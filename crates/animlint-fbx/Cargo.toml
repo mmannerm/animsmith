@@ -1,6 +1,6 @@
 [package]
-name = "animlint-gltf"
-description = "glTF/GLB ingestion into the animlint core model"
+name = "animlint-fbx"
+description = "FBX ingestion into the animlint core model, via the official ufbx bindings"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,8 +9,6 @@ repository.workspace = true
 
 [dependencies]
 animlint-core = { workspace = true }
-gltf = { workspace = true }
-base64 = { workspace = true }
+ufbx = { workspace = true }
 glam = { workspace = true }
 thiserror = { workspace = true }
-serde_json = { workspace = true }

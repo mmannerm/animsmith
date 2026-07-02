@@ -3,6 +3,8 @@
 //! and semantic check sets, rig profiles, and TOML config. `convert`,
 //! `report`, `diff`, and FBX input arrive in later milestones.
 
+mod diff;
+
 use animlint_core::model::Document;
 use animlint_core::profile::{ResolvedRoles, resolve_named};
 use animlint_core::{CheckCtx, Config, Finding, Severity, all_checks, run_checks};
@@ -58,6 +60,23 @@ enum Cmd {
         /// Suppress findings from these checks (comma-separated ids).
         #[arg(long, value_delimiter = ',')]
         allow: Vec<String>,
+    },
+    /// Convert an input (typically FBX) to glTF: skeleton + animation
+    /// tracks only — no meshes, skins, or materials. Output format by
+    /// extension: .glb binary, .gltf JSON with an embedded buffer.
+    Convert {
+        input: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+    /// Compare the measurements of two inputs (asset files or prior
+    /// `measure` JSON) and report movement beyond significance
+    /// thresholds. Exits 1 on significant movement.
+    Diff {
+        a: PathBuf,
+        b: PathBuf,
+        #[arg(long, value_enum, default_value_t = Format::Text)]
+        format: Format,
     },
 }
 
@@ -275,7 +294,72 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 ExitCode::SUCCESS
             })
         }
+        Cmd::Convert { input, output } => {
+            let doc = load(&input)?;
+            animlint_gltf::write::write(&doc, &output).map_err(|e| e.to_string())?;
+            let clips = doc.clips.len();
+            let bones = doc.skeleton.bones.len();
+            println!(
+                "wrote {} ({bones} bones, {clips} clip(s); skeleton + animation only)",
+                output.display()
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        Cmd::Diff { a, b, format } => {
+            let ma = load_measurements(&a, &config)?;
+            let mb = load_measurements(&b, &config)?;
+            let deltas = diff::diff_measurements(&ma, &mb);
+            match format {
+                Format::Json => print_json(&deltas),
+                Format::Text => {
+                    if deltas.is_empty() {
+                        println!("no significant movement");
+                    }
+                    for d in &deltas {
+                        let values = match (d.before, d.after) {
+                            (Some(x), Some(y)) => format!(" {x:.4} -> {y:.4}"),
+                            (Some(x), None) => format!(" {x:.4} -> (gone)"),
+                            (None, Some(y)) => format!(" (none) -> {y:.4}"),
+                            (None, None) => String::new(),
+                        };
+                        println!("  {} {}: {}{values}", d.clip, d.metric, d.note);
+                    }
+                    println!("{} significant change(s)", deltas.len());
+                }
+            }
+            Ok(if deltas.is_empty() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(EXIT_FINDINGS)
+            })
+        }
     }
+}
+
+/// Measurements for `diff`: an asset file (measured now) or a prior
+/// `measure`/`lint` JSON report (its `measurements` field, or the whole
+/// object as a bare measurement map).
+fn load_measurements(
+    path: &Path,
+    config: &Config,
+) -> Result<std::collections::BTreeMap<String, animlint_core::measure::ClipMeasurements>, String> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    if ext == "json" {
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let value: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|e| format!("bad JSON in {}: {e}", path.display()))?;
+        let map = value.get("measurements").cloned().unwrap_or(value);
+        return serde_json::from_value(map)
+            .map_err(|e| format!("{} is not a measurements report: {e}", path.display()));
+    }
+    let doc = load(path)?;
+    let roles = resolve_roles(&doc, config);
+    Ok(animlint_core::measure::measure_document(&doc, &roles))
 }
 
 fn require_files(files: &[PathBuf]) -> Result<(), String> {
@@ -294,12 +378,15 @@ fn load(path: &Path) -> Result<Document, String> {
         .unwrap_or_default();
     match ext.as_str() {
         "glb" | "gltf" => animlint_gltf::load(path).map_err(|e| e.to_string()),
+        #[cfg(feature = "fbx")]
+        "fbx" => animlint_fbx::load(path).map_err(|e| e.to_string()),
+        #[cfg(not(feature = "fbx"))]
         "fbx" => Err(format!(
-            "{}: FBX input lands in M2 (via ufbx); convert to glTF for now",
+            "{}: this animlint build has no FBX support (rebuild with the default `fbx` feature)",
             path.display()
         )),
         _ => Err(format!(
-            "{}: unsupported input (expected .glb or .gltf)",
+            "{}: unsupported input (expected .glb, .gltf, or .fbx)",
             path.display()
         )),
     }

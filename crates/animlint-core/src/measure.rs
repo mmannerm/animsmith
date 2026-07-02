@@ -6,24 +6,24 @@ use crate::metrics::{foot_cycle_metrics, metric_frame_count, root_motion_speed_m
 use crate::model::{Document, Property};
 use crate::profile::ResolvedRoles;
 use crate::sample::sample_clip;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Rotation ranges below this are not recorded (matches the incubating
 /// pipeline's convention).
 pub const MIN_RECORDED_ROTATION_DEG: f64 = 0.1;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GaitMeasurement {
     /// Stride-anchor phase in `[0,1)`; see
     /// [`crate::metrics::FootCycleMetrics::gait_phase`].
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phase: Option<f64>,
     /// Peak-to-peak L−R foot-height swing (metres).
     pub lr_amplitude_m: f64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClipMeasurements {
     pub duration_s: f64,
     /// Keyframe count of the longest channel.
@@ -36,14 +36,14 @@ pub struct ClipMeasurements {
     pub bone_rotation_range_deg: BTreeMap<String, f64>,
     /// Loop wrap discontinuity ratio; needs hips + foot roles and a
     /// real stride. See [`crate::metrics::FootCycleMetrics`].
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loop_seam_ratio: Option<f64>,
     /// Gait stride anchor; needs a left and a right foot role.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gait: Option<GaitMeasurement>,
     /// Horizontal root displacement ÷ duration (m/s); needs the Root
     /// (or Hips) role.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speed_mps: Option<f64>,
 }
 
