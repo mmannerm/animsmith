@@ -117,6 +117,23 @@ fn non_monotonic_times_are_flagged() {
 }
 
 #[test]
+fn negative_time_beyond_tolerance_is_flagged() {
+    let mut doc = clean_doc();
+    doc.clips[0].tracks[0].times = vec![-0.01, 0.5, 1.0];
+    assert_single(&doc, "time-monotonic", Severity::Error);
+}
+
+#[test]
+fn f32_quantization_dust_at_zero_is_tolerated() {
+    // Bake pipelines that slice frame ranges leave first keys like
+    // -1e-6 s; engines clamp these harmlessly.
+    let mut doc = clean_doc();
+    doc.clips[0].tracks[0].times = vec![-1e-6, 0.5, 1.0];
+    let findings = lint(&doc);
+    assert!(findings.is_empty(), "dust flagged: {findings:#?}");
+}
+
+#[test]
 fn late_first_key_is_noted() {
     let mut doc = clean_doc();
     doc.clips[0].tracks[0].times = vec![0.4, 0.7, 1.0];
@@ -172,6 +189,22 @@ fn mismatched_channel_ends_are_flagged() {
     let mut doc = clean_doc();
     doc.clips[0].tracks[1].times = vec![0.0, 0.3, 0.6]; // rotation still ends at 1.0
     assert_single(&doc, "duration-sanity", Severity::Warning);
+}
+
+#[test]
+fn single_key_pin_does_not_count_toward_end_spread() {
+    // A one-key track at t=0 is a pinned value (a common bake idiom),
+    // not a truncated channel.
+    let mut doc = clean_doc();
+    doc.clips[0].tracks.push(Track {
+        bone: 1,
+        property: Property::Translation,
+        interpolation: Interpolation::Linear,
+        times: vec![0.0],
+        values: TrackValues::Vec3s(vec![Vec3::new(0.0, 0.3, 0.0)]),
+    });
+    let findings = lint(&doc);
+    assert!(findings.is_empty(), "pin flagged: {findings:#?}");
 }
 
 #[test]

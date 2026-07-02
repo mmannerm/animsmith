@@ -11,6 +11,11 @@ use crate::model::Document;
 /// A first key later than this is flagged (half a frame at 30 fps).
 pub const FIRST_KEY_SLACK_S: f32 = 0.017;
 
+/// Negative first-key times within this of zero are tolerated: frame-
+/// range slicing in bake pipelines leaves f32-quantization dust like
+/// -1e-6 s, which engines clamp harmlessly.
+pub const NEGATIVE_TIME_TOLERANCE_S: f32 = 1e-4;
+
 pub struct TimeMonotonic;
 
 impl Check for TimeMonotonic {
@@ -24,7 +29,7 @@ impl Check for TimeMonotonic {
             if times.is_empty() {
                 continue;
             }
-            if times[0] < 0.0 {
+            if times[0] < -NEGATIVE_TIME_TOLERANCE_S {
                 out.push(
                     Finding::new(
                         self.id(),

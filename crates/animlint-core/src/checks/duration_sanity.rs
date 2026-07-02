@@ -39,10 +39,13 @@ impl Check for DurationSanity {
                 );
                 continue;
             }
+            // Single-key tracks are pinned values, not truncated
+            // channels — a common bake idiom — so they don't count
+            // toward the end spread.
             let ends: Vec<f32> = clip
                 .tracks
                 .iter()
-                .filter(|t| !t.times.is_empty())
+                .filter(|t| t.key_count() >= 2)
                 .map(|t| t.end_time())
                 .collect();
             if ends.is_empty() {
