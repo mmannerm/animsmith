@@ -1,0 +1,15 @@
+[package]
+name = "animlint-gltf"
+description = "glTF/GLB ingestion into the animlint core model"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+animlint-core = { workspace = true }
+gltf = { workspace = true }
+base64 = { workspace = true }
+glam = { workspace = true }
+thiserror = { workspace = true }
