@@ -1,10 +1,11 @@
-//! The animlint CLI. See DESIGN.md §3 for the surface; M0 ships
+//! The animlint CLI. See DESIGN.md §3 for the surface; M0+M1 ship
 //! `inspect`, `measure`, and `lint` over glTF/GLB with the mechanical
-//! check set. `convert`, `report`, `diff`, and FBX input arrive in
-//! later milestones.
+//! and semantic check sets, rig profiles, and TOML config. `convert`,
+//! `report`, `diff`, and FBX input arrive in later milestones.
 
 use animlint_core::model::Document;
-use animlint_core::{Finding, Severity, mechanical_checks, run_checks};
+use animlint_core::profile::{ResolvedRoles, resolve_named};
+use animlint_core::{CheckCtx, Config, Finding, Severity, all_checks, run_checks};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -17,7 +18,7 @@ const EXIT_OPERATOR: u8 = 2;
 
 /// Version of the machine-readable output schema, bumped on breaking
 /// changes to the JSON shape.
-const SCHEMA_VERSION: u32 = 0;
+const SCHEMA_VERSION: u32 = 1;
 
 #[derive(Parser)]
 #[command(
@@ -26,13 +27,16 @@ const SCHEMA_VERSION: u32 = 0;
     about = "A linter for skeletal animation clips"
 )]
 struct Cli {
+    /// Config file (defaults to ./animlint.toml when present).
+    #[arg(long, global = true)]
+    config: Option<PathBuf>,
     #[command(subcommand)]
     cmd: Cmd,
 }
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Summarize a file: skeleton, clips, tracks.
+    /// Summarize a file: skeleton, clips, tracks, detected rig profile.
     Inspect { file: PathBuf },
     /// Emit per-clip measurements without judging them.
     Measure {
@@ -48,6 +52,12 @@ enum Cmd {
         /// Treat warnings as errors for the exit code.
         #[arg(long)]
         deny_warnings: bool,
+        /// Run only these checks (comma-separated ids).
+        #[arg(long, value_delimiter = ',')]
+        select: Vec<String>,
+        /// Suppress findings from these checks (comma-separated ids).
+        #[arg(long, value_delimiter = ',')]
+        allow: Vec<String>,
     },
 }
 
@@ -73,10 +83,17 @@ impl ToolInfo {
 }
 
 #[derive(Serialize)]
+struct RigInfo {
+    profile: String,
+    resolved_roles: std::collections::BTreeMap<&'static str, String>,
+}
+
+#[derive(Serialize)]
 struct FileReport {
     schema_version: u32,
     tool: ToolInfo,
     file: String,
+    rig: RigInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
     findings: Option<Vec<Finding>>,
     measurements: std::collections::BTreeMap<String, animlint_core::measure::ClipMeasurements>,
@@ -93,11 +110,66 @@ fn main() -> ExitCode {
     }
 }
 
+fn load_config(explicit: Option<&Path>) -> Result<Config, String> {
+    let path = match explicit {
+        Some(p) => p.to_path_buf(),
+        None => {
+            let default = PathBuf::from("animlint.toml");
+            if !default.exists() {
+                return Ok(Config::default());
+            }
+            default
+        }
+    };
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| format!("cannot read config {}: {e}", path.display()))?;
+    toml::from_str(&text).map_err(|e| format!("bad config {}: {e}", path.display()))
+}
+
+/// Resolve rig roles per the config: inline role map entries override
+/// the (named or auto-detected) profile.
+fn resolve_roles(doc: &Document, config: &Config) -> ResolvedRoles {
+    let base = resolve_named(&doc.skeleton, &config.rig.profile).unwrap_or_default();
+    if config.rig.roles.is_empty() {
+        return base;
+    }
+    let mut pairs: Vec<_> = base
+        .iter()
+        .map(|(role, bone)| (role, doc.skeleton.bones[bone].name.clone()))
+        .collect();
+    pairs.extend(
+        config
+            .rig
+            .roles
+            .iter()
+            .map(|(role, name)| (*role, name.clone())),
+    );
+    let mut resolved = ResolvedRoles::from_names(&doc.skeleton, pairs);
+    resolved.profile = if base.profile.is_empty() {
+        "custom".into()
+    } else {
+        format!("{}+custom", base.profile)
+    };
+    resolved
+}
+
+fn rig_info(doc: &Document, roles: &ResolvedRoles) -> RigInfo {
+    RigInfo {
+        profile: roles.profile.clone(),
+        resolved_roles: roles
+            .iter()
+            .map(|(role, bone)| (role.as_str(), doc.skeleton.bones[bone].name.clone()))
+            .collect(),
+    }
+}
+
 fn run(cli: Cli) -> Result<ExitCode, String> {
+    let config = load_config(cli.config.as_deref())?;
     match cli.cmd {
         Cmd::Inspect { file } => {
             let doc = load(&file)?;
-            inspect(&doc);
+            let roles = resolve_roles(&doc, &config);
+            inspect(&doc, &roles);
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Measure { files, format } => {
@@ -105,12 +177,14 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let mut reports = Vec::new();
             for file in &files {
                 let doc = load(file)?;
+                let roles = resolve_roles(&doc, &config);
                 reports.push(FileReport {
                     schema_version: SCHEMA_VERSION,
                     tool: ToolInfo::current(),
                     file: file.display().to_string(),
+                    rig: rig_info(&doc, &roles),
                     findings: None,
-                    measurements: animlint_core::measure::measure_document(&doc),
+                    measurements: animlint_core::measure::measure_document(&doc, &roles),
                 });
             }
             match format {
@@ -119,8 +193,18 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     for report in &reports {
                         println!("{}:", report.file);
                         for (clip, m) in &report.measurements {
+                            let seam = m
+                                .loop_seam_ratio
+                                .map(|r| format!(" seam×{r:.2}"))
+                                .unwrap_or_default();
+                            let gait = m
+                                .gait
+                                .as_ref()
+                                .and_then(|g| g.phase.map(|p| (p, g.lr_amplitude_m)))
+                                .map(|(p, a)| format!(" gait φ={p:.2} ({:.1}cm)", a * 100.0))
+                                .unwrap_or_default();
                             println!(
-                                "  {clip}: {:.3}s, {} frames, {} animated bones",
+                                "  {clip}: {:.3}s, {} frames, {} animated bones{seam}{gait}",
                                 m.duration_s,
                                 m.frame_count,
                                 m.animated_bones.len()
@@ -135,14 +219,31 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             files,
             format,
             deny_warnings,
+            select,
+            allow,
         } => {
             require_files(&files)?;
-            let checks = mechanical_checks();
+            let mut checks = all_checks();
+            if !select.is_empty() {
+                let known: Vec<&str> = checks.iter().map(|c| c.id()).collect();
+                for id in &select {
+                    if !known.contains(&id.as_str()) {
+                        return Err(format!(
+                            "--select: unknown check '{id}' (known: {})",
+                            known.join(", ")
+                        ));
+                    }
+                }
+                checks.retain(|c| select.iter().any(|id| id == c.id()));
+            }
             let mut reports = Vec::new();
             let mut worst = Severity::Note;
             for file in &files {
                 let doc = load(file)?;
-                let mut findings = run_checks(&doc, &checks);
+                let roles = resolve_roles(&doc, &config);
+                let ctx = CheckCtx::new(&doc, &roles, &config);
+                let mut findings = run_checks(&ctx, &checks);
+                findings.retain(|f| !allow.iter().any(|id| id == f.check_id));
                 findings.sort_by(|a, b| {
                     (a.clip.as_deref(), std::cmp::Reverse(a.severity))
                         .cmp(&(b.clip.as_deref(), std::cmp::Reverse(b.severity)))
@@ -154,8 +255,9 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     schema_version: SCHEMA_VERSION,
                     tool: ToolInfo::current(),
                     file: file.display().to_string(),
+                    rig: rig_info(&doc, &roles),
                     findings: Some(findings),
-                    measurements: animlint_core::measure::measure_document(&doc),
+                    measurements: animlint_core::measure::measure_document(&doc, &roles),
                 });
             }
             match format {
@@ -254,12 +356,24 @@ fn print_text(reports: &[FileReport]) {
     println!("{errors} error(s), {warnings} warning(s), {notes} note(s)");
 }
 
-fn inspect(doc: &Document) {
+fn inspect(doc: &Document, roles: &ResolvedRoles) {
     if let Some(path) = &doc.source.path {
         println!("{path}");
     }
+    if roles.is_empty() {
+        println!("rig profile: none detected");
+    } else {
+        println!("rig profile: {} ({} roles)", roles.profile, roles.len());
+        for (role, bone) in roles.iter() {
+            println!(
+                "  {:<12} -> {}",
+                role.as_str(),
+                doc.skeleton.bones[bone].name
+            );
+        }
+    }
     println!("skeleton: {} bones", doc.skeleton.bones.len());
-    for (id, bone) in doc.skeleton.bones.iter().enumerate() {
+    for bone in &doc.skeleton.bones {
         let mut depth = 0;
         let mut parent = bone.parent;
         while let Some(p) = parent {
@@ -272,7 +386,6 @@ fn inspect(doc: &Document) {
             ""
         };
         println!("  {}{}{}", "  ".repeat(depth), bone.name, skinned);
-        let _ = id;
     }
     println!("clips: {}", doc.clips.len());
     for clip in &doc.clips {

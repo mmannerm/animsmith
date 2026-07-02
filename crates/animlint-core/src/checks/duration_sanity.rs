@@ -3,9 +3,8 @@
 //! shorter channels, which usually means a partial export). fps
 //! expectations from config arrive with M1.
 
-use crate::check::Check;
+use crate::check::{Check, CheckCtx};
 use crate::finding::{Finding, Severity};
-use crate::model::Document;
 
 /// Channel end-time spread beyond this is flagged (half a frame at
 /// 30 fps).
@@ -18,7 +17,8 @@ impl Check for DurationSanity {
         "duration-sanity"
     }
 
-    fn run(&self, doc: &Document, out: &mut Vec<Finding>) {
+    fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
+        let doc = ctx.doc;
         for clip in &doc.clips {
             if clip.tracks.is_empty() {
                 out.push(

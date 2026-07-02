@@ -1,0 +1,91 @@
+//! `frozen-bone` — a required bone that carries keyframes but whose
+//! rotation never exceeds a floor is frozen: a T-posed limb, a
+//! wrong-source slice, or a masked-out channel that the presence-only
+//! `missing-bones` check would pass. Real motion moves required bones
+//! tens of degrees; the default 1° floor catches truly static bones
+//! without flagging subtle idle sway.
+
+use crate::check::{Check, CheckCtx};
+use crate::finding::{Finding, Severity};
+use crate::model::Property;
+
+pub const DEFAULT_MIN_ROTATION_DEG: f64 = 1.0;
+
+pub struct FrozenBone;
+
+impl Check for FrozenBone {
+    fn id(&self) -> &'static str {
+        "frozen-bone"
+    }
+
+    fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
+        let floor = ctx
+            .config
+            .check_settings(self.id())
+            .min_rotation_deg
+            .unwrap_or(DEFAULT_MIN_ROTATION_DEG);
+
+        for clip in &ctx.doc.clips {
+            let Some(required) = ctx.config.expectations_for(&clip.name).animates_bones else {
+                continue;
+            };
+            for bone_name in &required {
+                let Some(bone_id) = ctx
+                    .doc
+                    .skeleton
+                    .bones
+                    .iter()
+                    .position(|b| &b.name == bone_name)
+                else {
+                    continue; // missing-bones owns absent bones
+                };
+                // Max angular deviation from the first key across the
+                // bone's rotation tracks; a bone with no rotation track
+                // at all is also frozen rotation-wise, but that reads as
+                // missing-bones territory only if it has no tracks —
+                // with translation-only tracks it belongs here.
+                let mut has_any_track = false;
+                let mut max_deg = 0.0f64;
+                for track in clip.tracks.iter().filter(|t| t.bone == bone_id) {
+                    has_any_track = true;
+                    if track.property != Property::Rotation {
+                        continue;
+                    }
+                    let Some(first) = track.key_quat(0) else {
+                        continue;
+                    };
+                    if !first.is_finite() || first.length_squared() == 0.0 {
+                        continue;
+                    }
+                    let first = first.normalize();
+                    for k in 1..track.key_count() {
+                        if let Some(q) = track.key_quat(k)
+                            && q.is_finite()
+                            && q.length_squared() > 0.0
+                        {
+                            max_deg =
+                                max_deg.max(first.angle_between(q.normalize()).to_degrees() as f64);
+                        }
+                    }
+                }
+                if has_any_track && max_deg < floor {
+                    out.push(
+                        Finding::new(
+                            self.id(),
+                            Severity::Error,
+                            format!(
+                                "required bone rotates only {max_deg:.2}° over the clip \
+                                 (floor {floor:.2}°) — frozen/T-posed limb or a \
+                                 wrong-source slice"
+                            ),
+                        )
+                        .clip(&clip.name)
+                        .bone(bone_name.clone())
+                        .measured(max_deg)
+                        .expected(floor),
+                    );
+                }
+            }
+        }
+    }
+}

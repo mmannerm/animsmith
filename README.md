@@ -9,10 +9,14 @@ phase, root-motion sanity, and foot slide.
 glTF-Validator checks spec conformance; animlint judges *content*.
 Nothing open-source did game-semantics clip validation before this.
 
-**Status: M0 (walking skeleton).** glTF/GLB input, the mechanical check
-set, `inspect` / `measure` / `lint`. See [DESIGN.md](DESIGN.md) for the
-full design, check catalog, and roadmap (FBX via ufbx, self-contained
-HTML reports with a 3D viewer, loop/gait/foot-slide checks).
+**Status: M1.** glTF/GLB input; mechanical + locomotion-semantics check
+sets; rig profiles (mixamo / ue-mannequin / rauta-humanoid + auto-detect);
+`animlint.toml` config with per-clip expectations and gait groups;
+`inspect` / `measure` / `lint`. The loop-seam and gait algorithms are
+golden-tested against the production numbers of the pipeline they were
+extracted from. See [DESIGN.md](DESIGN.md) for the full design and
+roadmap (FBX via ufbx, self-contained HTML reports with a 3D viewer,
+foot-slide detection).
 
 ## Quickstart
 
@@ -30,7 +34,9 @@ $ cargo run -p animlint -- inspect clip.glb          # skeleton + clip summary
 Exit codes: `0` clean/warnings-only, `1` error findings (`--deny-warnings`
 promotes), `2` operator error.
 
-## Checks (M0)
+## Checks
+
+Mechanical (always on, no config needed):
 
 | id | severity | what |
 |---|---|---|
@@ -41,6 +47,45 @@ promotes), `2` operator error.
 | `duration-sanity` | error/warning | degenerate duration; channels ending at different times; empty clips |
 | `scale-keys` | warning | animated scale present; non-uniform scale |
 | `constant-track` | note | multi-key tracks that never move (export bloat) |
+
+Semantic (driven by declared expectations + rig roles):
+
+| id | severity | what |
+|---|---|---|
+| `loop-seam` | error | a declared loop's feet-relative-to-hips wrap discontinuity vs its neighbouring in-clip steps |
+| `gait-group` | error | stride-phase (L−R foot-height fundamental) spread across a declared directional blend ring |
+| `root-motion-speed` | error | measured horizontal root travel vs the declared `speed_mps` pin; stray pins on stationary clips |
+| `missing-bones` | error | declared `animates_bones` absent from the skeleton or carrying no keys |
+| `frozen-bone` | error | a required bone whose rotation never exceeds the floor (T-posed limb, wrong-source slice) |
+
+## Configuration
+
+`animlint.toml` (auto-loaded from the working directory, or `--config`):
+
+```toml
+[rig]
+profile = "auto"            # or mixamo / ue-mannequin / rauta-humanoid, or inline [rig.roles]
+
+[checks.loop-seam]
+max_ratio = 1.6
+
+[clips."run_*"]
+loop = true
+
+[clips.run_forward]
+speed_mps = { value = 3.1, tolerance = 0.25 }
+
+[groups.run-ring]
+clips = ["run_forward", "run_backward", "run_left", "run_right"]
+max_gait_phase_spread = 0.15
+min_lr_amplitude_m = 0.03
+```
+
+See [examples/rauta.animlint.toml](examples/rauta.animlint.toml) for a
+real config mirroring the incubating project's animation contract.
+Checks whose rig roles don't resolve are skipped with a note — never a
+false failure. `--select`, `--allow`, and `[checks.*] severity`
+(including `"off"`) control what runs and how hard it fails.
 
 ## Workspace
 

@@ -3,9 +3,14 @@
 
 pub mod constant_track;
 pub mod duration_sanity;
+pub mod frozen_bone;
+pub mod gait_group;
+pub mod loop_seam;
+pub mod missing_bones;
 pub mod nan;
 pub mod quat_flip;
 pub mod quat_norm;
+pub mod root_motion_speed;
 pub mod scale_keys;
 pub mod time_monotonic;
 

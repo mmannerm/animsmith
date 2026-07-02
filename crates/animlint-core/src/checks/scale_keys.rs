@@ -5,9 +5,9 @@
 //! break on) is called out separately.
 
 use super::tracks;
-use crate::check::Check;
+use crate::check::{Check, CheckCtx};
 use crate::finding::{Finding, Severity};
-use crate::model::{Document, Property};
+use crate::model::Property;
 
 /// Relative component spread beyond which a scale key counts as
 /// non-uniform.
@@ -25,7 +25,8 @@ impl Check for ScaleKeys {
         "scale-keys"
     }
 
-    fn run(&self, doc: &Document, out: &mut Vec<Finding>) {
+    fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
+        let doc = ctx.doc;
         for (clip, bone, track) in tracks(doc) {
             if track.property != Property::Scale {
                 continue;

@@ -5,9 +5,9 @@
 //! `frozen-bone` check and needs per-clip expectations (M1).
 
 use super::tracks;
-use crate::check::Check;
+use crate::check::{Check, CheckCtx};
 use crate::finding::{Finding, Severity};
-use crate::model::{Document, TrackValues};
+use crate::model::TrackValues;
 
 /// Positional/scale spread (in source units) below which a track is
 /// constant.
@@ -24,7 +24,8 @@ impl Check for ConstantTrack {
         "constant-track"
     }
 
-    fn run(&self, doc: &Document, out: &mut Vec<Finding>) {
+    fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
+        let doc = ctx.doc;
         for (clip, bone, track) in tracks(doc) {
             if track.key_count() < 2 {
                 continue; // a single-key track is a compact pin, not bloat

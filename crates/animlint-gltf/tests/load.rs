@@ -1,7 +1,8 @@
 //! End-to-end: load the checked-in fixture, verify the model shape,
 //! and confirm the mechanical checks pass on clean data.
 
-use animlint_core::{Severity, mechanical_checks, run_checks, sample_clip};
+use animlint_core::profile::ResolvedRoles;
+use animlint_core::{CheckCtx, Config, Severity, mechanical_checks, run_checks, sample_clip};
 use std::path::PathBuf;
 
 fn fixture() -> PathBuf {
@@ -27,7 +28,10 @@ fn loads_fixture_into_core_model() {
 #[test]
 fn fixture_is_lint_clean() {
     let doc = animlint_gltf::load(&fixture()).expect("fixture loads");
-    let findings = run_checks(&doc, &mechanical_checks());
+    let config = Config::default();
+    let roles = ResolvedRoles::default();
+    let ctx = CheckCtx::new(&doc, &roles, &config);
+    let findings = run_checks(&ctx, &mechanical_checks());
     let serious: Vec<_> = findings
         .iter()
         .filter(|f| f.severity >= Severity::Warning)
@@ -55,7 +59,7 @@ fn fixture_pose_grid_fk_is_sane() {
 #[test]
 fn measurements_match_fixture() {
     let doc = animlint_gltf::load(&fixture()).expect("fixture loads");
-    let measurements = animlint_core::measure::measure_document(&doc);
+    let measurements = animlint_core::measure::measure_document(&doc, &ResolvedRoles::default());
     let walk = &measurements["walk"];
     assert_eq!(walk.frame_count, 3);
     assert_eq!(walk.animated_bones, vec!["hips", "root"]);

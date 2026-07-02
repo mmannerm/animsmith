@@ -3,7 +3,8 @@
 //! exactly one thing, and assert exactly the expected check fires.
 
 use animlint_core::model::*;
-use animlint_core::{Severity, mechanical_checks, run_checks};
+use animlint_core::profile::ResolvedRoles;
+use animlint_core::{CheckCtx, Config, Severity, mechanical_checks, run_checks};
 use glam::{Quat, Vec3};
 
 /// A clean 2-bone document with a rotation and a translation track.
@@ -61,7 +62,10 @@ fn clean_doc() -> Document {
 }
 
 fn lint(doc: &Document) -> Vec<animlint_core::Finding> {
-    run_checks(doc, &mechanical_checks())
+    let config = Config::default();
+    let roles = ResolvedRoles::default();
+    let ctx = CheckCtx::new(doc, &roles, &config);
+    run_checks(&ctx, &mechanical_checks())
 }
 
 fn assert_single(doc: &Document, check_id: &str, severity: Severity) {
@@ -274,7 +278,7 @@ fn constant_rotation_track_is_noted() {
 #[test]
 fn measurements_report_rotation_range() {
     let doc = clean_doc();
-    let measurements = animlint_core::measure::measure_document(&doc);
+    let measurements = animlint_core::measure::measure_document(&doc, &ResolvedRoles::default());
     let walk = &measurements["walk"];
     assert_eq!(walk.frame_count, 3);
     assert_eq!(walk.animated_bones, vec!["hips", "spine"]);

@@ -4,9 +4,8 @@
 //! the engine clamp-holds an unauthored pose for the gap.
 
 use super::tracks;
-use crate::check::Check;
+use crate::check::{Check, CheckCtx};
 use crate::finding::{Finding, Severity};
-use crate::model::Document;
 
 /// A first key later than this is flagged (half a frame at 30 fps).
 pub const FIRST_KEY_SLACK_S: f32 = 0.017;
@@ -23,7 +22,8 @@ impl Check for TimeMonotonic {
         "time-monotonic"
     }
 
-    fn run(&self, doc: &Document, out: &mut Vec<Finding>) {
+    fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
+        let doc = ctx.doc;
         for (clip, bone, track) in tracks(doc) {
             let times = &track.times;
             if times.is_empty() {

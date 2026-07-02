@@ -2,13 +2,26 @@
 //! `lint` judges. Kept separate from findings so pipelines (e.g. a
 //! bake's measured sidecar) can pin their own contracts to the numbers.
 
+use crate::metrics::{foot_cycle_metrics, metric_frame_count, root_motion_speed_mps};
 use crate::model::{Document, Property};
+use crate::profile::ResolvedRoles;
+use crate::sample::sample_clip;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Rotation ranges below this are not recorded (matches the incubating
 /// pipeline's convention).
 pub const MIN_RECORDED_ROTATION_DEG: f64 = 0.1;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GaitMeasurement {
+    /// Stride-anchor phase in `[0,1)`; see
+    /// [`crate::metrics::FootCycleMetrics::gait_phase`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phase: Option<f64>,
+    /// Peak-to-peak L−R foot-height swing (metres).
+    pub lr_amplitude_m: f64,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ClipMeasurements {
@@ -21,10 +34,26 @@ pub struct ClipMeasurements {
     /// keyed rotation. Bones under [`MIN_RECORDED_ROTATION_DEG`] are
     /// omitted.
     pub bone_rotation_range_deg: BTreeMap<String, f64>,
+    /// Loop wrap discontinuity ratio; needs hips + foot roles and a
+    /// real stride. See [`crate::metrics::FootCycleMetrics`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loop_seam_ratio: Option<f64>,
+    /// Gait stride anchor; needs a left and a right foot role.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gait: Option<GaitMeasurement>,
+    /// Horizontal root displacement ÷ duration (m/s); needs the Root
+    /// (or Hips) role.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speed_mps: Option<f64>,
 }
 
-/// Measure every clip in the document.
-pub fn measure_document(doc: &Document) -> BTreeMap<String, ClipMeasurements> {
+/// Measure every clip in the document. Role-dependent metrics
+/// (loop seam, gait, root-motion speed) are present only where the
+/// roles resolve; pass an empty [`ResolvedRoles`] to skip them.
+pub fn measure_document(
+    doc: &Document,
+    roles: &ResolvedRoles,
+) -> BTreeMap<String, ClipMeasurements> {
     doc.clips
         .iter()
         .map(|clip| {
@@ -65,6 +94,11 @@ pub fn measure_document(doc: &Document) -> BTreeMap<String, ClipMeasurements> {
                 }
             }
 
+            let grid =
+                metric_frame_count(clip).map(|frames| sample_clip(&doc.skeleton, clip, frames));
+            let cycle = grid.as_ref().and_then(|g| foot_cycle_metrics(g, roles));
+            let speed_mps = grid.as_ref().and_then(|g| root_motion_speed_mps(g, roles));
+
             (
                 clip.name.clone(),
                 ClipMeasurements {
@@ -72,6 +106,12 @@ pub fn measure_document(doc: &Document) -> BTreeMap<String, ClipMeasurements> {
                     frame_count: frame_count as u32,
                     animated_bones: animated.into_iter().collect(),
                     bone_rotation_range_deg: rotation_range,
+                    loop_seam_ratio: cycle.as_ref().and_then(|c| c.loop_seam_ratio),
+                    gait: cycle.map(|c| GaitMeasurement {
+                        phase: c.gait_phase,
+                        lr_amplitude_m: c.lr_amplitude_m,
+                    }),
+                    speed_mps,
                 },
             )
         })
