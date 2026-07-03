@@ -5,6 +5,22 @@ contract formats, sidecar schemas, and gates embed the library instead:
 `animsmith-core` (measurements, checks, config — no file formats, no
 I/O) plus one ingestion crate (`animsmith-gltf`, `animsmith-fbx`).
 
+Add the crates you need:
+
+```toml
+[dependencies]
+animsmith-core = "0.1"
+animsmith-gltf = "0.1"
+# Optional, only when you ingest FBX:
+animsmith-fbx = "0.1"
+```
+
+Canonical API docs live on docs.rs after publish:
+[animsmith-core](https://docs.rs/animsmith-core),
+[animsmith-gltf](https://docs.rs/animsmith-gltf), and
+[animsmith-fbx](https://docs.rs/animsmith-fbx). `animsmith-core` is the
+stable embedding boundary; the CLI crate is not the library API.
+
 The worked, compiling version of everything below is
 [`crates/animsmith/examples/embed.rs`](../crates/animsmith/examples/embed.rs)
 — run it with:

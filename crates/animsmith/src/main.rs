@@ -27,7 +27,7 @@ const SCHEMA_URL: &str =
 #[command(
     name = "animsmith",
     version = env!("ANIMSMITH_VERSION"),
-    about = "A linter for skeletal animation clips"
+    about = "Inspect, validate, and repair skeletal animation clips"
 )]
 struct Cli {
     /// Config file (defaults to ./animsmith.toml when present).
@@ -69,9 +69,11 @@ enum Cmd {
         #[arg(long, value_delimiter = ',')]
         allow: Vec<String>,
     },
-    /// Render a self-contained offline HTML report: WebGL skeleton
-    /// playback of the exact frames the checks judged, metric charts,
-    /// and the findings list.
+    /// Render a self-contained offline HTML report.
+    #[command(
+        about = "Render a self-contained offline HTML report",
+        long_about = "Render a self-contained offline HTML report: WebGL skeleton playback of the exact frames the checks judged, metric charts, and the findings list."
+    )]
     #[cfg(feature = "report")]
     Report {
         /// Input .glb, .gltf, or .fbx file.
@@ -83,10 +85,11 @@ enum Cmd {
         #[arg(long)]
         clip: Option<String>,
     },
-    /// Apply pipeline-mechanical clip transforms and write the result
-    /// as skeleton+animation glTF (meshes are not carried; transform
-    /// clips before splicing them into a full asset). Operations apply
-    /// to every clip, or one clip via --clip.
+    /// Apply mechanical clip transforms.
+    #[command(
+        about = "Apply mechanical clip transforms",
+        long_about = "Apply pipeline-mechanical clip transforms and write the result as skeleton+animation glTF. Meshes are not carried; transform clips before splicing them into a full asset. Operations apply to every clip, or one clip via --clip."
+    )]
     Transform {
         /// Input .glb, .gltf, or .fbx file.
         input: PathBuf,
@@ -112,10 +115,11 @@ enum Cmd {
         #[arg(long, default_value_t = 30.0)]
         fps: f64,
     },
-    /// Repair mechanical clip defects in place, byte-surgically: only
-    /// the offending animation bytes change; meshes, skins, materials,
-    /// and textures pass through untouched. Currently fixes quaternion
-    /// hemisphere flips (the `quat-flip` check) on glTF/GLB inputs.
+    /// Repair safe mechanical glTF/GLB defects.
+    #[command(
+        about = "Repair safe mechanical glTF/GLB defects",
+        long_about = "Repair mechanical clip defects in place, byte-surgically: only the offending animation bytes change; meshes, skins, materials, and textures pass through untouched. Currently fixes quaternion hemisphere flips (the `quat-flip` check) on glTF/GLB inputs."
+    )]
     Fix {
         /// Input .glb or .gltf file. Omit only with --list-repairs.
         #[arg(value_name = "FILE")]
@@ -139,10 +143,11 @@ enum Cmd {
         #[arg(long)]
         list_repairs: bool,
     },
-    /// Convert an input (typically FBX) to glTF: skeleton, animation,
-    /// triangulated meshes, skins, and factor-only materials (texture
-    /// wiring stays a downstream concern). Output format by extension:
-    /// .glb binary, .gltf JSON with an embedded buffer.
+    /// Convert FBX input to glTF.
+    #[command(
+        about = "Convert FBX input to glTF",
+        long_about = "Convert FBX input to glTF: skeleton, animation, triangulated meshes, skins, and factor-only materials. Texture wiring stays a downstream concern. Output format by extension: .glb binary, .gltf JSON with an embedded buffer."
+    )]
     #[cfg(feature = "fbx")]
     Convert {
         /// Input .fbx file.
@@ -154,9 +159,11 @@ enum Cmd {
         #[arg(long)]
         animation_only: bool,
     },
-    /// Compare the measurements of two inputs (asset files or prior
-    /// `measure` JSON) and report movement beyond significance
-    /// thresholds. Exits 1 on significant movement.
+    /// Compare animation measurements.
+    #[command(
+        about = "Compare animation measurements",
+        long_about = "Compare the measurements of two inputs (asset files or prior `measure` JSON) and report movement beyond significance thresholds. Exits 1 on significant movement."
+    )]
     Diff {
         /// Before input: asset file or single-file `measure --format json` report.
         a: PathBuf,

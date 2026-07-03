@@ -19,9 +19,11 @@ the next `main` run publish.
 The CLI display version is separate from the package version. Published
 crates and dependency resolution use `Cargo.toml`; the `animsmith`
 binary embeds `ANIMSMITH_BUILD_VERSION` when that environment variable is
-set, otherwise it falls back to `git describe --tags --dirty --always`,
-and finally to `CARGO_PKG_VERSION` when built from a crates.io package
-without git metadata.
+set. Otherwise, source-checkout builds use `git describe --tags --dirty
+--always` only when the nearest tag matches `CARGO_PKG_VERSION`; if the
+manifest is ahead of or behind the git tags, the binary displays the
+manifest version plus the short git revision. Crates.io builds have no
+git metadata and display `CARGO_PKG_VERSION`.
 
 crates.io publishing is a gated job in the same workflow, using
 [crates.io Trusted Publishing](https://crates.io/docs/trusted-publishing)
@@ -53,10 +55,15 @@ before publishing.
    first; then publish in the order above and let each subsequent crate
    resolve the crate that was just published.
 
-3. On crates.io, for **each** of the five crates: Settings → Trusted
+3. After each crate is accepted by crates.io, docs.rs automatically
+   queues documentation for that crate. Check the docs.rs page for each
+   crate after publishing; the manifests set `documentation` links and
+   `[package.metadata.docs.rs]` so the public API docs build the intended
+   Linux/all-features surface.
+4. On crates.io, for **each** of the five crates: Settings → Trusted
    Publishing → add publisher — repository `mmannerm/animsmith`,
    workflow `main.yml`, no environment.
-4. Arm the CI job:
+5. Arm the CI job:
 
    ```console
    gh variable set CRATES_IO_TRUSTED_PUBLISHING --body true

@@ -8,10 +8,11 @@ gait-phase drift, and export bloat; convert straight from DCC exports;
 and fix safe mechanical problems in place.
 
 glTF-Validator checks spec conformance; animsmith judges — and forges —
-*content*. Nothing open-source did game-semantics clip validation
-before this.
+game-semantics *content*: loop seams, gait phase, root-motion speed,
+track hygiene, and other properties that decide whether an animation is
+usable in a game runtime.
 
-**Status: M2.** glTF/GLB **and FBX** input (via [ufbx](https://github.com/ufbx/ufbx));
+**Status: pre-1.0, publishing candidate.** glTF/GLB **and FBX** input (via [ufbx](https://github.com/ufbx/ufbx));
 mechanical + locomotion-semantics check sets; rig profiles
 (mixamo / ue-mannequin / humanoid + auto-detect); `animsmith.toml`
 config with per-clip expectations and gait groups; subcommands
@@ -26,24 +27,70 @@ animation bytes, so meshes, skins, and textures pass through
 byte-identical. Next up are the remaining hard semantic checks and
 additional machine-readable output formats.
 
+## Install
+
+For the CLI:
+
+```console
+$ cargo install animsmith
+```
+
+The default install includes FBX input and HTML reports. For a pure-Rust
+glTF-only binary with no C build step:
+
+```console
+$ cargo install animsmith --no-default-features
+```
+
+For Rust pipelines, depend on the crates you need:
+
+```toml
+[dependencies]
+animsmith-core = "0.1"
+animsmith-gltf = "0.1"
+# Optional, only when you ingest FBX:
+animsmith-fbx = "0.1"
+```
+
+API documentation is published on docs.rs when the crates are published
+to crates.io:
+
+- [animsmith-core](https://docs.rs/animsmith-core)
+- [animsmith-gltf](https://docs.rs/animsmith-gltf)
+- [animsmith-fbx](https://docs.rs/animsmith-fbx)
+- [animsmith-report](https://docs.rs/animsmith-report)
+- [animsmith](https://docs.rs/animsmith)
+
+## CLI or Library?
+
+Use the `animsmith` binary when you want a local tool, CI gate, or
+artist-facing report. Use `animsmith-core` when you already have a Rust
+pipeline and want to run the same measurements and checks inside your
+own gate. Pair `animsmith-core` with exactly the loader crates you need:
+`animsmith-gltf` for glTF/GLB and `animsmith-fbx` for FBX. The CLI crate
+is not the embedding API; it is just one frontend over the same core.
+
 ## Quickstart
 
 ```console
-$ cargo run -p animsmith -- lint clip.glb
+$ animsmith lint clip.glb
 clip.glb:
   warning[quat-flip] clip 'walk' bone 'hips' @0.533s: 1 hemisphere flip(s) ...
   note[constant-track] clip 'walk' bone 'ik_target': scale track has 90 keys but never moves — export bloat
 0 error(s), 1 warning(s), 1 note(s)
 
-$ cargo run -p animsmith -- lint export.fbx           # lint a DCC export directly
-$ cargo run -p animsmith -- measure clip.glb          # machine-readable measurements
-$ cargo run -p animsmith -- inspect clip.glb          # skeleton + clips + detected rig profile
-$ cargo run -p animsmith -- report clip.glb -o report.html   # offline HTML: 3D playback + charts
-$ cargo run -p animsmith -- convert export.fbx -o clip.glb   # skeleton+animation glTF
-$ cargo run -p animsmith -- diff old.glb new.glb      # did the re-export change what matters?
-$ cargo run -p animsmith -- fix clip.glb -o fixed.glb # repair quat flips, byte-surgically
-$ cargo run -p animsmith -- fix clip.glb --dry-run    # inspect repairs without writing
+$ animsmith lint export.fbx           # lint a DCC export directly
+$ animsmith measure clip.glb          # machine-readable measurements
+$ animsmith inspect clip.glb          # skeleton + clips + detected rig profile
+$ animsmith report clip.glb -o report.html   # offline HTML: 3D playback + charts
+$ animsmith convert export.fbx -o clip.glb   # skeleton+animation glTF
+$ animsmith diff old.glb new.glb      # did the re-export change what matters?
+$ animsmith fix clip.glb -o fixed.glb # repair quat flips, byte-surgically
+$ animsmith fix clip.glb --dry-run    # inspect repairs without writing
 ```
+
+From a source checkout, prefix the same commands with
+`cargo run -p animsmith --`.
 
 Exit codes: `0` clean/warnings-only, `1` error findings (`--deny-warnings`
 promotes), `2` operator error.

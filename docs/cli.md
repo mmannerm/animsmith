@@ -4,6 +4,29 @@
 automation. It reads glTF/GLB everywhere; the released default build also
 reads FBX through the `fbx` feature.
 
+Install the released CLI with:
+
+```console
+cargo install animsmith
+```
+
+From a source checkout, prefix commands with `cargo run -p animsmith --`.
+
+## Help
+
+Every command has generated help:
+
+```console
+animsmith --help
+animsmith lint --help
+animsmith fix --help
+```
+
+There are no man pages yet, so `--help` is the canonical installed CLI
+reference. The help output reflects compile-time features: a
+`--no-default-features` binary omits feature-gated commands such as
+`report` and `convert`.
+
 ## Commands
 
 ```console
