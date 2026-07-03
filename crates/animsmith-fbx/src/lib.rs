@@ -15,8 +15,8 @@
 //! becomes one core `Clip` with times shifted to start at 0.
 
 use animsmith_core::model::{
-    Bone, Clip, Document, Interpolation, Property, Skeleton, SourceInfo, Track, TrackValues,
-    Transform,
+    Bone, Clip, Document, Interpolation, MaterialAsset, MeshAsset, Primitive, Property,
+    SceneAssets, Skeleton, SourceInfo, Track, TrackValues, Transform,
 };
 use glam::{Mat4, Quat, Vec3};
 use std::path::Path;
@@ -69,8 +69,15 @@ fn mat4(m: &ufbx::Matrix) -> Mat4 {
     ])
 }
 
-/// Load an `.fbx` file into a core [`Document`].
+/// Load an `.fbx` file into a core [`Document`] (animation + skeleton
+/// only — the assets are discarded).
 pub fn load(path: &Path) -> Result<Document, LoadError> {
+    load_with_assets(path).map(|(doc, _)| doc)
+}
+
+/// Load an `.fbx` file into a core [`Document`] plus its scene assets
+/// (triangulated meshes, skins, factor-only materials).
+pub fn load_with_assets(path: &Path) -> Result<(Document, SceneAssets), LoadError> {
     let filename = path
         .to_str()
         .ok_or_else(|| LoadError::Path(path.display().to_string()))?;
@@ -79,9 +86,13 @@ pub fn load(path: &Path) -> Result<Document, LoadError> {
         target_unit_meters: 1.0,
         space_conversion: ufbx::SpaceConversion::AdjustTransforms,
         geometry_transform_handling: ufbx::GeometryTransformHandling::HelperNodes,
-        // Geometry isn't modelled yet; skip the heavy parts but keep
-        // skins so inverse binds resolve.
-        skip_mesh_parts: true,
+        // FBX scale-compensation inheritance (Maya-style; ubiquitous in
+        // Mixamo rigs, every bone carrying scale 0.01) cannot be
+        // represented by plain TRS hierarchies like glTF's — ufbx
+        // compensates the transforms (with helper nodes as fallback)
+        // so standard composition is correct.
+        inherit_mode_handling: ufbx::InheritModeHandling::Compensate,
+        generate_missing_normals: true,
         ..Default::default()
     };
     let scene = ufbx::load_file(filename, opts).map_err(|e| LoadError::Fbx(format!("{e:?}")))?;
@@ -112,7 +123,10 @@ pub fn load(path: &Path) -> Result<Document, LoadError> {
         if let Some(bone_node) = &cluster.bone_node {
             let id = bone_node.element.typed_id as usize;
             if id < bones.len() {
-                bones[id].inverse_bind = Some(mat4(&cluster.geometry_to_bone));
+                // Joint-centric bind inverse in the converted scene
+                // space; the mesh-dependent part lives per mesh in
+                // `MeshAsset::skin_ibms`.
+                bones[id].inverse_bind = Some(mat4(&cluster.bind_to_world).inverse());
             }
         }
     }
@@ -193,12 +207,177 @@ pub fn load(path: &Path) -> Result<Document, LoadError> {
         });
     }
 
-    Ok(Document {
-        skeleton: Skeleton { bones },
-        clips,
-        source: SourceInfo {
-            path: Some(path.display().to_string()),
-            format: Some("fbx".into()),
+    let assets = extract_assets(&scene);
+
+    Ok((
+        Document {
+            skeleton: Skeleton { bones },
+            clips,
+            source: SourceInfo {
+                path: Some(path.display().to_string()),
+                format: Some("fbx".into()),
+            },
         },
-    })
+        assets,
+    ))
+}
+
+/// Triangulated, unindexed geometry + skins + factor-only materials.
+/// Corner attributes come straight from ufbx's indexed accessors; skin
+/// weights are per source vertex (top four, renormalized).
+fn extract_assets(scene: &ufbx::Scene) -> SceneAssets {
+    let mut assets = SceneAssets::default();
+    let mut material_index: std::collections::BTreeMap<u32, usize> =
+        std::collections::BTreeMap::new();
+
+    for node in &scene.nodes {
+        let Some(mesh) = &node.mesh else { continue };
+        let node_id = node.element.typed_id as usize;
+
+        // Materials referenced by this mesh, deduped globally by id.
+        let local_materials: Vec<usize> = mesh
+            .materials
+            .iter()
+            .map(|m| {
+                *material_index
+                    .entry(m.element.element_id)
+                    .or_insert_with(|| {
+                        let base = if m.pbr.base_color.has_value {
+                            m.pbr.base_color.value_vec4
+                        } else {
+                            m.fbx.diffuse_color.value_vec4
+                        };
+                        assets.materials.push(MaterialAsset {
+                            name: m.element.name.to_string(),
+                            base_color: [
+                                base.x as f32,
+                                base.y as f32,
+                                base.z as f32,
+                                base.w as f32,
+                            ],
+                            metallic: if m.pbr.metalness.has_value {
+                                m.pbr.metalness.value_vec4.x as f32
+                            } else {
+                                0.0
+                            },
+                            roughness: if m.pbr.roughness.has_value {
+                                m.pbr.roughness.value_vec4.x as f32
+                            } else {
+                                1.0
+                            },
+                        });
+                        assets.materials.len() - 1
+                    })
+            })
+            .collect();
+
+        // Per-vertex skin influences (top 4, renormalized), cluster
+        // order defines the joint list.
+        let skin = mesh.skin_deformers.first();
+        let skin_joints: Vec<usize> = skin
+            .map(|s| {
+                s.clusters
+                    .iter()
+                    .map(|c| {
+                        c.bone_node
+                            .as_ref()
+                            .map(|b| b.element.typed_id as usize)
+                            .unwrap_or(0)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        // glTF inverse bind per joint: bind-world⁻¹ × geometry-to-world,
+        // both already in ufbx's converted (metres, Y-up) space —
+        // `geometry_to_bone` is raw source units and NOT suitable.
+        let skin_ibms: Vec<glam::Mat4> = skin
+            .map(|s| {
+                s.clusters
+                    .iter()
+                    .map(|c| mat4(&c.bind_to_world).inverse() * mat4(&c.geometry_to_world))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let vertex_influences: Vec<([u16; 4], [f32; 4])> = skin
+            .map(|s| {
+                (0..mesh.num_vertices)
+                    .map(|v| {
+                        let mut pairs: Vec<(u16, f32)> = Vec::new();
+                        if let Some(sv) = s.vertices.get(v) {
+                            for w in 0..sv.num_weights as usize {
+                                let sw = &s.weights[sv.weight_begin as usize + w];
+                                pairs.push((sw.cluster_index as u16, sw.weight as f32));
+                            }
+                        }
+                        pairs.sort_by(|a, b| b.1.total_cmp(&a.1));
+                        pairs.truncate(4);
+                        let total: f32 = pairs.iter().map(|p| p.1).sum();
+                        let mut joints = [0u16; 4];
+                        let mut weights = [0f32; 4];
+                        for (slot, (j, w)) in pairs.into_iter().enumerate() {
+                            joints[slot] = j;
+                            weights[slot] = if total > 0.0 { w / total } else { 0.0 };
+                        }
+                        (joints, weights)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // One primitive per material slot (unindexed corners).
+        let slots = local_materials.len().max(1);
+        let mut primitives: Vec<Primitive> = (0..slots)
+            .map(|slot| Primitive {
+                material: local_materials.get(slot).copied(),
+                ..Primitive::default()
+            })
+            .collect();
+
+        let mut tri_indices = vec![0u32; mesh.max_face_triangles * 3];
+        for (face_index, &face) in mesh.faces.iter().enumerate() {
+            let slot = mesh
+                .face_material
+                .get(face_index)
+                .map(|&m| m as usize)
+                .filter(|&m| m < slots)
+                .unwrap_or(0);
+            let prim = &mut primitives[slot];
+            let tris = mesh.triangulate_face(&mut tri_indices, face) as usize;
+            for &corner in &tri_indices[..tris * 3] {
+                let corner = corner as usize;
+                let p = mesh.vertex_position[corner];
+                prim.positions
+                    .push(Vec3::new(p.x as f32, p.y as f32, p.z as f32));
+                if mesh.vertex_normal.exists {
+                    let n = mesh.vertex_normal[corner];
+                    prim.normals
+                        .push(Vec3::new(n.x as f32, n.y as f32, n.z as f32));
+                }
+                if mesh.vertex_uv.exists {
+                    let uv = mesh.vertex_uv[corner];
+                    // glTF's texcoord origin is top-left; FBX's is
+                    // bottom-left.
+                    prim.uvs.push([uv.x as f32, 1.0 - uv.y as f32]);
+                }
+                if !vertex_influences.is_empty() {
+                    let vertex = mesh.vertex_indices[corner] as usize;
+                    let (joints, weights) = vertex_influences[vertex];
+                    prim.joints.push(joints);
+                    prim.weights.push(weights);
+                }
+            }
+        }
+        primitives.retain(|p| !p.positions.is_empty());
+        if primitives.is_empty() {
+            continue;
+        }
+        assets.meshes.push(MeshAsset {
+            name: mesh.element.name.to_string(),
+            node: node_id,
+            primitives,
+            skin_joints,
+            skin_ibms,
+        });
+    }
+    assets
 }

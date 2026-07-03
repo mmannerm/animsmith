@@ -8,7 +8,7 @@
 //! conversion does not repair.
 
 use crate::LoadError;
-use animsmith_core::model::{Document, Interpolation, Property, TrackValues};
+use animsmith_core::model::{Document, Interpolation, Property, SceneAssets, TrackValues};
 use base64::Engine as _;
 use serde_json::{Value, json};
 use std::path::Path;
@@ -33,7 +33,9 @@ impl BufferBuilder {
     fn push(&mut self, data: &[f32], kind: &str, with_min_max: bool) -> usize {
         let components = match kind {
             "SCALAR" => 1,
+            "VEC2" => 2,
             "VEC3" => 3,
+            "MAT4" => 16,
             _ => 4,
         };
         let offset = self.bytes.len();
@@ -66,6 +68,34 @@ impl BufferBuilder {
         }
         let index = self.accessors.len();
         self.accessors.push(accessor);
+        index
+    }
+}
+
+impl BufferBuilder {
+    /// Append u16 data (JOINTS_0) as a buffer view + accessor.
+    fn push_u16(&mut self, data: &[u16], kind: &str) -> usize {
+        let components = if kind == "VEC4" { 4 } else { 1 };
+        let offset = self.bytes.len();
+        for v in data {
+            self.bytes.extend_from_slice(&v.to_le_bytes());
+        }
+        while !self.bytes.len().is_multiple_of(4) {
+            self.bytes.push(0);
+        }
+        let view = self.views.len();
+        self.views.push(json!({
+            "buffer": 0,
+            "byteOffset": offset,
+            "byteLength": data.len() * 2,
+        }));
+        let index = self.accessors.len();
+        self.accessors.push(json!({
+            "bufferView": view,
+            "componentType": 5123,
+            "count": data.len() / components,
+            "type": kind,
+        }));
         index
     }
 }
@@ -119,8 +149,19 @@ fn document_to_json(doc: &Document, buffer_uri: Option<String>, buffer_len: usiz
 }
 
 /// Serialize `doc` to `path` (`.glb` for binary, anything else as
-/// `.gltf` JSON with an embedded data-URI buffer).
+/// `.gltf` JSON with an embedded data-URI buffer). Animation +
+/// skeleton only; use [`write_with_assets`] to carry geometry.
 pub fn write(doc: &Document, path: &Path) -> Result<(), LoadError> {
+    write_with_assets(doc, &SceneAssets::default(), path)
+}
+
+/// Serialize `doc` plus its scene assets (triangulated meshes, skins,
+/// factor-only materials — textures are downstream pipelines' job).
+pub fn write_with_assets(
+    doc: &Document,
+    assets: &SceneAssets,
+    path: &Path,
+) -> Result<(), LoadError> {
     let mut buffers = BufferBuilder::new();
     let mut animations: Vec<Value> = Vec::new();
 
@@ -173,6 +214,71 @@ pub fn write(doc: &Document, path: &Path) -> Result<(), LoadError> {
         }
     }
 
+    let mut meshes_json: Vec<Value> = Vec::new();
+    let mut skins_json: Vec<Value> = Vec::new();
+    // node index -> (mesh index, Option<skin index>)
+    let mut node_attach: Vec<(usize, usize, Option<usize>)> = Vec::new();
+    for mesh in &assets.meshes {
+        let mut prims: Vec<Value> = Vec::new();
+        for prim in &mesh.primitives {
+            let flat: Vec<f32> = prim.positions.iter().flat_map(|v| v.to_array()).collect();
+            let mut attributes = json!({
+                // POSITION min/max is required by the spec.
+                "POSITION": buffers.push(&flat, "VEC3", true),
+            });
+            if !prim.normals.is_empty() {
+                let flat: Vec<f32> = prim.normals.iter().flat_map(|v| v.to_array()).collect();
+                attributes["NORMAL"] = json!(buffers.push(&flat, "VEC3", false));
+            }
+            if !prim.uvs.is_empty() {
+                let flat: Vec<f32> = prim.uvs.iter().flatten().copied().collect();
+                attributes["TEXCOORD_0"] = json!(buffers.push(&flat, "VEC2", false));
+            }
+            if !prim.joints.is_empty() {
+                let flat_j: Vec<u16> = prim.joints.iter().flatten().copied().collect();
+                attributes["JOINTS_0"] = json!(buffers.push_u16(&flat_j, "VEC4"));
+                let flat_w: Vec<f32> = prim.weights.iter().flatten().copied().collect();
+                attributes["WEIGHTS_0"] = json!(buffers.push(&flat_w, "VEC4", false));
+            }
+            let mut value = json!({ "attributes": attributes });
+            if let Some(material) = prim.material {
+                value["material"] = json!(material);
+            }
+            prims.push(value);
+        }
+        let mesh_index = meshes_json.len();
+        meshes_json.push(json!({ "name": mesh.name, "primitives": prims }));
+
+        let skin_index = if mesh.skin_joints.is_empty() {
+            None
+        } else {
+            let mut ibms: Vec<f32> = Vec::with_capacity(mesh.skin_joints.len() * 16);
+            for (slot, &joint) in mesh.skin_joints.iter().enumerate() {
+                let m = mesh
+                    .skin_ibms
+                    .get(slot)
+                    .copied()
+                    .or_else(|| doc.skeleton.bones.get(joint).and_then(|b| b.inverse_bind))
+                    .unwrap_or(glam::Mat4::IDENTITY);
+                ibms.extend_from_slice(&m.to_cols_array());
+            }
+            let accessor = buffers.push(&ibms, "MAT4", false);
+            let index = skins_json.len();
+            skins_json.push(json!({
+                "joints": mesh.skin_joints,
+                "inverseBindMatrices": accessor,
+            }));
+            Some(index)
+        };
+        // Skinned meshes hang off a fresh identity node at scene root:
+        // the spec ignores a skinned mesh's node transform, but several
+        // loaders (notably three.js) fold it into the bind matrix, so a
+        // transform-carrying node yields inconsistent rendering. The
+        // joints + IBMs fully place the vertices. Unskinned meshes keep
+        // their original node, whose transform is meaningful.
+        node_attach.push((mesh.node, mesh_index, skin_index));
+    }
+
     let binary = path
         .extension()
         .and_then(|e| e.to_str())
@@ -191,6 +297,51 @@ pub fn write(doc: &Document, path: &Path) -> Result<(), LoadError> {
     root["accessors"] = Value::Array(buffers.accessors);
     if !animations.is_empty() {
         root["animations"] = Value::Array(animations);
+    }
+    if !meshes_json.is_empty() {
+        for (node, mesh_index, skin_index) in &node_attach {
+            match skin_index {
+                Some(skin) => {
+                    let nodes = root["nodes"].as_array_mut().expect("nodes array");
+                    let holder = nodes.len();
+                    nodes.push(json!({
+                        "name": format!("{}_skinned", assets.meshes[*mesh_index].name),
+                        "mesh": mesh_index,
+                        "skin": skin,
+                    }));
+                    root["scenes"][0]["nodes"]
+                        .as_array_mut()
+                        .expect("scene roots")
+                        .push(json!(holder));
+                }
+                None => {
+                    let node_value = &mut root["nodes"][*node];
+                    node_value["mesh"] = json!(mesh_index);
+                }
+            }
+        }
+        root["meshes"] = Value::Array(meshes_json);
+        if !skins_json.is_empty() {
+            root["skins"] = Value::Array(skins_json);
+        }
+        if !assets.materials.is_empty() {
+            root["materials"] = Value::Array(
+                assets
+                    .materials
+                    .iter()
+                    .map(|m| {
+                        json!({
+                            "name": m.name,
+                            "pbrMetallicRoughness": {
+                                "baseColorFactor": m.base_color,
+                                "metallicFactor": m.metallic,
+                                "roughnessFactor": m.roughness,
+                            },
+                        })
+                    })
+                    .collect(),
+            );
+        }
     }
 
     let io_err = |e: std::io::Error| LoadError::Io {

@@ -177,3 +177,56 @@ pub struct Document {
     pub clips: Vec<Clip>,
     pub source: SourceInfo,
 }
+
+// --- Scene assets (meshes/materials) -----------------------------------
+//
+// Carried alongside a Document by `convert` so a full FBX→glTF
+// conversion can preserve geometry. Deliberately NOT part of Document:
+// the check catalog judges animation, and every existing consumer stays
+// untouched. Vertex data is unindexed (one entry per triangle corner);
+// a welding/indexing pass is a future size optimization.
+
+/// One glTF-primitive-to-be: unindexed triangles sharing a material.
+#[derive(Debug, Clone, Default)]
+pub struct Primitive {
+    /// Index into [`SceneAssets::materials`].
+    pub material: Option<usize>,
+    pub positions: Vec<Vec3>,
+    /// Same length as `positions`, or empty.
+    pub normals: Vec<Vec3>,
+    /// Same length as `positions`, or empty.
+    pub uvs: Vec<[f32; 2]>,
+    /// Indices into the owning mesh's `skin_joints`; empty if unskinned.
+    pub joints: Vec<[u16; 4]>,
+    pub weights: Vec<[f32; 4]>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MeshAsset {
+    pub name: String,
+    /// The node this mesh hangs off.
+    pub node: BoneId,
+    pub primitives: Vec<Primitive>,
+    /// Skin joints in cluster order. Empty = unskinned.
+    pub skin_joints: Vec<BoneId>,
+    /// Per-joint inverse bind matrices, parallel to `skin_joints`
+    /// (glTF convention: joint-bind-world⁻¹ × geometry-to-world, all
+    /// in the converted scene space). Falls back to the bones'
+    /// `inverse_bind` when empty.
+    pub skin_ibms: Vec<Mat4>,
+}
+
+/// Factor-only material (textures are wired by downstream pipelines).
+#[derive(Debug, Clone)]
+pub struct MaterialAsset {
+    pub name: String,
+    pub base_color: [f32; 4],
+    pub metallic: f32,
+    pub roughness: f32,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SceneAssets {
+    pub meshes: Vec<MeshAsset>,
+    pub materials: Vec<MaterialAsset>,
+}
