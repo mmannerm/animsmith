@@ -14,6 +14,9 @@ edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/mmannerm/animlint"
+readme = "README.md"
+keywords = ["animation", "gltf", "lint", "gamedev", "fbx"]
+categories = ["game-development", "graphics", "development-tools"]
 
 [workspace.dependencies]
 animlint-core = { path = "crates/animlint-core", version = "0.1.0" }
