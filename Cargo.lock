@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "animlint"
-version = "0.1.0-dev"
+version = "0.1.0"
 dependencies = [
  "animlint-core",
  "animlint-fbx",
@@ -18,7 +18,7 @@ dependencies = [
 
 [[package]]
 name = "animlint-core"
-version = "0.1.0-dev"
+version = "0.1.0"
 dependencies = [
  "glam",
  "serde",
@@ -28,7 +28,7 @@ dependencies = [
 
 [[package]]
 name = "animlint-fbx"
-version = "0.1.0-dev"
+version = "0.1.0"
 dependencies = [
  "animlint-core",
  "glam",
@@ -38,7 +38,7 @@ dependencies = [
 
 [[package]]
 name = "animlint-gltf"
-version = "0.1.0-dev"
+version = "0.1.0"
 dependencies = [
  "animlint-core",
  "base64",
@@ -50,7 +50,7 @@ dependencies = [
 
 [[package]]
 name = "animlint-report"
-version = "0.1.0-dev"
+version = "0.1.0"
 dependencies = [
  "animlint-core",
  "base64",
