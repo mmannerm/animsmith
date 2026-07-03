@@ -482,7 +482,13 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 "fbx" if !animation_only => {
                     animsmith_fbx::load_with_assets(&input).map_err(|e| e.to_string())?
                 }
-                _ => (load(&input)?, animsmith_core::model::SceneAssets::default()),
+                // glTF ingestion carries no scene assets, so the output
+                // is animation-only regardless of the flag (which only
+                // the fbx path reads).
+                _ => {
+                    let _ = animation_only;
+                    (load(&input)?, animsmith_core::model::SceneAssets::default())
+                }
             };
             animsmith_gltf::write::write_with_assets(&doc, &assets, &output)
                 .map_err(|e| e.to_string())?;
