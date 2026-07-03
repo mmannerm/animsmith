@@ -34,4 +34,4 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       # The published binary must also build without the C dependency.
-      - run: cargo build -p animlint --no-default-features
+      - run: cargo build -p animsmith --no-default-features

@@ -1,0 +1,17 @@
+[package]
+name = "animsmith-fbx"
+description = "FBX ingestion into the animsmith core model, via the official ufbx bindings"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+animsmith-core = { workspace = true }
+ufbx = { workspace = true }
+glam = { workspace = true }
+thiserror = { workspace = true }

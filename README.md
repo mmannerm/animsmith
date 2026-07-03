@@ -1,39 +1,44 @@
-# animlint
+# animsmith
 
-A linter for skeletal animation clips. It answers the question every
-game team answers by hand today: **does this clip have
-game-engine-friendly characteristics?** Broken quaternions, degenerate
-durations, export bloat — and, as the catalog grows, loop closure, gait
-phase, root-motion sanity, and foot slide.
+A workbench for skeletal animation clips. It answers the question every
+game team answers by hand today — **does this clip have
+game-engine-friendly characteristics?** — and then helps you make it
+so. Lint broken quaternions, degenerate durations, popped loop seams,
+gait-phase drift, and export bloat; convert straight from DCC exports;
+and (roadmap) fix the mechanical problems in place.
 
-glTF-Validator checks spec conformance; animlint judges *content*.
-Nothing open-source did game-semantics clip validation before this.
+glTF-Validator checks spec conformance; animsmith judges — and forges —
+*content*. Nothing open-source did game-semantics clip validation
+before this.
 
 **Status: M2.** glTF/GLB **and FBX** input (via [ufbx](https://github.com/ufbx/ufbx));
 mechanical + locomotion-semantics check sets; rig profiles
-(mixamo / ue-mannequin / rauta-humanoid + auto-detect); `animlint.toml`
-config with per-clip expectations and gait groups; the full subcommand
-surface: `inspect` / `measure` / `lint` / `convert` / `report` / `diff`.
+(mixamo / ue-mannequin / rauta-humanoid + auto-detect); `animsmith.toml`
+config with per-clip expectations and gait groups; subcommands
+`inspect` / `measure` / `lint` / `convert` / `report` / `diff`.
 The loop-seam and gait algorithms are golden-tested against the
 production numbers of the pipeline they were extracted from. See
-[DESIGN.md](DESIGN.md) for the full design and roadmap (foot-slide
-detection, bind-pose checks).
+[DESIGN.md](DESIGN.md) for the full design and roadmap: next up are the
+transform features — `fix` (quaternion hemisphere normalization),
+frame-range slice/trim + hold-extend, gait-anchor rotation, and full
+mesh/skin conversion (a maintained replacement for the archived
+FBX2glTF) — plus foot-slide and bind-pose checks.
 
 ## Quickstart
 
 ```console
-$ cargo run -p animlint -- lint clip.glb
+$ cargo run -p animsmith -- lint clip.glb
 clip.glb:
   warning[quat-flip] clip 'walk' bone 'hips' @0.533s: 1 hemisphere flip(s) ...
   note[constant-track] clip 'walk' bone 'ik_target': scale track has 90 keys but never moves — export bloat
 0 error(s), 1 warning(s), 1 note(s)
 
-$ cargo run -p animlint -- lint export.fbx           # lint a DCC export directly
-$ cargo run -p animlint -- measure clip.glb          # machine-readable measurements
-$ cargo run -p animlint -- inspect clip.glb          # skeleton + clips + detected rig profile
-$ cargo run -p animlint -- report clip.glb -o report.html   # offline HTML: 3D playback + charts
-$ cargo run -p animlint -- convert export.fbx -o clip.glb   # skeleton+animation glTF
-$ cargo run -p animlint -- diff old.glb new.glb      # did the re-export change what matters?
+$ cargo run -p animsmith -- lint export.fbx           # lint a DCC export directly
+$ cargo run -p animsmith -- measure clip.glb          # machine-readable measurements
+$ cargo run -p animsmith -- inspect clip.glb          # skeleton + clips + detected rig profile
+$ cargo run -p animsmith -- report clip.glb -o report.html   # offline HTML: 3D playback + charts
+$ cargo run -p animsmith -- convert export.fbx -o clip.glb   # skeleton+animation glTF
+$ cargo run -p animsmith -- diff old.glb new.glb      # did the re-export change what matters?
 ```
 
 Exit codes: `0` clean/warnings-only, `1` error findings (`--deny-warnings`
@@ -72,7 +77,7 @@ Semantic (driven by declared expectations + rig roles):
 
 ## Configuration
 
-`animlint.toml` (auto-loaded from the working directory, or `--config`):
+`animsmith.toml` (auto-loaded from the working directory, or `--config`):
 
 ```toml
 [rig]
@@ -93,7 +98,7 @@ max_gait_phase_spread = 0.15
 min_lr_amplitude_m = 0.03
 ```
 
-See [examples/rauta.animlint.toml](examples/rauta.animlint.toml) for a
+See [examples/rauta.animsmith.toml](examples/rauta.animsmith.toml) for a
 real config mirroring the incubating project's animation contract.
 Checks whose rig roles don't resolve are skipped with a note — never a
 false failure. `--select`, `--allow`, and `[checks.*] severity`
@@ -101,11 +106,16 @@ false failure. `--select`, `--allow`, and `[checks.*] severity`
 
 ## Workspace
 
-- [`animlint-core`](crates/animlint-core) — engine-agnostic data model,
+- [`animsmith-core`](crates/animsmith-core) — engine-agnostic data model,
   game-runtime-like sampler (`PoseGrid`), measurements, checks. What
   pipelines embed.
-- [`animlint-gltf`](crates/animlint-gltf) — glTF/GLB ingestion.
-- [`animlint`](crates/animlint) — the CLI.
+- [`animsmith-gltf`](crates/animsmith-gltf) — glTF/GLB ingestion + the
+  glTF writer behind `convert`.
+- [`animsmith-fbx`](crates/animsmith-fbx) — FBX ingestion via ufbx
+  (isolates the C build; optional).
+- [`animsmith-report`](crates/animsmith-report) — the self-contained
+  HTML report.
+- [`animsmith`](crates/animsmith) — the CLI.
 
 ## License
 
