@@ -120,6 +120,13 @@ false failure. `--select`, `--allow`, and `[checks.*] severity`
   HTML report.
 - [`animsmith`](crates/animsmith) — the CLI.
 
+## Contributing
+
+All merges go through PRs with Conventional Commits (CI enforces both);
+merged `feat`/`fix` commits auto-publish a GitHub Release. Agent
+workflow, architecture invariants, and the audit gate live in
+[.agent-instructions/shared.md](.agent-instructions/shared.md).
+
 ## License
 
 MIT OR Apache-2.0.
