@@ -8,7 +8,6 @@ fn animsmith() -> Command {
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
         .join("testdata")
         .join(name)
 }
@@ -109,6 +108,12 @@ fn measure_json_uses_versioned_envelope() {
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_eq!(json["schema_version"], 1);
     assert_eq!(json["tool"]["name"], "animsmith");
+    assert!(
+        json["tool"]["version"]
+            .as_str()
+            .is_some_and(|s| s.starts_with(env!("CARGO_PKG_VERSION"))),
+        "{json:#}"
+    );
     assert_eq!(json["command"], "measure");
     assert_eq!(json["summary"]["files"], 1);
     assert_eq!(json["summary"]["findings"]["error"], 0);

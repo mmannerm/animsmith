@@ -13,6 +13,7 @@ use std::rc::Rc;
 /// Everything a check may consume: the document, the resolved rig
 /// roles, the configuration, and a lazy per-clip [`PoseGrid`] cache
 /// shared across checks.
+#[derive(Debug)]
 pub struct CheckCtx<'a> {
     pub doc: &'a Document,
     pub roles: &'a ResolvedRoles,

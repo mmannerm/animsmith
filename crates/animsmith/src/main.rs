@@ -20,8 +20,11 @@ const EXIT_OPERATOR: u8 = 2;
 /// Version of the machine-readable output schema, bumped on breaking
 /// changes to the JSON shape.
 const SCHEMA_VERSION: u32 = 1;
-const SCHEMA_URL: &str =
-    "https://raw.githubusercontent.com/mmannerm/animsmith/main/docs/schemas/output-v1.schema.json";
+const SCHEMA_URL: &str = concat!(
+    "https://raw.githubusercontent.com/mmannerm/animsmith/v",
+    env!("CARGO_PKG_VERSION"),
+    "/docs/schemas/output-v1.schema.json"
+);
 
 #[derive(Parser)]
 #[command(
@@ -174,13 +177,13 @@ enum Cmd {
     },
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum Format {
     Text,
     Json,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum Repair {
     QuatFlip,
 }
@@ -199,7 +202,7 @@ impl Repair {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum RepairGroup {
     Default,
     Lossless,
@@ -245,7 +248,7 @@ impl ToolInfo {
     fn current() -> Self {
         Self {
             name: "animsmith",
-            version: env!("CARGO_PKG_VERSION"),
+            version: env!("ANIMSMITH_VERSION"),
         }
     }
 }
@@ -278,6 +281,7 @@ impl FindingSummary {
             Severity::Error => self.error += 1,
             Severity::Warning => self.warning += 1,
             Severity::Note => self.note += 1,
+            _ => self.note += 1,
         }
     }
 }
@@ -907,6 +911,7 @@ fn print_text(reports: &[FileReport]) {
                 Severity::Error => errors += 1,
                 Severity::Warning => warnings += 1,
                 Severity::Note => notes += 1,
+                _ => notes += 1,
             }
             let mut location = String::new();
             if let Some(clip) = &f.clip {

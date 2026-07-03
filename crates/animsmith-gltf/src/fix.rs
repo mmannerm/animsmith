@@ -19,12 +19,13 @@
 //! authored curve was the long-way spin being repaired.) Sparse
 //! accessors and quantized (normalized-int) rotations are skipped.
 
-use crate::LoadError;
+use crate::FixError;
 use base64::Engine as _;
 use std::path::Path;
 
 /// One track's repair summary.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct TrackFix {
     pub clip: String,
     pub bone: String,
@@ -32,6 +33,7 @@ pub struct TrackFix {
 }
 
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct FixReport {
     pub tracks: Vec<TrackFix>,
     /// Tracks that needed repair but were skipped (cubic, quantized,
@@ -48,18 +50,18 @@ impl FixReport {
 /// Hemisphere-normalize every rotation track of `input`, writing the
 /// (otherwise byte-identical) result to `output`. `input` and `output`
 /// may be the same path.
-pub fn fix_quat_hemisphere(input: &Path, output: &Path) -> Result<FixReport, LoadError> {
+pub fn fix_quat_hemisphere(input: &Path, output: &Path) -> Result<FixReport, FixError> {
     fix_quat_hemisphere_impl(input, Some(output))
 }
 
 /// Inspect which rotation tracks would be hemisphere-normalized without
 /// writing any bytes.
-pub fn inspect_quat_hemisphere(input: &Path) -> Result<FixReport, LoadError> {
+pub fn inspect_quat_hemisphere(input: &Path) -> Result<FixReport, FixError> {
     fix_quat_hemisphere_impl(input, None)
 }
 
-fn fix_quat_hemisphere_impl(input: &Path, output: Option<&Path>) -> Result<FixReport, LoadError> {
-    let bytes = std::fs::read(input).map_err(|source| LoadError::Io {
+fn fix_quat_hemisphere_impl(input: &Path, output: Option<&Path>) -> Result<FixReport, FixError> {
+    let bytes = std::fs::read(input).map_err(|source| FixError::Io {
         path: input.display().to_string(),
         source,
     })?;
@@ -75,19 +77,19 @@ fn fix_quat_hemisphere_impl(input: &Path, output: Option<&Path>) -> Result<FixRe
             gltf::buffer::Source::Bin => gltf
                 .blob
                 .clone()
-                .ok_or_else(|| LoadError::Buffer("GLB has no BIN chunk".into()))?,
+                .ok_or_else(|| FixError::Buffer("GLB has no BIN chunk".into()))?,
             gltf::buffer::Source::Uri(uri) => {
                 if let Some(encoded) = uri.strip_prefix("data:") {
                     let payload = encoded
                         .split_once("base64,")
                         .map(|(_, p)| p)
-                        .ok_or_else(|| LoadError::Buffer("unsupported data URI".into()))?;
+                        .ok_or_else(|| FixError::Buffer("unsupported data URI".into()))?;
                     base64::engine::general_purpose::STANDARD
                         .decode(payload)
-                        .map_err(|e| LoadError::Buffer(format!("bad base64 data URI: {e}")))?
+                        .map_err(|e| FixError::Buffer(format!("bad base64 data URI: {e}")))?
                 } else {
                     let path = base.unwrap_or(Path::new(".")).join(uri);
-                    std::fs::read(&path).map_err(|source| LoadError::Io {
+                    std::fs::read(&path).map_err(|source| FixError::Io {
                         path: path.display().to_string(),
                         source,
                     })?
@@ -210,10 +212,10 @@ fn write_patched(
     original: &[u8],
     gltf: &gltf::Gltf,
     buffers: Vec<Vec<u8>>,
-) -> Result<(), LoadError> {
+) -> Result<(), FixError> {
     let io_err = |path: &Path| {
         let path = path.display().to_string();
-        move |source: std::io::Error| LoadError::Io {
+        move |source: std::io::Error| FixError::Io {
             path: path.clone(),
             source,
         }

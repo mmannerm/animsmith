@@ -1,7 +1,9 @@
 name: audit
 
-# Dependency vulnerability scan (RustSec advisory DB via cargo-audit).
-# Runs when the dependency set changes, weekly for newly-disclosed CVEs
+# Dependency vulnerability and supply-chain policy scan.
+# `cargo-audit` checks RustSec advisories; `cargo-deny` checks
+# license/source policy and dependency graph drift. Runs when the
+# dependency set or policy changes, weekly for newly-disclosed CVEs
 # against unchanged code, and on demand.
 
 on:
@@ -9,6 +11,7 @@ on:
     paths:
       - '**/Cargo.toml'
       - '**/Cargo.lock'
+      - 'deny.toml'
       - '.github/workflows/audit.yml'
   schedule:
     # Weekly Monday 06:23 UTC; offset minute spreads cron load.
@@ -25,13 +28,22 @@ permissions:
 jobs:
   audit:
     runs-on: ubuntu-latest
+    env:
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
       - name: Install cargo-audit
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
       - run: cargo audit
+      - run: cargo deny check

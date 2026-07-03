@@ -19,7 +19,11 @@ Canonical API docs live on docs.rs after publish:
 [animsmith-core](https://docs.rs/animsmith-core),
 [animsmith-gltf](https://docs.rs/animsmith-gltf), and
 [animsmith-fbx](https://docs.rs/animsmith-fbx). `animsmith-core` is the
-stable embedding boundary; the CLI crate is not the library API.
+embedding boundary; the CLI crate is not the library API. The Rust API
+is still pre-1.0 and experimental, so prefer the crate-root catalog
+functions and documented data/config types over internal modules.
+`animsmith-core` re-exports `glam` as `animsmith_core::glam` because its
+public types use `glam` vectors, quaternions, and matrices.
 
 The worked, compiling version of everything below is
 [`crates/animsmith/examples/embed.rs`](../crates/animsmith/examples/embed.rs)

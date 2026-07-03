@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 documentation = "https://docs.rs/animsmith-gltf"
 readme.workspace = true
+include.workspace = true
 keywords.workspace = true
 categories.workspace = true
 

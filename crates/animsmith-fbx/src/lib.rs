@@ -22,6 +22,7 @@ use glam::{Mat4, Quat, Vec3};
 use std::path::Path;
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum LoadError {
     #[error("path is not valid UTF-8: {0}")]
     Path(String),

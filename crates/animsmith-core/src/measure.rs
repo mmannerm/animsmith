@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const MIN_RECORDED_ROTATION_DEG: f64 = 0.1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct GaitMeasurement {
     /// Stride-anchor phase in `[0,1)`; see
     /// [`crate::metrics::FootCycleMetrics::gait_phase`].
@@ -24,6 +25,7 @@ pub struct GaitMeasurement {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ClipMeasurements {
     pub duration_s: f64,
     /// Keyframe count of the longest channel.

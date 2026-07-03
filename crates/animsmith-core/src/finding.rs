@@ -7,6 +7,7 @@ use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum Severity {
     Note,
     Warning,
@@ -26,6 +27,7 @@ impl fmt::Display for Severity {
 /// A measured or expected quantity attached to a finding.
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum Value {
     Number(f64),
     Text(String),
@@ -41,6 +43,7 @@ impl fmt::Display for Value {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub struct Finding {
     pub check_id: &'static str,
     pub severity: Severity,

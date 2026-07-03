@@ -23,6 +23,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum LoadError {
     #[error("failed to read {path}: {source}")]
     Io {
@@ -33,6 +34,32 @@ pub enum LoadError {
     Gltf(#[from] gltf::Error),
     #[error("buffer resolution failed: {0}")]
     Buffer(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum FixError {
+    #[error("failed to read or write {path}: {source}")]
+    Io {
+        path: String,
+        source: std::io::Error,
+    },
+    #[error("glTF parse error: {0}")]
+    Gltf(#[from] gltf::Error),
+    #[error("buffer resolution failed: {0}")]
+    Buffer(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum WriteError {
+    #[error("failed to write {path}: {source}")]
+    Io {
+        path: String,
+        source: std::io::Error,
+    },
+    #[error("failed to serialize glTF JSON: {0}")]
+    Serialize(#[from] serde_json::Error),
 }
 
 /// Load a `.glb` or `.gltf` file into a core [`Document`].

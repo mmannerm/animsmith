@@ -93,6 +93,7 @@ pub fn hold_extend(clip: &mut Clip, hold_s: f64) {
 
 /// Outcome of [`align_gait_anchor`].
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct GaitAlignOutcome {
     /// The measured stride-anchor phase before rotation.
     pub phase_before: f64,

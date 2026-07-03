@@ -11,12 +11,23 @@ install-rust-tools:
     if ! command -v sccache >/dev/null; then
       RUSTC_WRAPPER= cargo install sccache --locked
     fi
+    if ! command -v cargo-deny >/dev/null; then
+      RUSTC_WRAPPER= cargo install cargo-deny --locked
+    fi
 
 require-sccache:
     #!/usr/bin/env bash
     set -euo pipefail
     command -v sccache >/dev/null || {
       echo "sccache not found; run 'just install-rust-tools' before building." >&2
+      exit 1
+    }
+
+require-cargo-deny:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v cargo-deny >/dev/null || {
+      echo "cargo-deny not found; run 'just install-rust-tools' before running gates." >&2
       exit 1
     }
 
@@ -43,10 +54,12 @@ package-inventory: require-sccache
 
 # Fast local PR gate. The GitHub workflow also verifies package assembly
 # on a clean checkout.
-gates: require-sccache
+gates: require-sccache require-cargo-deny
     cargo fmt --all --check
     cargo clippy --workspace --all-targets -- -D warnings
+    cargo check --workspace --examples
     cargo test --workspace
+    cargo deny check
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
     RUSTDOCFLAGS="-D warnings" cargo doc -p animsmith --no-default-features --no-deps
     cargo test -p animsmith --test cli_contract --no-default-features

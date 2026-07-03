@@ -56,6 +56,7 @@ jobs:
           cache-on-failure: true
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo check --workspace --examples
       - run: cargo test --workspace
       # The published binary must also build without the C dependency.
       - run: cargo build -p animsmith --no-default-features
@@ -67,6 +68,24 @@ jobs:
         run: cargo build -p animsmith --release --no-default-features
       - name: Smoke release binary without default features
         run: cargo run -p animsmith --release --no-default-features -- --version
+
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.88
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: msrv
+      - run: cargo check --workspace --all-targets
 
   docs-package:
     name: docs and package
@@ -109,7 +128,7 @@ jobs:
         run: cargo package -p animsmith-core
 
   version:
-    needs: [test, docs-package]
+    needs: [test, msrv, docs-package]
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.compute.outputs.version }}

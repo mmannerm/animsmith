@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/mmannerm/animsmith/main/docs/schemas/output-v1.schema.json",
+  "$id": "https://raw.githubusercontent.com/mmannerm/animsmith/v0.1.0/docs/schemas/output-v1.schema.json",
   "title": "animsmith output v1",
   "type": "object",
   "required": ["schema_version", "schema", "tool", "command", "summary"],

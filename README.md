@@ -70,6 +70,8 @@ pipeline and want to run the same measurements and checks inside your
 own gate. Pair `animsmith-core` with exactly the loader crates you need:
 `animsmith-gltf` for glTF/GLB and `animsmith-fbx` for FBX. The CLI crate
 is not the embedding API; it is just one frontend over the same core.
+The Rust API is pre-1.0 experimental; the most stable automation
+contracts are check ids, exit codes, and the versioned JSON envelope.
 
 ## Quickstart
 
@@ -92,6 +94,18 @@ $ animsmith fix clip.glb --dry-run    # inspect repairs without writing
 
 From a source checkout, prefix the same commands with
 `cargo run -p animsmith --`.
+
+## Source Builds
+
+Run `just install-rust-tools` once before local development. The
+workspace commits `.cargo/config.toml` with `rustc-wrapper = "sccache"`
+and `incremental = false` so separate worktrees can share compiled Rust
+artifacts through the local `sccache` store. CI uses the public-runner
+GitHub Actions backend plus `Swatinem/rust-cache`; no private runner
+cache is required.
+
+Use `RUSTC_WRAPPER=` for an individual command only when you intentionally
+want to bypass `sccache`.
 
 Exit codes: `0` clean/warnings-only, `1` error findings (`--deny-warnings`
 promotes), `2` operator error.
@@ -188,4 +202,6 @@ workflow, architecture invariants, and the audit gate live in
 
 ## License
 
-MIT OR Apache-2.0.
+MIT OR Apache-2.0. See
+[THIRD-PARTY.md](https://github.com/mmannerm/animsmith/blob/main/THIRD-PARTY.md)
+for dependency notices.

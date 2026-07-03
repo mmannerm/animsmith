@@ -13,7 +13,7 @@ use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Load: values arrive exactly as authored.
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/rig.gltf");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/rig.gltf");
     let doc = animsmith_gltf::load(&path)?;
     println!(
         "loaded {} bones, {} clip(s)",
@@ -41,19 +41,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //    this from its own contract format — the TOML file the CLI
     //    reads is just one constructor of the same struct.
     let mut config = Config::default();
-    config.clips.insert(
-        "walk".into(),
-        ClipExpectations {
-            looping: Some(true),
-            // Deliberately wrong: the fixture's root travels 1 m/s, so
-            // this declaration produces an `in-place` Error below —
-            // demonstrating a finding and the non-zero gate exit.
-            in_place: Some(true),
-            fps: Some(2.0), // the fixture keys at 0.0/0.5/1.0 s
-            speed_mps: None,
-            animates_bones: Some(vec!["hips".into()]),
-        },
-    );
+    let mut walk = ClipExpectations::default();
+    walk.looping = Some(true);
+    // Deliberately wrong: the fixture's root travels 1 m/s, so this
+    // declaration produces an `in-place` Error below — demonstrating a
+    // finding and the non-zero gate exit.
+    walk.in_place = Some(true);
+    walk.fps = Some(2.0); // the fixture keys at 0.0/0.5/1.0 s
+    walk.animates_bones = Some(vec!["hips".into()]);
+    config.clips.insert("walk".into(), walk);
 
     // 4a. Measure: the raw metric map, no judgment.
     let measurements = measure_document(&doc, &roles);

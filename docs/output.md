@@ -10,7 +10,7 @@ contract.
 ```json
 {
   "schema_version": 1,
-  "schema": "https://raw.githubusercontent.com/mmannerm/animsmith/main/docs/schemas/output-v1.schema.json",
+  "schema": "https://raw.githubusercontent.com/mmannerm/animsmith/v0.1.0/docs/schemas/output-v1.schema.json",
   "tool": { "name": "animsmith", "version": "0.1.0" },
   "command": "lint",
   "summary": { "files": 1, "findings": { "error": 0, "warning": 1, "note": 0 } },
@@ -18,9 +18,11 @@ contract.
 }
 ```
 
-`schema_version` changes only on breaking JSON changes. Additive fields
-may appear within the same version; consumers should ignore fields they do
-not understand.
+`schema_version` changes only on breaking JSON changes. The `schema`
+field points at the schema file from the Cargo package version's release
+tag so consumers can validate against an immutable contract snapshot.
+Additive fields may appear within the same version; consumers should
+ignore fields they do not understand.
 
 ## `measure` and `lint`
 
@@ -48,7 +50,7 @@ and `deltas`:
 ```json
 {
   "schema_version": 1,
-  "schema": "https://raw.githubusercontent.com/mmannerm/animsmith/main/docs/schemas/output-v1.schema.json",
+  "schema": "https://raw.githubusercontent.com/mmannerm/animsmith/v0.1.0/docs/schemas/output-v1.schema.json",
   "tool": { "name": "animsmith", "version": "0.1.0" },
   "command": "diff",
   "inputs": { "before": "old.glb", "after": "new.glb" },
