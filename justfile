@@ -51,6 +51,10 @@ gates: require-sccache
     RUSTDOCFLAGS="-D warnings" cargo doc -p animsmith --no-default-features --no-deps
     cargo test -p animsmith --test cli_contract --no-default-features
     cargo build -p animsmith --no-default-features
+    cargo build -p animsmith --release
+    cargo run -p animsmith --release -- --version
+    cargo build -p animsmith --release --no-default-features
+    cargo run -p animsmith --release --no-default-features -- --version
     just package-inventory
 
 # See .agent-instructions/shared.md for the required env vars.

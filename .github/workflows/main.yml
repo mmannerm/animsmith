@@ -59,6 +59,14 @@ jobs:
       - run: cargo test --workspace
       # The published binary must also build without the C dependency.
       - run: cargo build -p animsmith --no-default-features
+      - name: Build release binary
+        run: cargo build -p animsmith --release
+      - name: Smoke release binary
+        run: cargo run -p animsmith --release -- --version
+      - name: Build release binary without default features
+        run: cargo build -p animsmith --release --no-default-features
+      - name: Smoke release binary without default features
+        run: cargo run -p animsmith --release --no-default-features -- --version
 
   docs-package:
     name: docs and package
