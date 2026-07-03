@@ -19,10 +19,12 @@ config with per-clip expectations and gait groups; subcommands
 The loop-seam and gait algorithms are golden-tested against the
 production numbers of the pipeline they were extracted from. See
 [DESIGN.md](DESIGN.md) for the full design and roadmap: next up are the
-transform features — `fix` (quaternion hemisphere normalization),
-frame-range slice/trim + hold-extend, gait-anchor rotation, and full
-mesh/skin conversion (a maintained replacement for the archived
-FBX2glTF) — plus foot-slide and bind-pose checks.
+remaining transform features — frame-range slice/trim + hold-extend,
+gait-anchor rotation, and full mesh/skin conversion (a maintained
+replacement for the archived FBX2glTF) — plus foot-slide and bind-pose
+checks. `fix` (quaternion hemisphere normalization) already ships: it
+patches only the offending animation bytes, so meshes, skins, and
+textures pass through byte-identical.
 
 ## Quickstart
 
@@ -39,6 +41,7 @@ $ cargo run -p animsmith -- inspect clip.glb          # skeleton + clips + detec
 $ cargo run -p animsmith -- report clip.glb -o report.html   # offline HTML: 3D playback + charts
 $ cargo run -p animsmith -- convert export.fbx -o clip.glb   # skeleton+animation glTF
 $ cargo run -p animsmith -- diff old.glb new.glb      # did the re-export change what matters?
+$ cargo run -p animsmith -- fix clip.glb -o fixed.glb # repair quat hemisphere flips, byte-surgically
 ```
 
 Exit codes: `0` clean/warnings-only, `1` error findings (`--deny-warnings`

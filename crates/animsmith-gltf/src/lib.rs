@@ -10,6 +10,7 @@
 //! keep image decoding out of the dependency tree: GLB BIN chunks,
 //! `data:` URIs, and sibling files are supported.
 
+pub mod fix;
 pub mod write;
 
 use animsmith_core::model::{
