@@ -110,13 +110,17 @@ enum Cmd {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
-    /// Convert an input (typically FBX) to glTF: skeleton + animation
-    /// tracks only — no meshes, skins, or materials. Output format by
-    /// extension: .glb binary, .gltf JSON with an embedded buffer.
+    /// Convert an input (typically FBX) to glTF: skeleton, animation,
+    /// triangulated meshes, skins, and factor-only materials (texture
+    /// wiring stays a downstream concern). Output format by extension:
+    /// .glb binary, .gltf JSON with an embedded buffer.
     Convert {
         input: PathBuf,
         #[arg(short, long)]
         output: PathBuf,
+        /// Strip geometry: emit skeleton + animation only.
+        #[arg(long)]
+        animation_only: bool,
     },
     /// Compare the measurements of two inputs (asset files or prior
     /// `measure` JSON) and report movement beyond significance
@@ -463,14 +467,37 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             );
             Ok(ExitCode::SUCCESS)
         }
-        Cmd::Convert { input, output } => {
-            let doc = load(&input)?;
-            animsmith_gltf::write::write(&doc, &output).map_err(|e| e.to_string())?;
-            let clips = doc.clips.len();
-            let bones = doc.skeleton.bones.len();
+        Cmd::Convert {
+            input,
+            output,
+            animation_only,
+        } => {
+            let ext = input
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(str::to_ascii_lowercase)
+                .unwrap_or_default();
+            let (doc, assets) = match ext.as_str() {
+                #[cfg(feature = "fbx")]
+                "fbx" if !animation_only => {
+                    animsmith_fbx::load_with_assets(&input).map_err(|e| e.to_string())?
+                }
+                _ => (load(&input)?, animsmith_core::model::SceneAssets::default()),
+            };
+            animsmith_gltf::write::write_with_assets(&doc, &assets, &output)
+                .map_err(|e| e.to_string())?;
+            let vertices: usize = assets
+                .meshes
+                .iter()
+                .flat_map(|m| m.primitives.iter().map(|p| p.positions.len()))
+                .sum();
             println!(
-                "wrote {} ({bones} bones, {clips} clip(s); skeleton + animation only)",
-                output.display()
+                "wrote {} ({} bones, {} clip(s), {} mesh(es) / {vertices} corners, {} material(s))",
+                output.display(),
+                doc.skeleton.bones.len(),
+                doc.clips.len(),
+                assets.meshes.len(),
+                assets.materials.len(),
             );
             Ok(ExitCode::SUCCESS)
         }
