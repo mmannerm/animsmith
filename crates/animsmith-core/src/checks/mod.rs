@@ -1,10 +1,14 @@
 //! The built-in check catalog. Each module is one check with its
 //! defaults documented on the type. See DESIGN.md §6 for the tiers.
 
+pub mod bind_pose;
 pub mod constant_track;
 pub mod duration_sanity;
+pub mod foot_slide;
+pub mod fps;
 pub mod frozen_bone;
 pub mod gait_group;
+pub mod in_place;
 pub mod loop_seam;
 pub mod missing_bones;
 pub mod nan;

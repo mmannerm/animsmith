@@ -54,6 +54,14 @@ pub struct CheckSettings {
     pub min_stride_step_m: Option<f64>,
     /// `frozen-bone`: rotation floor in degrees (default 1.0).
     pub min_rotation_deg: Option<f64>,
+    /// `bind-pose`: mean first-frame deviation cap in degrees
+    /// (default 45).
+    pub max_mean_rest_delta_deg: Option<f64>,
+    /// `foot-slide`: contact height above the per-clip foot minimum
+    /// (default 0.03 m).
+    pub contact_height_m: Option<f64>,
+    /// `foot-slide`: allowed stance-speed deviation (default 0.3 m/s).
+    pub max_slide_mps: Option<f64>,
 }
 
 /// What the author declares about one clip (or a glob of clips).

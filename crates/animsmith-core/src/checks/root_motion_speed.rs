@@ -22,9 +22,16 @@ impl Check for RootMotionSpeed {
     fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
         let mut missing_roles_noted = false;
         for (index, clip) in ctx.doc.clips.iter().enumerate() {
-            let Some(pin) = ctx.config.expectations_for(&clip.name).speed_mps else {
+            let expectations = ctx.config.expectations_for(&clip.name);
+            let Some(pin) = expectations.speed_mps else {
                 continue;
             };
+            if expectations.in_place == Some(true) {
+                // A treadmill clip's declared speed describes the
+                // stance sweep, not root displacement — `foot-slide`
+                // validates it there.
+                continue;
+            }
             let measured = ctx
                 .grid(index)
                 .and_then(|grid| root_motion_speed_mps(&grid, ctx.roles));
