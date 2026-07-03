@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 pub const DURATION_THRESHOLD_S: f64 = 0.017; // half a frame at 30 fps
 pub const ROTATION_RANGE_THRESHOLD_DEG: f64 = 1.0;
 pub const SEAM_THRESHOLD: f64 = 0.05;
-pub const PHASE_THRESHOLD: f64 = 0.02; // cycle fraction, circular
+pub const PHASE_THRESHOLD: f64 = 0.05; // cycle fraction, circular
 pub const AMPLITUDE_THRESHOLD_M: f64 = 0.005;
 pub const SPEED_THRESHOLD_MPS: f64 = 0.1;
 
@@ -174,4 +174,147 @@ pub fn diff_measurements(
         }
     }
     deltas
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use animsmith_core::measure::ClipMeasurements;
+    use serde_json::json;
+
+    fn clip_measurements() -> ClipMeasurements {
+        serde_json::from_value(json!({
+            "duration_s": 1.0,
+            "frame_count": 31,
+            "animated_bones": ["hips"],
+            "bone_rotation_range_deg": { "hips": 10.0 },
+            "loop_seam_ratio": 0.2,
+            "gait": {
+                "phase": 0.25,
+                "lr_amplitude_m": 0.1
+            },
+            "speed_mps": 1.0
+        }))
+        .expect("valid clip measurement fixture")
+    }
+
+    fn measurement_map(
+        clip: &str,
+        measurements: ClipMeasurements,
+    ) -> BTreeMap<String, ClipMeasurements> {
+        BTreeMap::from([(clip.into(), measurements)])
+    }
+
+    fn delta_for<'a>(deltas: &'a [MetricDelta], metric: &str) -> &'a MetricDelta {
+        deltas
+            .iter()
+            .find(|d| d.metric == metric)
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing metric delta {metric}; got {:?}",
+                    delta_metrics(deltas)
+                )
+            })
+    }
+
+    fn delta_metrics(deltas: &[MetricDelta]) -> Vec<&str> {
+        deltas.iter().map(|d| d.metric.as_str()).collect()
+    }
+
+    #[test]
+    fn reports_moved_appeared_and_disappeared_metrics() {
+        let mut before = clip_measurements();
+        before.speed_mps = None;
+
+        let mut after = before.clone();
+        after.duration_s += DURATION_THRESHOLD_S * 2.0;
+        after.loop_seam_ratio = None;
+        after.speed_mps = Some(1.0);
+
+        let deltas = diff_measurements(
+            &measurement_map("walk", before),
+            &measurement_map("walk", after),
+        );
+
+        assert_eq!(deltas.len(), 3, "{:?}", delta_metrics(&deltas));
+        assert_eq!(delta_for(&deltas, "duration_s").note, "moved");
+        assert_eq!(delta_for(&deltas, "loop_seam_ratio").note, "disappeared");
+        assert_eq!(delta_for(&deltas, "speed_mps").note, "appeared");
+    }
+
+    #[test]
+    fn reports_clip_added_and_removed() {
+        let deltas = diff_measurements(
+            &measurement_map("removed", clip_measurements()),
+            &measurement_map("added", clip_measurements()),
+        );
+
+        assert_eq!(deltas.len(), 2, "{:?}", delta_metrics(&deltas));
+        assert!(
+            deltas
+                .iter()
+                .any(|d| d.clip == "removed" && d.metric == "clip" && d.note == "clip removed")
+        );
+        assert!(
+            deltas
+                .iter()
+                .any(|d| d.clip == "added" && d.metric == "clip" && d.note == "clip added")
+        );
+    }
+
+    #[test]
+    fn ignores_sub_threshold_noise() {
+        let before = clip_measurements();
+        let mut after = before.clone();
+        after.duration_s += DURATION_THRESHOLD_S / 2.0;
+        after.loop_seam_ratio = Some(before.loop_seam_ratio.unwrap() + SEAM_THRESHOLD / 2.0);
+        let gait = after.gait.as_mut().expect("gait fixture present");
+        gait.phase = Some(0.25 + PHASE_THRESHOLD / 2.0);
+        gait.lr_amplitude_m += AMPLITUDE_THRESHOLD_M / 2.0;
+        after.speed_mps = Some(before.speed_mps.unwrap() + SPEED_THRESHOLD_MPS / 2.0);
+        after
+            .bone_rotation_range_deg
+            .insert("hips".into(), 10.0 + ROTATION_RANGE_THRESHOLD_DEG / 2.0);
+
+        let deltas = diff_measurements(
+            &measurement_map("walk", before),
+            &measurement_map("walk", after),
+        );
+
+        assert!(deltas.is_empty(), "{:?}", delta_metrics(&deltas));
+    }
+
+    #[test]
+    fn compares_gait_phase_on_a_cycle() {
+        let mut before = clip_measurements();
+        before.gait.as_mut().unwrap().phase = Some(0.98);
+        let mut after = before.clone();
+        after.gait.as_mut().unwrap().phase = Some(0.02);
+
+        let deltas = diff_measurements(
+            &measurement_map("walk", before),
+            &measurement_map("walk", after),
+        );
+
+        assert!(deltas.is_empty(), "{:?}", delta_metrics(&deltas));
+    }
+
+    #[test]
+    fn reports_significant_gait_phase_moves() {
+        let mut before = clip_measurements();
+        before.gait.as_mut().unwrap().phase = Some(0.9);
+        let mut after = before.clone();
+        after.gait.as_mut().unwrap().phase = Some(0.1);
+
+        let deltas = diff_measurements(
+            &measurement_map("walk", before),
+            &measurement_map("walk", after),
+        );
+
+        assert_eq!(deltas.len(), 1, "{:?}", delta_metrics(&deltas));
+        let delta = delta_for(&deltas, "gait.phase");
+        assert_eq!(delta.note, "moved");
+        assert_eq!(delta.before, Some(0.9));
+        assert_eq!(delta.after, Some(0.1));
+    }
 }

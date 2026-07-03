@@ -1,6 +1,6 @@
 use animsmith_core::glam::{Quat, Vec3};
 use animsmith_core::model::*;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
@@ -76,6 +76,32 @@ fn write_flipped_glb(path: &std::path::Path) {
 
 fn write_clean_glb(path: &std::path::Path) {
     animsmith_gltf::write::write(&sway_doc(false), path).expect("writes clean fixture");
+}
+
+fn write_json(path: &std::path::Path, value: &Value) {
+    std::fs::write(
+        path,
+        serde_json::to_vec_pretty(value).expect("serializes JSON fixture"),
+    )
+    .expect("writes JSON fixture");
+}
+
+fn measurement_report(duration_s: f64) -> Value {
+    json!({
+        "schema_version": 1,
+        "files": [{
+            "path": "fixture.gltf",
+            "rig": { "profile": "unknown" },
+            "measurements": {
+                "walk": {
+                    "duration_s": duration_s,
+                    "frame_count": 31,
+                    "animated_bones": [],
+                    "bone_rotation_range_deg": {}
+                }
+            }
+        }]
+    })
 }
 
 fn stdout(output: &Output) -> String {
@@ -526,6 +552,61 @@ fn diff_accepts_single_file_measure_report_round_trip() {
         "stdout:\n{}",
         stdout(&output)
     );
+}
+
+#[test]
+fn diff_accepts_measurement_json_and_exits_one_for_deltas() {
+    let dir = unique_temp_dir("diff-json-deltas");
+    let before = dir.join("before.json");
+    let after = dir.join("after.json");
+    write_json(&before, &measurement_report(1.0));
+    write_json(&after, &measurement_report(1.1));
+
+    let output = animsmith()
+        .args([
+            "diff",
+            before.to_str().expect("utf-8 before path"),
+            after.to_str().expect("utf-8 after path"),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(json["summary"]["deltas"].as_u64(), Some(1));
+    assert_eq!(json["deltas"][0]["clip"], "walk");
+    assert_eq!(json["deltas"][0]["metric"], "duration_s");
+    assert_eq!(json["deltas"][0]["note"], "moved");
+}
+
+#[test]
+fn diff_accepts_measurement_json_and_exits_zero_without_deltas() {
+    let dir = unique_temp_dir("diff-json-clean");
+    let before = dir.join("before.json");
+    let after = dir.join("after.json");
+    let report = measurement_report(1.0);
+    write_json(&before, &report);
+    write_json(&after, &report);
+
+    let output = animsmith()
+        .args([
+            "diff",
+            before.to_str().expect("utf-8 before path"),
+            after.to_str().expect("utf-8 after path"),
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert!(stdout(&output).contains("no significant movement"));
 }
 
 #[test]
