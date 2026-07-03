@@ -2,21 +2,39 @@
 
 worktree_root := parent_directory(justfile_directory()) / "animsmith-worktrees"
 
+# Install local Rust build tools used by this workspace. `RUSTC_WRAPPER=`
+# is intentional: this bootstraps sccache before Cargo can use it as the
+# configured rustc wrapper.
+install-rust-tools:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v sccache >/dev/null; then
+      RUSTC_WRAPPER= cargo install sccache --locked
+    fi
+
+require-sccache:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v sccache >/dev/null || {
+      echo "sccache not found; run 'just install-rust-tools' before building." >&2
+      exit 1
+    }
+
 # Debug build of the whole workspace.
-build:
+build: require-sccache
     cargo build --workspace
 
 # Full test suite.
-test:
+test: require-sccache
     cargo test --workspace
 
 # Render public docs with rustdoc warnings denied.
-doc:
+doc: require-sccache
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
     RUSTDOCFLAGS="-D warnings" cargo doc -p animsmith --no-default-features --no-deps
 
 # Check the crate package inventories that CI validates before release.
-package-inventory:
+package-inventory: require-sccache
     #!/usr/bin/env bash
     set -euo pipefail
     for crate in animsmith-core animsmith-gltf animsmith-fbx animsmith-report animsmith; do
@@ -25,7 +43,7 @@ package-inventory:
 
 # Fast local PR gate. The GitHub workflow also verifies package assembly
 # on a clean checkout.
-gates:
+gates: require-sccache
     cargo fmt --all --check
     cargo clippy --workspace --all-targets -- -D warnings
     cargo test --workspace
@@ -37,7 +55,7 @@ gates:
 
 # See .agent-instructions/shared.md for the required env vars.
 # Env-gated reference tests against licensed assets.
-golden:
+golden: require-sccache
     cargo test -p animsmith-gltf --test golden -- --nocapture
     cargo test -p animsmith --test convert_mesh -- --nocapture
 
