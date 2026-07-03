@@ -18,6 +18,7 @@ mechanical + locomotion-semantics check sets; rig profiles
 config with per-clip expectations and gait groups; subcommands
 `inspect` / `measure` / `lint` / `report` / `transform` / `fix` /
 `convert` / `diff`.
+The CLI and crates are tested on Linux, macOS, and Windows.
 The loop-seam and gait algorithms are golden-tested against the
 production numbers of the pipeline they were extracted from. See
 [DESIGN.md](https://github.com/mmannerm/animsmith/blob/main/DESIGN.md)
@@ -36,7 +37,7 @@ $ cargo install animsmith
 ```
 
 The default install includes FBX input and HTML reports. For a pure-Rust
-glTF-only binary with no C build step:
+glTF-only binary with no C build step on Linux, macOS, or Windows:
 
 ```console
 $ cargo install animsmith --no-default-features

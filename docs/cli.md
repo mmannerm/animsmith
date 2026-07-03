@@ -2,7 +2,8 @@
 
 `animsmith` is designed for artist inner loops, CI gates, and pipeline
 automation. It reads glTF/GLB everywhere; the released default build also
-reads FBX through the `fbx` feature.
+reads FBX through the `fbx` feature. The CLI is tested on Linux, macOS,
+and Windows.
 
 Install the released CLI with:
 

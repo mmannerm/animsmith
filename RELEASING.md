@@ -58,8 +58,11 @@ before publishing.
 3. After each crate is accepted by crates.io, docs.rs automatically
    queues documentation for that crate. Check the docs.rs page for each
    crate after publishing; the manifests set `documentation` links and
-   `[package.metadata.docs.rs]` so the public API docs build the intended
-   Linux/all-features surface.
+   `[package.metadata.docs.rs]` so pure-Rust crates get Linux, macOS,
+   and Windows docs.rs target pages. C-dependent crates (`animsmith-fbx`
+   and the all-features CLI) use the Linux default docs.rs target because
+   docs.rs builds on Linux and cannot rely on a Windows/macOS C toolchain;
+   CI remains the source of truth for Linux/macOS/Windows support.
 4. On crates.io, for **each** of the five crates: Settings → Trusted
    Publishing → add publisher — repository `mmannerm/animsmith`,
    workflow `main.yml`, no environment.
