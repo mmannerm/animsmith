@@ -78,8 +78,9 @@ before publishing.
 2. Before release, bump:
    - `[workspace.package] version`
    - every internal `[workspace.dependencies] animsmith-*` version
-   - schema documentation/examples that include the release-tagged
-     schema URL, when the machine-readable schema is still current
+   - schema documentation/examples, either leaving the schema URL on
+     `main` for pre-publish development or pinning it to the release tag
+     when that tag will contain the schema file
 3. Merge that as `chore(release): bump workspace version to X.Y.Z`.
 
 The next `main` run creates the GitHub Release and, once Trusted

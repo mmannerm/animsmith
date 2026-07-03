@@ -6,6 +6,7 @@ use animsmith_core::model::*;
 use animsmith_core::profile::ResolvedRoles;
 use animsmith_core::{CheckCtx, Config, mechanical_checks, run_checks};
 use glam::{Quat, Vec3};
+use std::path::PathBuf;
 
 /// A document whose rotation track has two sign-flipped keys (same
 /// rotations as the clean sequence, opposite hemisphere).
@@ -69,6 +70,12 @@ fn lint_flip_count(doc: &Document) -> usize {
         .count()
 }
 
+fn unique_temp_dir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("animsmith-{name}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
 #[test]
 fn fix_repairs_flips_losslessly_and_idempotently() {
     let dir = std::env::temp_dir().join("animsmith-fix-test");
@@ -119,6 +126,68 @@ fn fix_repairs_flips_losslessly_and_idempotently() {
     assert_eq!(
         std::fs::read(&fixed).unwrap(),
         std::fs::read(&again).unwrap()
+    );
+}
+
+#[test]
+fn malformed_external_accessor_range_is_skipped_without_panic() {
+    let dir = unique_temp_dir("short-buffer");
+    let gltf = dir.join("short.gltf");
+    let bin = dir.join("short.bin");
+    std::fs::write(&bin, [0u8; 8]).unwrap();
+    std::fs::write(
+        &gltf,
+        r#"{
+  "asset": { "version": "2.0" },
+  "buffers": [{ "uri": "short.bin", "byteLength": 64 }],
+  "bufferViews": [{ "buffer": 0, "byteOffset": 0, "byteLength": 64 }],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0], "max": [1] },
+    { "bufferView": 0, "componentType": 5126, "count": 2, "type": "VEC4" }
+  ],
+  "nodes": [{ "name": "root" }],
+  "animations": [{
+    "samplers": [{ "input": 0, "output": 1, "interpolation": "LINEAR" }],
+    "channels": [{ "sampler": 0, "target": { "node": 0, "path": "rotation" } }]
+  }],
+  "scenes": [{ "nodes": [0] }],
+  "scene": 0
+}"#,
+    )
+    .unwrap();
+
+    let report = animsmith_gltf::fix::inspect_quat_hemisphere(&gltf).expect("inspects");
+    assert_eq!(report.total_flipped(), 0);
+    assert!(
+        report
+            .skipped
+            .iter()
+            .any(|reason| reason.contains("outside buffer length")),
+        "skipped: {:?}",
+        report.skipped
+    );
+}
+
+#[test]
+fn unsafe_external_buffer_uri_is_rejected() {
+    let dir = unique_temp_dir("unsafe-buffer-uri");
+    let gltf = dir.join("unsafe.gltf");
+    std::fs::write(
+        &gltf,
+        r#"{
+  "asset": { "version": "2.0" },
+  "buffers": [{ "uri": "../escape.bin", "byteLength": 1 }],
+  "nodes": [{ "name": "root" }],
+  "scenes": [{ "nodes": [0] }],
+  "scene": 0
+}"#,
+    )
+    .unwrap();
+
+    let err = animsmith_gltf::fix::inspect_quat_hemisphere(&gltf).expect_err("rejects URI");
+    assert!(
+        err.to_string().contains("unsafe external buffer URI"),
+        "{err}"
     );
 }
 

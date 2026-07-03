@@ -21,7 +21,10 @@
 
 use crate::FixError;
 use base64::Engine as _;
-use std::path::Path;
+use std::ops::Range;
+use std::path::{Component, Path, PathBuf};
+
+const ROTATION_ELEMENT_BYTES: usize = 16;
 
 /// One track's repair summary.
 #[derive(Debug, Clone)]
@@ -88,7 +91,9 @@ fn fix_quat_hemisphere_impl(input: &Path, output: Option<&Path>) -> Result<FixRe
                         .decode(payload)
                         .map_err(|e| FixError::Buffer(format!("bad base64 data URI: {e}")))?
                 } else {
-                    let path = base.unwrap_or(Path::new(".")).join(uri);
+                    let path = base
+                        .unwrap_or(Path::new("."))
+                        .join(safe_external_buffer_path(uri)?);
                     std::fs::read(&path).map_err(|source| FixError::Io {
                         path: path.display().to_string(),
                         source,
@@ -141,20 +146,60 @@ fn fix_quat_hemisphere_impl(input: &Path, output: Option<&Path>) -> Result<FixRe
                     .push(format!("{clip}/{bone}: accessor without view"));
                 continue;
             };
-            if is_data_uri[view.buffer().index()] {
+            let buffer_index = view.buffer().index();
+            let Some(is_data_uri_buffer) = is_data_uri.get(buffer_index).copied() else {
+                report
+                    .skipped
+                    .push(format!("{clip}/{bone}: buffer index out of range"));
+                continue;
+            };
+            if is_data_uri_buffer {
                 report.skipped.push(format!(
                     "{clip}/{bone}: data-URI buffer (convert to .glb first)"
                 ));
                 continue;
             }
             let stride = view.stride().unwrap_or(16);
-            let start = view.offset() + accessor.offset();
-            let buffer = &mut buffers[view.buffer().index()];
+            let Some(start) = view.offset().checked_add(accessor.offset()) else {
+                report
+                    .skipped
+                    .push(format!("{clip}/{bone}: accessor byte offset overflow"));
+                continue;
+            };
+            let Some(buffer) = buffers.get_mut(buffer_index) else {
+                report
+                    .skipped
+                    .push(format!("{clip}/{bone}: missing buffer {buffer_index}"));
+                continue;
+            };
 
             // Cubic outputs hold [in-tangent, value, out-tangent]
             // triplets; the hemisphere walk compares VALUE elements and
             // negates whole triplets.
             let (per_key, value_offset) = if cubic { (3usize, 1usize) } else { (1, 0) };
+            if accessor.count() % per_key != 0 {
+                report
+                    .skipped
+                    .push(format!("{clip}/{bone}: malformed cubic rotation accessor"));
+                continue;
+            }
+            let Some(range) =
+                accessor_byte_range(start, stride, accessor.count(), ROTATION_ELEMENT_BYTES)
+            else {
+                report
+                    .skipped
+                    .push(format!("{clip}/{bone}: accessor byte range overflow"));
+                continue;
+            };
+            if range.end > buffer.len() {
+                report.skipped.push(format!(
+                    "{clip}/{bone}: accessor byte range {}..{} outside buffer length {}",
+                    range.start,
+                    range.end,
+                    buffer.len()
+                ));
+                continue;
+            }
             let keys = accessor.count() / per_key;
             let read4 = |buffer: &[u8], element: usize| -> [f32; 4] {
                 let at = start + element * stride;
@@ -224,21 +269,40 @@ fn write_patched(
     if original.starts_with(b"glTF") {
         // GLB: copy the header + JSON chunk verbatim, splice the
         // patched BIN chunk (same length — we only overwrote values).
-        let json_len = u32::from_le_bytes(original[12..16].try_into().unwrap()) as usize;
-        let bin_chunk_start = 12 + 8 + json_len;
+        let json_len = read_u32_le(original, 12)?;
+        let bin_chunk_start = 12usize
+            .checked_add(8)
+            .and_then(|n| n.checked_add(json_len))
+            .ok_or_else(|| FixError::Buffer("malformed GLB chunk length overflow".into()))?;
+        if bin_chunk_start > original.len() {
+            return Err(FixError::Buffer("malformed GLB JSON chunk length".into()));
+        }
         let mut out = original[..bin_chunk_start].to_vec();
         if bin_chunk_start < original.len() {
-            let bin_len = u32::from_le_bytes(
-                original[bin_chunk_start..bin_chunk_start + 4]
-                    .try_into()
-                    .unwrap(),
-            ) as usize;
-            out.extend_from_slice(&original[bin_chunk_start..bin_chunk_start + 8]);
+            let bin_len = read_u32_le(original, bin_chunk_start)?;
+            let bin_header_end = bin_chunk_start
+                .checked_add(8)
+                .ok_or_else(|| FixError::Buffer("malformed GLB BIN chunk overflow".into()))?;
+            if bin_header_end > original.len() {
+                return Err(FixError::Buffer("malformed GLB BIN chunk header".into()));
+            }
+            out.extend_from_slice(&original[bin_chunk_start..bin_header_end]);
             let bin = buffers.first().cloned().unwrap_or_default();
-            debug_assert!(bin.len() <= bin_len);
+            if bin.len() > bin_len {
+                return Err(FixError::Buffer(format!(
+                    "patched BIN chunk length {} exceeds original length {bin_len}",
+                    bin.len()
+                )));
+            }
             out.extend_from_slice(&bin);
             // Preserve the original chunk padding.
-            out.extend_from_slice(&original[bin_chunk_start + 8 + bin.len()..]);
+            let padding_start = bin_header_end
+                .checked_add(bin.len())
+                .ok_or_else(|| FixError::Buffer("malformed GLB BIN chunk overflow".into()))?;
+            if padding_start > original.len() {
+                return Err(FixError::Buffer("malformed GLB BIN chunk length".into()));
+            }
+            out.extend_from_slice(&original[padding_start..]);
         }
         return std::fs::write(output, out).map_err(io_err(output));
     }
@@ -255,9 +319,70 @@ fn write_patched(
             if uri.starts_with("data:") {
                 continue; // never patched — such tracks are skipped upstream
             }
-            let path = output.parent().unwrap_or(Path::new(".")).join(uri);
+            let path = output
+                .parent()
+                .unwrap_or(Path::new("."))
+                .join(safe_external_buffer_path(uri)?);
             std::fs::write(&path, data).map_err(io_err(&path))?;
         }
     }
     Ok(())
+}
+
+fn accessor_byte_range(
+    start: usize,
+    stride: usize,
+    element_count: usize,
+    element_bytes: usize,
+) -> Option<Range<usize>> {
+    if stride < element_bytes {
+        return None;
+    }
+    if element_count == 0 {
+        return Some(start..start);
+    }
+    let last = element_count.checked_sub(1)?;
+    let last_start = start.checked_add(last.checked_mul(stride)?)?;
+    Some(start..last_start.checked_add(element_bytes)?)
+}
+
+fn read_u32_le(bytes: &[u8], offset: usize) -> Result<usize, FixError> {
+    let end = offset
+        .checked_add(4)
+        .ok_or_else(|| FixError::Buffer("malformed GLB offset overflow".into()))?;
+    let word = bytes
+        .get(offset..end)
+        .ok_or_else(|| FixError::Buffer("malformed GLB chunk header".into()))?;
+    Ok(u32::from_le_bytes(word.try_into().expect("slice has four bytes")) as usize)
+}
+
+fn safe_external_buffer_path(uri: &str) -> Result<PathBuf, FixError> {
+    if uri.is_empty() || uri.contains('\\') {
+        return Err(FixError::Buffer(format!(
+            "unsafe external buffer URI {uri:?}: expected a relative child path"
+        )));
+    }
+    let path = Path::new(uri);
+    if path.is_absolute() {
+        return Err(FixError::Buffer(format!(
+            "unsafe external buffer URI {uri:?}: absolute paths are not supported"
+        )));
+    }
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => out.push(part),
+            _ => {
+                return Err(FixError::Buffer(format!(
+                    "unsafe external buffer URI {uri:?}: expected a relative child path"
+                )));
+            }
+        }
+    }
+    if out.as_os_str().is_empty() {
+        return Err(FixError::Buffer(format!(
+            "unsafe external buffer URI {uri:?}: expected a relative child path"
+        )));
+    }
+    Ok(out)
 }

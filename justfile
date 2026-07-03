@@ -3,8 +3,8 @@
 worktree_root := parent_directory(justfile_directory()) / "animsmith-worktrees"
 
 # Install local Rust build tools used by this workspace. `RUSTC_WRAPPER=`
-# is intentional: this bootstraps sccache before Cargo can use it as the
-# configured rustc wrapper.
+# is intentional: this bootstraps sccache even when the user's Cargo
+# config already enables it as the rustc wrapper.
 install-rust-tools:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -14,6 +14,34 @@ install-rust-tools:
     if ! command -v cargo-deny >/dev/null; then
       RUSTC_WRAPPER= cargo install cargo-deny --locked
     fi
+
+configure-sccache: require-sccache
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+    cargo_config="$cargo_home/config.toml"
+    if [ ! -e "$cargo_config" ] && [ -e "$cargo_home/config" ]; then
+      cargo_config="$cargo_home/config"
+    fi
+    mkdir -p "$(dirname "$cargo_config")"
+    touch "$cargo_config"
+    if grep -Eq '^[[:space:]]*rustc-wrapper[[:space:]]*=' "$cargo_config"; then
+      echo "$cargo_config already configures rustc-wrapper"
+      exit 0
+    fi
+    if grep -Eq '^[[:space:]]*\[build\][[:space:]]*$' "$cargo_config"; then
+      echo "$cargo_config already has a [build] table." >&2
+      echo "Add these entries there:" >&2
+      echo '  rustc-wrapper = "sccache"' >&2
+      echo '  incremental = false' >&2
+      exit 1
+    fi
+    {
+      printf '\n[build]\n'
+      printf 'rustc-wrapper = "sccache"\n'
+      printf 'incremental = false\n'
+    } >> "$cargo_config"
+    echo "Configured Cargo to use sccache in $cargo_config"
 
 require-sccache:
     #!/usr/bin/env bash
@@ -32,20 +60,23 @@ require-cargo-deny:
     }
 
 # Debug build of the whole workspace.
-build: require-sccache
+build:
     cargo build --workspace
 
 # Full test suite.
-test: require-sccache
+test:
     cargo test --workspace
 
 # Render public docs with rustdoc warnings denied.
-doc: require-sccache
+doc:
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
     RUSTDOCFLAGS="-D warnings" cargo doc -p animsmith --no-default-features --no-deps
 
+release-alignment:
+    scripts/check-release-alignment.sh
+
 # Check the crate package inventories that CI validates before release.
-package-inventory: require-sccache
+package-inventory:
     #!/usr/bin/env bash
     set -euo pipefail
     for crate in animsmith-core animsmith-gltf animsmith-fbx animsmith-report animsmith; do
@@ -54,12 +85,13 @@ package-inventory: require-sccache
 
 # Fast local PR gate. The GitHub workflow also verifies package assembly
 # on a clean checkout.
-gates: require-sccache require-cargo-deny
+gates: require-cargo-deny
     cargo fmt --all --check
     cargo clippy --workspace --all-targets -- -D warnings
     cargo check --workspace --examples
     cargo test --workspace
     cargo deny check
+    just release-alignment
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
     RUSTDOCFLAGS="-D warnings" cargo doc -p animsmith --no-default-features --no-deps
     cargo test -p animsmith --test cli_contract --no-default-features
@@ -72,7 +104,7 @@ gates: require-sccache require-cargo-deny
 
 # See .agent-instructions/shared.md for the required env vars.
 # Env-gated reference tests against licensed assets.
-golden: require-sccache
+golden:
     cargo test -p animsmith-gltf --test golden -- --nocapture
     cargo test -p animsmith --test convert_mesh -- --nocapture
 

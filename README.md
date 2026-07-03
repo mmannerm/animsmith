@@ -97,12 +97,13 @@ From a source checkout, prefix the same commands with
 
 ## Source Builds
 
-Run `just install-rust-tools` once before local development. The
-workspace commits `.cargo/config.toml` with `rustc-wrapper = "sccache"`
-and `incremental = false` so separate worktrees can share compiled Rust
-artifacts through the local `sccache` store. CI uses the public-runner
-GitHub Actions backend plus `Swatinem/rust-cache`; no private runner
-cache is required.
+Run `just install-rust-tools` once before local development. Cargo works
+with its stock defaults, and `sccache` is opt-in: run
+`just configure-sccache` to add a user-level Cargo config with
+`rustc-wrapper = "sccache"` and `incremental = false` so separate
+worktrees can share compiled Rust artifacts through the local `sccache`
+store. CI uses explicit public-runner GitHub Actions caching plus
+`Swatinem/rust-cache`; no private runner cache is required.
 
 Use `RUSTC_WRAPPER=` for an individual command only when you intentionally
 want to bypass `sccache`.

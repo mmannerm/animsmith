@@ -10,7 +10,7 @@ contract.
 ```json
 {
   "schema_version": 1,
-  "schema": "https://raw.githubusercontent.com/mmannerm/animsmith/v0.1.0/docs/schemas/output-v1.schema.json",
+  "schema": "https://raw.githubusercontent.com/mmannerm/animsmith/main/docs/schemas/output-v1.schema.json",
   "tool": { "name": "animsmith", "version": "0.1.0" },
   "command": "lint",
   "summary": { "files": 1, "findings": { "error": 0, "warning": 1, "note": 0 } },
@@ -18,9 +18,11 @@ contract.
 }
 ```
 
-`schema_version` changes only on breaking JSON changes. The `schema`
-field points at the schema file from the Cargo package version's release
-tag so consumers can validate against an immutable contract snapshot.
+`schema_version` changes only on breaking JSON changes after this first
+published envelope. Earlier development JSON shapes were not a published
+contract. Until the first manifest-versioned release that contains this
+schema file, the `schema` field points at `main`; release PRs may pin it
+to the matching `vX.Y.Z` tag once that tag will contain the schema.
 Additive fields may appear within the same version; consumers should
 ignore fields they do not understand.
 
@@ -50,7 +52,7 @@ and `deltas`:
 ```json
 {
   "schema_version": 1,
-  "schema": "https://raw.githubusercontent.com/mmannerm/animsmith/v0.1.0/docs/schemas/output-v1.schema.json",
+  "schema": "https://raw.githubusercontent.com/mmannerm/animsmith/main/docs/schemas/output-v1.schema.json",
   "tool": { "name": "animsmith", "version": "0.1.0" },
   "command": "diff",
   "inputs": { "before": "old.glb", "after": "new.glb" },

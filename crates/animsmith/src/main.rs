@@ -17,14 +17,11 @@ use std::process::ExitCode;
 const EXIT_FINDINGS: u8 = 1;
 const EXIT_OPERATOR: u8 = 2;
 
-/// Version of the machine-readable output schema, bumped on breaking
-/// changes to the JSON shape.
+/// Version of the first-published machine-readable output schema,
+/// bumped on breaking JSON changes after that contract is released.
 const SCHEMA_VERSION: u32 = 1;
-const SCHEMA_URL: &str = concat!(
-    "https://raw.githubusercontent.com/mmannerm/animsmith/v",
-    env!("CARGO_PKG_VERSION"),
-    "/docs/schemas/output-v1.schema.json"
-);
+const SCHEMA_URL: &str =
+    "https://raw.githubusercontent.com/mmannerm/animsmith/main/docs/schemas/output-v1.schema.json";
 
 #[derive(Parser)]
 #[command(
@@ -220,6 +217,10 @@ const ALL_REPAIR_GROUPS: &[RepairGroup] = &[
 
 impl RepairGroup {
     fn repairs(self) -> &'static [Repair] {
+        // Invariant: `default` contains only safe, lossless,
+        // idempotent repairs. Broader groups may grow faster, but must
+        // remain explicit here so automation can pin the intended risk
+        // profile by group name.
         match self {
             RepairGroup::Default
             | RepairGroup::Lossless
@@ -707,6 +708,12 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             };
             if selected.is_empty() {
                 return Err("no repairs selected".into());
+            }
+            if !dry_run && selected.len() > 1 {
+                return Err(
+                    "running multiple repairs in one write is not supported yet; rerun one repair at a time"
+                        .into(),
+                );
             }
             if !dry_run && output.is_none() && !in_place {
                 return Err(

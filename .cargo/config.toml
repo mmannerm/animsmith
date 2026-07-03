@@ -1,4 +1,0 @@
-[build]
-rustc-wrapper = "sccache"
-# sccache's Rust cache does not support rustc incremental artifacts.
-incremental = false

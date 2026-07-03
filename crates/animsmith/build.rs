@@ -1,4 +1,5 @@
 use std::env;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
@@ -17,17 +18,17 @@ fn main() {
 }
 
 fn git_version(package_version: &str) -> Option<String> {
-    let describe = git_describe()?;
+    let git_root = trusted_git_root()?;
+    let describe = git_describe(&git_root)?;
     if describe_matches_package_version(package_version, &describe) {
         Some(display_version(package_version, &describe))
     } else {
-        git_revision().map(|revision| format!("{package_version} ({revision})"))
+        git_revision(&git_root).map(|revision| format!("{package_version} ({revision})"))
     }
 }
 
-fn git_describe() -> Option<String> {
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").ok()?;
-    let output = git(&manifest_dir, ["describe", "--tags", "--dirty", "--always"])?;
+fn git_describe(git_root: &Path) -> Option<String> {
+    let output = git(git_root, ["describe", "--tags", "--dirty", "--always"])?;
     if !output.status.success() {
         return None;
     }
@@ -36,9 +37,8 @@ fn git_describe() -> Option<String> {
     (!describe.is_empty()).then(|| describe.to_owned())
 }
 
-fn git_revision() -> Option<String> {
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").ok()?;
-    let output = git(&manifest_dir, ["rev-parse", "--short", "HEAD"])?;
+fn git_revision(git_root: &Path) -> Option<String> {
+    let output = git(git_root, ["rev-parse", "--short", "HEAD"])?;
     if !output.status.success() {
         return None;
     }
@@ -47,22 +47,22 @@ fn git_revision() -> Option<String> {
     if revision.is_empty() {
         return None;
     }
-    if is_dirty(&manifest_dir) {
+    if is_dirty(git_root) {
         revision.push_str("-dirty");
     }
     Some(revision)
 }
 
-fn is_dirty(manifest_dir: &str) -> bool {
-    git(manifest_dir, ["diff-index", "--quiet", "HEAD", "--"])
+fn is_dirty(git_root: &Path) -> bool {
+    git(git_root, ["diff-index", "--quiet", "HEAD", "--"])
         .is_some_and(|output| !output.status.success())
 }
 
 fn watch_git_metadata() {
-    let Some(manifest_dir) = env::var("CARGO_MANIFEST_DIR").ok() else {
+    let Some(git_root) = trusted_git_root() else {
         return;
     };
-    let Some(output) = git(&manifest_dir, ["rev-parse", "--git-dir"]) else {
+    let Some(output) = git(&git_root, ["rev-parse", "--git-dir"]) else {
         return;
     };
     if !output.status.success() {
@@ -80,10 +80,36 @@ fn watch_git_metadata() {
     println!("cargo:rerun-if-changed={git_dir}/refs/tags");
 }
 
-fn git<const N: usize>(manifest_dir: &str, args: [&str; N]) -> Option<std::process::Output> {
+fn trusted_git_root() -> Option<PathBuf> {
+    let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR")?);
+
+    // Cargo package builds include vcs metadata separately; do not look
+    // through the package directory into any surrounding repository.
+    if manifest_dir.join(".cargo_vcs_info.json").is_file() {
+        return None;
+    }
+
+    let output = git(&manifest_dir, ["rev-parse", "--show-toplevel"])?;
+    if !output.status.success() {
+        return None;
+    }
+    let root = String::from_utf8(output.stdout).ok()?;
+    let root = PathBuf::from(root.trim());
+    if root.as_os_str().is_empty() {
+        return None;
+    }
+
+    let expected_manifest = root.join("crates").join("animsmith").join("Cargo.toml");
+    let actual_manifest = manifest_dir.join("Cargo.toml");
+    let expected_manifest = expected_manifest.canonicalize().ok()?;
+    let actual_manifest = actual_manifest.canonicalize().ok()?;
+    (expected_manifest == actual_manifest).then_some(root)
+}
+
+fn git<const N: usize>(dir: &Path, args: [&str; N]) -> Option<std::process::Output> {
     Command::new("git")
         .arg("-C")
-        .arg(manifest_dir)
+        .arg(dir)
         .args(args)
         .output()
         .ok()
