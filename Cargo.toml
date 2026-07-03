@@ -15,6 +15,18 @@ rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/mmannerm/animsmith"
 readme = "README.md"
+include = [
+    "src/**",
+    "assets/**",
+    "examples/**",
+    "tests/**",
+    "testdata/**",
+    "build.rs",
+    "Cargo.toml",
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
+    "THIRD-PARTY.md",
+]
 keywords = ["animation", "gltf", "lint", "gamedev", "fbx"]
 categories = ["game-development", "graphics", "development-tools"]
 

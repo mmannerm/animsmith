@@ -1,19 +1,21 @@
 name: main
 
 # Post-merge pipeline:
-# re-run the full test matrix on main, then compute the next semver
-# from the Conventional Commits since the last release (git-cliff) and
-# publish a GitHub Release when the commits warrant one.
+# re-run the full test matrix and release-readiness checks on main,
+# then compute the next semver from the Conventional Commits since the
+# last release (git-cliff) and publish a GitHub Release when the commits
+# warrant one.
 #
 # Bump policy (cliff.toml): breaking → major, feat → minor, fix/perf →
 # patch, anything else → no release.
 #
-# Bootstrap: the first release (v0.1.0) is published by hand; the
-# version job refuses to auto-publish until one exists.
+# Bootstrap: the version job refuses to auto-publish until at least one
+# GitHub Release exists. crates.io has its own one-time bootstrap; see
+# RELEASING.md.
 #
-# crates.io publishing is intentionally NOT automated yet — it needs a
-# registry token (or crates.io Trusted Publishing) and a Cargo.toml
-# version bump; releases here are tag + notes only.
+# crates.io publishing is available via Trusted Publishing after the
+# one-time bootstrap in RELEASING.md and the
+# CRATES_IO_TRUSTED_PUBLISHING repository variable are in place.
 
 on:
   push:
@@ -32,26 +34,11 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+  checks:
+    uses: ./.github/workflows/checks.yml
 
   version:
-    needs: [test]
+    needs: [checks]
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.compute.outputs.version }}
@@ -69,6 +56,9 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: git-cliff
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Compute next version
         id: compute
@@ -103,17 +93,25 @@ jobs:
             sed 's/^/  /' "$cliff_err"
           fi
           rm -f "$cliff_err"
-          echo "last=${last} next=${next}"
+          crate_version=$(cargo metadata --format-version 1 --no-deps \
+            | jq -r '.packages[] | select(.name=="animsmith") | .version')
+          echo "last=${last} next=${next} cargo=v${crate_version}"
 
           if [ -z "$last" ]; then
-            # Bootstrap policy: publish v0.1.0 by hand before CI takes
-            # over auto-versioning.
-            echo "::warning::no prior GitHub Release found; refusing to auto-publish — bootstrap manually with: gh release create v0.1.0 --target main --title v0.1.0"
+            # Bootstrap policy: create the first GitHub Release by hand
+            # before CI takes over auto-versioning.
+            echo "::warning::no prior GitHub Release found; refusing to auto-publish — bootstrap manually at v${crate_version} or another intentional tag"
             printf 'release=%s\n' "false" >> "$GITHUB_OUTPUT"
             printf 'version=%s\n' "$(git describe --tags --always)" >> "$GITHUB_OUTPUT"
           elif [ -n "$next" ] && [ "$next" != "$last" ]; then
-            printf 'release=%s\n' "true"  >> "$GITHUB_OUTPUT"
-            printf 'version=%s\n' "$next" >> "$GITHUB_OUTPUT"
+            if [ "v${crate_version}" != "$next" ]; then
+              echo "::warning::git-cliff computed $next, but Cargo.toml is v${crate_version}; refusing to create a release until a chore(release) PR bumps the workspace version"
+              printf 'release=%s\n' "false" >> "$GITHUB_OUTPUT"
+              printf 'version=%s\n' "$(git describe --tags --always)" >> "$GITHUB_OUTPUT"
+            else
+              printf 'release=%s\n' "true"  >> "$GITHUB_OUTPUT"
+              printf 'version=%s\n' "$next" >> "$GITHUB_OUTPUT"
+            fi
           else
             printf 'release=%s\n' "false" >> "$GITHUB_OUTPUT"
             printf 'version=%s\n' "$(git describe --tags --always)" >> "$GITHUB_OUTPUT"
@@ -184,11 +182,16 @@ jobs:
     permissions:
       id-token: write # OIDC hand-shake with crates.io
       contents: read
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
       - uses: rust-lang/crates-io-auth-action@v1
         id: auth
       - name: Publish workspace crates in dependency order
@@ -197,16 +200,14 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
-          # The GitHub Release version (git-cliff) and the Cargo.toml
-          # workspace version advance independently; publishing a crate
-          # version that doesn't match the tag would mislabel the
-          # release. Skip (loudly) until a `chore(release): bump` PR
-          # aligns them.
+          # The version job already requires this match before creating
+          # a GitHub Release. Keep the check here too so a manual re-run
+          # cannot publish a mismatched crate/tag pair.
           crate_version=$(cargo metadata --format-version 1 --no-deps \
             | jq -r '.packages[] | select(.name=="animsmith") | .version')
           if [ "v$crate_version" != "$VERSION" ]; then
-            echo "::warning::Cargo.toml version v$crate_version != release $VERSION; skipping crates.io publish — land a chore(release) bump PR and re-run"
-            exit 0
+            echo "::error::Cargo.toml version v$crate_version != release $VERSION"
+            exit 1
           fi
           for crate in animsmith-core animsmith-gltf animsmith-fbx animsmith-report animsmith; do
             # Idempotent re-runs: skip versions already on the registry.

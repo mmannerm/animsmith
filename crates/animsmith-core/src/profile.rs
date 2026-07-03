@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Role {
     Root,
     Hips,
@@ -43,6 +44,7 @@ impl Role {
 /// How a role's bone is found by name. Matching also tries a
 /// namespace-stripped variant of each bone name (`"ns:Hips"` → `"Hips"`).
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum NameMatcher {
     Exact(&'static str),
 }

@@ -16,6 +16,7 @@ pub const MIN_STRIDE_STEP_M: f64 = 0.02;
 
 /// Foot-cycle metrics for one sampled clip.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct FootCycleMetrics {
     /// Wrap discontinuity of the feet (relative to hips) over the max of
     /// the two seam-adjacent in-clip steps. ≈1.0 for a clean cyclic

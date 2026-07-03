@@ -5,6 +5,26 @@ contract formats, sidecar schemas, and gates embed the library instead:
 `animsmith-core` (measurements, checks, config — no file formats, no
 I/O) plus one ingestion crate (`animsmith-gltf`, `animsmith-fbx`).
 
+Add the crates you need:
+
+```toml
+[dependencies]
+animsmith-core = "0.1"
+animsmith-gltf = "0.1"
+# Optional, only when you ingest FBX:
+animsmith-fbx = "0.1"
+```
+
+Canonical API docs live on docs.rs after publish:
+[animsmith-core](https://docs.rs/animsmith-core),
+[animsmith-gltf](https://docs.rs/animsmith-gltf), and
+[animsmith-fbx](https://docs.rs/animsmith-fbx). `animsmith-core` is the
+embedding boundary; the CLI crate is not the library API. The Rust API
+is still pre-1.0 and experimental, so prefer the crate-root catalog
+functions and documented data/config types over internal modules.
+`animsmith-core` re-exports `glam` as `animsmith_core::glam` because its
+public types use `glam` vectors, quaternions, and matrices.
+
 The worked, compiling version of everything below is
 [`crates/animsmith/examples/embed.rs`](../crates/animsmith/examples/embed.rs)
 — run it with:
@@ -64,11 +84,25 @@ Embedders can pin on these; changing any of them is a breaking change
 
 - **Check ids** (`loop-seam`, `quat-flip`, …) — config keys and JSON
   fields.
-- **JSON output schema** — versioned via `schema_version`.
+- **JSON output schema** — versioned via `schema_version`; JSON is an
+  envelope with `tool`, `command`, `summary`, and `files`.
 - **Exit codes** — 0 / 1 / 2 as above.
 - **Measurement semantics** — the sampling model is "glTF-spec
   interpolation on a uniform grid, wrap pair = (last frame, 0)";
   metric changes require golden-test re-verification.
+
+For v0.1, the most stable integration path is:
+
+1. Load with `animsmith-gltf` or `animsmith-fbx`.
+2. Build `Config` from your own contract format.
+3. Call `measure_document`, `CheckCtx::new`, `all_checks`, and
+   `run_checks`.
+4. Map `Finding` values into your gate/reporting system.
+
+The `Check` trait is public because the built-in catalog uses it and
+advanced embedders may want to experiment, but custom-check/plugin
+registration is not yet a stability promise. Prefer wrapping animsmith's
+findings with your own pipeline checks until a registry API lands.
 
 ## Migrating a script-based bake pipeline
 
@@ -78,7 +112,7 @@ typical Python/DCC bake pipeline accumulates. The mapping:
 | If your pipeline has… | Replace with | Notes |
 |---|---|---|
 | An FBX→glTF converter binary (e.g. the archived FBX2glTF) | `animsmith convert in.fbx -o out.glb` | Triangulated + welded meshes, skins, factor materials, embedded PNG/JPEG base-color textures; `--animation-only` to strip geometry. Units/axes normalized to glTF conventions; scale-compensated (Maya-style) rigs handled. |
-| A quaternion hemisphere-normalization pass | `animsmith fix clip.glb [-o out.glb]` | Byte-surgical: only repaired keys change, container/meshes byte-identical; lossless and idempotent; handles LINEAR/STEP/CUBICSPLINE. |
+| A quaternion hemisphere-normalization pass | `animsmith fix clip.glb -o out.glb` or `animsmith fix clip.glb --in-place` | Byte-surgical: only repaired keys change, container/meshes byte-identical; lossless and idempotent; handles LINEAR/STEP/CUBICSPLINE. Use `--dry-run` or `--list-repairs` to inspect first. |
 | Frame-range slicing, final-pose hold extension, cycle re-anchoring scripts | `animsmith transform --slice a:b --hold-extend s --gait-anchor --fps n` | Slice copies keys verbatim (half-frame epsilon); gait-anchor is frame-quantized and picks the cleanest wrap of the ±1-frame candidates. |
 | Loop-seam / gait-phase / root-motion measurement scripts | `animsmith measure --format json`, or the library API above | Same numbers, golden-tested; feed them to your own sidecar/contract format via the library. |
 | A post-bake contract/validation gate | `animsmith lint --config your.toml` (or a programmatic `Config`) | See [`examples/character.animsmith.toml`](../examples/character.animsmith.toml) for a game character's contract expressed as config. |

@@ -7,7 +7,7 @@
 //! Values are written exactly as held in the core model — lint first;
 //! conversion does not repair.
 
-use crate::LoadError;
+use crate::WriteError;
 use animsmith_core::model::{Document, Interpolation, Property, SceneAssets, TrackValues};
 use base64::Engine as _;
 use serde_json::{Value, json};
@@ -189,7 +189,7 @@ fn document_to_json(doc: &Document, buffer_uri: Option<String>, buffer_len: usiz
 /// Serialize `doc` to `path` (`.glb` for binary, anything else as
 /// `.gltf` JSON with an embedded data-URI buffer). Animation +
 /// skeleton only; use [`write_with_assets`] to carry geometry.
-pub fn write(doc: &Document, path: &Path) -> Result<(), LoadError> {
+pub fn write(doc: &Document, path: &Path) -> Result<(), WriteError> {
     write_with_assets(doc, &SceneAssets::default(), path)
 }
 
@@ -199,7 +199,7 @@ pub fn write_with_assets(
     doc: &Document,
     assets: &SceneAssets,
     path: &Path,
-) -> Result<(), LoadError> {
+) -> Result<(), WriteError> {
     let mut buffers = BufferBuilder::new();
     let mut animations: Vec<Value> = Vec::new();
 
@@ -220,26 +220,31 @@ pub fn write_with_assets(
                     let flat: Vec<f32> = v.iter().flat_map(|q| q.to_array()).collect();
                     buffers.push(&flat, "VEC4", false)
                 }
+                _ => continue,
+            };
+            let interpolation = match track.interpolation {
+                Interpolation::Linear => "LINEAR",
+                Interpolation::Step => "STEP",
+                Interpolation::CubicSpline => "CUBICSPLINE",
+                _ => continue,
+            };
+            let target_path = match track.property {
+                Property::Translation => "translation",
+                Property::Rotation => "rotation",
+                Property::Scale => "scale",
+                _ => continue,
             };
             let sampler = samplers.len();
             samplers.push(json!({
                 "input": input,
                 "output": output,
-                "interpolation": match track.interpolation {
-                    Interpolation::Linear => "LINEAR",
-                    Interpolation::Step => "STEP",
-                    Interpolation::CubicSpline => "CUBICSPLINE",
-                },
+                "interpolation": interpolation,
             }));
             channels.push(json!({
                 "sampler": sampler,
                 "target": {
                     "node": track.bone,
-                    "path": match track.property {
-                        Property::Translation => "translation",
-                        Property::Rotation => "rotation",
-                        Property::Scale => "scale",
-                    },
+                    "path": target_path,
                 },
             }));
         }
@@ -406,12 +411,12 @@ pub fn write_with_assets(
         }
     }
 
-    let io_err = |e: std::io::Error| LoadError::Io {
+    let io_err = |e: std::io::Error| WriteError::Io {
         path: path.display().to_string(),
         source: e,
     };
     if binary {
-        let mut json_bytes = serde_json::to_vec(&root).expect("glTF JSON serializes");
+        let mut json_bytes = serde_json::to_vec(&root)?;
         while !json_bytes.len().is_multiple_of(4) {
             json_bytes.push(b' ');
         }
@@ -432,7 +437,7 @@ pub fn write_with_assets(
         out.extend_from_slice(&bin);
         std::fs::write(path, out).map_err(io_err)
     } else {
-        let text = serde_json::to_string_pretty(&root).expect("glTF JSON serializes");
+        let text = serde_json::to_string_pretty(&root)?;
         std::fs::write(path, text).map_err(io_err)
     }
 }

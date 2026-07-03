@@ -6,9 +6,15 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+documentation = "https://docs.rs/animsmith-gltf"
 readme.workspace = true
+include.workspace = true
 keywords.workspace = true
 categories.workspace = true
+
+[package.metadata.docs.rs]
+default-target = "x86_64-unknown-linux-gnu"
+targets = ["aarch64-apple-darwin", "x86_64-pc-windows-msvc"]
 
 [dependencies]
 animsmith-core = { workspace = true }

@@ -1,5 +1,5 @@
 //! Typed configuration: rig selection, per-check settings, per-clip
-//! expectations, and gait groups. The TOML file (`animsmith.toml`) is
+//! expectations, and typed clip groups. The TOML file (`animsmith.toml`) is
 //! *one* constructor of this — embedding pipelines build it
 //! programmatically through this module and keep their own contract
 //! formats on their side.
@@ -23,6 +23,7 @@ pub struct Pinned {
 /// Severity override for a check; `Off` disables it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum SeveritySetting {
     Off,
     Note,
@@ -46,6 +47,7 @@ impl SeveritySetting {
 /// built-in checks' tunables (only the owning check reads each field).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct CheckSettings {
     pub severity: Option<SeveritySetting>,
     /// `loop-seam`: ratio above which the seam is a pop (default 1.5).
@@ -67,6 +69,7 @@ pub struct CheckSettings {
 /// What the author declares about one clip (or a glob of clips).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct ClipExpectations {
     /// The clip is a cyclic loop; loop checks apply.
     #[serde(rename = "loop")]
@@ -119,6 +122,7 @@ pub struct GaitGroup {
 /// role map (which wins over the profile for the roles it names).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct RigConfig {
     #[serde(default = "default_profile")]
     pub profile: String,
@@ -143,6 +147,7 @@ impl Default for RigConfig {
 /// sections.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct Config {
     #[serde(default)]
     pub rig: RigConfig,
@@ -154,7 +159,7 @@ pub struct Config {
     #[serde(default)]
     pub clips: BTreeMap<String, ClipExpectations>,
     #[serde(default)]
-    pub groups: BTreeMap<String, GaitGroup>,
+    pub gait_groups: BTreeMap<String, GaitGroup>,
 }
 
 impl Config {

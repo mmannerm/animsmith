@@ -15,6 +15,7 @@ use crate::model::{Clip, Interpolation, Skeleton, Track, TrackValues, Transform}
 use glam::{Mat4, Quat, Vec3};
 
 /// Model-space and local poses for every (frame, bone) of one clip.
+#[derive(Debug)]
 pub struct PoseGrid {
     /// Uniform sample times, `times[0] == 0`, `times[last] == duration`.
     pub times: Vec<f32>,
@@ -115,6 +116,7 @@ pub fn sample_clip(skeleton: &Skeleton, clip: &Clip, frames: usize) -> PoseGrid 
 
 /// One track's sampled value at a time.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub enum TrackSample {
     Vec3(Vec3),
     Quat(Quat),

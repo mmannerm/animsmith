@@ -6,7 +6,7 @@ use animsmith_core::{CheckCtx, Config, Severity, mechanical_checks, run_checks, 
 use std::path::PathBuf;
 
 fn fixture() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/rig.gltf")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/rig.gltf")
 }
 
 #[test]

@@ -59,6 +59,7 @@ impl Skeleton {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Property {
     Translation,
     Rotation,
@@ -76,6 +77,7 @@ impl Property {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Interpolation {
     Linear,
     Step,
@@ -96,6 +98,7 @@ impl Interpolation {
 }
 
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum TrackValues {
     Vec3s(Vec<Vec3>),
     Quats(Vec<Quat>),

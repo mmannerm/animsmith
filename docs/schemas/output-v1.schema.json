@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/mmannerm/animsmith/main/docs/schemas/output-v1.schema.json",
+  "title": "animsmith output v1",
+  "type": "object",
+  "required": ["schema_version", "schema", "tool", "command", "summary"],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "schema": {
+      "type": "string",
+      "format": "uri"
+    },
+    "tool": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "const": "animsmith" },
+        "version": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "command": {
+      "enum": ["measure", "lint", "diff"]
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "files": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/file_report" }
+    },
+    "inputs": {
+      "type": "object",
+      "required": ["before", "after"],
+      "properties": {
+        "before": { "type": "string" },
+        "after": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "deltas": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/metric_delta" }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "command": { "enum": ["measure", "lint"] } }
+      },
+      "then": {
+        "required": ["files"]
+      }
+    },
+    {
+      "if": {
+        "properties": { "command": { "const": "diff" } }
+      },
+      "then": {
+        "required": ["inputs", "deltas"]
+      }
+    }
+  ],
+  "$defs": {
+    "file_report": {
+      "type": "object",
+      "required": ["path", "rig", "measurements"],
+      "properties": {
+        "path": { "type": "string" },
+        "rig": {
+          "type": "object",
+          "required": ["profile", "resolved_roles"],
+          "properties": {
+            "profile": { "type": "string" },
+            "resolved_roles": {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            }
+          },
+          "additionalProperties": true
+        },
+        "findings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/finding" }
+        },
+        "measurements": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/clip_measurements" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "finding": {
+      "type": "object",
+      "required": ["check_id", "severity", "message"],
+      "properties": {
+        "check_id": { "type": "string" },
+        "severity": { "enum": ["note", "warning", "error"] },
+        "clip": { "type": "string" },
+        "bone": { "type": "string" },
+        "time_s": { "type": "number" },
+        "measured": {},
+        "expected": {},
+        "message": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "clip_measurements": {
+      "type": "object",
+      "required": ["duration_s", "frame_count", "animated_bones", "bone_rotation_range_deg"],
+      "properties": {
+        "duration_s": { "type": "number" },
+        "frame_count": { "type": "integer", "minimum": 0 },
+        "animated_bones": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "bone_rotation_range_deg": {
+          "type": "object",
+          "additionalProperties": { "type": "number" }
+        },
+        "loop_seam_ratio": { "type": "number" },
+        "gait": {
+          "type": "object",
+          "required": ["lr_amplitude_m"],
+          "properties": {
+            "phase": { "type": "number" },
+            "lr_amplitude_m": { "type": "number" }
+          },
+          "additionalProperties": true
+        },
+        "speed_mps": { "type": "number" }
+      },
+      "additionalProperties": true
+    },
+    "metric_delta": {
+      "type": "object",
+      "required": ["clip", "metric", "note"],
+      "properties": {
+        "clip": { "type": "string" },
+        "metric": { "type": "string" },
+        "before": { "type": "number" },
+        "after": { "type": "number" },
+        "note": { "type": "string" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
