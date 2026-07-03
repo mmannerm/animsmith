@@ -160,7 +160,7 @@ pub fn builtin_profiles() -> Vec<RigProfile> {
             ],
         },
         RigProfile {
-            name: "rauta-humanoid",
+            name: "humanoid",
             bindings: vec![
                 (Root, Exact("root")),
                 (Hips, Exact("humanoid_ Pelvis")),

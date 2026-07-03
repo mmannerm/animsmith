@@ -13,7 +13,7 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-/// Exit codes, wire-compatible with rauta's validate-assets:
+/// Exit codes, matching common asset-validation gate conventions:
 /// 0 = clean or warnings-only, 1 = error findings, 2 = operator error.
 const EXIT_FINDINGS: u8 = 1;
 const EXIT_OPERATOR: u8 = 2;

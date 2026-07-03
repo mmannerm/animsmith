@@ -1,5 +1,6 @@
 //! Locomotion clip metrics: loop-seam ratio, gait phase, root-motion
-//! speed. Ported from the rauta project's `locomotion_metrics.py`
+//! speed. Ported from a production game pipeline's reference
+//! implementation
 //! (verified there against Blender pose-matrix FK to <0.01×) — the
 //! algorithms are kept semantically identical so the numbers reproduce.
 

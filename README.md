@@ -13,7 +13,7 @@ before this.
 
 **Status: M2.** glTF/GLB **and FBX** input (via [ufbx](https://github.com/ufbx/ufbx));
 mechanical + locomotion-semantics check sets; rig profiles
-(mixamo / ue-mannequin / rauta-humanoid + auto-detect); `animsmith.toml`
+(mixamo / ue-mannequin / humanoid + auto-detect); `animsmith.toml`
 config with per-clip expectations and gait groups; subcommands
 `inspect` / `measure` / `lint` / `convert` / `report` / `diff`.
 The loop-seam and gait algorithms are golden-tested against the
@@ -84,7 +84,7 @@ Semantic (driven by declared expectations + rig roles):
 
 ```toml
 [rig]
-profile = "auto"            # or mixamo / ue-mannequin / rauta-humanoid, or inline [rig.roles]
+profile = "auto"            # or mixamo / ue-mannequin / humanoid, or inline [rig.roles]
 
 [checks.loop-seam]
 max_ratio = 1.6
@@ -101,7 +101,7 @@ max_gait_phase_spread = 0.15
 min_lr_amplitude_m = 0.03
 ```
 
-See [examples/rauta.animsmith.toml](examples/rauta.animsmith.toml) for a
+See [examples/character.animsmith.toml](examples/character.animsmith.toml) for a
 real config mirroring the incubating project's animation contract.
 Checks whose rig roles don't resolve are skipped with a note — never a
 false failure. `--select`, `--allow`, and `[checks.*] severity`

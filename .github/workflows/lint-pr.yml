@@ -1,7 +1,7 @@
 name: lint-pr
 
 # Forces every commit landing through a PR to be Conventional Commits,
-# regardless of which merge method is chosen (mirrors the rauta setup):
+# regardless of which merge method is chosen:
 #
 #   - Squash merge: the squash commit's subject comes from the PR title
 #     (repo setting: squash_merge_commit_title=PR_TITLE). The `title`

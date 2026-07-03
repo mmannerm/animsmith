@@ -1,22 +1,22 @@
-//! Golden test against the rauta project's production bake: the ported
-//! loop-seam and gait algorithms must reproduce the numbers rauta's
-//! Python reference (`locomotion_metrics.py`) recorded in
-//! `character.measured.ron` (which were themselves verified against
-//! Blender pose-matrix FK to <0.01×).
+//! Golden test against the production bake this port was extracted
+//! from: the loop-seam and gait algorithms must reproduce the numbers
+//! the reference implementation recorded for its shipped character
+//! (values that were themselves verified against Blender pose-matrix
+//! FK to <0.01×).
 //!
-//! Gated on RAUTA_CHARACTER_GLB because the asset is licensed and can't
-//! ship in this repo:
+//! Gated on ANIMSMITH_GOLDEN_GLB because the asset is licensed and
+//! can't ship in this repo:
 //!
 //! ```console
-//! RAUTA_CHARACTER_GLB=~/src/rauta/assets/models/character.glb cargo test -p animsmith-gltf golden
+//! ANIMSMITH_GOLDEN_GLB=/path/to/reference-character.glb cargo test -p animsmith-gltf golden
 //! ```
 
 use animsmith_core::detect_profile;
 use animsmith_core::measure::measure_document;
 
 /// (clip, loop_seam_ratio, gait phase, lr_amplitude_m) as recorded by
-/// rauta's Python reference. Seam ratios use `None` where the reference
-/// reports no real stride.
+/// the reference implementation. Seam ratios use `None` where the
+/// reference reports no real stride.
 const GOLDEN: &[(&str, Option<f64>, f64, f64)] = &[
     ("idle_1h", Some(0.997817), 0.658668, 0.016100),
     ("run_forward_1h", Some(0.806956), 0.030621, 0.097489),
@@ -40,14 +40,14 @@ fn circular_delta(a: f64, b: f64) -> f64 {
 }
 
 #[test]
-fn reproduces_rauta_reference_numbers() {
-    let Ok(path) = std::env::var("RAUTA_CHARACTER_GLB") else {
-        eprintln!("skipped: set RAUTA_CHARACTER_GLB to run the golden test");
+fn reproduces_reference_numbers() {
+    let Ok(path) = std::env::var("ANIMSMITH_GOLDEN_GLB") else {
+        eprintln!("skipped: set ANIMSMITH_GOLDEN_GLB to run the golden test");
         return;
     };
     let doc = animsmith_gltf::load(std::path::Path::new(&path)).expect("golden GLB loads");
-    let roles = detect_profile(&doc.skeleton).expect("rauta profile detected");
-    assert_eq!(roles.profile, "rauta-humanoid");
+    let roles = detect_profile(&doc.skeleton).expect("profile detected");
+    assert_eq!(roles.profile, "humanoid");
     let measurements = measure_document(&doc, &roles);
 
     let mut failures = Vec::new();
