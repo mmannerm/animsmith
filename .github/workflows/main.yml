@@ -1,6 +1,6 @@
 name: main
 
-# Post-merge pipeline (mirrors the rauta setup, minus dist binaries):
+# Post-merge pipeline:
 # re-run the full test matrix on main, then compute the next semver
 # from the Conventional Commits since the last release (git-cliff) and
 # publish a GitHub Release when the commits warrant one.

@@ -67,8 +67,8 @@ reference tests are env-gated and skip silently when the variable is
 unset:
 
 ```bash
-RAUTA_CHARACTER_GLB=~/src/rauta/assets/models/character.glb \
-ANIMSMITH_MESH_FBX="<path to a mesh-bearing fbx>" \
+ANIMSMITH_GOLDEN_GLB=/path/to/reference-character.glb \
+ANIMSMITH_MESH_FBX=/path/to/mesh-bearing.fbx \
 just golden
 ```
 

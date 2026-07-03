@@ -20,7 +20,7 @@ gates:
 # See .agent-instructions/shared.md for the required env vars.
 # Env-gated reference tests against licensed assets.
 golden:
-    cargo test -p animsmith-gltf --test golden_rauta -- --nocapture
+    cargo test -p animsmith-gltf --test golden -- --nocapture
     cargo test -p animsmith --test convert_mesh -- --nocapture
 
 # One worktree per substantial task; parallel agents don't collide.

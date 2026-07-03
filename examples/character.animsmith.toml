@@ -1,22 +1,20 @@
-# Example animsmith config mirroring the rauta project's animation
-# contract (crates/asset-contract/contracts/character.contract.ron):
-# loop declarations for the locomotion rings, the seam cap, and the two
-# gait-coherence groups.
+# Worked example: a game character's animation contract expressed as an
+# animsmith config — loop declarations for the locomotion rings, the
+# seam cap, and gait-coherence groups. Pairs with docs/embedding.md.
 #
-#   animsmith lint --config examples/rauta.animsmith.toml character.glb
+#   animsmith lint --config examples/character.animsmith.toml character.glb
 
 [rig]
-profile = "auto" # resolves to rauta-humanoid on the character rig
+profile = "auto" # or a named profile / inline [rig.roles]
 
 [checks.loop-seam]
-max_ratio = 1.6 # rauta's loop_seam_ratio_max
+max_ratio = 1.6
 
 [checks.frozen-bone]
-min_rotation_deg = 0.5 # rauta's min_animated_bone_rotation_deg
+min_rotation_deg = 0.5
 
-# The FBX2glTF-era hemisphere flips are a known issue tracked on the
-# bake side; every rauta consumer slerp-corrects, so demote the warning
-# to a note until the bake normalizes them.
+# Example severity override: demote a warning to a note while a known
+# upstream issue is being fixed at the source.
 [checks.quat-flip]
 severity = "note"
 

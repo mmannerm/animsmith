@@ -19,7 +19,7 @@ fn skeleton_of(names: &[&str]) -> Skeleton {
 }
 
 #[test]
-fn detects_rauta_humanoid() {
+fn detects_humanoid_prefixed() {
     let skel = skeleton_of(&[
         "root",
         "humanoid_ Pelvis",
@@ -29,7 +29,7 @@ fn detects_rauta_humanoid() {
         "humanoid_ R Toe0",
     ]);
     let roles = detect_profile(&skel).expect("profile detected");
-    assert_eq!(roles.profile, "rauta-humanoid");
+    assert_eq!(roles.profile, "humanoid");
     assert_eq!(roles.get(Role::Hips), Some(1));
     assert_eq!(roles.get(Role::LeftToe), Some(4));
 }

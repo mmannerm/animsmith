@@ -2,8 +2,9 @@
 
 Status: v1 design, pre-implementation. Intended to seed the new repo as
 `DESIGN.md`.
-Origin: extracted from the rauta project's animation pipeline (design
-session 2026-07-03); rauta is the first consumer, not the scope.
+Origin: extracted from a private game project's animation pipeline
+(design session 2026-07-03); that project — "the incubating project"
+below — is the first consumer, not the scope.
 
 ---
 
@@ -64,8 +65,8 @@ output, and a self-contained HTML report with a 3D preview.
    stable JSON schema, exit codes, per-check severity config, baseline
    file for adopting teams with a dirty back catalog.
 3. **Pipeline library** — engine pipelines embed `animsmith-core` and build
-   check sets programmatically. First consumer: rauta's `asset-contract
-   measure` (issue #59) replaces ~1000 LOC of measurement Python with
+   check sets programmatically. First consumer: the incubating
+   project's asset gate replaces ~1000 LOC of measurement Python with
    library calls.
 4. **PR-review artifact** — `animsmith report clip.glb -o report.html`
    produces a single offline HTML file with 3D skeleton playback and
@@ -116,7 +117,7 @@ animsmith/
 
 - **animsmith-core**: deps `glam` (the de-facto Rust game-math crate — do
   not hand-roll mat4/quat as the Python did), `serde`, `thiserror`. No
-  file-format knowledge, no I/O. This is what rauta links.
+  file-format knowledge, no I/O. This is what embedding pipelines link.
 - **animsmith-gltf**: the `gltf` crate with trimmed features (no image
   decoding); owns GLB emission via `gltf-json`.
 - **animsmith-fbx**: `ufbx` (official bindings, v0.11.x, actively
@@ -169,7 +170,7 @@ pub struct RigProfile { pub name: String, pub bindings: Vec<(Role, NameMatcher)>
 ```
 
 Built-in profiles ship for `mixamo` (`mixamorig:Hips`…), `ue-mannequin`
-(`pelvis`, `foot_l`…), and `rauta-humanoid` (`humanoid_ Pelvis`,
+(`pelvis`, `foot_l`…), and `humanoid` (`humanoid_ Pelvis`,
 `humanoid_ L Foot`…), plus **auto-detection** that scores every profile by
 resolved-role coverage and reports the winner in `inspect`. A check whose
 required roles don't resolve is *skipped with a note* — never a false
@@ -198,7 +199,7 @@ the JSON schema, and the HTML report cheap.
 ## 6. Check catalog
 
 Tiers are shipping priority. "Prior art" = a proven implementation exists
-in rauta's Python/Rust pipeline to port, with real-world numbers to
+in the incubating project's pipeline to port, with real-world numbers to
 golden-test against.
 
 ### P0 — mechanical + the two killer semantic checks (v0 core)
@@ -209,13 +210,13 @@ golden-test against.
 | `time-monotonic` | non-increasing/duplicate key times; first key ≫ 0 | raw | epsilon | new |
 | `quat-norm` | rotation keys with \|q\|−1 beyond tolerance | raw | eps (1e-3) | new |
 | `quat-flip` | adjacent keys with `dot < 0` (long-way slerp in engines that don't neighborhood-correct) | raw | severity | new |
-| `duration-sanity` | zero/degenerate duration; channels within one clip ending at different times; frame count non-integral at declared fps | raw + meta | expected fps list, pinned duration | rauta `duration_s` pin |
+| `duration-sanity` | zero/degenerate duration; channels within one clip ending at different times; frame count non-integral at declared fps | raw + meta | expected fps list, pinned duration | reference contract `duration_s` pin |
 | `scale-keys` | scale tracks present (warn); non-uniform scale (opt-in error) | raw | severities | new |
 | `constant-track` | track never deviating from rest beyond eps (bloat), or a track that is *unexpectedly* constant | raw | eps | new |
-| `frozen-bone` | required bone's max angular deviation from first frame below floor | grid + roles/meta | `min_rotation_deg` | rauta `min_animated_bone_rotation_deg` + `bone_rotation_range_deg` |
+| `frozen-bone` | required bone's max angular deviation from first frame below floor | grid + roles/meta | `min_rotation_deg` | reference contract rotation floor + measured rotation ranges |
 | `loop-seam` | last→first position wrap discontinuity of feet-relative-to-hips, normalized by the *local neighbour* per-frame step, with a stride floor so stationary clips skip | grid + Hips/feet/toe roles | `max_ratio`, `min_stride_step_m` | `locomotion_metrics.py` — port verbatim |
-| `root-motion-speed` | horizontal root/hips displacement ÷ duration vs declared `speed_mps`; flags stray speed pins on non-locomotion clips | grid + Root/Hips | pinned speed + tolerance (rauta gate: 15%) | `build_character_glb_native.py` |
-| `missing-bones` | declared-required animated bones absent; tracks targeting nodes outside the skeleton | raw + meta | bone/role list | rauta `animates_bones` |
+| `root-motion-speed` | horizontal root/hips displacement ÷ duration vs declared `speed_mps`; flags stray speed pins on non-locomotion clips | grid + Root/Hips | pinned speed + tolerance (reference gate: 15%) | reference bake |
+| `missing-bones` | declared-required animated bones absent; tracks targeting nodes outside the skeleton | raw + meta | bone/role list | reference contract `animates_bones` |
 | `naming` | clip names vs convention pattern | meta | regex/glob | new |
 | `units-sanity` | hips rest height wildly outside human scale (the cm-vs-m export classic) | skeleton + profile | height band | new |
 
@@ -223,12 +224,12 @@ golden-test against.
 
 | id | what it checks | prior art |
 |---|---|---|
-| `gait-phase` / `gait-group` | stride-phase anchor from the fundamental-harmonic trough of the left-minus-right foot-height signal; circular phase spread across a declared clip ring (directional-blend coherence), with an `lr_amplitude` confidence floor | `locomotion_metrics.py` + rauta `GaitPhaseGroup` — port verbatim |
+| `gait-phase` / `gait-group` | stride-phase anchor from the fundamental-harmonic trough of the left-minus-right foot-height signal; circular phase spread across a declared clip ring (directional-blend coherence), with an `lr_amplitude` confidence floor | reference metrics module + gait-group contract — port verbatim |
 | `in-place` | classify in-place vs root-motion (net + per-frame root displacement) and compare against the clip's declared expectation | new; trivial on the grid |
 | `foot-slide` | detect stance (foot height + near-zero vertical velocity), measure horizontal foot velocity during stance in the travel-cancelled frame | new; hardest check — ships opt-in until corpus-tuned |
-| `bind-pose` | rest pose vs first frame delta (clip authored against wrong bind); T-pose/A-pose classification; node-TRS rest disagreeing with IBM-derived rest (the disagreement is itself a finding) | rauta sidecar already derives rest from IBMs |
-| `axis-conventions` | character forward/up at rest vs declared axes; root orientation drift over a loop | rauta contract `Axis` vocabulary |
-| `loop-seam-rot` / `loop-seam-vel` | rotational C0 and velocity C1 seam continuity | flagged in rauta (#104), unimplemented |
+| `bind-pose` | rest pose vs first frame delta (clip authored against wrong bind); T-pose/A-pose classification; node-TRS rest disagreeing with IBM-derived rest (the disagreement is itself a finding) | reference sidecar already derives rest from IBMs |
+| `axis-conventions` | character forward/up at rest vs declared axes; root orientation drift over a loop | reference contract axis vocabulary |
+| `loop-seam-rot` / `loop-seam-vel` | rotational C0 and velocity C1 seam continuity | flagged in the incubating project, unimplemented |
 | `key-density` | keys/sec far above the clip fps (unbaked-curve bloat) or far below (starved track) | new |
 
 ### P2 — corpus/cross-clip
@@ -272,10 +273,10 @@ min_lr_amplitude_m = 0.05
 CLI flags override file config (`--select`, `--allow`, `--deny`).
 
 **Engine-agnosticism rule:** the TOML file is merely *one* constructor of
-a `CheckSet`. Embedding pipelines (rauta) build check sets
+a `CheckSet`. Embedding pipelines build check sets
 programmatically through the library API and keep their own contract
 formats, hashing, and tolerance semantics on their side. animsmith never
-learns rauta's RON schema.
+learns an embedder's contract schema.
 
 ## 8. Output formats
 
@@ -332,7 +333,7 @@ to *that* frame N. Determinism is the feature.
 ## 10. FBX ingestion (`animsmith-fbx` + `convert`)
 
 - **Library**: the official `ufbx` Rust bindings (v0.11.x, actively
-  maintained; the same C foundation as rauta's existing converter, so
+  maintained; the same C foundation the incubating pipeline already trusted, so
   behavior is already trusted in the incubating pipeline).
 - **Normalization at load** via `LoadOpts`: target axes = glTF convention
   (right-handed, +Y up, −Z forward), `target_unit_meters = 1.0` (FBX
@@ -360,21 +361,21 @@ to *that* frame N. Determinism is the feature.
   (fmt/clippy/test on Linux/macOS/Windows), CC0 test fixtures. Core model
   + sampler/FK; `animsmith-gltf`; `inspect` and `measure --format json`;
   the mechanical P0 checks (`nan` → `constant-track`).
-- **M1 — rauta parity.** Rig profiles, TOML config, per-clip
+- **M1 — reference parity.** Rig profiles, TOML config, per-clip
   expectations; port `loop-seam`, `frozen-bone`, `root-motion-speed`,
-  `gait-phase`/`gait-group` — **golden-tested against rauta's verified
-  production numbers**; `lint` with exit codes + stable JSON; adopt
-  rauta's mutation-test discipline (corrupt one field, assert the finding
-  names exactly that field). **rauta #59 lands here**: `asset-contract
-  measure` becomes a thin wrapper over `animsmith-core` + `animsmith-gltf`
-  (rauta keeps its sidecar RON schema and blake3 hashing);
+  `gait-phase`/`gait-group` — **golden-tested against the reference
+  implementation's verified production numbers**; `lint` with exit codes + stable JSON; adopt
+  the reference project's mutation-test discipline (corrupt one field, assert the finding
+  names exactly that field). **the incubating project's measure
+  port lands here**: its sidecar tool becomes a thin wrapper over `animsmith-core` + `animsmith-gltf`
+  (the embedder keeps its sidecar schema and hashing);
   `locomotion_metrics.py` and the animation half of `measured_sidecar.py`
   are deleted.
 - **M2 — report, FBX, diff → v0.1.0 on crates.io.** HTML report; FBX
-  ingestion + `convert`; `diff`. The v0.1 bar for "usable by a non-rauta
+  ingestion + `convert`; `diff`. The v0.1 bar for "usable by an unaffiliated
   team": README quickstart works on a raw Mixamo-style GLB with zero
   config (profile auto-detect), built-in `mixamo` + `ue-mannequin`
-  profiles, sample `animsmith.toml`, versioned JSON schema doc, no rauta
+  profiles, sample `animsmith.toml`, versioned JSON schema doc, no incubator
   vocabulary anywhere in the public API.
 - **M3 — the hard semantics.** `foot-slide` (stance detection),
   `in-place`, `bind-pose`/`axis-conventions`, rotational/velocity loop
@@ -428,17 +429,16 @@ it was built, before anything was published):
    verified free on crates.io with zero GitHub repository hits. Lint
    remains the flagship subcommand.
 
-## Appendix B — rauta prior art map (first consumer)
+## Appendix B — prior-art map (first consumer)
 
-| animsmith piece | rauta origin |
-|---|---|
-| `loop-seam`, `gait-phase` algorithms | `tools/locomotion_metrics.py` (uniform grid, FK, local-neighbour seam denominator, stride floor, L−R fundamental-harmonic trough) |
-| `root-motion-speed` + 15% gate | `tools/build_character_glb_native.py` (`measure_root_motion`, `gate_speed_meta_matches_measured`) |
-| measurement set (`bone_rotation_range_deg`, `animated_bones`, `speed_mps`, IBM-derived rest) | `tools/measured_sidecar.py` (deleted at M1 via issue #59) |
-| config vocabulary (`Pinned{value, tolerance}`, gait groups, seam-ratio max, rotation floor) | `crates/asset-contract/src/schema/animation.rs` |
-| `Finding`/severity/exit-code shape | `crates/asset-contract/src/report.rs`, `validate.rs` |
-| mutation-test discipline | `crates/asset-contract/tests/mutations.rs` |
-
-Prior research (Cascadeur constraints, engine ingest-validation patterns,
-glTF tooling survey) lives in rauta's `animation-authoring-design.md`
-appendix.
+The measurement algorithms, config vocabulary, and testing discipline
+were extracted from a private game project's asset pipeline — the
+uniform-grid sampler, the local-neighbour loop-seam denominator with
+its stride floor, the L−R fundamental-harmonic gait anchor, the
+root-motion speed gate, the `Pinned{value, tolerance}` expectation
+shape, the `Finding`/severity/exit-code conventions, and the
+mutation-test style (corrupt one field, assert the finding names it)
+are all faithful ports, golden-tested against that pipeline's shipped
+numbers. Its measurement scripts are deleted as the project migrates
+onto the animsmith library — the standing proof that the public API is
+sufficient for a real bake pipeline.
