@@ -16,7 +16,7 @@
 
 use animsmith_core::model::{
     Bone, Clip, Document, Interpolation, MaterialAsset, MeshAsset, Primitive, Property,
-    SceneAssets, Skeleton, SourceInfo, Track, TrackValues, Transform,
+    SceneAssets, Skeleton, SourceInfo, TextureAsset, Track, TrackValues, Transform,
 };
 use glam::{Mat4, Quat, Vec3};
 use std::path::Path;
@@ -207,7 +207,7 @@ pub fn load_with_assets(path: &Path) -> Result<(Document, SceneAssets), LoadErro
         });
     }
 
-    let assets = extract_assets(&scene);
+    let assets = extract_assets(&scene, path.parent());
 
     Ok((
         Document {
@@ -225,7 +225,52 @@ pub fn load_with_assets(path: &Path) -> Result<(Document, SceneAssets), LoadErro
 /// Triangulated, unindexed geometry + skins + factor-only materials.
 /// Corner attributes come straight from ufbx's indexed accessors; skin
 /// weights are per source vertex (top four, renormalized).
-fn extract_assets(scene: &ufbx::Scene) -> SceneAssets {
+/// Encoded image bytes for a material's base-color texture: embedded
+/// FBX content first, else the referenced file next to the source.
+/// Only PNG/JPEG pass through (glTF's mandated formats).
+fn base_color_texture(material: &ufbx::Material, base_dir: Option<&Path>) -> Option<TextureAsset> {
+    let texture = material.pbr.base_color.texture.as_ref().or(material
+        .fbx
+        .diffuse_color
+        .texture
+        .as_ref())?;
+    let bytes: Vec<u8> = if !texture.content.is_empty() {
+        texture.content.to_vec()
+    } else {
+        let mut found = None;
+        for candidate in [
+            texture.absolute_filename.as_ref(),
+            texture.relative_filename.as_ref(),
+            texture.filename.as_ref(),
+        ] {
+            if candidate.is_empty() {
+                continue;
+            }
+            let direct = Path::new(candidate);
+            let path = if direct.is_absolute() {
+                direct.to_path_buf()
+            } else {
+                base_dir.unwrap_or(Path::new(".")).join(direct)
+            };
+            if let Ok(data) = std::fs::read(&path) {
+                found = Some(data);
+                break;
+            }
+        }
+        found?
+    };
+    let mime = match bytes.get(..3) {
+        Some([0x89, b'P', b'N']) => "image/png",
+        Some([0xFF, 0xD8, _]) => "image/jpeg",
+        _ => return None,
+    };
+    Some(TextureAsset {
+        bytes,
+        mime: mime.into(),
+    })
+}
+
+fn extract_assets(scene: &ufbx::Scene, base_dir: Option<&Path>) -> SceneAssets {
     let mut assets = SceneAssets::default();
     let mut material_index: std::collections::BTreeMap<u32, usize> =
         std::collections::BTreeMap::new();
@@ -247,14 +292,16 @@ fn extract_assets(scene: &ufbx::Scene) -> SceneAssets {
                         } else {
                             m.fbx.diffuse_color.value_vec4
                         };
+                        let texture = base_color_texture(m, base_dir);
                         assets.materials.push(MaterialAsset {
                             name: m.element.name.to_string(),
-                            base_color: [
-                                base.x as f32,
-                                base.y as f32,
-                                base.z as f32,
-                                base.w as f32,
-                            ],
+                            // Exporter convention: a texture replaces
+                            // the factor (they multiply in glTF).
+                            base_color: if texture.is_some() {
+                                [1.0, 1.0, 1.0, 1.0]
+                            } else {
+                                [base.x as f32, base.y as f32, base.z as f32, base.w as f32]
+                            },
                             metallic: if m.pbr.metalness.has_value {
                                 m.pbr.metalness.value_vec4.x as f32
                             } else {
@@ -265,6 +312,7 @@ fn extract_assets(scene: &ufbx::Scene) -> SceneAssets {
                             } else {
                                 1.0
                             },
+                            base_color_texture: texture,
                         });
                         assets.materials.len() - 1
                     })
@@ -368,6 +416,9 @@ fn extract_assets(scene: &ufbx::Scene) -> SceneAssets {
             }
         }
         primitives.retain(|p| !p.positions.is_empty());
+        for prim in &mut primitives {
+            prim.weld();
+        }
         if primitives.is_empty() {
             continue;
         }

@@ -29,8 +29,16 @@ fn converted_mesh_is_structurally_sound() {
         for prim in mesh.primitives() {
             let reader = prim.reader(get);
             let positions: Vec<[f32; 3]> = reader.read_positions().expect("POSITION").collect();
-            assert!(positions.len().is_multiple_of(3), "unindexed triangles");
-            corners += positions.len();
+            let index_count = reader
+                .read_indices()
+                .map(|i| i.into_u32().count())
+                .unwrap_or(positions.len());
+            assert!(index_count.is_multiple_of(3), "triangles");
+            assert!(
+                positions.len() <= index_count,
+                "welding must not add vertices"
+            );
+            corners += index_count;
             // Mesh-local positions stay in source units under ufbx's
             // AdjustTransforms space conversion (the node/skin
             // matrices carry the unit scale), so only finiteness and a

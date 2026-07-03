@@ -5,6 +5,15 @@
 use animsmith_core::model::*;
 use glam::{Mat4, Vec3};
 
+/// A valid 1×1 white PNG.
+const TINY_PNG: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+    0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0xF8, 0xFF, 0xFF, 0x3F,
+    0x00, 0x05, 0xFE, 0x02, 0xFE, 0xA7, 0x35, 0x81, 0x84, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
+    0x44, 0xAE, 0x42, 0x60, 0x82,
+];
+
 fn skinned_triangle() -> (Document, SceneAssets) {
     let doc = Document {
         skeleton: Skeleton {
@@ -33,26 +42,46 @@ fn skinned_triangle() -> (Document, SceneAssets) {
         meshes: vec![MeshAsset {
             name: "tri".into(),
             node: 0,
-            primitives: vec![Primitive {
-                material: Some(0),
-                positions: vec![
-                    Vec3::new(0.0, 0.0, 0.0),
-                    Vec3::new(1.0, 0.0, 0.0),
-                    Vec3::new(0.0, 1.0, 0.0),
-                ],
-                normals: vec![Vec3::Z; 3],
-                uvs: vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
-                joints: vec![[0, 1, 0, 0]; 3],
-                weights: vec![[0.75, 0.25, 0.0, 0.0]; 3],
+            primitives: vec![{
+                // Two triangles sharing an edge: 6 corners, 4 unique.
+                let mut prim = Primitive {
+                    material: Some(0),
+                    indices: vec![],
+                    positions: vec![
+                        Vec3::new(0.0, 0.0, 0.0),
+                        Vec3::new(1.0, 0.0, 0.0),
+                        Vec3::new(0.0, 1.0, 0.0),
+                        Vec3::new(1.0, 0.0, 0.0),
+                        Vec3::new(1.0, 1.0, 0.0),
+                        Vec3::new(0.0, 1.0, 0.0),
+                    ],
+                    normals: vec![Vec3::Z; 6],
+                    uvs: vec![
+                        [0.0, 0.0],
+                        [1.0, 0.0],
+                        [0.0, 1.0],
+                        [1.0, 0.0],
+                        [1.0, 1.0],
+                        [0.0, 1.0],
+                    ],
+                    joints: vec![[0, 1, 0, 0]; 6],
+                    weights: vec![[0.75, 0.25, 0.0, 0.0]; 6],
+                };
+                prim.weld();
+                prim
             }],
             skin_joints: vec![0, 1],
             skin_ibms: vec![],
         }],
         materials: vec![MaterialAsset {
             name: "mat".into(),
-            base_color: [0.8, 0.2, 0.2, 1.0],
+            base_color: [1.0, 1.0, 1.0, 1.0],
             metallic: 0.0,
             roughness: 0.9,
+            base_color_texture: Some(TextureAsset {
+                bytes: TINY_PNG.to_vec(),
+                mime: "image/png".into(),
+            }),
         }],
     };
     (doc, assets)
@@ -76,11 +105,14 @@ fn skinned_mesh_round_trips_through_gltf_parser() {
     assert_eq!(prim.material().index(), Some(0));
     let reader = prim.reader(get);
     let positions: Vec<[f32; 3]> = reader.read_positions().expect("POSITION").collect();
-    assert_eq!(positions.len(), 3);
+    assert_eq!(positions.len(), 4, "welded to unique corners");
     assert_eq!(positions[1], [1.0, 0.0, 0.0]);
+    let indices: Vec<u32> = reader.read_indices().expect("indices").into_u32().collect();
+    assert_eq!(indices.len(), 6, "two triangles");
+    assert_eq!(&indices[..3], &[0, 1, 2]);
     assert_eq!(
         reader.read_normals().expect("NORMAL").count(),
-        3,
+        4,
         "normals present"
     );
     let uvs: Vec<[f32; 2]> = reader
@@ -89,6 +121,20 @@ fn skinned_mesh_round_trips_through_gltf_parser() {
         .into_f32()
         .collect();
     assert_eq!(uvs[2], [0.0, 1.0]);
+    // The embedded texture round-trips byte-for-byte.
+    let material = prim.material();
+    let tex = material
+        .pbr_metallic_roughness()
+        .base_color_texture()
+        .expect("baseColorTexture")
+        .texture();
+    let image = tex.source().source();
+    let gltf::image::Source::View { view, mime_type } = image else {
+        panic!("image must be buffer-backed");
+    };
+    assert_eq!(mime_type, "image/png");
+    let image_bytes = &blob[view.offset()..view.offset() + view.length()];
+    assert_eq!(image_bytes, TINY_PNG);
     let joints: Vec<[u16; 4]> = reader
         .read_joints(0)
         .expect("JOINTS_0")
