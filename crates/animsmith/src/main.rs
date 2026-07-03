@@ -73,6 +73,16 @@ enum Cmd {
         #[arg(long)]
         clip: Option<String>,
     },
+    /// Repair mechanical clip defects in place, byte-surgically: only
+    /// the offending animation bytes change; meshes, skins, materials,
+    /// and textures pass through untouched. Currently fixes quaternion
+    /// hemisphere flips (the `quat-flip` check) on glTF/GLB inputs.
+    Fix {
+        input: PathBuf,
+        /// Output path (defaults to in-place).
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
     /// Convert an input (typically FBX) to glTF: skeleton + animation
     /// tracks only — no meshes, skins, or materials. Output format by
     /// extension: .glb binary, .gltf JSON with an embedded buffer.
@@ -321,6 +331,38 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 doc.clips.len(),
                 findings.len(),
                 html.len() as f64 / 1e6
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        Cmd::Fix { input, output } => {
+            let ext = input
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(str::to_ascii_lowercase)
+                .unwrap_or_default();
+            if ext != "glb" && ext != "gltf" {
+                return Err(format!(
+                    "{}: fix operates on .glb/.gltf (convert FBX first)",
+                    input.display()
+                ));
+            }
+            let output = output.unwrap_or_else(|| input.clone());
+            let report = animsmith_gltf::fix::fix_quat_hemisphere(&input, &output)
+                .map_err(|e| e.to_string())?;
+            for t in &report.tracks {
+                println!(
+                    "  fixed[quat-flip] clip '{}' bone '{}': {} key(s) hemisphere-normalized",
+                    t.clip, t.bone, t.flipped_keys
+                );
+            }
+            for s in &report.skipped {
+                println!("  skipped: {s}");
+            }
+            println!(
+                "{} key(s) fixed across {} track(s) -> {}",
+                report.total_flipped(),
+                report.tracks.len(),
+                output.display()
             );
             Ok(ExitCode::SUCCESS)
         }
