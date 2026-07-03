@@ -1,8 +1,8 @@
 //! Engine-agnostic core of animsmith: the clip/skeleton data model, the
-//! game-runtime-like sampler (`PoseGrid`), measurements, rig profiles,
+//! game-runtime-like sampler ([`PoseGrid`]), measurements, rig profiles,
 //! configuration, and the check catalog. No file-format knowledge lives
-//! here — see `animsmith-gltf` (and, later, `animsmith-fbx`) for
-//! ingestion.
+//! here; pair it with `animsmith-gltf` or `animsmith-fbx` at the edge of
+//! a pipeline.
 
 pub mod check;
 pub mod checks;

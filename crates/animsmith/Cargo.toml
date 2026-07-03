@@ -1,6 +1,6 @@
 [package]
 name = "animsmith"
-description = "A linter for skeletal animation clips: game-engine-friendliness checks for glTF/GLB (and later FBX) animations"
+description = "A linter for skeletal animation clips: game-engine-friendliness checks for glTF/GLB and FBX animations"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

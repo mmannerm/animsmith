@@ -5,7 +5,7 @@ game team answers by hand today — **does this clip have
 game-engine-friendly characteristics?** — and then helps you make it
 so. Lint broken quaternions, degenerate durations, popped loop seams,
 gait-phase drift, and export bloat; convert straight from DCC exports;
-and (roadmap) fix the mechanical problems in place.
+and fix safe mechanical problems in place.
 
 glTF-Validator checks spec conformance; animsmith judges — and forges —
 *content*. Nothing open-source did game-semantics clip validation
@@ -15,16 +15,16 @@ before this.
 mechanical + locomotion-semantics check sets; rig profiles
 (mixamo / ue-mannequin / humanoid + auto-detect); `animsmith.toml`
 config with per-clip expectations and gait groups; subcommands
-`inspect` / `measure` / `lint` / `convert` / `report` / `diff`.
+`inspect` / `measure` / `lint` / `report` / `transform` / `fix` /
+`convert` / `diff`.
 The loop-seam and gait algorithms are golden-tested against the
 production numbers of the pipeline they were extracted from. See
-[DESIGN.md](DESIGN.md) for the full design and roadmap: next up are the
-remaining transform features — frame-range slice/trim + hold-extend,
-gait-anchor rotation, and full mesh/skin conversion (a maintained
-replacement for the archived FBX2glTF) — plus foot-slide and bind-pose
-checks. `fix` (quaternion hemisphere normalization) already ships: it
-patches only the offending animation bytes, so meshes, skins, and
-textures pass through byte-identical.
+[DESIGN.md](https://github.com/mmannerm/animsmith/blob/main/DESIGN.md)
+for the full design and roadmap. `fix`
+(quaternion hemisphere normalization) patches only the offending
+animation bytes, so meshes, skins, and textures pass through
+byte-identical. Next up are the remaining hard semantic checks and
+additional machine-readable output formats.
 
 ## Quickstart
 
@@ -41,7 +41,8 @@ $ cargo run -p animsmith -- inspect clip.glb          # skeleton + clips + detec
 $ cargo run -p animsmith -- report clip.glb -o report.html   # offline HTML: 3D playback + charts
 $ cargo run -p animsmith -- convert export.fbx -o clip.glb   # skeleton+animation glTF
 $ cargo run -p animsmith -- diff old.glb new.glb      # did the re-export change what matters?
-$ cargo run -p animsmith -- fix clip.glb -o fixed.glb # repair quat hemisphere flips, byte-surgically
+$ cargo run -p animsmith -- fix clip.glb -o fixed.glb # repair quat flips, byte-surgically
+$ cargo run -p animsmith -- fix clip.glb --dry-run    # inspect repairs without writing
 ```
 
 Exit codes: `0` clean/warnings-only, `1` error findings (`--deny-warnings`
@@ -52,7 +53,16 @@ attach it to a PR): a small hand-written WebGL viewer plays back **the
 exact pose-grid frames the checks judged** — no re-sampling in JS —
 with foot/root trails, metric charts synced to the scrubber, and a
 clickable findings list. FBX support bundles the ufbx C library; build
-with `--no-default-features` for a pure-Rust glTF-only binary.
+with `--no-default-features` for a pure-Rust glTF-only binary. In that
+build, glTF inspect/measure/lint/transform/fix/diff stay available; the
+HTML `report` command requires the `report` feature and the FBX-oriented
+`convert` command requires the `fbx` feature.
+
+More documentation:
+
+- [CLI reference](https://github.com/mmannerm/animsmith/blob/main/docs/cli.md)
+- [Embedding API](https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md)
+- [Machine-readable output](https://github.com/mmannerm/animsmith/blob/main/docs/output.md)
 
 ## Checks
 
@@ -95,37 +105,38 @@ loop = true
 [clips.run_forward]
 speed_mps = { value = 3.1, tolerance = 0.25 }
 
-[groups.run-ring]
+[gait_groups.run-ring]
 clips = ["run_forward", "run_backward", "run_left", "run_right"]
 max_gait_phase_spread = 0.15
 min_lr_amplitude_m = 0.03
 ```
 
-See [examples/character.animsmith.toml](examples/character.animsmith.toml) for a
-real config mirroring the incubating project's animation contract.
+See the
+[worked config](https://github.com/mmannerm/animsmith/blob/main/examples/character.animsmith.toml)
+for a real contract-style example.
 Checks whose rig roles don't resolve are skipped with a note — never a
 false failure. `--select`, `--allow`, and `[checks.*] severity`
 (including `"off"`) control what runs and how hard it fails.
 
 ## Workspace
 
-- [`animsmith-core`](crates/animsmith-core) — engine-agnostic data model,
+- [`animsmith-core`](https://github.com/mmannerm/animsmith/tree/main/crates/animsmith-core) — engine-agnostic data model,
   game-runtime-like sampler (`PoseGrid`), measurements, checks. What
   pipelines embed.
-- [`animsmith-gltf`](crates/animsmith-gltf) — glTF/GLB ingestion + the
+- [`animsmith-gltf`](https://github.com/mmannerm/animsmith/tree/main/crates/animsmith-gltf) — glTF/GLB ingestion + the
   glTF writer behind `convert`.
-- [`animsmith-fbx`](crates/animsmith-fbx) — FBX ingestion via ufbx
+- [`animsmith-fbx`](https://github.com/mmannerm/animsmith/tree/main/crates/animsmith-fbx) — FBX ingestion via ufbx
   (isolates the C build; optional).
-- [`animsmith-report`](crates/animsmith-report) — the self-contained
+- [`animsmith-report`](https://github.com/mmannerm/animsmith/tree/main/crates/animsmith-report) — the self-contained
   HTML report.
-- [`animsmith`](crates/animsmith) — the CLI.
+- [`animsmith`](https://github.com/mmannerm/animsmith/tree/main/crates/animsmith) — the CLI.
 
 ## Contributing
 
 All merges go through PRs with Conventional Commits (CI enforces both);
 merged `feat`/`fix` commits auto-publish a GitHub Release. Agent
 workflow, architecture invariants, and the audit gate live in
-[.agent-instructions/shared.md](.agent-instructions/shared.md).
+[.agent-instructions/shared.md](https://github.com/mmannerm/animsmith/blob/main/.agent-instructions/shared.md).
 
 ## License
 

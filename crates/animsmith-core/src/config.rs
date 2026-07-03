@@ -1,5 +1,5 @@
 //! Typed configuration: rig selection, per-check settings, per-clip
-//! expectations, and gait groups. The TOML file (`animsmith.toml`) is
+//! expectations, and typed clip groups. The TOML file (`animsmith.toml`) is
 //! *one* constructor of this — embedding pipelines build it
 //! programmatically through this module and keep their own contract
 //! formats on their side.
@@ -154,7 +154,7 @@ pub struct Config {
     #[serde(default)]
     pub clips: BTreeMap<String, ClipExpectations>,
     #[serde(default)]
-    pub groups: BTreeMap<String, GaitGroup>,
+    pub gait_groups: BTreeMap<String, GaitGroup>,
 }
 
 impl Config {

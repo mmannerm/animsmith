@@ -1,7 +1,5 @@
-//! The animsmith CLI. See DESIGN.md §3 for the surface; M0+M1 ship
-//! `inspect`, `measure`, and `lint` over glTF/GLB with the mechanical
-//! and semantic check sets, rig profiles, and TOML config. `convert`,
-//! `report`, `diff`, and FBX input arrive in later milestones.
+//! The animsmith CLI: inspect, measure, lint, report, transform, fix,
+//! convert, and diff skeletal animation clips.
 
 mod diff;
 
@@ -10,6 +8,7 @@ use animsmith_core::profile::{ResolvedRoles, resolve_named};
 use animsmith_core::{CheckCtx, Config, Finding, Severity, all_checks, run_checks};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -21,11 +20,13 @@ const EXIT_OPERATOR: u8 = 2;
 /// Version of the machine-readable output schema, bumped on breaking
 /// changes to the JSON shape.
 const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_URL: &str =
+    "https://raw.githubusercontent.com/mmannerm/animsmith/main/docs/schemas/output-v1.schema.json";
 
 #[derive(Parser)]
 #[command(
     name = "animsmith",
-    version,
+    version = env!("ANIMSMITH_VERSION"),
     about = "A linter for skeletal animation clips"
 )]
 struct Cli {
@@ -39,15 +40,22 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// Summarize a file: skeleton, clips, tracks, detected rig profile.
-    Inspect { file: PathBuf },
+    Inspect {
+        /// Input .glb, .gltf, or .fbx file.
+        file: PathBuf,
+    },
     /// Emit per-clip measurements without judging them.
     Measure {
+        /// Input .glb, .gltf, or .fbx files.
+        #[arg(required = true, value_name = "FILE")]
         files: Vec<PathBuf>,
         #[arg(long, value_enum, default_value_t = Format::Json)]
         format: Format,
     },
     /// Run the check catalog and report findings.
     Lint {
+        /// Input .glb, .gltf, or .fbx files.
+        #[arg(required = true, value_name = "FILE")]
         files: Vec<PathBuf>,
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
@@ -66,7 +74,9 @@ enum Cmd {
     /// and the findings list.
     #[cfg(feature = "report")]
     Report {
+        /// Input .glb, .gltf, or .fbx file.
         file: PathBuf,
+        /// Output HTML report path.
         #[arg(short, long)]
         output: PathBuf,
         /// Restrict the report to one clip.
@@ -78,13 +88,15 @@ enum Cmd {
     /// clips before splicing them into a full asset). Operations apply
     /// to every clip, or one clip via --clip.
     Transform {
+        /// Input .glb, .gltf, or .fbx file.
         input: PathBuf,
+        /// Output .glb or .gltf path.
         #[arg(short, long)]
         output: PathBuf,
         /// Restrict to one clip.
         #[arg(long)]
         clip: Option<String>,
-        /// Keep only [start:end] seconds, retimed to start at 0
+        /// Keep only `START:END` seconds, retimed to start at 0
         /// (half-frame epsilon at --fps).
         #[arg(long, value_name = "START:END")]
         slice: Option<String>,
@@ -105,17 +117,37 @@ enum Cmd {
     /// and textures pass through untouched. Currently fixes quaternion
     /// hemisphere flips (the `quat-flip` check) on glTF/GLB inputs.
     Fix {
-        input: PathBuf,
-        /// Output path (defaults to in-place).
-        #[arg(short, long)]
+        /// Input .glb or .gltf file. Omit only with --list-repairs.
+        #[arg(value_name = "FILE")]
+        input: Option<PathBuf>,
+        /// Output path. Required unless --in-place or --dry-run is used.
+        #[arg(short, long, value_name = "PATH")]
         output: Option<PathBuf>,
+        /// Modify the input file in place.
+        #[arg(long, conflicts_with = "output")]
+        in_place: bool,
+        /// Run exactly these repairs (comma-separated ids).
+        #[arg(long = "repair", value_enum, value_delimiter = ',')]
+        repairs: Vec<Repair>,
+        /// Run this repair group when --repair is not set.
+        #[arg(long, value_enum, default_value = "default")]
+        group: RepairGroup,
+        /// Report what would be repaired without writing output.
+        #[arg(long)]
+        dry_run: bool,
+        /// List known repairs and groups.
+        #[arg(long)]
+        list_repairs: bool,
     },
     /// Convert an input (typically FBX) to glTF: skeleton, animation,
     /// triangulated meshes, skins, and factor-only materials (texture
     /// wiring stays a downstream concern). Output format by extension:
     /// .glb binary, .gltf JSON with an embedded buffer.
+    #[cfg(feature = "fbx")]
     Convert {
+        /// Input .fbx file.
         input: PathBuf,
+        /// Output .glb or .gltf path.
         #[arg(short, long)]
         output: PathBuf,
         /// Strip geometry: emit skeleton + animation only.
@@ -126,7 +158,9 @@ enum Cmd {
     /// `measure` JSON) and report movement beyond significance
     /// thresholds. Exits 1 on significant movement.
     Diff {
+        /// Before input: asset file or single-file `measure --format json` report.
         a: PathBuf,
+        /// After input: asset file or single-file `measure --format json` report.
         b: PathBuf,
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
@@ -137,6 +171,61 @@ enum Cmd {
 enum Format {
     Text,
     Json,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum Repair {
+    QuatFlip,
+}
+
+impl Repair {
+    fn id(self) -> &'static str {
+        match self {
+            Repair::QuatFlip => "quat-flip",
+        }
+    }
+
+    fn summary(self) -> &'static str {
+        match self {
+            Repair::QuatFlip => "lossless quaternion hemisphere normalization",
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum RepairGroup {
+    Default,
+    Lossless,
+    Mechanical,
+    All,
+}
+
+const ALL_REPAIRS: &[Repair] = &[Repair::QuatFlip];
+const ALL_REPAIR_GROUPS: &[RepairGroup] = &[
+    RepairGroup::Default,
+    RepairGroup::Lossless,
+    RepairGroup::Mechanical,
+    RepairGroup::All,
+];
+
+impl RepairGroup {
+    fn repairs(self) -> &'static [Repair] {
+        match self {
+            RepairGroup::Default
+            | RepairGroup::Lossless
+            | RepairGroup::Mechanical
+            | RepairGroup::All => ALL_REPAIRS,
+        }
+    }
+
+    fn description(self) -> &'static str {
+        match self {
+            RepairGroup::Default => "safe, lossless, idempotent repairs",
+            RepairGroup::Lossless => "all mathematically lossless repairs",
+            RepairGroup::Mechanical => "deterministic pipeline-mechanical repairs",
+            RepairGroup::All => "every available repair",
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -157,18 +246,95 @@ impl ToolInfo {
 #[derive(Serialize)]
 struct RigInfo {
     profile: String,
-    resolved_roles: std::collections::BTreeMap<&'static str, String>,
+    resolved_roles: BTreeMap<&'static str, String>,
 }
 
 #[derive(Serialize)]
 struct FileReport {
-    schema_version: u32,
-    tool: ToolInfo,
-    file: String,
+    path: String,
     rig: RigInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
     findings: Option<Vec<Finding>>,
-    measurements: std::collections::BTreeMap<String, animsmith_core::measure::ClipMeasurements>,
+    measurements: BTreeMap<String, animsmith_core::measure::ClipMeasurements>,
+}
+
+#[derive(Default, Serialize)]
+struct FindingSummary {
+    error: usize,
+    warning: usize,
+    note: usize,
+}
+
+impl FindingSummary {
+    fn add(&mut self, severity: Severity) {
+        match severity {
+            Severity::Error => self.error += 1,
+            Severity::Warning => self.warning += 1,
+            Severity::Note => self.note += 1,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct ReportSummary {
+    files: usize,
+    findings: FindingSummary,
+}
+
+#[derive(Serialize)]
+struct ReportEnvelope {
+    schema_version: u32,
+    schema: &'static str,
+    tool: ToolInfo,
+    command: &'static str,
+    summary: ReportSummary,
+    files: Vec<FileReport>,
+}
+
+impl ReportEnvelope {
+    fn new(command: &'static str, files: Vec<FileReport>) -> Self {
+        let mut findings = FindingSummary::default();
+        for file in &files {
+            if let Some(file_findings) = &file.findings {
+                for finding in file_findings {
+                    findings.add(finding.severity);
+                }
+            }
+        }
+        Self {
+            schema_version: SCHEMA_VERSION,
+            schema: SCHEMA_URL,
+            tool: ToolInfo::current(),
+            command,
+            summary: ReportSummary {
+                files: files.len(),
+                findings,
+            },
+            files,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct DiffInputs {
+    before: String,
+    after: String,
+}
+
+#[derive(Serialize)]
+struct DiffSummary {
+    deltas: usize,
+}
+
+#[derive(Serialize)]
+struct DiffEnvelope {
+    schema_version: u32,
+    schema: &'static str,
+    tool: ToolInfo,
+    command: &'static str,
+    inputs: DiffInputs,
+    summary: DiffSummary,
+    deltas: Vec<diff::MetricDelta>,
 }
 
 fn main() -> ExitCode {
@@ -203,7 +369,11 @@ fn load_config(explicit: Option<&Path>) -> Result<Config, String> {
 fn resolve_roles(doc: &Document, config: &Config) -> ResolvedRoles {
     let base = resolve_named(&doc.skeleton, &config.rig.profile).unwrap_or_default();
     if config.rig.roles.is_empty() {
-        return base;
+        let mut roles = base;
+        if roles.profile.is_empty() {
+            roles.profile = "unknown".into();
+        }
+        return roles;
     }
     let mut pairs: Vec<_> = base
         .iter()
@@ -235,35 +405,93 @@ fn rig_info(doc: &Document, roles: &ResolvedRoles) -> RigInfo {
     }
 }
 
+fn print_repairs() {
+    println!("repairs:");
+    for repair in ALL_REPAIRS {
+        println!("  {:<12} {}", repair.id(), repair.summary());
+    }
+    println!("groups:");
+    for group in ALL_REPAIR_GROUPS {
+        let repairs = group
+            .repairs()
+            .iter()
+            .map(|repair| repair.id())
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!(
+            "  {:<12} {} [{}]",
+            group
+                .to_possible_value()
+                .expect("repair groups have clap values")
+                .get_name(),
+            group.description(),
+            repairs
+        );
+    }
+}
+
+fn print_fix_report(
+    repair: Repair,
+    report: &animsmith_gltf::fix::FixReport,
+    output: Option<&Path>,
+    dry_run: bool,
+) {
+    let verb = if dry_run { "would fix" } else { "fixed" };
+    for t in &report.tracks {
+        println!(
+            "  {verb}[{}] clip '{}' bone '{}': {} key(s) hemisphere-normalized",
+            repair.id(),
+            t.clip,
+            t.bone,
+            t.flipped_keys
+        );
+    }
+    for s in &report.skipped {
+        println!("  skipped[{}]: {s}", repair.id());
+    }
+    let target = if dry_run {
+        "no output written".into()
+    } else {
+        output
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "output".into())
+    };
+    println!(
+        "{} key(s) {} across {} track(s) -> {target}",
+        report.total_flipped(),
+        if dry_run { "would be fixed" } else { "fixed" },
+        report.tracks.len(),
+    );
+}
+
 fn run(cli: Cli) -> Result<ExitCode, String> {
-    let config = load_config(cli.config.as_deref())?;
     match cli.cmd {
         Cmd::Inspect { file } => {
+            let config = load_config(cli.config.as_deref())?;
             let doc = load(&file)?;
             let roles = resolve_roles(&doc, &config);
             inspect(&doc, &roles);
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Measure { files, format } => {
+            let config = load_config(cli.config.as_deref())?;
             require_files(&files)?;
             let mut reports = Vec::new();
             for file in &files {
                 let doc = load(file)?;
                 let roles = resolve_roles(&doc, &config);
                 reports.push(FileReport {
-                    schema_version: SCHEMA_VERSION,
-                    tool: ToolInfo::current(),
-                    file: file.display().to_string(),
+                    path: file.display().to_string(),
                     rig: rig_info(&doc, &roles),
                     findings: None,
                     measurements: animsmith_core::measure::measure_document(&doc, &roles),
                 });
             }
             match format {
-                Format::Json => print_json(&reports),
+                Format::Json => print_json(&ReportEnvelope::new("measure", reports)),
                 Format::Text => {
                     for report in &reports {
-                        println!("{}:", report.file);
+                        println!("{}:", report.path);
                         for (clip, m) in &report.measurements {
                             let seam = m
                                 .loop_seam_ratio
@@ -294,6 +522,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             select,
             allow,
         } => {
+            let config = load_config(cli.config.as_deref())?;
             require_files(&files)?;
             let mut checks = all_checks();
             if !select.is_empty() {
@@ -324,16 +553,14 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     worst = worst.max(finding.severity);
                 }
                 reports.push(FileReport {
-                    schema_version: SCHEMA_VERSION,
-                    tool: ToolInfo::current(),
-                    file: file.display().to_string(),
+                    path: file.display().to_string(),
                     rig: rig_info(&doc, &roles),
                     findings: Some(findings),
                     measurements: animsmith_core::measure::measure_document(&doc, &roles),
                 });
             }
             match format {
-                Format::Json => print_json(&reports),
+                Format::Json => print_json(&ReportEnvelope::new("lint", reports)),
                 Format::Text => print_text(&reports),
             }
             let fail_at = if deny_warnings {
@@ -349,6 +576,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
         }
         #[cfg(feature = "report")]
         Cmd::Report { file, output, clip } => {
+            let config = load_config(cli.config.as_deref())?;
             let doc = load(&file)?;
             let roles = resolve_roles(&doc, &config);
             let ctx = CheckCtx::new(&doc, &roles, &config);
@@ -374,6 +602,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             gait_anchor,
             fps,
         } => {
+            let config = load_config(cli.config.as_deref())?;
             let mut doc = load(&input)?;
             let roles = resolve_roles(&doc, &config);
             let window = match &slice {
@@ -435,7 +664,20 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             println!("wrote {} ({touched} clip(s) transformed)", output.display());
             Ok(ExitCode::SUCCESS)
         }
-        Cmd::Fix { input, output } => {
+        Cmd::Fix {
+            input,
+            output,
+            in_place,
+            repairs,
+            group,
+            dry_run,
+            list_repairs,
+        } => {
+            if list_repairs {
+                print_repairs();
+                return Ok(ExitCode::SUCCESS);
+            }
+            let input = input.ok_or_else(|| "fix requires an input file".to_string())?;
             let ext = input
                 .extension()
                 .and_then(|e| e.to_str())
@@ -447,26 +689,43 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     input.display()
                 ));
             }
-            let output = output.unwrap_or_else(|| input.clone());
-            let report = animsmith_gltf::fix::fix_quat_hemisphere(&input, &output)
-                .map_err(|e| e.to_string())?;
-            for t in &report.tracks {
-                println!(
-                    "  fixed[quat-flip] clip '{}' bone '{}': {} key(s) hemisphere-normalized",
-                    t.clip, t.bone, t.flipped_keys
+            let selected = if repairs.is_empty() {
+                group.repairs().to_vec()
+            } else {
+                repairs
+            };
+            if selected.is_empty() {
+                return Err("no repairs selected".into());
+            }
+            if !dry_run && output.is_none() && !in_place {
+                return Err(
+                    "fix requires --output <PATH> or --in-place (use --dry-run to inspect only)"
+                        .into(),
                 );
             }
-            for s in &report.skipped {
-                println!("  skipped: {s}");
+            let output = if in_place {
+                Some(input.clone())
+            } else {
+                output
+            };
+            for repair in selected {
+                match repair {
+                    Repair::QuatFlip => {
+                        let report = if dry_run {
+                            animsmith_gltf::fix::inspect_quat_hemisphere(&input)
+                                .map_err(|e| e.to_string())?
+                        } else {
+                            let output = output.as_ref().expect("validated output target");
+                            animsmith_gltf::fix::fix_quat_hemisphere(&input, output)
+                                .map_err(|e| e.to_string())?
+                        };
+                        print_fix_report(repair, &report, output.as_deref(), dry_run);
+                    }
+                }
             }
-            println!(
-                "{} key(s) fixed across {} track(s) -> {}",
-                report.total_flipped(),
-                report.tracks.len(),
-                output.display()
-            );
             Ok(ExitCode::SUCCESS)
         }
+        #[cfg(feature = "fbx")]
         Cmd::Convert {
             input,
             output,
@@ -478,7 +737,6 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 .map(str::to_ascii_lowercase)
                 .unwrap_or_default();
             let (doc, assets) = match ext.as_str() {
-                #[cfg(feature = "fbx")]
                 "fbx" if !animation_only => {
                     animsmith_fbx::load_with_assets(&input).map_err(|e| e.to_string())?
                 }
@@ -508,11 +766,26 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Diff { a, b, format } => {
+            let config = load_config(cli.config.as_deref())?;
             let ma = load_measurements(&a, &config)?;
             let mb = load_measurements(&b, &config)?;
             let deltas = diff::diff_measurements(&ma, &mb);
+            let has_deltas = !deltas.is_empty();
             match format {
-                Format::Json => print_json(&deltas),
+                Format::Json => print_json(&DiffEnvelope {
+                    schema_version: SCHEMA_VERSION,
+                    schema: SCHEMA_URL,
+                    tool: ToolInfo::current(),
+                    command: "diff",
+                    inputs: DiffInputs {
+                        before: a.display().to_string(),
+                        after: b.display().to_string(),
+                    },
+                    summary: DiffSummary {
+                        deltas: deltas.len(),
+                    },
+                    deltas,
+                }),
                 Format::Text => {
                     if deltas.is_empty() {
                         println!("no significant movement");
@@ -529,22 +802,21 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     println!("{} significant change(s)", deltas.len());
                 }
             }
-            Ok(if deltas.is_empty() {
-                ExitCode::SUCCESS
-            } else {
+            Ok(if has_deltas {
                 ExitCode::from(EXIT_FINDINGS)
+            } else {
+                ExitCode::SUCCESS
             })
         }
     }
 }
 
 /// Measurements for `diff`: an asset file (measured now) or a prior
-/// `measure`/`lint` JSON report (its `measurements` field, or the whole
-/// object as a bare measurement map).
+/// single-file `measure`/`lint` JSON report.
 fn load_measurements(
     path: &Path,
     config: &Config,
-) -> Result<std::collections::BTreeMap<String, animsmith_core::measure::ClipMeasurements>, String> {
+) -> Result<BTreeMap<String, animsmith_core::measure::ClipMeasurements>, String> {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
@@ -555,7 +827,20 @@ fn load_measurements(
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         let value: serde_json::Value = serde_json::from_str(&text)
             .map_err(|e| format!("bad JSON in {}: {e}", path.display()))?;
-        let map = value.get("measurements").cloned().unwrap_or(value);
+        let map = if let Some(files) = value.get("files").and_then(|v| v.as_array()) {
+            if files.len() != 1 {
+                return Err(format!(
+                    "{} is a multi-file report; diff expects a single-file measurement report",
+                    path.display()
+                ));
+            }
+            files[0]
+                .get("measurements")
+                .cloned()
+                .ok_or_else(|| format!("{} report has no measurements", path.display()))?
+        } else {
+            value.get("measurements").cloned().unwrap_or(value)
+        };
         return serde_json::from_value(map)
             .map_err(|e| format!("{} is not a measurements report: {e}", path.display()));
     }
@@ -594,12 +879,8 @@ fn load(path: &Path) -> Result<Document, String> {
     }
 }
 
-fn print_json<T: Serialize>(reports: &[T]) {
-    let out = if reports.len() == 1 {
-        serde_json::to_string_pretty(&reports[0])
-    } else {
-        serde_json::to_string_pretty(reports)
-    };
+fn print_json<T: Serialize>(value: &T) {
+    let out = serde_json::to_string_pretty(value);
     println!("{}", out.expect("report serializes"));
 }
 
@@ -610,10 +891,10 @@ fn print_text(reports: &[FileReport]) {
     for report in reports {
         let findings = report.findings.as_deref().unwrap_or_default();
         if findings.is_empty() {
-            println!("{}: clean", report.file);
+            println!("{}: clean", report.path);
             continue;
         }
-        println!("{}:", report.file);
+        println!("{}:", report.path);
         for f in findings {
             match f.severity {
                 Severity::Error => errors += 1,

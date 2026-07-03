@@ -1,7 +1,8 @@
 # animsmith — design & requirements
 
-Status: v1 design, pre-implementation. Intended to seed the new repo as
-`DESIGN.md`.
+Status: v0.1 publishing design. Intended to keep the public crate and
+CLI surface aligned while the project is still willing to make breaking
+changes.
 Origin: extracted from a private game project's animation pipeline
 (design session 2026-07-03); that project — "the incubating project"
 below — is the first consumer, not the scope.
@@ -79,8 +80,11 @@ output, and a self-contained HTML report with a 3D preview.
 animsmith lint    <file...> [--config animsmith.toml] [--select ids] [--deny warn] [--format text|json]
 animsmith measure <file...> --format json          # measurements only, no judgment
 animsmith inspect <file>                           # clips, durations, tracks, bones, detected rig profile
-animsmith convert <in.fbx> -o <out.glb> [--animation-only]
 animsmith report  <file> -o report.html [--clip name]
+animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor]
+animsmith fix     <file> (-o <out.glb>|--in-place) [--repair id[,id] | --group default|lossless|mechanical|all] [--dry-run]
+animsmith fix     --list-repairs
+animsmith convert <in.fbx> -o <out.glb> [--animation-only]
 animsmith diff    <A> <B> [--format text|json]     # A/B: asset files or prior `measure` JSON
 ```
 
@@ -92,6 +96,14 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: asset files or prior `
   config). `--deny-warnings` promotes warnings to errors.
 - Inputs: `.glb`, `.gltf` (+ external buffers), `.fbx` (via the `fbx`
   feature, default-on in the released binary).
+- `fix` intentionally requires either `-o/--output` or `--in-place` for
+  writes; `--dry-run` is inspect-only. Repairs are addressed by stable
+  ids and grouped into `default`, `lossless`, `mechanical`, and `all` so
+  future fixes can be added without changing the command shape.
+- `convert` is compiled only with the `fbx` feature. `--no-default-features`
+  remains a glTF-only pure-Rust CLI with validation, transform, fix, and
+  diff commands intact; `report` is controlled separately by the
+  `report` feature.
 
 ## 4. Repository & crate layout
 
@@ -264,7 +276,7 @@ in_place = true
 speed_mps = { value = 3.1, tolerance = 0.25 }
 fps = 30
 
-[groups.run-ring]
+[gait_groups.run-ring]
 clips = ["run_forward", "run_back", "run_left", "run_right"]
 max_gait_phase_spread = 0.08
 min_lr_amplitude_m = 0.05
@@ -282,12 +294,18 @@ learns an embedder's contract schema.
 
 - **Text** (default): findings grouped per clip, measured-vs-expected on
   one line, colored; `--quiet` for CI summaries.
-- **JSON** (`--format json`): versioned stable schema —
-  `{ schema_version, tool: {name, version}, file, rig: {profile,
-  resolved_roles}, findings: [...], measurements: {clip → metric map} }`.
-  `measure` emits only `measurements`; `lint` emits both. Field structure
-  is deliberately SARIF-mappable (rule id, level, location) so SARIF later
-  is a serializer, not a redesign.
+- **JSON** (`--format json`): versioned native envelope —
+  `{ schema_version, schema, tool: {name, version}, command, summary,
+  files: [{path, rig: {profile, resolved_roles}, findings?, measurements}] }`.
+  `measure` omits `findings`; `lint` emits both findings and
+  measurements. The top-level envelope leaves room for multi-file runs,
+  future metadata, and additional formats without changing per-file
+  records.
+- **Future serializers**: no game-industry standard exists for skeletal
+  animation lint results. Keep native JSON as the source of truth, then
+  add serializers where downstream tools expect them: SARIF for code
+  scanning, GitLab Code Quality/CodeClimate for MR widgets, JUnit XML for
+  CI test dashboards, and CSV/HTML for humans.
 - **`diff A B`**: compares measurement maps per metric with per-metric
   significance thresholds (defaults derived from configured tolerances);
   prints deltas; exits 1 on significant movement. Primary use: "did this
@@ -404,7 +422,8 @@ to *that* frame N. Determinism is the feature.
    JSON blocks if it bites.
 7. **Scope pressure toward transformation** will come ("you detected the
    seam pop — just fix it"). The linter-first line is the identity; only
-   `convert` and (later, mechanical-only) `fix` may mutate data.
+   `convert`, `transform`, and mechanical/lossless `fix` operations may
+   mutate data.
 
 ## Appendix A — naming decision record
 

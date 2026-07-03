@@ -1,0 +1,80 @@
+# animsmith CLI
+
+`animsmith` is designed for artist inner loops, CI gates, and pipeline
+automation. It reads glTF/GLB everywhere; the released default build also
+reads FBX through the `fbx` feature.
+
+## Commands
+
+```console
+animsmith inspect <file>
+animsmith measure <file...> [--format text|json]
+animsmith lint <file...> [--format text|json] [--select id[,id]] [--allow id[,id]] [--deny-warnings]
+animsmith report <file> -o <report.html> [--clip name]
+animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor] [--fps N]
+animsmith fix <file> (-o <out.glb>|--in-place) [--repair id[,id] | --group default|lossless|mechanical|all] [--dry-run]
+animsmith fix --list-repairs
+animsmith convert <in.fbx> -o <out.glb|out.gltf> [--animation-only]
+animsmith diff <before> <after> [--format text|json]
+```
+
+`--config animsmith.toml` is global. Without it, the CLI auto-loads
+`./animsmith.toml` when present and otherwise uses built-in defaults.
+
+## Exit Codes
+
+| Code | Meaning |
+|---:|---|
+| 0 | Clean, or warnings only. |
+| 1 | At least one failing finding, or a significant `diff`. |
+| 2 | Operator/tool error: unreadable input, bad config, unsupported format, or invalid flags. |
+
+Use `lint --deny-warnings` when CI should fail on warnings as well as
+errors.
+
+## Feature Flags
+
+The default binary enables `fbx` and `report`.
+
+```console
+cargo install animsmith
+cargo install animsmith --no-default-features
+```
+
+The no-default-features build has no C toolchain dependency and keeps the
+glTF-only workflow: `inspect`, `measure`, `lint`, `transform`, `fix`, and
+`diff`. The HTML `report` command is controlled by the `report` feature.
+The FBX-oriented `convert` command is compiled only with the `fbx`
+feature.
+
+## Repairs
+
+Repairs have stable ids so scripts can pin exact behavior:
+
+| Repair id | Group(s) | Behavior |
+|---|---|---|
+| `quat-flip` | `default`, `lossless`, `mechanical`, `all` | Normalizes adjacent quaternion keys to the same hemisphere. This is lossless because `q` and `-q` represent the same rotation. |
+
+`fix` writes only when you explicitly choose a destination:
+
+```console
+animsmith fix clip.glb --dry-run
+animsmith fix clip.glb -o fixed.glb
+animsmith fix clip.glb --in-place
+animsmith fix clip.glb --repair quat-flip -o fixed.glb
+```
+
+Use `--repair` for an exact list. Use `--group` for a policy that may grow
+within its promise; `default` is the safe CI choice.
+
+## Machine Output
+
+`measure`, `lint`, and `diff` support `--format json`. The native JSON
+contract is the source of truth and is versioned with `schema_version`.
+See [output.md](output.md) and
+[schemas/output-v1.schema.json](schemas/output-v1.schema.json).
+
+Native JSON is deliberately shaped so serializers can be added later
+without redesigning the checks: SARIF for code scanning, GitLab Code
+Quality/CodeClimate for MR widgets, JUnit XML for CI dashboards, and CSV
+for ad-hoc analysis.

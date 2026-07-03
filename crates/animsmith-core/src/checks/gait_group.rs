@@ -18,7 +18,7 @@ impl Check for GaitGroup {
     }
 
     fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
-        for (group_name, group) in &ctx.config.groups {
+        for (group_name, group) in &ctx.config.gait_groups {
             let mut measured: Vec<(&str, f64)> = Vec::new();
             for clip_name in &group.clips {
                 let Some(index) = ctx.doc.clips.iter().position(|c| &c.name == clip_name) else {

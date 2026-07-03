@@ -241,7 +241,7 @@ fn gait_group_spread_is_flagged() {
         ],
     });
     let config = json_config(serde_json::json!({
-        "groups": { "ring": {
+        "gait_groups": { "ring": {
             "clips": ["walk", "walk_swapped"],
             "max_gait_phase_spread": 0.1,
             "min_lr_amplitude_m": 0.05
@@ -262,7 +262,7 @@ fn coherent_gait_group_is_clean() {
     second.name = "walk_b".into();
     doc.clips.push(second);
     let config = json_config(serde_json::json!({
-        "groups": { "ring": {
+        "gait_groups": { "ring": {
             "clips": ["walk", "walk_b"],
             "max_gait_phase_spread": 0.1,
             "min_lr_amplitude_m": 0.05
@@ -279,7 +279,7 @@ fn coherent_gait_group_is_clean() {
 fn missing_group_member_is_flagged() {
     let doc = walk_doc();
     let config = json_config(serde_json::json!({
-        "groups": { "ring": {
+        "gait_groups": { "ring": {
             "clips": ["walk", "no_such_clip"],
             "max_gait_phase_spread": 0.1
         }}

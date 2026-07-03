@@ -11,7 +11,7 @@ use animsmith_core::finding::Finding;
 use animsmith_core::metrics::metric_frame_count;
 use animsmith_core::model::Document;
 use animsmith_core::profile::{ResolvedRoles, Role};
-use animsmith_core::sample::sample_clip;
+use animsmith_core::sample::{PoseGrid, sample_clip};
 use base64::Engine as _;
 use serde_json::{Value, json};
 
@@ -146,11 +146,7 @@ pub fn render(
 /// SVG metric charts for one clip: gait signal (L/R foot heights and
 /// their difference) and the top-down root path. Rust-rendered; a JS
 /// playhead line is moved across them in sync with the 3D view.
-fn clip_charts(
-    clip_name: &str,
-    grid: &animsmith_core::sample::PoseGrid,
-    roles: &ResolvedRoles,
-) -> String {
+fn clip_charts(clip_name: &str, grid: &PoseGrid, roles: &ResolvedRoles) -> String {
     let mut out = String::new();
     let frames = grid.frame_count();
     let hips = roles.get(Role::Hips);

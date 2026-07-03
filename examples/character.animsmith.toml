@@ -1,6 +1,6 @@
 # Worked example: a game character's animation contract expressed as an
 # animsmith config — loop declarations for the locomotion rings, the
-# seam cap, and gait-coherence groups. Pairs with docs/embedding.md.
+# seam cap, and typed gait-coherence groups. Pairs with docs/embedding.md.
 #
 #   animsmith lint --config examples/character.animsmith.toml character.glb
 
@@ -27,7 +27,7 @@ loop = true
 [clips.idle_1h]
 loop = true
 
-[groups.run-ring]
+[gait_groups.run-ring]
 clips = [
     "run_forward_1h", "run_backward_1h", "run_left_1h", "run_right_1h",
     "run_forward_left_1h", "run_forward_right_1h",
@@ -36,7 +36,7 @@ clips = [
 max_gait_phase_spread = 0.15
 min_lr_amplitude_m = 0.03
 
-[groups.walk-ring]
+[gait_groups.walk-ring]
 clips = [
     "walk_forward_1h", "walk_backward_1h", "walk_left_1h", "walk_right_1h",
     "walk_forward_left_1h", "walk_forward_right_1h",

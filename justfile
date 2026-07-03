@@ -10,12 +10,30 @@ build:
 test:
     cargo test --workspace
 
-# Everything PR CI runs, in the same order (.github/workflows/ci.yml).
+# Render public docs with rustdoc warnings denied.
+doc:
+    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+    RUSTDOCFLAGS="-D warnings" cargo doc -p animsmith --no-default-features --no-deps
+
+# Check the crate package inventories that CI validates before release.
+package-inventory:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for crate in animsmith-core animsmith-gltf animsmith-fbx animsmith-report animsmith; do
+      cargo package --list -p "$crate" --allow-dirty >/dev/null
+    done
+
+# Fast local PR gate. The GitHub workflow also verifies package assembly
+# on a clean checkout.
 gates:
     cargo fmt --all --check
     cargo clippy --workspace --all-targets -- -D warnings
     cargo test --workspace
+    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+    RUSTDOCFLAGS="-D warnings" cargo doc -p animsmith --no-default-features --no-deps
+    cargo test -p animsmith --test cli_contract --no-default-features
     cargo build -p animsmith --no-default-features
+    just package-inventory
 
 # See .agent-instructions/shared.md for the required env vars.
 # Env-gated reference tests against licensed assets.

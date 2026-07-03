@@ -49,6 +49,16 @@ impl FixReport {
 /// (otherwise byte-identical) result to `output`. `input` and `output`
 /// may be the same path.
 pub fn fix_quat_hemisphere(input: &Path, output: &Path) -> Result<FixReport, LoadError> {
+    fix_quat_hemisphere_impl(input, Some(output))
+}
+
+/// Inspect which rotation tracks would be hemisphere-normalized without
+/// writing any bytes.
+pub fn inspect_quat_hemisphere(input: &Path) -> Result<FixReport, LoadError> {
+    fix_quat_hemisphere_impl(input, None)
+}
+
+fn fix_quat_hemisphere_impl(input: &Path, output: Option<&Path>) -> Result<FixReport, LoadError> {
     let bytes = std::fs::read(input).map_err(|source| LoadError::Io {
         path: input.display().to_string(),
         source,
@@ -186,7 +196,9 @@ pub fn fix_quat_hemisphere(input: &Path, output: &Path) -> Result<FixReport, Loa
         }
     }
 
-    write_patched(input, output, &bytes, &gltf, buffers)?;
+    if let Some(output) = output {
+        write_patched(input, output, &bytes, &gltf, buffers)?;
+    }
     Ok(report)
 }
 
