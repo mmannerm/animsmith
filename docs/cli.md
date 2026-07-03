@@ -54,8 +54,12 @@ animsmith diff <before> <after> [--format text|json]
 
 Use `lint --deny-warnings` when CI should fail on warnings as well as
 errors. `fix --dry-run` is the repair check mode: it exits 1 when the
-file has repairable defects and 0 when it is clean, so CI can gate on
-"this asset needs fixing" without writing anything.
+file has repairable defects and 0 otherwise, so CI can gate on "this
+asset needs fixing" without writing anything. The exit code
+reflects repairs `fix` would actually perform: tracks it cannot patch
+(data-URI buffers, cubic/quantized rotations) are printed as
+`skipped[...]` but do not fail the check — gate on `lint` (the
+`quat-flip` check) when detection alone should fail CI.
 
 ## Feature Flags
 

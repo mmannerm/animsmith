@@ -136,7 +136,7 @@ enum Cmd {
         repairs: Vec<Repair>,
         /// Report what would be repaired without writing anything.
         /// Exits 1 when repairs are pending, 0 when the file is clean.
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["output", "in_place"])]
         dry_run: bool,
     },
     /// Convert FBX input to glTF.
@@ -187,9 +187,10 @@ enum Repair {
 const ALL_REPAIRS: &[Repair] = &[Repair::QuatFlip];
 
 impl Repair {
-    /// Stable id: the `--repair` value, the config key, and the tag in
-    /// printed output. The hand-written [`ValueEnum`] impl below makes
-    /// this the single source of the CLI name.
+    /// Stable id: the `--repair` value and the tag in printed output,
+    /// matching the corresponding check id (`quat-flip`). The
+    /// hand-written [`ValueEnum`] impl below makes this the single
+    /// source of the CLI name.
     fn id(self) -> &'static str {
         match self {
             Repair::QuatFlip => "quat-flip",
@@ -647,6 +648,10 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             } else {
                 repairs
             };
+            // Adjacent-only dedup is exact while one repair exists;
+            // revisit (sort or reject duplicates) with repair #2. The
+            // guard below is a tripwire: each write re-reads `input`,
+            // so chaining repairs would clobber earlier results.
             selected.dedup();
             if !dry_run && selected.len() > 1 {
                 return Err(
@@ -678,7 +683,9 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                                 .map_err(|e| e.to_string())?
                         };
                         pending += report.total_flipped();
-                        print_fix_report(repair, &report, output.as_deref().filter(|_| !dry_run));
+                        // clap rejects --dry-run with a write target, so
+                        // `output` is None exactly when this is a dry run.
+                        print_fix_report(repair, &report, output.as_deref());
                     }
                 }
             }
