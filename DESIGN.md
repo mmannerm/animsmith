@@ -82,8 +82,7 @@ animsmith measure <file...> --format json          # measurements only, no judgm
 animsmith inspect <file>                           # clips, durations, tracks, bones, detected rig profile
 animsmith report  <file> -o report.html [--clip name]
 animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor]
-animsmith fix     <file> (-o <out.glb>|--in-place) [--repair id[,id] | --group default|lossless|mechanical|all] [--dry-run]
-animsmith fix     --list-repairs
+animsmith fix     <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
 animsmith convert <in.fbx> -o <out.glb> [--animation-only]
 animsmith diff    <A> <B> [--format text|json]     # A/B: asset files or prior `measure` JSON
 ```
@@ -92,14 +91,17 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: asset files or prior `
   judgment — it emits the raw measurement map (the substrate other
   pipelines pin their own contracts to).
 - **Exit codes**: `0` clean or warnings-only, `1` at least one
-  error-severity finding, `2` operator/tool error (unreadable file, bad
-  config). `--deny-warnings` promotes warnings to errors.
+  error-severity finding (or pending repairs under `fix --dry-run`),
+  `2` operator/tool error (unreadable file, bad config).
+  `--deny-warnings` promotes warnings to errors.
 - Inputs: `.glb`, `.gltf` (+ external buffers), `.fbx` (via the `fbx`
   feature, default-on in the released binary).
 - `fix` intentionally requires either `-o/--output` or `--in-place` for
-  writes; `--dry-run` is inspect-only. Repairs are addressed by stable
-  ids and grouped into `default`, `lossless`, `mechanical`, and `all` so
-  future fixes can be added without changing the command shape.
+  writes; `--dry-run` is the check mode — it inspects only and exits `1`
+  when repairs are pending, mirroring `lint`. Repairs are addressed by
+  stable ids; every repair must be safe, lossless, and idempotent.
+  Repair taxonomy (risk-tier groups) is deliberately deferred until a
+  repair exists that doesn't meet that bar.
 - `convert` is compiled only with the `fbx` feature. `--no-default-features`
   remains a glTF-only pure-Rust CLI with validation, transform, fix, and
   diff commands intact; `report` is controlled separately by the

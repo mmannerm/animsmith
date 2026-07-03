@@ -64,6 +64,21 @@ fn write_flipped_glb(path: &std::path::Path) {
     animsmith_gltf::write::write(&flipped_doc(), path).expect("writes flipped fixture");
 }
 
+/// The same document with every key already on one hemisphere.
+fn write_clean_glb(path: &std::path::Path) {
+    let mut doc = flipped_doc();
+    for track in &mut doc.clips[0].tracks {
+        if let TrackValues::Quats(quats) = &mut track.values {
+            for (i, q) in quats.iter_mut().enumerate() {
+                if i == 1 || i == 3 {
+                    *q = -*q;
+                }
+            }
+        }
+    }
+    animsmith_gltf::write::write(&doc, path).expect("writes clean fixture");
+}
+
 fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
@@ -73,19 +88,23 @@ fn stderr(output: &Output) -> String {
 }
 
 #[test]
-fn fix_lists_stable_repairs_and_groups() {
+fn fix_rejects_unknown_repair_ids() {
     let output = animsmith()
-        .args(["fix", "--list-repairs"])
+        .args(["fix", "clip.glb", "--dry-run", "--repair", "no-such-repair"])
         .output()
         .expect("runs animsmith");
 
-    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
-    let out = stdout(&output);
-    assert!(out.contains("quat-flip"));
-    assert!(out.contains("default"));
-    assert!(out.contains("lossless"));
-    assert!(out.contains("mechanical"));
-    assert!(out.contains("all"));
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "stdout:\n{}",
+        stdout(&output)
+    );
+    assert!(
+        stderr(&output).contains("quat-flip"),
+        "stderr should list valid repair ids:\n{}",
+        stderr(&output)
+    );
 }
 
 #[test]
@@ -126,7 +145,15 @@ fn fix_dry_run_reports_without_writing() {
         .output()
         .expect("runs animsmith");
 
-    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    // Pending repairs are findings: dry run exits 1 (the check mode),
+    // and the input is untouched.
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
     assert!(
         stdout(&output).contains("would be fixed"),
         "stdout:\n{}",
@@ -136,7 +163,31 @@ fn fix_dry_run_reports_without_writing() {
 }
 
 #[test]
-fn fix_group_writes_output() {
+fn fix_dry_run_on_clean_input_exits_zero() {
+    let dir = unique_temp_dir("fix-dry-run-clean");
+    let input = dir.join("clean.glb");
+    write_clean_glb(&input);
+
+    let output = animsmith()
+        .args([
+            "fix",
+            input.to_str().expect("utf-8 input path"),
+            "--dry-run",
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+}
+
+#[test]
+fn fix_default_repairs_write_output() {
     let dir = unique_temp_dir("fix-output");
     let input = dir.join("dirty.glb");
     let output_path = dir.join("fixed.glb");
@@ -148,8 +199,6 @@ fn fix_group_writes_output() {
             input.to_str().expect("utf-8 input path"),
             "--output",
             output_path.to_str().expect("utf-8 output path"),
-            "--group",
-            "default",
         ])
         .output()
         .expect("runs animsmith");

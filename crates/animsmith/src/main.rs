@@ -121,27 +121,23 @@ enum Cmd {
         long_about = "Repair mechanical clip defects in place, byte-surgically: only the offending animation bytes change; meshes, skins, materials, and textures pass through untouched. Currently fixes quaternion hemisphere flips (the `quat-flip` check) on glTF/GLB inputs."
     )]
     Fix {
-        /// Input .glb or .gltf file. Omit only with --list-repairs.
+        /// Input .glb or .gltf file.
         #[arg(value_name = "FILE")]
-        input: Option<PathBuf>,
+        input: PathBuf,
         /// Output path. Required unless --in-place or --dry-run is used.
         #[arg(short, long, value_name = "PATH")]
         output: Option<PathBuf>,
         /// Modify the input file in place.
         #[arg(long, conflicts_with = "output")]
         in_place: bool,
-        /// Run exactly these repairs (comma-separated ids).
+        /// Run exactly these repairs (comma-separated ids). Defaults to
+        /// every available repair.
         #[arg(long = "repair", value_enum, value_delimiter = ',')]
         repairs: Vec<Repair>,
-        /// Run this repair group when --repair is not set.
-        #[arg(long, value_enum, default_value = "default")]
-        group: RepairGroup,
-        /// Report what would be repaired without writing output.
+        /// Report what would be repaired without writing anything.
+        /// Exits 1 when repairs are pending, 0 when the file is clean.
         #[arg(long)]
         dry_run: bool,
-        /// List known repairs and groups.
-        #[arg(long)]
-        list_repairs: bool,
     },
     /// Convert FBX input to glTF.
     #[command(
@@ -180,62 +176,34 @@ enum Format {
     Json,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Repair {
     QuatFlip,
 }
 
+// Every repair must be safe, lossless, and idempotent — repair
+// taxonomy (groups, risk tiers) is deliberately deferred until a
+// repair exists that isn't (see issue #38).
+const ALL_REPAIRS: &[Repair] = &[Repair::QuatFlip];
+
 impl Repair {
+    /// Stable id: the `--repair` value, the config key, and the tag in
+    /// printed output. The hand-written [`ValueEnum`] impl below makes
+    /// this the single source of the CLI name.
     fn id(self) -> &'static str {
         match self {
             Repair::QuatFlip => "quat-flip",
         }
     }
-
-    fn summary(self) -> &'static str {
-        match self {
-            Repair::QuatFlip => "lossless quaternion hemisphere normalization",
-        }
-    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum RepairGroup {
-    Default,
-    Lossless,
-    Mechanical,
-    All,
-}
-
-const ALL_REPAIRS: &[Repair] = &[Repair::QuatFlip];
-const ALL_REPAIR_GROUPS: &[RepairGroup] = &[
-    RepairGroup::Default,
-    RepairGroup::Lossless,
-    RepairGroup::Mechanical,
-    RepairGroup::All,
-];
-
-impl RepairGroup {
-    fn repairs(self) -> &'static [Repair] {
-        // Invariant: `default` contains only safe, lossless,
-        // idempotent repairs. Broader groups may grow faster, but must
-        // remain explicit here so automation can pin the intended risk
-        // profile by group name.
-        match self {
-            RepairGroup::Default
-            | RepairGroup::Lossless
-            | RepairGroup::Mechanical
-            | RepairGroup::All => ALL_REPAIRS,
-        }
+impl ValueEnum for Repair {
+    fn value_variants<'a>() -> &'a [Self] {
+        ALL_REPAIRS
     }
 
-    fn description(self) -> &'static str {
-        match self {
-            RepairGroup::Default => "safe, lossless, idempotent repairs",
-            RepairGroup::Lossless => "all mathematically lossless repairs",
-            RepairGroup::Mechanical => "deterministic pipeline-mechanical repairs",
-            RepairGroup::All => "every available repair",
-        }
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        Some(clap::builder::PossibleValue::new(self.id()))
     }
 }
 
@@ -417,38 +385,18 @@ fn rig_info(doc: &Document, roles: &ResolvedRoles) -> RigInfo {
     }
 }
 
-fn print_repairs() {
-    println!("repairs:");
-    for repair in ALL_REPAIRS {
-        println!("  {:<12} {}", repair.id(), repair.summary());
-    }
-    println!("groups:");
-    for group in ALL_REPAIR_GROUPS {
-        let repairs = group
-            .repairs()
-            .iter()
-            .map(|repair| repair.id())
-            .collect::<Vec<_>>()
-            .join(", ");
-        println!(
-            "  {:<12} {} [{}]",
-            group
-                .to_possible_value()
-                .expect("repair groups have clap values")
-                .get_name(),
-            group.description(),
-            repairs
-        );
-    }
-}
-
+/// Print one repair's report. `target` is the written path; `None`
+/// means dry run (nothing written).
 fn print_fix_report(
     repair: Repair,
     report: &animsmith_gltf::fix::FixReport,
-    output: Option<&Path>,
-    dry_run: bool,
+    target: Option<&Path>,
 ) {
-    let verb = if dry_run { "would fix" } else { "fixed" };
+    let verb = if target.is_none() {
+        "would fix"
+    } else {
+        "fixed"
+    };
     for t in &report.tracks {
         println!(
             "  {verb}[{}] clip '{}' bone '{}': {} key(s) hemisphere-normalized",
@@ -461,17 +409,17 @@ fn print_fix_report(
     for s in &report.skipped {
         println!("  skipped[{}]: {s}", repair.id());
     }
-    let target = if dry_run {
-        "no output written".into()
-    } else {
-        output
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|| "output".into())
-    };
+    let destination = target
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "no output written".into());
     println!(
-        "{} key(s) {} across {} track(s) -> {target}",
+        "{} key(s) {} across {} track(s) -> {destination}",
         report.total_flipped(),
-        if dry_run { "would be fixed" } else { "fixed" },
+        if target.is_none() {
+            "would be fixed"
+        } else {
+            "fixed"
+        },
         report.tracks.len(),
     );
 }
@@ -681,15 +629,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             output,
             in_place,
             repairs,
-            group,
             dry_run,
-            list_repairs,
         } => {
-            if list_repairs {
-                print_repairs();
-                return Ok(ExitCode::SUCCESS);
-            }
-            let input = input.ok_or_else(|| "fix requires an input file".to_string())?;
             let ext = input
                 .extension()
                 .and_then(|e| e.to_str())
@@ -701,14 +642,12 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     input.display()
                 ));
             }
-            let selected = if repairs.is_empty() {
-                group.repairs().to_vec()
+            let mut selected = if repairs.is_empty() {
+                ALL_REPAIRS.to_vec()
             } else {
                 repairs
             };
-            if selected.is_empty() {
-                return Err("no repairs selected".into());
-            }
+            selected.dedup();
             if !dry_run && selected.len() > 1 {
                 return Err(
                     "running multiple repairs in one write is not supported yet; rerun one repair at a time"
@@ -726,6 +665,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             } else {
                 output
             };
+            let mut pending = 0usize;
             for repair in selected {
                 match repair {
                     Repair::QuatFlip => {
@@ -737,11 +677,18 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                             animsmith_gltf::fix::fix_quat_hemisphere(&input, output)
                                 .map_err(|e| e.to_string())?
                         };
-                        print_fix_report(repair, &report, output.as_deref(), dry_run);
+                        pending += report.total_flipped();
+                        print_fix_report(repair, &report, output.as_deref().filter(|_| !dry_run));
                     }
                 }
             }
-            Ok(ExitCode::SUCCESS)
+            // Dry run doubles as a CI check mode: pending repairs are
+            // findings, mirroring `lint`'s exit contract.
+            Ok(if dry_run && pending > 0 {
+                ExitCode::from(EXIT_FINDINGS)
+            } else {
+                ExitCode::SUCCESS
+            })
         }
         #[cfg(feature = "fbx")]
         Cmd::Convert {
