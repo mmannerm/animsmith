@@ -33,11 +33,14 @@ already exist:
 
 ## One-time bootstrap
 
-This repository already has GitHub Releases/tags (`v0.1.0` and later),
-so the first crates.io publish should use the next intentional Cargo
-workspace version, not an old tag. If `Cargo.toml` still says `0.1.0`
-while the latest GitHub Release is newer, bump the workspace manifest
-before publishing.
+This repository starts its public release history from a clean slate:
+the pre-publication development releases/tags (`v0.1.0`–`v0.7.0`, never
+published to crates.io) were deleted on 2026-07-04 so the first
+crates.io publish, the first GitHub Release, and the changelog all
+begin together at the `0.1.0` in `Cargo.toml`. With no GitHub Release
+present, the `main` workflow's version job stays in its bootstrap state
+and creates no tags until the first release exists (or the planned
+release-plz flow replaces it).
 
 1. `cargo login` with a token from <https://crates.io/settings/tokens>
    (scope: `publish-new` + `publish-update`).
