@@ -113,6 +113,22 @@ pub fn sample_clip(skeleton: &Skeleton, clip: &Clip, frames: usize) -> PoseGrid 
     }
 }
 
+/// One track's sampled value at a time.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TrackSample {
+    Vec3(Vec3),
+    Quat(Quat),
+}
+
+/// Sample a single track at `t` with the same semantics the grid uses
+/// (clamp at ends, glTF interpolation, shortest-path slerp).
+pub fn sample_track(track: &Track, t: f32) -> TrackSample {
+    match &track.values {
+        TrackValues::Vec3s(_) => TrackSample::Vec3(sample_vec3(track, t)),
+        TrackValues::Quats(_) => TrackSample::Quat(sample_quat(track, t)),
+    }
+}
+
 /// Locate the keyframe segment containing `t`: returns `(k0, k1, u)`
 /// with `u` in `[0, 1]`. Clamps outside the keyframe range.
 fn segment(times: &[f32], t: f32) -> (usize, usize, f32) {

@@ -73,6 +73,33 @@ enum Cmd {
         #[arg(long)]
         clip: Option<String>,
     },
+    /// Apply pipeline-mechanical clip transforms and write the result
+    /// as skeleton+animation glTF (meshes are not carried; transform
+    /// clips before splicing them into a full asset). Operations apply
+    /// to every clip, or one clip via --clip.
+    Transform {
+        input: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Restrict to one clip.
+        #[arg(long)]
+        clip: Option<String>,
+        /// Keep only [start:end] seconds, retimed to start at 0
+        /// (half-frame epsilon at --fps).
+        #[arg(long, value_name = "START:END")]
+        slice: Option<String>,
+        /// Extend the final pose by this many seconds (charge/block
+        /// holds).
+        #[arg(long, value_name = "SECONDS")]
+        hold_extend: Option<f64>,
+        /// Rotate cyclic clips so the measured stride anchor lands at
+        /// t=0 (needs hips+feet rig roles).
+        #[arg(long)]
+        gait_anchor: bool,
+        /// Frame rate used for epsilon and shift quantization.
+        #[arg(long, default_value_t = 30.0)]
+        fps: f64,
+    },
     /// Repair mechanical clip defects in place, byte-surgically: only
     /// the offending animation bytes change; meshes, skins, materials,
     /// and textures pass through untouched. Currently fixes quaternion
@@ -332,6 +359,76 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 findings.len(),
                 html.len() as f64 / 1e6
             );
+            Ok(ExitCode::SUCCESS)
+        }
+        Cmd::Transform {
+            input,
+            output,
+            clip,
+            slice,
+            hold_extend,
+            gait_anchor,
+            fps,
+        } => {
+            let mut doc = load(&input)?;
+            let roles = resolve_roles(&doc, &config);
+            let window = match &slice {
+                None => None,
+                Some(spec) => {
+                    let (a, b) = spec
+                        .split_once(':')
+                        .ok_or_else(|| format!("--slice wants START:END, got {spec}"))?;
+                    let a: f64 = a.parse().map_err(|e| format!("--slice start: {e}"))?;
+                    let b: f64 = b.parse().map_err(|e| format!("--slice end: {e}"))?;
+                    if b <= a {
+                        return Err(format!("--slice end must be after start ({spec})"));
+                    }
+                    Some((a, b))
+                }
+            };
+            let skeleton = doc.skeleton.clone();
+            let mut touched = 0usize;
+            for c in doc.clips.iter_mut() {
+                if clip.as_deref().is_some_and(|name| name != c.name) {
+                    continue;
+                }
+                touched += 1;
+                if let Some((a, b)) = window {
+                    animsmith_core::transform::slice(c, a, b, fps);
+                    println!(
+                        "  sliced '{}' to [{a}:{b}]s ({} keys max)",
+                        c.name,
+                        c.tracks.iter().map(|t| t.key_count()).max().unwrap_or(0)
+                    );
+                }
+                if let Some(hold) = hold_extend {
+                    animsmith_core::transform::hold_extend(c, hold);
+                    println!("  hold-extended '{}' by {hold}s", c.name);
+                }
+                if gait_anchor {
+                    match animsmith_core::transform::align_gait_anchor(&skeleton, c, &roles, fps) {
+                        Ok(o) => println!(
+                            "  gait-anchored '{}': phase {:.3} -> {:.3} (offset {}, seam {})",
+                            c.name,
+                            o.phase_before,
+                            o.phase_after,
+                            o.frame_offset,
+                            o.seam_after
+                                .map(|s| format!("{s:.2}"))
+                                .unwrap_or_else(|| "n/a".into()),
+                        ),
+                        Err(reason) => println!("  gait-anchor skipped '{}': {reason}", c.name),
+                    }
+                }
+            }
+            if touched == 0 {
+                return Err(match clip {
+                    Some(name) => format!("clip '{name}' not found in {}", input.display()),
+                    None => format!("{} has no clips", input.display()),
+                });
+            }
+            animsmith_gltf::write::write(&doc, &output).map_err(|e| e.to_string())?;
+            println!("wrote {} ({touched} clip(s) transformed)", output.display());
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Fix { input, output } => {
