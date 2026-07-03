@@ -1,9 +1,16 @@
 name: CI
 
+# PR gate: every merge into main goes through a pull request (branch
+# protection enforces this), and this workflow is the required test
+# check. Pushes to main re-run the same tests in main.yml ahead of the
+# release job.
+
 on:
-  push:
-    branches: [main]
   pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -17,6 +24,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -24,3 +33,5 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      # The published binary must also build without the C dependency.
+      - run: cargo build -p animlint --no-default-features

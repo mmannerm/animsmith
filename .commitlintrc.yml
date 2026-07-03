@@ -1,0 +1,37 @@
+# Conventional Commits rules — enforced on every commit landing through
+# a PR (see .github/workflows/lint-pr.yml). The accepted `type-enum` set
+# is kept aligned with `cliff.toml`'s `[git].commit_parsers`, so a commit
+# that passes commitlint is also one that git-cliff can correctly
+# categorise when computing the next semver bump.
+
+extends:
+  - '@commitlint/config-conventional'
+
+rules:
+  # Allowed types — matches cliff.toml's commit_parsers exactly so any
+  # commit that lands on main is recognised by both tools.
+  type-enum:
+    - 2     # error level
+    - always
+    - [feat, fix, perf, revert, chore, ci, docs, style, refactor, test, build]
+
+  # CC is silent on subject case. config-conventional defaults to
+  # forbidding sentence/start-case; relax so `feat: Add inventory UI`
+  # and `feat: add inventory ui` are both accepted.
+  subject-case: [0]
+
+  # Allow longer header lines than the default 100. Many of our PR
+  # subjects need scope + a short prose summary.
+  header-max-length:
+    - 2
+    - always
+    - 120
+
+  # Body line length is checked by github but config-conventional's
+  # 100-char body rule is too tight for paragraphs.
+  body-max-line-length: [0]
+
+  # Validation blocks and co-author metadata can make commitlint classify
+  # long command lines as footer content; keep the same practical line-length
+  # policy there as for normal commit bodies.
+  footer-max-line-length: [0]
