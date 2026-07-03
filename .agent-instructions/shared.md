@@ -82,7 +82,8 @@ cycle.
 **Trivial tasks** — one-line config tweak, dep bump, typo, doc fix.
 These still go through a PR (branch protection allows nothing else) but
 skip the audit; conventional-commit type `chore`/`docs`/`ci` keeps them
-out of release notes.
+out of release notes. The merge-permission rule still applies: the
+user merges, or pre-approves the batch.
 
 **Substantial tasks** — new checks, new subcommands, changes to
 measurement semantics, anything user-visible. Target each PR at under
@@ -116,11 +117,16 @@ measurement semantics, anything user-visible. Target each PR at under
    for quality cleanups. Then invoke or follow the **`audit-task`**
    workflow (`.claude/skills/audit-task/SKILL.md` — it is written to be
    followable by any agent, not just Claude). Address all BLOCKers.
-7. **Mark ready + merge.** Merge-commit strategy (NOT squash): every
-   branch commit lands on `main` and must stand alone as a conventional
-   commit. Auto-merge is fine once the audit verdict is APPROVE /
-   APPROVE WITH FOLLOW-UPS. The `main` pipeline re-tests and
-   auto-publishes a GitHub Release when the commits warrant a bump.
+7. **Report the verdict and STOP — the user merges.** An agent never
+   merges or arms auto-merge on its own: merging requires the audit
+   verdict (APPROVE / APPROVE WITH FOLLOW-UPS) **and** the user's
+   explicit permission or a standing pre-approval for that PR. Green CI
+   and a passing audit are necessary, not sufficient. End the task at
+   "PR open, audited, awaiting your merge decision".
+   Merge-commit strategy (NOT squash): every branch commit lands on
+   `main` and must stand alone as a conventional commit. The `main`
+   pipeline re-tests and auto-publishes a GitHub Release when the
+   commits warrant a bump.
 8. **File follow-up issues** the audit drafted (the user picks which).
 9. **Prune the worktree:** `just worktree-prune` after merge.
 
