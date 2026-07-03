@@ -13,6 +13,7 @@ pub mod metrics;
 pub mod model;
 pub mod profile;
 pub mod sample;
+pub mod transform;
 
 pub use check::{Check, CheckCtx, all_checks, mechanical_checks, run_checks};
 pub use config::{ClipExpectations, Config, GaitGroup, Pinned, SeveritySetting};
@@ -22,4 +23,4 @@ pub use model::{
     TrackValues, Transform,
 };
 pub use profile::{ResolvedRoles, RigProfile, Role, builtin_profiles, detect_profile};
-pub use sample::{PoseGrid, default_frame_count, sample_clip};
+pub use sample::{PoseGrid, TrackSample, default_frame_count, sample_clip, sample_track};
