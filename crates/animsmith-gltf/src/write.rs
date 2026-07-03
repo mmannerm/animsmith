@@ -73,6 +73,44 @@ impl BufferBuilder {
 }
 
 impl BufferBuilder {
+    /// Append u32 triangle indices as a buffer view + accessor.
+    fn push_indices(&mut self, data: &[u32]) -> usize {
+        let offset = self.bytes.len();
+        for v in data {
+            self.bytes.extend_from_slice(&v.to_le_bytes());
+        }
+        let view = self.views.len();
+        self.views.push(json!({
+            "buffer": 0,
+            "byteOffset": offset,
+            "byteLength": data.len() * 4,
+        }));
+        let index = self.accessors.len();
+        self.accessors.push(json!({
+            "bufferView": view,
+            "componentType": 5125,
+            "count": data.len(),
+            "type": "SCALAR",
+        }));
+        index
+    }
+
+    /// Append raw bytes (an encoded image) as a bare buffer view.
+    fn push_view(&mut self, data: &[u8]) -> usize {
+        while !self.bytes.len().is_multiple_of(4) {
+            self.bytes.push(0);
+        }
+        let offset = self.bytes.len();
+        self.bytes.extend_from_slice(data);
+        let view = self.views.len();
+        self.views.push(json!({
+            "buffer": 0,
+            "byteOffset": offset,
+            "byteLength": data.len(),
+        }));
+        view
+    }
+
     /// Append u16 data (JOINTS_0) as a buffer view + accessor.
     fn push_u16(&mut self, data: &[u16], kind: &str) -> usize {
         let components = if kind == "VEC4" { 4 } else { 1 };
@@ -241,6 +279,9 @@ pub fn write_with_assets(
                 attributes["WEIGHTS_0"] = json!(buffers.push(&flat_w, "VEC4", false));
             }
             let mut value = json!({ "attributes": attributes });
+            if !prim.indices.is_empty() {
+                value["indices"] = json!(buffers.push_indices(&prim.indices));
+            }
             if let Some(material) = prim.material {
                 value["material"] = json!(material);
             }
@@ -277,6 +318,21 @@ pub fn write_with_assets(
         // joints + IBMs fully place the vertices. Unskinned meshes keep
         // their original node, whose transform is meaningful.
         node_attach.push((mesh.node, mesh_index, skin_index));
+    }
+
+    // Embedded base-color textures: raw encoded bytes as buffer views
+    // (glTF never decodes; PNG/JPEG pass through untouched).
+    let mut images_json: Vec<Value> = Vec::new();
+    let mut textures_json: Vec<Value> = Vec::new();
+    let mut material_texture_index: Vec<Option<usize>> = vec![None; assets.materials.len()];
+    for (mi, material) in assets.materials.iter().enumerate() {
+        if let Some(texture) = &material.base_color_texture {
+            let view = buffers.push_view(&texture.bytes);
+            let image = images_json.len();
+            images_json.push(json!({ "bufferView": view, "mimeType": texture.mime }));
+            material_texture_index[mi] = Some(textures_json.len());
+            textures_json.push(json!({ "source": image }));
+        }
     }
 
     let binary = path
@@ -329,18 +385,24 @@ pub fn write_with_assets(
                 assets
                     .materials
                     .iter()
-                    .map(|m| {
-                        json!({
-                            "name": m.name,
-                            "pbrMetallicRoughness": {
-                                "baseColorFactor": m.base_color,
-                                "metallicFactor": m.metallic,
-                                "roughnessFactor": m.roughness,
-                            },
-                        })
+                    .enumerate()
+                    .map(|(mi, m)| {
+                        let mut pbr = json!({
+                            "baseColorFactor": m.base_color,
+                            "metallicFactor": m.metallic,
+                            "roughnessFactor": m.roughness,
+                        });
+                        if let Some(slot) = material_texture_index[mi] {
+                            pbr["baseColorTexture"] = json!({ "index": slot });
+                        }
+                        json!({ "name": m.name, "pbrMetallicRoughness": pbr })
                     })
                     .collect(),
             );
+            if !images_json.is_empty() {
+                root["images"] = Value::Array(images_json);
+                root["textures"] = Value::Array(textures_json);
+            }
         }
     }
 

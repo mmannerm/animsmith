@@ -186,11 +186,15 @@ pub struct Document {
 // untouched. Vertex data is unindexed (one entry per triangle corner);
 // a welding/indexing pass is a future size optimization.
 
-/// One glTF-primitive-to-be: unindexed triangles sharing a material.
+/// One glTF-primitive-to-be: triangles sharing a material. Attributes
+/// are per corner until [`Primitive::weld`] dedupes them into indexed
+/// form.
 #[derive(Debug, Clone, Default)]
 pub struct Primitive {
     /// Index into [`SceneAssets::materials`].
     pub material: Option<usize>,
+    /// Triangle indices into the attribute arrays; empty = unindexed.
+    pub indices: Vec<u32>,
     pub positions: Vec<Vec3>,
     /// Same length as `positions`, or empty.
     pub normals: Vec<Vec3>,
@@ -216,13 +220,91 @@ pub struct MeshAsset {
     pub skin_ibms: Vec<Mat4>,
 }
 
-/// Factor-only material (textures are wired by downstream pipelines).
+/// An embedded texture: raw encoded image bytes (glTF embeds the file
+/// as-is, no decoding).
+#[derive(Debug, Clone)]
+pub struct TextureAsset {
+    pub bytes: Vec<u8>,
+    /// "image/png" or "image/jpeg".
+    pub mime: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct MaterialAsset {
     pub name: String,
+    /// Multiplied with the texture when one is present (set to white
+    /// by the FBX loader in that case, matching exporter convention).
     pub base_color: [f32; 4],
     pub metallic: f32,
     pub roughness: f32,
+    pub base_color_texture: Option<TextureAsset>,
+}
+
+impl Primitive {
+    /// Dedupe identical corners into indexed triangles. Exact
+    /// bit-equality only — no tolerance welding, so seams authored via
+    /// split normals/UVs are preserved.
+    pub fn weld(&mut self) {
+        if !self.indices.is_empty() || self.positions.is_empty() {
+            return;
+        }
+        let corner_key = |i: usize| -> Vec<u8> {
+            let mut key = Vec::with_capacity(64);
+            let mut push_f32s = |vals: &[f32]| {
+                for v in vals {
+                    key.extend_from_slice(&v.to_le_bytes());
+                }
+            };
+            push_f32s(&self.positions[i].to_array());
+            if let Some(n) = self.normals.get(i) {
+                push_f32s(&n.to_array());
+            }
+            if let Some(uv) = self.uvs.get(i) {
+                push_f32s(uv);
+            }
+            if let Some(w) = self.weights.get(i) {
+                push_f32s(w);
+            }
+            if let Some(j) = self.joints.get(i) {
+                for v in j {
+                    key.extend_from_slice(&v.to_le_bytes());
+                }
+            }
+            key
+        };
+        let mut seen: std::collections::HashMap<Vec<u8>, u32> = std::collections::HashMap::new();
+        let mut indices = Vec::with_capacity(self.positions.len());
+        let mut positions = Vec::new();
+        let mut normals = Vec::new();
+        let mut uvs = Vec::new();
+        let mut joints = Vec::new();
+        let mut weights = Vec::new();
+        for i in 0..self.positions.len() {
+            let index = *seen.entry(corner_key(i)).or_insert_with(|| {
+                positions.push(self.positions[i]);
+                if let Some(n) = self.normals.get(i) {
+                    normals.push(*n);
+                }
+                if let Some(uv) = self.uvs.get(i) {
+                    uvs.push(*uv);
+                }
+                if let Some(j) = self.joints.get(i) {
+                    joints.push(*j);
+                }
+                if let Some(w) = self.weights.get(i) {
+                    weights.push(*w);
+                }
+                (positions.len() - 1) as u32
+            });
+            indices.push(index);
+        }
+        self.indices = indices;
+        self.positions = positions;
+        self.normals = normals;
+        self.uvs = uvs;
+        self.joints = joints;
+        self.weights = weights;
+    }
 }
 
 #[derive(Debug, Clone, Default)]
