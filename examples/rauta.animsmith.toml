@@ -1,0 +1,48 @@
+# Example animsmith config mirroring the rauta project's animation
+# contract (crates/asset-contract/contracts/character.contract.ron):
+# loop declarations for the locomotion rings, the seam cap, and the two
+# gait-coherence groups.
+#
+#   animsmith lint --config examples/rauta.animsmith.toml character.glb
+
+[rig]
+profile = "auto" # resolves to rauta-humanoid on the character rig
+
+[checks.loop-seam]
+max_ratio = 1.6 # rauta's loop_seam_ratio_max
+
+[checks.frozen-bone]
+min_rotation_deg = 0.5 # rauta's min_animated_bone_rotation_deg
+
+# The FBX2glTF-era hemisphere flips are a known issue tracked on the
+# bake side; every rauta consumer slerp-corrects, so demote the warning
+# to a note until the bake normalizes them.
+[checks.quat-flip]
+severity = "note"
+
+[clips."run_*"]
+loop = true
+
+[clips."walk_*"]
+loop = true
+
+[clips.idle_1h]
+loop = true
+
+[groups.run-ring]
+clips = [
+    "run_forward_1h", "run_backward_1h", "run_left_1h", "run_right_1h",
+    "run_forward_left_1h", "run_forward_right_1h",
+    "run_backward_left_1h", "run_backward_right_1h",
+]
+max_gait_phase_spread = 0.15
+min_lr_amplitude_m = 0.03
+
+[groups.walk-ring]
+clips = [
+    "walk_forward_1h", "walk_backward_1h", "walk_left_1h", "walk_right_1h",
+    "walk_forward_left_1h", "walk_forward_right_1h",
+    "walk_backward_left_1h", "walk_backward_right_1h",
+]
+max_gait_phase_spread = 0.15
+min_lr_amplitude_m = 0.03

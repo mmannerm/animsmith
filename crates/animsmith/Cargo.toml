@@ -1,0 +1,33 @@
+[package]
+name = "animsmith"
+description = "A linter for skeletal animation clips: game-engine-friendliness checks for glTF/GLB (and later FBX) animations"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "animsmith"
+path = "src/main.rs"
+
+[features]
+default = ["fbx", "report"]
+# FBX input via ufbx (bundles a C library; --no-default-features gives
+# a pure-Rust glTF-only build).
+fbx = ["dep:animsmith-fbx"]
+# HTML report generation.
+report = ["dep:animsmith-report"]
+
+[dependencies]
+animsmith-core = { workspace = true }
+animsmith-gltf = { workspace = true }
+animsmith-fbx = { workspace = true, optional = true }
+animsmith-report = { workspace = true, optional = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }

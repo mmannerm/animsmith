@@ -1,4 +1,4 @@
-# animlint — design & requirements
+# animsmith — design & requirements
 
 Status: v1 design, pre-implementation. Intended to seed the new repo as
 `DESIGN.md`.
@@ -9,7 +9,7 @@ session 2026-07-03); rauta is the first consumer, not the scope.
 
 ## 1. Mission & positioning
 
-**animlint is a linter for skeletal animation clips.** It answers the
+**animsmith is a linter for skeletal animation clips.** It answers the
 question every game team answers by hand today: *does this clip have
 game-engine-friendly characteristics?* — does the loop actually close, does
 the walk cycle's declared speed match its root motion, do the feet slide
@@ -30,41 +30,44 @@ validation:
   custom checks, but the checks themselves are always studio-custom and
   re-derived from scratch.
 
-animlint packages those checks as a standalone Rust library + CLI: glTF/GLB
+animsmith packages those checks as a standalone Rust library + CLI: glTF/GLB
 native, FBX ingested via ufbx, engine-agnostic core, machine-readable
 output, and a self-contained HTML report with a 3D preview.
 
 **What it is not (scope guardrails):**
 
 - **Not a spec validator.** Run glTF-Validator for container conformance;
-  animlint assumes a parseable file and judges its *content*.
+  animsmith assumes a parseable file and judges its *content*.
 - **Not an art exporter.** `convert` (FBX→glTF) exists so clips can enter
   the lint pipeline directly from a DCC export; it promises animation and
   skinning fidelity, not material/shading fidelity.
-- **Not a transformer.** Trimming, resampling, loop repair, root-motion
-  baking are DCC/pipeline work (glTF-Transform territory). animlint tells
-  you what is wrong and shows you; it does not rewrite clips. (A future
-  `fix` for mechanical issues — e.g. renormalizing quaternions — remains
-  name-compatible, per the `cargo clippy --fix` precedent, but is
-  deliberately absent from v1.)
+- **A transformer for pipeline-mechanical operations only** (scope
+  widened 2026-07-03; see Appendix A). In scope: `fix` for lossless
+  mechanical repairs (quaternion hemisphere normalization), frame-range
+  slice/trim + hold-extend, gait-anchor rotation, and format conversion
+  including a full mesh/skin FBX→glTF path (a maintained replacement
+  for the archived FBX2glTF). Out of scope stays *artistic*
+  transformation: retargeting, motion editing, procedural animation —
+  that is DCC work. The rule of thumb: animsmith may rewrite a clip
+  only in ways whose correctness its own checks can verify.
 - **Not a runtime.** It models how engines sample animation; it does not
   play games.
 
 ## 2. Users & use cases
 
-1. **Artist inner loop** — `animlint lint export.fbx` seconds after a DCC
+1. **Artist inner loop** — `animsmith lint export.fbx` seconds after a DCC
    export, before any engine import or bake. Catches "the loop pops",
    "wrong rig", "cm instead of m" while the DCC session is still open.
    This is the highest-value loop: the alternative is discovering the
    problem after the slowest step of the pipeline.
-2. **CI gate** — `animlint lint --format json` in CI on committed assets;
+2. **CI gate** — `animsmith lint --format json` in CI on committed assets;
    stable JSON schema, exit codes, per-check severity config, baseline
    file for adopting teams with a dirty back catalog.
-3. **Pipeline library** — engine pipelines embed `animlint-core` and build
+3. **Pipeline library** — engine pipelines embed `animsmith-core` and build
    check sets programmatically. First consumer: rauta's `asset-contract
    measure` (issue #59) replaces ~1000 LOC of measurement Python with
    library calls.
-4. **PR-review artifact** — `animlint report clip.glb -o report.html`
+4. **PR-review artifact** — `animsmith report clip.glb -o report.html`
    produces a single offline HTML file with 3D skeleton playback and
    metric charts; attach it to a PR or CI artifacts so a reviewer can *see*
    the seam pop the numbers describe.
@@ -72,12 +75,12 @@ output, and a self-contained HTML report with a 3D preview.
 ## 3. CLI surface
 
 ```
-animlint lint    <file...> [--config animlint.toml] [--select ids] [--deny warn] [--format text|json]
-animlint measure <file...> --format json          # measurements only, no judgment
-animlint inspect <file>                           # clips, durations, tracks, bones, detected rig profile
-animlint convert <in.fbx> -o <out.glb> [--animation-only]
-animlint report  <file> -o report.html [--clip name]
-animlint diff    <A> <B> [--format text|json]     # A/B: asset files or prior `measure` JSON
+animsmith lint    <file...> [--config animsmith.toml] [--select ids] [--deny warn] [--format text|json]
+animsmith measure <file...> --format json          # measurements only, no judgment
+animsmith inspect <file>                           # clips, durations, tracks, bones, detected rig profile
+animsmith convert <in.fbx> -o <out.glb> [--animation-only]
+animsmith report  <file> -o report.html [--clip name]
+animsmith diff    <A> <B> [--format text|json]     # A/B: asset files or prior `measure` JSON
 ```
 
 - `lint` = measure + judge against config. `measure` is lint minus
@@ -97,30 +100,30 @@ and minimal deps; FBX support pulls in a C build step most library
 consumers must never pay for.
 
 ```
-animlint/
+animsmith/
 ├── Cargo.toml                  # workspace, edition 2024
 ├── LICENSE-MIT / LICENSE-APACHE
 ├── THIRD-PARTY.md              # ufbx (MIT OR PDDL-1.0), vendored viewer assets
 ├── crates/
-│   ├── animlint-core/          # data model, sampling/FK, metrics, checks, config, findings
-│   ├── animlint-gltf/          # glTF/GLB → core model; GLB writer for `convert`
-│   ├── animlint-fbx/           # ufbx wrapper → core model; isolates the C build
-│   ├── animlint-report/        # self-contained HTML report generation
-│   └── animlint/               # CLI binary (features: fbx, report — default on)
+│   ├── animsmith-core/          # data model, sampling/FK, metrics, checks, config, findings
+│   ├── animsmith-gltf/          # glTF/GLB → core model; GLB writer for `convert`
+│   ├── animsmith-fbx/           # ufbx wrapper → core model; isolates the C build
+│   ├── animsmith-report/        # self-contained HTML report generation
+│   └── animsmith/               # CLI binary (features: fbx, report — default on)
 ├── assets/viewer/              # viewer JS/CSS, inlined via include_str!
 └── testdata/                   # CC0 rigs + procedurally corrupted fixtures
 ```
 
-- **animlint-core**: deps `glam` (the de-facto Rust game-math crate — do
+- **animsmith-core**: deps `glam` (the de-facto Rust game-math crate — do
   not hand-roll mat4/quat as the Python did), `serde`, `thiserror`. No
   file-format knowledge, no I/O. This is what rauta links.
-- **animlint-gltf**: the `gltf` crate with trimmed features (no image
+- **animsmith-gltf**: the `gltf` crate with trimmed features (no image
   decoding); owns GLB emission via `gltf-json`.
-- **animlint-fbx**: `ufbx` (official bindings, v0.11.x, actively
+- **animsmith-fbx**: `ufbx` (official bindings, v0.11.x, actively
   maintained; bundles the single-file C library via `cc` — no system
   deps). A separate crate rather than a feature flag so the C toolchain
   requirement is structurally isolated.
-- **animlint (CLI)**: `clap`, `serde_json`, `toml`. `--no-default-features`
+- **animsmith (CLI)**: `clap`, `serde_json`, `toml`. `--no-default-features`
   yields a pure-Rust glTF-only build.
 - Toolchain: stable Rust, edition 2024, MSRV pinned in CI. License:
   MIT OR Apache-2.0. All crate names verified free on crates.io
@@ -237,7 +240,7 @@ ground-penetration of feet/toes; mirrored-pair symmetry (`walk_left` vs
 
 ## 7. Configuration
 
-TOML (`animlint.toml`, or `--config`); Rust-ecosystem norm and
+TOML (`animsmith.toml`, or `--config`); Rust-ecosystem norm and
 diff-friendly in asset repos:
 
 ```toml
@@ -271,7 +274,7 @@ CLI flags override file config (`--select`, `--allow`, `--deny`).
 **Engine-agnosticism rule:** the TOML file is merely *one* constructor of
 a `CheckSet`. Embedding pipelines (rauta) build check sets
 programmatically through the library API and keep their own contract
-formats, hashing, and tolerance semantics on their side. animlint never
+formats, hashing, and tolerance semantics on their side. animsmith never
 learns rauta's RON schema.
 
 ## 8. Output formats
@@ -291,7 +294,7 @@ learns rauta's RON schema.
 
 ## 9. HTML report (the visual preview)
 
-`animlint report clip.glb -o report.html` → **one self-contained offline
+`animsmith report clip.glb -o report.html` → **one self-contained offline
 HTML file** (CI-artifact- and PR-attachment-friendly; no CDN, no install).
 
 **Key design choice: no three.js, no `<model-viewer>`.**
@@ -326,7 +329,7 @@ to *that* frame N. Determinism is the feature.
 - A skinned-mesh view (vendored three.js, `--report full`) is a P2 option
   the crate layout leaves room for; it is presentation polish, not v1.
 
-## 10. FBX ingestion (`animlint-fbx` + `convert`)
+## 10. FBX ingestion (`animsmith-fbx` + `convert`)
 
 - **Library**: the official `ufbx` Rust bindings (v0.11.x, actively
   maintained; the same C foundation as rauta's existing converter, so
@@ -355,7 +358,7 @@ to *that* frame N. Determinism is the feature.
 
 - **M0 — walking skeleton.** Repo bootstrap: workspace, dual license, CI
   (fmt/clippy/test on Linux/macOS/Windows), CC0 test fixtures. Core model
-  + sampler/FK; `animlint-gltf`; `inspect` and `measure --format json`;
+  + sampler/FK; `animsmith-gltf`; `inspect` and `measure --format json`;
   the mechanical P0 checks (`nan` → `constant-track`).
 - **M1 — rauta parity.** Rig profiles, TOML config, per-clip
   expectations; port `loop-seam`, `frozen-bone`, `root-motion-speed`,
@@ -363,7 +366,7 @@ to *that* frame N. Determinism is the feature.
   production numbers**; `lint` with exit codes + stable JSON; adopt
   rauta's mutation-test discipline (corrupt one field, assert the finding
   names exactly that field). **rauta #59 lands here**: `asset-contract
-  measure` becomes a thin wrapper over `animlint-core` + `animlint-gltf`
+  measure` becomes a thin wrapper over `animsmith-core` + `animsmith-gltf`
   (rauta keeps its sidecar RON schema and blake3 hashing);
   `locomotion_metrics.py` and the animation half of `measured_sidecar.py`
   are deleted.
@@ -371,7 +374,7 @@ to *that* frame N. Determinism is the feature.
   ingestion + `convert`; `diff`. The v0.1 bar for "usable by a non-rauta
   team": README quickstart works on a raw Mixamo-style GLB with zero
   config (profile auto-detect), built-in `mixamo` + `ue-mannequin`
-  profiles, sample `animlint.toml`, versioned JSON schema doc, no rauta
+  profiles, sample `animsmith.toml`, versioned JSON schema doc, no rauta
   vocabulary anywhere in the public API.
 - **M3 — the hard semantics.** `foot-slide` (stance detection),
   `in-place`, `bind-pose`/`axis-conventions`, rotational/velocity loop
@@ -391,7 +394,7 @@ to *that* frame N. Determinism is the feature.
    interpolation on a uniform grid, wrap = (last, 0)" — and exposes grid
    fps as config, accepting it is a model of runtimes, not all of them.
 4. **ufbx 0.x churn** and thin docs.rs coverage: pin exact versions,
-   treat the C library's docs as canonical, keep `animlint-fbx` thin and
+   treat the C library's docs as canonical, keep `animsmith-fbx` thin and
    swappable.
 5. **Rest-pose truth**: node TRS and inverse-bind matrices can disagree.
    Rule: IBM-derived rest is authoritative when a skin exists, node TRS
@@ -404,20 +407,30 @@ to *that* frame N. Determinism is the feature.
 
 ## Appendix A — naming decision record
 
-`animlint` chosen 2026-07-03. Verified free on crates.io (also
-`animlint-core`, `anim-lint`, `anim-metrics` for siblings) and zero
-GitHub repository hits. Rejected: `gltf-lint` (glTF is the carrier, not
-the domain; permanently confusable with Khronos glTF-Validator's
-spec-conformance role; wrong the moment FBX input landed), `animkit`/
-`clipkit`/`clipforge` (existing projects), `gaitkeeper` (minor
-collisions; overemphasizes locomotion). Linter-first identity retained
-despite `convert`/`report`/`measure` because each serves the lint
-verdict: convert = ingestion, report = presentation, measure = lint minus
-judgment, diff = lint across versions.
+Two decisions, both 2026-07-03 (the project was renamed the same day
+it was built, before anything was published):
+
+1. **`animlint`** was chosen first, on a linter-first scope with clip
+   transformation explicitly out of scope. Rejected then: `gltf-lint`
+   (glTF is the carrier, not the domain; permanently confusable with
+   Khronos glTF-Validator's spec-conformance role; wrong the moment FBX
+   input landed), `animkit`/`clipkit`/`clipforge` (existing projects),
+   `gaitkeeper` (minor collisions; overemphasizes locomotion).
+
+2. **Renamed to `animsmith`** the same day, when transformation became
+   first-class: the incubating pipeline needs hemisphere normalization,
+   frame-range slicing, hold-extend, and gait-anchor rotation sooner
+   than later, and its archived-FBX2glTF conversion step wants a
+   maintained replacement. The naming record had said the lint-first
+   name "only breaks if clip transformation becomes first-class" —
+   that fork flipped, so the name followed before the first crates.io
+   publish made it permanent. `animsmith` and all sibling crate names
+   verified free on crates.io with zero GitHub repository hits. Lint
+   remains the flagship subcommand.
 
 ## Appendix B — rauta prior art map (first consumer)
 
-| animlint piece | rauta origin |
+| animsmith piece | rauta origin |
 |---|---|
 | `loop-seam`, `gait-phase` algorithms | `tools/locomotion_metrics.py` (uniform grid, FK, local-neighbour seam denominator, stride floor, L−R fundamental-harmonic trough) |
 | `root-motion-speed` + 15% gate | `tools/build_character_glb_native.py` (`measure_root_motion`, `gate_speed_meta_matches_measured`) |

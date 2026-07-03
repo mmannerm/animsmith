@@ -3,13 +3,13 @@
 version = 4
 
 [[package]]
-name = "animlint"
+name = "animsmith"
 version = "0.1.0"
 dependencies = [
- "animlint-core",
- "animlint-fbx",
- "animlint-gltf",
- "animlint-report",
+ "animsmith-core",
+ "animsmith-fbx",
+ "animsmith-gltf",
+ "animsmith-report",
  "clap",
  "serde",
  "serde_json",
@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "animlint-core"
+name = "animsmith-core"
 version = "0.1.0"
 dependencies = [
  "glam",
@@ -27,20 +27,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "animlint-fbx"
+name = "animsmith-fbx"
 version = "0.1.0"
 dependencies = [
- "animlint-core",
+ "animsmith-core",
  "glam",
  "thiserror",
  "ufbx",
 ]
 
 [[package]]
-name = "animlint-gltf"
+name = "animsmith-gltf"
 version = "0.1.0"
 dependencies = [
- "animlint-core",
+ "animsmith-core",
  "base64",
  "glam",
  "gltf",
@@ -49,10 +49,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "animlint-report"
+name = "animsmith-report"
 version = "0.1.0"
 dependencies = [
- "animlint-core",
+ "animsmith-core",
  "base64",
  "serde_json",
 ]
