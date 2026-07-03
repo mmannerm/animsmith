@@ -56,13 +56,36 @@ pub fn hold_extend(clip: &mut Clip, hold_s: f64) {
         let Some(&last) = track.times.last() else {
             continue;
         };
-        if track.interpolation == Interpolation::CubicSpline {
-            continue; // duplicating a cubic key needs tangent zeroing; defer
-        }
+        let key = track.key_count() - 1;
         track.times.push(last + hold_s as f32);
         match &mut track.values {
-            TrackValues::Vec3s(v) => v.push(*v.last().expect("non-empty track")),
-            TrackValues::Quats(v) => v.push(*v.last().expect("non-empty track")),
+            TrackValues::Vec3s(v) => {
+                let value = v[track.interpolation.value_index_static(key)];
+                match track.interpolation {
+                    Interpolation::CubicSpline => {
+                        // Zero tangents: a flat Hermite hold. Also zero
+                        // the previous key's out-tangent so the hold
+                        // segment stays flat.
+                        v[key * 3 + 2] = glam::Vec3::ZERO;
+                        v.extend_from_slice(&[glam::Vec3::ZERO, value, glam::Vec3::ZERO]);
+                    }
+                    _ => v.push(value),
+                }
+            }
+            TrackValues::Quats(v) => {
+                let value = v[track.interpolation.value_index_static(key)];
+                match track.interpolation {
+                    Interpolation::CubicSpline => {
+                        v[key * 3 + 2] = glam::Quat::from_xyzw(0.0, 0.0, 0.0, 0.0);
+                        v.extend_from_slice(&[
+                            glam::Quat::from_xyzw(0.0, 0.0, 0.0, 0.0),
+                            value,
+                            glam::Quat::from_xyzw(0.0, 0.0, 0.0, 0.0),
+                        ]);
+                    }
+                    _ => v.push(value),
+                }
+            }
         }
         clip.duration_s = clip.duration_s.max((last + hold_s as f32) as f64);
     }

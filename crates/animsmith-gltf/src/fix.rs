@@ -11,11 +11,13 @@
 //! unchanged, so walking each track and negating keys until the whole
 //! track is hemisphere-consistent is lossless.
 //!
-//! Scope: LINEAR and STEP tracks with float32 VEC4 output. CUBICSPLINE
-//! tracks are skipped with a warning (negating a key also changes how
-//! its Hermite segments traverse 4-space; a correct cubic fix needs
-//! resampling, which is not byte-surgical). Sparse accessors and
-//! quantized (normalized-int) rotations are likewise skipped.
+//! Scope: float32 VEC4 rotation outputs. For CUBICSPLINE tracks the
+//! whole `[in-tangent, value, out-tangent]` triplet is negated with the
+//! key — the tangents are derivatives in quaternion component space, so
+//! they flip with it. (Hermite segments between a flipped and an
+//! unflipped key traverse 4-space differently than authored, but the
+//! authored curve was the long-way spin being repaired.) Sparse
+//! accessors and quantized (normalized-int) rotations are skipped.
 
 use crate::LoadError;
 use base64::Engine as _;
@@ -104,12 +106,7 @@ pub fn fix_quat_hemisphere(input: &Path, output: &Path) -> Result<FixReport, Loa
                 .unwrap_or("<unnamed>")
                 .to_string();
             let sampler = channel.sampler();
-            if sampler.interpolation() == gltf::animation::Interpolation::CubicSpline {
-                report.skipped.push(format!(
-                    "{clip}/{bone}: CUBICSPLINE track (needs resampling)"
-                ));
-                continue;
-            }
+            let cubic = sampler.interpolation() == gltf::animation::Interpolation::CubicSpline;
             let accessor = sampler.output();
             if accessor.sparse().is_some() {
                 report
@@ -142,26 +139,39 @@ pub fn fix_quat_hemisphere(input: &Path, output: &Path) -> Result<FixReport, Loa
             let start = view.offset() + accessor.offset();
             let buffer = &mut buffers[view.buffer().index()];
 
-            let mut prev: Option<[f32; 4]> = None;
-            let mut flipped = 0usize;
-            for k in 0..accessor.count() {
-                let at = start + k * stride;
+            // Cubic outputs hold [in-tangent, value, out-tangent]
+            // triplets; the hemisphere walk compares VALUE elements and
+            // negates whole triplets.
+            let (per_key, value_offset) = if cubic { (3usize, 1usize) } else { (1, 0) };
+            let keys = accessor.count() / per_key;
+            let read4 = |buffer: &[u8], element: usize| -> [f32; 4] {
+                let at = start + element * stride;
                 let mut q = [0f32; 4];
                 for (c, slot) in q.iter_mut().enumerate() {
                     let o = at + c * 4;
                     *slot = f32::from_le_bytes(buffer[o..o + 4].try_into().unwrap());
                 }
+                q
+            };
+            let mut prev: Option<[f32; 4]> = None;
+            let mut flipped = 0usize;
+            for k in 0..keys {
+                let value_element = k * per_key + value_offset;
+                let q = read4(buffer, value_element);
                 if let Some(p) = prev {
                     let dot: f32 = p.iter().zip(&q).map(|(a, b)| a * b).sum();
                     if dot < 0.0 {
-                        for slot in q.iter_mut() {
-                            *slot = -*slot;
-                        }
-                        for (c, slot) in q.iter().enumerate() {
-                            let o = at + c * 4;
-                            buffer[o..o + 4].copy_from_slice(&slot.to_le_bytes());
+                        for e in (k * per_key)..(k * per_key + per_key) {
+                            let negated = read4(buffer, e).map(|v| -v);
+                            let at = start + e * stride;
+                            for (c, v) in negated.iter().enumerate() {
+                                let o = at + c * 4;
+                                buffer[o..o + 4].copy_from_slice(&v.to_le_bytes());
+                            }
                         }
                         flipped += 1;
+                        prev = Some(q.map(|v| -v));
+                        continue;
                     }
                 }
                 prev = Some(q);

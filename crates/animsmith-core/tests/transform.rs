@@ -181,3 +181,35 @@ fn gait_anchor_refuses_stationary_clips() {
     let err = align_gait_anchor(&skel, &mut clip, &roles, FPS).unwrap_err();
     assert!(err.contains("stride anchor"), "got: {err}");
 }
+
+#[test]
+fn hold_extend_handles_cubic_tracks() {
+    let (_, mut clip) = open_walk();
+    // Rebuild track 0 as CUBICSPLINE with zero tangents.
+    let orig = clip.tracks[0].clone();
+    let TrackValues::Vec3s(vals) = &orig.values else {
+        unreachable!()
+    };
+    let mut cubic_vals = Vec::new();
+    for v in vals {
+        cubic_vals.push(Vec3::ZERO);
+        cubic_vals.push(*v);
+        cubic_vals.push(Vec3::ZERO);
+    }
+    clip.tracks[0] = Track {
+        interpolation: Interpolation::CubicSpline,
+        values: TrackValues::Vec3s(cubic_vals),
+        ..orig.clone()
+    };
+    let last_value = orig.key_vec3(orig.key_count() - 1).unwrap();
+    hold_extend(&mut clip, 0.5);
+    let track = &clip.tracks[0];
+    assert_eq!(track.key_count(), orig.key_count() + 1);
+    assert_eq!(track.key_vec3(track.key_count() - 1), Some(last_value));
+    // The appended triplet has zero tangents (flat hold).
+    let TrackValues::Vec3s(v) = &track.values else {
+        unreachable!()
+    };
+    assert_eq!(v[v.len() - 3], Vec3::ZERO);
+    assert_eq!(v[v.len() - 1], Vec3::ZERO);
+}

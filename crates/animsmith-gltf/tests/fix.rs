@@ -132,3 +132,47 @@ fn in_place_fix_works() {
     assert_eq!(report.total_flipped(), 2);
     assert_eq!(lint_flip_count(&animsmith_gltf::load(&path).unwrap()), 0);
 }
+
+#[test]
+fn cubic_tracks_are_fixed_by_triplet() {
+    // A CUBICSPLINE rotation track whose middle key (value + tangents)
+    // is sign-flipped.
+    let angles = [0.0f32, 0.5, 1.0];
+    let mut values: Vec<Quat> = Vec::new();
+    for (k, &a) in angles.iter().enumerate() {
+        let q = Quat::from_rotation_y(a);
+        let sign = if k == 1 { -1.0 } else { 1.0 };
+        values.push(Quat::from_xyzw(0.0, 0.0, 0.0, 0.0)); // in-tangent
+        values.push(q * sign);
+        values.push(Quat::from_xyzw(0.0, 0.0, 0.0, 0.0)); // out-tangent
+    }
+    let mut doc = flipped_doc();
+    doc.clips[0].tracks[0] = Track {
+        bone: 1,
+        property: Property::Rotation,
+        interpolation: Interpolation::CubicSpline,
+        times: vec![0.0, 0.5, 1.0],
+        values: TrackValues::Quats(values),
+    };
+    let dir = std::env::temp_dir().join("animsmith-fix-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("cubic.glb");
+    animsmith_gltf::write::write(&doc, &path).expect("writes");
+    assert_eq!(lint_flip_count(&animsmith_gltf::load(&path).unwrap()), 1);
+
+    let report = animsmith_gltf::fix::fix_quat_hemisphere(&path, &path).expect("fixes");
+    assert_eq!(report.total_flipped(), 1, "one triplet repaired");
+    assert!(report.skipped.is_empty(), "cubic no longer skipped");
+
+    let repaired = animsmith_gltf::load(&path).expect("reloads");
+    assert_eq!(lint_flip_count(&repaired), 0);
+    let track = &repaired.clips[0].tracks[0];
+    assert!(
+        track
+            .key_quat(1)
+            .unwrap()
+            .angle_between(Quat::from_rotation_y(0.5))
+            < 1e-5,
+        "rotation preserved"
+    );
+}
