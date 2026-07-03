@@ -9,17 +9,20 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0-dev"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/mmannerm/animlint"
+readme = "README.md"
+keywords = ["animation", "gltf", "lint", "gamedev", "fbx"]
+categories = ["game-development", "graphics", "development-tools"]
 
 [workspace.dependencies]
-animlint-core = { path = "crates/animlint-core", version = "0.1.0-dev" }
-animlint-gltf = { path = "crates/animlint-gltf", version = "0.1.0-dev" }
-animlint-fbx = { path = "crates/animlint-fbx", version = "0.1.0-dev" }
-animlint-report = { path = "crates/animlint-report", version = "0.1.0-dev" }
+animlint-core = { path = "crates/animlint-core", version = "0.1.0" }
+animlint-gltf = { path = "crates/animlint-gltf", version = "0.1.0" }
+animlint-fbx = { path = "crates/animlint-fbx", version = "0.1.0" }
+animlint-report = { path = "crates/animlint-report", version = "0.1.0" }
 ufbx = "0.11"
 glam = "0.33"
 serde = { version = "1", features = ["derive"] }
