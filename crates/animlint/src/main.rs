@@ -61,6 +61,18 @@ enum Cmd {
         #[arg(long, value_delimiter = ',')]
         allow: Vec<String>,
     },
+    /// Render a self-contained offline HTML report: WebGL skeleton
+    /// playback of the exact frames the checks judged, metric charts,
+    /// and the findings list.
+    #[cfg(feature = "report")]
+    Report {
+        file: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Restrict the report to one clip.
+        #[arg(long)]
+        clip: Option<String>,
+    },
     /// Convert an input (typically FBX) to glTF: skeleton + animation
     /// tracks only — no meshes, skins, or materials. Output format by
     /// extension: .glb binary, .gltf JSON with an embedded buffer.
@@ -293,6 +305,24 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             } else {
                 ExitCode::SUCCESS
             })
+        }
+        #[cfg(feature = "report")]
+        Cmd::Report { file, output, clip } => {
+            let doc = load(&file)?;
+            let roles = resolve_roles(&doc, &config);
+            let ctx = CheckCtx::new(&doc, &roles, &config);
+            let findings = run_checks(&ctx, &all_checks());
+            let html = animlint_report::render(&doc, &roles, &findings, clip.as_deref());
+            std::fs::write(&output, &html)
+                .map_err(|e| format!("cannot write {}: {e}", output.display()))?;
+            println!(
+                "wrote {} ({} clip(s), {} finding(s), {:.1} MB)",
+                output.display(),
+                doc.clips.len(),
+                findings.len(),
+                html.len() as f64 / 1e6
+            );
+            Ok(ExitCode::SUCCESS)
         }
         Cmd::Convert { input, output } => {
             let doc = load(&input)?;

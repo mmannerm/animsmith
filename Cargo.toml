@@ -4,6 +4,7 @@ members = [
     "crates/animlint-core",
     "crates/animlint-gltf",
     "crates/animlint-fbx",
+    "crates/animlint-report",
     "crates/animlint",
 ]
 
@@ -18,6 +19,7 @@ repository = "https://github.com/mmannerm/animlint"
 animlint-core = { path = "crates/animlint-core", version = "0.1.0-dev" }
 animlint-gltf = { path = "crates/animlint-gltf", version = "0.1.0-dev" }
 animlint-fbx = { path = "crates/animlint-fbx", version = "0.1.0-dev" }
+animlint-report = { path = "crates/animlint-report", version = "0.1.0-dev" }
 ufbx = "0.11"
 glam = "0.33"
 serde = { version = "1", features = ["derive"] }

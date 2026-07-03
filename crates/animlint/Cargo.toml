@@ -12,15 +12,18 @@ name = "animlint"
 path = "src/main.rs"
 
 [features]
-default = ["fbx"]
+default = ["fbx", "report"]
 # FBX input via ufbx (bundles a C library; --no-default-features gives
 # a pure-Rust glTF-only build).
 fbx = ["dep:animlint-fbx"]
+# HTML report generation.
+report = ["dep:animlint-report"]
 
 [dependencies]
 animlint-core = { workspace = true }
 animlint-gltf = { workspace = true }
 animlint-fbx = { workspace = true, optional = true }
+animlint-report = { workspace = true, optional = true }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

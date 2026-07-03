@@ -1,0 +1,38 @@
+:root {
+  --bg: #17171f;
+  --panel: #1e1e2a;
+  --text: #d5d9e5;
+  --muted: #9099b2;
+  --accent: #7aa2f7;
+}
+* { box-sizing: border-box; margin: 0; }
+body { background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, sans-serif; }
+header { display: flex; gap: 1rem; align-items: baseline; padding: 0.7rem 1rem; }
+header h1 { font-size: 1.05rem; color: var(--accent); }
+#file { color: var(--muted); font-size: 0.85rem; }
+main { display: grid; grid-template-columns: minmax(0, 3fr) minmax(280px, 2fr); gap: 1rem; padding: 0 1rem 1rem; }
+@media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+section { background: var(--panel); border-radius: 8px; padding: 0.8rem; }
+#controls { display: flex; gap: 0.6rem; align-items: center; margin-bottom: 0.6rem; }
+#controls select, #controls button {
+  background: #2a2a3a; color: var(--text); border: 1px solid #3a3a4e;
+  border-radius: 5px; padding: 0.25rem 0.6rem; font: inherit; cursor: pointer;
+}
+#scrub { flex: 1; accent-color: var(--accent); }
+#time { color: var(--muted); font-size: 0.8rem; white-space: nowrap; }
+#gl { width: 100%; aspect-ratio: 4 / 3; border-radius: 6px; background: #16161d; cursor: grab; }
+.hint { color: var(--muted); font-size: 0.75rem; margin-top: 0.4rem; }
+#side h2 { font-size: 0.9rem; color: var(--accent); margin: 0.4rem 0; }
+#findings { list-style: none; max-height: 34vh; overflow-y: auto; }
+.finding { padding: 0.4rem 0.5rem; border-radius: 5px; margin-bottom: 0.3rem; background: #232331; cursor: pointer; font-size: 0.82rem; }
+.finding:hover { background: #2b2b3d; }
+.finding .sev { font-weight: 600; margin-right: 0.4rem; text-transform: uppercase; font-size: 0.7rem; }
+.finding.error .sev { color: #f7768e; }
+.finding.warning .sev { color: #e0af68; }
+.finding.note .sev { color: var(--muted); }
+.finding code { color: var(--accent); }
+.chart { margin-bottom: 0.7rem; }
+.chart figcaption { color: var(--muted); font-size: 0.75rem; margin-bottom: 0.2rem; }
+.chart svg { background: #16161d; border-radius: 5px; }
+.playhead { stroke: #f7768e; stroke-width: 1; }
+.pathdot { fill: #f7768e; }

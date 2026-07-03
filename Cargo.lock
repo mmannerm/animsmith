@@ -9,6 +9,7 @@ dependencies = [
  "animlint-core",
  "animlint-fbx",
  "animlint-gltf",
+ "animlint-report",
  "clap",
  "serde",
  "serde_json",
@@ -45,6 +46,15 @@ dependencies = [
  "gltf",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "animlint-report"
+version = "0.1.0-dev"
+dependencies = [
+ "animlint-core",
+ "base64",
+ "serde_json",
 ]
 
 [[package]]

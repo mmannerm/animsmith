@@ -9,14 +9,15 @@ phase, root-motion sanity, and foot slide.
 glTF-Validator checks spec conformance; animlint judges *content*.
 Nothing open-source did game-semantics clip validation before this.
 
-**Status: M1.** glTF/GLB input; mechanical + locomotion-semantics check
-sets; rig profiles (mixamo / ue-mannequin / rauta-humanoid + auto-detect);
-`animlint.toml` config with per-clip expectations and gait groups;
-`inspect` / `measure` / `lint`. The loop-seam and gait algorithms are
-golden-tested against the production numbers of the pipeline they were
-extracted from. See [DESIGN.md](DESIGN.md) for the full design and
-roadmap (FBX via ufbx, self-contained HTML reports with a 3D viewer,
-foot-slide detection).
+**Status: M2.** glTF/GLB **and FBX** input (via [ufbx](https://github.com/ufbx/ufbx));
+mechanical + locomotion-semantics check sets; rig profiles
+(mixamo / ue-mannequin / rauta-humanoid + auto-detect); `animlint.toml`
+config with per-clip expectations and gait groups; the full subcommand
+surface: `inspect` / `measure` / `lint` / `convert` / `report` / `diff`.
+The loop-seam and gait algorithms are golden-tested against the
+production numbers of the pipeline they were extracted from. See
+[DESIGN.md](DESIGN.md) for the full design and roadmap (foot-slide
+detection, bind-pose checks).
 
 ## Quickstart
 
@@ -27,12 +28,23 @@ clip.glb:
   note[constant-track] clip 'walk' bone 'ik_target': scale track has 90 keys but never moves — export bloat
 0 error(s), 1 warning(s), 1 note(s)
 
+$ cargo run -p animlint -- lint export.fbx           # lint a DCC export directly
 $ cargo run -p animlint -- measure clip.glb          # machine-readable measurements
-$ cargo run -p animlint -- inspect clip.glb          # skeleton + clip summary
+$ cargo run -p animlint -- inspect clip.glb          # skeleton + clips + detected rig profile
+$ cargo run -p animlint -- report clip.glb -o report.html   # offline HTML: 3D playback + charts
+$ cargo run -p animlint -- convert export.fbx -o clip.glb   # skeleton+animation glTF
+$ cargo run -p animlint -- diff old.glb new.glb      # did the re-export change what matters?
 ```
 
 Exit codes: `0` clean/warnings-only, `1` error findings (`--deny-warnings`
 promotes), `2` operator error.
+
+The HTML report is a single self-contained file (no CDN, works offline,
+attach it to a PR): a small hand-written WebGL viewer plays back **the
+exact pose-grid frames the checks judged** — no re-sampling in JS —
+with foot/root trails, metric charts synced to the scrubber, and a
+clickable findings list. FBX support bundles the ufbx C library; build
+with `--no-default-features` for a pure-Rust glTF-only binary.
 
 ## Checks
 

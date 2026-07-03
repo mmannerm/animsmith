@@ -1,10 +1,7 @@
 # Third-party notices
 
-Nothing is vendored yet.
-
-Planned (see DESIGN.md):
-
-- **ufbx** (M2, via the `ufbx` crate's bundled C library) — licensed
-  MIT OR PDDL-1.0.
-- **Viewer JS/CSS** for the HTML report (M2) — hand-written in this
-  repo, no external libraries planned.
+- **ufbx** — the `animlint-fbx` crate builds the single-file ufbx C
+  library bundled by the `ufbx` crate (https://github.com/ufbx/ufbx),
+  licensed MIT OR PDDL-1.0.
+- **Viewer JS/CSS** for the HTML report is hand-written in this repo
+  (crates/animlint-report/assets/) — no external libraries.
