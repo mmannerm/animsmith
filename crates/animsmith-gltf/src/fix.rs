@@ -275,20 +275,16 @@ fn write_patched(
         let bin_chunk_start = 12usize
             .checked_add(8)
             .and_then(|n| n.checked_add(json_len))
-            .ok_or_else(|| {
-                FixError::Load(LoadError::Buffer(
-                    "malformed GLB chunk length overflow".into(),
-                ))
-            })?;
+            .ok_or_else(|| LoadError::Buffer("malformed GLB chunk length overflow".into()))?;
         if bin_chunk_start > original.len() {
             return Err(LoadError::Buffer("malformed GLB JSON chunk length".into()).into());
         }
         let mut out = original[..bin_chunk_start].to_vec();
         if bin_chunk_start < original.len() {
             let bin_len = read_u32_le(original, bin_chunk_start)?;
-            let bin_header_end = bin_chunk_start.checked_add(8).ok_or_else(|| {
-                FixError::Load(LoadError::Buffer("malformed GLB BIN chunk overflow".into()))
-            })?;
+            let bin_header_end = bin_chunk_start
+                .checked_add(8)
+                .ok_or_else(|| LoadError::Buffer("malformed GLB BIN chunk overflow".into()))?;
             if bin_header_end > original.len() {
                 return Err(LoadError::Buffer("malformed GLB BIN chunk header".into()).into());
             }
@@ -303,9 +299,9 @@ fn write_patched(
             }
             out.extend_from_slice(&bin);
             // Preserve the original chunk padding.
-            let padding_start = bin_header_end.checked_add(bin.len()).ok_or_else(|| {
-                FixError::Load(LoadError::Buffer("malformed GLB BIN chunk overflow".into()))
-            })?;
+            let padding_start = bin_header_end
+                .checked_add(bin.len())
+                .ok_or_else(|| LoadError::Buffer("malformed GLB BIN chunk overflow".into()))?;
             if padding_start > original.len() {
                 return Err(LoadError::Buffer("malformed GLB BIN chunk length".into()).into());
             }

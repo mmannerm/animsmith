@@ -528,3 +528,35 @@ fn diff_rejects_non_envelope_json() {
         stderr(&output)
     );
 }
+
+#[test]
+fn diff_rejects_unsupported_schema_versions() {
+    let dir = unique_temp_dir("diff-future-schema");
+    let future = dir.join("future.json");
+    std::fs::write(
+        &future,
+        r#"{"schema_version": 99, "files": [{"measurements": {}}]}"#,
+    )
+    .expect("writes future report");
+
+    let output = animsmith()
+        .args([
+            "diff",
+            future.to_str().expect("utf-8 path"),
+            fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "stdout:\n{}",
+        stdout(&output)
+    );
+    assert!(
+        stderr(&output).contains("schema_version 99"),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+}

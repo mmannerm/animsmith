@@ -36,9 +36,11 @@ pub enum LoadError {
     Buffer(String),
 }
 
-/// `fix` = load + patch + write, and its error type says so: the load
-/// phase (reading, parsing, buffer resolution) fails as [`LoadError`],
-/// the write phase as [`WriteError`].
+/// `fix` errors are classified by defect, not by phase: [`LoadError`]
+/// means the *input* was unreadable or malformed (even when detected
+/// while assembling the output, e.g. re-deriving GLB chunk bounds or
+/// validating an input-supplied buffer URI); [`WriteError`] means
+/// emitting the output failed.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum FixError {

@@ -805,7 +805,23 @@ fn load_measurements(
         let value: serde_json::Value = serde_json::from_str(&text)
             .map_err(|e| format!("bad JSON in {}: {e}", path.display()))?;
         // Only the versioned v1 envelope is accepted — no pre-publish
-        // legacy shapes.
+        // legacy shapes, and no silently mis-reading a future version.
+        match value.get("schema_version").and_then(|v| v.as_u64()) {
+            Some(v) if v == u64::from(SCHEMA_VERSION) => {}
+            Some(v) => {
+                return Err(format!(
+                    "{} has schema_version {v}; this build reads schema_version {SCHEMA_VERSION}",
+                    path.display()
+                ));
+            }
+            None => {
+                return Err(format!(
+                    "{} is not an animsmith report envelope (no `schema_version`); \
+                     regenerate it with `animsmith measure --format json`",
+                    path.display()
+                ));
+            }
+        }
         let Some(files) = value.get("files").and_then(|v| v.as_array()) else {
             return Err(format!(
                 "{} is not an animsmith report envelope (no `files` array); \
