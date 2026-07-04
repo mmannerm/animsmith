@@ -357,6 +357,7 @@ mod tests {
         let delta = delta_for(&deltas, "gait.lr_amplitude_m");
         assert_eq!(delta.note, "moved");
         assert_eq!(delta.before, Some(0.1));
+        assert_eq!(delta.after, Some(0.1 + AMPLITUDE_THRESHOLD_M * 2.0));
     }
 
     #[test]
@@ -376,6 +377,7 @@ mod tests {
         let delta = delta_for(&deltas, "bone_rotation_range_deg[hips]");
         assert_eq!(delta.note, "moved");
         assert_eq!(delta.before, Some(10.0));
+        assert_eq!(delta.after, Some(10.0 + ROTATION_RANGE_THRESHOLD_DEG * 2.0));
     }
 
     #[test]
@@ -424,12 +426,7 @@ mod tests {
         let delta = delta_for(&deltas, "animated_bones");
         assert_eq!(delta.before, Some(1.0));
         assert_eq!(delta.after, Some(2.0));
-        // Set difference, not just a count change.
-        assert!(
-            delta.note.contains("gained [spine, tail]"),
-            "{}",
-            delta.note
-        );
-        assert!(delta.note.contains("lost [hips]"), "{}", delta.note);
+        // Exact note: set difference (sorted), not just a count change.
+        assert_eq!(delta.note, "gained [spine, tail], lost [hips]");
     }
 }
