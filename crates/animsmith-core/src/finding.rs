@@ -7,7 +7,6 @@ use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
-#[non_exhaustive]
 pub enum Severity {
     Note,
     Warning,

@@ -457,3 +457,74 @@ fn diff_json_uses_versioned_envelope() {
     assert!(json["inputs"]["before"].is_string());
     assert!(json["inputs"]["after"].is_string());
 }
+
+#[test]
+fn diff_accepts_single_file_measure_report_round_trip() {
+    let dir = unique_temp_dir("diff-round-trip");
+    let asset = fixture("rig.gltf");
+    let report_path = dir.join("measure.json");
+
+    let measured = animsmith()
+        .args([
+            "measure",
+            asset.to_str().expect("utf-8 fixture path"),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("runs animsmith");
+    assert!(measured.status.success(), "stderr:\n{}", stderr(&measured));
+    std::fs::write(&report_path, &measured.stdout).expect("writes report");
+
+    // A report diffed against the asset it was measured from is clean.
+    let output = animsmith()
+        .args([
+            "diff",
+            report_path.to_str().expect("utf-8 report path"),
+            asset.to_str().expect("utf-8 fixture path"),
+        ])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert!(
+        stdout(&output).contains("no significant movement"),
+        "stdout:\n{}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn diff_rejects_non_envelope_json() {
+    let dir = unique_temp_dir("diff-bare-map");
+    let bare = dir.join("bare.json");
+    // A bare measurement map (a pre-publish development shape) is not
+    // part of the v1 contract and must be rejected with guidance.
+    std::fs::write(&bare, r#"{"walk": {"duration_s": 1.0}}"#).expect("writes bare map");
+
+    let output = animsmith()
+        .args([
+            "diff",
+            bare.to_str().expect("utf-8 path"),
+            fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "stdout:\n{}",
+        stdout(&output)
+    );
+    assert!(
+        stderr(&output).contains("not an animsmith report envelope"),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+}

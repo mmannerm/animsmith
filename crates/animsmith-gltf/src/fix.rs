@@ -19,7 +19,7 @@
 //! authored curve was the long-way spin being repaired.) Sparse
 //! accessors and quantized (normalized-int) rotations are skipped.
 
-use crate::FixError;
+use crate::{FixError, LoadError, WriteError};
 use base64::Engine as _;
 use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
@@ -64,11 +64,11 @@ pub fn inspect_quat_hemisphere(input: &Path) -> Result<FixReport, FixError> {
 }
 
 fn fix_quat_hemisphere_impl(input: &Path, output: Option<&Path>) -> Result<FixReport, FixError> {
-    let bytes = std::fs::read(input).map_err(|source| FixError::Io {
+    let bytes = std::fs::read(input).map_err(|source| LoadError::Io {
         path: input.display().to_string(),
         source,
     })?;
-    let gltf = gltf::Gltf::from_slice(&bytes)?;
+    let gltf = gltf::Gltf::from_slice(&bytes).map_err(LoadError::from)?;
 
     // Buffers as mutable byte vectors; index 0 of a GLB is the BIN
     // chunk. External and data-URI buffers are loaded, patched, and
@@ -80,21 +80,21 @@ fn fix_quat_hemisphere_impl(input: &Path, output: Option<&Path>) -> Result<FixRe
             gltf::buffer::Source::Bin => gltf
                 .blob
                 .clone()
-                .ok_or_else(|| FixError::Buffer("GLB has no BIN chunk".into()))?,
+                .ok_or_else(|| LoadError::Buffer("GLB has no BIN chunk".into()))?,
             gltf::buffer::Source::Uri(uri) => {
                 if let Some(encoded) = uri.strip_prefix("data:") {
                     let payload = encoded
                         .split_once("base64,")
                         .map(|(_, p)| p)
-                        .ok_or_else(|| FixError::Buffer("unsupported data URI".into()))?;
+                        .ok_or_else(|| LoadError::Buffer("unsupported data URI".into()))?;
                     base64::engine::general_purpose::STANDARD
                         .decode(payload)
-                        .map_err(|e| FixError::Buffer(format!("bad base64 data URI: {e}")))?
+                        .map_err(|e| LoadError::Buffer(format!("bad base64 data URI: {e}")))?
                 } else {
                     let path = base
                         .unwrap_or(Path::new("."))
                         .join(safe_external_buffer_path(uri)?);
-                    std::fs::read(&path).map_err(|source| FixError::Io {
+                    std::fs::read(&path).map_err(|source| LoadError::Io {
                         path: path.display().to_string(),
                         source,
                     })?
@@ -260,9 +260,11 @@ fn write_patched(
 ) -> Result<(), FixError> {
     let io_err = |path: &Path| {
         let path = path.display().to_string();
-        move |source: std::io::Error| FixError::Io {
-            path: path.clone(),
-            source,
+        move |source: std::io::Error| {
+            FixError::Write(WriteError::Io {
+                path: path.clone(),
+                source,
+            })
         }
     };
 
@@ -273,34 +275,39 @@ fn write_patched(
         let bin_chunk_start = 12usize
             .checked_add(8)
             .and_then(|n| n.checked_add(json_len))
-            .ok_or_else(|| FixError::Buffer("malformed GLB chunk length overflow".into()))?;
+            .ok_or_else(|| {
+                FixError::Load(LoadError::Buffer(
+                    "malformed GLB chunk length overflow".into(),
+                ))
+            })?;
         if bin_chunk_start > original.len() {
-            return Err(FixError::Buffer("malformed GLB JSON chunk length".into()));
+            return Err(LoadError::Buffer("malformed GLB JSON chunk length".into()).into());
         }
         let mut out = original[..bin_chunk_start].to_vec();
         if bin_chunk_start < original.len() {
             let bin_len = read_u32_le(original, bin_chunk_start)?;
-            let bin_header_end = bin_chunk_start
-                .checked_add(8)
-                .ok_or_else(|| FixError::Buffer("malformed GLB BIN chunk overflow".into()))?;
+            let bin_header_end = bin_chunk_start.checked_add(8).ok_or_else(|| {
+                FixError::Load(LoadError::Buffer("malformed GLB BIN chunk overflow".into()))
+            })?;
             if bin_header_end > original.len() {
-                return Err(FixError::Buffer("malformed GLB BIN chunk header".into()));
+                return Err(LoadError::Buffer("malformed GLB BIN chunk header".into()).into());
             }
             out.extend_from_slice(&original[bin_chunk_start..bin_header_end]);
             let bin = buffers.first().cloned().unwrap_or_default();
             if bin.len() > bin_len {
-                return Err(FixError::Buffer(format!(
+                return Err(LoadError::Buffer(format!(
                     "patched BIN chunk length {} exceeds original length {bin_len}",
                     bin.len()
-                )));
+                ))
+                .into());
             }
             out.extend_from_slice(&bin);
             // Preserve the original chunk padding.
-            let padding_start = bin_header_end
-                .checked_add(bin.len())
-                .ok_or_else(|| FixError::Buffer("malformed GLB BIN chunk overflow".into()))?;
+            let padding_start = bin_header_end.checked_add(bin.len()).ok_or_else(|| {
+                FixError::Load(LoadError::Buffer("malformed GLB BIN chunk overflow".into()))
+            })?;
             if padding_start > original.len() {
-                return Err(FixError::Buffer("malformed GLB BIN chunk length".into()));
+                return Err(LoadError::Buffer("malformed GLB BIN chunk length".into()).into());
             }
             out.extend_from_slice(&original[padding_start..]);
         }
@@ -346,25 +353,25 @@ fn accessor_byte_range(
     Some(start..last_start.checked_add(element_bytes)?)
 }
 
-fn read_u32_le(bytes: &[u8], offset: usize) -> Result<usize, FixError> {
+fn read_u32_le(bytes: &[u8], offset: usize) -> Result<usize, LoadError> {
     let end = offset
         .checked_add(4)
-        .ok_or_else(|| FixError::Buffer("malformed GLB offset overflow".into()))?;
+        .ok_or_else(|| LoadError::Buffer("malformed GLB offset overflow".into()))?;
     let word = bytes
         .get(offset..end)
-        .ok_or_else(|| FixError::Buffer("malformed GLB chunk header".into()))?;
+        .ok_or_else(|| LoadError::Buffer("malformed GLB chunk header".into()))?;
     Ok(u32::from_le_bytes(word.try_into().expect("slice has four bytes")) as usize)
 }
 
-fn safe_external_buffer_path(uri: &str) -> Result<PathBuf, FixError> {
+fn safe_external_buffer_path(uri: &str) -> Result<PathBuf, LoadError> {
     if uri.is_empty() || uri.contains('\\') {
-        return Err(FixError::Buffer(format!(
+        return Err(LoadError::Buffer(format!(
             "unsafe external buffer URI {uri:?}: expected a relative child path"
         )));
     }
     let path = Path::new(uri);
     if path.is_absolute() {
-        return Err(FixError::Buffer(format!(
+        return Err(LoadError::Buffer(format!(
             "unsafe external buffer URI {uri:?}: absolute paths are not supported"
         )));
     }
@@ -373,14 +380,14 @@ fn safe_external_buffer_path(uri: &str) -> Result<PathBuf, FixError> {
         match component {
             Component::Normal(part) => out.push(part),
             _ => {
-                return Err(FixError::Buffer(format!(
+                return Err(LoadError::Buffer(format!(
                     "unsafe external buffer URI {uri:?}: expected a relative child path"
                 )));
             }
         }
     }
     if out.as_os_str().is_empty() {
-        return Err(FixError::Buffer(format!(
+        return Err(LoadError::Buffer(format!(
             "unsafe external buffer URI {uri:?}: expected a relative child path"
         )));
     }

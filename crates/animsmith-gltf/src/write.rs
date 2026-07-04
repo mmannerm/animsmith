@@ -220,19 +220,16 @@ pub fn write_with_assets(
                     let flat: Vec<f32> = v.iter().flat_map(|q| q.to_array()).collect();
                     buffers.push(&flat, "VEC4", false)
                 }
-                _ => continue,
             };
             let interpolation = match track.interpolation {
                 Interpolation::Linear => "LINEAR",
                 Interpolation::Step => "STEP",
                 Interpolation::CubicSpline => "CUBICSPLINE",
-                _ => continue,
             };
             let target_path = match track.property {
                 Property::Translation => "translation",
                 Property::Rotation => "rotation",
                 Property::Scale => "scale",
-                _ => continue,
             };
             let sampler = samplers.len();
             samplers.push(json!({

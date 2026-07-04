@@ -36,18 +36,16 @@ pub enum LoadError {
     Buffer(String),
 }
 
+/// `fix` = load + patch + write, and its error type says so: the load
+/// phase (reading, parsing, buffer resolution) fails as [`LoadError`],
+/// the write phase as [`WriteError`].
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum FixError {
-    #[error("failed to read or write {path}: {source}")]
-    Io {
-        path: String,
-        source: std::io::Error,
-    },
-    #[error("glTF parse error: {0}")]
-    Gltf(#[from] gltf::Error),
-    #[error("buffer resolution failed: {0}")]
-    Buffer(String),
+    #[error(transparent)]
+    Load(#[from] LoadError),
+    #[error(transparent)]
+    Write(#[from] WriteError),
 }
 
 #[derive(Debug, thiserror::Error)]
