@@ -1000,10 +1000,16 @@ fn lint_unknown_select_is_operator_error() {
         "stdout:\n{}",
         stdout(&output)
     );
+    let err = stderr(&output);
     assert!(
-        stderr(&output).contains("unknown check 'no-such-check'"),
-        "stderr:\n{}",
-        stderr(&output)
+        err.contains("unknown check 'no-such-check'"),
+        "stderr:\n{err}"
+    );
+    // The error also lists the known check ids so the user can correct
+    // the typo without reading the docs.
+    assert!(
+        err.contains("known:") && err.contains("quat-flip"),
+        "error should list known check ids:\n{err}"
     );
 }
 
