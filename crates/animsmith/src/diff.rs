@@ -317,4 +317,119 @@ mod tests {
         assert_eq!(delta.before, Some(0.9));
         assert_eq!(delta.after, Some(0.1));
     }
+
+    /// #53: `frame_count` is the wrong-sign guard — a *decrease* must
+    /// still report, so an impl that only diffed increases is caught.
+    #[test]
+    fn reports_frame_count_move_including_a_decrease() {
+        let before = clip_measurements(); // frame_count 31
+        let mut after = before.clone();
+        after.frame_count = 20;
+
+        let deltas = diff_measurements(
+            &measurement_map("walk", before),
+            &measurement_map("walk", after),
+        );
+
+        assert_eq!(deltas.len(), 1, "{:?}", delta_metrics(&deltas));
+        let delta = delta_for(&deltas, "frame_count");
+        assert_eq!(delta.note, "moved");
+        assert_eq!(delta.before, Some(31.0));
+        assert_eq!(delta.after, Some(20.0));
+        assert!(
+            delta.before.unwrap() > delta.after.unwrap(),
+            "a decrease must be captured, not dropped"
+        );
+    }
+
+    #[test]
+    fn reports_gait_amplitude_move() {
+        let before = clip_measurements(); // lr_amplitude_m 0.1
+        let mut after = before.clone();
+        after.gait.as_mut().unwrap().lr_amplitude_m = 0.1 + AMPLITUDE_THRESHOLD_M * 2.0;
+
+        let deltas = diff_measurements(
+            &measurement_map("walk", before),
+            &measurement_map("walk", after),
+        );
+
+        assert_eq!(deltas.len(), 1, "{:?}", delta_metrics(&deltas));
+        let delta = delta_for(&deltas, "gait.lr_amplitude_m");
+        assert_eq!(delta.note, "moved");
+        assert_eq!(delta.before, Some(0.1));
+    }
+
+    #[test]
+    fn reports_bone_rotation_range_moved() {
+        let before = clip_measurements(); // hips: 10.0
+        let mut after = before.clone();
+        after
+            .bone_rotation_range_deg
+            .insert("hips".into(), 10.0 + ROTATION_RANGE_THRESHOLD_DEG * 2.0);
+
+        let deltas = diff_measurements(
+            &measurement_map("walk", before),
+            &measurement_map("walk", after),
+        );
+
+        assert_eq!(deltas.len(), 1, "{:?}", delta_metrics(&deltas));
+        let delta = delta_for(&deltas, "bone_rotation_range_deg[hips]");
+        assert_eq!(delta.note, "moved");
+        assert_eq!(delta.before, Some(10.0));
+    }
+
+    #[test]
+    fn reports_bone_rotation_range_appeared_and_disappeared() {
+        // A bone gaining a rotation range: before None, after Some.
+        let before = clip_measurements();
+        let mut after = before.clone();
+        after.bone_rotation_range_deg.insert("spine".into(), 5.0);
+        let deltas = diff_measurements(
+            &measurement_map("walk", before),
+            &measurement_map("walk", after),
+        );
+        assert_eq!(deltas.len(), 1, "{:?}", delta_metrics(&deltas));
+        let delta = delta_for(&deltas, "bone_rotation_range_deg[spine]");
+        assert_eq!(delta.note, "bone now animated");
+        assert_eq!(delta.before, None);
+        assert_eq!(delta.after, Some(5.0));
+
+        // A bone losing its rotation range: before Some, after None.
+        let before = clip_measurements();
+        let mut after = before.clone();
+        after.bone_rotation_range_deg.remove("hips");
+        let deltas = diff_measurements(
+            &measurement_map("walk", before),
+            &measurement_map("walk", after),
+        );
+        assert_eq!(deltas.len(), 1, "{:?}", delta_metrics(&deltas));
+        let delta = delta_for(&deltas, "bone_rotation_range_deg[hips]");
+        assert_eq!(delta.note, "bone no longer animated");
+        assert_eq!(delta.before, Some(10.0));
+        assert_eq!(delta.after, None);
+    }
+
+    #[test]
+    fn reports_animated_bones_gained_and_lost() {
+        let before = clip_measurements(); // ["hips"]
+        let mut after = before.clone();
+        after.animated_bones = vec!["spine".into(), "tail".into()];
+
+        let deltas = diff_measurements(
+            &measurement_map("walk", before),
+            &measurement_map("walk", after),
+        );
+
+        assert_eq!(deltas.len(), 1, "{:?}", delta_metrics(&deltas));
+        let delta = delta_for(&deltas, "animated_bones");
+        assert_eq!(delta.before, Some(1.0));
+        assert_eq!(delta.after, Some(2.0));
+        // Set difference, not just a count change.
+        assert!(
+            delta.note.contains("gained [spine, tail]"),
+            "{}",
+            delta.note
+        );
+        assert!(delta.note.contains("lost [hips]"), "{}", delta.note);
+    }
 }
