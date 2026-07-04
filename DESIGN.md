@@ -96,6 +96,12 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: asset files or prior `
   `--deny-warnings` promotes warnings to errors.
 - Inputs: `.glb`, `.gltf` (+ external buffers), `.fbx` (via the `fbx`
   feature, default-on in the released binary).
+- **Malformation policy**: *structural* malformation — keyframe/value
+  count mismatch, zero-key channels, absolute or escaping external
+  buffer URIs — is rejected at load (operator error, exit 2; run
+  glTF-Validator for the details). *Semantic* defects — NaN times or
+  values, hemisphere flips, seam pops — load fine and are judged by
+  the checks; sampling is panic-free under them by construction.
 - `fix` intentionally requires either `-o/--output` or `--in-place` for
   writes; `--dry-run` is the check mode — it inspects only and exits `1`
   when repairs are pending, mirroring `lint`. Repairs are addressed by

@@ -766,3 +766,120 @@ fn fix_reports_unreadable_input_as_operator_error() {
         stderr(&output)
     );
 }
+
+/// 3 keyframe times but 2 output values — structurally malformed.
+const COUNT_MISMATCH_GLTF: &str = r#"{
+  "asset": { "version": "2.0" },
+  "buffers": [{ "uri": "data:application/octet-stream;base64,AAAAAAAAAD8AAIA/AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8=", "byteLength": 44 }],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0, "byteLength": 12 },
+    { "buffer": 0, "byteOffset": 12, "byteLength": 32 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 3, "type": "SCALAR", "min": [0], "max": [1] },
+    { "bufferView": 1, "componentType": 5126, "count": 2, "type": "VEC4" }
+  ],
+  "nodes": [{ "name": "root" }],
+  "animations": [{
+    "name": "bad",
+    "samplers": [{ "input": 0, "output": 1, "interpolation": "LINEAR" }],
+    "channels": [{ "sampler": 0, "target": { "node": 0, "path": "rotation" } }]
+  }],
+  "scenes": [{ "nodes": [0] }],
+  "scene": 0
+}"#;
+
+/// First keyframe time is NaN; values are valid identity quats.
+const NAN_TIME_GLTF: &str = r#"{
+  "asset": { "version": "2.0" },
+  "buffers": [{ "uri": "data:application/octet-stream;base64,AADAfwAAAD8AAIA/AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/", "byteLength": 60 }],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0, "byteLength": 12 },
+    { "buffer": 0, "byteOffset": 12, "byteLength": 48 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 3, "type": "SCALAR", "min": [0], "max": [1] },
+    { "bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC4" }
+  ],
+  "nodes": [{ "name": "root" }],
+  "animations": [{
+    "name": "poisoned",
+    "samplers": [{ "input": 0, "output": 1, "interpolation": "LINEAR" }],
+    "channels": [{ "sampler": 0, "target": { "node": 0, "path": "rotation" } }]
+  }],
+  "scenes": [{ "nodes": [0] }],
+  "scene": 0
+}"#;
+
+#[test]
+fn malformed_track_counts_are_operator_errors_everywhere() {
+    let dir = unique_temp_dir("count-mismatch-cli");
+    let input = dir.join("bad.gltf");
+    std::fs::write(&input, COUNT_MISMATCH_GLTF).expect("writes fixture");
+    let out = dir.join("out.glb");
+
+    let commands: [&[&str]; 3] = [
+        &["measure", input.to_str().expect("utf-8 path")],
+        &["lint", input.to_str().expect("utf-8 path")],
+        &[
+            "transform",
+            input.to_str().expect("utf-8 path"),
+            "-o",
+            out.to_str().expect("utf-8 path"),
+        ],
+    ];
+    for args in commands {
+        let output = animsmith().args(args).output().expect("runs animsmith");
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{args:?}: stdout:\n{}\nstderr:\n{}",
+            stdout(&output),
+            stderr(&output)
+        );
+        assert!(
+            stderr(&output).contains("malformed animation data"),
+            "{args:?}: stderr:\n{}",
+            stderr(&output)
+        );
+    }
+}
+
+#[test]
+fn nan_key_times_lint_as_errors_and_never_crash() {
+    let dir = unique_temp_dir("nan-time-cli");
+    let input = dir.join("nan.gltf");
+    std::fs::write(&input, NAN_TIME_GLTF).expect("writes fixture");
+
+    // measure survives (exit 0): NaN is a semantic defect for lint to
+    // judge, not a crash.
+    let output = animsmith()
+        .args(["measure", input.to_str().expect("utf-8 path")])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+
+    // lint reports the nan error finding and exits 1.
+    let output = animsmith()
+        .args(["lint", input.to_str().expect("utf-8 path")])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert!(
+        stdout(&output).contains("error[nan]") && stdout(&output).contains("non-finite key time"),
+        "stdout:\n{}",
+        stdout(&output)
+    );
+}

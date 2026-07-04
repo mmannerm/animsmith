@@ -19,10 +19,10 @@
 //! authored curve was the long-way spin being repaired.) Sparse
 //! accessors and quantized (normalized-int) rotations are skipped.
 
-use crate::{FixError, LoadError, WriteError};
+use crate::{FixError, LoadError, WriteError, safe_external_buffer_path};
 use base64::Engine as _;
 use std::ops::Range;
-use std::path::{Component, Path, PathBuf};
+use std::path::Path;
 
 const ROTATION_ELEMENT_BYTES: usize = 16;
 
@@ -289,7 +289,14 @@ fn write_patched(
                 return Err(LoadError::Buffer("malformed GLB BIN chunk header".into()).into());
             }
             out.extend_from_slice(&original[bin_chunk_start..bin_header_end]);
-            let bin = buffers.first().cloned().unwrap_or_default();
+            // The BIN chunk holds the buffer with Source::Bin (buffer 0
+            // per spec when present) — not blindly buffers[0], which
+            // may be a URI buffer in a BIN-less GLB.
+            let bin = gltf
+                .buffers()
+                .position(|b| matches!(b.source(), gltf::buffer::Source::Bin))
+                .and_then(|i| buffers.get(i).cloned())
+                .unwrap_or_default();
             if bin.len() > bin_len {
                 return Err(LoadError::Buffer(format!(
                     "patched BIN chunk length {} exceeds original length {bin_len}",
@@ -307,7 +314,11 @@ fn write_patched(
             }
             out.extend_from_slice(&original[padding_start..]);
         }
-        return std::fs::write(output, out).map_err(io_err(output));
+        std::fs::write(output, out).map_err(io_err(output))?;
+        // A GLB may also reference external URI buffers; their patched
+        // bytes must land on disk too, or "N keys fixed" is a false
+        // success (the repaired keys would be in the untouched .bin).
+        return write_uri_buffers(output, gltf, &buffers);
     }
 
     // .gltf: the JSON is untouched; copy it through and write each
@@ -317,6 +328,16 @@ fn write_patched(
     if input != output {
         std::fs::copy(input, output).map_err(io_err(output))?;
     }
+    write_uri_buffers(output, gltf, &buffers)
+}
+
+/// Write every patched external (non-data-URI) buffer next to
+/// `output`, keeping the container/buffer pair together.
+fn write_uri_buffers(
+    output: &Path,
+    gltf: &gltf::Gltf,
+    buffers: &[Vec<u8>],
+) -> Result<(), FixError> {
     for (buffer, data) in gltf.buffers().zip(buffers) {
         if let gltf::buffer::Source::Uri(uri) = buffer.source() {
             if uri.starts_with("data:") {
@@ -326,7 +347,12 @@ fn write_patched(
                 .parent()
                 .unwrap_or(Path::new("."))
                 .join(safe_external_buffer_path(uri)?);
-            std::fs::write(&path, data).map_err(io_err(&path))?;
+            std::fs::write(&path, data).map_err(|source| {
+                FixError::Write(WriteError::Io {
+                    path: path.display().to_string(),
+                    source,
+                })
+            })?;
         }
     }
     Ok(())
@@ -357,35 +383,4 @@ fn read_u32_le(bytes: &[u8], offset: usize) -> Result<usize, LoadError> {
         .get(offset..end)
         .ok_or_else(|| LoadError::Buffer("malformed GLB chunk header".into()))?;
     Ok(u32::from_le_bytes(word.try_into().expect("slice has four bytes")) as usize)
-}
-
-fn safe_external_buffer_path(uri: &str) -> Result<PathBuf, LoadError> {
-    if uri.is_empty() || uri.contains('\\') {
-        return Err(LoadError::Buffer(format!(
-            "unsafe external buffer URI {uri:?}: expected a relative child path"
-        )));
-    }
-    let path = Path::new(uri);
-    if path.is_absolute() {
-        return Err(LoadError::Buffer(format!(
-            "unsafe external buffer URI {uri:?}: absolute paths are not supported"
-        )));
-    }
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::Normal(part) => out.push(part),
-            _ => {
-                return Err(LoadError::Buffer(format!(
-                    "unsafe external buffer URI {uri:?}: expected a relative child path"
-                )));
-            }
-        }
-    }
-    if out.as_os_str().is_empty() {
-        return Err(LoadError::Buffer(format!(
-            "unsafe external buffer URI {uri:?}: expected a relative child path"
-        )));
-    }
-    Ok(out)
 }
