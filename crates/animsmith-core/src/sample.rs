@@ -116,7 +116,6 @@ pub fn sample_clip(skeleton: &Skeleton, clip: &Clip, frames: usize) -> PoseGrid 
 
 /// One track's sampled value at a time.
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[non_exhaustive]
 pub enum TrackSample {
     Vec3(Vec3),
     Quat(Quat),

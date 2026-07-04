@@ -36,18 +36,18 @@ pub enum LoadError {
     Buffer(String),
 }
 
+/// `fix` errors are classified by defect, not by phase: [`LoadError`]
+/// means the *input* was unreadable or malformed (even when detected
+/// while assembling the output, e.g. re-deriving GLB chunk bounds or
+/// validating an input-supplied buffer URI); [`WriteError`] means
+/// emitting the output failed.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum FixError {
-    #[error("failed to read or write {path}: {source}")]
-    Io {
-        path: String,
-        source: std::io::Error,
-    },
-    #[error("glTF parse error: {0}")]
-    Gltf(#[from] gltf::Error),
-    #[error("buffer resolution failed: {0}")]
-    Buffer(String),
+    #[error(transparent)]
+    Load(#[from] LoadError),
+    #[error(transparent)]
+    Write(#[from] WriteError),
 }
 
 #[derive(Debug, thiserror::Error)]

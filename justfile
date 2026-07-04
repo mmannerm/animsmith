@@ -83,8 +83,9 @@ package-inventory:
       cargo package --list -p "$crate" --allow-dirty >/dev/null
     done
 
-# Fast local PR gate. The GitHub workflow also verifies package assembly
-# on a clean checkout.
+# Full local PR gate, matching CI (includes release builds — expect
+# minutes, not seconds). The GitHub workflow also verifies package
+# assembly on a clean checkout.
 gates: require-cargo-deny
     cargo fmt --all --check
     cargo clippy --workspace --all-targets -- -D warnings

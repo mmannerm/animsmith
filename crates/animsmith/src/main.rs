@@ -71,7 +71,6 @@ enum Cmd {
     },
     /// Render a self-contained offline HTML report.
     #[command(
-        about = "Render a self-contained offline HTML report",
         long_about = "Render a self-contained offline HTML report: WebGL skeleton playback of the exact frames the checks judged, metric charts, and the findings list."
     )]
     #[cfg(feature = "report")]
@@ -87,7 +86,6 @@ enum Cmd {
     },
     /// Apply mechanical clip transforms.
     #[command(
-        about = "Apply mechanical clip transforms",
         long_about = "Apply pipeline-mechanical clip transforms and write the result as skeleton+animation glTF. Meshes are not carried; transform clips before splicing them into a full asset. Operations apply to every clip, or one clip via --clip."
     )]
     Transform {
@@ -117,7 +115,6 @@ enum Cmd {
     },
     /// Repair safe mechanical glTF/GLB defects.
     #[command(
-        about = "Repair safe mechanical glTF/GLB defects",
         long_about = "Repair mechanical clip defects in place, byte-surgically: only the offending animation bytes change; meshes, skins, materials, and textures pass through untouched. Currently fixes quaternion hemisphere flips (the `quat-flip` check) on glTF/GLB inputs."
     )]
     Fix {
@@ -141,7 +138,6 @@ enum Cmd {
     },
     /// Convert FBX input to glTF.
     #[command(
-        about = "Convert FBX input to glTF",
         long_about = "Convert FBX input to glTF: skeleton, animation, triangulated meshes, skins, and factor-only materials. Texture wiring stays a downstream concern. Output format by extension: .glb binary, .gltf JSON with an embedded buffer."
     )]
     #[cfg(feature = "fbx")]
@@ -157,7 +153,6 @@ enum Cmd {
     },
     /// Compare animation measurements.
     #[command(
-        about = "Compare animation measurements",
         long_about = "Compare the measurements of two inputs (asset files or prior `measure` JSON) and report movement beyond significance thresholds. Exits 1 on significant movement."
     )]
     Diff {
@@ -251,7 +246,6 @@ impl FindingSummary {
             Severity::Error => self.error += 1,
             Severity::Warning => self.warning += 1,
             Severity::Note => self.note += 1,
-            _ => self.note += 1,
         }
     }
 }
@@ -262,12 +256,31 @@ struct ReportSummary {
     findings: FindingSummary,
 }
 
+/// The common head of every JSON envelope — one definition for the
+/// contract fields the schema requires of all commands.
 #[derive(Serialize)]
-struct ReportEnvelope {
+struct EnvelopeHeader {
     schema_version: u32,
     schema: &'static str,
     tool: ToolInfo,
     command: &'static str,
+}
+
+impl EnvelopeHeader {
+    fn new(command: &'static str) -> Self {
+        Self {
+            schema_version: SCHEMA_VERSION,
+            schema: SCHEMA_URL,
+            tool: ToolInfo::current(),
+            command,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct ReportEnvelope {
+    #[serde(flatten)]
+    header: EnvelopeHeader,
     summary: ReportSummary,
     files: Vec<FileReport>,
 }
@@ -283,10 +296,7 @@ impl ReportEnvelope {
             }
         }
         Self {
-            schema_version: SCHEMA_VERSION,
-            schema: SCHEMA_URL,
-            tool: ToolInfo::current(),
-            command,
+            header: EnvelopeHeader::new(command),
             summary: ReportSummary {
                 files: files.len(),
                 findings,
@@ -309,10 +319,8 @@ struct DiffSummary {
 
 #[derive(Serialize)]
 struct DiffEnvelope {
-    schema_version: u32,
-    schema: &'static str,
-    tool: ToolInfo,
-    command: &'static str,
+    #[serde(flatten)]
+    header: EnvelopeHeader,
     inputs: DiffInputs,
     summary: DiffSummary,
     deltas: Vec<diff::MetricDelta>,
@@ -745,10 +753,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let has_deltas = !deltas.is_empty();
             match format {
                 Format::Json => print_json(&DiffEnvelope {
-                    schema_version: SCHEMA_VERSION,
-                    schema: SCHEMA_URL,
-                    tool: ToolInfo::current(),
-                    command: "diff",
+                    header: EnvelopeHeader::new("diff"),
                     inputs: DiffInputs {
                         before: a.display().to_string(),
                         after: b.display().to_string(),
@@ -799,20 +804,41 @@ fn load_measurements(
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         let value: serde_json::Value = serde_json::from_str(&text)
             .map_err(|e| format!("bad JSON in {}: {e}", path.display()))?;
-        let map = if let Some(files) = value.get("files").and_then(|v| v.as_array()) {
-            if files.len() != 1 {
+        // Only the versioned v1 envelope is accepted — no pre-publish
+        // legacy shapes, and no silently mis-reading a future version.
+        match value.get("schema_version").and_then(|v| v.as_u64()) {
+            Some(v) if v == u64::from(SCHEMA_VERSION) => {}
+            Some(v) => {
                 return Err(format!(
-                    "{} is a multi-file report; diff expects a single-file measurement report",
+                    "{} has schema_version {v}; this build reads schema_version {SCHEMA_VERSION}",
                     path.display()
                 ));
             }
-            files[0]
-                .get("measurements")
-                .cloned()
-                .ok_or_else(|| format!("{} report has no measurements", path.display()))?
-        } else {
-            value.get("measurements").cloned().unwrap_or(value)
+            None => {
+                return Err(format!(
+                    "{} is not an animsmith report envelope (no `schema_version`); \
+                     regenerate it with `animsmith measure --format json`",
+                    path.display()
+                ));
+            }
+        }
+        let Some(files) = value.get("files").and_then(|v| v.as_array()) else {
+            return Err(format!(
+                "{} is not an animsmith report envelope (no `files` array); \
+                 regenerate it with `animsmith measure --format json`",
+                path.display()
+            ));
         };
+        if files.len() != 1 {
+            return Err(format!(
+                "{} is a multi-file report; diff expects a single-file measurement report",
+                path.display()
+            ));
+        }
+        let map = files[0]
+            .get("measurements")
+            .cloned()
+            .ok_or_else(|| format!("{} report has no measurements", path.display()))?;
         return serde_json::from_value(map)
             .map_err(|e| format!("{} is not a measurements report: {e}", path.display()));
     }
@@ -872,7 +898,6 @@ fn print_text(reports: &[FileReport]) {
                 Severity::Error => errors += 1,
                 Severity::Warning => warnings += 1,
                 Severity::Note => notes += 1,
-                _ => notes += 1,
             }
             let mut location = String::new();
             if let Some(clip) = &f.clip {
