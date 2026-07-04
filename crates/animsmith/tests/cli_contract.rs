@@ -352,6 +352,13 @@ fn help_matches_compiled_feature_set() {
     assert!(out.contains("fix"));
     assert!(out.contains("diff"));
 
+    // One-line summaries come from the doc comments (clap derives
+    // `about` from the first line); pin them so description drift is
+    // visible.
+    assert!(out.contains("Repair safe mechanical glTF/GLB defects"));
+    assert!(out.contains("Apply mechanical clip transforms"));
+    assert!(out.contains("Compare animation measurements"));
+
     assert_eq!(out.contains("\n  convert "), cfg!(feature = "fbx"), "{out}");
     assert_eq!(
         out.contains("\n  report "),
@@ -428,6 +435,17 @@ fn lint_json_uses_versioned_envelope() {
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_eq!(json["schema_version"], 1);
+    assert!(
+        json["schema"]
+            .as_str()
+            .is_some_and(|s| s.ends_with("output-v1.schema.json"))
+    );
+    assert_eq!(json["tool"]["name"], "animsmith");
+    assert!(
+        json["tool"]["version"]
+            .as_str()
+            .is_some_and(|s| s.starts_with(env!("CARGO_PKG_VERSION")))
+    );
     assert_eq!(json["command"], "lint");
     assert_eq!(json["summary"]["files"], 1);
     assert!(json["files"][0]["findings"].is_array());
@@ -451,6 +469,17 @@ fn diff_json_uses_versioned_envelope() {
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_eq!(json["schema_version"], 1);
+    assert!(
+        json["schema"]
+            .as_str()
+            .is_some_and(|s| s.ends_with("output-v1.schema.json"))
+    );
+    assert_eq!(json["tool"]["name"], "animsmith");
+    assert!(
+        json["tool"]["version"]
+            .as_str()
+            .is_some_and(|s| s.starts_with(env!("CARGO_PKG_VERSION")))
+    );
     assert_eq!(json["command"], "diff");
     assert_eq!(json["summary"]["deltas"], 0);
     assert_eq!(json["deltas"].as_array().expect("deltas array").len(), 0);
@@ -500,11 +529,11 @@ fn diff_accepts_single_file_measure_report_round_trip() {
 }
 
 #[test]
-fn diff_rejects_non_envelope_json() {
+fn diff_rejects_json_without_schema_version() {
     let dir = unique_temp_dir("diff-bare-map");
     let bare = dir.join("bare.json");
-    // A bare measurement map (a pre-publish development shape) is not
-    // part of the v1 contract and must be rejected with guidance.
+    // A bare measurement map (a pre-publish development shape) has no
+    // schema_version and must be rejected with regenerate guidance.
     std::fs::write(&bare, r#"{"walk": {"duration_s": 1.0}}"#).expect("writes bare map");
 
     let output = animsmith()
@@ -524,6 +553,11 @@ fn diff_rejects_non_envelope_json() {
     );
     assert!(
         stderr(&output).contains("not an animsmith report envelope"),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    assert!(
+        stderr(&output).contains("regenerate it with"),
         "stderr:\n{}",
         stderr(&output)
     );
@@ -556,6 +590,97 @@ fn diff_rejects_unsupported_schema_versions() {
     );
     assert!(
         stderr(&output).contains("schema_version 99"),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn diff_rejects_envelope_without_files() {
+    let dir = unique_temp_dir("diff-no-files");
+    let report = dir.join("no-files.json");
+    std::fs::write(&report, r#"{"schema_version": 1}"#).expect("writes report");
+
+    let output = animsmith()
+        .args([
+            "diff",
+            report.to_str().expect("utf-8 path"),
+            fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "stdout:\n{}",
+        stdout(&output)
+    );
+    assert!(
+        stderr(&output).contains("no `files` array"),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn lint_counts_severities_in_summary_and_text() {
+    let dir = unique_temp_dir("lint-severity-counts");
+    let input = dir.join("dirty.glb");
+    write_flipped_glb(&input);
+
+    // JSON: the flipped fixture produces exactly one quat-flip warning;
+    // the summary must bucket it as a warning, not a note or error.
+    let output = animsmith()
+        .args([
+            "lint",
+            input.to_str().expect("utf-8 input path"),
+            "--format",
+            "json",
+            "--select",
+            "quat-flip",
+        ])
+        .output()
+        .expect("runs animsmith");
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(json["summary"]["findings"]["warning"], 1, "{json:#}");
+    assert_eq!(json["summary"]["findings"]["error"], 0, "{json:#}");
+    assert_eq!(json["summary"]["findings"]["note"], 0, "{json:#}");
+    assert_eq!(json["files"][0]["findings"][0]["severity"], "warning");
+
+    // Text mode counts through the same severity match.
+    let output = animsmith()
+        .args([
+            "lint",
+            input.to_str().expect("utf-8 input path"),
+            "--select",
+            "quat-flip",
+        ])
+        .output()
+        .expect("runs animsmith");
+    assert!(
+        stdout(&output).contains("1 warning(s)"),
+        "stdout:\n{}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn fix_reports_unreadable_input_as_operator_error() {
+    let output = animsmith()
+        .args(["fix", "missing.glb", "--dry-run"])
+        .output()
+        .expect("runs animsmith");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "stdout:\n{}",
+        stdout(&output)
+    );
+    assert!(
+        stderr(&output).contains("failed to read"),
         "stderr:\n{}",
         stderr(&output)
     );
