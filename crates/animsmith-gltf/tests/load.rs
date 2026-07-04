@@ -59,7 +59,9 @@ fn fixture_pose_grid_fk_is_sane() {
 #[test]
 fn measurements_match_fixture() {
     let doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
-    let measurements = animsmith_core::measure::measure_document(&doc, &ResolvedRoles::default());
+    let config = Config::default();
+    let measurements =
+        animsmith_core::measure::measure_document(&doc, &ResolvedRoles::default(), &config);
     let walk = &measurements["walk"];
     assert_eq!(walk.frame_count, 3);
     assert_eq!(walk.animated_bones, vec!["hips", "root"]);

@@ -58,7 +58,7 @@ config.clips.insert("run_*".into(), /* looping, speed pins, … */);
 
 // 4. Measure (numbers without judgment) and lint (numbers judged
 //    against the config).
-let measurements = measure_document(&doc, &roles);
+let measurements = measure_document(&doc, &roles, &config);
 let ctx = CheckCtx::new(&doc, &roles, &config);
 let findings = run_checks(&ctx, &all_checks());
 

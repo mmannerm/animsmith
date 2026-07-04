@@ -9,6 +9,7 @@
 //! touches a file format.
 
 use crate::finding::Severity;
+use crate::metrics::MIN_STRIDE_STEP_M;
 use crate::profile::Role;
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -175,6 +176,13 @@ impl Config {
 
     pub fn check_settings(&self, id: &str) -> CheckSettings {
         self.checks.get(id).cloned().unwrap_or_default()
+    }
+
+    /// Effective stride floor for loop-seam metrics, in metres.
+    pub fn loop_seam_min_stride_step_m(&self) -> f64 {
+        self.check_settings("loop-seam")
+            .min_stride_step_m
+            .unwrap_or(MIN_STRIDE_STEP_M)
     }
 }
 

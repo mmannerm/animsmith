@@ -39,7 +39,11 @@ pub struct FootCycleMetrics {
 ///
 /// The grid must span `[0, duration]` — the wrap pair is
 /// `(last frame, frame 0)`. Grids under 3 frames carry no cycle.
-pub fn foot_cycle_metrics(grid: &PoseGrid, roles: &ResolvedRoles) -> Option<FootCycleMetrics> {
+pub fn foot_cycle_metrics(
+    grid: &PoseGrid,
+    roles: &ResolvedRoles,
+    min_stride_step_m: f64,
+) -> Option<FootCycleMetrics> {
     if grid.frame_count() < 3 {
         return None;
     }
@@ -78,7 +82,7 @@ pub fn foot_cycle_metrics(grid: &PoseGrid, roles: &ResolvedRoles) -> Option<Foot
     let step_first = max_foot_dist(1, 0);
     let step_last = max_foot_dist(frames - 1, frames - 2);
     let neighbour_step = step_first.max(step_last);
-    let loop_seam_ratio = if neighbour_step >= MIN_STRIDE_STEP_M {
+    let loop_seam_ratio = if neighbour_step > 0.0 && neighbour_step >= min_stride_step_m {
         Some(seam / neighbour_step)
     } else {
         None

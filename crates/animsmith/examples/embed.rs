@@ -56,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // 4a. Measure: the raw metric map, no judgment.
-    let measurements = measure_document(&doc, &roles);
+    let measurements = measure_document(&doc, &roles, &config);
     for (clip, m) in &measurements {
         println!(
             "measured '{clip}': {:.3}s, {} frames, {} animated bones",

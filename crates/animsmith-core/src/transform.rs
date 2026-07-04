@@ -157,7 +157,7 @@ pub fn align_gait_anchor(
     let measure = |c: &Clip| -> Option<(f64, Option<f64>, f64)> {
         let frames = crate::metrics::metric_frame_count(c)?;
         let grid = sample_clip(skeleton, c, frames);
-        let m = foot_cycle_metrics(&grid, roles)?;
+        let m = foot_cycle_metrics(&grid, roles, crate::metrics::MIN_STRIDE_STEP_M)?;
         Some((m.gait_phase?, m.loop_seam_ratio, m.lr_amplitude_m))
     };
     let Some((phase_before, _, amplitude)) = measure(clip) else {

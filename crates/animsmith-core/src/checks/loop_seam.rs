@@ -37,6 +37,7 @@ impl Check for LoopSeam {
     fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
         let settings = ctx.config.check_settings(self.id());
         let max_ratio = settings.max_ratio.unwrap_or(DEFAULT_MAX_RATIO);
+        let min_stride_step_m = ctx.config.loop_seam_min_stride_step_m();
 
         for (index, clip) in ctx.doc.clips.iter().enumerate() {
             if ctx.config.expectations_for(&clip.name).looping != Some(true) {
@@ -47,7 +48,7 @@ impl Check for LoopSeam {
             };
             // Roles resolve (readiness gate); a `None` here means a
             // degenerate clip, which duration-sanity owns.
-            let Some(metrics) = foot_cycle_metrics(&grid, ctx.roles) else {
+            let Some(metrics) = foot_cycle_metrics(&grid, ctx.roles, min_stride_step_m) else {
                 continue;
             };
             let Some(ratio) = metrics.loop_seam_ratio else {
