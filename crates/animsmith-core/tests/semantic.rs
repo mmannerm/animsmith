@@ -114,6 +114,15 @@ fn lint_with(doc: &Document, config: &Config) -> Vec<animsmith_core::Finding> {
     run_checks(&ctx, &all_checks())
 }
 
+/// Lint with an *empty* role map — the shape a rig whose profile did
+/// not resolve produces. Role-dependent checks must skip-with-note,
+/// never fail.
+fn lint_unresolved(doc: &Document, config: &Config) -> Vec<animsmith_core::Finding> {
+    let roles = ResolvedRoles::default();
+    let ctx = CheckCtx::new(doc, &roles, config);
+    run_checks(&ctx, &all_checks())
+}
+
 fn json_config(json: serde_json::Value) -> Config {
     serde_json::from_value(json).expect("config parses")
 }
@@ -342,6 +351,94 @@ fn severity_override_and_off() {
     }));
     let findings = lint_with(&doc, &off);
     assert!(!findings.iter().any(|f| f.check_id == "loop-seam"));
+}
+
+/// #28: a severity override applies to a check's *violations*, never
+/// to its requirement skip-notes. Declaring `loop-seam` an error on a
+/// rig whose roles don't resolve must still surface a Note — not a
+/// false Error that fails CI on every rig without foot roles.
+#[test]
+fn skip_note_is_exempt_from_severity_override() {
+    let doc = popped_doc(); // would be a loop-seam Error with roles resolved
+    let config = json_config(serde_json::json!({
+        "clips": { "walk": { "loop": true } },
+        "checks": { "loop-seam": { "severity": "error" } }
+    }));
+    let findings = lint_unresolved(&doc, &config);
+    let seam: Vec<_> = findings
+        .iter()
+        .filter(|f| f.check_id == "loop-seam")
+        .collect();
+    assert_eq!(seam.len(), 1, "one skip-note, not silence: {seam:#?}");
+    assert_eq!(
+        seam[0].severity,
+        Severity::Note,
+        "skip-note must stay a Note despite severity = error"
+    );
+    assert!(seam[0].message.contains("skipped"), "{}", seam[0].message);
+}
+
+/// #28: `severity = "off"` removes the check entirely — not even its
+/// skip-note is emitted.
+#[test]
+fn off_removes_check_including_its_skip_note() {
+    let doc = popped_doc();
+    let config = json_config(serde_json::json!({
+        "clips": { "walk": { "loop": true } },
+        "checks": { "loop-seam": { "severity": "off" } }
+    }));
+    let findings = lint_unresolved(&doc, &config);
+    assert!(!findings.iter().any(|f| f.check_id == "loop-seam"));
+}
+
+/// #28: the skip-note plumbing is unified — every role-dependent check
+/// with pending work emits exactly one Note when roles don't resolve,
+/// including `foot-slide` (previously silent) and `gait-group`
+/// (previously a false Error).
+#[test]
+fn unresolved_roles_yield_one_note_per_pending_check() {
+    let doc = walk_doc();
+    let config = json_config(serde_json::json!({
+        "clips": { "walk": { "loop": true, "speed_mps": { "value": 1.0, "tolerance": 0.25 }, "in_place": false } },
+        "gait_groups": { "ring": { "clips": ["walk"], "max_gait_phase_spread": 0.1 } }
+    }));
+    let findings = lint_unresolved(&doc, &config);
+    for id in [
+        "loop-seam",
+        "root-motion-speed",
+        "in-place",
+        "foot-slide",
+        "gait-group",
+    ] {
+        let notes: Vec<_> = findings.iter().filter(|f| f.check_id == id).collect();
+        assert_eq!(
+            notes.len(),
+            1,
+            "{id}: expected one skip-note, got {notes:#?}"
+        );
+        assert_eq!(notes[0].severity, Severity::Note, "{id} not a Note");
+    }
+}
+
+/// #28: a check with no pending work stays silent even when roles are
+/// unresolved — no spurious skip-notes.
+#[test]
+fn idle_checks_emit_no_skip_notes() {
+    let doc = walk_doc(); // no config expectations at all
+    let config = Config::default();
+    let findings = lint_unresolved(&doc, &config);
+    for id in [
+        "loop-seam",
+        "root-motion-speed",
+        "in-place",
+        "foot-slide",
+        "gait-group",
+    ] {
+        assert!(
+            !findings.iter().any(|f| f.check_id == id),
+            "{id} emitted a note with nothing to do: {findings:#?}"
+        );
+    }
 }
 
 #[test]

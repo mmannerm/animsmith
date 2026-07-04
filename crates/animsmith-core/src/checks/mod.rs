@@ -18,7 +18,43 @@ pub mod root_motion_speed;
 pub mod scale_keys;
 pub mod time_monotonic;
 
+use crate::check::Readiness;
 use crate::model::{Document, Track};
+use crate::profile::{ResolvedRoles, Role};
+
+/// Roles a locomotion check needs to measure root travel: a `root`
+/// bone, or `hips` as a fallback. Returns [`Readiness::Ready`] when
+/// resolved, otherwise a skip-note reason.
+pub(crate) fn root_motion_readiness(roles: &ResolvedRoles) -> Readiness {
+    if roles.get(Role::Root).is_some() || roles.get(Role::Hips).is_some() {
+        Readiness::Ready
+    } else {
+        Readiness::Skipped(format!(
+            "root/hips role not resolved (rig profile '{}')",
+            roles.profile
+        ))
+    }
+}
+
+/// Roles a gait check needs: `hips` plus at least one foot/toe.
+pub(crate) fn gait_readiness(roles: &ResolvedRoles) -> Readiness {
+    let has_foot = [
+        Role::LeftFoot,
+        Role::LeftToe,
+        Role::RightFoot,
+        Role::RightToe,
+    ]
+    .iter()
+    .any(|&r| roles.get(r).is_some());
+    if roles.get(Role::Hips).is_some() && has_foot {
+        Readiness::Ready
+    } else {
+        Readiness::Skipped(format!(
+            "hips/foot roles not resolved (rig profile '{}') — needs hips and at least one foot role",
+            roles.profile
+        ))
+    }
+}
 
 /// Iterate `(clip name, bone name, track)` across a document.
 pub(crate) fn tracks(doc: &Document) -> impl Iterator<Item = (&str, &str, &Track)> {

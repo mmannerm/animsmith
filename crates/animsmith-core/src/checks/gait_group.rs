@@ -6,7 +6,8 @@
 //! cannot be measured at all is an error, so the group's coherence is
 //! never silently unverified.
 
-use crate::check::{Check, CheckCtx};
+use crate::check::{Check, CheckCtx, Readiness};
+use crate::checks::gait_readiness;
 use crate::finding::{Finding, Severity};
 use crate::metrics::{circular_phase_spread, foot_cycle_metrics};
 
@@ -15,6 +16,14 @@ pub struct GaitGroup;
 impl Check for GaitGroup {
     fn id(&self) -> &'static str {
         "gait-group"
+    }
+
+    fn readiness(&self, ctx: &CheckCtx) -> Readiness {
+        if ctx.config.gait_groups.is_empty() {
+            Readiness::Idle
+        } else {
+            gait_readiness(ctx.roles)
+        }
     }
 
     fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
@@ -32,6 +41,9 @@ impl Check for GaitGroup {
                     );
                     continue;
                 };
+                // Roles resolve (readiness gate); `None` here means the
+                // member clip is too short to carry a cycle — a real
+                // problem for a declared ring member, not a skip.
                 let gait = ctx
                     .grid(index)
                     .and_then(|grid| foot_cycle_metrics(&grid, ctx.roles));
@@ -42,8 +54,7 @@ impl Check for GaitGroup {
                             Severity::Error,
                             format!(
                                 "gait group '{group_name}' member has no measurable gait \
-                                 (hips/foot roles unresolved or clip too short) — the \
-                                 group's coherence is unverified"
+                                 (clip too short) — the group's coherence is unverified"
                             ),
                         )
                         .clip(clip_name.clone()),
