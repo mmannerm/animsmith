@@ -5,9 +5,18 @@
 
 use animsmith_core::model::*;
 use animsmith_core::profile::{ResolvedRoles, Role};
+use animsmith_core::sample::{TrackSample, sample_track};
 use animsmith_core::transform::{align_gait_anchor, hold_extend, slice};
 use glam::Vec3;
 use std::f64::consts::TAU;
+
+/// Extract a Vec3 track's values, panicking otherwise (test helper).
+fn vec3_values(track: &Track) -> Vec<Vec3> {
+    match &track.values {
+        TrackValues::Vec3s(v) => v.clone(),
+        _ => panic!("expected a Vec3 track"),
+    }
+}
 
 const KEYS: usize = 32; // open loop: one full cycle across KEYS frames
 const FPS: f64 = 32.0;
@@ -259,12 +268,89 @@ fn slice_dedupes_start_boundary_and_clamps_end() {
         t.end_time()
     );
     assert!((clip.duration_s - 0.5).abs() < 1e-9);
-    // The surviving boundary keys are the ones closest to the window:
-    // 0.25 (value index 2) at the start, 0.75 (value index 5) at the end.
-    assert_eq!(t.key_vec3(0).unwrap(), Vec3::new(2.0, 0.0, 0.0));
+    // Every surviving key keeps its original value (losslessness): the
+    // boundary keys are the ones closest to the window — 0.25 (value 2)
+    // and 0.75 (value 5) — and the interior keys 0.40/0.60 carry values
+    // 3 and 4 verbatim.
     assert_eq!(
-        t.key_vec3(t.key_count() - 1).unwrap(),
-        Vec3::new(5.0, 0.0, 0.0)
+        (0..t.key_count())
+            .map(|k| t.key_vec3(k).unwrap().x)
+            .collect::<Vec<_>>(),
+        vec![2.0, 3.0, 4.0, 5.0],
+    );
+}
+
+/// #26 for CUBICSPLINE: dedup keeps whole tangent triplets aligned with
+/// their (retimed) keys — a per-key stride of 1 would shred them.
+#[test]
+fn slice_dedupes_cubic_keeps_triplets_aligned() {
+    // Two keys inside the start epsilon (0.24, 0.25); values are
+    // triplets [in, value, out] with the value carrying the key index.
+    let times: Vec<f32> = vec![0.24, 0.25, 0.40, 0.60, 0.75];
+    let values: Vec<Vec3> = (0..times.len())
+        .flat_map(|i| {
+            [
+                Vec3::new(i as f32, -1.0, 0.0), // in-tangent
+                Vec3::new(i as f32, 0.0, 0.0),  // value
+                Vec3::new(i as f32, 1.0, 0.0),  // out-tangent
+            ]
+        })
+        .collect();
+    let mut clip = Clip {
+        name: "cubic".into(),
+        duration_s: 1.0,
+        tracks: vec![Track {
+            bone: 0,
+            property: Property::Translation,
+            interpolation: Interpolation::CubicSpline,
+            times,
+            values: TrackValues::Vec3s(values),
+        }],
+    };
+
+    slice(&mut clip, 0.25, 0.75, 30.0);
+    let t = &clip.tracks[0];
+    let TrackValues::Vec3s(v) = &t.values else {
+        unreachable!()
+    };
+    assert_eq!(t.key_count(), 4, "0.24 dropped as a start duplicate");
+    assert_eq!(v.len(), 3 * t.key_count(), "triplets intact");
+    // Surviving original key indices are 1,2,3,4; their triplets must
+    // land verbatim (in/value/out), proving cubic per_key=3 alignment.
+    for (out_key, orig_i) in [1usize, 2, 3, 4].into_iter().enumerate() {
+        assert_eq!(v[out_key * 3], Vec3::new(orig_i as f32, -1.0, 0.0));
+        assert_eq!(v[out_key * 3 + 1], Vec3::new(orig_i as f32, 0.0, 0.0));
+        assert_eq!(v[out_key * 3 + 2], Vec3::new(orig_i as f32, 1.0, 0.0));
+    }
+}
+
+/// #26: the end clamp is load-bearing on its own — a single key just
+/// past `end` (no key exactly at `end`, so the dedup never fires) must
+/// still be pulled back into the window.
+#[test]
+fn slice_clamps_lone_past_end_key() {
+    let times: Vec<f32> = vec![0.30, 0.50, 0.7575];
+    let values: Vec<Vec3> = (0..times.len())
+        .map(|i| Vec3::new(i as f32, 0.0, 0.0))
+        .collect();
+    let mut clip = Clip {
+        name: "past-end".into(),
+        duration_s: 1.0,
+        tracks: vec![Track {
+            bone: 0,
+            property: Property::Translation,
+            interpolation: Interpolation::Linear,
+            times,
+            values: TrackValues::Vec3s(values),
+        }],
+    };
+
+    slice(&mut clip, 0.25, 0.75, 30.0);
+    let t = &clip.tracks[0];
+    assert!(
+        t.end_time() <= 0.5 + 1e-6,
+        "past-end key {} not clamped into the window",
+        t.end_time()
     );
 }
 
@@ -324,17 +410,61 @@ fn gait_anchor_rotates_short_non_constant_tracks() {
     });
     let ramp_before = clip.tracks.last().unwrap().clone();
 
-    align_gait_anchor(&skel, &mut clip, &roles, FPS).expect("aligns");
+    let outcome = align_gait_anchor(&skel, &mut clip, &roles, FPS).expect("aligns");
     let ramp_after = clip.tracks.last().unwrap();
 
-    let TrackValues::Vec3s(before) = &ramp_before.values else {
-        unreachable!()
-    };
     let TrackValues::Vec3s(after) = &ramp_after.values else {
         unreachable!()
     };
-    assert!(
-        before != after,
-        "the 2-key ramp was left unrotated: {before:?}"
+    // Independently recompute the shift the rotation applied and sample
+    // the ORIGINAL ramp there; the rotated values must match exactly
+    // (this is the same lossless-resample contract the foot-track test
+    // pins, but on a 2-key track — so a "resample at 0 → constant" or a
+    // value-corrupting bug can't hide behind a bare `before != after`).
+    let period = dur as f64 + 1.0 / FPS;
+    let shift = (((outcome.phase_before * period * FPS).round() + outcome.frame_offset as f64)
+        / FPS)
+        .rem_euclid(period);
+    for (k, &t) in [0.0f32, dur].iter().enumerate() {
+        let TrackSample::Vec3(want) =
+            sample_track(&ramp_before, ((t as f64 + shift) % period) as f32)
+        else {
+            unreachable!()
+        };
+        assert!(
+            (after[k] - want).length() < 1e-6,
+            "ramp key {k}: rotated {:?} != resampled {want:?}",
+            after[k]
+        );
+    }
+}
+
+/// #27: a *constant* CUBICSPLINE track is rotation-invariant, so
+/// alignment must skip it (not refuse the whole clip) and leave it
+/// byte-identical.
+#[test]
+fn gait_anchor_skips_constant_cubic_tracks() {
+    let (skel, mut clip) = open_walk();
+    let roles = roles(&skel);
+    // Constant cubic: same value at every key, zero tangents.
+    let held = Vec3::new(0.0, 2.0, 0.0);
+    let values: Vec<Vec3> = (0..3)
+        .flat_map(|_| [Vec3::ZERO, held, Vec3::ZERO])
+        .collect();
+    clip.tracks.push(Track {
+        bone: 0,
+        property: Property::Translation,
+        interpolation: Interpolation::CubicSpline,
+        times: vec![0.0, 0.5, 1.0],
+        values: TrackValues::Vec3s(values),
+    });
+    let constant_before = clip.tracks.last().unwrap().clone();
+
+    align_gait_anchor(&skel, &mut clip, &roles, FPS).expect("aligns, does not refuse");
+    let constant_after = clip.tracks.last().unwrap();
+    assert_eq!(
+        vec3_values(&constant_before),
+        vec3_values(constant_after),
+        "a constant cubic track must be left untouched"
     );
 }
