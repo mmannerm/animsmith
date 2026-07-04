@@ -70,9 +70,10 @@ fn fix_quat_hemisphere_impl(input: &Path, output: Option<&Path>) -> Result<FixRe
     })?;
     let gltf = gltf::Gltf::from_slice(&bytes).map_err(LoadError::from)?;
 
-    // Buffers as mutable byte vectors; index 0 of a GLB is the BIN
-    // chunk. External and data-URI buffers are loaded, patched, and
-    // written back to where they came from.
+    // Buffers as mutable byte vectors, indexed as the JSON declares
+    // them (the BIN-chunk buffer is located by Source::Bin at write
+    // time, not assumed to be index 0). External and data-URI buffers
+    // are loaded, patched, and written back to where they came from.
     let base = input.parent();
     let mut buffers: Vec<Vec<u8>> = Vec::new();
     for buffer in gltf.buffers() {
