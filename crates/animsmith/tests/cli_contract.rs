@@ -1019,9 +1019,11 @@ fn lint_missing_file_is_operator_error() {
         "stdout:\n{}",
         stdout(&output)
     );
-    // Exit 2 is the catch-all; pin that it failed for the right reason.
+    // Exit 2 is the catch-all; pin that it failed at load (the right
+    // cause) rather than arg parsing or config. The OS "file not found"
+    // text differs across platforms, so anchor on the stable prefix.
     assert!(
-        stderr(&output).contains("No such file"),
+        stderr(&output).contains("glTF parse error"),
         "stderr:\n{}",
         stderr(&output)
     );
