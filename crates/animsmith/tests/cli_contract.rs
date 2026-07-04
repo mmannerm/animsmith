@@ -883,3 +883,277 @@ fn nan_key_times_lint_as_errors_and_never_crash() {
         stdout(&output)
     );
 }
+
+// --- #30: exit-code, config-path, and inspect contract ---
+
+fn write_config(dir: &std::path::Path, name: &str, toml: &str) -> PathBuf {
+    let path = dir.join(name);
+    std::fs::write(&path, toml).expect("writes config");
+    path
+}
+
+fn example_config() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/character.animsmith.toml")
+}
+
+#[test]
+fn lint_clean_file_exits_zero() {
+    let output = animsmith()
+        .args(["lint", fixture("rig.gltf").to_str().expect("utf-8 path")])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    assert!(
+        stdout(&output).contains("clean"),
+        "stdout:\n{}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn lint_warnings_pass_but_deny_warnings_fails() {
+    let dir = unique_temp_dir("deny-warnings");
+    let input = dir.join("flipped.glb");
+    write_flipped_glb(&input); // quat-flip → warning
+    let path = input.to_str().expect("utf-8 path");
+
+    // Warnings alone are exit 0.
+    let output = animsmith().args(["lint", path]).output().expect("runs");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    assert!(
+        stdout(&output).contains("quat-flip"),
+        "stdout:\n{}",
+        stdout(&output)
+    );
+
+    // --deny-warnings promotes the exit to 1.
+    let output = animsmith()
+        .args(["lint", path, "--deny-warnings"])
+        .output()
+        .expect("runs");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+}
+
+#[test]
+fn lint_allow_suppresses_a_check() {
+    let dir = unique_temp_dir("allow");
+    let input = dir.join("flipped.glb");
+    write_flipped_glb(&input);
+    let path = input.to_str().expect("utf-8 path");
+
+    // Positive control: quat-flip fires on this fixture without --allow.
+    let baseline = animsmith().args(["lint", path]).output().expect("runs");
+    assert!(
+        stdout(&baseline).contains("quat-flip"),
+        "fixture no longer produces quat-flip; suppression test would be vacuous:\n{}",
+        stdout(&baseline)
+    );
+
+    // With --allow, the same finding is gone.
+    let output = animsmith()
+        .args(["lint", path, "--allow", "quat-flip"])
+        .output()
+        .expect("runs");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    assert!(
+        !stdout(&output).contains("quat-flip"),
+        "allowed check still reported:\n{}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn lint_unknown_select_is_operator_error() {
+    let output = animsmith()
+        .args([
+            "lint",
+            fixture("rig.gltf").to_str().expect("utf-8 path"),
+            "--select",
+            "no-such-check",
+        ])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "stdout:\n{}",
+        stdout(&output)
+    );
+    let err = stderr(&output);
+    assert!(
+        err.contains("unknown check 'no-such-check'"),
+        "stderr:\n{err}"
+    );
+    // The error also lists the known check ids so the user can correct
+    // the typo without reading the docs.
+    assert!(
+        err.contains("known:") && err.contains("quat-flip"),
+        "error should list known check ids:\n{err}"
+    );
+}
+
+#[test]
+fn lint_missing_file_is_operator_error() {
+    let output = animsmith()
+        .args(["lint", "/no/such/file.glb"])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "stdout:\n{}",
+        stdout(&output)
+    );
+    // Exit 2 is the catch-all; pin that it failed at load (the right
+    // cause) rather than arg parsing or config. The OS "file not found"
+    // text differs across platforms, so anchor on the stable prefix.
+    assert!(
+        stderr(&output).contains("glTF parse error"),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn lint_bad_config_is_operator_error() {
+    let dir = unique_temp_dir("bad-config");
+    let config = write_config(&dir, "bad.toml", "not valid = = toml [[[\n");
+    let output = animsmith()
+        .args([
+            "--config",
+            config.to_str().expect("utf-8 path"),
+            "lint",
+            fixture("rig.gltf").to_str().expect("utf-8 path"),
+        ])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "stdout:\n{}",
+        stdout(&output)
+    );
+    assert!(
+        stderr(&output).contains("bad config"),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+}
+
+/// The `--config` TOML path is otherwise only reached through the CLI:
+/// a config that disables `quat-flip` must suppress it on a flipped
+/// clip, proving `toml::from_str` → `Config` → severity handling works
+/// end to end.
+#[test]
+fn config_toml_path_drives_check_behaviour() {
+    let dir = unique_temp_dir("config-toml");
+    let input = dir.join("flipped.glb");
+    write_flipped_glb(&input);
+    let path = input.to_str().expect("utf-8 path");
+    let config = write_config(
+        &dir,
+        "animsmith.toml",
+        "[checks.quat-flip]\nseverity = \"off\"\n",
+    );
+
+    // Positive control: without the config, quat-flip fires.
+    let baseline = animsmith().args(["lint", path]).output().expect("runs");
+    assert!(
+        stdout(&baseline).contains("quat-flip"),
+        "fixture no longer produces quat-flip; the config test would be vacuous:\n{}",
+        stdout(&baseline)
+    );
+
+    // The TOML config turns it off end to end.
+    let output = animsmith()
+        .args([
+            "--config",
+            config.to_str().expect("utf-8 path"),
+            "lint",
+            path,
+        ])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    assert!(
+        !stdout(&output).contains("quat-flip"),
+        "off check still reported via TOML config:\n{}",
+        stdout(&output)
+    );
+}
+
+/// The shipped example config must parse verbatim — otherwise it drifts
+/// from the schema and fails users at runtime while CI stays green.
+#[test]
+fn example_config_parses_verbatim() {
+    let config = example_config();
+    assert!(config.exists(), "example config missing at {config:?}");
+    let output = animsmith()
+        .args([
+            "--config",
+            config.to_str().expect("utf-8 path"),
+            "inspect",
+            fixture("rig.gltf").to_str().expect("utf-8 path"),
+        ])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "example config did not parse:\nstderr:\n{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn inspect_reports_clip_and_profile() {
+    let output = animsmith()
+        .args(["inspect", fixture("rig.gltf").to_str().expect("utf-8 path")])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    let out = stdout(&output);
+    // Distinctive clip detail: the fixture's one clip, its duration and
+    // track/key counts — pins that inspect actually read the file, not
+    // just that it printed a static template.
+    assert!(
+        out.contains("walk: 1.000s, 2 tracks, 3 keys max"),
+        "clip summary missing/changed:\n{out}"
+    );
+    assert!(out.contains("rig profile:"), "no profile line:\n{out}");
+    assert!(
+        out.contains("skeleton: 3 bones"),
+        "no skeleton line:\n{out}"
+    );
+}
