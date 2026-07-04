@@ -295,10 +295,95 @@ fn missing_group_member_is_flagged() {
     }));
     let findings = lint_with(&doc, &config);
     assert!(
-        findings
-            .iter()
-            .any(|f| f.check_id == "gait-group" && f.clip.as_deref() == Some("no_such_clip")),
+        findings.iter().any(|f| f.check_id == "gait-group"
+            && f.clip.as_deref() == Some("no_such_clip")
+            && f.severity == Severity::Error),
         "got: {findings:#?}"
+    );
+}
+
+/// #28 regression guard: with roles resolved, a declared ring member
+/// too short to carry a cycle is a real Error — the readiness refactor
+/// narrowed this branch (it used to also cover unresolved roles), so
+/// it must not silently become a skip.
+#[test]
+fn too_short_group_member_is_an_error() {
+    let mut doc = walk_doc();
+    // A 2-key clip: below the 3-frame floor `foot_cycle_metrics` needs.
+    let short = Clip {
+        name: "stub".into(),
+        duration_s: 1.0,
+        tracks: vec![Track {
+            bone: 1,
+            property: Property::Translation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Vec3s(vec![Vec3::new(0.1, -1.0, 0.0); 2]),
+        }],
+    };
+    doc.clips.push(short);
+    let config = json_config(serde_json::json!({
+        "gait_groups": { "ring": {
+            "clips": ["walk", "stub"],
+            "max_gait_phase_spread": 0.1
+        }}
+    }));
+    let findings = lint_with(&doc, &config); // roles resolve
+    let stub = findings
+        .iter()
+        .find(|f| f.check_id == "gait-group" && f.clip.as_deref() == Some("stub"))
+        .expect("too-short member flagged");
+    assert_eq!(stub.severity, Severity::Error);
+    assert!(stub.message.contains("too short"), "{}", stub.message);
+}
+
+/// #28: foot-slide (previously silent on unresolved roles) now emits
+/// its own skip-note, driven by its `speed_mps` pending-work predicate
+/// and carrying the root/hips reason — not another check's.
+#[test]
+fn foot_slide_skip_note_is_isolated_and_reasoned() {
+    let doc = walk_doc();
+    let config = json_config(serde_json::json!({
+        "clips": { "walk": { "speed_mps": { "value": 1.0, "tolerance": 0.25 }, "in_place": true } }
+    }));
+    let findings = lint_unresolved(&doc, &config);
+
+    let foot: Vec<_> = findings
+        .iter()
+        .filter(|f| f.check_id == "foot-slide")
+        .collect();
+    assert_eq!(foot.len(), 1, "one foot-slide note: {foot:#?}");
+    assert_eq!(foot[0].severity, Severity::Note);
+    assert!(foot[0].message.contains("root/hips"), "{}", foot[0].message);
+
+    // in_place=true means root-motion-speed has no pending work → Idle,
+    // while foot-slide still judges the treadmill sweep. Pins the
+    // asymmetric pending-work predicates.
+    assert!(
+        !findings.iter().any(|f| f.check_id == "root-motion-speed"),
+        "root-motion-speed should be idle for an in-place pin: {findings:#?}"
+    );
+}
+
+/// #28: gait-group (previously a false Error on unresolved roles) now
+/// emits a single skip-note carrying the hips/foot reason.
+#[test]
+fn gait_group_skip_note_is_isolated_and_reasoned() {
+    let doc = walk_doc();
+    let config = json_config(serde_json::json!({
+        "gait_groups": { "ring": { "clips": ["walk"], "max_gait_phase_spread": 0.1 } }
+    }));
+    let findings = lint_unresolved(&doc, &config);
+    let group: Vec<_> = findings
+        .iter()
+        .filter(|f| f.check_id == "gait-group")
+        .collect();
+    assert_eq!(group.len(), 1, "one gait-group note: {group:#?}");
+    assert_eq!(group[0].severity, Severity::Note);
+    assert!(
+        group[0].message.contains("hips/foot"),
+        "{}",
+        group[0].message
     );
 }
 
