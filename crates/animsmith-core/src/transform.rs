@@ -221,8 +221,12 @@ pub fn align_gait_anchor(
     Ok(outcome)
 }
 
-/// True when every keyframe of `track` holds the same value — such a
-/// track is invariant under time rotation, so it can be skipped safely.
+/// True when `track` holds the same pose at every time — such a track
+/// is invariant under time rotation, so it can be skipped safely. For
+/// CUBICSPLINE this means the keyed values agree *and* every in/out
+/// tangent is zero: equal values with non-zero tangents still describe
+/// an animated Hermite curve (the sampler interpolates through the
+/// tangents), so that track must be rotated or refused, never skipped.
 /// A short or inconsistent value array reads as animated (never wrongly
 /// skipped).
 fn is_constant_track(track: &Track) -> bool {
@@ -230,12 +234,22 @@ fn is_constant_track(track: &Track) -> bool {
     if n <= 1 {
         return true;
     }
-    let all_equal = |eq: &dyn Fn(usize, usize) -> Option<bool>| {
-        (1..n).all(|k| eq(track.value_index(0), track.value_index(k)) == Some(true))
-    };
+    let cubic = track.interpolation == Interpolation::CubicSpline;
+    fn constant<T: Copy + PartialEq>(v: &[T], n: usize, cubic: bool, zero: T) -> bool {
+        let value = |k: usize| if cubic { 3 * k + 1 } else { k };
+        let Some(&first) = v.get(value(0)) else {
+            return false;
+        };
+        (0..n).all(|k| {
+            // Keyed value matches, and for cubic the in/out tangents
+            // (indices 3k and 3k+2) are zero — a genuinely flat hold.
+            v.get(value(k)) == Some(&first)
+                && (!cubic || (v.get(3 * k) == Some(&zero) && v.get(3 * k + 2) == Some(&zero)))
+        })
+    }
     match &track.values {
-        TrackValues::Vec3s(v) => all_equal(&|a, b| Some(v.get(a)? == v.get(b)?)),
-        TrackValues::Quats(v) => all_equal(&|a, b| Some(v.get(a)? == v.get(b)?)),
+        TrackValues::Vec3s(v) => constant(v, n, cubic, glam::Vec3::ZERO),
+        TrackValues::Quats(v) => constant(v, n, cubic, glam::Quat::from_xyzw(0.0, 0.0, 0.0, 0.0)),
     }
 }
 

@@ -468,3 +468,33 @@ fn gait_anchor_skips_constant_cubic_tracks() {
         "a constant cubic track must be left untouched"
     );
 }
+
+/// #27: a CUBICSPLINE track whose keyed values are equal but whose
+/// tangents are non-zero is an *animated* Hermite curve — the sampler
+/// interpolates through the tangents. It must be refused (naming it),
+/// not mistaken for a constant hold and silently left behind while the
+/// rest of the rig rotates.
+#[test]
+fn gait_anchor_refuses_cubic_with_nonzero_tangents() {
+    let (skel, mut clip) = open_walk();
+    let roles = roles(&skel);
+    let held = Vec3::new(0.0, 2.0, 0.0);
+    let tangent = Vec3::new(1.0, 0.0, 0.0); // non-zero → curved segment
+    let values: Vec<Vec3> = (0..3).flat_map(|_| [tangent, held, tangent]).collect();
+    clip.tracks.push(Track {
+        bone: 0,
+        property: Property::Translation,
+        interpolation: Interpolation::CubicSpline,
+        times: vec![0.0, 0.5, 1.0],
+        values: TrackValues::Vec3s(values),
+    });
+    let before = clip.clone();
+
+    let err = align_gait_anchor(&skel, &mut clip, &roles, FPS).unwrap_err();
+    assert!(err.contains("cannot gait-anchor"), "got: {err}");
+    assert!(err.contains("bone 0"), "error should name the track: {err}");
+    // Refusal is total — nothing rotated.
+    for (a, b) in clip.tracks.iter().zip(&before.tracks) {
+        assert_eq!(vec3_values(a), vec3_values(b));
+    }
+}
