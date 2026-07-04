@@ -12,17 +12,45 @@ use crate::sample::{TrackSample, sample_clip, sample_track};
 /// epsilon at `fps` absorbing float drift from earlier retimings) and
 /// retime them so the window starts at 0. Cubic tangent triplets move
 /// with their keys. The clip duration becomes `end - start`.
+///
+/// Boundary keys are snapped to the window, not carried past it: keys
+/// within the epsilon of `start` clamp to 0 and keys within it of `end`
+/// clamp to the new duration. When several keys land on a boundary, the
+/// one closest to the original boundary is kept and the rest dropped —
+/// so the output has at most one key at 0 and one at the end, stays
+/// time-monotonic, and round-trips its declared duration.
 pub fn slice(clip: &mut Clip, start_s: f64, end_s: f64, fps: f64) {
     let eps = (0.5 / fps) as f32;
     let (start, end) = (start_s as f32, end_s as f32);
+    let duration = (end - start).max(0.0);
     for track in &mut clip.tracks {
-        let keep: Vec<usize> = (0..track.key_count())
+        // (key index, retimed+clamped time), in original key order.
+        let mut kept: Vec<(usize, f32)> = (0..track.key_count())
             .filter(|&k| track.times[k] >= start - eps && track.times[k] <= end + eps)
+            .map(|k| (k, (track.times[k] - start).clamp(0.0, duration)))
             .collect();
-        track.times = keep
-            .iter()
-            .map(|&k| (track.times[k] - start).max(0.0))
-            .collect();
+
+        // Drop boundary duplicates: at t=0 keep the last (closest to
+        // `start`); at t=duration keep the first (closest to `end`).
+        // Interior times are already distinct and monotonic.
+        kept.retain({
+            let times: Vec<f32> = kept.iter().map(|&(_, t)| t).collect();
+            let mut i = 0;
+            move |_| {
+                let t = times[i];
+                let keep = if t <= 0.0 {
+                    times.get(i + 1).is_none_or(|&next| next > 0.0)
+                } else if t >= duration {
+                    i == 0 || times[i - 1] < duration
+                } else {
+                    true
+                };
+                i += 1;
+                keep
+            }
+        });
+
+        track.times = kept.iter().map(|&(_, t)| t).collect();
         let per_key = match track.interpolation {
             Interpolation::CubicSpline => 3,
             _ => 1,
@@ -30,16 +58,16 @@ pub fn slice(clip: &mut Clip, start_s: f64, end_s: f64, fps: f64) {
         match &mut track.values {
             TrackValues::Vec3s(v) => {
                 let old = std::mem::take(v);
-                *v = keep
+                *v = kept
                     .iter()
-                    .flat_map(|&k| old[k * per_key..(k + 1) * per_key].to_vec())
+                    .flat_map(|&(k, _)| old[k * per_key..(k + 1) * per_key].to_vec())
                     .collect();
             }
             TrackValues::Quats(v) => {
                 let old = std::mem::take(v);
-                *v = keep
+                *v = kept
                     .iter()
-                    .flat_map(|&k| old[k * per_key..(k + 1) * per_key].to_vec())
+                    .flat_map(|&(k, _)| old[k * per_key..(k + 1) * per_key].to_vec())
                     .collect();
             }
         }
@@ -111,12 +139,15 @@ pub struct GaitAlignOutcome {
 /// Semantics ported from the reference bake: the cycle period is
 /// `duration + 1/fps` (an open loop's wrap step is a real frame of the
 /// stride); the shift is quantized to whole frames so every resample
-/// lands on an existing key; each channel keeps its times and gets its
-/// output values replaced by the channel sampled at
-/// `(t + shift) mod period`; channels with fewer than 3 keys are left
-/// alone. Because a ±1-frame shift stays inside phase tolerance but
-/// moves *where the wrap lands*, all three candidates are tried and
-/// the one with the cleanest wrap (lowest seam ratio) wins.
+/// lands on an existing key; each animated channel keeps its times and
+/// gets its output values replaced by the channel sampled at
+/// `(t + shift) mod period`. Constant channels are rotation-invariant
+/// and left alone; a non-constant CUBICSPLINE channel cannot be
+/// resampled losslessly, so alignment refuses (naming it) rather than
+/// rotate the rest of the rig around it. Because a ±1-frame shift stays
+/// inside phase tolerance but moves *where the wrap lands*, all three
+/// candidates are tried and the one with the cleanest wrap (lowest seam
+/// ratio) wins.
 pub fn align_gait_anchor(
     skeleton: &Skeleton,
     clip: &mut Clip,
@@ -138,6 +169,24 @@ pub fn align_gait_anchor(
         return Err(format!(
             "no usable stride anchor (L−R amplitude {amplitude:.4} m) — a ring clip must \
              alternate its feet for anchor alignment to mean anything"
+        ));
+    }
+
+    // Refuse rather than rotate part of a clip: a channel we cannot
+    // resample coherently (a non-constant CUBICSPLINE track) would be
+    // left in place while its siblings shift, desynchronizing the rig.
+    // Constant tracks are rotation-invariant and safely skipped.
+    let unrotatable: Vec<String> = clip
+        .tracks
+        .iter()
+        .filter(|t| t.interpolation == Interpolation::CubicSpline && !is_constant_track(t))
+        .map(|t| format!("{} bone {}", t.property.as_str(), t.bone))
+        .collect();
+    if !unrotatable.is_empty() {
+        return Err(format!(
+            "cannot gait-anchor: these animated tracks need lossless resampling that is \
+             not yet supported ({}); retime them to LINEAR first",
+            unrotatable.join(", ")
         ));
     }
 
@@ -172,8 +221,42 @@ pub fn align_gait_anchor(
     Ok(outcome)
 }
 
-/// Replace each dense channel's output values with the channel sampled
-/// at `(t + shift) mod period`; times untouched.
+/// True when `track` holds the same pose at every time — such a track
+/// is invariant under time rotation, so it can be skipped safely. For
+/// CUBICSPLINE this means the keyed values agree *and* every in/out
+/// tangent is zero: equal values with non-zero tangents still describe
+/// an animated Hermite curve (the sampler interpolates through the
+/// tangents), so that track must be rotated or refused, never skipped.
+/// A short or inconsistent value array reads as animated (never wrongly
+/// skipped).
+fn is_constant_track(track: &Track) -> bool {
+    let n = track.key_count();
+    if n <= 1 {
+        return true;
+    }
+    let cubic = track.interpolation == Interpolation::CubicSpline;
+    fn constant<T: Copy + PartialEq>(v: &[T], n: usize, cubic: bool, zero: T) -> bool {
+        let value = |k: usize| if cubic { 3 * k + 1 } else { k };
+        let Some(&first) = v.get(value(0)) else {
+            return false;
+        };
+        (0..n).all(|k| {
+            // Keyed value matches, and for cubic the in/out tangents
+            // (indices 3k and 3k+2) are zero — a genuinely flat hold.
+            v.get(value(k)) == Some(&first)
+                && (!cubic || (v.get(3 * k) == Some(&zero) && v.get(3 * k + 2) == Some(&zero)))
+        })
+    }
+    match &track.values {
+        TrackValues::Vec3s(v) => constant(v, n, cubic, glam::Vec3::ZERO),
+        TrackValues::Quats(v) => constant(v, n, cubic, glam::Quat::from_xyzw(0.0, 0.0, 0.0, 0.0)),
+    }
+}
+
+/// Replace each animated channel's output values with the channel
+/// sampled at `(t + shift) mod period`; times untouched. Constant
+/// tracks (rotation-invariant) are skipped; non-constant CUBICSPLINE
+/// tracks are refused upstream in [`align_gait_anchor`].
 fn rotate_values(clip: &mut Clip, phase: f64, fps: f64, frame_offset: i32) {
     let duration = clip
         .tracks
@@ -188,8 +271,12 @@ fn rotate_values(clip: &mut Clip, phase: f64, fps: f64, frame_offset: i32) {
     shift = shift.rem_euclid(period);
 
     for track in &mut clip.tracks {
-        if track.key_count() < 3 || track.interpolation == Interpolation::CubicSpline {
-            continue; // constants are rotation-invariant; cubic needs resampling
+        // Constant tracks (any key count) are invariant; cubic tracks
+        // reaching here are constant, so the zip below only touches
+        // LINEAR/STEP values. Non-constant short tracks (e.g. a 2-key
+        // root ramp) are now rotated instead of silently left behind.
+        if is_constant_track(track) {
+            continue;
         }
         let sampled: Vec<TrackSample> = track
             .times
