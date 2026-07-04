@@ -213,3 +213,128 @@ fn hold_extend_handles_cubic_tracks() {
     assert_eq!(v[v.len() - 3], Vec3::ZERO);
     assert_eq!(v[v.len() - 1], Vec3::ZERO);
 }
+
+/// #26: keys denser than the fps within the start epsilon must not all
+/// collapse onto t=0, and a key just past the end must clamp into the
+/// window rather than exceed the declared duration.
+#[test]
+fn slice_dedupes_start_boundary_and_clamps_end() {
+    // fps=30 → eps = 1/60 ≈ 0.0167. Three keys fall within [start-eps,
+    // start]; one falls within (end, end+eps].
+    let times: Vec<f32> = vec![0.24, 0.245, 0.25, 0.40, 0.60, 0.75, 0.7575];
+    let values: Vec<Vec3> = (0..times.len())
+        .map(|i| Vec3::new(i as f32, 0.0, 0.0))
+        .collect();
+    let mut clip = Clip {
+        name: "dense".into(),
+        duration_s: 1.0,
+        tracks: vec![Track {
+            bone: 0,
+            property: Property::Translation,
+            interpolation: Interpolation::Linear,
+            times,
+            values: TrackValues::Vec3s(values),
+        }],
+    };
+
+    slice(&mut clip, 0.25, 0.75, 30.0);
+    let t = &clip.tracks[0];
+
+    assert_eq!(
+        t.times.iter().filter(|&&x| x == 0.0).count(),
+        1,
+        "at most one key at t=0: {:?}",
+        t.times
+    );
+    for w in t.times.windows(2) {
+        assert!(
+            w[1] > w[0],
+            "times must be strictly increasing: {:?}",
+            t.times
+        );
+    }
+    assert!(
+        t.end_time() <= 0.5 + 1e-6,
+        "last key {} exceeds duration 0.5",
+        t.end_time()
+    );
+    assert!((clip.duration_s - 0.5).abs() < 1e-9);
+    // The surviving boundary keys are the ones closest to the window:
+    // 0.25 (value index 2) at the start, 0.75 (value index 5) at the end.
+    assert_eq!(t.key_vec3(0).unwrap(), Vec3::new(2.0, 0.0, 0.0));
+    assert_eq!(
+        t.key_vec3(t.key_count() - 1).unwrap(),
+        Vec3::new(5.0, 0.0, 0.0)
+    );
+}
+
+fn cubic_ramp_track(bone: BoneId) -> Track {
+    // 3 keys, distinct values, zero tangents → non-constant CUBICSPLINE.
+    let flat = |v: Vec3| [Vec3::ZERO, v, Vec3::ZERO];
+    let values: Vec<Vec3> = [
+        Vec3::new(0.0, 0.0, 0.0),
+        Vec3::new(0.5, 0.0, 0.0),
+        Vec3::new(1.0, 0.0, 0.0),
+    ]
+    .into_iter()
+    .flat_map(flat)
+    .collect();
+    Track {
+        bone,
+        property: Property::Translation,
+        interpolation: Interpolation::CubicSpline,
+        times: vec![0.0, 0.5, 1.0],
+        values: TrackValues::Vec3s(values),
+    }
+}
+
+/// #27: a non-constant CUBICSPLINE track cannot be rotated coherently;
+/// align must refuse (naming it) rather than shift the linear tracks
+/// and leave the cubic one behind.
+#[test]
+fn gait_anchor_refuses_mixed_interpolation_clips() {
+    let (skel, mut clip) = open_walk();
+    let roles = roles(&skel);
+    clip.tracks.push(cubic_ramp_track(0));
+    let original = clip.clone();
+
+    let err = align_gait_anchor(&skel, &mut clip, &roles, FPS).unwrap_err();
+    assert!(err.contains("cannot gait-anchor"), "got: {err}");
+    assert!(err.contains("bone 0"), "error should name the track: {err}");
+    // Refusal is total: the clip is left untouched, not partially rotated.
+    assert_eq!(clip.tracks.len(), original.tracks.len());
+    for (a, b) in clip.tracks.iter().zip(&original.tracks) {
+        assert_eq!(a.key_vec3(0), b.key_vec3(0));
+    }
+}
+
+/// #27: a non-constant two-key LINEAR track (too short for the old
+/// `< 3 keys` skip) must be rotated, not silently left in place.
+#[test]
+fn gait_anchor_rotates_short_non_constant_tracks() {
+    let (skel, mut clip) = open_walk();
+    let roles = roles(&skel);
+    let dur = clip.duration_s as f32;
+    clip.tracks.push(Track {
+        bone: 0,
+        property: Property::Translation,
+        interpolation: Interpolation::Linear,
+        times: vec![0.0, dur],
+        values: TrackValues::Vec3s(vec![Vec3::new(0.0, 1.0, 0.0), Vec3::new(2.0, 1.0, 0.0)]),
+    });
+    let ramp_before = clip.tracks.last().unwrap().clone();
+
+    align_gait_anchor(&skel, &mut clip, &roles, FPS).expect("aligns");
+    let ramp_after = clip.tracks.last().unwrap();
+
+    let TrackValues::Vec3s(before) = &ramp_before.values else {
+        unreachable!()
+    };
+    let TrackValues::Vec3s(after) = &ramp_after.values else {
+        unreachable!()
+    };
+    assert!(
+        before != after,
+        "the 2-key ramp was left unrotated: {before:?}"
+    );
+}
