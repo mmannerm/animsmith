@@ -36,8 +36,7 @@ animsmith measure <file...> [--format text|json]
 animsmith lint <file...> [--format text|json] [--select id[,id]] [--allow id[,id]] [--deny-warnings]
 animsmith report <file> -o <report.html> [--clip name]
 animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor] [--fps N]
-animsmith fix <file> (-o <out.glb>|--in-place) [--repair id[,id] | --group default|lossless|mechanical|all] [--dry-run]
-animsmith fix --list-repairs
+animsmith fix <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
 animsmith convert <in.fbx> -o <out.glb|out.gltf> [--animation-only]
 animsmith diff <before> <after> [--format text|json]
 ```
@@ -50,11 +49,17 @@ animsmith diff <before> <after> [--format text|json]
 | Code | Meaning |
 |---:|---|
 | 0 | Clean, or warnings only. |
-| 1 | At least one failing finding, or a significant `diff`. |
+| 1 | At least one failing finding, a significant `diff`, or pending repairs under `fix --dry-run`. |
 | 2 | Operator/tool error: unreadable input, bad config, unsupported format, or invalid flags. |
 
 Use `lint --deny-warnings` when CI should fail on warnings as well as
-errors.
+errors. `fix --dry-run` is the repair check mode: it exits 1 when the
+file has repairable defects and 0 otherwise, so CI can gate on "this
+asset needs fixing" without writing anything. The exit code
+reflects repairs `fix` would actually perform: tracks it cannot patch
+(data-URI buffers, cubic/quantized rotations) are printed as
+`skipped[...]` but do not fail the check — gate on `lint` (the
+`quat-flip` check) when detection alone should fail CI.
 
 ## Feature Flags
 
@@ -73,13 +78,17 @@ feature.
 
 ## Repairs
 
-Repairs have stable ids so scripts can pin exact behavior:
+Every repair is safe, lossless, and idempotent — that is the bar for
+adding one. Repairs have stable ids so scripts can pin exact behavior:
 
-| Repair id | Group(s) | Behavior |
-|---|---|---|
-| `quat-flip` | `default`, `lossless`, `mechanical`, `all` | Normalizes adjacent quaternion keys to the same hemisphere. This is lossless because `q` and `-q` represent the same rotation. |
+| Repair id | Behavior |
+|---|---|
+| `quat-flip` | Normalizes adjacent quaternion keys to the same hemisphere. This is lossless because `q` and `-q` represent the same rotation. |
 
-`fix` writes only when you explicitly choose a destination:
+By default `fix` runs every repair. `--repair id[,id]` pins an exact
+list (`animsmith fix --help` names the valid ids). `fix` writes only
+when you explicitly choose a destination; `--dry-run` reports and sets
+the exit code without writing:
 
 ```console
 animsmith fix clip.glb --dry-run
@@ -87,9 +96,6 @@ animsmith fix clip.glb -o fixed.glb
 animsmith fix clip.glb --in-place
 animsmith fix clip.glb --repair quat-flip -o fixed.glb
 ```
-
-Use `--repair` for an exact list. Use `--group` for a policy that may grow
-within its promise; `default` is the safe CI choice.
 
 ## Machine Output
 
