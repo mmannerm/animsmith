@@ -4,7 +4,8 @@
 //! locked to world velocity; a stale pin plays the clip visibly too
 //! fast or too slow.
 
-use crate::check::{Check, CheckCtx};
+use crate::check::{Check, CheckCtx, Readiness};
+use crate::checks::root_motion_readiness;
 use crate::finding::{Finding, Severity};
 use crate::metrics::root_motion_speed_mps;
 
@@ -14,13 +15,31 @@ pub const STRAY_PIN_FLOOR_MPS: f64 = 0.5;
 
 pub struct RootMotionSpeed;
 
+impl RootMotionSpeed {
+    /// Clips whose declared `speed_mps` this check judges (root-motion
+    /// clips — treadmill speeds belong to `foot-slide`).
+    fn has_pending_work(ctx: &CheckCtx) -> bool {
+        ctx.doc.clips.iter().any(|c| {
+            let e = ctx.config.expectations_for(&c.name);
+            e.speed_mps.is_some() && e.in_place != Some(true)
+        })
+    }
+}
+
 impl Check for RootMotionSpeed {
     fn id(&self) -> &'static str {
         "root-motion-speed"
     }
 
+    fn readiness(&self, ctx: &CheckCtx) -> Readiness {
+        if Self::has_pending_work(ctx) {
+            root_motion_readiness(ctx.roles)
+        } else {
+            Readiness::Idle
+        }
+    }
+
     fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
-        let mut missing_roles_noted = false;
         for (index, clip) in ctx.doc.clips.iter().enumerate() {
             let expectations = ctx.config.expectations_for(&clip.name);
             let Some(pin) = expectations.speed_mps else {
@@ -36,21 +55,7 @@ impl Check for RootMotionSpeed {
                 .grid(index)
                 .and_then(|grid| root_motion_speed_mps(&grid, ctx.roles));
             let Some(measured) = measured else {
-                if !missing_roles_noted {
-                    missing_roles_noted = true;
-                    out.push(
-                        Finding::new(
-                            self.id(),
-                            Severity::Note,
-                            format!(
-                                "skipped: root/hips role not resolved (rig profile '{}')",
-                                ctx.roles.profile
-                            ),
-                        )
-                        .clip(&clip.name),
-                    );
-                }
-                continue;
+                continue; // roles resolve (readiness gate); degenerate clip
             };
             if measured < STRAY_PIN_FLOOR_MPS && pin.value >= STRAY_PIN_FLOOR_MPS {
                 out.push(

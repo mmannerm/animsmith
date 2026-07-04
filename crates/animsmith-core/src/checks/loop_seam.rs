@@ -5,10 +5,10 @@
 //! that. Judged only on clips declared `loop = true`; the ratio itself
 //! is always available via `measure`.
 
-use crate::check::{Check, CheckCtx};
+use crate::check::{Check, CheckCtx, Readiness};
+use crate::checks::gait_readiness;
 use crate::finding::{Finding, Severity};
 use crate::metrics::foot_cycle_metrics;
-use crate::profile::Role;
 
 /// Default ratio cap. A clean loop sits near 1.0; materially above
 /// that is a seam pop.
@@ -21,11 +21,23 @@ impl Check for LoopSeam {
         "loop-seam"
     }
 
+    fn readiness(&self, ctx: &CheckCtx) -> Readiness {
+        let any_loop = ctx
+            .doc
+            .clips
+            .iter()
+            .any(|c| ctx.config.expectations_for(&c.name).looping == Some(true));
+        if any_loop {
+            gait_readiness(ctx.roles)
+        } else {
+            Readiness::Idle
+        }
+    }
+
     fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
         let settings = ctx.config.check_settings(self.id());
         let max_ratio = settings.max_ratio.unwrap_or(DEFAULT_MAX_RATIO);
 
-        let mut missing_roles_noted = false;
         for (index, clip) in ctx.doc.clips.iter().enumerate() {
             if ctx.config.expectations_for(&clip.name).looping != Some(true) {
                 continue;
@@ -33,20 +45,9 @@ impl Check for LoopSeam {
             let Some(grid) = ctx.grid(index) else {
                 continue; // too short for a cycle; duration-sanity owns degenerate clips
             };
+            // Roles resolve (readiness gate); a `None` here means a
+            // degenerate clip, which duration-sanity owns.
             let Some(metrics) = foot_cycle_metrics(&grid, ctx.roles) else {
-                if !missing_roles_noted {
-                    missing_roles_noted = true;
-                    out.push(Finding::new(
-                        self.id(),
-                        Severity::Note,
-                        format!(
-                            "skipped: hips/foot roles not resolved (rig profile '{}') — \
-                             loop-seam needs {} and at least one foot role",
-                            ctx.roles.profile,
-                            Role::Hips.as_str(),
-                        ),
-                    ));
-                }
                 continue;
             };
             let Some(ratio) = metrics.loop_seam_ratio else {

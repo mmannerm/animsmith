@@ -9,7 +9,8 @@
 //! detection is heuristic, so it ships as a warning with generous
 //! defaults; judged only on clips that declare `speed_mps`.
 
-use crate::check::{Check, CheckCtx};
+use crate::check::{Check, CheckCtx, Readiness};
+use crate::checks::root_motion_readiness;
 use crate::finding::{Finding, Severity};
 use crate::metrics::root_motion_speed_mps;
 use crate::profile::Role;
@@ -27,6 +28,22 @@ impl Check for FootSlide {
         "foot-slide"
     }
 
+    fn readiness(&self, ctx: &CheckCtx) -> Readiness {
+        // Foot-slide needs the travel mode (root/hips) to know whether
+        // a planted or sweeping foot is correct; individual missing
+        // feet are handled per-foot in `run`.
+        let any = ctx
+            .doc
+            .clips
+            .iter()
+            .any(|c| ctx.config.expectations_for(&c.name).speed_mps.is_some());
+        if any {
+            root_motion_readiness(ctx.roles)
+        } else {
+            Readiness::Idle
+        }
+    }
+
     fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
         let settings = ctx.config.check_settings(self.id());
         let contact_height = settings
@@ -42,7 +59,7 @@ impl Check for FootSlide {
                 continue;
             };
             let Some(root_speed) = root_motion_speed_mps(&grid, ctx.roles) else {
-                continue; // roles unresolved; other checks note this
+                continue; // roles resolve (readiness gate); degenerate clip
             };
             // Treadmill clip: the stance foot must sweep backward at the
             // declared speed. Root-motion clip: it must stay planted.

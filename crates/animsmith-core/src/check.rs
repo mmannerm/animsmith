@@ -2,7 +2,7 @@
 //! check sets.
 
 use crate::config::Config;
-use crate::finding::Finding;
+use crate::finding::{Finding, Severity};
 use crate::model::Document;
 use crate::profile::ResolvedRoles;
 use crate::sample::{PoseGrid, sample_clip};
@@ -46,10 +46,33 @@ impl<'a> CheckCtx<'a> {
     }
 }
 
+/// Whether a check can run against a document — decided by the runner
+/// *before* `run`, so requirement diagnostics are emitted in one place
+/// and never subject to per-check severity overrides.
+pub enum Readiness {
+    /// Requirements met; run the check.
+    Ready,
+    /// The check has pending work (relevant expectations are declared)
+    /// but a prerequisite — a rig role — is unresolved. The runner
+    /// emits one standardized skip-note carrying `reason` at `Note`
+    /// severity, exempt from overrides. `reason` states what is needed.
+    Skipped(String),
+    /// No pending work for this document/config; stay silent.
+    Idle,
+}
+
 pub trait Check {
     /// Stable identifier, e.g. `"loop-seam"`. Used in config, JSON
     /// output, and `--select`.
     fn id(&self) -> &'static str;
+
+    /// Whether the check's prerequisites are met. The default is
+    /// [`Readiness::Ready`] — mechanical checks need no rig or config.
+    /// Role-dependent checks override this to declare their needs so
+    /// the runner, not the check, owns skip-note emission.
+    fn readiness(&self, _ctx: &CheckCtx) -> Readiness {
+        Readiness::Ready
+    }
 
     fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>);
 }
@@ -82,23 +105,44 @@ pub fn all_checks() -> Vec<Box<dyn Check>> {
     checks
 }
 
-/// Run `checks`, applying per-check severity overrides from the config
-/// (`severity = "off"` drops a check's findings entirely).
+/// Run `checks`, honouring per-check severity settings:
+///
+/// - `severity = "off"` removes the check from the run set — it never
+///   executes (no wasted sampling, no discarded findings).
+/// - Any other override replaces the severity of the check's
+///   *violations*. Diagnostics — the requirement skip-notes emitted by
+///   the runner (via [`Check::readiness`]) and any a check marks with
+///   [`Finding::as_diagnostic`] — are exempt, so declaring `severity =
+///   "error"` never turns a "roles unresolved" note into a false
+///   failure.
 pub fn run_checks(ctx: &CheckCtx, checks: &[Box<dyn Check>]) -> Vec<Finding> {
+    use crate::config::SeveritySetting;
+
     let mut out = Vec::new();
     for check in checks {
-        let mut findings = Vec::new();
-        check.run(ctx, &mut findings);
-        match ctx.config.check_settings(check.id()).severity {
-            None => out.append(&mut findings),
-            Some(setting) => {
-                // as_severity() is None for "off": drop the findings.
-                if let Some(severity) = setting.as_severity() {
-                    for mut f in findings {
-                        f.severity = severity;
-                        out.push(f);
+        let setting = ctx.config.check_settings(check.id()).severity;
+        if setting == Some(SeveritySetting::Off) {
+            continue; // off removes the check from the run set
+        }
+        match check.readiness(ctx) {
+            Readiness::Idle => {}
+            Readiness::Skipped(reason) => {
+                out.push(
+                    Finding::new(check.id(), Severity::Note, format!("skipped: {reason}"))
+                        .as_diagnostic(),
+                );
+            }
+            Readiness::Ready => {
+                let mut findings = Vec::new();
+                check.run(ctx, &mut findings);
+                if let Some(severity) = setting.and_then(SeveritySetting::as_severity) {
+                    for f in &mut findings {
+                        if !f.diagnostic {
+                            f.severity = severity;
+                        }
                     }
                 }
+                out.append(&mut findings);
             }
         }
     }

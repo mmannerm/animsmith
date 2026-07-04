@@ -3,7 +3,8 @@
 //! expect no baked travel; root-motion clips are the opposite. A
 //! mismatch makes the character glide or run in place at runtime.
 
-use crate::check::{Check, CheckCtx};
+use crate::check::{Check, CheckCtx, Readiness};
+use crate::checks::root_motion_readiness;
 use crate::finding::{Finding, Severity};
 use crate::metrics::root_motion_speed_mps;
 
@@ -17,8 +18,20 @@ impl Check for InPlace {
         "in-place"
     }
 
+    fn readiness(&self, ctx: &CheckCtx) -> Readiness {
+        let any = ctx
+            .doc
+            .clips
+            .iter()
+            .any(|c| ctx.config.expectations_for(&c.name).in_place.is_some());
+        if any {
+            root_motion_readiness(ctx.roles)
+        } else {
+            Readiness::Idle
+        }
+    }
+
     fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
-        let mut missing_roles_noted = false;
         for (index, clip) in ctx.doc.clips.iter().enumerate() {
             let Some(expected) = ctx.config.expectations_for(&clip.name).in_place else {
                 continue;
@@ -27,21 +40,7 @@ impl Check for InPlace {
                 .grid(index)
                 .and_then(|grid| root_motion_speed_mps(&grid, ctx.roles));
             let Some(speed) = measured else {
-                if !missing_roles_noted {
-                    missing_roles_noted = true;
-                    out.push(
-                        Finding::new(
-                            self.id(),
-                            Severity::Note,
-                            format!(
-                                "skipped: root/hips role not resolved (rig profile '{}')",
-                                ctx.roles.profile
-                            ),
-                        )
-                        .clip(&clip.name),
-                    );
-                }
-                continue;
+                continue; // roles resolve (readiness gate); degenerate clip
             };
             let travels = speed >= TRAVEL_THRESHOLD_MPS;
             if expected && travels {
