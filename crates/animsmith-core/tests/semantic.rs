@@ -3,6 +3,7 @@
 //! trough at phase 0.75, peak-to-peak 4·A), the loop closes exactly
 //! (seam 0), and root travel is exact.
 
+use animsmith_core::metrics::MIN_STRIDE_STEP_M;
 use animsmith_core::model::*;
 use animsmith_core::profile::{ResolvedRoles, Role};
 use animsmith_core::{CheckCtx, Config, Severity, all_checks, run_checks};
@@ -58,7 +59,7 @@ fn roles(skel: &Skeleton) -> ResolvedRoles {
     )
 }
 
-fn foot_track(bone: BoneId, rest: Vec3, sign: f32, periods: f64) -> Track {
+fn foot_track_with_stride(bone: BoneId, rest: Vec3, sign: f32, periods: f64, stride: f32) -> Track {
     let times: Vec<f32> = (0..KEYS).map(|k| k as f32 / (KEYS - 1) as f32).collect();
     let values: Vec<Vec3> = (0..KEYS)
         .map(|k| {
@@ -66,7 +67,7 @@ fn foot_track(bone: BoneId, rest: Vec3, sign: f32, periods: f64) -> Track {
             rest + Vec3::new(
                 0.0,
                 sign * FOOT_AMPLITUDE * theta.sin(),
-                sign * STRIDE * theta.sin(),
+                sign * stride * theta.sin(),
             )
         })
         .collect();
@@ -79,11 +80,19 @@ fn foot_track(bone: BoneId, rest: Vec3, sign: f32, periods: f64) -> Track {
     }
 }
 
+fn foot_track(bone: BoneId, rest: Vec3, sign: f32, periods: f64) -> Track {
+    foot_track_with_stride(bone, rest, sign, periods, STRIDE)
+}
+
 fn doc_with_periods(periods: f64) -> Document {
+    doc_with_periods_and_stride(periods, STRIDE)
+}
+
+fn doc_with_periods_and_stride(periods: f64, stride: f32) -> Document {
     let skel = skeleton();
     let tracks = vec![
-        foot_track(1, skel.bones[1].rest.translation, 1.0, periods),
-        foot_track(2, skel.bones[2].rest.translation, -1.0, periods),
+        foot_track_with_stride(1, skel.bones[1].rest.translation, 1.0, periods, stride),
+        foot_track_with_stride(2, skel.bones[2].rest.translation, -1.0, periods, stride),
     ];
     Document {
         skeleton: skel,
@@ -128,10 +137,19 @@ fn json_config(json: serde_json::Value) -> Config {
 }
 
 #[test]
+fn default_min_stride_step_matches_metric_default() {
+    assert_eq!(
+        Config::default().loop_seam_min_stride_step_m(),
+        MIN_STRIDE_STEP_M
+    );
+}
+
+#[test]
 fn analytic_walk_metrics() {
     let doc = walk_doc();
     let roles = roles(&doc.skeleton);
-    let measurements = animsmith_core::measure::measure_document(&doc, &roles);
+    let config = Config::default();
+    let measurements = animsmith_core::measure::measure_document(&doc, &roles, &config);
     let walk = &measurements["walk"];
 
     // L−R foot height = 2A·sin(θ): fundamental trough at 0.75.
@@ -179,6 +197,61 @@ fn seam_pop_is_flagged_on_declared_loop() {
         .expect("seam finding");
     assert_eq!(seam.severity, Severity::Error);
     assert_eq!(seam.clip.as_deref(), Some("walk"));
+}
+
+#[test]
+fn min_stride_step_config_controls_tiny_stride_ratio() {
+    let doc = doc_with_periods_and_stride(0.75, 0.01);
+    let roles = roles(&doc.skeleton);
+    let default_floor = json_config(serde_json::json!({
+        "clips": { "walk": { "loop": true } }
+    }));
+    let tuned_floor = json_config(serde_json::json!({
+        "clips": { "walk": { "loop": true } },
+        "checks": { "loop-seam": { "min_stride_step_m": 0.001 } }
+    }));
+
+    let default_measurements =
+        animsmith_core::measure::measure_document(&doc, &roles, &default_floor);
+    assert_eq!(default_measurements["walk"].loop_seam_ratio, None);
+    let default_findings = lint_with(&doc, &default_floor);
+    assert!(
+        !default_findings.iter().any(|f| f.check_id == "loop-seam"),
+        "default floor should suppress tiny-stride seam ratio: {default_findings:#?}"
+    );
+
+    let tuned_measurements = animsmith_core::measure::measure_document(&doc, &roles, &tuned_floor);
+    let ratio = tuned_measurements["walk"]
+        .loop_seam_ratio
+        .expect("configured stride floor reports ratio");
+    let expected_ratio = 1.0 / ((0.75 * TAU / (KEYS - 1) as f64) as f32).sin() as f64;
+    assert!(
+        (ratio - expected_ratio).abs() < 1e-4,
+        "expected {expected_ratio}, got {ratio}"
+    );
+    let tuned_findings = lint_with(&doc, &tuned_floor);
+    assert!(
+        tuned_findings.iter().any(|f| f.check_id == "loop-seam"),
+        "tuned floor should expose loop-seam finding: {tuned_findings:#?}"
+    );
+}
+
+#[test]
+fn zero_stride_floor_does_not_report_stationary_ratio() {
+    let doc = doc_with_periods_and_stride(0.0, 0.0);
+    let roles = roles(&doc.skeleton);
+    let config = json_config(serde_json::json!({
+        "clips": { "walk": { "loop": true } },
+        "checks": { "loop-seam": { "min_stride_step_m": 0.0 } }
+    }));
+
+    let measurements = animsmith_core::measure::measure_document(&doc, &roles, &config);
+    assert_eq!(measurements["walk"].loop_seam_ratio, None);
+    let findings = lint_with(&doc, &config);
+    assert!(
+        !findings.iter().any(|f| f.check_id == "loop-seam"),
+        "zero stride should not produce loop-seam finding: {findings:#?}"
+    );
 }
 
 #[test]

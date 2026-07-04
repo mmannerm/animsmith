@@ -278,7 +278,9 @@ fn constant_rotation_track_is_noted() {
 #[test]
 fn measurements_report_rotation_range() {
     let doc = clean_doc();
-    let measurements = animsmith_core::measure::measure_document(&doc, &ResolvedRoles::default());
+    let config = Config::default();
+    let measurements =
+        animsmith_core::measure::measure_document(&doc, &ResolvedRoles::default(), &config);
     let walk = &measurements["walk"];
     assert_eq!(walk.frame_count, 3);
     assert_eq!(walk.animated_bones, vec!["hips", "spine"]);

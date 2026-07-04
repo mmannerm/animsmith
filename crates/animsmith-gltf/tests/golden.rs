@@ -11,8 +11,8 @@
 //! ANIMSMITH_GOLDEN_GLB=/path/to/reference-character.glb cargo test -p animsmith-gltf golden
 //! ```
 
-use animsmith_core::detect_profile;
 use animsmith_core::measure::measure_document;
+use animsmith_core::{Config, detect_profile};
 
 /// (clip, loop_seam_ratio, gait phase, lr_amplitude_m) as recorded by
 /// the reference implementation. Seam ratios use `None` where the
@@ -48,7 +48,8 @@ fn reproduces_reference_numbers() {
     let doc = animsmith_gltf::load(std::path::Path::new(&path)).expect("golden GLB loads");
     let roles = detect_profile(&doc.skeleton).expect("profile detected");
     assert_eq!(roles.profile, "humanoid");
-    let measurements = measure_document(&doc, &roles);
+    let config = Config::default();
+    let measurements = measure_document(&doc, &roles, &config);
 
     let mut failures = Vec::new();
     for &(clip, want_seam, want_phase, want_amplitude) in GOLDEN {

@@ -9,7 +9,7 @@
 use crate::check::{Check, CheckCtx, Readiness};
 use crate::checks::gait_readiness;
 use crate::finding::{Finding, Severity};
-use crate::metrics::{circular_phase_spread, foot_cycle_metrics};
+use crate::metrics::{MIN_STRIDE_STEP_M, circular_phase_spread, foot_cycle_metrics};
 
 pub struct GaitGroup;
 
@@ -73,7 +73,7 @@ impl Check for GaitGroup {
                 // declared ring member.
                 let gait = ctx
                     .grid(index)
-                    .and_then(|grid| foot_cycle_metrics(&grid, ctx.roles));
+                    .and_then(|grid| foot_cycle_metrics(&grid, ctx.roles, MIN_STRIDE_STEP_M));
                 let Some(metrics) = gait else {
                     out.push(
                         Finding::new(

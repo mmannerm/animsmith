@@ -453,7 +453,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     path: file.display().to_string(),
                     rig: rig_info(&doc, &roles),
                     findings: None,
-                    measurements: animsmith_core::measure::measure_document(&doc, &roles),
+                    measurements: animsmith_core::measure::measure_document(&doc, &roles, &config),
                 });
             }
             match format {
@@ -525,7 +525,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     path: file.display().to_string(),
                     rig: rig_info(&doc, &roles),
                     findings: Some(findings),
-                    measurements: animsmith_core::measure::measure_document(&doc, &roles),
+                    measurements: animsmith_core::measure::measure_document(&doc, &roles, &config),
                 });
             }
             match format {
@@ -844,7 +844,9 @@ fn load_measurements(
     }
     let doc = load(path)?;
     let roles = resolve_roles(&doc, config);
-    Ok(animsmith_core::measure::measure_document(&doc, &roles))
+    Ok(animsmith_core::measure::measure_document(
+        &doc, &roles, config,
+    ))
 }
 
 fn require_files(files: &[PathBuf]) -> Result<(), String> {

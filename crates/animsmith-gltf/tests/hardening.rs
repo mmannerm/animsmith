@@ -198,10 +198,10 @@ fn nan_key_time_measures_without_panicking_and_lints_as_error() {
     // survives it, and the `nan` check reports it as an error.
     let doc = animsmith_gltf::load(&path).expect("NaN times load; checks judge them");
     let roles = ResolvedRoles::default();
-    let measurements = measure_document(&doc, &roles);
+    let config = Config::default();
+    let measurements = measure_document(&doc, &roles, &config);
     assert!(measurements.contains_key("poisoned"));
 
-    let config = Config::default();
     let ctx = CheckCtx::new(&doc, &roles, &config);
     let findings = run_checks(&ctx, &mechanical_checks());
     assert!(

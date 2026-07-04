@@ -2,6 +2,7 @@
 //! `lint` judges. Kept separate from findings so pipelines (e.g. a
 //! bake's measured sidecar) can pin their own contracts to the numbers.
 
+use crate::config::Config;
 use crate::metrics::{foot_cycle_metrics, metric_frame_count, root_motion_speed_mps};
 use crate::model::{Document, Property};
 use crate::profile::ResolvedRoles;
@@ -55,7 +56,9 @@ pub struct ClipMeasurements {
 pub fn measure_document(
     doc: &Document,
     roles: &ResolvedRoles,
+    config: &Config,
 ) -> BTreeMap<String, ClipMeasurements> {
+    let min_stride_step_m = config.loop_seam_min_stride_step_m();
     doc.clips
         .iter()
         .map(|clip| {
@@ -98,7 +101,9 @@ pub fn measure_document(
 
             let grid =
                 metric_frame_count(clip).map(|frames| sample_clip(&doc.skeleton, clip, frames));
-            let cycle = grid.as_ref().and_then(|g| foot_cycle_metrics(g, roles));
+            let cycle = grid
+                .as_ref()
+                .and_then(|g| foot_cycle_metrics(g, roles, min_stride_step_m));
             let speed_mps = grid.as_ref().and_then(|g| root_motion_speed_mps(g, roles));
 
             (
