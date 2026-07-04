@@ -132,19 +132,34 @@ pub fn sample_track(track: &Track, t: f32) -> TrackSample {
 
 /// Locate the keyframe segment containing `t`: returns `(k0, k1, u)`
 /// with `u` in `[0, 1]`. Clamps outside the keyframe range.
+///
+/// Panic-free on hostile tracks: empty times yield the first segment,
+/// and non-finite key times (every comparison false) fall through to
+/// the clamped first/last key instead of underflowing — the `nan`
+/// check reports them; sampling must merely survive them.
 fn segment(times: &[f32], t: f32) -> (usize, usize, f32) {
     let n = times.len();
-    if t <= times[0] || n == 1 {
+    if n <= 1 || t <= times[0] {
         return (0, 0, 0.0);
     }
     if t >= times[n - 1] {
         return (n - 1, n - 1, 0.0);
     }
-    let k1 = times.partition_point(|&k| k <= t);
+    let k1 = times.partition_point(|&k| k <= t).min(n - 1);
+    if k1 == 0 {
+        return (0, 0, 0.0);
+    }
     let k0 = k1 - 1;
     let dt = times[k1] - times[k0];
     let u = if dt > 0.0 { (t - times[k0]) / dt } else { 0.0 };
     (k0, k1, u)
+}
+
+/// Clamped value fetch: loaders enforce times/values length agreement,
+/// but `Document`s are plain data an embedder can build by hand — an
+/// inconsistent track samples as the type default, never a panic.
+fn value_at<T: Copy + Default>(vals: &[T], index: usize) -> T {
+    vals.get(index).copied().unwrap_or_default()
 }
 
 /// glTF cubic-spline Hermite basis at `u`.
@@ -164,19 +179,19 @@ fn sample_vec3(track: &Track, t: f32) -> Vec3 {
         return Vec3::ZERO;
     };
     let (k0, k1, u) = segment(&track.times, t);
-    let v0 = vals[track.value_index(k0)];
+    let v0 = value_at(vals, track.value_index(k0));
     if k0 == k1 {
         return v0;
     }
-    let v1 = vals[track.value_index(k1)];
+    let v1 = value_at(vals, track.value_index(k1));
     match track.interpolation {
         Interpolation::Step => v0,
         Interpolation::Linear => v0.lerp(v1, u),
         Interpolation::CubicSpline => {
             let dt = track.times[k1] - track.times[k0];
             // out-tangent of k0, in-tangent of k1, scaled by dt per spec.
-            let m0 = vals[3 * k0 + 2] * dt;
-            let m1 = vals[3 * k1] * dt;
+            let m0 = value_at(vals, 3 * k0 + 2) * dt;
+            let m1 = value_at(vals, 3 * k1) * dt;
             let (h00, h10, h01, h11) = hermite(u);
             v0 * h00 + m0 * h10 + v1 * h01 + m1 * h11
         }
@@ -188,11 +203,11 @@ fn sample_quat(track: &Track, t: f32) -> Quat {
         return Quat::IDENTITY;
     };
     let (k0, k1, u) = segment(&track.times, t);
-    let q0 = vals[track.value_index(k0)];
+    let q0: Quat = value_at(vals, track.value_index(k0));
     if k0 == k1 {
         return q0.normalize();
     }
-    let q1 = vals[track.value_index(k1)];
+    let q1 = value_at(vals, track.value_index(k1));
     match track.interpolation {
         Interpolation::Step => q0.normalize(),
         Interpolation::Linear => {
@@ -205,8 +220,8 @@ fn sample_quat(track: &Track, t: f32) -> Quat {
             // Per glTF spec: componentwise Hermite on the raw
             // quaternion, then normalize.
             let dt = track.times[k1] - track.times[k0];
-            let m0 = vals[3 * k0 + 2].to_array();
-            let m1 = vals[3 * k1].to_array();
+            let m0 = value_at(vals, 3 * k0 + 2).to_array();
+            let m1 = value_at(vals, 3 * k1).to_array();
             let a0 = q0.to_array();
             let a1 = q1.to_array();
             let (h00, h10, h01, h11) = hermite(u);
@@ -216,5 +231,95 @@ fn sample_quat(track: &Track, t: f32) -> Quat {
             }
             Quat::from_array(out).normalize()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::Property;
+
+    fn track(times: Vec<f32>, quats: Vec<Quat>) -> Track {
+        Track {
+            bone: 0,
+            property: Property::Rotation,
+            interpolation: Interpolation::Linear,
+            times,
+            values: TrackValues::Quats(quats),
+        }
+    }
+
+    fn vec3_track(interpolation: Interpolation, times: Vec<f32>, vals: Vec<Vec3>) -> Track {
+        Track {
+            bone: 0,
+            property: Property::Translation,
+            interpolation,
+            times,
+            values: TrackValues::Vec3s(vals),
+        }
+    }
+
+    /// Issue #24: a NaN first key time made both clamp guards fail,
+    /// partition_point return 0, and `k1 - 1` underflow.
+    #[test]
+    fn nan_first_key_time_samples_without_panicking() {
+        let t = track(
+            vec![f32::NAN, 0.5, 1.0],
+            vec![Quat::IDENTITY, Quat::IDENTITY, Quat::IDENTITY],
+        );
+        for time in [-1.0, 0.0, 0.25, 0.75, 2.0] {
+            let TrackSample::Quat(q) = sample_track(&t, time) else {
+                panic!("rotation track samples a quat");
+            };
+            assert!(q.is_finite() || q.is_nan()); // no panic is the contract
+        }
+    }
+
+    #[test]
+    fn all_nan_times_sample_without_panicking() {
+        let t = track(
+            vec![f32::NAN, f32::NAN],
+            vec![Quat::IDENTITY, Quat::IDENTITY],
+        );
+        sample_track(&t, 0.5);
+    }
+
+    #[test]
+    fn empty_track_samples_default_without_panicking() {
+        let t = track(vec![], vec![]);
+        let TrackSample::Quat(q) = sample_track(&t, 0.5) else {
+            panic!("rotation track samples a quat");
+        };
+        assert_eq!(q, Quat::IDENTITY.normalize());
+    }
+
+    /// Issue #24: values shorter than times indexed out of bounds.
+    /// Loaders reject such tracks; hand-built documents sample the
+    /// type default instead of panicking.
+    #[test]
+    fn short_values_sample_default_without_panicking() {
+        let t = track(vec![0.0, 0.5, 1.0], vec![Quat::IDENTITY, Quat::IDENTITY]);
+        sample_track(&t, 0.75); // k1 = 2, values has no index 2
+    }
+
+    #[test]
+    fn short_vec3_values_sample_default_without_panicking() {
+        let t = vec3_track(Interpolation::Linear, vec![0.0, 0.5, 1.0], vec![Vec3::ONE]);
+        let TrackSample::Vec3(v) = sample_track(&t, 0.75) else {
+            panic!("translation track samples a vec3");
+        };
+        assert!(v.is_finite());
+    }
+
+    /// The cubic tangent fetches (3*k0+2, 3*k1) are the indices most
+    /// likely to run off a short buffer.
+    #[test]
+    fn short_cubic_values_sample_default_without_panicking() {
+        let t = vec3_track(
+            Interpolation::CubicSpline,
+            vec![0.0, 1.0],
+            vec![Vec3::ZERO, Vec3::ONE, Vec3::ZERO], // 3 of the 6 a cubic pair needs
+        );
+        sample_track(&t, 0.5);
     }
 }

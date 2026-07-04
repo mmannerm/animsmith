@@ -20,7 +20,7 @@ use animsmith_core::model::{
 use base64::Engine as _;
 use glam::{Mat4, Quat, Vec3};
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -34,6 +34,8 @@ pub enum LoadError {
     Gltf(#[from] gltf::Error),
     #[error("buffer resolution failed: {0}")]
     Buffer(String),
+    #[error("malformed animation data: {0}")]
+    Malformed(String),
 }
 
 /// `fix` errors are classified by defect, not by phase: [`LoadError`]
@@ -60,6 +62,76 @@ pub enum WriteError {
     },
     #[error("failed to serialize glTF JSON: {0}")]
     Serialize(#[from] serde_json::Error),
+}
+
+/// Contain an external-buffer URI to a relative child path: absolute
+/// paths, `..`, backslashes, and non-normal components are rejected.
+/// URIs are used verbatim (no percent-decoding), so encoded traversal
+/// sequences stay literal path characters and cannot escape either.
+pub(crate) fn safe_external_buffer_path(uri: &str) -> Result<PathBuf, LoadError> {
+    if uri.is_empty() || uri.contains('\\') {
+        return Err(LoadError::Buffer(format!(
+            "unsafe external buffer URI {uri:?}: expected a relative child path"
+        )));
+    }
+    let path = Path::new(uri);
+    if path.is_absolute() {
+        return Err(LoadError::Buffer(format!(
+            "unsafe external buffer URI {uri:?}: absolute paths are not supported"
+        )));
+    }
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => out.push(part),
+            _ => {
+                return Err(LoadError::Buffer(format!(
+                    "unsafe external buffer URI {uri:?}: expected a relative child path"
+                )));
+            }
+        }
+    }
+    if out.as_os_str().is_empty() {
+        return Err(LoadError::Buffer(format!(
+            "unsafe external buffer URI {uri:?}: expected a relative child path"
+        )));
+    }
+    Ok(out)
+}
+
+/// Structural validation for one animation channel: key/value counts
+/// must agree (x3 for CUBICSPLINE's [in-tangent, value, out-tangent]
+/// triplets) and a track must have at least one key. Violations are
+/// container-level malformation -> [`LoadError::Malformed`], exit 2 at
+/// the CLI; semantic problems (NaN, flips, seams) stay findings.
+fn validate_track_lengths(
+    clip: &str,
+    node: usize,
+    interpolation: Interpolation,
+    times: &[f32],
+    values: &TrackValues,
+) -> Result<(), LoadError> {
+    if times.is_empty() {
+        return Err(LoadError::Malformed(format!(
+            "clip '{clip}' node {node}: animation channel with zero keyframes"
+        )));
+    }
+    let per_key = match interpolation {
+        Interpolation::CubicSpline => 3,
+        _ => 1,
+    };
+    let expected = times.len() * per_key;
+    let actual = match values {
+        TrackValues::Vec3s(v) => v.len(),
+        TrackValues::Quats(v) => v.len(),
+    };
+    if actual != expected {
+        return Err(LoadError::Malformed(format!(
+            "clip '{clip}' node {node}: {} keyframe times but {actual} output values (expected {expected})",
+            times.len()
+        )));
+    }
+    Ok(())
 }
 
 /// Load a `.glb` or `.gltf` file into a core [`Document`].
@@ -92,7 +164,9 @@ fn resolve_buffers(gltf: &gltf::Gltf, base: Option<&Path>) -> Result<Vec<Vec<u8>
                         .decode(payload)
                         .map_err(|e| LoadError::Buffer(format!("bad base64 data URI: {e}")))?
                 } else {
-                    let path = base.unwrap_or(Path::new(".")).join(uri);
+                    let path = base
+                        .unwrap_or(Path::new("."))
+                        .join(safe_external_buffer_path(uri)?);
                     std::fs::read(&path).map_err(|source| LoadError::Io {
                         path: path.display().to_string(),
                         source,
@@ -197,6 +271,17 @@ fn build_document(
             let Some(bone) = bone_of_node[channel.target().node().index()] else {
                 continue;
             };
+            // Reject zero-count sampler accessors before reading: the
+            // `gltf` reader underflows on a count-0 accessor (panics in
+            // its accessor iterator), so this guard is what keeps a
+            // hostile file from crashing the loader.
+            let sampler = channel.sampler();
+            if sampler.input().count() == 0 || sampler.output().count() == 0 {
+                return Err(LoadError::Malformed(format!(
+                    "clip '{name}' node {}: animation channel with zero keyframes",
+                    channel.target().node().index()
+                )));
+            }
             let reader = channel.reader(|buffer| buffers.get(buffer.index()).map(Vec::as_slice));
             let Some(times) = reader.read_inputs().map(|it| it.collect::<Vec<f32>>()) else {
                 continue;
@@ -218,15 +303,23 @@ fn build_document(
                 // skeletal check catalog (P2 revisits them).
                 Some(gltf::animation::util::ReadOutputs::MorphTargetWeights(_)) | None => continue,
             };
+            let interpolation = match channel.sampler().interpolation() {
+                gltf::animation::Interpolation::Linear => Interpolation::Linear,
+                gltf::animation::Interpolation::Step => Interpolation::Step,
+                gltf::animation::Interpolation::CubicSpline => Interpolation::CubicSpline,
+            };
+            validate_track_lengths(
+                &name,
+                channel.target().node().index(),
+                interpolation,
+                &times,
+                &values,
+            )?;
             duration = duration.max(times.last().copied().unwrap_or(0.0) as f64);
             tracks.push(Track {
                 bone,
                 property,
-                interpolation: match channel.sampler().interpolation() {
-                    gltf::animation::Interpolation::Linear => Interpolation::Linear,
-                    gltf::animation::Interpolation::Step => Interpolation::Step,
-                    gltf::animation::Interpolation::CubicSpline => Interpolation::CubicSpline,
-                },
+                interpolation,
                 times,
                 values,
             });
