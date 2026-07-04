@@ -249,6 +249,16 @@ mod tests {
         }
     }
 
+    fn vec3_track(interpolation: Interpolation, times: Vec<f32>, vals: Vec<Vec3>) -> Track {
+        Track {
+            bone: 0,
+            property: Property::Translation,
+            interpolation,
+            times,
+            values: TrackValues::Vec3s(vals),
+        }
+    }
+
     /// Issue #24: a NaN first key time made both clamp guards fail,
     /// partition_point return 0, and `k1 - 1` underflow.
     #[test]
@@ -290,5 +300,26 @@ mod tests {
     fn short_values_sample_default_without_panicking() {
         let t = track(vec![0.0, 0.5, 1.0], vec![Quat::IDENTITY, Quat::IDENTITY]);
         sample_track(&t, 0.75); // k1 = 2, values has no index 2
+    }
+
+    #[test]
+    fn short_vec3_values_sample_default_without_panicking() {
+        let t = vec3_track(Interpolation::Linear, vec![0.0, 0.5, 1.0], vec![Vec3::ONE]);
+        let TrackSample::Vec3(v) = sample_track(&t, 0.75) else {
+            panic!("translation track samples a vec3");
+        };
+        assert!(v.is_finite());
+    }
+
+    /// The cubic tangent fetches (3*k0+2, 3*k1) are the indices most
+    /// likely to run off a short buffer.
+    #[test]
+    fn short_cubic_values_sample_default_without_panicking() {
+        let t = vec3_track(
+            Interpolation::CubicSpline,
+            vec![0.0, 1.0],
+            vec![Vec3::ZERO, Vec3::ONE, Vec3::ZERO], // 3 of the 6 a cubic pair needs
+        );
+        sample_track(&t, 0.5);
     }
 }

@@ -62,6 +62,52 @@ const NAN_TIME_GLTF: &str = r#"{
   "scene": 0
 }"#;
 
+/// CUBICSPLINE needs 3 output values per key (in-tangent, value,
+/// out-tangent). 2 keys with 3 values (not 6) is malformed — this
+/// exercises the `per_key = 3` branch of the validator.
+const CUBIC_COUNT_MISMATCH_GLTF: &str = r#"{
+  "asset": { "version": "2.0" },
+  "buffers": [{ "uri": "data:application/octet-stream;base64,AAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8=", "byteLength": 56 }],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0, "byteLength": 8 },
+    { "buffer": 0, "byteOffset": 8, "byteLength": 48 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0], "max": [1] },
+    { "bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC4" }
+  ],
+  "nodes": [{ "name": "root" }],
+  "animations": [{
+    "name": "bad-cubic",
+    "samplers": [{ "input": 0, "output": 1, "interpolation": "CUBICSPLINE" }],
+    "channels": [{ "sampler": 0, "target": { "node": 0, "path": "rotation" } }]
+  }],
+  "scenes": [{ "nodes": [0] }],
+  "scene": 0
+}"#;
+
+/// An animation channel that resolves to zero keyframes.
+const ZERO_KEY_GLTF: &str = r#"{
+  "asset": { "version": "2.0" },
+  "buffers": [{ "uri": "data:application/octet-stream;base64,", "byteLength": 0 }],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0, "byteLength": 0 },
+    { "buffer": 0, "byteOffset": 0, "byteLength": 0 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 0, "type": "SCALAR" },
+    { "bufferView": 1, "componentType": 5126, "count": 0, "type": "VEC4" }
+  ],
+  "nodes": [{ "name": "root" }],
+  "animations": [{
+    "name": "empty",
+    "samplers": [{ "input": 0, "output": 1, "interpolation": "LINEAR" }],
+    "channels": [{ "sampler": 0, "target": { "node": 0, "path": "rotation" } }]
+  }],
+  "scenes": [{ "nodes": [0] }],
+  "scene": 0
+}"#;
+
 #[test]
 fn loader_rejects_times_values_count_mismatch() {
     let dir = unique_temp_dir("count-mismatch");
@@ -78,26 +124,68 @@ fn loader_rejects_times_values_count_mismatch() {
 }
 
 #[test]
-fn loader_rejects_unsafe_external_buffer_uri() {
-    let dir = unique_temp_dir("load-unsafe-uri");
-    let path = dir.join("escape.gltf");
-    std::fs::write(
-        &path,
-        r#"{
-  "asset": { "version": "2.0" },
-  "buffers": [{ "uri": "../escape.bin", "byteLength": 1 }],
-  "nodes": [{ "name": "root" }],
-  "scenes": [{ "nodes": [0] }],
-  "scene": 0
-}"#,
-    )
-    .unwrap();
+fn loader_rejects_cubic_triplet_count_mismatch() {
+    let dir = unique_temp_dir("cubic-count-mismatch");
+    let path = dir.join("bad-cubic.gltf");
+    std::fs::write(&path, CUBIC_COUNT_MISMATCH_GLTF).unwrap();
 
-    let err = animsmith_gltf::load(&path).expect_err("traversal URI must be rejected");
+    let err = animsmith_gltf::load(&path).expect_err("cubic mismatch must be rejected");
+    assert!(matches!(err, LoadError::Malformed(_)), "{err}");
+    // 2 keys x 3 = 6 expected, 3 present.
     assert!(
-        err.to_string().contains("unsafe external buffer URI"),
+        err.to_string()
+            .contains("2 keyframe times but 3 output values (expected 6)"),
         "{err}"
     );
+}
+
+#[test]
+fn loader_rejects_zero_key_channel() {
+    let dir = unique_temp_dir("zero-key");
+    let path = dir.join("empty.gltf");
+    std::fs::write(&path, ZERO_KEY_GLTF).unwrap();
+
+    let err = animsmith_gltf::load(&path).expect_err("zero-key channel must be rejected");
+    assert!(matches!(err, LoadError::Malformed(_)), "{err}");
+    assert!(err.to_string().contains("zero keyframes"), "{err}");
+}
+
+fn gltf_with_buffer_uri(uri: &str) -> String {
+    format!(
+        r#"{{
+  "asset": {{ "version": "2.0" }},
+  "buffers": [{{ "uri": "{uri}", "byteLength": 1 }}],
+  "nodes": [{{ "name": "root" }}],
+  "scenes": [{{ "nodes": [0] }}],
+  "scene": 0
+}}"#
+    )
+}
+
+#[test]
+fn loader_rejects_unsafe_external_buffer_uris() {
+    let dir = unique_temp_dir("load-unsafe-uri");
+    // Every containment branch: parent traversal, absolute path,
+    // backslash, and a bare `..`. All are LoadError::Buffer, never a
+    // read outside the input's directory.
+    for (label, uri) in [
+        ("parent", "../escape.bin"),
+        ("absolute", "/etc/passwd"),
+        ("backslash", "..\\\\escape.bin"),
+        ("bare-dotdot", ".."),
+    ] {
+        let path = dir.join(format!("{label}.gltf"));
+        std::fs::write(&path, gltf_with_buffer_uri(uri)).unwrap();
+        let err = animsmith_gltf::load(&path).expect_err("unsafe URI must be rejected");
+        assert!(
+            matches!(err, LoadError::Buffer(_)),
+            "{label}: wrong variant: {err}"
+        );
+        assert!(
+            err.to_string().contains("unsafe external buffer URI"),
+            "{label}: {err}"
+        );
+    }
 }
 
 #[test]

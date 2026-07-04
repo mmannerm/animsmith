@@ -271,6 +271,17 @@ fn build_document(
             let Some(bone) = bone_of_node[channel.target().node().index()] else {
                 continue;
             };
+            // Reject zero-count sampler accessors before reading: the
+            // `gltf` reader underflows on a count-0 accessor (panics in
+            // its accessor iterator), so this guard is what keeps a
+            // hostile file from crashing the loader.
+            let sampler = channel.sampler();
+            if sampler.input().count() == 0 || sampler.output().count() == 0 {
+                return Err(LoadError::Malformed(format!(
+                    "clip '{name}' node {}: animation channel with zero keyframes",
+                    channel.target().node().index()
+                )));
+            }
             let reader = channel.reader(|buffer| buffers.get(buffer.index()).map(Vec::as_slice));
             let Some(times) = reader.read_inputs().map(|it| it.collect::<Vec<f32>>()) else {
                 continue;
