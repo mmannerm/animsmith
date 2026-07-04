@@ -957,6 +957,15 @@ fn lint_allow_suppresses_a_check() {
     write_flipped_glb(&input);
     let path = input.to_str().expect("utf-8 path");
 
+    // Positive control: quat-flip fires on this fixture without --allow.
+    let baseline = animsmith().args(["lint", path]).output().expect("runs");
+    assert!(
+        stdout(&baseline).contains("quat-flip"),
+        "fixture no longer produces quat-flip; suppression test would be vacuous:\n{}",
+        stdout(&baseline)
+    );
+
+    // With --allow, the same finding is gone.
     let output = animsmith()
         .args(["lint", path, "--allow", "quat-flip"])
         .output()
@@ -1010,6 +1019,12 @@ fn lint_missing_file_is_operator_error() {
         "stdout:\n{}",
         stdout(&output)
     );
+    // Exit 2 is the catch-all; pin that it failed for the right reason.
+    assert!(
+        stderr(&output).contains("No such file"),
+        "stderr:\n{}",
+        stderr(&output)
+    );
 }
 
 #[test]
@@ -1047,18 +1062,28 @@ fn config_toml_path_drives_check_behaviour() {
     let dir = unique_temp_dir("config-toml");
     let input = dir.join("flipped.glb");
     write_flipped_glb(&input);
+    let path = input.to_str().expect("utf-8 path");
     let config = write_config(
         &dir,
         "animsmith.toml",
         "[checks.quat-flip]\nseverity = \"off\"\n",
     );
 
+    // Positive control: without the config, quat-flip fires.
+    let baseline = animsmith().args(["lint", path]).output().expect("runs");
+    assert!(
+        stdout(&baseline).contains("quat-flip"),
+        "fixture no longer produces quat-flip; the config test would be vacuous:\n{}",
+        stdout(&baseline)
+    );
+
+    // The TOML config turns it off end to end.
     let output = animsmith()
         .args([
             "--config",
             config.to_str().expect("utf-8 path"),
             "lint",
-            input.to_str().expect("utf-8 path"),
+            path,
         ])
         .output()
         .expect("runs animsmith");
@@ -1111,6 +1136,16 @@ fn inspect_reports_clip_and_profile() {
         stderr(&output)
     );
     let out = stdout(&output);
-    assert!(out.contains("walk"), "no clip listed:\n{out}");
-    assert!(out.contains("profile"), "no profile line:\n{out}");
+    // Distinctive clip detail: the fixture's one clip, its duration and
+    // track/key counts — pins that inspect actually read the file, not
+    // just that it printed a static template.
+    assert!(
+        out.contains("walk: 1.000s, 2 tracks, 3 keys max"),
+        "clip summary missing/changed:\n{out}"
+    );
+    assert!(out.contains("rig profile:"), "no profile line:\n{out}");
+    assert!(
+        out.contains("skeleton: 3 bones"),
+        "no skeleton line:\n{out}"
+    );
 }
