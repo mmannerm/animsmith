@@ -199,12 +199,16 @@ its birthplace: tolerance data and bone names are config; the math is not.
 
 The runner, not each check, owns that rule. A check declares its
 prerequisites through `readiness(ctx)`; the runner emits one standardized
-skip-note per unmet requirement. Crucially, the skip-note is a **runner
-diagnostic**, so it is exempt from the per-check `severity` override:
-`[checks.loop-seam] severity = "error"` escalates loop-seam's *violations*
-but can never turn a "roles unresolved" note into a false Error. And
-`severity = "off"` removes the check from the run set entirely — it never
-executes.
+skip-note per unmet requirement. Crucially, a skip-note is a **diagnostic**
+— exempt from the per-check `severity` override: `[checks.loop-seam]
+severity = "error"` escalates loop-seam's *violations* but can never turn a
+"roles unresolved" note into a false Error. Exemption is a property of the
+finding (`Finding::diagnostic`), so a check with role-independent work can
+stay `Ready` and mark its own skip-note: `gait-group` always validates that
+its members exist (a config error needing no rig) and reports that Error
+even when the rig is unresolved, while marking the *measurement* skip-note
+a diagnostic. `severity = "off"` removes the check from the run set
+entirely — it never executes.
 
 **Checks** implement one trait and emit structured findings:
 

@@ -302,6 +302,57 @@ fn missing_group_member_is_flagged() {
     );
 }
 
+/// #28 (Codex audit): a gait-group member-not-found is a config error
+/// detectable without a rig, so it must still surface when roles are
+/// unresolved — not be hidden behind the roles skip-note. The existing
+/// member gets one exempt skip-note; the missing member gets its Error.
+#[test]
+fn missing_group_member_is_flagged_even_when_roles_unresolved() {
+    let doc = walk_doc();
+    let config = json_config(serde_json::json!({
+        "gait_groups": { "ring": {
+            "clips": ["walk", "no_such_clip"],
+            "max_gait_phase_spread": 0.1
+        }}
+    }));
+    let findings = lint_unresolved(&doc, &config);
+
+    assert!(
+        findings.iter().any(|f| f.check_id == "gait-group"
+            && f.clip.as_deref() == Some("no_such_clip")
+            && f.severity == Severity::Error),
+        "member-not-found Error hidden by unresolved roles: {findings:#?}"
+    );
+    // The resolvable-but-unmeasurable member yields exactly one Note.
+    let notes: Vec<_> = findings
+        .iter()
+        .filter(|f| f.check_id == "gait-group" && f.severity == Severity::Note)
+        .collect();
+    assert_eq!(notes.len(), 1, "expected one skip-note: {notes:#?}");
+}
+
+/// The member-not-found Error stays an Error even under a severity
+/// override — it is a config violation, not a diagnostic.
+#[test]
+fn missing_group_member_error_survives_severity_override() {
+    let doc = walk_doc();
+    let config = json_config(serde_json::json!({
+        "checks": { "gait-group": { "severity": "warn" } },
+        "gait_groups": { "ring": {
+            "clips": ["walk", "no_such_clip"],
+            "max_gait_phase_spread": 0.1
+        }}
+    }));
+    // Roles resolved so only the member-not-found path fires.
+    let findings = lint_with(&doc, &config);
+    let member = findings
+        .iter()
+        .find(|f| f.check_id == "gait-group" && f.clip.as_deref() == Some("no_such_clip"))
+        .expect("member-not-found reported");
+    // A real violation, so the override applies: warn, not error.
+    assert_eq!(member.severity, Severity::Warning);
+}
+
 /// #28 regression guard: with roles resolved, a declared ring member
 /// too short to carry a cycle is a real Error — the readiness refactor
 /// narrowed this branch (it used to also cover unresolved roles), so

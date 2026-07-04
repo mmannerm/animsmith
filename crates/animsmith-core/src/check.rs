@@ -110,10 +110,11 @@ pub fn all_checks() -> Vec<Box<dyn Check>> {
 /// - `severity = "off"` removes the check from the run set — it never
 ///   executes (no wasted sampling, no discarded findings).
 /// - Any other override replaces the severity of the check's
-///   *violations*. Requirement skip-notes are diagnostics emitted by
-///   the runner (via [`Check::readiness`]) and are exempt from the
-///   override — declaring `severity = "error"` never turns a
-///   "roles unresolved" note into a false failure.
+///   *violations*. Diagnostics — the requirement skip-notes emitted by
+///   the runner (via [`Check::readiness`]) and any a check marks with
+///   [`Finding::as_diagnostic`] — are exempt, so declaring `severity =
+///   "error"` never turns a "roles unresolved" note into a false
+///   failure.
 pub fn run_checks(ctx: &CheckCtx, checks: &[Box<dyn Check>]) -> Vec<Finding> {
     use crate::config::SeveritySetting;
 
@@ -126,18 +127,19 @@ pub fn run_checks(ctx: &CheckCtx, checks: &[Box<dyn Check>]) -> Vec<Finding> {
         match check.readiness(ctx) {
             Readiness::Idle => {}
             Readiness::Skipped(reason) => {
-                out.push(Finding::new(
-                    check.id(),
-                    Severity::Note,
-                    format!("skipped: {reason}"),
-                ));
+                out.push(
+                    Finding::new(check.id(), Severity::Note, format!("skipped: {reason}"))
+                        .as_diagnostic(),
+                );
             }
             Readiness::Ready => {
                 let mut findings = Vec::new();
                 check.run(ctx, &mut findings);
                 if let Some(severity) = setting.and_then(SeveritySetting::as_severity) {
                     for f in &mut findings {
-                        f.severity = severity;
+                        if !f.diagnostic {
+                            f.severity = severity;
+                        }
                     }
                 }
                 out.append(&mut findings);

@@ -18,15 +18,29 @@ impl Check for GaitGroup {
         "gait-group"
     }
 
+    // gait-group is always Ready when groups exist: member existence is
+    // config validation that needs no rig roles, so it must run even on
+    // an unresolved rig. The role-dependent metric work inside `run` is
+    // gated separately, emitting one exempt skip-note.
     fn readiness(&self, ctx: &CheckCtx) -> Readiness {
         if ctx.config.gait_groups.is_empty() {
             Readiness::Idle
         } else {
-            gait_readiness(ctx.roles)
+            Readiness::Ready
         }
     }
 
     fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
+        // Roles gate the metric work only. `Some(reason)` means the rig
+        // did not resolve — measurable coherence is skipped with one
+        // exempt diagnostic, but member existence is still validated.
+        let roles_skip_reason = match gait_readiness(ctx.roles) {
+            Readiness::Ready => None,
+            Readiness::Skipped(reason) => Some(reason),
+            Readiness::Idle => None,
+        };
+        let mut roles_noted = false;
+
         for (group_name, group) in &ctx.config.gait_groups {
             let mut measured: Vec<(&str, f64)> = Vec::new();
             for clip_name in &group.clips {
@@ -41,9 +55,22 @@ impl Check for GaitGroup {
                     );
                     continue;
                 };
-                // Roles resolve (readiness gate); `None` here means the
-                // member clip is too short to carry a cycle — a real
-                // problem for a declared ring member, not a skip.
+                if let Some(reason) = &roles_skip_reason {
+                    // Member exists but the rig does not resolve: emit
+                    // one exempt skip-note for the whole check, then
+                    // stop measuring (member existence is already done).
+                    if !roles_noted {
+                        roles_noted = true;
+                        out.push(
+                            Finding::new(self.id(), Severity::Note, format!("skipped: {reason}"))
+                                .as_diagnostic(),
+                        );
+                    }
+                    continue;
+                }
+                // Roles resolved; `None` here means the member clip is
+                // too short to carry a cycle — a real problem for a
+                // declared ring member.
                 let gait = ctx
                     .grid(index)
                     .and_then(|grid| foot_cycle_metrics(&grid, ctx.roles));
