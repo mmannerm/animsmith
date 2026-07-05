@@ -150,6 +150,184 @@ fn loader_rejects_zero_key_channel() {
     assert!(err.to_string().contains("zero keyframes"), "{err}");
 }
 
+/// A well-formed container whose only defect is the animation channel
+/// `target` — `{path}` for the property, `{node}` for the node index.
+/// `gltf`'s validator never inspects channel targets, so both slip past
+/// `from_slice` and would panic in the high-level getters.
+fn gltf_with_channel_target(path: &str, node: usize) -> String {
+    format!(
+        r#"{{
+  "asset": {{ "version": "2.0" }},
+  "buffers": [{{ "uri": "data:application/octet-stream;base64,AAAAAAAAAD8AAIA/AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/", "byteLength": 60 }}],
+  "bufferViews": [
+    {{ "buffer": 0, "byteOffset": 0, "byteLength": 12 }},
+    {{ "buffer": 0, "byteOffset": 12, "byteLength": 48 }}
+  ],
+  "accessors": [
+    {{ "bufferView": 0, "componentType": 5126, "count": 3, "type": "SCALAR", "min": [0], "max": [1] }},
+    {{ "bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC4" }}
+  ],
+  "nodes": [{{ "name": "root" }}],
+  "animations": [{{
+    "name": "bad",
+    "samplers": [{{ "input": 0, "output": 1, "interpolation": "LINEAR" }}],
+    "channels": [{{ "sampler": 0, "target": {{ "node": {node}, "path": "{path}" }} }}]
+  }}],
+  "scenes": [{{ "nodes": [0] }}],
+  "scene": 0
+}}"#
+    )
+}
+
+#[test]
+fn loader_rejects_unknown_animation_target_path() {
+    let dir = unique_temp_dir("bad-target-path");
+    let path = dir.join("bad-path.gltf");
+    std::fs::write(&path, gltf_with_channel_target("wobble", 0)).unwrap();
+
+    // Would otherwise panic in gltf's `Target::property().unwrap()`.
+    let err = animsmith_gltf::load(&path).expect_err("unknown target path must be rejected");
+    assert!(matches!(err, LoadError::Malformed(_)), "{err}");
+    assert!(err.to_string().contains("unknown target path"), "{err}");
+
+    // The fix path shares the guard.
+    let out = dir.join("out.gltf");
+    let err =
+        animsmith_gltf::fix::fix_quat_hemisphere(&path, &out).expect_err("fix must reject it too");
+    assert!(
+        matches!(err, animsmith_gltf::FixError::Load(LoadError::Malformed(_))),
+        "{err}"
+    );
+}
+
+/// A rotation channel whose sampler output accessor is UNSIGNED_INT
+/// (componentType 5125) — a spec-valid component type that is nonsensical
+/// for animation and hits `unreachable!()` in gltf's `read_outputs`.
+const U32_ROTATION_OUTPUT_GLTF: &str = r#"{
+  "asset": { "version": "2.0" },
+  "buffers": [{ "uri": "data:application/octet-stream;base64,AAAAAAAAgD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "byteLength": 60 }],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0, "byteLength": 12 },
+    { "buffer": 0, "byteOffset": 12, "byteLength": 48 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 3, "type": "SCALAR", "min": [0], "max": [1] },
+    { "bufferView": 1, "componentType": 5125, "count": 3, "type": "VEC4" }
+  ],
+  "nodes": [{ "name": "root" }],
+  "animations": [{
+    "name": "bad",
+    "samplers": [{ "input": 0, "output": 1, "interpolation": "LINEAR" }],
+    "channels": [{ "sampler": 0, "target": { "node": 0, "path": "rotation" } }]
+  }],
+  "scenes": [{ "nodes": [0] }],
+  "scene": 0
+}"#;
+
+#[test]
+fn loader_rejects_unsigned_int_animation_output() {
+    let dir = unique_temp_dir("u32-output");
+    let path = dir.join("u32.gltf");
+    std::fs::write(&path, U32_ROTATION_OUTPUT_GLTF).unwrap();
+
+    // Would otherwise hit gltf's `read_outputs` `unreachable!()`.
+    let err = animsmith_gltf::load(&path).expect_err("U32 animation output must be rejected");
+    assert!(matches!(err, LoadError::Malformed(_)), "{err}");
+    assert!(err.to_string().contains("UNSIGNED_INT"), "{err}");
+}
+
+#[test]
+fn loader_rejects_out_of_range_animation_target_node() {
+    let dir = unique_temp_dir("bad-target-node");
+    let path = dir.join("bad-node.gltf");
+    // Only node 0 exists; target node 9 is out of range.
+    std::fs::write(&path, gltf_with_channel_target("rotation", 9)).unwrap();
+
+    // Would otherwise panic in gltf's `Target::node().unwrap()`.
+    let err = animsmith_gltf::load(&path).expect_err("out-of-range target node must be rejected");
+    assert!(matches!(err, LoadError::Malformed(_)), "{err}");
+    assert!(err.to_string().contains("out of range"), "{err}");
+}
+
+/// A node hierarchy with a cycle: node 0 (a root) parents node 1, and
+/// node 1 lists itself as a child. glTF requires a forest; this is
+/// malformed but structurally valid JSON that `gltf` accepts.
+const NODE_CYCLE_GLTF: &str = r#"{
+  "asset": { "version": "2.0" },
+  "nodes": [
+    { "name": "root", "children": [1] },
+    { "name": "loop", "children": [1] }
+  ],
+  "scenes": [{ "nodes": [0] }],
+  "scene": 0
+}"#;
+
+#[test]
+fn loader_terminates_on_node_cycle_without_ooming() {
+    let dir = unique_temp_dir("node-cycle");
+    let path = dir.join("cycle.gltf");
+    std::fs::write(&path, NODE_CYCLE_GLTF).unwrap();
+
+    // The DFS must terminate: each node is emitted at most once, so the
+    // load succeeds with a bounded skeleton instead of allocating forever.
+    let doc = animsmith_gltf::load(&path).expect("cyclic hierarchy loads, bounded");
+    assert_eq!(doc.skeleton.bones.len(), 2, "each node becomes one bone");
+}
+
+fn glb_with_declared_length(total_len: u32) -> Vec<u8> {
+    let mut glb = Vec::new();
+    glb.extend_from_slice(b"glTF");
+    glb.extend_from_slice(&2u32.to_le_bytes()); // version
+    glb.extend_from_slice(&total_len.to_le_bytes()); // total length (the lie)
+    glb.extend_from_slice(&0x0004_c000u32.to_le_bytes()); // JSON chunk length
+    glb.extend_from_slice(b"JSON");
+    glb.extend_from_slice(br#"{ "asset": { "version": "2.0" } }"#);
+    glb
+}
+
+/// A GLB header whose declared total length dwarfs the file must not
+/// drive a length-field allocation (invariant-1). The reader path in the
+/// `gltf` crate pre-allocates `vec![0; declared_len]` before reading a
+/// byte; `load` reads the file, validates the framing, and parses from
+/// the slice instead. Found by the `gltf_load` fuzz target (see `fuzz/`).
+#[test]
+fn loader_rejects_glb_length_field_far_past_eof() {
+    // Declared ~2.5 GiB against a 54-byte file.
+    let glb = glb_with_declared_length(0x9800_0538);
+    let dir = unique_temp_dir("glb-length-oom");
+    let path = dir.join("huge-length.glb");
+    std::fs::write(&path, &glb).unwrap();
+
+    // No panic, no multi-gigabyte allocation — just a LoadError.
+    let err = animsmith_gltf::load(&path).expect_err("bogus GLB length must be rejected");
+    assert!(matches!(err, LoadError::Buffer(_)), "{err}");
+}
+
+/// A declared length *below* the 12-byte header underflows the `gltf`
+/// crate's `declared - HEADER_LEN` subtraction — benign wrapping in
+/// release, but a panic under the overflow checks every debug build and
+/// `cargo test` run with. `load` rejects it first. Found by the
+/// `gltf_fix_quat_hemisphere` fuzz target (see `fuzz/`).
+#[test]
+fn loader_rejects_glb_length_field_below_header_size() {
+    let glb = glb_with_declared_length(0); // 0 - 12 would underflow
+    let dir = unique_temp_dir("glb-length-underflow");
+    let path = dir.join("tiny-length.glb");
+    std::fs::write(&path, &glb).unwrap();
+
+    let err = animsmith_gltf::load(&path).expect_err("sub-header GLB length must be rejected");
+    assert!(matches!(err, LoadError::Buffer(_)), "{err}");
+
+    // The fix path shares the same guard.
+    let out = dir.join("out.glb");
+    let err =
+        animsmith_gltf::fix::fix_quat_hemisphere(&path, &out).expect_err("fix must reject it too");
+    assert!(
+        matches!(err, animsmith_gltf::FixError::Load(LoadError::Buffer(_))),
+        "{err}"
+    );
+}
+
 fn gltf_with_buffer_uri(uri: &str) -> String {
     format!(
         r#"{{

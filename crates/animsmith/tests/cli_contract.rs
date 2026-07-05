@@ -1241,10 +1241,12 @@ fn lint_missing_file_is_operator_error() {
         stdout(&output)
     );
     // Exit 2 is the catch-all; pin that it failed at load (the right
-    // cause) rather than arg parsing or config. The OS "file not found"
-    // text differs across platforms, so anchor on the stable prefix.
+    // cause) rather than arg parsing or config. The loader reads the file
+    // itself now, so a missing file is an I/O error, not a parse error.
+    // The OS "file not found" text differs across platforms, so anchor on
+    // the stable prefix.
     assert!(
-        stderr(&output).contains("glTF parse error"),
+        stderr(&output).contains("failed to read"),
         "stderr:\n{}",
         stderr(&output)
     );

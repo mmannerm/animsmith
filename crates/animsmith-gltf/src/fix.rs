@@ -70,7 +70,9 @@ impl FixSession {
             path: input.display().to_string(),
             source,
         })?;
+        crate::validate_glb_framing(&original)?;
         let gltf = gltf::Gltf::from_slice(&original).map_err(LoadError::from)?;
+        crate::validate_animation_channels(gltf.document.as_json())?;
 
         // Buffers as mutable byte vectors, indexed as the JSON declares
         // them (the BIN-chunk buffer is located by Source::Bin at write
