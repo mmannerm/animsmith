@@ -86,7 +86,7 @@ enum Cmd {
     },
     /// Apply mechanical clip transforms.
     #[command(
-        long_about = "Apply pipeline-mechanical clip transforms and write the result as glTF, carrying through any geometry the input brought (FBX meshes/skins/materials today; glTF mesh ingestion is #16). Operations apply to every clip, or one clip via --clip."
+        long_about = "Apply pipeline-mechanical clip transforms and write the result as glTF, carrying through any geometry the input brought (FBX or glTF meshes/skins/materials). Operations apply to every clip, or one clip via --clip."
     )]
     Transform {
         /// Input .glb, .gltf, or .fbx file.
@@ -142,7 +142,7 @@ enum Cmd {
     )]
     #[cfg(feature = "fbx")]
     Convert {
-        /// Input .fbx file.
+        /// Input .fbx, .glb, or .gltf file.
         input: PathBuf,
         /// Output .glb or .gltf path.
         #[arg(short, long)]

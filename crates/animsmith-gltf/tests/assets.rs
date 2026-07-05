@@ -448,6 +448,12 @@ fn load_remaps_skin_joints_through_topological_bone_order() {
         vec![1, 0],
         "joints remapped to bone ids, both loader paths agreeing"
     );
+    // The mesh hangs off node 1 (root), which is bone 0 — `MeshAsset::node`
+    // is likewise a bone id, not the raw node index.
+    assert_eq!(
+        doc.assets.meshes[0].node, 0,
+        "MeshAsset::node is the remapped bone id"
+    );
 }
 
 /// `load` carries scene geometry in `Document::assets` — the same
@@ -605,5 +611,72 @@ fn load_survives_zero_count_position_accessor() {
     assert!(
         doc.assets.meshes.is_empty(),
         "the empty primitive is skipped, not crashed into"
+    );
+}
+
+/// The zero-count guard covers *optional* accessors too: a valid
+/// POSITION beside a count-0 NORMAL must load the geometry and drop the
+/// empty attribute, never panic in the NORMAL reader.
+#[test]
+fn load_survives_zero_count_optional_accessor() {
+    let dir = std::env::temp_dir().join("animsmith-load-assets-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("zero-count-normal.gltf");
+    // buffer = 3 positions (0,0,0),(1,0,0),(0,1,0); NORMAL accessor is
+    // count 0 over the same view.
+    std::fs::write(
+        &path,
+        r#"{
+            "asset": { "version": "2.0" },
+            "buffers": [{ "byteLength": 36, "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAA" }],
+            "bufferViews": [{ "buffer": 0, "byteOffset": 0, "byteLength": 36 }],
+            "accessors": [
+                { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0,0,0], "max": [1,1,0] },
+                { "bufferView": 0, "componentType": 5126, "count": 0, "type": "VEC3" }
+            ],
+            "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0, "NORMAL": 1 } }] }],
+            "nodes": [{ "mesh": 0 }],
+            "scenes": [{ "nodes": [0] }],
+            "scene": 0
+        }"#,
+    )
+    .unwrap();
+
+    let doc = animsmith_gltf::load(&path).expect("zero-count NORMAL parses without panic");
+    let prim = &doc.assets.meshes[0].primitives[0];
+    assert_eq!(prim.positions.len(), 3, "POSITION still loaded");
+    assert!(
+        prim.normals.is_empty(),
+        "empty NORMAL dropped, not iterated"
+    );
+}
+
+/// Only triangle lists are ingested: a non-TRIANGLES primitive (here
+/// POINTS, `mode: 0`) is skipped rather than misread as a triangle list,
+/// so it never silently round-trips as corrupted TRIANGLES.
+#[test]
+fn load_skips_non_triangle_primitive() {
+    let dir = std::env::temp_dir().join("animsmith-load-assets-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("points-primitive.gltf");
+    std::fs::write(
+        &path,
+        r#"{
+            "asset": { "version": "2.0" },
+            "buffers": [{ "byteLength": 36, "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAA" }],
+            "bufferViews": [{ "buffer": 0, "byteOffset": 0, "byteLength": 36 }],
+            "accessors": [{ "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0,0,0], "max": [1,1,0] }],
+            "meshes": [{ "primitives": [{ "mode": 0, "attributes": { "POSITION": 0 } }] }],
+            "nodes": [{ "mesh": 0 }],
+            "scenes": [{ "nodes": [0] }],
+            "scene": 0
+        }"#,
+    )
+    .unwrap();
+
+    let doc = animsmith_gltf::load(&path).expect("loads");
+    assert!(
+        doc.assets.meshes.is_empty(),
+        "POINTS primitive skipped, not ingested as triangles"
     );
 }

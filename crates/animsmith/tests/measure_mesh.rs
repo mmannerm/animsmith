@@ -122,3 +122,61 @@ fn cli_measure_omits_meshes_when_no_geometry() {
         "no meshes key without geometry"
     );
 }
+
+/// A mesh whose positions are all non-finite must not emit a bounding
+/// box — an inf/-inf box serializes to JSON `null`, which violates the
+/// numeric schema. The `aabb` key is omitted end-to-end; the vertex
+/// count still reports.
+#[test]
+fn cli_measure_omits_aabb_for_non_finite_geometry() {
+    let dir = std::env::temp_dir().join(format!("animsmith-measure-nan-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let input = dir.join("nan.glb");
+    let doc = Document {
+        skeleton: Skeleton {
+            bones: vec![Bone {
+                name: "root".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            }],
+        },
+        clips: vec![],
+        assets: SceneAssets {
+            meshes: vec![MeshAsset {
+                name: "nan".into(),
+                node: 0,
+                primitives: vec![Primitive {
+                    positions: vec![Vec3::splat(f32::NAN); 3],
+                    ..Primitive::default()
+                }],
+                skin_joints: vec![],
+                skin_ibms: vec![],
+            }],
+            materials: vec![],
+        },
+        source: SourceInfo::default(),
+    };
+    animsmith_gltf::write::write(&doc, &input).expect("writes");
+
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_animsmith"))
+        .arg("measure")
+        .arg(&input)
+        .arg("--format")
+        .arg("json")
+        .output()
+        .expect("runs animsmith");
+    assert!(out.status.success());
+    let raw = String::from_utf8(out.stdout).expect("utf8");
+    assert!(
+        !raw.contains("null"),
+        "no null must appear in measure JSON:\n{raw}"
+    );
+    let report: serde_json::Value = serde_json::from_str(&raw).expect("valid JSON");
+    let mesh = &report["files"][0]["meshes"][0];
+    assert_eq!(mesh["vertex_count"], 3, "count still reported");
+    assert!(
+        mesh.get("aabb").is_none(),
+        "no bounding box from non-finite geometry"
+    );
+}

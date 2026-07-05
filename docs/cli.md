@@ -37,7 +37,7 @@ animsmith lint <file...> [--format text|json] [--select id[,id]] [--allow id[,id
 animsmith report <file> -o <report.html> [--clip name]
 animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor] [--fps N]
 animsmith fix <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
-animsmith convert <in.fbx> -o <out.glb|out.gltf> [--animation-only]
+animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb|out.gltf> [--animation-only]
 animsmith diff <before> <after> [--format text|json]
 ```
 
@@ -73,8 +73,8 @@ cargo install animsmith --no-default-features
 The no-default-features build has no C toolchain dependency and keeps the
 glTF-only workflow: `inspect`, `measure`, `lint`, `transform`, `fix`, and
 `diff`. The HTML `report` command is controlled by the `report` feature.
-The FBX-oriented `convert` command is compiled only with the `fbx`
-feature.
+`convert` accepts FBX or glTF input (a glTF input is re-emitted,
+carrying its geometry) but is compiled only with the `fbx` feature.
 
 ## Repairs
 

@@ -52,9 +52,10 @@ pub struct MeshMeasurements {
 /// Measure every mesh in the document's [`SceneAssets`], in document
 /// order. Returns an empty vector when no geometry was loaded (the
 /// lint/inspect path and asset-less files), so callers that don't carry
-/// assets emit nothing extra. Never panics on hostile geometry: NaN
-/// positions are ignored by the min/max reduction and flow to the `nan`
-/// check instead.
+/// assets emit nothing extra. Hostile geometry never crashes or leaks a
+/// non-finite bound: non-finite positions and weight sums are dropped
+/// from the AABB / weight-sum stats (and still flow to the `nan` check),
+/// so the emitted numbers are always finite.
 pub fn measure_meshes(assets: &SceneAssets) -> Vec<MeshMeasurements> {
     assets
         .meshes
@@ -63,41 +64,48 @@ pub fn measure_meshes(assets: &SceneAssets) -> Vec<MeshMeasurements> {
             let mut vertex_count = 0u32;
             let mut min = [f32::INFINITY; 3];
             let mut max = [f32::NEG_INFINITY; 3];
-            let mut any_position = false;
+            let mut any_finite_position = false;
             let mut max_joints_per_vertex = 0u32;
             let mut weight_sum_min = f64::INFINITY;
             let mut weight_sum_max = f64::NEG_INFINITY;
-            let mut any_weight = false;
+            let mut any_finite_weight = false;
 
             for prim in &mesh.primitives {
                 vertex_count = vertex_count.saturating_add(prim.positions.len() as u32);
                 for p in &prim.positions {
-                    any_position = true;
                     let a = p.to_array();
-                    for i in 0..3 {
-                        // f32::min/max return the non-NaN operand, so a
-                        // NaN coordinate can't poison the box.
-                        min[i] = min[i].min(a[i]);
-                        max[i] = max[i].max(a[i]);
+                    // Only finite vertices contribute to the box; a NaN
+                    // or infinite coordinate is garbage geometry (it
+                    // still lints via the `nan` check) and must never
+                    // reach the output — a non-finite bound serializes to
+                    // JSON `null`, which violates the numeric schema.
+                    if a.iter().all(|c| c.is_finite()) {
+                        any_finite_position = true;
+                        for i in 0..3 {
+                            min[i] = min[i].min(a[i]);
+                            max[i] = max[i].max(a[i]);
+                        }
                     }
                 }
                 for w in &prim.weights {
-                    any_weight = true;
                     let influences = w.iter().filter(|&&x| x > 0.0).count() as u32;
                     max_joints_per_vertex = max_joints_per_vertex.max(influences);
                     let sum: f64 = w.iter().map(|&x| x as f64).sum();
-                    weight_sum_min = weight_sum_min.min(sum);
-                    weight_sum_max = weight_sum_max.max(sum);
+                    if sum.is_finite() {
+                        any_finite_weight = true;
+                        weight_sum_min = weight_sum_min.min(sum);
+                        weight_sum_max = weight_sum_max.max(sum);
+                    }
                 }
             }
 
             MeshMeasurements {
                 name: mesh.name.clone(),
                 vertex_count,
-                aabb: any_position.then_some(Aabb { min, max }),
+                aabb: any_finite_position.then_some(Aabb { min, max }),
                 max_joints_per_vertex,
-                weight_sum_min: any_weight.then_some(weight_sum_min),
-                weight_sum_max: any_weight.then_some(weight_sum_max),
+                weight_sum_min: any_finite_weight.then_some(weight_sum_min),
+                weight_sum_max: any_finite_weight.then_some(weight_sum_max),
             }
         })
         .collect()
@@ -290,22 +298,60 @@ mod tests {
     }
 
     #[test]
-    fn nan_position_does_not_poison_the_bbox() {
-        // A hostile NaN coordinate must not crash or corrupt the box —
-        // f32::min/max drop it, keeping the finite extent.
+    fn non_finite_position_is_dropped_from_the_bbox() {
+        // A vertex with any non-finite coordinate is garbage geometry:
+        // it is dropped whole (not folded per-axis), so the box stays
+        // the finite extent — and never emits a non-finite bound.
         let prim = Primitive {
             positions: vec![
                 Vec3::new(0.0, 0.0, 0.0),
                 Vec3::new(f32::NAN, 5.0, 0.0),
-                Vec3::new(2.0, 0.0, 0.0),
+                Vec3::new(f32::INFINITY, 9.0, 0.0),
+                Vec3::new(2.0, 3.0, 0.0),
             ],
             ..Primitive::default()
         };
         let m = &measure_meshes(&mesh("nan", vec![prim]))[0];
         let aabb = m.aabb.as_ref().unwrap();
-        assert_eq!(aabb.min[0], 0.0);
-        assert_eq!(aabb.max[0], 2.0, "NaN ignored, real extent kept");
-        assert_eq!(aabb.max[1], 5.0);
+        // Only the two finite vertices contribute; the NaN/Inf rows drop
+        // out, so their 5.0 / 9.0 do NOT reach the box.
+        assert_eq!(aabb.min, [0.0, 0.0, 0.0]);
+        assert_eq!(aabb.max, [2.0, 3.0, 0.0]);
+        assert!(
+            aabb.min.iter().chain(&aabb.max).all(|c| c.is_finite()),
+            "no non-finite bound is ever emitted"
+        );
+    }
+
+    #[test]
+    fn all_non_finite_positions_yield_no_bbox() {
+        // Every vertex non-finite ⇒ no finite contribution ⇒ `aabb` is
+        // omitted, not an inf/-inf box that serializes to JSON `null`.
+        let prim = Primitive {
+            positions: vec![Vec3::splat(f32::NAN), Vec3::splat(f32::INFINITY)],
+            ..Primitive::default()
+        };
+        let m = &measure_meshes(&mesh("allnan", vec![prim]))[0];
+        assert_eq!(m.vertex_count, 2, "count still reflects the vertices");
+        assert!(
+            m.aabb.is_none(),
+            "no finite vertex ⇒ no box (never null bounds)"
+        );
+    }
+
+    #[test]
+    fn non_finite_weight_sum_is_omitted() {
+        // A NaN weight makes its sum non-finite; it must not surface as a
+        // JSON-null weight-sum bound.
+        let prim = Primitive {
+            positions: vec![Vec3::ZERO, Vec3::ONE],
+            weights: vec![[0.5, 0.5, 0.0, 0.0], [f32::NAN, 0.0, 0.0, 0.0]],
+            ..Primitive::default()
+        };
+        let m = &measure_meshes(&mesh("nanw", vec![prim]))[0];
+        // The one finite sum (1.0) is kept; the NaN sum is skipped.
+        assert_eq!(m.weight_sum_min, Some(1.0));
+        assert_eq!(m.weight_sum_max, Some(1.0));
     }
 
     #[test]

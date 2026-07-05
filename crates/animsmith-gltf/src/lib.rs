@@ -435,6 +435,15 @@ fn extract_assets(
 
         let mut primitives = Vec::new();
         for prim in mesh.primitives() {
+            // Only triangle lists are ingested. The core model and the
+            // writer are triangle-only (no primitive `mode` field), and
+            // measure/checks assume triangulated geometry; a points/
+            // lines/strip/fan primitive read as a triangle list would be
+            // silently corrupted, so skip it rather than misinterpret it.
+            // Skinned rigs — the target inputs — are triangle lists.
+            if prim.mode() != gltf::mesh::Mode::Triangles {
+                continue;
+            }
             let reader = prim.reader(|b| buffers.get(b.index()).map(Vec::as_slice));
             // Never iterate a count-0 accessor: gltf 1.4's reader
             // underflows and panics on one (invariant: hostile input must
