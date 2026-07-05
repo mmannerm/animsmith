@@ -7,7 +7,7 @@ name: release-plz
 # Two jobs run on every push to main:
 #   - release-pr: opens/updates a release PR that bumps the shared
 #     workspace version, propagates the internal animsmith-* dependency
-#     versions, and updates CHANGELOG.md (git-cliff config: cliff.toml).
+#     versions, and updates CHANGELOG.md (release-plz's Keep-a-Changelog format).
 #   - release: once a release PR merges (the Cargo.toml version changes),
 #     tags, creates the GitHub Release, and publishes all five crates to
 #     crates.io in dependency order.

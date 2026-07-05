@@ -5,11 +5,13 @@
 # version-alignment logic previously in main.yml (see #37).
 
 [workspace]
-# Reuse the repository's existing git-cliff configuration so changelog
-# and release-note styling is unchanged from the previous flow.
-# (release-plz manages the per-version section headers in CHANGELOG.md;
-# cliff.toml supplies the grouped entry body.)
-changelog_config = "cliff.toml"
+# Changelog uses release-plz's default Keep-a-Changelog format (versioned
+# `## [X.Y.Z]` sections with dates + release links). We deliberately do
+# NOT set `changelog_config = "cliff.toml"`: cliff.toml is shaped for
+# GitHub release notes (no version headers), so reusing it produced a
+# headerless, non-standard CHANGELOG.md. cliff.toml stays in the repo as
+# the source of truth for commit_parsers (aligned with .commitlintrc.yml
+# and lint-pr.yml) — it just no longer drives the changelog file.
 
 # Publish only when a release-plz PR is merged — not on every push to
 # main. This matches the documented flow (open a release PR, review it,
@@ -27,37 +29,48 @@ git_release_enable = false
 
 # The five crates ship as one unit at a single shared version
 # (`version.workspace = true`). `version_group` forces one version across
-# the whole group — the highest next-version among them — and every
-# package writes into one root CHANGELOG.md. release-plz bumps the
-# internal `animsmith-*` dependency requirements in lockstep.
+# the whole group — the highest next-version among them.
+#
+# Changelog ownership: only the top-level `animsmith` crate writes the
+# single root CHANGELOG.md; it folds the four libraries' entries in via
+# `changelog_include`. The libraries set `changelog_update = false` — if
+# every crate wrote to the shared CHANGELOG.md, each would append its own
+# copy of the (shared) history, duplicating it five times.
+
 [[package]]
 name = "animsmith-core"
 version_group = "animsmith"
-changelog_path = "CHANGELOG.md"
+changelog_update = false
 
 [[package]]
 name = "animsmith-gltf"
 version_group = "animsmith"
-changelog_path = "CHANGELOG.md"
+changelog_update = false
 
 [[package]]
 name = "animsmith-fbx"
 version_group = "animsmith"
-changelog_path = "CHANGELOG.md"
+changelog_update = false
 
 [[package]]
 name = "animsmith-report"
 version_group = "animsmith"
-changelog_path = "CHANGELOG.md"
+changelog_update = false
 
 [[package]]
 name = "animsmith"
 version_group = "animsmith"
 changelog_path = "CHANGELOG.md"
+changelog_include = [
+    "animsmith-core",
+    "animsmith-gltf",
+    "animsmith-fbx",
+    "animsmith-report",
+]
 # The one crate that carries the workspace's single `vX.Y.Z` tag and
-# GitHub Release (tags/releases are disabled workspace-wide above).
-# crates.io publishing of all five crates is unaffected — that is the
-# separate `publish` field, left at its default.
+# GitHub Release (tags/releases are disabled workspace-wide above), and
+# the one that owns CHANGELOG.md. crates.io publishing of all five crates
+# is unaffected — that is the separate `publish` field, left at default.
 git_tag_enable = true
 git_release_enable = true
 git_tag_name = "v{{ version }}"

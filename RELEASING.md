@@ -8,8 +8,10 @@ release, publishes the GitHub Release, and publishes all five crates to
 crates.io in dependency order.
 
 The workflow is `.github/workflows/release-plz.yml`; its behaviour is
-configured by `release-plz.toml` (which reuses the existing `cliff.toml`
-for changelog styling).
+configured by `release-plz.toml`. The changelog uses release-plz's
+default Keep-a-Changelog format (`cliff.toml` remains the commit-parser
+source of truth for commitlint/lint-pr, but no longer drives the
+changelog file).
 
 ## Per-release flow (steady state)
 
@@ -84,17 +86,18 @@ So automation begins at `0.2.0`; `0.1.0` is done by hand, once:
    Publishing → add publisher — repository `mmannerm/animsmith`, workflow
    `release-plz.yml`, no environment.
 5. Create the first tag, GitHub Release, and changelog **by hand** —
-   release-plz will not, because `0.1.0` is already published. Seed
-   `CHANGELOG.md` from the full history (release-plz maintains it from
-   `0.2.0` on), tag the release commit, and publish the Release:
+   release-plz will not, because `0.1.0` is already published. Generate
+   `CHANGELOG.md` with release-plz itself (so its format matches every
+   later release), tag the commit, and publish the Release from the
+   `0.1.0` section:
 
    ```console
-   git cliff --tag v0.1.0 -o CHANGELOG.md
+   release-plz update          # writes CHANGELOG.md in Keep-a-Changelog form
    git add CHANGELOG.md && git commit -m "chore(release): 0.1.0"
    git push
    git tag v0.1.0 && git push origin v0.1.0
    gh release create v0.1.0 --title v0.1.0 \
-     --notes "$(git cliff --unreleased --tag v0.1.0 --strip header)"
+     --notes-file <(awk '/^## \[0\.1\.0\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md)
    ```
 
 6. Arm the release automation. Both the `release-pr` and `release` jobs
