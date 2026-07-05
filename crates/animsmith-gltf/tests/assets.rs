@@ -397,6 +397,59 @@ fn load_preserves_unindexed_primitives() {
     assert_eq!(prim.material, None, "no material referenced");
 }
 
+/// Skin joints are node indices in the file; `load` must remap them to
+/// bone ids through the *same* topological order the skeleton is built
+/// in. This fixture orders the child node *before* its parent in the
+/// glTF `nodes` array, so bone id ≠ node index (DFS-from-root makes the
+/// root bone 0, the child bone 1). A loader that returned raw joint node
+/// indices — or that let `extract_assets` diverge from `build_document`
+/// — would produce `[0, 1]` instead of the correct `[1, 0]`.
+#[test]
+fn load_remaps_skin_joints_through_topological_bone_order() {
+    let dir = std::env::temp_dir().join("animsmith-load-assets-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("reordered-skin.gltf");
+    // buffer = 3 positions (VEC3 f32): (0,0,0),(1,0,0),(0,1,0).
+    std::fs::write(
+        &path,
+        r#"{
+            "asset": { "version": "2.0" },
+            "buffers": [{ "byteLength": 36, "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAA" }],
+            "bufferViews": [{ "buffer": 0, "byteOffset": 0, "byteLength": 36 }],
+            "accessors": [{
+                "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+                "min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0]
+            }],
+            "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 } }] }],
+            "nodes": [
+                { "name": "child" },
+                { "name": "root", "children": [0], "mesh": 0, "skin": 0 }
+            ],
+            "skins": [{ "joints": [0, 1] }],
+            "scenes": [{ "nodes": [1] }],
+            "scene": 0
+        }"#,
+    )
+    .unwrap();
+
+    let doc = animsmith_gltf::load(&path).expect("loads");
+    // Topological bone order: root first (bone 0), child second (bone 1).
+    assert_eq!(doc.skeleton.bones[0].name, "root");
+    assert_eq!(doc.skeleton.bones[1].name, "child");
+    assert_eq!(
+        doc.skeleton.bones[1].parent,
+        Some(0),
+        "child hangs off root"
+    );
+    // Skin joints [node0=child, node1=root] remap to bone ids [1, 0] —
+    // and match the skeleton the other code path built.
+    assert_eq!(
+        doc.assets.meshes[0].skin_joints,
+        vec![1, 0],
+        "joints remapped to bone ids, both loader paths agreeing"
+    );
+}
+
 /// `load` carries scene geometry in `Document::assets` — the same
 /// one-call contract as `animsmith_fbx::load`, so consumers reach
 /// meshes/materials without a second entry point.
