@@ -1,0 +1,104 @@
+# release-plz configuration — https://release-plz.dev/docs/config
+#
+# Drives the automated release flow in .github/workflows/release-plz.yml,
+# which replaces the bespoke git-cliff version-computation + manual
+# version-alignment logic previously in main.yml (see #37).
+
+[workspace]
+# Changelog uses release-plz's default Keep-a-Changelog format (versioned
+# `## [X.Y.Z]` sections with dates + release links), derived from the
+# Conventional Commit history. The accepted commit types are defined in
+# .commitlintrc.yml (enforced by lint-pr.yml).
+
+# Publish only when a release-plz PR is merged — not on every push to
+# main. This matches the documented flow (open a release PR, review it,
+# merge to publish); with the default `true`, the release job would run
+# publish logic on every main-branch commit.
+release_always = false
+
+# One repo-level git tag + GitHub Release for the whole workspace, named
+# `vX.Y.Z` — not the per-package `<crate>-v<version>` names release-plz
+# defaults to when more than one crate is public. Disabled here and
+# re-enabled on the `animsmith` package below. This is the tag form that
+# RELEASING.md, issue #37, and scripts/check-schema-id.sh all assume.
+git_tag_enable = false
+git_release_enable = false
+
+# Version-bump policy: a feat bumps the minor even on 0.x (release-plz's
+# default bumps the patch). This ports the old cliff.toml `[bump]
+# features_always_bump_minor`. Note: cliff.toml also forced breaking ->
+# major, but release-plz has no equivalent key; breaking changes follow
+# semver (on 0.x that is a minor bump). Documented in RELEASING.md.
+features_always_increment_minor = true
+
+# Which commit types appear in the changelog / GitHub Release notes
+# (ported from the removed cliff.toml [git].commit_parsers, adapted to
+# release-plz's Keep-a-Changelog group names). feat -> Added, fix ->
+# Fixed, perf/revert -> Changed; chore/ci/docs/style/refactor/test/build,
+# merge commits, and anything unmatched are skipped from the notes (they
+# still count toward whether a release is warranted).
+[changelog]
+commit_parsers = [
+    { message = "^feat", group = "added" },
+    { message = "^fix", group = "fixed" },
+    { message = "^perf", group = "changed" },
+    { message = "^revert", group = "changed" },
+    { message = "^chore", skip = true },
+    { message = "^ci", skip = true },
+    { message = "^docs", skip = true },
+    { message = "^style", skip = true },
+    { message = "^refactor", skip = true },
+    { message = "^test", skip = true },
+    { message = "^build", skip = true },
+    { message = "^Merge", skip = true },
+    { message = "^.*", skip = true },
+]
+
+# The five crates ship as one unit at a single shared version
+# (`version.workspace = true`). `version_group` forces one version across
+# the whole group — the highest next-version among them.
+#
+# Changelog ownership: only the top-level `animsmith` crate writes the
+# single root CHANGELOG.md; it folds the four libraries' entries in via
+# `changelog_include`. The libraries set `changelog_update = false` — if
+# every crate wrote to the shared CHANGELOG.md, each would append its own
+# copy of the (shared) history, duplicating it five times.
+
+[[package]]
+name = "animsmith-core"
+version_group = "animsmith"
+changelog_update = false
+
+[[package]]
+name = "animsmith-gltf"
+version_group = "animsmith"
+changelog_update = false
+
+[[package]]
+name = "animsmith-fbx"
+version_group = "animsmith"
+changelog_update = false
+
+[[package]]
+name = "animsmith-report"
+version_group = "animsmith"
+changelog_update = false
+
+[[package]]
+name = "animsmith"
+version_group = "animsmith"
+changelog_path = "CHANGELOG.md"
+changelog_include = [
+    "animsmith-core",
+    "animsmith-gltf",
+    "animsmith-fbx",
+    "animsmith-report",
+]
+# The one crate that carries the workspace's single `vX.Y.Z` tag and
+# GitHub Release (tags/releases are disabled workspace-wide above), and
+# the one that owns CHANGELOG.md. crates.io publishing of all five crates
+# is unaffected — that is the separate `publish` field, left at default.
+git_tag_enable = true
+git_release_enable = true
+git_tag_name = "v{{ version }}"
+git_release_name = "v{{ version }}"

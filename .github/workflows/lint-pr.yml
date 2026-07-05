@@ -9,8 +9,9 @@ name: lint-pr
 #
 #   - Merge commit (the default): each individual commit on the PR
 #     branch lands on main. The auto-generated `Merge pull request #N
-#     from ...` commit is skipped by cliff.toml's `^Merge` parser. The
-#     `commits` job checks each non-merge commit in the PR range.
+#     from ...` commit is not a Conventional Commit and is skipped by
+#     release-plz's changelog generation. The `commits` job checks each
+#     non-merge commit in the PR range.
 #
 #   - Rebase merge: disabled at the repo level — we prefer
 #     cleanup-before-merge over rebase-on-merge.
@@ -49,7 +50,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         with:
           # Keep this list in lock-step with `.commitlintrc.yml`'s
-          # type-enum and cliff.toml's commit_parsers.
+          # type-enum (the source of truth for accepted commit types).
           types: |
             feat
             fix

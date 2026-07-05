@@ -1,15 +1,16 @@
 # Conventional Commits rules — enforced on every commit landing through
-# a PR (see .github/workflows/lint-pr.yml). The accepted `type-enum` set
-# is kept aligned with `cliff.toml`'s `[git].commit_parsers`, so a commit
-# that passes commitlint is also one that git-cliff can correctly
-# categorise when computing the next semver bump.
+# a PR (see .github/workflows/lint-pr.yml). This `type-enum` is the
+# source of truth for the commit types accepted on main; release-plz
+# groups these Conventional Commits into the changelog and derives the
+# semver bump from them.
 
 extends:
   - '@commitlint/config-conventional'
 
 rules:
-  # Allowed types — matches cliff.toml's commit_parsers exactly so any
-  # commit that lands on main is recognised by both tools.
+  # Allowed types — the source of truth for what CI accepts on main;
+  # release-plz recognises these Conventional Commit types for the
+  # changelog and version bump.
   type-enum:
     - 2     # error level
     - always

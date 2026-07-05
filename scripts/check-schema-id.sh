@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
+# Verify the machine-readable output schema's $id is internally
+# consistent: it points at `main` (or a matching release tag), and the
+# CLI and docs reference that exact $id.
+#
+# Crate version bumps and internal animsmith-* dependency alignment are
+# now owned by release-plz (see #37); this check is purely about the
+# schema URL and the places that must reference it.
 set -euo pipefail
 
 failures=0
 
 fail() {
-  echo "release-alignment: $*" >&2
+  echo "schema-id: $*" >&2
   failures=$((failures + 1))
 }
 
@@ -19,19 +26,6 @@ workspace_version=$(
 if [ -z "$workspace_version" ]; then
   fail "could not read [workspace.package] version from Cargo.toml"
 fi
-
-for crate in animsmith-core animsmith-gltf animsmith-fbx animsmith-report; do
-  line=$(grep -E "^[[:space:]]*$crate[[:space:]]*=" Cargo.toml || true)
-  if [ -z "$line" ]; then
-    fail "missing workspace dependency for $crate"
-    continue
-  fi
-  dep_version=$(printf '%s\n' "$line" \
-    | sed -nE 's/.*version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p')
-  if [ "$dep_version" != "$workspace_version" ]; then
-    fail "$crate dependency version $dep_version != workspace version $workspace_version"
-  fi
-done
 
 schema_id=$(sed -nE 's/.*"\$id"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' \
   docs/schemas/output-v1.schema.json | head -1)
