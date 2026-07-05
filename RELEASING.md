@@ -97,9 +97,10 @@ So automation begins at `0.2.0`; `0.1.0` is done by hand, once:
      --notes "$(git cliff --unreleased --tag v0.1.0 --strip header)"
    ```
 
-6. Arm the publish job. It is gated on `vars.RELEASE_PLZ_ARMED` and stays
-   inert until this is set, so pushes to `main` before this point never
-   attempt to publish:
+6. Arm the release automation. Both the `release-pr` and `release` jobs
+   are gated on `vars.RELEASE_PLZ_ARMED`, so the whole flow stays inert
+   until this is set — no release PRs and no publish attempts before the
+   manual `0.1.0` above:
 
    ```console
    gh variable set RELEASE_PLZ_ARMED --body true

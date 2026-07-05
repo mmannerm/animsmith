@@ -76,6 +76,11 @@ jobs:
 
   release-pr:
     name: release-plz release-pr
+    # Also gated on the bootstrap arming variable: before the first
+    # manual v0.1.0 release there is no baseline tag, so an ungated
+    # release-pr would open a spurious release PR. Arming turns the whole
+    # release flow on at once (see RELEASING.md).
+    if: ${{ vars.RELEASE_PLZ_ARMED == 'true' }}
     runs-on: ubuntu-latest
     # Never cancel a half-written release PR.
     concurrency:
