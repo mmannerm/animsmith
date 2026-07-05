@@ -24,12 +24,7 @@ animsmith-gltf = "0.1"
 
 ```rust,no_run
 fn lint_document(doc: &animsmith_core::Document) -> Vec<animsmith_core::Finding> {
-    let roles = animsmith_core::detect_profile(&doc.skeleton).unwrap_or_else(|| {
-        animsmith_core::ResolvedRoles::from_names(
-            &doc.skeleton,
-            std::iter::empty::<(animsmith_core::Role, String)>(),
-        )
-    });
+    let roles = animsmith_core::detect_profile(&doc.skeleton).unwrap_or_default();
     let config = animsmith_core::Config::default();
     let ctx = animsmith_core::CheckCtx::new(doc, &roles, &config);
 

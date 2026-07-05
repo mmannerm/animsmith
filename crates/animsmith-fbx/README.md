@@ -26,12 +26,7 @@ fn lint_fbx(
     path: &std::path::Path,
 ) -> Result<Vec<animsmith_core::Finding>, Box<dyn std::error::Error>> {
     let doc = animsmith_fbx::load(path)?;
-    let roles = animsmith_core::detect_profile(&doc.skeleton).unwrap_or_else(|| {
-        animsmith_core::ResolvedRoles::from_names(
-            &doc.skeleton,
-            std::iter::empty::<(animsmith_core::Role, String)>(),
-        )
-    });
+    let roles = animsmith_core::detect_profile(&doc.skeleton).unwrap_or_default();
     let config = animsmith_core::Config::default();
     let ctx = animsmith_core::CheckCtx::new(&doc, &roles, &config);
 
