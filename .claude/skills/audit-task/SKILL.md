@@ -160,22 +160,32 @@ The audit emits **one** summary review comment on the PR. Re-runs
 **edit that comment in place** rather than appending new ones; identify
 it on subsequent runs by the `<!-- audit-task agent=<agent> -->` HTML
 marker at the top of the body, where `<agent>` is your own lowercase
-slug (`claude`, `codex`, …).
+slug — `claude` or `codex`.
 
-The marker **must carry the agent slug**. Multiple agents (Claude and
-Codex) run this skill on the same repo and post under the **same
-GitHub account**, so a bare `<!-- audit-task -->` marker cannot tell
-whose comment is whose — matching on it lets one agent overwrite
-another's audit. Match, and edit, **only** the comment bearing *your
-own* `agent=<agent>` marker; if the only audit comment present is
-another agent's, post a **new** comment rather than clobbering theirs.
+The marker **must carry the agent slug**, and it is the **only** key
+you match on (the human attribution line at the bottom is for readers,
+not for matching). Multiple agents (Claude and Codex) run this skill on
+the same repo and post under the **same GitHub account**, so a bare
+`<!-- audit-task -->` marker cannot tell whose comment is whose —
+matching on it lets one agent overwrite another's audit. Rules:
+
+- Match on the **exact, full** marker `<!-- audit-task agent=<agent> -->`
+  for your own slug — never a loose `audit-task` / `<!-- audit-task`
+  substring, which also matches other agents' comments.
+- Edit a comment **only** when its marker is exactly your own slug.
+  **Never** PATCH a comment carrying a different slug (or the bare
+  marker) — even when your own comment is absent; in that case post a
+  **new** comment.
+- If your exact marker matches more than one comment, that is an error
+  state: reconcile by hand, do not blind-PATCH the first hit.
 
 Mechanism: `gh pr comment <N> --body "<body>"` for the initial post,
 then `gh api repos/<owner>/<repo>/issues/comments/<comment_id> -X PATCH
--f body=...` to edit on re-runs. Find your existing comment by listing
-`gh api repos/<owner>/<repo>/issues/<N>/comments` and grep-matching
-your `<!-- audit-task agent=<agent> -->` marker (not the bare marker).
-Include your agent attribution line at the bottom of the comment.
+-f body=...` to edit on re-runs. Find your existing comment id with an
+exact-marker filter, e.g. `gh api
+repos/<owner>/<repo>/issues/<N>/comments --jq '.[] | select(.body |
+contains("<!-- audit-task agent=<agent> -->")) | .id'`. Include your
+agent attribution line at the bottom of the comment.
 
 #### PR comment structure
 
