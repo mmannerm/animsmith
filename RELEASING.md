@@ -31,6 +31,23 @@ short-lived token itself — there is no long-lived `CARGO_REGISTRY_TOKEN`.
 The publish step is idempotent: a re-run skips versions already on the
 registry.
 
+### Version-bump policy
+
+Configured in `release-plz.toml`:
+
+- **`feat`** bumps the minor, **`fix`/`perf`** the patch, even on `0.x`
+  (`features_always_increment_minor = true`, porting the old
+  `cliff.toml` bump rule).
+- **Breaking changes** follow semver — on `0.x` that is a **minor** bump
+  (`0.1.0` → `0.2.0`), not a major. This is the one place the old
+  `cliff.toml` differed: it forced breaking → major (`→ 1.0.0`), but
+  release-plz has no equivalent setting. If you want to go to `1.0.0`,
+  bump the version explicitly in the release PR.
+- Only `feat`/`fix`/`perf`/`revert` appear in the changelog and release
+  notes; `chore`/`ci`/`docs`/`style`/`refactor`/`test`/`build` and merge
+  commits are skipped (`[changelog].commit_parsers`) — they still count
+  toward whether a release is warranted.
+
 ## Bumping schema `$id` on a release (if applicable)
 
 The machine-readable output schema's `$id`
@@ -64,8 +81,19 @@ So automation begins at `0.2.0`; `0.1.0` is done by hand, once:
 
 1. `cargo login` with a token from <https://crates.io/settings/tokens>
    (scope: `publish-new` + `publish-update`).
-2. Publish the workspace once, in dependency order (each dependent crate
-   resolves against the crate just published):
+2. **Generate and commit the changelog first — before publishing.**
+   `release-plz update` compares the local crates against the registry to
+   find unreleased changes, so it only produces the `0.1.0` changelog
+   while the crates are still unpublished. Run it now (its Keep-a-Changelog
+   format matches every later release):
+
+   ```console
+   release-plz update          # writes CHANGELOG.md
+   git add CHANGELOG.md && git commit -m "chore(release): 0.1.0"
+   git push
+   ```
+3. Publish the workspace from that release commit, in dependency order
+   (each dependent crate resolves against the crate just published):
 
    ```console
    for crate in animsmith-core animsmith-gltf animsmith-fbx animsmith-report animsmith; do
@@ -76,30 +104,25 @@ So automation begins at `0.2.0`; `0.1.0` is done by hand, once:
    `animsmith-core` should pass `cargo publish --dry-run` first; the
    dependent crates can only fully verify once their `animsmith-*`
    dependencies exist in the index.
-3. After each crate is accepted, docs.rs queues its documentation. Check
+4. After each crate is accepted, docs.rs queues its documentation. Check
    each crate's docs.rs page; the manifests set `documentation` links and
    `[package.metadata.docs.rs]` so pure-Rust crates get Linux/macOS/Windows
    pages, while the C-dependent crates (`animsmith-fbx`, all-features CLI)
    use the Linux default target.
-4. On crates.io, for **each** of the five crates: Settings → Trusted
+5. On crates.io, for **each** of the five crates: Settings → Trusted
    Publishing → add publisher — repository `mmannerm/animsmith`, workflow
    `release-plz.yml`, no environment.
-5. Create the first tag, GitHub Release, and changelog **by hand** —
-   release-plz will not, because `0.1.0` is already published. Generate
-   `CHANGELOG.md` with release-plz itself (so its format matches every
-   later release), tag the commit, and publish the Release from the
-   `0.1.0` section:
+6. Tag the release commit and publish the GitHub Release from the `0.1.0`
+   changelog section (release-plz won't create it — `0.1.0` is already
+   published — so the notes are extracted from that same section):
 
    ```console
-   release-plz update          # writes CHANGELOG.md in Keep-a-Changelog form
-   git add CHANGELOG.md && git commit -m "chore(release): 0.1.0"
-   git push
    git tag v0.1.0 && git push origin v0.1.0
    gh release create v0.1.0 --title v0.1.0 \
      --notes-file <(awk '/^## \[0\.1\.0\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md)
    ```
 
-6. Arm the release automation. Both the `release-pr` and `release` jobs
+7. Arm the release automation. Both the `release-pr` and `release` jobs
    are gated on `vars.RELEASE_PLZ_ARMED`, so the whole flow stays inert
    until this is set — no release PRs and no publish attempts before the
    manual `0.1.0` above:
