@@ -17,8 +17,8 @@ pub mod fix;
 pub mod write;
 
 use animsmith_core::model::{
-    Bone, Clip, Document, Interpolation, Property, SceneAssets, Skeleton, SourceInfo, Track,
-    TrackValues, Transform,
+    Bone, Clip, Document, Interpolation, MaterialAsset, MeshAsset, Primitive, Property,
+    SceneAssets, Skeleton, SourceInfo, TextureAsset, Track, TrackValues, Transform,
 };
 use base64::Engine as _;
 use glam::{Mat4, Quat, Vec3};
@@ -137,11 +137,17 @@ fn validate_track_lengths(
     Ok(())
 }
 
-/// Load a `.glb` or `.gltf` file into a core [`Document`].
+/// Load a `.glb` or `.gltf` file into a core [`Document`], including the
+/// scene assets (meshes, skins, materials) its geometry describes — the
+/// symmetric read side of [`write::write`], and the same one-call shape
+/// `animsmith_fbx::load` uses. Consumers that judge only animation
+/// (`lint`, `inspect`) simply ignore [`Document::assets`].
 pub fn load(path: &Path) -> Result<Document, LoadError> {
     let gltf = gltf::Gltf::open(path)?;
     let buffers = resolve_buffers(&gltf, path.parent())?;
-    build_document(&gltf, &buffers, path)
+    let mut doc = build_document(&gltf, &buffers, path)?;
+    doc.assets = extract_assets(&gltf.document, &buffers, path.parent())?;
+    Ok(doc)
 }
 
 fn resolve_buffers(gltf: &gltf::Gltf, base: Option<&Path>) -> Result<Vec<Vec<u8>>, LoadError> {
@@ -189,39 +195,10 @@ fn build_document(
 ) -> Result<Document, LoadError> {
     let doc = &gltf.document;
 
-    // Parent map over ALL nodes (scene membership doesn't matter:
-    // animations may target unreferenced subtrees).
-    let node_count = doc.nodes().count();
-    let mut parent: Vec<Option<usize>> = vec![None; node_count];
-    for node in doc.nodes() {
-        for child in node.children() {
-            parent[child.index()] = Some(node.index());
-        }
-    }
-
-    // Topological order: DFS from roots.
-    let mut order: Vec<usize> = Vec::with_capacity(node_count);
-    let mut stack: Vec<usize> = doc
-        .nodes()
-        .filter(|n| parent[n.index()].is_none())
-        .map(|n| n.index())
-        .collect();
-    stack.reverse(); // keep file order among roots
     let nodes: Vec<gltf::Node> = doc.nodes().collect();
-    while let Some(i) = stack.pop() {
-        order.push(i);
-        let children: Vec<usize> = nodes[i].children().map(|c| c.index()).collect();
-        for &c in children.iter().rev() {
-            stack.push(c);
-        }
-    }
+    let (order, parent, bone_of_node) = topology(doc);
 
-    let mut bone_of_node: Vec<Option<usize>> = vec![None; node_count];
-    for (bone_id, &node_index) in order.iter().enumerate() {
-        bone_of_node[node_index] = Some(bone_id);
-    }
-
-    let mut bones: Vec<Bone> = Vec::with_capacity(node_count);
+    let mut bones: Vec<Bone> = Vec::with_capacity(nodes.len());
     for &node_index in &order {
         let node = &nodes[node_index];
         let (t, r, s) = node.transform().decomposed();
@@ -242,6 +219,11 @@ fn build_document(
 
     // Inverse bind matrices from skins (last skin wins on conflict).
     for skin in doc.skins() {
+        // Skip a count-0 IBM accessor: gltf 1.4's reader underflows and
+        // panics iterating one (the same guard the asset path uses).
+        if skin.inverse_bind_matrices().is_none_or(|a| a.count() == 0) {
+            continue;
+        }
         let reader = skin.reader(|buffer| buffers.get(buffer.index()).map(Vec::as_slice));
         if let Some(ibms) = reader.read_inverse_bind_matrices() {
             for (joint, ibm) in skin.joints().zip(ibms) {
@@ -337,12 +319,255 @@ fn build_document(
     Ok(Document {
         skeleton: Skeleton { bones },
         clips,
-        // glTF mesh ingestion is #16; until then assets stay empty and
-        // the writer emits animation + skeleton only.
+        // `build_document` covers skeleton + animation; `load` fills
+        // `assets` from `extract_assets` before returning.
         assets: SceneAssets::default(),
         source: SourceInfo {
             path: Some(path.display().to_string()),
             format: Some("gltf".into()),
         },
     })
+}
+
+/// Node-index → bone-id map (plus the raw parent array and DFS order),
+/// in the topological order `build_document` assigns bones: DFS from
+/// roots, file order among siblings, over ALL nodes (scene membership
+/// doesn't matter — animations may target unreferenced subtrees). Shared
+/// by the skeleton build and asset extraction so both agree on which
+/// bone a node became.
+fn topology(doc: &gltf::Document) -> (Vec<usize>, Vec<Option<usize>>, Vec<Option<usize>>) {
+    let node_count = doc.nodes().count();
+    let mut parent: Vec<Option<usize>> = vec![None; node_count];
+    for node in doc.nodes() {
+        for child in node.children() {
+            parent[child.index()] = Some(node.index());
+        }
+    }
+
+    let nodes: Vec<gltf::Node> = doc.nodes().collect();
+    let mut order: Vec<usize> = Vec::with_capacity(node_count);
+    let mut stack: Vec<usize> = doc
+        .nodes()
+        .filter(|n| parent[n.index()].is_none())
+        .map(|n| n.index())
+        .collect();
+    stack.reverse(); // keep file order among roots
+    while let Some(i) = stack.pop() {
+        order.push(i);
+        let children: Vec<usize> = nodes[i].children().map(|c| c.index()).collect();
+        for &c in children.iter().rev() {
+            stack.push(c);
+        }
+    }
+
+    let mut bone_of_node: Vec<Option<usize>> = vec![None; node_count];
+    for (bone_id, &node_index) in order.iter().enumerate() {
+        bone_of_node[node_index] = Some(bone_id);
+    }
+    (order, parent, bone_of_node)
+}
+
+/// Parse meshes (indexed or unindexed), skins (joints + inverse bind
+/// matrices), and materials (PBR factors + embedded base-color texture)
+/// into the core [`SceneAssets`] model — the symmetric read side of
+/// [`write::write`], mirroring `animsmith-fbx`'s `extract_assets`.
+///
+/// Vertex data is kept exactly as authored: glTF is already triangulated
+/// and Y-up, so unlike the FBX path there is no triangulation, unit
+/// conversion, or UV flip — `measure` sees the real bytes. Materials
+/// keep their glTF array index so a primitive's `material()` index maps
+/// straight into `assets.materials`.
+fn extract_assets(
+    doc: &gltf::Document,
+    buffers: &[Vec<u8>],
+    base: Option<&Path>,
+) -> Result<SceneAssets, LoadError> {
+    let mut assets = SceneAssets::default();
+
+    // `doc.materials()` yields defined materials in index order (the
+    // synthesized default material has no index and is skipped), so
+    // pushing in iteration order keeps `assets.materials[i]` aligned
+    // with glTF material index `i`.
+    for material in doc.materials() {
+        if material.index().is_none() {
+            continue;
+        }
+        let pbr = material.pbr_metallic_roughness();
+        let base_color_texture = pbr
+            .base_color_texture()
+            .and_then(|info| read_image(info.texture().source().source(), buffers, base));
+        assets.materials.push(MaterialAsset {
+            name: material.name().unwrap_or("material").to_string(),
+            base_color: pbr.base_color_factor(),
+            metallic: pbr.metallic_factor(),
+            roughness: pbr.roughness_factor(),
+            base_color_texture,
+        });
+    }
+
+    let (_order, _parent, bone_of_node) = topology(doc);
+
+    for node in doc.nodes() {
+        let Some(mesh) = node.mesh() else { continue };
+        let node_bone = bone_of_node[node.index()].unwrap_or(0);
+
+        let skin = node.skin();
+        // Skin joints are node indices in the file; map them into bone
+        // ids so they index the core skeleton, matching the writer,
+        // which emits joints in bone order.
+        let skin_joints: Vec<usize> = skin
+            .as_ref()
+            .map(|s| {
+                s.joints()
+                    .map(|j| bone_of_node[j.index()].unwrap_or(0))
+                    .collect()
+            })
+            .unwrap_or_default();
+        // gltf 1.4's accessor iterator underflows (panics) on a count-0
+        // accessor — the same bug the animation path guards before
+        // reading. Only read an inverse-bind accessor that has entries.
+        let skin_ibms: Vec<Mat4> = skin
+            .as_ref()
+            .filter(|s| s.inverse_bind_matrices().is_some_and(|a| a.count() > 0))
+            .map(|s| {
+                let reader = s.reader(|b| buffers.get(b.index()).map(Vec::as_slice));
+                reader
+                    .read_inverse_bind_matrices()
+                    .map(|it| it.map(|m| Mat4::from_cols_array_2d(&m)).collect())
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default();
+
+        let mut primitives = Vec::new();
+        for prim in mesh.primitives() {
+            // Only triangle lists are ingested. The core model and the
+            // writer are triangle-only (no primitive `mode` field), and
+            // measure/checks assume triangulated geometry; a points/
+            // lines/strip/fan primitive read as a triangle list would be
+            // silently corrupted, so skip it rather than misinterpret it.
+            // Skinned rigs — the target inputs — are triangle lists.
+            if prim.mode() != gltf::mesh::Mode::Triangles {
+                continue;
+            }
+            let reader = prim.reader(|b| buffers.get(b.index()).map(Vec::as_slice));
+            // Never iterate a count-0 accessor: gltf 1.4's reader
+            // underflows and panics on one (invariant: hostile input must
+            // not crash the loader). Treat a zero-count attribute as
+            // absent, and skip a primitive whose POSITION is missing or
+            // empty — a primitive without positions carries no geometry.
+            let has = |sem: gltf::Semantic| prim.get(&sem).is_some_and(|a| a.count() > 0);
+            if !has(gltf::Semantic::Positions) {
+                continue;
+            }
+            let positions: Vec<Vec3> = reader
+                .read_positions()
+                .map(|it| it.map(Vec3::from_array).collect())
+                .unwrap_or_default();
+            let normals = if has(gltf::Semantic::Normals) {
+                reader
+                    .read_normals()
+                    .map(|it| it.map(Vec3::from_array).collect())
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            let uvs = if has(gltf::Semantic::TexCoords(0)) {
+                reader
+                    .read_tex_coords(0)
+                    .map(|tc| tc.into_f32().collect())
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            // JOINTS_0/WEIGHTS_0 come as a pair; keep them parallel.
+            let (joints, weights) =
+                if has(gltf::Semantic::Joints(0)) && has(gltf::Semantic::Weights(0)) {
+                    match (reader.read_joints(0), reader.read_weights(0)) {
+                        (Some(j), Some(w)) => (j.into_u16().collect(), w.into_f32().collect()),
+                        _ => (Vec::new(), Vec::new()),
+                    }
+                } else {
+                    (Vec::new(), Vec::new())
+                };
+            let indices = if prim.indices().is_some_and(|a| a.count() > 0) {
+                reader
+                    .read_indices()
+                    .map(|it| it.into_u32().collect())
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            primitives.push(Primitive {
+                material: prim.material().index(),
+                indices,
+                positions,
+                normals,
+                uvs,
+                joints,
+                weights,
+            });
+        }
+        if primitives.is_empty() {
+            continue;
+        }
+
+        assets.meshes.push(MeshAsset {
+            name: mesh.name().unwrap_or("mesh").to_string(),
+            node: node_bone,
+            primitives,
+            skin_joints,
+            skin_ibms,
+        });
+    }
+
+    Ok(assets)
+}
+
+/// Read an embedded glTF image into a [`TextureAsset`] (raw encoded
+/// bytes + MIME; glTF never decodes, so PNG/JPEG pass through
+/// untouched). Buffer-view and `data:` URI sources are supported (what
+/// the writer and typical GLB exports use); an external-file source is
+/// read relative to `base`. A texture whose bytes can't be resolved
+/// yields `None` — an absent texture is missing measurement data, not a
+/// load failure.
+fn read_image(
+    source: gltf::image::Source,
+    buffers: &[Vec<u8>],
+    base: Option<&Path>,
+) -> Option<TextureAsset> {
+    match source {
+        gltf::image::Source::View { view, mime_type } => {
+            let buffer = buffers.get(view.buffer().index())?;
+            // `offset`/`length` are attacker-controlled `byteOffset`/
+            // `byteLength` JSON fields; add with a checked op so a
+            // near-`usize::MAX` offset fails closed instead of panicking
+            // on overflow in debug builds (invariant: loaders never
+            // panic on hostile input).
+            let end = view.offset().checked_add(view.length())?;
+            let bytes = buffer.get(view.offset()..end)?.to_vec();
+            Some(TextureAsset {
+                bytes,
+                mime: mime_type.to_string(),
+            })
+        }
+        gltf::image::Source::Uri { uri, mime_type } => {
+            if let Some(encoded) = uri.strip_prefix("data:") {
+                let (meta, payload) = encoded.split_once("base64,")?;
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(payload)
+                    .ok()?;
+                let mime = mime_type
+                    .map(str::to_string)
+                    .unwrap_or_else(|| meta.trim_end_matches(';').to_string());
+                Some(TextureAsset { bytes, mime })
+            } else {
+                let path = base?.join(safe_external_buffer_path(uri).ok()?);
+                let bytes = std::fs::read(path).ok()?;
+                Some(TextureAsset {
+                    bytes,
+                    mime: mime_type.unwrap_or_default().to_string(),
+                })
+            }
+        }
+    }
 }

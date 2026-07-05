@@ -86,7 +86,7 @@ enum Cmd {
     },
     /// Apply mechanical clip transforms.
     #[command(
-        long_about = "Apply pipeline-mechanical clip transforms and write the result as glTF, carrying through any geometry the input brought (FBX meshes/skins/materials today; glTF mesh ingestion is #16). Operations apply to every clip, or one clip via --clip."
+        long_about = "Apply pipeline-mechanical clip transforms and write the result as glTF, carrying through any geometry the input brought (FBX or glTF meshes/skins/materials). Operations apply to every clip, or one clip via --clip."
     )]
     Transform {
         /// Input .glb, .gltf, or .fbx file.
@@ -136,13 +136,13 @@ enum Cmd {
         #[arg(long, conflicts_with_all = ["output", "in_place"])]
         dry_run: bool,
     },
-    /// Convert FBX input to glTF.
+    /// Convert FBX or glTF input to glTF.
     #[command(
-        long_about = "Convert FBX input to glTF: skeleton, animation, triangulated meshes, skins, and factor-only materials. Texture wiring stays a downstream concern. Output format by extension: .glb binary, .gltf JSON with an embedded buffer."
+        long_about = "Convert FBX or glTF input to glTF: skeleton, animation, triangulated meshes, skins, and factor-only materials. A glTF input is re-emitted carrying its geometry; --animation-only drops it. Texture wiring stays a downstream concern. Output format by extension: .glb binary, .gltf JSON with an embedded buffer."
     )]
     #[cfg(feature = "fbx")]
     Convert {
-        /// Input .fbx file.
+        /// Input .fbx, .glb, or .gltf file.
         input: PathBuf,
         /// Output .glb or .gltf path.
         #[arg(short, long)]
@@ -259,6 +259,10 @@ struct FileReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     findings: Option<Vec<Finding>>,
     measurements: BTreeMap<String, animsmith_core::measure::ClipMeasurements>,
+    /// Static per-mesh geometry measurements; empty (and omitted) unless
+    /// the input carried scene assets. Additive to the v1 schema.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    meshes: Vec<animsmith_core::measure::MeshMeasurements>,
 }
 
 #[derive(Default, Serialize)]
@@ -483,6 +487,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     rig: rig_info(&doc, &roles),
                     findings: None,
                     measurements: animsmith_core::measure::measure_document(&doc, &roles, &config),
+                    meshes: animsmith_core::measure::measure_meshes(&doc.assets),
                 });
             }
             match format {
@@ -506,6 +511,31 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                                 m.duration_s,
                                 m.frame_count,
                                 m.animated_bones.len()
+                            );
+                        }
+                        for mesh in &report.meshes {
+                            let bbox = mesh
+                                .aabb
+                                .as_ref()
+                                .map(|b| {
+                                    let s = [
+                                        b.max[0] - b.min[0],
+                                        b.max[1] - b.min[1],
+                                        b.max[2] - b.min[2],
+                                    ];
+                                    format!(" bbox {:.3}×{:.3}×{:.3}", s[0], s[1], s[2])
+                                })
+                                .unwrap_or_default();
+                            let skin = match (mesh.weight_sum_min, mesh.weight_sum_max) {
+                                (Some(lo), Some(hi)) => format!(
+                                    ", ≤{} joints/vtx, weight-sum {lo:.3}–{hi:.3}",
+                                    mesh.max_joints_per_vertex
+                                ),
+                                _ => String::new(),
+                            };
+                            println!(
+                                "  mesh {}: {} verts{bbox}{skin}",
+                                mesh.name, mesh.vertex_count
                             );
                         }
                     }
@@ -555,6 +585,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     rig: rig_info(&doc, &roles),
                     findings: Some(findings),
                     measurements: animsmith_core::measure::measure_document(&doc, &roles, &config),
+                    // `lint` judges animation, not geometry — no meshes.
+                    meshes: Vec::new(),
                 });
             }
             match format {
@@ -728,8 +760,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
         } => {
             let mut doc = load(&input)?;
             // `--animation-only` clears assets uniformly across formats:
-            // glTF ingestion carries none yet (#16), so this is where an
-            // FBX conversion drops its geometry on request.
+            // this is where a conversion drops its geometry on request.
             if animation_only {
                 doc.assets = animsmith_core::model::SceneAssets::default();
             }

@@ -2,10 +2,10 @@
 
 `animsmith-core` is the embedding boundary for animsmith. It contains
 the engine-agnostic data model, rig-role resolution, configuration
-types, measurements, sampler, findings, and built-in check catalog. It
-does not know about filesystems or file formats; pair it with a loader
-crate such as `animsmith-gltf` or `animsmith-fbx` at the edge of your
-pipeline.
+types, animation and mesh measurements, sampler, findings, and built-in
+check catalog. It does not know about filesystems or file formats; pair
+it with a loader crate such as `animsmith-gltf` or `animsmith-fbx` at the
+edge of your pipeline.
 
 Use it when a Rust asset pipeline already owns its sidecar format,
 contract storage, and gate policy, but wants animsmith's animation

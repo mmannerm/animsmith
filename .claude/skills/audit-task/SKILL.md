@@ -110,7 +110,9 @@ outputs, allocation bombs).
 Then apply this codebase's invariants from `code-invariants.md` (in
 this skill's directory). Read it verbatim; for each invariant, decide
 whether the diff touches the relevant area and either flag a finding or
-say "not in scope" explicitly. Do not fabricate.
+say "not in scope" explicitly. Do not fabricate. Cite each invariant by
+its identifier (`invariant-1` … `invariant-9`), **never** as `#1` — a
+bare `#N` in a GitHub comment auto-links to issue #N.
 
 ### 5. Simplicity-first lens
 
@@ -212,7 +214,7 @@ file:line refs.
 
 **Code review:** summary or link to the code-review pass.
 
-**Security:** general-pass summary + code-invariant findings (or "not in scope" per invariant area).
+**Security:** general-pass summary + code-invariant findings, each cited by id (`invariant-N`, never `#N`) (or "not in scope" per invariant area).
 
 **Simplicity:** SIMPLIFY / REFACTOR / NIT bullets with file:line refs.
 

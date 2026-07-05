@@ -37,12 +37,29 @@ ignore fields they do not understand.
 | `rig.profile` | Resolved built-in or custom profile name. |
 | `rig.resolved_roles` | Role-to-bone-name map used by role-dependent checks. |
 | `measurements` | Per-clip metric map. |
+| `meshes` | Per-mesh geometry measurements; present only when the input carried scene assets (see below). |
 | `findings` | Structured lint findings; omitted by `measure`. |
 
 Findings carry `check_id`, `severity`, optional `clip`, optional `bone`,
 optional `time_s`, optional measured/expected values, and a human message.
 Treat `check_id` as the stable key for automation; treat `message` as
 display text.
+
+`measure` reports static (animation-independent) geometry when the input
+carries meshes (FBX always; glTF when the file has mesh data). Each entry
+in `files[].meshes` is:
+
+| Field | Meaning |
+|---|---|
+| `name` | Mesh name. |
+| `vertex_count` | Total position count across the mesh's primitives (indexed meshes count unique vertices, unindexed count corners). |
+| `aabb` | `{ "min": [x,y,z], "max": [x,y,z] }` bounding box in scene units; omitted for a mesh with no finite positions (a mesh with none, or whose positions are all non-finite). |
+| `max_joints_per_vertex` | Highest non-zero skin-influence count on any vertex; `0` for an unskinned mesh. |
+| `weight_sum_min` / `weight_sum_max` | Range of per-vertex skin-weight sums (≈1.0 for a well-formed skin); omitted for an unskinned mesh. |
+
+The `meshes` array is omitted entirely for asset-less inputs, so
+skeleton/animation-only reports are unchanged. This is an additive field
+under the same v1 schema.
 
 ## `diff`
 

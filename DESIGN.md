@@ -84,7 +84,7 @@ animsmith inspect <file>                           # clips, durations, tracks, b
 animsmith report  <file> -o report.html [--clip name]
 animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor]
 animsmith fix     <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
-animsmith convert <in.fbx> -o <out.glb> [--animation-only]
+animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb> [--animation-only]
 animsmith diff    <A> <B> [--format text|json]     # A/B: asset files or prior `measure` JSON
 ```
 
@@ -116,10 +116,10 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: asset files or prior `
   verbatim, so meshes, skins, materials, and textures survive a repair
   bit-for-bit. Folding hemisphere/norm repair into a core `transform`
   and re-emitting through the unified `Document` writer was considered
-  and rejected: the model writer is not byte-identical and (until glTF
-  mesh ingestion, #16) would drop geometry a glTF file already carries.
-  The `Document` round-trip is the right tool for `convert`/`transform`;
-  in-place `fix` is not a round-trip.
+  and rejected: the model writer re-emits and reorders accessors, so it
+  is not byte-identical and would rewrite bytes `fix` must leave
+  untouched. The `Document` round-trip is the right tool for
+  `convert`/`transform`; in-place `fix` is not a round-trip.
 - `convert` is compiled only with the `fbx` feature. `--no-default-features`
   remains a glTF-only pure-Rust CLI with validation, transform, fix, and
   diff commands intact; `report` is controlled separately by the
@@ -171,7 +171,7 @@ quaternion flips, key density, constant tracks):
 
 ```rust
 pub struct Document { pub skeleton: Skeleton, pub clips: Vec<Clip>,
-                     pub assets: SceneAssets,            // meshes/materials; default-empty
+                     pub assets: SceneAssets,            // meshes/skins/materials, when the input carries them
                      pub source: SourceInfo }
 pub struct Skeleton  { pub bones: Vec<Bone> }            // topological order, parents first
 pub struct Bone      { pub name: String, pub parent: Option<BoneId>,
@@ -184,12 +184,20 @@ pub struct Track     { pub bone: BoneId, pub property: Property,   // T | R | S
 ```
 
 `assets` (meshes, skins, factor-only materials) is the geometry half of
-the document. It is *default-empty* and the check catalog ignores it —
-checks judge animation. But it rides through the single `load`/`write`
-round-trip (there is no separate assets-carrying entry point), so
-`transform` and `convert` preserve geometry rather than silently
-dropping it. FBX ingestion populates it today; glTF mesh ingestion is
-#16, so glTF-loaded documents carry empty assets until then.
+the document. Both the FBX and glTF loaders populate it from a single
+`load` (there is no separate assets-carrying entry point — the two
+loaders share one shape); it is empty only when the input carries no
+geometry. The check catalog ignores it — checks judge animation — but it
+rides the one `load`/`write` round-trip, so `transform` and `convert`
+preserve geometry rather than silently dropping it, and `measure`
+reports mesh-level measurements (vertex count, AABB, joints-per-vertex,
+weight sums) from it (#16).
+
+Ingestion is **triangle-list only** — the target inputs are skinned game
+rigs, and the model and writer carry no primitive-topology field. A
+non-`TRIANGLES` glTF primitive (points, lines, strips, fans) is skipped
+rather than misread as a triangle list; other topologies and their
+retriangulation are out of scope for now.
 
 **Sampled layer** — what a game runtime sees. A `PoseGrid` built by a
 `ClipSampler`: uniform time grid over `[0, duration]` (resolution = max
