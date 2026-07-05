@@ -48,8 +48,18 @@ were deleted on 2026-07-04, so the first crates.io publish, the first
 GitHub Release, and `CHANGELOG.md` all begin together at the `0.1.0` in
 `Cargo.toml`.
 
-**Trusted Publishing cannot publish a crate that does not yet exist**, so
-the very first publish of each crate is manual; TP takes over afterwards.
+**The entire first `0.1.0` release is manual** — crates.io publish, the
+`v0.1.0` tag, the GitHub Release, and the initial `CHANGELOG.md`. Two
+constraints force this, and they compose:
+
+- Trusted Publishing cannot publish a crate that does not yet exist, so
+  the first crates.io publish of each crate must use a token.
+- release-plz `release` only acts on *unpublished* packages. Once `0.1.0`
+  is on crates.io it will (correctly) no-op — so it will **not** create
+  the first `v0.1.0` tag/Release for you. The manual `v0.1.0` tag is also
+  the baseline release-plz needs to compute the next version.
+
+So automation begins at `0.2.0`; `0.1.0` is done by hand, once:
 
 1. `cargo login` with a token from <https://crates.io/settings/tokens>
    (scope: `publish-new` + `publish-update`).
@@ -73,16 +83,31 @@ the very first publish of each crate is manual; TP takes over afterwards.
 4. On crates.io, for **each** of the five crates: Settings → Trusted
    Publishing → add publisher — repository `mmannerm/animsmith`, workflow
    `release-plz.yml`, no environment.
-5. Arm the publish job. It is gated on `vars.RELEASE_PLZ_ARMED` and stays
-   inert until this is set, so pre-bootstrap pushes to `main` never attempt
-   to publish the not-yet-existing crates:
+5. Create the first tag, GitHub Release, and changelog **by hand** —
+   release-plz will not, because `0.1.0` is already published. Seed
+   `CHANGELOG.md` from the full history (release-plz maintains it from
+   `0.2.0` on), tag the release commit, and publish the Release:
+
+   ```console
+   git cliff --tag v0.1.0 -o CHANGELOG.md
+   git add CHANGELOG.md && git commit -m "chore(release): 0.1.0"
+   git push
+   git tag v0.1.0 && git push origin v0.1.0
+   gh release create v0.1.0 --title v0.1.0 \
+     --notes "$(git cliff --unreleased --tag v0.1.0 --strip header)"
+   ```
+
+6. Arm the publish job. It is gated on `vars.RELEASE_PLZ_ARMED` and stays
+   inert until this is set, so pushes to `main` before this point never
+   attempt to publish:
 
    ```console
    gh variable set RELEASE_PLZ_ARMED --body true
    ```
 
-After the bootstrap, every subsequent release goes through the release-plz
-PR flow above — no manual `cargo publish`, no manual version edits.
+After the bootstrap, every subsequent release (`0.2.0`+) goes through the
+release-plz PR flow above — no manual `cargo publish`, no manual version
+edits, one repo-level `vX.Y.Z` tag and Release per version.
 
 ## Known caveat: CI on the release PR
 
