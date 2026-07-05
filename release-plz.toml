@@ -11,6 +11,12 @@
 # cliff.toml supplies the grouped entry body.)
 changelog_config = "cliff.toml"
 
+# Publish only when a release-plz PR is merged — not on every push to
+# main. This matches the documented flow (open a release PR, review it,
+# merge to publish); with the default `true`, the release job would run
+# publish logic on every main-branch commit.
+release_always = false
+
 # The five crates ship as one unit at a single shared version
 # (`version.workspace = true`). `version_group` forces one version across
 # the whole group — the highest next-version among them — and every
