@@ -65,12 +65,30 @@ the PR body makes that no delivered line enforces is proving-line NONE —
 the docs-equivalent of an unpinned assertion. Do not skip the ledger
 just because there is no test to cite.
 
+## Behaviour delegated to a documented dependency
+
+When the diff adopts or configures a well-established third-party tool (a
+release automation, a linter, a framework), the tool's own documented
+behaviour is not this diff's to re-prove. The diff's job is *correct
+configuration*; the proving line is the config that selects the behaviour,
+not an assertion that re-verifies the tool. Example: "publishes crates in
+dependency order" when that ordering is the release tool's built-in — mark
+the row `context — relies on <tool>'s documented contract` and exempt it
+from the NONE ⇒ BLOCK rule.
+
+What is **not** exempt is the part the diff itself owns: which tool, which
+version, which flags, which files. Those must be pinned. If the config
+selects the wrong option, omits a required key, or pins a version that
+predates the claimed behaviour, that IS a delivery gap — the exemption
+covers the tool's contract, never the wiring to it.
+
 ## The verdict rule (mechanical, not a judgement call)
 
 - Column 3 non-empty (a buggy impl still passes) **or** column 2 is
   NONE ⇒ **BLOCK** for that row — *unless* the row is marked `context —
-  not delivered by this diff` per the section above, which is exempt.
-  Otherwise the claim is asserted more strongly in words than in code.
+  not delivered by this diff` or `context — relies on <tool>'s documented
+  contract` per the sections above, which are exempt. Otherwise the claim
+  is asserted more strongly in words than in code.
 - Every row "none — fully pinned" (or exempt context) ⇒ intent check
   **clean**.
 

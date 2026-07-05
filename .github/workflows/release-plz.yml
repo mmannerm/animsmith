@@ -40,24 +40,35 @@ jobs:
   # Post-merge test gate — also the safety re-run that used to live in
   # main.yml. Publishing waits on this.
   checks:
+    permissions:
+      contents: read # checkout for the reusable test matrix
     uses: ./.github/workflows/checks.yml
 
   release:
     name: release-plz release
     needs: [checks]
+    # Inert until the one-time bootstrap arms it (see RELEASING.md). Before
+    # the first manual publish + Trusted Publishing setup, an armed job would
+    # try to publish the not-yet-existing 0.1.0 crates on every main push and
+    # fail. Arm with: gh variable set RELEASE_PLZ_ARMED --body true
+    if: ${{ vars.RELEASE_PLZ_ARMED == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write # push tags + create GitHub Releases
       pull-requests: read
       id-token: write # OIDC handshake with crates.io (Trusted Publishing)
+    # This job mints a crates.io token (id-token: write), so its actions are
+    # SHA-pinned to remove the moving-ref exposure a tag like @stable carries.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: stable
       - name: Run release-plz
-        uses: release-plz/action@v0.5.130
+        uses: release-plz/action@e8792575c7f2366cf6ff3ccc33ead9ace5b691c7 # v0.5.130
         with:
           command: release
         env:

@@ -73,6 +73,13 @@ the very first publish of each crate is manual; TP takes over afterwards.
 4. On crates.io, for **each** of the five crates: Settings → Trusted
    Publishing → add publisher — repository `mmannerm/animsmith`, workflow
    `release-plz.yml`, no environment.
+5. Arm the publish job. It is gated on `vars.RELEASE_PLZ_ARMED` and stays
+   inert until this is set, so pre-bootstrap pushes to `main` never attempt
+   to publish the not-yet-existing crates:
+
+   ```console
+   gh variable set RELEASE_PLZ_ARMED --body true
+   ```
 
 After the bootstrap, every subsequent release goes through the release-plz
 PR flow above — no manual `cargo publish`, no manual version edits.
