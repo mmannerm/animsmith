@@ -264,3 +264,151 @@ fn transform_pass_preserves_geometry() {
         .count();
     assert_eq!(input_keys, 3, "hold-extend appended a keyframe");
 }
+
+/// The read side of the writer: `write` → `load_with_assets` recovers
+/// meshes, skins, and materials equivalently. This is the #16 round-trip
+/// contract — a GLB-based measure wrapper can now reach geometry through
+/// animsmith.
+#[test]
+fn load_with_assets_round_trips_meshes_skins_materials() {
+    let dir = std::env::temp_dir().join("animsmith-load-assets-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("roundtrip.glb");
+    animsmith_gltf::write::write(&skinned_triangle(), &path).expect("writes");
+
+    let (doc, assets) = animsmith_gltf::load_with_assets(&path).expect("loads with assets");
+    // `load_with_assets` leaves the returned document's assets empty; the
+    // geometry rides in the second tuple element until a caller attaches it.
+    assert!(doc.assets.meshes.is_empty(), "document assets stay empty");
+
+    assert_eq!(assets.meshes.len(), 1, "one mesh");
+    let mesh = &assets.meshes[0];
+    assert_eq!(mesh.primitives.len(), 1, "one primitive");
+    let prim = &mesh.primitives[0];
+
+    // Geometry: welded to 4 unique corners, 6 indices (two triangles).
+    assert_eq!(prim.positions.len(), 4, "welded to unique corners");
+    assert_eq!(prim.positions[1], Vec3::new(1.0, 0.0, 0.0));
+    assert_eq!(prim.indices.len(), 6, "two triangles");
+    assert_eq!(&prim.indices[..3], &[0, 1, 2]);
+    assert_eq!(prim.normals.len(), 4, "normals recovered");
+    assert_eq!(prim.uvs[2], [0.0, 1.0], "UVs recovered");
+    assert_eq!(prim.material, Some(0), "primitive keeps its material index");
+
+    // Skin influences survive, still normalized.
+    assert_eq!(prim.joints[0], [0, 1, 0, 0]);
+    for w in &prim.weights {
+        let sum: f32 = w.iter().sum();
+        assert!((sum - 1.0).abs() < 1e-5, "weights normalized: {w:?}");
+    }
+
+    // Skin: joints map back to bone ids in cluster order, IBMs recovered.
+    assert_eq!(mesh.skin_joints, vec![0, 1], "joints in cluster order");
+    assert_eq!(mesh.skin_ibms.len(), 2, "one IBM per joint");
+    assert_eq!(
+        mesh.skin_ibms[1].to_cols_array_2d()[3][1],
+        -1.0,
+        "tip IBM carries the -1 y translation"
+    );
+
+    // Material: PBR factors and the embedded base-color texture.
+    assert_eq!(assets.materials.len(), 1);
+    let material = &assets.materials[0];
+    assert_eq!(material.base_color, [1.0, 1.0, 1.0, 1.0]);
+    assert_eq!(material.metallic, 0.0);
+    assert!((material.roughness - 0.9).abs() < 1e-6);
+    let texture = material
+        .base_color_texture
+        .as_ref()
+        .expect("base-color texture present");
+    assert_eq!(texture.mime, "image/png");
+    assert_eq!(texture.bytes, TINY_PNG, "texture bytes round-trip");
+}
+
+/// The `.gltf` (text) path resolves a data-URI buffer and a
+/// bufferView-backed image just like the binary `.glb` path.
+#[test]
+fn load_with_assets_reads_gltf_text_format() {
+    let dir = std::env::temp_dir().join("animsmith-load-assets-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("roundtrip.gltf");
+    animsmith_gltf::write::write(&skinned_triangle(), &path).expect("writes");
+
+    let (_doc, assets) = animsmith_gltf::load_with_assets(&path).expect("loads");
+    assert_eq!(assets.meshes.len(), 1);
+    assert_eq!(assets.meshes[0].primitives[0].positions.len(), 4);
+    assert_eq!(
+        assets.materials[0]
+            .base_color_texture
+            .as_ref()
+            .expect("texture")
+            .bytes,
+        TINY_PNG,
+    );
+}
+
+/// An unindexed primitive stays unindexed: the writer emits no index
+/// accessor, and `load_with_assets` recovers the raw corner stream. This
+/// is the "meshes (indexed or not)" half of #16.
+#[test]
+fn load_with_assets_preserves_unindexed_primitives() {
+    let dir = std::env::temp_dir().join("animsmith-load-assets-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("unindexed.glb");
+
+    // A single unwelded triangle: 3 corners, no indices.
+    let doc = Document {
+        skeleton: Skeleton {
+            bones: vec![Bone {
+                name: "root".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            }],
+        },
+        clips: vec![],
+        assets: SceneAssets {
+            meshes: vec![MeshAsset {
+                name: "tri".into(),
+                node: 0,
+                primitives: vec![Primitive {
+                    material: None,
+                    indices: vec![],
+                    positions: vec![
+                        Vec3::new(0.0, 0.0, 0.0),
+                        Vec3::new(1.0, 0.0, 0.0),
+                        Vec3::new(0.0, 1.0, 0.0),
+                    ],
+                    ..Primitive::default()
+                }],
+                skin_joints: vec![],
+                skin_ibms: vec![],
+            }],
+            materials: vec![],
+        },
+        source: SourceInfo::default(),
+    };
+    animsmith_gltf::write::write(&doc, &path).expect("writes");
+
+    let (_doc, assets) = animsmith_gltf::load_with_assets(&path).expect("loads");
+    let prim = &assets.meshes[0].primitives[0];
+    assert!(prim.indices.is_empty(), "no index accessor was emitted");
+    assert_eq!(prim.positions.len(), 3, "raw corner stream preserved");
+    assert_eq!(prim.material, None, "no material referenced");
+}
+
+/// `load` (without `_with_assets`) leaves geometry on the floor even when
+/// the file carries it — the lint/measure path stays mesh-free.
+#[test]
+fn load_drops_assets() {
+    let dir = std::env::temp_dir().join("animsmith-load-assets-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("has-geometry.glb");
+    animsmith_gltf::write::write(&skinned_triangle(), &path).expect("writes");
+
+    let doc = animsmith_gltf::load(&path).expect("loads");
+    assert!(doc.assets.meshes.is_empty(), "load() drops meshes");
+    assert!(doc.assets.materials.is_empty(), "load() drops materials");
+    // But the skeleton and any animation still load.
+    assert!(!doc.skeleton.bones.is_empty(), "skeleton still loads");
+}

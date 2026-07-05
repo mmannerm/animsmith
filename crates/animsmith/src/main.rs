@@ -726,10 +726,25 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             output,
             animation_only,
         } => {
-            let mut doc = load(&input)?;
+            // Convert is the one path that needs scene geometry, so it
+            // uses the assets-aware glTF loader (FBX's `load` already
+            // carries assets); the lighter `load` stays geometry-free
+            // for lint/measure.
+            let ext = input
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(str::to_ascii_lowercase)
+                .unwrap_or_default();
+            let mut doc = if matches!(ext.as_str(), "glb" | "gltf") {
+                let (mut doc, assets) =
+                    animsmith_gltf::load_with_assets(&input).map_err(|e| e.to_string())?;
+                doc.assets = assets;
+                doc
+            } else {
+                load(&input)?
+            };
             // `--animation-only` clears assets uniformly across formats:
-            // glTF ingestion carries none yet (#16), so this is where an
-            // FBX conversion drops its geometry on request.
+            // this is where a conversion drops its geometry on request.
             if animation_only {
                 doc.assets = animsmith_core::model::SceneAssets::default();
             }
