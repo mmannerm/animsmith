@@ -1,8 +1,10 @@
-//! Minimal glTF 2.0 writer for `convert`: emits the skeleton (node
-//! hierarchy + rest TRS) and every clip's animation tracks. This is a
-//! *pipeline* conversion — meshes, skins, and materials are not
-//! carried; the output exists so animation data can enter glTF-based
-//! tooling (including animsmith itself) straight from a DCC export.
+//! Minimal glTF 2.0 writer for `convert`/`transform`: emits the
+//! skeleton (node hierarchy + rest TRS), every clip's animation tracks,
+//! and whatever scene assets the [`Document`] carries ([`Document::assets`]
+//! — triangulated meshes, skins, and factor-only materials). A document
+//! with default-empty assets writes animation + skeleton only, so
+//! animation data can still enter glTF-based tooling (including animsmith
+//! itself) straight from a DCC export.
 //!
 //! Values are written exactly as held in the core model — lint first;
 //! conversion does not repair.
