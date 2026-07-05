@@ -355,6 +355,22 @@ mod tests {
     }
 
     #[test]
+    fn all_non_finite_weight_sums_yield_no_weight_stats() {
+        // Every weight sum non-finite ⇒ no finite contribution ⇒ both
+        // bounds omitted, not an inf/-inf pair that serializes to `null`.
+        let prim = Primitive {
+            positions: vec![Vec3::ZERO, Vec3::ONE],
+            weights: vec![[f32::NAN, 0.0, 0.0, 0.0], [f32::INFINITY, 0.0, 0.0, 0.0]],
+            ..Primitive::default()
+        };
+        let m = &measure_meshes(&mesh("allnanw", vec![prim]))[0];
+        assert_eq!(m.weight_sum_min, None, "no finite weight sum ⇒ omitted");
+        assert_eq!(m.weight_sum_max, None);
+        // max_joints_per_vertex still counts the non-zero influences.
+        assert_eq!(m.max_joints_per_vertex, 1);
+    }
+
+    #[test]
     fn vertex_count_sums_across_primitives() {
         let a = Primitive {
             positions: vec![Vec3::ZERO; 3],

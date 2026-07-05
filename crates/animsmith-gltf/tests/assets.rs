@@ -365,14 +365,35 @@ fn load_reads_gltf_text_format() {
 
 /// An unindexed primitive stays unindexed: the writer emits no index
 /// accessor, and `load` recovers the raw corner stream. This is the
-/// "meshes (indexed or not)" half of #16.
+/// "meshes (indexed or not)" half of #16 — every attribute (positions,
+/// normals, UVs, joints, weights) is pinned per corner with distinct
+/// values, so an unindexed loader that dropped or scrambled any of them
+/// would fail here.
 #[test]
 fn load_preserves_unindexed_primitives() {
     let dir = std::env::temp_dir().join("animsmith-load-assets-test");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("unindexed.glb");
 
-    // A single unwelded triangle: 3 corners, no indices.
+    // A single unwelded triangle: 3 distinct corners, no indices, every
+    // optional attribute present with per-corner-distinct values.
+    let positions = vec![
+        Vec3::new(0.0, 0.0, 0.0),
+        Vec3::new(1.0, 0.0, 0.0),
+        Vec3::new(0.0, 1.0, 0.0),
+    ];
+    let normals = vec![
+        Vec3::new(0.0, 0.0, 1.0),
+        Vec3::new(1.0, 0.0, 0.0),
+        Vec3::new(0.0, 1.0, 0.0),
+    ];
+    let uvs = vec![[0.0, 0.0], [1.0, 0.0], [0.25, 0.75]];
+    let joints = vec![[0, 0, 0, 0], [1, 2, 0, 0], [3, 0, 0, 0]];
+    let weights = vec![
+        [1.0, 0.0, 0.0, 0.0],
+        [0.5, 0.5, 0.0, 0.0],
+        [0.25, 0.25, 0.5, 0.0],
+    ];
     let doc = Document {
         skeleton: Skeleton {
             bones: vec![Bone {
@@ -390,12 +411,11 @@ fn load_preserves_unindexed_primitives() {
                 primitives: vec![Primitive {
                     material: None,
                     indices: vec![],
-                    positions: vec![
-                        Vec3::new(0.0, 0.0, 0.0),
-                        Vec3::new(1.0, 0.0, 0.0),
-                        Vec3::new(0.0, 1.0, 0.0),
-                    ],
-                    ..Primitive::default()
+                    positions: positions.clone(),
+                    normals: normals.clone(),
+                    uvs: uvs.clone(),
+                    joints: joints.clone(),
+                    weights: weights.clone(),
                 }],
                 skin_joints: vec![],
                 skin_ibms: vec![],
@@ -407,10 +427,14 @@ fn load_preserves_unindexed_primitives() {
     animsmith_gltf::write::write(&doc, &path).expect("writes");
 
     let doc = animsmith_gltf::load(&path).expect("loads");
-    let assets = &doc.assets;
-    let prim = &assets.meshes[0].primitives[0];
+    let prim = &doc.assets.meshes[0].primitives[0];
     assert!(prim.indices.is_empty(), "no index accessor was emitted");
-    assert_eq!(prim.positions.len(), 3, "raw corner stream preserved");
+    // Every attribute round-trips exactly, per corner.
+    assert_eq!(prim.positions, positions);
+    assert_eq!(prim.normals, normals);
+    assert_eq!(prim.uvs, uvs);
+    assert_eq!(prim.joints, joints);
+    assert_eq!(prim.weights, weights);
     assert_eq!(prim.material, None, "no material referenced");
 }
 
