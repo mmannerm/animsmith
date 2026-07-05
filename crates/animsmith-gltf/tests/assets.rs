@@ -1,6 +1,6 @@
-//! Mesh/skin/material emission: a synthetic skinned triangle written
-//! with `write_with_assets` must parse as valid glTF with every
-//! attribute readable and weights normalized.
+//! Mesh/skin/material emission: a synthetic skinned triangle carried in
+//! `Document::assets` must parse as valid glTF with every attribute
+//! readable and weights normalized.
 
 use animsmith_core::model::*;
 use glam::{Mat4, Vec3};
@@ -14,29 +14,25 @@ const TINY_PNG: &[u8] = &[
     0x44, 0xAE, 0x42, 0x60, 0x82,
 ];
 
-fn skinned_triangle() -> (Document, SceneAssets) {
-    let doc = Document {
-        skeleton: Skeleton {
-            bones: vec![
-                Bone {
-                    name: "root".into(),
-                    parent: None,
-                    rest: Transform::IDENTITY,
-                    inverse_bind: Some(Mat4::IDENTITY),
+fn skinned_triangle() -> Document {
+    let skeleton = Skeleton {
+        bones: vec![
+            Bone {
+                name: "root".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: Some(Mat4::IDENTITY),
+            },
+            Bone {
+                name: "tip".into(),
+                parent: Some(0),
+                rest: Transform {
+                    translation: Vec3::new(0.0, 1.0, 0.0),
+                    ..Transform::IDENTITY
                 },
-                Bone {
-                    name: "tip".into(),
-                    parent: Some(0),
-                    rest: Transform {
-                        translation: Vec3::new(0.0, 1.0, 0.0),
-                        ..Transform::IDENTITY
-                    },
-                    inverse_bind: Some(Mat4::from_translation(Vec3::new(0.0, -1.0, 0.0))),
-                },
-            ],
-        },
-        clips: vec![],
-        source: SourceInfo::default(),
+                inverse_bind: Some(Mat4::from_translation(Vec3::new(0.0, -1.0, 0.0))),
+            },
+        ],
     };
     let assets = SceneAssets {
         meshes: vec![MeshAsset {
@@ -84,7 +80,12 @@ fn skinned_triangle() -> (Document, SceneAssets) {
             }),
         }],
     };
-    (doc, assets)
+    Document {
+        skeleton,
+        clips: vec![],
+        assets,
+        source: SourceInfo::default(),
+    }
 }
 
 #[test]
@@ -92,8 +93,8 @@ fn skinned_mesh_round_trips_through_gltf_parser() {
     let dir = std::env::temp_dir().join("animsmith-assets-test");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("tri.glb");
-    let (doc, assets) = skinned_triangle();
-    animsmith_gltf::write::write_with_assets(&doc, &assets, &path).expect("writes");
+    let doc = skinned_triangle();
+    animsmith_gltf::write::write(&doc, &path).expect("writes");
 
     let bytes = std::fs::read(&path).unwrap();
     let gltf = gltf::Gltf::from_slice(&bytes).expect("valid glTF");
@@ -187,4 +188,29 @@ fn skinned_mesh_round_trips_through_gltf_parser() {
     // POSITION accessor carries the spec-required min/max.
     let pos_accessor = prim.get(&gltf::Semantic::Positions).unwrap();
     assert!(pos_accessor.min().is_some() && pos_accessor.max().is_some());
+}
+
+/// `write` is driven entirely by `Document::assets`: clearing them (what
+/// `convert --animation-only` does, uniformly across formats) yields a
+/// mesh/skin/material-free file — while the same document's skeleton and
+/// clips still write. This is the unification's data-loss contract: only
+/// clearing assets drops geometry, never the write path itself.
+#[test]
+fn clearing_assets_writes_no_geometry() {
+    let dir = std::env::temp_dir().join("animsmith-assets-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("stripped.glb");
+
+    let mut doc = skinned_triangle();
+    assert!(!doc.assets.meshes.is_empty(), "fixture carries a mesh");
+    doc.assets = SceneAssets::default();
+    animsmith_gltf::write::write(&doc, &path).expect("writes");
+
+    let bytes = std::fs::read(&path).unwrap();
+    let gltf = gltf::Gltf::from_slice(&bytes).expect("valid glTF");
+    assert_eq!(gltf.meshes().count(), 0, "no meshes without assets");
+    assert_eq!(gltf.skins().count(), 0, "no skins without assets");
+    assert_eq!(gltf.materials().count(), 0, "no materials without assets");
+    // The skeleton (both bones) still writes — geometry is the only loss.
+    assert_eq!(gltf.nodes().count(), 2, "skeleton nodes survive");
 }

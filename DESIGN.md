@@ -110,6 +110,16 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: asset files or prior `
   stable ids; every repair must be safe, lossless, and idempotent.
   Repair taxonomy (risk-tier groups) is deliberately deferred until a
   repair exists that doesn't meet that bar.
+- **`fix` stays byte-surgical — a product requirement, not an accident**
+  (decision recorded for #33). It patches only the offending animation
+  bytes in the original container and copies everything else through
+  verbatim, so meshes, skins, materials, and textures survive a repair
+  bit-for-bit. Folding hemisphere/norm repair into a core `transform`
+  and re-emitting through the unified `Document` writer was considered
+  and rejected: the model writer is not byte-identical and (until glTF
+  mesh ingestion, #16) would drop geometry a glTF file already carries.
+  The `Document` round-trip is the right tool for `convert`/`transform`;
+  in-place `fix` is not a round-trip.
 - `convert` is compiled only with the `fbx` feature. `--no-default-features`
   remains a glTF-only pure-Rust CLI with validation, transform, fix, and
   diff commands intact; `report` is controlled separately by the
@@ -160,7 +170,9 @@ Two representations of a loaded file, because checks genuinely need both:
 quaternion flips, key density, constant tracks):
 
 ```rust
-pub struct Document { pub skeleton: Skeleton, pub clips: Vec<Clip>, pub source: SourceInfo }
+pub struct Document { pub skeleton: Skeleton, pub clips: Vec<Clip>,
+                     pub assets: SceneAssets,            // meshes/materials; default-empty
+                     pub source: SourceInfo }
 pub struct Skeleton  { pub bones: Vec<Bone> }            // topological order, parents first
 pub struct Bone      { pub name: String, pub parent: Option<BoneId>,
                        pub rest: Transform,              // node-local TRS
@@ -170,6 +182,14 @@ pub struct Track     { pub bone: BoneId, pub property: Property,   // T | R | S
                        pub times: Vec<f32>, pub values: TrackValues,
                        pub interpolation: Interpolation }          // Linear | Step | CubicSpline
 ```
+
+`assets` (meshes, skins, factor-only materials) is the geometry half of
+the document. It is *default-empty* and the check catalog ignores it —
+checks judge animation. But it rides through the single `load`/`write`
+round-trip (there is no separate assets-carrying entry point), so
+`transform` and `convert` preserve geometry rather than silently
+dropping it. FBX ingestion populates it today; glTF mesh ingestion is
+#16, so glTF-loaded documents carry empty assets until then.
 
 **Sampled layer** — what a game runtime sees. A `PoseGrid` built by a
 `ClipSampler`: uniform time grid over `[0, duration]` (resolution = max
@@ -389,7 +409,10 @@ to *that* frame N. Determinism is the feature.
 - **`convert`** emits glTF 2.0 GLB: nodes + skin (computed IBMs) +
   animations always; mesh + weights when present; `--animation-only` to
   strip mesh. Explicitly *not* an art exporter — no material fidelity
-  promise.
+  promise. Both `convert` and `transform` share one `load`→`write`
+  round-trip over `Document` (assets included), so geometry survives a
+  transform pass and `--animation-only` clears it uniformly across input
+  formats (it is the only lever that drops geometry).
 - **FBX pitfalls double as checks** when linting `.fbx` directly: source
   unit ≠ 1m (warn even though we convert), Z-up source, namespace-prefixed
   bone names (profile matcher strips), default "Take 001" naming (feeds

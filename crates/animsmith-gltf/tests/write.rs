@@ -50,6 +50,7 @@ fn synthetic_doc() -> Document {
                 },
             ],
         }],
+        assets: Default::default(),
         source: SourceInfo::default(),
     }
 }

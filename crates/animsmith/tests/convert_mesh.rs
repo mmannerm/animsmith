@@ -12,12 +12,11 @@ fn converted_mesh_is_structurally_sound() {
         eprintln!("skipped: set ANIMSMITH_MESH_FBX to run");
         return;
     };
-    let (doc, assets) =
-        animsmith_fbx::load_with_assets(std::path::Path::new(&fbx)).expect("FBX loads");
-    assert!(!assets.meshes.is_empty(), "fixture must carry meshes");
+    let doc = animsmith_fbx::load(std::path::Path::new(&fbx)).expect("FBX loads");
+    assert!(!doc.assets.meshes.is_empty(), "fixture must carry meshes");
 
     let out = std::env::temp_dir().join("animsmith-convert-mesh.glb");
-    animsmith_gltf::write::write_with_assets(&doc, &assets, &out).expect("writes");
+    animsmith_gltf::write::write(&doc, &out).expect("writes");
 
     let bytes = std::fs::read(&out).unwrap();
     let gltf = gltf::Gltf::from_slice(&bytes).expect("valid glTF");

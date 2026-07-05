@@ -57,6 +57,7 @@ fn clean_doc() -> Document {
             duration_s: 1.0,
             tracks: vec![rotation, translation],
         }],
+        assets: Default::default(),
         source: SourceInfo::default(),
     }
 }

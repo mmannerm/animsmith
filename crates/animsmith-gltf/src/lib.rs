@@ -14,8 +14,8 @@ pub mod fix;
 pub mod write;
 
 use animsmith_core::model::{
-    Bone, Clip, Document, Interpolation, Property, Skeleton, SourceInfo, Track, TrackValues,
-    Transform,
+    Bone, Clip, Document, Interpolation, Property, SceneAssets, Skeleton, SourceInfo, Track,
+    TrackValues, Transform,
 };
 use base64::Engine as _;
 use glam::{Mat4, Quat, Vec3};
@@ -334,6 +334,9 @@ fn build_document(
     Ok(Document {
         skeleton: Skeleton { bones },
         clips,
+        // glTF mesh ingestion is #16; until then assets stay empty and
+        // the writer emits animation + skeleton only.
+        assets: SceneAssets::default(),
         source: SourceInfo {
             path: Some(path.display().to_string()),
             format: Some("gltf".into()),

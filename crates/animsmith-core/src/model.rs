@@ -180,21 +180,26 @@ pub struct SourceInfo {
     pub format: Option<String>,
 }
 
-/// A loaded file: one skeleton, any number of clips targeting it.
+/// A loaded file: one skeleton, any number of clips targeting it, and
+/// the scene assets (meshes/materials) that rode in alongside them.
+/// `assets` is default-empty: the check catalog judges animation and
+/// ignores it, but the load/write round-trip carries it so `transform`
+/// and `convert` preserve geometry instead of silently dropping it.
 #[derive(Debug, Clone, Default)]
 pub struct Document {
     pub skeleton: Skeleton,
     pub clips: Vec<Clip>,
+    pub assets: SceneAssets,
     pub source: SourceInfo,
 }
 
 // --- Scene assets (meshes/materials) -----------------------------------
 //
-// Carried alongside a Document by `convert` so a full FBX→glTF
-// conversion can preserve geometry. Deliberately NOT part of Document:
-// the check catalog judges animation, and every existing consumer stays
-// untouched. Vertex data is unindexed (one entry per triangle corner);
-// a welding/indexing pass is a future size optimization.
+// The geometry half of a [`Document`]. Populated by loaders that ingest
+// meshes (FBX today; glTF is #16) and emitted by the writer, so a full
+// conversion preserves geometry. Vertex data is unindexed (one entry
+// per triangle corner); a welding/indexing pass is a future size
+// optimization.
 
 /// One glTF-primitive-to-be: triangles sharing a material. Attributes
 /// are per corner until [`Primitive::weld`] dedupes them into indexed

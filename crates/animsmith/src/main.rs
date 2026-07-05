@@ -86,7 +86,7 @@ enum Cmd {
     },
     /// Apply mechanical clip transforms.
     #[command(
-        long_about = "Apply pipeline-mechanical clip transforms and write the result as skeleton+animation glTF. Meshes are not carried; transform clips before splicing them into a full asset. Operations apply to every clip, or one clip via --clip."
+        long_about = "Apply pipeline-mechanical clip transforms and write the result as glTF, carrying through any geometry the input brought (FBX meshes/skins/materials today; glTF mesh ingestion is #16). Operations apply to every clip, or one clip via --clip."
     )]
     Transform {
         /// Input .glb, .gltf, or .fbx file.
@@ -726,26 +726,16 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             output,
             animation_only,
         } => {
-            let ext = input
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(str::to_ascii_lowercase)
-                .unwrap_or_default();
-            let (doc, assets) = match ext.as_str() {
-                "fbx" if !animation_only => {
-                    animsmith_fbx::load_with_assets(&input).map_err(|e| e.to_string())?
-                }
-                // glTF ingestion carries no scene assets, so the output
-                // is animation-only regardless of the flag (which only
-                // the fbx path reads).
-                _ => {
-                    let _ = animation_only;
-                    (load(&input)?, animsmith_core::model::SceneAssets::default())
-                }
-            };
-            animsmith_gltf::write::write_with_assets(&doc, &assets, &output)
-                .map_err(|e| e.to_string())?;
-            let vertices: usize = assets
+            let mut doc = load(&input)?;
+            // `--animation-only` clears assets uniformly across formats:
+            // glTF ingestion carries none yet (#16), so this is where an
+            // FBX conversion drops its geometry on request.
+            if animation_only {
+                doc.assets = animsmith_core::model::SceneAssets::default();
+            }
+            animsmith_gltf::write::write(&doc, &output).map_err(|e| e.to_string())?;
+            let vertices: usize = doc
+                .assets
                 .meshes
                 .iter()
                 .flat_map(|m| m.primitives.iter().map(|p| p.positions.len()))
@@ -755,8 +745,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 output.display(),
                 doc.skeleton.bones.len(),
                 doc.clips.len(),
-                assets.meshes.len(),
-                assets.materials.len(),
+                doc.assets.meshes.len(),
+                doc.assets.materials.len(),
             );
             Ok(ExitCode::SUCCESS)
         }

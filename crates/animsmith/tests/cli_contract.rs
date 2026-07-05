@@ -70,6 +70,7 @@ fn sway_doc_with_quats(quats: Vec<Quat>) -> Document {
                 values: TrackValues::Quats(quats),
             }],
         }],
+        assets: Default::default(),
         source: SourceInfo::default(),
     }
 }
