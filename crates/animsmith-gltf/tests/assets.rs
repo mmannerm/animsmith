@@ -266,9 +266,11 @@ fn transform_pass_preserves_geometry() {
 }
 
 /// The read side of the writer: `write` → `load` recovers meshes,
-/// skins, and materials equivalently, in the document's `assets`. This
-/// is the #16 round-trip contract — a GLB-based measure wrapper can now
-/// reach geometry through animsmith.
+/// skins, and materials in the document's `assets`. This is the #16
+/// round-trip contract — a GLB-based measure wrapper can now reach
+/// geometry through animsmith. Every field is asserted whole (not a
+/// sampled subset), so a loader that corrupted any unchecked position,
+/// index, normal, UV, joint, weight, or IBM entry would fail here.
 #[test]
 fn load_round_trips_meshes_skins_materials() {
     let dir = std::env::temp_dir().join("animsmith-load-assets-test");
@@ -284,37 +286,52 @@ fn load_round_trips_meshes_skins_materials() {
     assert_eq!(mesh.primitives.len(), 1, "one primitive");
     let prim = &mesh.primitives[0];
 
-    // Geometry: welded to 4 unique corners, 6 indices (two triangles).
-    assert_eq!(prim.positions.len(), 4, "welded to unique corners");
-    assert_eq!(prim.positions[1], Vec3::new(1.0, 0.0, 0.0));
-    assert_eq!(prim.indices.len(), 6, "two triangles");
-    assert_eq!(&prim.indices[..3], &[0, 1, 2]);
-    assert_eq!(prim.normals.len(), 4, "normals recovered");
-    assert_eq!(prim.uvs[2], [0.0, 1.0], "UVs recovered");
-    assert_eq!(prim.material, Some(0), "primitive keeps its material index");
-
-    // Skin influences survive, still normalized.
-    assert_eq!(prim.joints[0], [0, 1, 0, 0]);
-    for w in &prim.weights {
-        let sum: f32 = w.iter().sum();
-        assert!((sum - 1.0).abs() < 1e-5, "weights normalized: {w:?}");
-    }
-
-    // Skin: joints map back to bone ids in cluster order, IBMs recovered.
-    assert_eq!(mesh.skin_joints, vec![0, 1], "joints in cluster order");
-    assert_eq!(mesh.skin_ibms.len(), 2, "one IBM per joint");
+    // Geometry recovers exactly as written — the fixture is welded to 4
+    // unique corners / 6 indices before writing, and every entry is
+    // pinned (glam/array types are `PartialEq`, so these compare whole).
     assert_eq!(
-        mesh.skin_ibms[1].to_cols_array_2d()[3][1],
-        -1.0,
-        "tip IBM carries the -1 y translation"
+        prim.positions,
+        vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(1.0, 1.0, 0.0),
+        ],
+    );
+    assert_eq!(prim.indices, vec![0, 1, 2, 1, 3, 2]);
+    assert_eq!(prim.normals, vec![Vec3::Z; 4]);
+    assert_eq!(
+        prim.uvs,
+        vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]
+    );
+    assert_eq!(prim.joints, vec![[0, 1, 0, 0]; 4]);
+    assert_eq!(prim.weights, vec![[0.75, 0.25, 0.0, 0.0]; 4]);
+    assert_eq!(prim.material, Some(0));
+
+    // Skin: joints in cluster order, and both inverse bind matrices whole
+    // (the writer falls back to the bones' `inverse_bind` when the mesh
+    // carries none, so `tip` keeps its −1 y translation).
+    assert_eq!(mesh.skin_joints, vec![0, 1]);
+    assert_eq!(
+        mesh.skin_ibms,
+        vec![
+            Mat4::IDENTITY,
+            Mat4::from_translation(Vec3::new(0.0, -1.0, 0.0)),
+        ],
     );
 
-    // Material: PBR factors and the embedded base-color texture.
+    // The skinned mesh hangs off the writer's dedicated holder node —
+    // a synthesized 3rd bone — not the original bone-0 node it was
+    // authored on. This pins the `MeshAsset::node` round-trip claim.
+    assert_eq!(doc.skeleton.bones.len(), 3, "2 skeleton bones + holder");
+    assert_eq!(mesh.node, 2, "mesh maps to the holder bone, not bone 0");
+
+    // Material: PBR factors and the embedded base-color texture, whole.
     assert_eq!(assets.materials.len(), 1);
     let material = &assets.materials[0];
     assert_eq!(material.base_color, [1.0, 1.0, 1.0, 1.0]);
     assert_eq!(material.metallic, 0.0);
-    assert!((material.roughness - 0.9).abs() < 1e-6);
+    assert_eq!(material.roughness, 0.9);
     let texture = material
         .base_color_texture
         .as_ref()

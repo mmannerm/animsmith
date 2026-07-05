@@ -53,7 +53,7 @@ in `files[].meshes` is:
 |---|---|
 | `name` | Mesh name. |
 | `vertex_count` | Total position count across the mesh's primitives (indexed meshes count unique vertices, unindexed count corners). |
-| `aabb` | `{ "min": [x,y,z], "max": [x,y,z] }` bounding box in scene units; omitted for a mesh with no positions. |
+| `aabb` | `{ "min": [x,y,z], "max": [x,y,z] }` bounding box in scene units; omitted for a mesh with no finite positions (a mesh with none, or whose positions are all non-finite). |
 | `max_joints_per_vertex` | Highest non-zero skin-influence count on any vertex; `0` for an unskinned mesh. |
 | `weight_sum_min` / `weight_sum_max` | Range of per-vertex skin-weight sums (≈1.0 for a well-formed skin); omitted for an unskinned mesh. |
 
