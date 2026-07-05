@@ -3,7 +3,7 @@
 //! readable and weights normalized.
 
 use animsmith_core::model::*;
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Quat, Vec3};
 
 /// A valid 1×1 white PNG.
 const TINY_PNG: &[u8] = &[
@@ -213,4 +213,54 @@ fn clearing_assets_writes_no_geometry() {
     assert_eq!(gltf.materials().count(), 0, "no materials without assets");
     // The skeleton (both bones) still writes — geometry is the only loss.
     assert_eq!(gltf.nodes().count(), 2, "skeleton nodes survive");
+}
+
+/// A transform pass over a geometry-carrying `Document` must preserve
+/// that geometry — this is the mechanism the `transform` CLI uses
+/// (load → mutate clips → `write`), minus the file load. It pins the
+/// data-loss regression #33 fixes: a transform that cleared or bypassed
+/// `Document::assets` before writing would drop the mesh here, while a
+/// correct one emits the (mutated) animation *and* the mesh together.
+#[test]
+fn transform_pass_preserves_geometry() {
+    let dir = std::env::temp_dir().join("animsmith-assets-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("transformed.glb");
+
+    // A two-key rotation clip on the root bone, carried alongside the
+    // skinned mesh.
+    let mut doc = skinned_triangle();
+    doc.clips = vec![Clip {
+        name: "spin".into(),
+        duration_s: 1.0,
+        tracks: vec![Track {
+            bone: 0,
+            property: Property::Rotation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Quats(vec![Quat::IDENTITY, Quat::from_rotation_y(1.0)]),
+        }],
+    }];
+
+    // Mutate the clip the way `transform` does; hold-extend appends one
+    // key (2 → 3), so the emitted sampler input proves the pass ran.
+    animsmith_core::transform::hold_extend(&mut doc.clips[0], 0.5);
+    animsmith_gltf::write::write(&doc, &path).expect("writes");
+
+    let bytes = std::fs::read(&path).unwrap();
+    let gltf = gltf::Gltf::from_slice(&bytes).expect("valid glTF");
+
+    // Geometry survived the transform pass.
+    assert_eq!(gltf.meshes().count(), 1, "mesh survives a transform pass");
+    assert_eq!(gltf.skins().count(), 1, "skin survives a transform pass");
+    // The transform actually ran: the animation is present with the
+    // hold-extended keyframe count.
+    let anim = gltf.animations().next().expect("animation present");
+    let input_keys = anim
+        .samplers()
+        .next()
+        .expect("sampler present")
+        .input()
+        .count();
+    assert_eq!(input_keys, 3, "hold-extend appended a keyframe");
 }
