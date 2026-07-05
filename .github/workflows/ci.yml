@@ -2,8 +2,8 @@ name: CI
 
 # PR gate: every merge into main goes through a pull request (branch
 # protection enforces this), and this workflow is the required test
-# check. Pushes to main re-run the same tests in main.yml ahead of the
-# release job.
+# check. Pushes to main re-run the same tests in release-plz.yml (its
+# `checks` job) ahead of the release/publish job.
 
 on:
   pull_request:

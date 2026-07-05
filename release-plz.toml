@@ -1,0 +1,42 @@
+# release-plz configuration — https://release-plz.dev/docs/config
+#
+# Drives the automated release flow in .github/workflows/release-plz.yml,
+# which replaces the bespoke git-cliff version-computation + manual
+# version-alignment logic previously in main.yml (see #37).
+
+[workspace]
+# Reuse the repository's existing git-cliff configuration so changelog
+# and release-note styling is unchanged from the previous flow.
+# (release-plz manages the per-version section headers in CHANGELOG.md;
+# cliff.toml supplies the grouped entry body.)
+changelog_config = "cliff.toml"
+
+# The five crates ship as one unit at a single shared version
+# (`version.workspace = true`). `version_group` forces one version across
+# the whole group — the highest next-version among them — and every
+# package writes into one root CHANGELOG.md. release-plz bumps the
+# internal `animsmith-*` dependency requirements in lockstep.
+[[package]]
+name = "animsmith-core"
+version_group = "animsmith"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "animsmith-gltf"
+version_group = "animsmith"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "animsmith-fbx"
+version_group = "animsmith"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "animsmith-report"
+version_group = "animsmith"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "animsmith"
+version_group = "animsmith"
+changelog_path = "CHANGELOG.md"

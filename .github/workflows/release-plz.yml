@@ -1,0 +1,87 @@
+name: release-plz
+
+# Release automation via release-plz. Replaces the bespoke git-cliff
+# version-computation + version-alignment flow removed from main.yml
+# (see #37).
+#
+# Two jobs run on every push to main:
+#   - release-pr: opens/updates a release PR that bumps the shared
+#     workspace version, propagates the internal animsmith-* dependency
+#     versions, and updates CHANGELOG.md (git-cliff config: cliff.toml).
+#   - release: once a release PR merges (the Cargo.toml version changes),
+#     tags, creates the GitHub Release, and publishes all five crates to
+#     crates.io in dependency order.
+#
+# crates.io publishing uses Trusted Publishing (GitHub OIDC): the release
+# job holds `id-token: write` and release-plz mints a short-lived token
+# itself — no CARGO_REGISTRY_TOKEN, no third-party auth/build action in
+# the publish path.
+#
+# BOOTSTRAP (see RELEASING.md): Trusted Publishing cannot publish a crate
+# that does not yet exist, so the first 0.1.0 of each crate is published
+# manually once; TP takes over for every release afterwards.
+#
+# CI-on-release-PR caveat: PRs opened with the default GITHUB_TOKEN do
+# not trigger `on: pull_request` workflows, so the release PR will not
+# get a CI run on its own. If branch protection requires CI to merge it,
+# swap `secrets.GITHUB_TOKEN` in the release-pr job for a PAT or GitHub
+# App token (release-plz `token` input). Deferred to bootstrap.
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Post-merge test gate — also the safety re-run that used to live in
+  # main.yml. Publishing waits on this.
+  checks:
+    uses: ./.github/workflows/checks.yml
+
+  release:
+    name: release-plz release
+    needs: [checks]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push tags + create GitHub Releases
+      pull-requests: read
+      id-token: write # OIDC handshake with crates.io (Trusted Publishing)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run release-plz
+        uses: release-plz/action@v0.5.130
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-pr:
+    name: release-plz release-pr
+    runs-on: ubuntu-latest
+    # Never cancel a half-written release PR.
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
+    permissions:
+      contents: write # push the release branch
+      pull-requests: write # open/update the release PR
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run release-plz
+        uses: release-plz/action@v0.5.130
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

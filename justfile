@@ -72,8 +72,8 @@ doc:
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
     RUSTDOCFLAGS="-D warnings" cargo doc -p animsmith --no-default-features --no-deps
 
-release-alignment:
-    scripts/check-release-alignment.sh
+schema-id:
+    scripts/check-schema-id.sh
 
 # Check the crate package inventories that CI validates before release.
 package-inventory:
@@ -92,7 +92,7 @@ gates: require-cargo-deny
     cargo check --workspace --examples
     cargo test --workspace
     cargo deny check
-    just release-alignment
+    just schema-id
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
     RUSTDOCFLAGS="-D warnings" cargo doc -p animsmith --no-default-features --no-deps
     cargo test -p animsmith --test cli_contract --no-default-features

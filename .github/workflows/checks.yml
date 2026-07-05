@@ -79,8 +79,8 @@ jobs:
         with:
           cache-on-failure: true
 
-      - name: Verify release metadata alignment
-        run: scripts/check-release-alignment.sh
+      - name: Verify output schema $id consistency
+        run: scripts/check-schema-id.sh
 
       - name: Rustdoc warnings are errors
         env:
