@@ -2,7 +2,9 @@
 //! and confirm the mechanical checks pass on clean data.
 
 use animsmith_core::profile::ResolvedRoles;
-use animsmith_core::{CheckCtx, Config, Severity, mechanical_checks, run_checks, sample_clip};
+use animsmith_core::{
+    CheckCtx, Config, MetricGrids, Severity, mechanical_checks, run_checks, sample_clip,
+};
 use std::path::PathBuf;
 
 fn fixture() -> PathBuf {
@@ -30,7 +32,8 @@ fn fixture_is_lint_clean() {
     let doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
     let config = Config::default();
     let roles = ResolvedRoles::default();
-    let ctx = CheckCtx::new(&doc, &roles, &config);
+    let grids = MetricGrids::new(&doc);
+    let ctx = CheckCtx::new(&grids, &roles, &config);
     let findings = run_checks(&ctx, &mechanical_checks());
     let serious: Vec<_> = findings
         .iter()
@@ -60,8 +63,9 @@ fn fixture_pose_grid_fk_is_sane() {
 fn measurements_match_fixture() {
     let doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
     let config = Config::default();
+    let grids = MetricGrids::new(&doc);
     let measurements =
-        animsmith_core::measure::measure_document(&doc, &ResolvedRoles::default(), &config);
+        animsmith_core::measure::measure_document(&grids, &ResolvedRoles::default(), &config);
     let walk = &measurements["walk"];
     assert_eq!(walk.frame_count, 3);
     assert_eq!(walk.animated_bones, vec!["hips", "root"]);

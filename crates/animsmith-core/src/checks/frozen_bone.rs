@@ -7,7 +7,7 @@
 
 use crate::check::{Check, CheckCtx};
 use crate::finding::{Finding, Severity};
-use crate::model::Property;
+use crate::metrics::rotation_range_deg;
 
 pub const DEFAULT_MIN_ROTATION_DEG: f64 = 1.0;
 
@@ -48,24 +48,8 @@ impl Check for FrozenBone {
                 let mut max_deg = 0.0f64;
                 for track in clip.tracks.iter().filter(|t| t.bone == bone_id) {
                     has_any_track = true;
-                    if track.property != Property::Rotation {
-                        continue;
-                    }
-                    let Some(first) = track.key_quat(0) else {
-                        continue;
-                    };
-                    if !first.is_finite() || first.length_squared() == 0.0 {
-                        continue;
-                    }
-                    let first = first.normalize();
-                    for k in 1..track.key_count() {
-                        if let Some(q) = track.key_quat(k)
-                            && q.is_finite()
-                            && q.length_squared() > 0.0
-                        {
-                            max_deg =
-                                max_deg.max(first.angle_between(q.normalize()).to_degrees() as f64);
-                        }
+                    if let Some(deg) = rotation_range_deg(track) {
+                        max_deg = max_deg.max(deg);
                     }
                 }
                 if has_any_track && max_deg < floor {

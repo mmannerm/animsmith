@@ -5,7 +5,7 @@
 
 use animsmith_core::model::*;
 use animsmith_core::profile::{ResolvedRoles, Role};
-use animsmith_core::{CheckCtx, Config, Severity, all_checks, run_checks};
+use animsmith_core::{CheckCtx, Config, MetricGrids, Severity, all_checks, run_checks};
 use glam::{Quat, Vec3};
 
 const KEYS: usize = 33; // 32 intervals over 1 s
@@ -107,7 +107,8 @@ fn treadmill_doc(sweep: f32) -> Document {
 
 fn lint_with(doc: &Document, config: &Config) -> Vec<animsmith_core::Finding> {
     let roles = roles(&doc.skeleton);
-    let ctx = CheckCtx::new(doc, &roles, config);
+    let grids = MetricGrids::new(doc);
+    let ctx = CheckCtx::new(&grids, &roles, config);
     run_checks(&ctx, &all_checks())
 }
 

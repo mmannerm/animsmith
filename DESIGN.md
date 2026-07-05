@@ -207,8 +207,8 @@ hold, cubic-spline Hermite), clamp at ends. For clips declared `loop`,
 the wrap pair is `(last frame, frame 0)` — the seam definition every loop
 check shares. FK accumulates local TRS to model space; the scene-root
 transform is excluded so measurements are independent of asset centering.
-The grid is computed once per clip and shared across checks via a lazy
-cache.
+The metric grid is computed once per clip and shared across checks,
+measurements, and reports through the lazy `MetricGrids` owner.
 
 **Rig profiles** — checks never reference bone names; they reference
 *roles*:

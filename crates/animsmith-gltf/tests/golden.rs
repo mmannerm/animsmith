@@ -12,7 +12,7 @@
 //! ```
 
 use animsmith_core::measure::measure_document;
-use animsmith_core::{Config, detect_profile};
+use animsmith_core::{Config, MetricGrids, detect_profile};
 
 /// (clip, loop_seam_ratio, gait phase, lr_amplitude_m) as recorded by
 /// the reference implementation. Seam ratios use `None` where the
@@ -49,7 +49,8 @@ fn reproduces_reference_numbers() {
     let roles = detect_profile(&doc.skeleton).expect("profile detected");
     assert_eq!(roles.profile, "humanoid");
     let config = Config::default();
-    let measurements = measure_document(&doc, &roles, &config);
+    let grids = MetricGrids::new(&doc);
+    let measurements = measure_document(&grids, &roles, &config);
 
     let mut failures = Vec::new();
     for &(clip, want_seam, want_phase, want_amplitude) in GOLDEN {

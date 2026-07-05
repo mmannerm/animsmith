@@ -86,9 +86,10 @@ pub fn hold_extend(clip: &mut Clip, hold_s: f64) {
         };
         let key = track.key_count() - 1;
         track.times.push(last + hold_s as f32);
+        let value_index = track.value_index(key);
         match &mut track.values {
             TrackValues::Vec3s(v) => {
-                let value = v[track.interpolation.value_index_static(key)];
+                let value = v[value_index];
                 match track.interpolation {
                     Interpolation::CubicSpline => {
                         // Zero tangents: a flat Hermite hold. Also zero
@@ -101,7 +102,7 @@ pub fn hold_extend(clip: &mut Clip, hold_s: f64) {
                 }
             }
             TrackValues::Quats(v) => {
-                let value = v[track.interpolation.value_index_static(key)];
+                let value = v[value_index];
                 match track.interpolation {
                     Interpolation::CubicSpline => {
                         v[key * 3 + 2] = glam::Quat::from_xyzw(0.0, 0.0, 0.0, 0.0);

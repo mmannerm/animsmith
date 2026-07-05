@@ -26,10 +26,15 @@ fn write_report(
     roles: &animsmith_core::ResolvedRoles,
     findings: &[animsmith_core::Finding],
 ) -> std::io::Result<()> {
-    let html = animsmith_report::render(doc, roles, findings, None);
+    let grids = animsmith_core::MetricGrids::new(doc);
+    let html = animsmith_report::render(&grids, roles, findings, None);
     std::fs::write("report.html", html)
 }
 ```
+
+Pass the same `animsmith_core::MetricGrids` used for checks or
+measurements to render those sampled frames without resampling the
+clips.
 
 ## Feature Flags
 

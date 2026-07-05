@@ -144,7 +144,10 @@ pub fn load(path: &Path) -> Result<Document, LoadError> {
     Ok(doc)
 }
 
-fn resolve_buffers(gltf: &gltf::Gltf, base: Option<&Path>) -> Result<Vec<Vec<u8>>, LoadError> {
+pub(crate) fn resolve_buffers(
+    gltf: &gltf::Gltf,
+    base: Option<&Path>,
+) -> Result<Vec<Vec<u8>>, LoadError> {
     let mut buffers = Vec::new();
     for buffer in gltf.buffers() {
         let data = match buffer.source() {

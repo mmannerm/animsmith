@@ -3,10 +3,9 @@
 //! bake's measured sidecar) can pin their own contracts to the numbers.
 
 use crate::config::Config;
-use crate::metrics::{foot_cycle_metrics, metric_frame_count, root_motion_speed_mps};
-use crate::model::{Document, Property, SceneAssets};
+use crate::metrics::{MetricGrids, foot_cycle_metrics, root_motion_speed_mps, rotation_range_deg};
+use crate::model::SceneAssets;
 use crate::profile::ResolvedRoles;
-use crate::sample::sample_clip;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -147,18 +146,20 @@ pub struct ClipMeasurements {
     pub speed_mps: Option<f64>,
 }
 
-/// Measure every clip in the document. Role-dependent metrics
-/// (loop seam, gait, root-motion speed) are present only where the
-/// roles resolve; pass an empty [`ResolvedRoles`] to skip them.
+/// Measure every clip using shared metric pose grids. Role-dependent
+/// metrics (loop seam, gait, root-motion speed) are present only where
+/// the roles resolve; pass an empty [`ResolvedRoles`] to skip them.
 pub fn measure_document(
-    doc: &Document,
+    grids: &MetricGrids<'_>,
     roles: &ResolvedRoles,
     config: &Config,
 ) -> BTreeMap<String, ClipMeasurements> {
+    let doc = grids.document();
     let min_stride_step_m = config.loop_seam_min_stride_step_m();
     doc.clips
         .iter()
-        .map(|clip| {
+        .enumerate()
+        .map(|(clip_index, clip)| {
             let mut animated: BTreeSet<String> = BTreeSet::new();
             let mut rotation_range: BTreeMap<String, f64> = BTreeMap::new();
             let mut frame_count = 0usize;
@@ -173,31 +174,15 @@ pub fn measure_document(
                 animated.insert(bone.name.clone());
                 frame_count = frame_count.max(track.key_count());
 
-                if track.property == Property::Rotation
-                    && let Some(first) = track.key_quat(0)
-                    && first.is_finite()
-                    && first.length_squared() > 0.0
+                if let Some(max_deg) = rotation_range_deg(track)
+                    && max_deg >= MIN_RECORDED_ROTATION_DEG
                 {
-                    let first = first.normalize();
-                    let mut max_deg = 0.0f64;
-                    for k in 1..track.key_count() {
-                        if let Some(q) = track.key_quat(k)
-                            && q.is_finite()
-                            && q.length_squared() > 0.0
-                        {
-                            let deg = first.angle_between(q.normalize()).to_degrees() as f64;
-                            max_deg = max_deg.max(deg);
-                        }
-                    }
-                    if max_deg >= MIN_RECORDED_ROTATION_DEG {
-                        let entry = rotation_range.entry(bone.name.clone()).or_insert(0.0);
-                        *entry = entry.max(max_deg);
-                    }
+                    let entry = rotation_range.entry(bone.name.clone()).or_insert(0.0);
+                    *entry = entry.max(max_deg);
                 }
             }
 
-            let grid =
-                metric_frame_count(clip).map(|frames| sample_clip(&doc.skeleton, clip, frames));
+            let grid = grids.grid(clip_index);
             let cycle = grid
                 .as_ref()
                 .and_then(|g| foot_cycle_metrics(g, roles, min_stride_step_m));

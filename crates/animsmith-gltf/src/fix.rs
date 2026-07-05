@@ -24,8 +24,7 @@
 //! keys without their tangents would change interior samples. Sparse
 //! accessors and quantized (normalized-int) rotations are skipped.
 
-use crate::{FixError, LoadError, WriteError, safe_external_buffer_path};
-use base64::Engine as _;
+use crate::{FixError, LoadError, WriteError, resolve_buffers, safe_external_buffer_path};
 use std::ops::Range;
 use std::path::Path;
 
@@ -76,36 +75,7 @@ impl FixSession {
         // them (the BIN-chunk buffer is located by Source::Bin at write
         // time, not assumed to be index 0). External and data-URI buffers
         // are loaded, patched, and written back to where they came from.
-        let base = input.parent();
-        let mut buffers: Vec<Vec<u8>> = Vec::new();
-        for buffer in gltf.buffers() {
-            let data = match buffer.source() {
-                gltf::buffer::Source::Bin => gltf
-                    .blob
-                    .clone()
-                    .ok_or_else(|| LoadError::Buffer("GLB has no BIN chunk".into()))?,
-                gltf::buffer::Source::Uri(uri) => {
-                    if let Some(encoded) = uri.strip_prefix("data:") {
-                        let payload = encoded
-                            .split_once("base64,")
-                            .map(|(_, p)| p)
-                            .ok_or_else(|| LoadError::Buffer("unsupported data URI".into()))?;
-                        base64::engine::general_purpose::STANDARD
-                            .decode(payload)
-                            .map_err(|e| LoadError::Buffer(format!("bad base64 data URI: {e}")))?
-                    } else {
-                        let path = base
-                            .unwrap_or(Path::new("."))
-                            .join(safe_external_buffer_path(uri)?);
-                        std::fs::read(&path).map_err(|source| LoadError::Io {
-                            path: path.display().to_string(),
-                            source,
-                        })?
-                    }
-                }
-            };
-            buffers.push(data);
-        }
+        let buffers = resolve_buffers(&gltf, input.parent())?;
 
         Ok(Self {
             original,

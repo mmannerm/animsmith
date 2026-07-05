@@ -6,7 +6,7 @@
 use animsmith_core::metrics::MIN_STRIDE_STEP_M;
 use animsmith_core::model::*;
 use animsmith_core::profile::{ResolvedRoles, Role};
-use animsmith_core::{CheckCtx, Config, Severity, all_checks, run_checks};
+use animsmith_core::{CheckCtx, Config, MetricGrids, Severity, all_checks, run_checks};
 use glam::Vec3;
 use std::f64::consts::TAU;
 
@@ -120,7 +120,8 @@ fn popped_doc() -> Document {
 
 fn lint_with(doc: &Document, config: &Config) -> Vec<animsmith_core::Finding> {
     let roles = roles(&doc.skeleton);
-    let ctx = CheckCtx::new(doc, &roles, config);
+    let grids = MetricGrids::new(doc);
+    let ctx = CheckCtx::new(&grids, &roles, config);
     run_checks(&ctx, &all_checks())
 }
 
@@ -129,7 +130,8 @@ fn lint_with(doc: &Document, config: &Config) -> Vec<animsmith_core::Finding> {
 /// never fail.
 fn lint_unresolved(doc: &Document, config: &Config) -> Vec<animsmith_core::Finding> {
     let roles = ResolvedRoles::default();
-    let ctx = CheckCtx::new(doc, &roles, config);
+    let grids = MetricGrids::new(doc);
+    let ctx = CheckCtx::new(&grids, &roles, config);
     run_checks(&ctx, &all_checks())
 }
 
@@ -150,7 +152,8 @@ fn analytic_walk_metrics() {
     let doc = walk_doc();
     let roles = roles(&doc.skeleton);
     let config = Config::default();
-    let measurements = animsmith_core::measure::measure_document(&doc, &roles, &config);
+    let grids = MetricGrids::new(&doc);
+    let measurements = animsmith_core::measure::measure_document(&grids, &roles, &config);
     let walk = &measurements["walk"];
 
     // L−R foot height = 2A·sin(θ): fundamental trough at 0.75.
@@ -212,8 +215,9 @@ fn min_stride_step_config_controls_tiny_stride_ratio() {
         "checks": { "loop-seam": { "min_stride_step_m": 0.001 } }
     }));
 
+    let default_grids = MetricGrids::new(&doc);
     let default_measurements =
-        animsmith_core::measure::measure_document(&doc, &roles, &default_floor);
+        animsmith_core::measure::measure_document(&default_grids, &roles, &default_floor);
     assert_eq!(default_measurements["walk"].loop_seam_ratio, None);
     let default_findings = lint_with(&doc, &default_floor);
     assert!(
@@ -221,7 +225,9 @@ fn min_stride_step_config_controls_tiny_stride_ratio() {
         "default floor should suppress tiny-stride seam ratio: {default_findings:#?}"
     );
 
-    let tuned_measurements = animsmith_core::measure::measure_document(&doc, &roles, &tuned_floor);
+    let tuned_grids = MetricGrids::new(&doc);
+    let tuned_measurements =
+        animsmith_core::measure::measure_document(&tuned_grids, &roles, &tuned_floor);
     let ratio = tuned_measurements["walk"]
         .loop_seam_ratio
         .expect("configured stride floor reports ratio");
@@ -246,7 +252,8 @@ fn zero_stride_floor_does_not_report_stationary_ratio() {
         "checks": { "loop-seam": { "min_stride_step_m": 0.0 } }
     }));
 
-    let measurements = animsmith_core::measure::measure_document(&doc, &roles, &config);
+    let grids = MetricGrids::new(&doc);
+    let measurements = animsmith_core::measure::measure_document(&grids, &roles, &config);
     assert_eq!(measurements["walk"].loop_seam_ratio, None);
     let findings = lint_with(&doc, &config);
     assert!(

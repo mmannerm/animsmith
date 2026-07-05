@@ -36,7 +36,7 @@ cargo run -p animsmith --example embed
 ## The five steps
 
 ```rust
-use animsmith_core::{CheckCtx, Config, all_checks, run_checks};
+use animsmith_core::{CheckCtx, Config, MetricGrids, all_checks, run_checks};
 use animsmith_core::measure::measure_document;
 use animsmith_core::profile::detect_profile;
 
@@ -57,9 +57,11 @@ let mut config = Config::default();
 config.clips.insert("run_*".into(), /* looping, speed pins, … */);
 
 // 4. Measure (numbers without judgment) and lint (numbers judged
-//    against the config).
-let measurements = measure_document(&doc, &roles, &config);
-let ctx = CheckCtx::new(&doc, &roles, &config);
+//    against the config). Share `MetricGrids` so every clip is
+//    sampled once across both consumers.
+let grids = MetricGrids::new(&doc);
+let measurements = measure_document(&grids, &roles, &config);
+let ctx = CheckCtx::new(&grids, &roles, &config);
 let findings = run_checks(&ctx, &all_checks());
 
 // 5. Map severities to your gate. The CLI's convention: exit 0 =
@@ -95,8 +97,8 @@ For v0.1, the most stable integration path is:
 
 1. Load with `animsmith-gltf` or `animsmith-fbx`.
 2. Build `Config` from your own contract format.
-3. Call `measure_document`, `CheckCtx::new`, `all_checks`, and
-   `run_checks`.
+3. Create `MetricGrids`, then call `measure_document`,
+   `CheckCtx::new`, `all_checks`, and `run_checks`.
 4. Map `Finding` values into your gate/reporting system.
 
 The `Check` trait is public because the built-in catalog uses it and

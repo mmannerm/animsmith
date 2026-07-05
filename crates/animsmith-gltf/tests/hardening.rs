@@ -5,7 +5,7 @@
 use animsmith_core::glam::Quat;
 use animsmith_core::measure::measure_document;
 use animsmith_core::profile::ResolvedRoles;
-use animsmith_core::{CheckCtx, Config, Severity, mechanical_checks, run_checks};
+use animsmith_core::{CheckCtx, Config, MetricGrids, Severity, mechanical_checks, run_checks};
 use animsmith_gltf::LoadError;
 use std::path::{Path, PathBuf};
 
@@ -199,10 +199,11 @@ fn nan_key_time_measures_without_panicking_and_lints_as_error() {
     let doc = animsmith_gltf::load(&path).expect("NaN times load; checks judge them");
     let roles = ResolvedRoles::default();
     let config = Config::default();
-    let measurements = measure_document(&doc, &roles, &config);
+    let grids = MetricGrids::new(&doc);
+    let measurements = measure_document(&grids, &roles, &config);
     assert!(measurements.contains_key("poisoned"));
 
-    let ctx = CheckCtx::new(&doc, &roles, &config);
+    let ctx = CheckCtx::new(&grids, &roles, &config);
     let findings = run_checks(&ctx, &mechanical_checks());
     assert!(
         findings.iter().any(|f| f.check_id == "nan"

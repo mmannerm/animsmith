@@ -3,46 +3,38 @@
 
 use crate::config::Config;
 use crate::finding::{Finding, Severity};
+use crate::metrics::MetricGrids;
 use crate::model::Document;
 use crate::profile::ResolvedRoles;
-use crate::sample::{PoseGrid, sample_clip};
-use std::cell::RefCell;
-use std::collections::BTreeMap;
+use crate::sample::PoseGrid;
 use std::rc::Rc;
 
 /// Everything a check may consume: the document, the resolved rig
-/// roles, the configuration, and a lazy per-clip [`PoseGrid`] cache
-/// shared across checks.
+/// roles, the configuration, and shared metric [`PoseGrid`] samples.
 #[derive(Debug)]
 pub struct CheckCtx<'a> {
     pub doc: &'a Document,
     pub roles: &'a ResolvedRoles,
     pub config: &'a Config,
-    grids: RefCell<BTreeMap<usize, Rc<PoseGrid>>>,
+    grids: &'a MetricGrids<'a>,
 }
 
 impl<'a> CheckCtx<'a> {
-    pub fn new(doc: &'a Document, roles: &'a ResolvedRoles, config: &'a Config) -> Self {
+    /// Build a check context that shares metric pose grids with
+    /// measurement or report generation.
+    pub fn new(grids: &'a MetricGrids<'a>, roles: &'a ResolvedRoles, config: &'a Config) -> Self {
         Self {
-            doc,
+            doc: grids.document(),
             roles,
             config,
-            grids: RefCell::new(BTreeMap::new()),
+            grids,
         }
     }
 
     /// The metric pose grid for clip `clip_index`, computed once and
     /// shared. `None` for clips too short to carry a cycle.
     pub fn grid(&self, clip_index: usize) -> Option<Rc<PoseGrid>> {
-        let clip = self.doc.clips.get(clip_index)?;
-        let frames = crate::metrics::metric_frame_count(clip)?;
-        Some(
-            self.grids
-                .borrow_mut()
-                .entry(clip_index)
-                .or_insert_with(|| Rc::new(sample_clip(&self.doc.skeleton, clip, frames)))
-                .clone(),
-        )
+        self.grids.grid(clip_index)
     }
 }
 
