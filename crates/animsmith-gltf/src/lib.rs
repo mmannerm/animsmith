@@ -1,14 +1,8 @@
-//! glTF/GLB ingestion into the animsmith core model.
-//!
-//! Every node in the file becomes a core `Bone` (animations may target
-//! any node; role resolution decides later which ones matter), in
-//! topological order. Values are kept exactly as authored — no
-//! quaternion renormalization, no resampling — so the mechanical checks
-//! see the real data.
-//!
-//! Buffers are resolved without the `gltf` crate's `import` feature to
-//! keep image decoding out of the dependency tree: GLB BIN chunks,
-//! `data:` URIs, and sibling files are supported.
+//! Docs.rs API map: [`load`] reads `.gltf`/`.glb` files into an
+//! [`animsmith_core::Document`], [`write::write`] emits a document as
+//! glTF/GLB, and the [`fix`] module provides byte-surgical quaternion
+//! repairs. Malformed inputs report [`LoadError`]; output failures
+//! report [`WriteError`].
 
 #![doc = "\n\n"]
 #![doc = include_str!("../README.md")]

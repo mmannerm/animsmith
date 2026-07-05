@@ -1,8 +1,9 @@
-//! Engine-agnostic core of animsmith: the clip/skeleton data model, the
-//! game-runtime-like sampler ([`PoseGrid`]), measurements, rig profiles,
-//! configuration, and the check catalog. No file-format knowledge lives
-//! here; pair it with `animsmith-gltf` or `animsmith-fbx` at the edge of
-//! a pipeline.
+//! Docs.rs API map: [`Document`] holds skeletons, clips, and scene
+//! assets; [`measure::measure_document`] computes measurements;
+//! [`CheckCtx::new`] prepares a check run; [`run_checks`] executes
+//! [`all_checks`]. Use [`detect_profile`] or
+//! [`ResolvedRoles::from_names`] to resolve rig roles. [`PoseGrid`] is
+//! the sampled pose cache shared by semantic checks.
 //!
 //! # API status
 //!
