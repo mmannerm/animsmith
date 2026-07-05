@@ -284,6 +284,85 @@ mod tests {
         assert!(deltas.is_empty(), "{:?}", delta_metrics(&deltas));
     }
 
+    /// #52: anchor every documented threshold to LITERAL stimuli.
+    /// Deriving a metric's fixture from the constant under test
+    /// (`THRESHOLD * 2`, `THRESHOLD / 2`) hides a fat-fingered constant —
+    /// e.g. `DURATION_THRESHOLD_S` 0.017 → 0.17 would still pass. Concrete
+    /// numbers straddling the documented threshold catch such a typo in
+    /// either direction. (`gait.phase` and `frame_count` are pinned with
+    /// literals by their own dedicated tests.)
+    #[test]
+    fn literal_stimuli_pin_documented_thresholds() {
+        // Base fixture: duration_s 1.0, loop_seam_ratio 0.2,
+        // lr_amplitude_m 0.1, speed_mps 1.0, hips rotation 10.0.
+        struct Case {
+            metric: &'static str,
+            over: fn(&mut ClipMeasurements),  // clears the threshold
+            under: fn(&mut ClipMeasurements), // stays within noise
+        }
+        let cases = [
+            Case {
+                metric: "duration_s", // threshold 0.017 s
+                over: |m| m.duration_s = 1.02,
+                under: |m| m.duration_s = 1.01,
+            },
+            Case {
+                metric: "loop_seam_ratio", // threshold 0.05
+                over: |m| m.loop_seam_ratio = Some(0.27),
+                under: |m| m.loop_seam_ratio = Some(0.23),
+            },
+            Case {
+                metric: "gait.lr_amplitude_m", // threshold 0.005 m
+                over: |m| m.gait.as_mut().unwrap().lr_amplitude_m = 0.11,
+                under: |m| m.gait.as_mut().unwrap().lr_amplitude_m = 0.102,
+            },
+            Case {
+                metric: "speed_mps", // threshold 0.1 m/s
+                over: |m| m.speed_mps = Some(1.15),
+                under: |m| m.speed_mps = Some(1.05),
+            },
+            Case {
+                metric: "bone_rotation_range_deg[hips]", // threshold 1.0 deg
+                over: |m| {
+                    m.bone_rotation_range_deg.insert("hips".into(), 13.0);
+                },
+                under: |m| {
+                    m.bone_rotation_range_deg.insert("hips".into(), 10.5);
+                },
+            },
+        ];
+
+        for case in cases {
+            let before = clip_measurements();
+
+            let mut over = before.clone();
+            (case.over)(&mut over);
+            let deltas = diff_measurements(
+                &measurement_map("walk", before.clone()),
+                &measurement_map("walk", over),
+            );
+            assert_eq!(
+                delta_metrics(&deltas),
+                vec![case.metric],
+                "over-threshold literal must report exactly {}",
+                case.metric
+            );
+
+            let mut under = before.clone();
+            (case.under)(&mut under);
+            let deltas = diff_measurements(
+                &measurement_map("walk", before),
+                &measurement_map("walk", under),
+            );
+            assert!(
+                deltas.is_empty(),
+                "under-threshold literal for {} must be silent: {:?}",
+                case.metric,
+                delta_metrics(&deltas)
+            );
+        }
+    }
+
     #[test]
     fn compares_gait_phase_on_a_cycle() {
         let mut before = clip_measurements();
