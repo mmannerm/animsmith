@@ -45,7 +45,8 @@ output, and a self-contained HTML report with a 3D preview.
   skinning fidelity, not material/shading fidelity.
 - **A transformer for pipeline-mechanical operations only** (scope
   widened 2026-07-03; see Appendix A). In scope: `fix` for lossless
-  mechanical repairs (quaternion hemisphere normalization), frame-range
+  mechanical repairs (quaternion unit normalization and hemisphere
+  normalization), frame-range
   slice/trim + hold-extend, gait-anchor rotation, and format conversion
   including a full mesh/skin FBX→glTF path (a maintained replacement
   for the archived FBX2glTF). Out of scope stays *artistic*
@@ -100,8 +101,9 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: asset files or prior `
   count mismatch, zero-key channels, absolute or escaping external
   buffer URIs — is rejected at load (operator error, exit 2; run
   glTF-Validator for the details). *Semantic* defects — NaN times or
-  values, hemisphere flips, seam pops — load fine and are judged by
-  the checks; sampling is panic-free under them by construction.
+  values, non-unit quaternions, hemisphere flips, seam pops — load fine
+  and are judged by the checks; sampling is panic-free under them by
+  construction.
 - `fix` intentionally requires either `-o/--output` or `--in-place` for
   writes; `--dry-run` is the check mode — it inspects only and exits `1`
   when repairs are pending, mirroring `lint`. Repairs are addressed by

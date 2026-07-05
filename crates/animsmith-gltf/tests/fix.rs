@@ -1,6 +1,5 @@
-//! Hemisphere-normalization fix: flipped keys are repaired losslessly
-//! (same rotations, hemisphere-consistent), the fix is idempotent, and
-//! untouched bytes stay untouched.
+//! Quaternion fixes are byte-surgical, lossless, idempotent, and
+//! composable through one session before writing.
 
 use animsmith_core::model::*;
 use animsmith_core::profile::ResolvedRoles;
@@ -8,13 +7,19 @@ use animsmith_core::{CheckCtx, Config, mechanical_checks, run_checks};
 use glam::{Quat, Vec3};
 use std::path::PathBuf;
 
-/// A document whose rotation track has two sign-flipped keys (same
-/// rotations as the clean sequence, opposite hemisphere).
-fn flipped_doc() -> Document {
-    let angles = [0.0f32, 0.4, 0.8, 1.2, 1.6];
-    let mut quats: Vec<Quat> = angles.iter().map(|&a| Quat::from_rotation_y(a)).collect();
-    quats[1] = -quats[1];
-    quats[3] = -quats[3];
+fn clean_quats() -> Vec<Quat> {
+    [0.0f32, 0.4, 0.8, 1.2, 1.6]
+        .iter()
+        .map(|&a| Quat::from_rotation_y(a))
+        .collect()
+}
+
+fn scaled_quat(q: Quat, scale: f32) -> Quat {
+    let [x, y, z, w] = q.to_array();
+    Quat::from_xyzw(x * scale, y * scale, z * scale, w * scale)
+}
+
+fn doc_with_quats(quats: Vec<Quat>) -> Document {
     Document {
         skeleton: Skeleton {
             bones: vec![
@@ -60,14 +65,44 @@ fn flipped_doc() -> Document {
     }
 }
 
-fn lint_flip_count(doc: &Document) -> usize {
+/// A document whose rotation track has two sign-flipped keys (same
+/// rotations as the clean sequence, opposite hemisphere).
+fn flipped_doc() -> Document {
+    let mut quats = clean_quats();
+    quats[1] = -quats[1];
+    quats[3] = -quats[3];
+    doc_with_quats(quats)
+}
+
+fn non_unit_doc() -> Document {
+    let mut quats = clean_quats();
+    quats[2] = scaled_quat(quats[2], 1.2);
+    doc_with_quats(quats)
+}
+
+fn flipped_non_unit_doc() -> Document {
+    let mut quats = clean_quats();
+    quats[1] = scaled_quat(-quats[1], 1.2);
+    quats[3] = -quats[3];
+    doc_with_quats(quats)
+}
+
+fn lint_count(doc: &Document, check_id: &str) -> usize {
     let config = Config::default();
     let roles = ResolvedRoles::default();
     let ctx = CheckCtx::new(doc, &roles, &config);
     run_checks(&ctx, &mechanical_checks())
         .iter()
-        .filter(|f| f.check_id == "quat-flip")
+        .filter(|f| f.check_id == check_id)
         .count()
+}
+
+fn lint_flip_count(doc: &Document) -> usize {
+    lint_count(doc, "quat-flip")
+}
+
+fn lint_norm_count(doc: &Document) -> usize {
+    lint_count(doc, "quat-norm")
 }
 
 fn unique_temp_dir(name: &str) -> PathBuf {
@@ -88,17 +123,14 @@ fn fix_repairs_flips_losslessly_and_idempotently() {
     assert_eq!(lint_flip_count(&animsmith_gltf::load(&dirty).unwrap()), 1);
 
     let report = animsmith_gltf::fix::fix_quat_hemisphere(&dirty, &fixed).expect("fixes");
-    assert_eq!(report.total_flipped(), 2, "both flipped keys repaired");
+    assert_eq!(report.total_fixed(), 2, "both flipped keys repaired");
     assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
 
     let repaired = animsmith_gltf::load(&fixed).expect("reloads");
     assert_eq!(lint_flip_count(&repaired), 0, "no flips remain");
 
     // Lossless: every key still represents the same rotation.
-    let clean: Vec<Quat> = [0.0f32, 0.4, 0.8, 1.2, 1.6]
-        .iter()
-        .map(|&a| Quat::from_rotation_y(a))
-        .collect();
+    let clean = clean_quats();
     let track = &repaired.clips[0].tracks[0];
     for (k, want) in clean.iter().enumerate() {
         let got = track.key_quat(k).unwrap();
@@ -122,11 +154,110 @@ fn fix_repairs_flips_losslessly_and_idempotently() {
     // Idempotent: a second pass changes nothing.
     let again = dir.join("again.glb");
     let report2 = animsmith_gltf::fix::fix_quat_hemisphere(&fixed, &again).expect("re-fixes");
-    assert_eq!(report2.total_flipped(), 0);
+    assert_eq!(report2.total_fixed(), 0);
     assert_eq!(
         std::fs::read(&fixed).unwrap(),
         std::fs::read(&again).unwrap()
     );
+}
+
+#[test]
+fn fix_quat_norm_repairs_keys_losslessly_and_idempotently() {
+    let dir = unique_temp_dir("quat-norm");
+    let dirty = dir.join("dirty.glb");
+    let fixed = dir.join("fixed.glb");
+
+    animsmith_gltf::write::write(&non_unit_doc(), &dirty).expect("writes");
+    assert_eq!(lint_norm_count(&animsmith_gltf::load(&dirty).unwrap()), 1);
+
+    let report = animsmith_gltf::fix::fix_quat_norm(&dirty, &fixed).expect("normalizes");
+    assert_eq!(report.total_fixed(), 1);
+    assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+
+    let repaired = animsmith_gltf::load(&fixed).expect("reloads");
+    assert_eq!(lint_norm_count(&repaired), 0);
+    assert_eq!(lint_flip_count(&repaired), 0);
+    let TrackValues::Quats(quats) = &repaired.clips[0].tracks[0].values else {
+        panic!("rotation track expected");
+    };
+    for (got, want) in quats.iter().zip(clean_quats()) {
+        assert!(
+            got.angle_between(want) < 1e-5,
+            "normalization must preserve the represented rotation"
+        );
+    }
+
+    let again = dir.join("again.glb");
+    let report2 = animsmith_gltf::fix::fix_quat_norm(&fixed, &again).expect("re-normalizes");
+    assert_eq!(report2.total_fixed(), 0);
+    assert_eq!(
+        std::fs::read(&fixed).unwrap(),
+        std::fs::read(&again).unwrap()
+    );
+}
+
+#[test]
+fn fix_quat_norm_skips_cubic_tracks_to_preserve_tangents() {
+    let mut values = Vec::new();
+    for (k, q) in clean_quats().into_iter().take(3).enumerate() {
+        let value = if k == 1 { scaled_quat(q, 1.2) } else { q };
+        values.push(Quat::from_xyzw(0.1, 0.0, 0.0, 0.0)); // in-tangent
+        values.push(value);
+        values.push(Quat::from_xyzw(0.0, 0.1, 0.0, 0.0)); // out-tangent
+    }
+    let mut doc = flipped_doc();
+    doc.clips[0].tracks[0] = Track {
+        bone: 1,
+        property: Property::Rotation,
+        interpolation: Interpolation::CubicSpline,
+        times: vec![0.0, 0.5, 1.0],
+        values: TrackValues::Quats(values),
+    };
+
+    let dir = unique_temp_dir("quat-norm-cubic");
+    let dirty = dir.join("dirty.glb");
+    let fixed = dir.join("fixed.glb");
+    animsmith_gltf::write::write(&doc, &dirty).expect("writes");
+    let before = std::fs::read(&dirty).unwrap();
+
+    let report = animsmith_gltf::fix::fix_quat_norm(&dirty, &fixed).expect("checks cubic");
+    assert_eq!(report.total_fixed(), 0);
+    assert!(
+        report
+            .skipped
+            .iter()
+            .any(|reason| reason.contains("quat-norm skipped to preserve tangents")),
+        "skipped: {:?}",
+        report.skipped
+    );
+    assert_eq!(
+        before,
+        std::fs::read(&fixed).unwrap(),
+        "cubic quat-norm skip must not rewrite animation bytes"
+    );
+}
+
+#[test]
+fn fix_session_composes_distinct_repairs_in_memory_before_writing() {
+    let dir = unique_temp_dir("session-compose");
+    let dirty = dir.join("dirty.glb");
+    let fixed = dir.join("fixed.glb");
+    animsmith_gltf::write::write(&flipped_non_unit_doc(), &dirty).expect("writes");
+
+    let mut session = animsmith_gltf::fix::FixSession::read(&dirty).expect("opens session");
+    let norm = session.fix_quat_norm();
+    assert_eq!(norm.total_fixed(), 1);
+
+    let flip = session.fix_quat_hemisphere();
+    assert_eq!(flip.total_fixed(), 2);
+    assert!(!fixed.exists(), "session should not write until requested");
+
+    session
+        .write(&dirty, &fixed)
+        .expect("writes patched buffers");
+    let repaired = animsmith_gltf::load(&fixed).unwrap();
+    assert_eq!(lint_norm_count(&repaired), 0);
+    assert_eq!(lint_flip_count(&repaired), 0);
 }
 
 #[test]
@@ -157,7 +288,7 @@ fn malformed_external_accessor_range_is_skipped_without_panic() {
     .unwrap();
 
     let report = animsmith_gltf::fix::inspect_quat_hemisphere(&gltf).expect("inspects");
-    assert_eq!(report.total_flipped(), 0);
+    assert_eq!(report.total_fixed(), 0);
     assert!(
         report
             .skipped
@@ -198,7 +329,7 @@ fn in_place_fix_works() {
     let path = dir.join("inplace.glb");
     animsmith_gltf::write::write(&flipped_doc(), &path).expect("writes");
     let report = animsmith_gltf::fix::fix_quat_hemisphere(&path, &path).expect("fixes");
-    assert_eq!(report.total_flipped(), 2);
+    assert_eq!(report.total_fixed(), 2);
     assert_eq!(lint_flip_count(&animsmith_gltf::load(&path).unwrap()), 0);
 }
 
@@ -230,7 +361,7 @@ fn cubic_tracks_are_fixed_by_triplet() {
     assert_eq!(lint_flip_count(&animsmith_gltf::load(&path).unwrap()), 1);
 
     let report = animsmith_gltf::fix::fix_quat_hemisphere(&path, &path).expect("fixes");
-    assert_eq!(report.total_flipped(), 1, "one triplet repaired");
+    assert_eq!(report.total_fixed(), 1, "one triplet repaired");
     assert!(report.skipped.is_empty(), "cubic no longer skipped");
 
     let repaired = animsmith_gltf::load(&path).expect("reloads");

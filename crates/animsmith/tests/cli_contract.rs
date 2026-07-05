@@ -33,8 +33,12 @@ fn sway_quats(flipped: bool) -> Vec<Quat> {
     quats
 }
 
-fn sway_doc(flipped: bool) -> Document {
-    let quats = sway_quats(flipped);
+fn scaled_quat(q: Quat, scale: f32) -> Quat {
+    let [x, y, z, w] = q.to_array();
+    Quat::from_xyzw(x * scale, y * scale, z * scale, w * scale)
+}
+
+fn sway_doc_with_quats(quats: Vec<Quat>) -> Document {
     Document {
         skeleton: Skeleton {
             bones: vec![
@@ -70,8 +74,23 @@ fn sway_doc(flipped: bool) -> Document {
     }
 }
 
+fn sway_doc(flipped: bool) -> Document {
+    sway_doc_with_quats(sway_quats(flipped))
+}
+
+fn sway_doc_with_distinct_repairs() -> Document {
+    let mut quats = sway_quats(true);
+    quats[1] = scaled_quat(quats[1], 1.2);
+    sway_doc_with_quats(quats)
+}
+
 fn write_flipped_glb(path: &std::path::Path) {
     animsmith_gltf::write::write(&sway_doc(true), path).expect("writes flipped fixture");
+}
+
+fn write_distinct_repair_glb(path: &std::path::Path) {
+    animsmith_gltf::write::write(&sway_doc_with_distinct_repairs(), path)
+        .expect("writes distinct repair fixture");
 }
 
 fn write_clean_glb(path: &std::path::Path) {
@@ -129,6 +148,11 @@ fn fix_rejects_unknown_repair_ids() {
     );
     assert!(
         stderr(&output).contains("quat-flip"),
+        "stderr should list valid repair ids:\n{}",
+        stderr(&output)
+    );
+    assert!(
+        stderr(&output).contains("quat-norm"),
         "stderr should list valid repair ids:\n{}",
         stderr(&output)
     );
@@ -213,6 +237,90 @@ fn fix_dry_run_reports_without_writing() {
         stdout(&output)
     );
     assert_eq!(before, std::fs::read(&input).expect("reads input"));
+}
+
+#[test]
+fn fix_dry_run_dedupes_duplicate_repairs() {
+    let dir = unique_temp_dir("fix-dry-run-dedup");
+    let input = dir.join("dirty.glb");
+    write_flipped_glb(&input);
+
+    let output = animsmith()
+        .args([
+            "fix",
+            input.to_str().expect("utf-8 input path"),
+            "--dry-run",
+            "--repair",
+            "quat-flip,quat-flip",
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    let out = stdout(&output);
+    assert!(
+        out.contains("2 key(s) would be fixed across 1 track(s)"),
+        "stdout:\n{out}"
+    );
+    assert_eq!(
+        out.matches("key(s) would be fixed across").count(),
+        1,
+        "duplicate repairs should be reported once:\n{out}"
+    );
+}
+
+#[test]
+fn fix_dry_run_dedupes_non_adjacent_distinct_repairs_without_writing() {
+    let dir = unique_temp_dir("fix-dry-run-compose");
+    let input = dir.join("dirty.glb");
+    write_distinct_repair_glb(&input);
+    let before = std::fs::read(&input).expect("reads input");
+
+    let output = animsmith()
+        .args([
+            "fix",
+            input.to_str().expect("utf-8 input path"),
+            "--dry-run",
+            "--repair",
+            "quat-norm,quat-flip,quat-norm",
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    let out = stdout(&output);
+    assert!(out.contains("would fix[quat-norm]"), "stdout:\n{out}");
+    assert!(out.contains("would fix[quat-flip]"), "stdout:\n{out}");
+    assert_eq!(
+        out.matches("would fix[quat-norm]").count(),
+        1,
+        "non-adjacent duplicate repairs should be reported once:\n{out}"
+    );
+    assert_eq!(before, std::fs::read(&input).expect("reads input"));
+    assert_eq!(
+        animsmith_gltf::fix::inspect_quat_norm(&input)
+            .expect("inspects dirty input")
+            .total_fixed(),
+        1
+    );
+    assert_eq!(
+        animsmith_gltf::fix::inspect_quat_hemisphere(&input)
+            .expect("inspects dirty input")
+            .total_fixed(),
+        2
+    );
 }
 
 #[test]
@@ -334,6 +442,112 @@ fn fix_default_repairs_write_output() {
 }
 
 #[test]
+fn fix_write_composes_distinct_repairs() {
+    let dir = unique_temp_dir("fix-output-compose");
+    let input = dir.join("dirty.glb");
+    let output_path = dir.join("fixed.glb");
+    write_distinct_repair_glb(&input);
+
+    assert_eq!(
+        animsmith_gltf::fix::inspect_quat_norm(&input)
+            .expect("inspects dirty input")
+            .total_fixed(),
+        1
+    );
+    assert_eq!(
+        animsmith_gltf::fix::inspect_quat_hemisphere(&input)
+            .expect("inspects dirty input")
+            .total_fixed(),
+        2
+    );
+
+    let output = animsmith()
+        .args([
+            "fix",
+            input.to_str().expect("utf-8 input path"),
+            "--output",
+            output_path.to_str().expect("utf-8 output path"),
+            "--repair",
+            "quat-norm,quat-flip",
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    let out = stdout(&output);
+    assert!(out.contains("fixed[quat-norm]"), "stdout:\n{out}");
+    assert!(out.contains("fixed[quat-flip]"), "stdout:\n{out}");
+
+    assert_eq!(
+        animsmith_gltf::fix::inspect_quat_norm(&output_path)
+            .expect("inspects fixed output")
+            .total_fixed(),
+        0
+    );
+    assert_eq!(
+        animsmith_gltf::fix::inspect_quat_hemisphere(&output_path)
+            .expect("inspects fixed output")
+            .total_fixed(),
+        0
+    );
+
+    let fixed = animsmith_gltf::load(&output_path).expect("loads fixed output");
+    let TrackValues::Quats(quats) = &fixed.clips[0].tracks[0].values else {
+        panic!("rotation track expected");
+    };
+    for (got, want) in quats.iter().zip(sway_quats(false)) {
+        assert!(
+            got.dot(want).abs() > 1.0 - 1e-5,
+            "composed repairs must preserve the represented rotation"
+        );
+    }
+}
+
+#[test]
+fn fix_write_dedupes_duplicate_repairs() {
+    let dir = unique_temp_dir("fix-output-dedup");
+    let input = dir.join("dirty.glb");
+    let output_path = dir.join("fixed.glb");
+    write_flipped_glb(&input);
+
+    let output = animsmith()
+        .args([
+            "fix",
+            input.to_str().expect("utf-8 input path"),
+            "--output",
+            output_path.to_str().expect("utf-8 output path"),
+            "--repair",
+            "quat-flip,quat-flip",
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    let out = stdout(&output);
+    assert_eq!(
+        out.matches("key(s) fixed across").count(),
+        1,
+        "duplicate repairs should be reported once:\n{out}"
+    );
+    assert_eq!(
+        animsmith_gltf::fix::inspect_quat_hemisphere(&output_path)
+            .expect("inspects fixed output")
+            .total_fixed(),
+        0
+    );
+}
+
+#[test]
 fn fix_in_place_writes_selected_repair() {
     let dir = unique_temp_dir("fix-in-place");
     let input = dir.join("dirty.glb");
@@ -341,7 +555,7 @@ fn fix_in_place_writes_selected_repair() {
     assert_eq!(
         animsmith_gltf::fix::inspect_quat_hemisphere(&input)
             .expect("inspects dirty input")
-            .total_flipped(),
+            .total_fixed(),
         2
     );
 
@@ -360,7 +574,7 @@ fn fix_in_place_writes_selected_repair() {
     assert_eq!(
         animsmith_gltf::fix::inspect_quat_hemisphere(&input)
             .expect("inspects fixed input")
-            .total_flipped(),
+            .total_fixed(),
         0
     );
 }

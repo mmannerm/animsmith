@@ -115,7 +115,7 @@ enum Cmd {
     },
     /// Repair safe mechanical glTF/GLB defects.
     #[command(
-        long_about = "Repair mechanical clip defects in place, byte-surgically: only the offending animation bytes change; meshes, skins, materials, and textures pass through untouched. Currently fixes quaternion hemisphere flips (the `quat-flip` check) on glTF/GLB inputs."
+        long_about = "Repair mechanical clip defects in place, byte-surgically: only the offending animation bytes change; meshes, skins, materials, and textures pass through untouched. Currently fixes non-unit quaternions (the `quat-norm` check) and quaternion hemisphere flips (the `quat-flip` check) on glTF/GLB inputs."
     )]
     Fix {
         /// Input .glb or .gltf file.
@@ -173,22 +173,31 @@ enum Format {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Repair {
+    QuatNorm,
     QuatFlip,
 }
 
 // Every repair must be safe, lossless, and idempotent — repair
 // taxonomy (groups, risk tiers) is deliberately deferred until a
 // repair exists that isn't (see issue #38).
-const ALL_REPAIRS: &[Repair] = &[Repair::QuatFlip];
+const ALL_REPAIRS: &[Repair] = &[Repair::QuatNorm, Repair::QuatFlip];
 
 impl Repair {
     /// Stable id: the `--repair` value and the tag in printed output,
-    /// matching the corresponding check id (`quat-flip`). The
-    /// hand-written [`ValueEnum`] impl below makes this the single
+    /// matching the corresponding check id (`quat-norm`, `quat-flip`).
+    /// The hand-written [`ValueEnum`] impl below makes this the single
     /// source of the CLI name.
     fn id(self) -> &'static str {
         match self {
+            Repair::QuatNorm => "quat-norm",
             Repair::QuatFlip => "quat-flip",
+        }
+    }
+
+    fn action(self) -> &'static str {
+        match self {
+            Repair::QuatNorm => "unit-normalized",
+            Repair::QuatFlip => "hemisphere-normalized",
         }
     }
 }
@@ -201,6 +210,25 @@ impl ValueEnum for Repair {
     fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
         Some(clap::builder::PossibleValue::new(self.id()))
     }
+}
+
+fn select_repairs(repairs: Vec<Repair>) -> Vec<Repair> {
+    let repairs = if repairs.is_empty() {
+        ALL_REPAIRS.to_vec()
+    } else {
+        repairs
+    };
+    dedup_preserving_order(repairs)
+}
+
+fn dedup_preserving_order<T: Copy + Eq>(items: impl IntoIterator<Item = T>) -> Vec<T> {
+    let mut selected = Vec::new();
+    for item in items {
+        if !selected.contains(&item) {
+            selected.push(item);
+        }
+    }
+    selected
 }
 
 #[derive(Serialize)]
@@ -408,11 +436,12 @@ fn print_fix_report(
     };
     for t in &report.tracks {
         println!(
-            "  {verb}[{}] clip '{}' bone '{}': {} key(s) hemisphere-normalized",
+            "  {verb}[{}] clip '{}' bone '{}': {} key(s) {}",
             repair.id(),
             t.clip,
             t.bone,
-            t.flipped_keys
+            t.fixed_keys,
+            repair.action()
         );
     }
     for s in &report.skipped {
@@ -423,7 +452,7 @@ fn print_fix_report(
         .unwrap_or_else(|| "no output written".into());
     println!(
         "{} key(s) {} across {} track(s) -> {destination}",
-        report.total_flipped(),
+        report.total_fixed(),
         if target.is_none() {
             "would be fixed"
         } else {
@@ -651,22 +680,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     input.display()
                 ));
             }
-            let mut selected = if repairs.is_empty() {
-                ALL_REPAIRS.to_vec()
-            } else {
-                repairs
-            };
-            // Adjacent-only dedup is exact while one repair exists;
-            // revisit (sort or reject duplicates) with repair #2. The
-            // guard below is a tripwire: each write re-reads `input`,
-            // so chaining repairs would clobber earlier results.
-            selected.dedup();
-            if !dry_run && selected.len() > 1 {
-                return Err(
-                    "running multiple repairs in one write is not supported yet; rerun one repair at a time"
-                        .into(),
-                );
-            }
+            let selected = select_repairs(repairs);
             if !dry_run && output.is_none() && !in_place {
                 return Err(
                     "fix requires --output <PATH> or --in-place (use --dry-run to inspect only)"
@@ -678,28 +692,29 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             } else {
                 output
             };
-            let mut pending = 0usize;
+            let mut pending = false;
+            let mut session =
+                animsmith_gltf::fix::FixSession::read(&input).map_err(|e| e.to_string())?;
+            let mut reports = Vec::new();
             for repair in selected {
-                match repair {
-                    Repair::QuatFlip => {
-                        let report = if dry_run {
-                            animsmith_gltf::fix::inspect_quat_hemisphere(&input)
-                                .map_err(|e| e.to_string())?
-                        } else {
-                            let output = output.as_ref().expect("validated output target");
-                            animsmith_gltf::fix::fix_quat_hemisphere(&input, output)
-                                .map_err(|e| e.to_string())?
-                        };
-                        pending += report.total_flipped();
-                        // clap rejects --dry-run with a write target, so
-                        // `output` is None exactly when this is a dry run.
-                        print_fix_report(repair, &report, output.as_deref());
-                    }
-                }
+                let report = match repair {
+                    Repair::QuatNorm => session.fix_quat_norm(),
+                    Repair::QuatFlip => session.fix_quat_hemisphere(),
+                };
+                pending |= report.total_fixed() > 0;
+                reports.push((repair, report));
+            }
+            if let Some(output) = output.as_deref() {
+                session.write(&input, output).map_err(|e| e.to_string())?;
+            }
+            for (repair, report) in &reports {
+                // clap rejects --dry-run with a write target, so
+                // `output` is None exactly when this is a dry run.
+                print_fix_report(*repair, report, output.as_deref());
             }
             // Dry run doubles as a CI check mode: pending repairs are
             // findings, mirroring `lint`'s exit contract.
-            Ok(if dry_run && pending > 0 {
+            Ok(if dry_run && pending {
                 ExitCode::from(EXIT_FINDINGS)
             } else {
                 ExitCode::SUCCESS

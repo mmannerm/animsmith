@@ -57,9 +57,9 @@ errors. `fix --dry-run` is the repair check mode: it exits 1 when the
 file has repairable defects and 0 otherwise, so CI can gate on "this
 asset needs fixing" without writing anything. The exit code
 reflects repairs `fix` would actually perform: tracks it cannot patch
-(data-URI buffers, cubic/quantized rotations) are printed as
+(data-URI buffers, cubic `quat-norm` tracks, quantized rotations) are printed as
 `skipped[...]` but do not fail the check — gate on `lint` (the
-`quat-flip` check) when detection alone should fail CI.
+`quat-norm` or `quat-flip` checks) when detection alone should fail CI.
 
 ## Feature Flags
 
@@ -83,6 +83,7 @@ adding one. Repairs have stable ids so scripts can pin exact behavior:
 
 | Repair id | Behavior |
 |---|---|
+| `quat-norm` | Unit-normalizes finite, non-zero LINEAR/STEP quaternion keys. This is lossless because scaling a quaternion does not change the represented rotation after normalization. CUBICSPLINE tracks are skipped to preserve tangents. |
 | `quat-flip` | Normalizes adjacent quaternion keys to the same hemisphere. This is lossless because `q` and `-q` represent the same rotation. |
 
 By default `fix` runs every repair. `--repair id[,id]` pins an exact
@@ -94,7 +95,7 @@ the exit code without writing:
 animsmith fix clip.glb --dry-run
 animsmith fix clip.glb -o fixed.glb
 animsmith fix clip.glb --in-place
-animsmith fix clip.glb --repair quat-flip -o fixed.glb
+animsmith fix clip.glb --repair quat-norm,quat-flip -o fixed.glb
 ```
 
 ## Machine Output
