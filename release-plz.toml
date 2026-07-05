@@ -6,12 +6,9 @@
 
 [workspace]
 # Changelog uses release-plz's default Keep-a-Changelog format (versioned
-# `## [X.Y.Z]` sections with dates + release links). We deliberately do
-# NOT set `changelog_config = "cliff.toml"`: cliff.toml is shaped for
-# GitHub release notes (no version headers), so reusing it produced a
-# headerless, non-standard CHANGELOG.md. cliff.toml stays in the repo as
-# the source of truth for commit_parsers (aligned with .commitlintrc.yml
-# and lint-pr.yml) — it just no longer drives the changelog file.
+# `## [X.Y.Z]` sections with dates + release links), derived from the
+# Conventional Commit history. The accepted commit types are defined in
+# .commitlintrc.yml (enforced by lint-pr.yml).
 
 # Publish only when a release-plz PR is merged — not on every push to
 # main. This matches the documented flow (open a release PR, review it,

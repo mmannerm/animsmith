@@ -109,7 +109,7 @@ measurement semantics, anything user-visible. Target each PR at under
    description is the intent contract: what behaviour changes, the
    chosen design for new features, and deliberately out-of-scope items.
    Every commit and the PR title must be Conventional Commits — CI
-   enforces both (`.commitlintrc.yml`), and `cliff.toml` turns them
+   enforces both (`.commitlintrc.yml`), and release-plz turns them
    into the release notes and the semver bump.
 6. **Review + audit.** Run the strongest available code-review pass
    (Claude: `/code-review`; Codex: its review surface) and address

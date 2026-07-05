@@ -9,9 +9,8 @@ crates.io in dependency order.
 
 The workflow is `.github/workflows/release-plz.yml`; its behaviour is
 configured by `release-plz.toml`. The changelog uses release-plz's
-default Keep-a-Changelog format (`cliff.toml` remains the commit-parser
-source of truth for commitlint/lint-pr, but no longer drives the
-changelog file).
+default Keep-a-Changelog format, derived from the Conventional Commit
+history (accepted types live in `.commitlintrc.yml`).
 
 ## Per-release flow (steady state)
 
