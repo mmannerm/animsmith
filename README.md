@@ -118,8 +118,8 @@ with foot/root trails, metric charts synced to the scrubber, and a
 clickable findings list. FBX support bundles the ufbx C library; build
 with `--no-default-features` for a pure-Rust glTF-only binary. In that
 build, glTF inspect/measure/lint/transform/fix/diff stay available; the
-HTML `report` command requires the `report` feature and the FBX-oriented
-`convert` command requires the `fbx` feature.
+HTML `report` command requires the `report` feature and the `convert`
+command (FBX or glTF input) requires the `fbx` feature.
 
 More documentation:
 

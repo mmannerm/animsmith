@@ -12,6 +12,13 @@ mechanical checks judge the same animation data that shipped in the
 file. Buffers support GLB BIN chunks, `data:` URIs, and sibling external
 files; unsafe external-buffer paths are rejected.
 
+`load` also fills `Document::assets` with the file's geometry — meshes
+(triangle lists), skins (joints + inverse bind matrices), and
+factor-only materials with embedded base-color textures — in the same
+single call, matching `animsmith-fbx`. Consumers that judge only
+animation ignore `assets`; `measure` reports mesh-level measurements
+from it and `convert` carries it through.
+
 ```toml
 [dependencies]
 animsmith-core = "0.1"
