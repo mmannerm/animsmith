@@ -93,5 +93,10 @@ fn git<const N: usize>(dir: &Path, args: [&str; N]) -> Option<std::process::Outp
 }
 
 pub(crate) fn display_version(package_version: &str, describe: &str) -> String {
-    format!("{package_version} ({describe})")
+    let exact_tag = format!("v{package_version}");
+    if describe == package_version || describe == exact_tag {
+        package_version.to_owned()
+    } else {
+        format!("{package_version} ({describe})")
+    }
 }

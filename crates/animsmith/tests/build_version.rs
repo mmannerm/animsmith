@@ -15,6 +15,12 @@ fn display_version_appends_git_describe_to_manifest_version() {
 }
 
 #[test]
+fn display_version_suppresses_exact_tag_describe() {
+    assert_eq!(build_script::display_version("0.1.0", "0.1.0"), "0.1.0");
+    assert_eq!(build_script::display_version("0.1.0", "v0.1.0"), "0.1.0");
+}
+
+#[test]
 fn trusted_git_root_accepts_animsmith_workspace_layout() {
     let temp = TempDir::new("workspace-layout");
     let git_root = temp.path();
