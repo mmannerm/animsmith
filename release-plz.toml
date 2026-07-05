@@ -17,6 +17,14 @@ changelog_config = "cliff.toml"
 # publish logic on every main-branch commit.
 release_always = false
 
+# One repo-level git tag + GitHub Release for the whole workspace, named
+# `vX.Y.Z` — not the per-package `<crate>-v<version>` names release-plz
+# defaults to when more than one crate is public. Disabled here and
+# re-enabled on the `animsmith` package below. This is the tag form that
+# RELEASING.md, issue #37, and scripts/check-schema-id.sh all assume.
+git_tag_enable = false
+git_release_enable = false
+
 # The five crates ship as one unit at a single shared version
 # (`version.workspace = true`). `version_group` forces one version across
 # the whole group — the highest next-version among them — and every
@@ -46,3 +54,11 @@ changelog_path = "CHANGELOG.md"
 name = "animsmith"
 version_group = "animsmith"
 changelog_path = "CHANGELOG.md"
+# The one crate that carries the workspace's single `vX.Y.Z` tag and
+# GitHub Release (tags/releases are disabled workspace-wide above).
+# crates.io publishing of all five crates is unaffected — that is the
+# separate `publish` field, left at its default.
+git_tag_enable = true
+git_release_enable = true
+git_tag_name = "v{{ version }}"
+git_release_name = "v{{ version }}"
