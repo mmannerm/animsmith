@@ -136,9 +136,9 @@ enum Cmd {
         #[arg(long, conflicts_with_all = ["output", "in_place"])]
         dry_run: bool,
     },
-    /// Convert FBX input to glTF.
+    /// Convert FBX or glTF input to glTF.
     #[command(
-        long_about = "Convert FBX input to glTF: skeleton, animation, triangulated meshes, skins, and factor-only materials. Texture wiring stays a downstream concern. Output format by extension: .glb binary, .gltf JSON with an embedded buffer."
+        long_about = "Convert FBX or glTF input to glTF: skeleton, animation, triangulated meshes, skins, and factor-only materials. A glTF input is re-emitted carrying its geometry; --animation-only drops it. Texture wiring stays a downstream concern. Output format by extension: .glb binary, .gltf JSON with an embedded buffer."
     )]
     #[cfg(feature = "fbx")]
     Convert {

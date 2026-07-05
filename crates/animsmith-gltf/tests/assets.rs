@@ -572,3 +572,38 @@ fn load_survives_overflowing_image_view() {
         "overflowing bufferView yields no texture, not a panic"
     );
 }
+
+/// A count-0 `POSITION` accessor must not crash the loader: gltf 1.4's
+/// accessor iterator underflows (panics) on a zero-count accessor — the
+/// same class of bug the animation path guards before reading. `load`
+/// skips the empty primitive and returns a mesh-less document, never a
+/// panic (invariant: hostile input never crashes the loader).
+#[test]
+fn load_survives_zero_count_position_accessor() {
+    let dir = std::env::temp_dir().join("animsmith-load-assets-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("zero-count-position.gltf");
+    std::fs::write(
+        &path,
+        r#"{
+            "asset": { "version": "2.0" },
+            "buffers": [{ "byteLength": 12, "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAA" }],
+            "bufferViews": [{ "buffer": 0, "byteOffset": 0, "byteLength": 12 }],
+            "accessors": [{
+                "bufferView": 0, "componentType": 5126, "count": 0, "type": "VEC3",
+                "min": [0.0, 0.0, 0.0], "max": [0.0, 0.0, 0.0]
+            }],
+            "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 } }] }],
+            "nodes": [{ "mesh": 0 }],
+            "scenes": [{ "nodes": [0] }],
+            "scene": 0
+        }"#,
+    )
+    .unwrap();
+
+    let doc = animsmith_gltf::load(&path).expect("zero-count POSITION parses without panic");
+    assert!(
+        doc.assets.meshes.is_empty(),
+        "the empty primitive is skipped, not crashed into"
+    );
+}

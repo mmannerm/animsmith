@@ -15,6 +15,26 @@ fn mesh_count(glb: &std::path::Path) -> usize {
         .count()
 }
 
+/// Positions of the first mesh's first primitive in a GLB — so a
+/// carry-through test can assert the actual geometry survived, not just
+/// that *a* mesh exists.
+fn first_primitive_positions(glb: &std::path::Path) -> Vec<[f32; 3]> {
+    let bytes = std::fs::read(glb).unwrap();
+    let gltf = gltf::Gltf::from_slice(&bytes).expect("valid glTF");
+    let blob = gltf.blob.clone().expect("BIN chunk");
+    let prim = gltf
+        .meshes()
+        .next()
+        .expect("mesh")
+        .primitives()
+        .next()
+        .expect("primitive");
+    prim.reader(|b| Some(&blob[..b.length()]))
+        .read_positions()
+        .expect("POSITION")
+        .collect()
+}
+
 /// Author a minimal geometry-carrying GLB (one unindexed triangle) to
 /// feed `convert` as input.
 fn write_geometry_glb(path: &std::path::Path) {
@@ -77,6 +97,12 @@ fn cli_convert_gltf_input_carries_and_strips_geometry() {
         mesh_count(&carried),
         1,
         "convert carries glTF-input geometry through (#16)"
+    );
+    // Not just *a* mesh — the actual fixture triangle survived.
+    assert_eq!(
+        first_primitive_positions(&carried),
+        vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        "carried geometry matches the input triangle"
     );
 
     // `--animation-only` still drops it, uniformly across formats.

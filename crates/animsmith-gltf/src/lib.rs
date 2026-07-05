@@ -418,8 +418,12 @@ fn extract_assets(
                     .collect()
             })
             .unwrap_or_default();
+        // gltf 1.4's accessor iterator underflows (panics) on a count-0
+        // accessor — the same bug the animation path guards before
+        // reading. Only read an inverse-bind accessor that has entries.
         let skin_ibms: Vec<Mat4> = skin
             .as_ref()
+            .filter(|s| s.inverse_bind_matrices().is_some_and(|a| a.count() > 0))
             .map(|s| {
                 let reader = s.reader(|b| buffers.get(b.index()).map(Vec::as_slice));
                 reader
@@ -432,31 +436,53 @@ fn extract_assets(
         let mut primitives = Vec::new();
         for prim in mesh.primitives() {
             let reader = prim.reader(|b| buffers.get(b.index()).map(Vec::as_slice));
-            // A primitive without POSITION carries no geometry; skip it.
-            let Some(positions) = reader.read_positions() else {
-                continue;
-            };
-            let positions: Vec<Vec3> = positions.map(Vec3::from_array).collect();
-            if positions.is_empty() {
+            // Never iterate a count-0 accessor: gltf 1.4's reader
+            // underflows and panics on one (invariant: hostile input must
+            // not crash the loader). Treat a zero-count attribute as
+            // absent, and skip a primitive whose POSITION is missing or
+            // empty — a primitive without positions carries no geometry.
+            let has = |sem: gltf::Semantic| prim.get(&sem).is_some_and(|a| a.count() > 0);
+            if !has(gltf::Semantic::Positions) {
                 continue;
             }
-            let normals = reader
-                .read_normals()
+            let positions: Vec<Vec3> = reader
+                .read_positions()
                 .map(|it| it.map(Vec3::from_array).collect())
                 .unwrap_or_default();
-            let uvs = reader
-                .read_tex_coords(0)
-                .map(|tc| tc.into_f32().collect())
-                .unwrap_or_default();
-            // JOINTS_0/WEIGHTS_0 come as a pair; keep them parallel.
-            let (joints, weights) = match (reader.read_joints(0), reader.read_weights(0)) {
-                (Some(j), Some(w)) => (j.into_u16().collect(), w.into_f32().collect()),
-                _ => (Vec::new(), Vec::new()),
+            let normals = if has(gltf::Semantic::Normals) {
+                reader
+                    .read_normals()
+                    .map(|it| it.map(Vec3::from_array).collect())
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
             };
-            let indices = reader
-                .read_indices()
-                .map(|it| it.into_u32().collect())
-                .unwrap_or_default();
+            let uvs = if has(gltf::Semantic::TexCoords(0)) {
+                reader
+                    .read_tex_coords(0)
+                    .map(|tc| tc.into_f32().collect())
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            // JOINTS_0/WEIGHTS_0 come as a pair; keep them parallel.
+            let (joints, weights) =
+                if has(gltf::Semantic::Joints(0)) && has(gltf::Semantic::Weights(0)) {
+                    match (reader.read_joints(0), reader.read_weights(0)) {
+                        (Some(j), Some(w)) => (j.into_u16().collect(), w.into_f32().collect()),
+                        _ => (Vec::new(), Vec::new()),
+                    }
+                } else {
+                    (Vec::new(), Vec::new())
+                };
+            let indices = if prim.indices().is_some_and(|a| a.count() > 0) {
+                reader
+                    .read_indices()
+                    .map(|it| it.into_u32().collect())
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
             primitives.push(Primitive {
                 material: prim.material().index(),
                 indices,
