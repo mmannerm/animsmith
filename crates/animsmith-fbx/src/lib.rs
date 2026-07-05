@@ -14,6 +14,9 @@
 //! sidesteps FBX curve semantics entirely. Each anim stack (take)
 //! becomes one core `Clip` with times shifted to start at 0.
 
+#![doc = "\n\n"]
+#![doc = include_str!("../README.md")]
+
 use animsmith_core::model::{
     Bone, Clip, Document, Interpolation, MaterialAsset, MeshAsset, Primitive, Property,
     SceneAssets, Skeleton, SourceInfo, TextureAsset, Track, TrackValues, Transform,

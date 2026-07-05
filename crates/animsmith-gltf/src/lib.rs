@@ -10,6 +10,9 @@
 //! keep image decoding out of the dependency tree: GLB BIN chunks,
 //! `data:` URIs, and sibling files are supported.
 
+#![doc = "\n\n"]
+#![doc = include_str!("../README.md")]
+
 pub mod fix;
 pub mod write;
 

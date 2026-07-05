@@ -59,6 +59,12 @@ substantial work — the audit checks against it):
 The design doc is `DESIGN.md` — current architecture, check catalog,
 roadmap. If a substantial PR makes or changes an architectural
 decision, update `DESIGN.md` in the same PR; `/audit-task` checks this.
+The publishable library crates also carry crate-local READMEs for their
+crates.io pages. If a PR changes a claim one of those READMEs makes —
+public symbols or signatures, feature flags, loader/report boundaries,
+or linked doc paths/anchors — update the README in the same PR, or
+track the docs update with a `type:docs` issue or comment; `/audit-task`
+checks this.
 
 ## Golden tests
 
