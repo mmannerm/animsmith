@@ -1,18 +1,8 @@
-//! FBX ingestion into the animsmith core model, via the official `ufbx`
-//! bindings (which bundle and build the single-file C library — no
-//! system dependencies).
-//!
-//! Normalization happens at parse time through `LoadOpts`: glTF axis
-//! conventions (right-handed, +Y up), metres, transform-adjust space
-//! conversion (geometry untouched), helper nodes for 3ds Max geometric
-//! transforms. The core model therefore only ever sees glTF-convention
-//! data regardless of the source.
-//!
-//! Animation is extracted with ufbx's `bake_anim`, which evaluates anim
-//! stacks/layers, cubic/TCB curves, pre/post-rotation, and
-//! inherit-scale modes into resampled linear TRS keyframes — this
-//! sidesteps FBX curve semantics entirely. Each anim stack (take)
-//! becomes one core `Clip` with times shifted to start at 0.
+//! Docs.rs API map: [`load`] reads FBX files into an
+//! [`animsmith_core::Document`], normalizing parser errors into
+//! [`LoadError`]. The resulting document carries skeletons, animation
+//! clips, and scene assets in the same core model used by the glTF
+//! loader.
 
 #![doc = "\n\n"]
 #![doc = include_str!("../README.md")]

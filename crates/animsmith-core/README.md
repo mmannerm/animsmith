@@ -1,5 +1,7 @@
 # animsmith-core
 
+## Overview
+
 `animsmith-core` is the embedding boundary for animsmith. It contains
 the engine-agnostic data model, rig-role resolution, configuration
 types, animation and mesh measurements, sampler, findings, and built-in
@@ -12,10 +14,27 @@ contract storage, and gate policy, but wants animsmith's animation
 measurements and lint findings inside that pipeline instead of through
 the CLI.
 
+## Usage
+
 ```toml
 [dependencies]
 animsmith-core = "0.1"
 animsmith-gltf = "0.1"
+```
+
+```rust,no_run
+fn lint_document(doc: &animsmith_core::Document) -> Vec<animsmith_core::Finding> {
+    let roles = animsmith_core::detect_profile(&doc.skeleton).unwrap_or_else(|| {
+        animsmith_core::ResolvedRoles::from_names(
+            &doc.skeleton,
+            std::iter::empty::<(animsmith_core::Role, String)>(),
+        )
+    });
+    let config = animsmith_core::Config::default();
+    let ctx = animsmith_core::CheckCtx::new(doc, &roles, &config);
+
+    animsmith_core::run_checks(&ctx, &animsmith_core::all_checks())
+}
 ```
 
 Typical embedding flow:
@@ -28,13 +47,27 @@ Typical embedding flow:
    `all_checks`, and `run_checks`.
 5. Map `Finding` severities into your pipeline's gate/reporting system.
 
+## Feature Flags
+
+This crate has no public feature flags. The workspace MSRV is Rust
+1.88.
+
 The crate re-exports `glam` as `animsmith_core::glam` because public
 model types use `glam` vectors, quaternions, and matrices. The Rust API
 is pre-1.0 and experimental; the most stable contracts are check ids,
 exit-code conventions in the CLI, and the versioned JSON envelope.
 
-More detail:
+## More Detail
 
 - [Embedding animsmith in a pipeline](https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md)
 - [Workspace design](https://github.com/mmannerm/animsmith/blob/main/DESIGN.md)
 - [CLI crate and examples](https://github.com/mmannerm/animsmith/tree/main/crates/animsmith)
+
+## License
+
+Licensed under either the MIT license or the Apache License, Version
+2.0, at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally
+submitted for inclusion in animsmith by you is licensed as MIT OR
+Apache-2.0, without any additional terms or conditions.

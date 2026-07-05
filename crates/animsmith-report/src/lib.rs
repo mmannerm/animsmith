@@ -1,11 +1,8 @@
-//! Self-contained offline HTML report generation.
-//!
-//! Design rule (DESIGN.md §9): the report never samples animation in
-//! JS. The Rust side embeds the already-computed [`PoseGrid`] —
-//! model-space joint positions for every frame the checks judged — and
-//! a small hand-written WebGL2 skeleton renderer plays exactly those
-//! frames. When a finding names frame N, the viewer scrubs to that
-//! frame N. No three.js, no CDN, no network.
+//! Docs.rs API map: [`render`] turns an
+//! [`animsmith_core::Document`], [`animsmith_core::ResolvedRoles`], and
+//! slice of [`animsmith_core::Finding`] values into a self-contained
+//! HTML report. The viewer is driven by the same
+//! [`animsmith_core::PoseGrid`] samples the checks judged.
 
 #![doc = "\n\n"]
 #![doc = include_str!("../README.md")]

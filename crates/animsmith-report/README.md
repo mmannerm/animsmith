@@ -1,5 +1,7 @@
 # animsmith-report
 
+## Overview
+
 `animsmith-report` renders animsmith findings into a single offline HTML
 report. It is the report-generation crate used by the CLI's `report`
 command: callers provide the loaded `Document`, resolved rig roles, and
@@ -9,6 +11,8 @@ The report embeds the pose-grid frames computed on the Rust side and
 plays back exactly those frames in a small hand-written WebGL viewer.
 There is no CDN, no three.js dependency, and no JavaScript resampling;
 when a finding names a frame, the viewer scrubs to that judged frame.
+
+## Usage
 
 ```toml
 [dependencies]
@@ -27,12 +31,23 @@ fn write_report(
 }
 ```
 
+## Feature Flags
+
 This crate has no public feature flags. In the `animsmith` CLI, the
 HTML report command is controlled by the default `report` feature and is
-omitted by `--no-default-features`.
+omitted by `--no-default-features`. The workspace MSRV is Rust 1.88.
 
-More detail:
+## More Detail
 
 - [CLI report command](https://github.com/mmannerm/animsmith/blob/main/docs/cli.md#commands)
 - [Embedding animsmith in a pipeline](https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md)
 - [Workspace design](https://github.com/mmannerm/animsmith/blob/main/DESIGN.md)
+
+## License
+
+Licensed under either the MIT license or the Apache License, Version
+2.0, at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally
+submitted for inclusion in animsmith by you is licensed as MIT OR
+Apache-2.0, without any additional terms or conditions.
