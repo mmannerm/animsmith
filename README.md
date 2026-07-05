@@ -88,7 +88,7 @@ $ animsmith inspect clip.glb          # skeleton + clips + detected rig profile
 $ animsmith report clip.glb -o report.html   # offline HTML: 3D playback + charts
 $ animsmith convert export.fbx -o clip.glb   # skeleton+animation glTF
 $ animsmith diff old.glb new.glb      # did the re-export change what matters?
-$ animsmith fix clip.glb -o fixed.glb # repair quat flips, byte-surgically
+$ animsmith fix clip.glb -o fixed.glb # repair quaternion defects, byte-surgically
 $ animsmith fix clip.glb --dry-run    # inspect repairs without writing
 ```
 

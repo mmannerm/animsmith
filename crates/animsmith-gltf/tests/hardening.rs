@@ -278,7 +278,7 @@ fn glb_external_buffer_fix_writes_the_buffer_not_a_false_success() {
     assert_eq!(
         animsmith_gltf::fix::inspect_quat_hemisphere(&glb)
             .expect("inspects")
-            .total_flipped(),
+            .total_fixed(),
         2
     );
 
@@ -288,13 +288,13 @@ fn glb_external_buffer_fix_writes_the_buffer_not_a_false_success() {
     std::fs::create_dir_all(&out_dir).unwrap();
     let out_glb = out_dir.join("fixed.glb");
     let report = animsmith_gltf::fix::fix_quat_hemisphere(&glb, &out_glb).expect("fixes");
-    assert_eq!(report.total_flipped(), 2);
+    assert_eq!(report.total_fixed(), 2);
 
     assert!(out_dir.join("ext.bin").exists(), "patched buffer written");
     assert_eq!(
         animsmith_gltf::fix::inspect_quat_hemisphere(&out_glb)
             .expect("re-inspects output")
-            .total_flipped(),
+            .total_fixed(),
         0,
         "output must actually be repaired"
     );
@@ -302,7 +302,7 @@ fn glb_external_buffer_fix_writes_the_buffer_not_a_false_success() {
     assert_eq!(
         animsmith_gltf::fix::inspect_quat_hemisphere(&glb)
             .expect("re-inspects input")
-            .total_flipped(),
+            .total_fixed(),
         2
     );
 }
