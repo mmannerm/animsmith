@@ -1,14 +1,16 @@
-//! Minimal glTF 2.0 writer for `convert`: emits the skeleton (node
-//! hierarchy + rest TRS) and every clip's animation tracks. This is a
-//! *pipeline* conversion — meshes, skins, and materials are not
-//! carried; the output exists so animation data can enter glTF-based
-//! tooling (including animsmith itself) straight from a DCC export.
+//! Minimal glTF 2.0 writer for `convert`/`transform`: emits the
+//! skeleton (node hierarchy + rest TRS), every clip's animation tracks,
+//! and whatever scene assets the [`Document`] carries ([`Document::assets`]
+//! — triangulated meshes, skins, and factor-only materials). A document
+//! with default-empty assets writes animation + skeleton only, so
+//! animation data can still enter glTF-based tooling (including animsmith
+//! itself) straight from a DCC export.
 //!
 //! Values are written exactly as held in the core model — lint first;
 //! conversion does not repair.
 
 use crate::WriteError;
-use animsmith_core::model::{Document, Interpolation, Property, SceneAssets, TrackValues};
+use animsmith_core::model::{Document, Interpolation, Property, TrackValues};
 use base64::Engine as _;
 use serde_json::{Value, json};
 use std::path::Path;
@@ -187,19 +189,13 @@ fn document_to_json(doc: &Document, buffer_uri: Option<String>, buffer_len: usiz
 }
 
 /// Serialize `doc` to `path` (`.glb` for binary, anything else as
-/// `.gltf` JSON with an embedded data-URI buffer). Animation +
-/// skeleton only; use [`write_with_assets`] to carry geometry.
+/// `.gltf` JSON with an embedded data-URI buffer): skeleton, animation,
+/// and any scene assets it carries ([`Document::assets`] — triangulated
+/// meshes, skins, factor-only materials; textures are downstream
+/// pipelines' job). A `Document` with default-empty assets writes
+/// animation + skeleton only.
 pub fn write(doc: &Document, path: &Path) -> Result<(), WriteError> {
-    write_with_assets(doc, &SceneAssets::default(), path)
-}
-
-/// Serialize `doc` plus its scene assets (triangulated meshes, skins,
-/// factor-only materials — textures are downstream pipelines' job).
-pub fn write_with_assets(
-    doc: &Document,
-    assets: &SceneAssets,
-    path: &Path,
-) -> Result<(), WriteError> {
+    let assets = &doc.assets;
     let mut buffers = BufferBuilder::new();
     let mut animations: Vec<Value> = Vec::new();
 

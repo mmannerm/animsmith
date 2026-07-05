@@ -100,6 +100,7 @@ fn treadmill_doc(sweep: f32) -> Document {
                 treadmill_track(2, skel.bones[2].rest.translation, 0.5, sweep),
             ],
         }],
+        assets: Default::default(),
         source: SourceInfo::default(),
     }
 }
@@ -242,6 +243,7 @@ fn rotated_first_frame_doc(angle: f32) -> Document {
             duration_s: 1.0,
             tracks,
         }],
+        assets: Default::default(),
         source: SourceInfo::default(),
     }
 }

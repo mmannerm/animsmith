@@ -70,15 +70,11 @@ fn mat4(m: &ufbx::Matrix) -> Mat4 {
     ])
 }
 
-/// Load an `.fbx` file into a core [`Document`] (animation + skeleton
-/// only — the assets are discarded).
+/// Load an `.fbx` file into a core [`Document`]: skeleton, animation,
+/// and scene assets (triangulated meshes, skins, factor-only
+/// materials). Consumers that only judge animation ignore
+/// [`Document::assets`].
 pub fn load(path: &Path) -> Result<Document, LoadError> {
-    load_with_assets(path).map(|(doc, _)| doc)
-}
-
-/// Load an `.fbx` file into a core [`Document`] plus its scene assets
-/// (triangulated meshes, skins, factor-only materials).
-pub fn load_with_assets(path: &Path) -> Result<(Document, SceneAssets), LoadError> {
     let filename = path
         .to_str()
         .ok_or_else(|| LoadError::Path(path.display().to_string()))?;
@@ -210,17 +206,15 @@ pub fn load_with_assets(path: &Path) -> Result<(Document, SceneAssets), LoadErro
 
     let assets = extract_assets(&scene, path.parent());
 
-    Ok((
-        Document {
-            skeleton: Skeleton { bones },
-            clips,
-            source: SourceInfo {
-                path: Some(path.display().to_string()),
-                format: Some("fbx".into()),
-            },
-        },
+    Ok(Document {
+        skeleton: Skeleton { bones },
+        clips,
         assets,
-    ))
+        source: SourceInfo {
+            path: Some(path.display().to_string()),
+            format: Some("fbx".into()),
+        },
+    })
 }
 
 /// Triangulated, unindexed geometry + skins + factor-only materials.

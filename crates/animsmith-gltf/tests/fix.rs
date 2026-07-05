@@ -61,6 +61,7 @@ fn doc_with_quats(quats: Vec<Quat>) -> Document {
                 },
             ],
         }],
+        assets: Default::default(),
         source: SourceInfo::default(),
     }
 }

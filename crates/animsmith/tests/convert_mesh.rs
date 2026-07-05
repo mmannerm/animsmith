@@ -12,12 +12,11 @@ fn converted_mesh_is_structurally_sound() {
         eprintln!("skipped: set ANIMSMITH_MESH_FBX to run");
         return;
     };
-    let (doc, assets) =
-        animsmith_fbx::load_with_assets(std::path::Path::new(&fbx)).expect("FBX loads");
-    assert!(!assets.meshes.is_empty(), "fixture must carry meshes");
+    let doc = animsmith_fbx::load(std::path::Path::new(&fbx)).expect("FBX loads");
+    assert!(!doc.assets.meshes.is_empty(), "fixture must carry meshes");
 
     let out = std::env::temp_dir().join("animsmith-convert-mesh.glb");
-    animsmith_gltf::write::write_with_assets(&doc, &assets, &out).expect("writes");
+    animsmith_gltf::write::write(&doc, &out).expect("writes");
 
     let bytes = std::fs::read(&out).unwrap();
     let gltf = gltf::Gltf::from_slice(&bytes).expect("valid glTF");
@@ -96,4 +95,91 @@ fn converted_mesh_is_structurally_sound() {
         "validated {corners} corners across {} meshes",
         gltf.meshes().count()
     );
+}
+
+/// End-to-end through the real `convert` subcommand: the default run
+/// carries geometry, and `--animation-only` strips it — the uniform
+/// behaviour #33 promises, exercised at the CLI contract (not just the
+/// library round-trip). Also gated on ANIMSMITH_MESH_FBX.
+#[test]
+fn cli_convert_carries_and_strips_geometry() {
+    let Ok(fbx) = std::env::var("ANIMSMITH_MESH_FBX") else {
+        eprintln!("skipped: set ANIMSMITH_MESH_FBX to run");
+        return;
+    };
+    let dir = std::env::temp_dir().join(format!("animsmith-cli-convert-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let mesh_count = |glb: &std::path::Path| -> usize {
+        let bytes = std::fs::read(glb).unwrap();
+        gltf::Gltf::from_slice(&bytes)
+            .expect("valid glTF")
+            .meshes()
+            .count()
+    };
+    let convert = |out: &std::path::Path, animation_only: bool| {
+        let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_animsmith"));
+        cmd.arg("convert").arg(&fbx).arg("-o").arg(out);
+        if animation_only {
+            cmd.arg("--animation-only");
+        }
+        let status = cmd.status().expect("runs animsmith");
+        assert!(status.success(), "convert exited {status}");
+    };
+
+    let carried = dir.join("carried.glb");
+    convert(&carried, false);
+    assert!(
+        mesh_count(&carried) > 0,
+        "convert carries geometry from a mesh FBX"
+    );
+
+    let stripped = dir.join("stripped.glb");
+    convert(&stripped, true);
+    assert_eq!(
+        mesh_count(&stripped),
+        0,
+        "convert --animation-only strips geometry"
+    );
+}
+
+/// End-to-end through the real `transform` subcommand: a transform pass
+/// must carry the input's geometry to the output (the data-loss bug #33
+/// fixes). Gated on ANIMSMITH_MESH_FBX, and skipped when the fixture
+/// carries no clips (transform has nothing to operate on).
+#[test]
+fn cli_transform_preserves_geometry() {
+    let Ok(fbx) = std::env::var("ANIMSMITH_MESH_FBX") else {
+        eprintln!("skipped: set ANIMSMITH_MESH_FBX to run");
+        return;
+    };
+    let doc = animsmith_fbx::load(std::path::Path::new(&fbx)).expect("FBX loads");
+    if doc.clips.is_empty() {
+        eprintln!("skipped: fixture carries no clips for transform to touch");
+        return;
+    }
+
+    let dir = std::env::temp_dir().join(format!("animsmith-cli-transform-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let out = dir.join("transformed.glb");
+
+    // A hold-extend is a real (non-no-op) transform; the geometry must
+    // survive it.
+    let status = std::process::Command::new(env!("CARGO_BIN_EXE_animsmith"))
+        .arg("transform")
+        .arg(&fbx)
+        .arg("-o")
+        .arg(&out)
+        .arg("--hold-extend")
+        .arg("0.25")
+        .status()
+        .expect("runs animsmith");
+    assert!(status.success(), "transform exited {status}");
+
+    let bytes = std::fs::read(&out).unwrap();
+    let meshes = gltf::Gltf::from_slice(&bytes)
+        .expect("valid glTF")
+        .meshes()
+        .count();
+    assert!(meshes > 0, "transform carries geometry to its output");
 }

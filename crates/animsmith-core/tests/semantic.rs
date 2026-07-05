@@ -101,6 +101,7 @@ fn doc_with_periods_and_stride(periods: f64, stride: f32) -> Document {
             duration_s: 1.0,
             tracks,
         }],
+        assets: Default::default(),
         source: SourceInfo::default(),
     }
 }
