@@ -193,6 +193,12 @@ preserve geometry rather than silently dropping it, and `measure`
 reports mesh-level measurements (vertex count, AABB, joints-per-vertex,
 weight sums) from it (#16).
 
+Ingestion is **triangle-list only** — the target inputs are skinned game
+rigs, and the model and writer carry no primitive-topology field. A
+non-`TRIANGLES` glTF primitive (points, lines, strips, fans) is skipped
+rather than misread as a triangle list; other topologies and their
+retriangulation are out of scope for now.
+
 **Sampled layer** — what a game runtime sees. A `PoseGrid` built by a
 `ClipSampler`: uniform time grid over `[0, duration]` (resolution = max
 channel key count, or explicit fps), glTF-spec interpolation semantics

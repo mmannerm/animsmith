@@ -219,6 +219,11 @@ fn build_document(
 
     // Inverse bind matrices from skins (last skin wins on conflict).
     for skin in doc.skins() {
+        // Skip a count-0 IBM accessor: gltf 1.4's reader underflows and
+        // panics iterating one (the same guard the asset path uses).
+        if skin.inverse_bind_matrices().is_none_or(|a| a.count() == 0) {
+            continue;
+        }
         let reader = skin.reader(|buffer| buffers.get(buffer.index()).map(Vec::as_slice));
         if let Some(ibms) = reader.read_inverse_bind_matrices() {
             for (joint, ibm) in skin.joints().zip(ibms) {

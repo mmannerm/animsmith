@@ -680,3 +680,81 @@ fn load_skips_non_triangle_primitive() {
         "POINTS primitive skipped, not ingested as triangles"
     );
 }
+
+/// A count-0 `inverseBindMatrices` accessor must not crash the loader.
+/// This is read in *two* places — the skeleton build (`build_document`)
+/// and asset extraction — so the guard has to cover both. `load` skips
+/// the empty IBM accessor (bones fall back to `inverse_bind: None`, mesh
+/// IBMs stay empty) and never panics.
+#[test]
+fn load_survives_zero_count_inverse_bind_matrices() {
+    let dir = std::env::temp_dir().join("animsmith-load-assets-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("zero-count-ibm.gltf");
+    // Valid triangle mesh + a skin whose inverseBindMatrices is a count-0
+    // MAT4 accessor.
+    std::fs::write(
+        &path,
+        r#"{
+            "asset": { "version": "2.0" },
+            "buffers": [{ "byteLength": 36, "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAA" }],
+            "bufferViews": [{ "buffer": 0, "byteOffset": 0, "byteLength": 36 }],
+            "accessors": [
+                { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0,0,0], "max": [1,1,0] },
+                { "bufferView": 0, "componentType": 5126, "count": 0, "type": "MAT4" }
+            ],
+            "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 } }] }],
+            "nodes": [{ "name": "joint" }, { "name": "mesh", "mesh": 0, "skin": 0 }],
+            "skins": [{ "joints": [0], "inverseBindMatrices": 1 }],
+            "scenes": [{ "nodes": [1] }],
+            "scene": 0
+        }"#,
+    )
+    .unwrap();
+
+    let doc = animsmith_gltf::load(&path).expect("count-0 IBM parses without panic");
+    assert_eq!(
+        doc.assets.meshes[0].primitives[0].positions.len(),
+        3,
+        "mesh still loads"
+    );
+    assert!(
+        doc.assets.meshes[0].skin_ibms.is_empty(),
+        "empty IBM accessor dropped in asset extraction"
+    );
+    assert!(
+        doc.skeleton.bones.iter().all(|b| b.inverse_bind.is_none()),
+        "empty IBM accessor dropped in the skeleton build too"
+    );
+}
+
+/// A count-0 `indices` accessor must not crash the loader — pins the
+/// index-read guard. `load` treats it as an unindexed primitive.
+#[test]
+fn load_survives_zero_count_indices() {
+    let dir = std::env::temp_dir().join("animsmith-load-assets-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("zero-count-indices.gltf");
+    std::fs::write(
+        &path,
+        r#"{
+            "asset": { "version": "2.0" },
+            "buffers": [{ "byteLength": 36, "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAA" }],
+            "bufferViews": [{ "buffer": 0, "byteOffset": 0, "byteLength": 36 }],
+            "accessors": [
+                { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0,0,0], "max": [1,1,0] },
+                { "bufferView": 0, "componentType": 5125, "count": 0, "type": "SCALAR" }
+            ],
+            "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 }, "indices": 1 }] }],
+            "nodes": [{ "mesh": 0 }],
+            "scenes": [{ "nodes": [0] }],
+            "scene": 0
+        }"#,
+    )
+    .unwrap();
+
+    let doc = animsmith_gltf::load(&path).expect("count-0 indices parses without panic");
+    let prim = &doc.assets.meshes[0].primitives[0];
+    assert_eq!(prim.positions.len(), 3, "mesh still loads");
+    assert!(prim.indices.is_empty(), "empty index accessor dropped");
+}
