@@ -510,9 +510,13 @@ fn read_image(
     match source {
         gltf::image::Source::View { view, mime_type } => {
             let buffer = buffers.get(view.buffer().index())?;
-            let bytes = buffer
-                .get(view.offset()..view.offset() + view.length())?
-                .to_vec();
+            // `offset`/`length` are attacker-controlled `byteOffset`/
+            // `byteLength` JSON fields; add with a checked op so a
+            // near-`usize::MAX` offset fails closed instead of panicking
+            // on overflow in debug builds (invariant: loaders never
+            // panic on hostile input).
+            let end = view.offset().checked_add(view.length())?;
+            let bytes = buffer.get(view.offset()..end)?.to_vec();
             Some(TextureAsset {
                 bytes,
                 mime: mime_type.to_string(),

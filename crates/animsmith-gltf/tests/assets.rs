@@ -412,3 +412,108 @@ fn load_drops_assets() {
     // But the skeleton and any animation still load.
     assert!(!doc.skeleton.bones.is_empty(), "skeleton still loads");
 }
+
+/// `TINY_PNG` as a standard-base64 payload, for hand-authored `data:`
+/// URI image sources (the writer only ever emits bufferView images, so
+/// this branch needs a fixture that doesn't come from `write`).
+const TINY_PNG_B64: &str =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4//8/AAX+Av6nNYGEAAAAAElFTkSuQmCC";
+
+/// A base-color texture whose image is an embedded `data:` URI — the
+/// `Source::Uri` data-URI branch of `read_image`, which no writer-driven
+/// round-trip exercises (the writer always emits bufferView images). The
+/// MIME is recovered from the URI's media-type prefix (no `mimeType`).
+#[test]
+fn load_with_assets_reads_data_uri_texture() {
+    let dir = std::env::temp_dir().join("animsmith-load-assets-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("data-uri-image.gltf");
+    let json = format!(
+        r#"{{
+            "asset": {{ "version": "2.0" }},
+            "images": [{{ "uri": "data:image/png;base64,{TINY_PNG_B64}" }}],
+            "textures": [{{ "source": 0 }}],
+            "materials": [{{
+                "name": "mat",
+                "pbrMetallicRoughness": {{ "baseColorTexture": {{ "index": 0 }} }}
+            }}]
+        }}"#
+    );
+    std::fs::write(&path, json).unwrap();
+
+    let (_doc, assets) = animsmith_gltf::load_with_assets(&path).expect("loads");
+    let texture = assets.materials[0]
+        .base_color_texture
+        .as_ref()
+        .expect("data-URI texture recovered");
+    assert_eq!(texture.mime, "image/png", "MIME parsed from the data URI");
+    assert_eq!(texture.bytes, TINY_PNG, "decoded bytes match the source");
+}
+
+/// A base-color texture whose image is an external sibling file — the
+/// `Source::Uri` external-file branch of `read_image`, read relative to
+/// the glTF via the same containment rule as external buffers.
+#[test]
+fn load_with_assets_reads_external_file_texture() {
+    let dir = std::env::temp_dir().join("animsmith-load-assets-test-ext");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("tex.png"), TINY_PNG).unwrap();
+    let path = dir.join("external-image.gltf");
+    std::fs::write(
+        &path,
+        r#"{
+            "asset": { "version": "2.0" },
+            "images": [{ "uri": "tex.png", "mimeType": "image/png" }],
+            "textures": [{ "source": 0 }],
+            "materials": [{
+                "name": "mat",
+                "pbrMetallicRoughness": { "baseColorTexture": { "index": 0 } }
+            }]
+        }"#,
+    )
+    .unwrap();
+
+    let (_doc, assets) = animsmith_gltf::load_with_assets(&path).expect("loads");
+    let texture = assets.materials[0]
+        .base_color_texture
+        .as_ref()
+        .expect("external-file texture recovered");
+    assert_eq!(texture.mime, "image/png");
+    assert_eq!(texture.bytes, TINY_PNG, "sibling PNG read from disk");
+}
+
+/// A bufferView-backed image whose `byteOffset + byteLength` overflows
+/// `usize` must not crash the loader — hostile input yields an absent
+/// texture, never a panic (invariant: loaders never panic on file data).
+/// Without the checked add this panics in debug builds.
+#[test]
+fn load_with_assets_survives_overflowing_image_view() {
+    let dir = std::env::temp_dir().join("animsmith-load-assets-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("overflow-view.gltf");
+    // byteOffset = u64::MAX, byteLength = 1 → the sum overflows usize.
+    std::fs::write(
+        &path,
+        r#"{
+            "asset": { "version": "2.0" },
+            "buffers": [{ "byteLength": 4, "uri": "data:application/octet-stream;base64,AAAAAA==" }],
+            "bufferViews": [{ "buffer": 0, "byteOffset": 18446744073709551615, "byteLength": 1 }],
+            "images": [{ "bufferView": 0, "mimeType": "image/png" }],
+            "textures": [{ "source": 0 }],
+            "materials": [{
+                "name": "m",
+                "pbrMetallicRoughness": { "baseColorTexture": { "index": 0 } }
+            }]
+        }"#,
+    )
+    .unwrap();
+
+    // The file must parse (so the overflowing view actually reaches
+    // `read_image`); the unresolvable texture is simply dropped.
+    let (_doc, assets) =
+        animsmith_gltf::load_with_assets(&path).expect("hostile view parses without panic");
+    assert!(
+        assets.materials[0].base_color_texture.is_none(),
+        "overflowing bufferView yields no texture, not a panic"
+    );
+}
