@@ -89,6 +89,10 @@
         "measurements": {
           "type": "object",
           "additionalProperties": { "$ref": "#/$defs/clip_measurements" }
+        },
+        "meshes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/mesh_measurements" }
         }
       },
       "additionalProperties": true
@@ -133,6 +137,27 @@
           "additionalProperties": true
         },
         "speed_mps": { "type": "number" }
+      },
+      "additionalProperties": true
+    },
+    "mesh_measurements": {
+      "type": "object",
+      "required": ["name", "vertex_count", "max_joints_per_vertex"],
+      "properties": {
+        "name": { "type": "string" },
+        "vertex_count": { "type": "integer", "minimum": 0 },
+        "aabb": {
+          "type": "object",
+          "required": ["min", "max"],
+          "properties": {
+            "min": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+            "max": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 }
+          },
+          "additionalProperties": true
+        },
+        "max_joints_per_vertex": { "type": "integer", "minimum": 0 },
+        "weight_sum_min": { "type": "number" },
+        "weight_sum_max": { "type": "number" }
       },
       "additionalProperties": true
     },

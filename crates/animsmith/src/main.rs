@@ -259,6 +259,10 @@ struct FileReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     findings: Option<Vec<Finding>>,
     measurements: BTreeMap<String, animsmith_core::measure::ClipMeasurements>,
+    /// Static per-mesh geometry measurements; empty (and omitted) unless
+    /// the input carried scene assets. Additive to the v1 schema.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    meshes: Vec<animsmith_core::measure::MeshMeasurements>,
 }
 
 #[derive(Default, Serialize)]
@@ -476,13 +480,16 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             require_files(&files)?;
             let mut reports = Vec::new();
             for file in &files {
-                let doc = load(file)?;
+                // `measure` reports geometry, so it loads scene assets
+                // (glTF via the assets-aware loader; FBX carries them).
+                let doc = load_with_assets(file)?;
                 let roles = resolve_roles(&doc, &config);
                 reports.push(FileReport {
                     path: file.display().to_string(),
                     rig: rig_info(&doc, &roles),
                     findings: None,
                     measurements: animsmith_core::measure::measure_document(&doc, &roles, &config),
+                    meshes: animsmith_core::measure::measure_meshes(&doc.assets),
                 });
             }
             match format {
@@ -506,6 +513,31 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                                 m.duration_s,
                                 m.frame_count,
                                 m.animated_bones.len()
+                            );
+                        }
+                        for mesh in &report.meshes {
+                            let bbox = mesh
+                                .aabb
+                                .as_ref()
+                                .map(|b| {
+                                    let s = [
+                                        b.max[0] - b.min[0],
+                                        b.max[1] - b.min[1],
+                                        b.max[2] - b.min[2],
+                                    ];
+                                    format!(" bbox {:.3}×{:.3}×{:.3}", s[0], s[1], s[2])
+                                })
+                                .unwrap_or_default();
+                            let skin = match (mesh.weight_sum_min, mesh.weight_sum_max) {
+                                (Some(lo), Some(hi)) => format!(
+                                    ", ≤{} joints/vtx, weight-sum {lo:.3}–{hi:.3}",
+                                    mesh.max_joints_per_vertex
+                                ),
+                                _ => String::new(),
+                            };
+                            println!(
+                                "  mesh {}: {} verts{bbox}{skin}",
+                                mesh.name, mesh.vertex_count
                             );
                         }
                     }
@@ -555,6 +587,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     rig: rig_info(&doc, &roles),
                     findings: Some(findings),
                     measurements: animsmith_core::measure::measure_document(&doc, &roles, &config),
+                    // `lint` judges animation, not geometry — no meshes.
+                    meshes: Vec::new(),
                 });
             }
             match format {
@@ -726,23 +760,9 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             output,
             animation_only,
         } => {
-            // Convert is the one path that needs scene geometry, so it
-            // uses the assets-aware glTF loader (FBX's `load` already
-            // carries assets); the lighter `load` stays geometry-free
-            // for lint/measure.
-            let ext = input
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(str::to_ascii_lowercase)
-                .unwrap_or_default();
-            let mut doc = if matches!(ext.as_str(), "glb" | "gltf") {
-                let (mut doc, assets) =
-                    animsmith_gltf::load_with_assets(&input).map_err(|e| e.to_string())?;
-                doc.assets = assets;
-                doc
-            } else {
-                load(&input)?
-            };
+            // Convert emits geometry, so it loads scene assets (glTF via
+            // the assets-aware loader; FBX carries them already).
+            let mut doc = load_with_assets(&input)?;
             // `--animation-only` clears assets uniformly across formats:
             // this is where a conversion drops its geometry on request.
             if animation_only {
@@ -896,6 +916,27 @@ fn load(path: &Path) -> Result<Document, String> {
             "{}: unsupported input (expected .glb, .gltf, or .fbx)",
             path.display()
         )),
+    }
+}
+
+/// Like [`load`], but with scene assets (meshes/skins/materials)
+/// attached — for the commands that report or emit geometry (`measure`,
+/// `convert`). glTF uses the assets-aware loader; the FBX loader already
+/// carries assets, so it shares the plain [`load`] dispatch.
+fn load_with_assets(path: &Path) -> Result<Document, String> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    match ext.as_str() {
+        "glb" | "gltf" => {
+            let (mut doc, assets) =
+                animsmith_gltf::load_with_assets(path).map_err(|e| e.to_string())?;
+            doc.assets = assets;
+            Ok(doc)
+        }
+        _ => load(path),
     }
 }
 
