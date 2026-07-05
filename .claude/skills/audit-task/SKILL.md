@@ -158,20 +158,29 @@ against a value produced by the code under test is not a test.
 
 The audit emits **one** summary review comment on the PR. Re-runs
 **edit that comment in place** rather than appending new ones; identify
-it on subsequent runs by the `<!-- audit-task -->` HTML marker at the
-top of the body.
+it on subsequent runs by the `<!-- audit-task agent=<agent> -->` HTML
+marker at the top of the body, where `<agent>` is your own lowercase
+slug (`claude`, `codex`, …).
+
+The marker **must carry the agent slug**. Multiple agents (Claude and
+Codex) run this skill on the same repo and post under the **same
+GitHub account**, so a bare `<!-- audit-task -->` marker cannot tell
+whose comment is whose — matching on it lets one agent overwrite
+another's audit. Match, and edit, **only** the comment bearing *your
+own* `agent=<agent>` marker; if the only audit comment present is
+another agent's, post a **new** comment rather than clobbering theirs.
 
 Mechanism: `gh pr comment <N> --body "<body>"` for the initial post,
 then `gh api repos/<owner>/<repo>/issues/comments/<comment_id> -X PATCH
--f body=...` to edit on re-runs. Find the existing comment by listing
-`gh api repos/<owner>/<repo>/issues/<N>/comments` and grep-matching the
-`<!-- audit-task -->` marker. Include your agent attribution line at
-the bottom of the comment.
+-f body=...` to edit on re-runs. Find your existing comment by listing
+`gh api repos/<owner>/<repo>/issues/<N>/comments` and grep-matching
+your `<!-- audit-task agent=<agent> -->` marker (not the bare marker).
+Include your agent attribution line at the bottom of the comment.
 
 #### PR comment structure
 
 ```markdown
-<!-- audit-task -->
+<!-- audit-task agent=<agent> -->
 ## Audit: <PR title> (#<N>)
 
 **Verdict:** [APPROVE] / [APPROVE WITH FOLLOW-UPS] / [BLOCK]
