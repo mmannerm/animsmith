@@ -77,11 +77,7 @@ schema-id:
 
 # Check the crate package inventories that CI validates before release.
 package-inventory:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    for crate in animsmith-core animsmith-gltf animsmith-fbx animsmith-report animsmith; do
-      cargo package --list -p "$crate" --allow-dirty >/dev/null
-    done
+    bash scripts/check-package-inventory.sh
 
 # Full local PR gate, matching CI (includes release builds — expect
 # minutes, not seconds). The GitHub workflow also verifies package

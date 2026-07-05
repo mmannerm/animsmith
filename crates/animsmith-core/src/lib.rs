@@ -13,6 +13,9 @@
 //! catalog functions re-exported from this crate root. Internal built-in
 //! check modules are private implementation details.
 
+#![doc = "\n\n"]
+#![doc = include_str!("../README.md")]
+
 pub mod check;
 mod checks;
 pub mod config;

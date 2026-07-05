@@ -96,12 +96,7 @@ jobs:
         run: cargo test -p animsmith --test cli_contract --no-default-features
 
       - name: Check crate package inventories
-        run: |
-          set -euo pipefail
-          for crate in animsmith-core animsmith-gltf animsmith-fbx animsmith-report animsmith; do
-            cargo package --list -p "$crate" > "/tmp/$crate.package-list"
-            test -s "/tmp/$crate.package-list"
-          done
+        run: bash scripts/check-package-inventory.sh
 
       - name: Verify publishable core crate
         run: cargo package -p animsmith-core

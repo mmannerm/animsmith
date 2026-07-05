@@ -80,12 +80,15 @@ If your environment cannot spawn subagents, run `intent-criteria.md`
 against the three artifacts yourself in a separate, clean pass — discard
 your mental model first and work only from the diff.
 
-**Design-doc check.** If the diff makes or changes an architectural
+**Docs-freshness check.** If the diff makes or changes an architectural
 decision (new crate, new check tier, changed measurement semantics, new
-public contract), verify `DESIGN.md` was updated in the same PR. A
-decision-level change with no doc update is a *delivery gap*. Diffs
-that don't change documented architecture: state "design docs: not
-applicable".
+public contract), verify `DESIGN.md` was updated in the same PR. If the
+diff changes a claim made by a crate-local README (public symbols or
+signatures, feature flags, loader/report boundaries, or linked doc
+paths/anchors), verify that README was updated in the same PR or a
+`type:docs` issue/comment tracks the update. An untracked
+decision-level or README-claim mismatch is a *delivery gap*. Diffs that
+touch neither: state "docs freshness: not applicable".
 
 ### 3. Run a bug-focused code review
 
@@ -205,7 +208,7 @@ agent attribution line at the bottom of the comment.
 rows as `claim → proving line → buggy impl that still passes`, with
 file:line refs.
 
-**Design docs:** updated (DESIGN.md §) / not applicable / delivery gap.
+**Docs freshness:** DESIGN.md updated (§) / crate READMEs updated / issue filed #NNN / not applicable / delivery gap.
 
 **Code review:** summary or link to the code-review pass.
 

@@ -7,6 +7,9 @@
 //! frames. When a finding names frame N, the viewer scrubs to that
 //! frame N. No three.js, no CDN, no network.
 
+#![doc = "\n\n"]
+#![doc = include_str!("../README.md")]
+
 use animsmith_core::finding::Finding;
 use animsmith_core::metrics::metric_frame_count;
 use animsmith_core::model::Document;
