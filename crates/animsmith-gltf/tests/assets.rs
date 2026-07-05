@@ -265,21 +265,19 @@ fn transform_pass_preserves_geometry() {
     assert_eq!(input_keys, 3, "hold-extend appended a keyframe");
 }
 
-/// The read side of the writer: `write` → `load_with_assets` recovers
-/// meshes, skins, and materials equivalently. This is the #16 round-trip
-/// contract — a GLB-based measure wrapper can now reach geometry through
-/// animsmith.
+/// The read side of the writer: `write` → `load` recovers meshes,
+/// skins, and materials equivalently, in the document's `assets`. This
+/// is the #16 round-trip contract — a GLB-based measure wrapper can now
+/// reach geometry through animsmith.
 #[test]
-fn load_with_assets_round_trips_meshes_skins_materials() {
+fn load_round_trips_meshes_skins_materials() {
     let dir = std::env::temp_dir().join("animsmith-load-assets-test");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("roundtrip.glb");
     animsmith_gltf::write::write(&skinned_triangle(), &path).expect("writes");
 
-    let (doc, assets) = animsmith_gltf::load_with_assets(&path).expect("loads with assets");
-    // `load_with_assets` leaves the returned document's assets empty; the
-    // geometry rides in the second tuple element until a caller attaches it.
-    assert!(doc.assets.meshes.is_empty(), "document assets stay empty");
+    let doc = animsmith_gltf::load(&path).expect("loads");
+    let assets = &doc.assets;
 
     assert_eq!(assets.meshes.len(), 1, "one mesh");
     let mesh = &assets.meshes[0];
@@ -328,13 +326,14 @@ fn load_with_assets_round_trips_meshes_skins_materials() {
 /// The `.gltf` (text) path resolves a data-URI buffer and a
 /// bufferView-backed image just like the binary `.glb` path.
 #[test]
-fn load_with_assets_reads_gltf_text_format() {
+fn load_reads_gltf_text_format() {
     let dir = std::env::temp_dir().join("animsmith-load-assets-test");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("roundtrip.gltf");
     animsmith_gltf::write::write(&skinned_triangle(), &path).expect("writes");
 
-    let (_doc, assets) = animsmith_gltf::load_with_assets(&path).expect("loads");
+    let doc = animsmith_gltf::load(&path).expect("loads");
+    let assets = &doc.assets;
     assert_eq!(assets.meshes.len(), 1);
     assert_eq!(assets.meshes[0].primitives[0].positions.len(), 4);
     assert_eq!(
@@ -348,10 +347,10 @@ fn load_with_assets_reads_gltf_text_format() {
 }
 
 /// An unindexed primitive stays unindexed: the writer emits no index
-/// accessor, and `load_with_assets` recovers the raw corner stream. This
-/// is the "meshes (indexed or not)" half of #16.
+/// accessor, and `load` recovers the raw corner stream. This is the
+/// "meshes (indexed or not)" half of #16.
 #[test]
-fn load_with_assets_preserves_unindexed_primitives() {
+fn load_preserves_unindexed_primitives() {
     let dir = std::env::temp_dir().join("animsmith-load-assets-test");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("unindexed.glb");
@@ -390,26 +389,27 @@ fn load_with_assets_preserves_unindexed_primitives() {
     };
     animsmith_gltf::write::write(&doc, &path).expect("writes");
 
-    let (_doc, assets) = animsmith_gltf::load_with_assets(&path).expect("loads");
+    let doc = animsmith_gltf::load(&path).expect("loads");
+    let assets = &doc.assets;
     let prim = &assets.meshes[0].primitives[0];
     assert!(prim.indices.is_empty(), "no index accessor was emitted");
     assert_eq!(prim.positions.len(), 3, "raw corner stream preserved");
     assert_eq!(prim.material, None, "no material referenced");
 }
 
-/// `load` (without `_with_assets`) leaves geometry on the floor even when
-/// the file carries it — the lint/measure path stays mesh-free.
+/// `load` carries scene geometry in `Document::assets` — the same
+/// one-call contract as `animsmith_fbx::load`, so consumers reach
+/// meshes/materials without a second entry point.
 #[test]
-fn load_drops_assets() {
+fn load_carries_assets() {
     let dir = std::env::temp_dir().join("animsmith-load-assets-test");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("has-geometry.glb");
     animsmith_gltf::write::write(&skinned_triangle(), &path).expect("writes");
 
     let doc = animsmith_gltf::load(&path).expect("loads");
-    assert!(doc.assets.meshes.is_empty(), "load() drops meshes");
-    assert!(doc.assets.materials.is_empty(), "load() drops materials");
-    // But the skeleton and any animation still load.
+    assert_eq!(doc.assets.meshes.len(), 1, "load() carries the mesh");
+    assert_eq!(doc.assets.materials.len(), 1, "load() carries the material");
     assert!(!doc.skeleton.bones.is_empty(), "skeleton still loads");
 }
 
@@ -424,7 +424,7 @@ const TINY_PNG_B64: &str =
 /// round-trip exercises (the writer always emits bufferView images). The
 /// MIME is recovered from the URI's media-type prefix (no `mimeType`).
 #[test]
-fn load_with_assets_reads_data_uri_texture() {
+fn load_reads_data_uri_texture() {
     let dir = std::env::temp_dir().join("animsmith-load-assets-test");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("data-uri-image.gltf");
@@ -441,7 +441,8 @@ fn load_with_assets_reads_data_uri_texture() {
     );
     std::fs::write(&path, json).unwrap();
 
-    let (_doc, assets) = animsmith_gltf::load_with_assets(&path).expect("loads");
+    let doc = animsmith_gltf::load(&path).expect("loads");
+    let assets = &doc.assets;
     let texture = assets.materials[0]
         .base_color_texture
         .as_ref()
@@ -454,7 +455,7 @@ fn load_with_assets_reads_data_uri_texture() {
 /// `Source::Uri` external-file branch of `read_image`, read relative to
 /// the glTF via the same containment rule as external buffers.
 #[test]
-fn load_with_assets_reads_external_file_texture() {
+fn load_reads_external_file_texture() {
     let dir = std::env::temp_dir().join("animsmith-load-assets-test-ext");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("tex.png"), TINY_PNG).unwrap();
@@ -473,7 +474,8 @@ fn load_with_assets_reads_external_file_texture() {
     )
     .unwrap();
 
-    let (_doc, assets) = animsmith_gltf::load_with_assets(&path).expect("loads");
+    let doc = animsmith_gltf::load(&path).expect("loads");
+    let assets = &doc.assets;
     let texture = assets.materials[0]
         .base_color_texture
         .as_ref()
@@ -487,7 +489,7 @@ fn load_with_assets_reads_external_file_texture() {
 /// texture, never a panic (invariant: loaders never panic on file data).
 /// Without the checked add this panics in debug builds.
 #[test]
-fn load_with_assets_survives_overflowing_image_view() {
+fn load_survives_overflowing_image_view() {
     let dir = std::env::temp_dir().join("animsmith-load-assets-test");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("overflow-view.gltf");
@@ -510,8 +512,8 @@ fn load_with_assets_survives_overflowing_image_view() {
 
     // The file must parse (so the overflowing view actually reaches
     // `read_image`); the unresolvable texture is simply dropped.
-    let (_doc, assets) =
-        animsmith_gltf::load_with_assets(&path).expect("hostile view parses without panic");
+    let doc = animsmith_gltf::load(&path).expect("hostile view parses without panic");
+    let assets = &doc.assets;
     assert!(
         assets.materials[0].base_color_texture.is_none(),
         "overflowing bufferView yields no texture, not a panic"

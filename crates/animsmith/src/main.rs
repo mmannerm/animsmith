@@ -480,9 +480,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             require_files(&files)?;
             let mut reports = Vec::new();
             for file in &files {
-                // `measure` reports geometry, so it loads scene assets
-                // (glTF via the assets-aware loader; FBX carries them).
-                let doc = load_with_assets(file)?;
+                let doc = load(file)?;
                 let roles = resolve_roles(&doc, &config);
                 reports.push(FileReport {
                     path: file.display().to_string(),
@@ -760,9 +758,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             output,
             animation_only,
         } => {
-            // Convert emits geometry, so it loads scene assets (glTF via
-            // the assets-aware loader; FBX carries them already).
-            let mut doc = load_with_assets(&input)?;
+            let mut doc = load(&input)?;
             // `--animation-only` clears assets uniformly across formats:
             // this is where a conversion drops its geometry on request.
             if animation_only {
@@ -916,27 +912,6 @@ fn load(path: &Path) -> Result<Document, String> {
             "{}: unsupported input (expected .glb, .gltf, or .fbx)",
             path.display()
         )),
-    }
-}
-
-/// Like [`load`], but with scene assets (meshes/skins/materials)
-/// attached — for the commands that report or emit geometry (`measure`,
-/// `convert`). glTF uses the assets-aware loader; the FBX loader already
-/// carries assets, so it shares the plain [`load`] dispatch.
-fn load_with_assets(path: &Path) -> Result<Document, String> {
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(str::to_ascii_lowercase)
-        .unwrap_or_default();
-    match ext.as_str() {
-        "glb" | "gltf" => {
-            let (mut doc, assets) =
-                animsmith_gltf::load_with_assets(path).map_err(|e| e.to_string())?;
-            doc.assets = assets;
-            Ok(doc)
-        }
-        _ => load(path),
     }
 }
 

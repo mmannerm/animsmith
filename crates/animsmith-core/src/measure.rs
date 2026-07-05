@@ -24,10 +24,10 @@ pub struct Aabb {
 }
 
 /// Static (animation-independent) measurements of one mesh carried in
-/// [`SceneAssets`]. Emitted by `measure` when geometry was loaded
-/// (`animsmith-fbx` always; `animsmith-gltf` via `load_with_assets`).
-/// Vertex data is read as authored — indexed meshes count their unique
-/// vertices, unindexed meshes count every triangle corner.
+/// [`SceneAssets`]. Emitted by `measure` when the input carried geometry
+/// (both the FBX and glTF loaders fill `SceneAssets`). Vertex data is
+/// read as authored — indexed meshes count their unique vertices,
+/// unindexed meshes count every triangle corner.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct MeshMeasurements {

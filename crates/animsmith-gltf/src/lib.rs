@@ -137,29 +137,17 @@ fn validate_track_lengths(
     Ok(())
 }
 
-/// Load a `.glb` or `.gltf` file into a core [`Document`]. Scene
-/// geometry is dropped; use [`load_with_assets`] to also parse it.
+/// Load a `.glb` or `.gltf` file into a core [`Document`], including the
+/// scene assets (meshes, skins, materials) its geometry describes — the
+/// symmetric read side of [`write::write`], and the same one-call shape
+/// `animsmith_fbx::load` uses. Consumers that judge only animation
+/// (`lint`, `inspect`) simply ignore [`Document::assets`].
 pub fn load(path: &Path) -> Result<Document, LoadError> {
     let gltf = gltf::Gltf::open(path)?;
     let buffers = resolve_buffers(&gltf, path.parent())?;
-    build_document(&gltf, &buffers, path)
-}
-
-/// Load a `.glb` or `.gltf` file into a core [`Document`] plus the
-/// [`SceneAssets`] its meshes/skins/materials describe — the geometry
-/// counterpart of the animation ingestion [`load`] performs, and the
-/// symmetric read side of [`write::write`]. The returned `Document`
-/// still carries default-empty `assets`; the caller attaches them
-/// (`doc.assets = assets`) when it wants geometry to flow on (a
-/// geometry-preserving `convert`), matching how the FBX loader's output
-/// is consumed. Keeping the two apart lets the lint/measure path stay on
-/// the lighter [`load`] with no mesh decoding.
-pub fn load_with_assets(path: &Path) -> Result<(Document, SceneAssets), LoadError> {
-    let gltf = gltf::Gltf::open(path)?;
-    let buffers = resolve_buffers(&gltf, path.parent())?;
-    let doc = build_document(&gltf, &buffers, path)?;
-    let assets = extract_assets(&gltf.document, &buffers, path.parent())?;
-    Ok((doc, assets))
+    let mut doc = build_document(&gltf, &buffers, path)?;
+    doc.assets = extract_assets(&gltf.document, &buffers, path.parent())?;
+    Ok(doc)
 }
 
 fn resolve_buffers(gltf: &gltf::Gltf, base: Option<&Path>) -> Result<Vec<Vec<u8>>, LoadError> {
@@ -326,8 +314,8 @@ fn build_document(
     Ok(Document {
         skeleton: Skeleton { bones },
         clips,
-        // Geometry is parsed separately by `load_with_assets`; the
-        // document `load` returns carries animation + skeleton only.
+        // `build_document` covers skeleton + animation; `load` fills
+        // `assets` from `extract_assets` before returning.
         assets: SceneAssets::default(),
         source: SourceInfo {
             path: Some(path.display().to_string()),
