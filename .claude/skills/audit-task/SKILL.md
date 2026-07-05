@@ -23,8 +23,12 @@ This workflow is written to be followable by any agent (Claude, Codex,
    intent contract — it has to state, in behavioural terms, what the
    diff changes. If no PR is open, ask the user to open a draft first;
    don't audit a branch in isolation.
-2. **Diff under review.** `git diff origin/main...HEAD` (or `gh pr diff <N>`).
-3. **Build + test status.** Run them yourself; do not trust prior claims.
+2. **The issue(s) the PR closes.** Parse `Closes #NNN` / `Fixes #NNN`
+   from the body and fetch each: `gh issue view <NNN> --json
+   title,body`. Their acceptance criteria are part of the intent
+   contract and feed the claims ledger (step 2).
+3. **Diff under review.** `git diff origin/main...HEAD` (or `gh pr diff <N>`).
+4. **Build + test status.** Run them yourself; do not trust prior claims.
 
 ## Required workflow
 
@@ -54,14 +58,27 @@ usable description names:
 - For new features, the design choice picked during discovery.
 - Any deliberately out-of-scope items.
 
-**Delivery check.** For each behaviour claim in the description:
-- Identify the file(s) and lines that implement it.
-- Identify the test(s) that exercise it through the real code path.
-- Apply the *buggy-implementation gauntlet*: would a wrong-sign,
-  off-by-one, swapped-field implementation still pass the test? If yes,
-  flag as a *delivery gap* even if the test passes.
-- For threshold / tolerance claims: if the test uses a value materially
-  looser than the description states, flag it.
+**Delivery check — the claims ledger, delegated cold.** This is the
+one pass most prone to author bias: on your own PR you read the tests
+as doing what you intended, not what they literally do. So do **not**
+run it from your own summary. Spawn a fresh subagent — one that has not
+seen the implementation discussion — with the **verbatim** contents of
+`intent-criteria.md` (in this skill's directory) as its prompt context.
+Hand it only three raw artifacts: the raw PR body, the raw text of each
+closed issue, and the diff. Do **not** brief it with what you think the
+tests assert — that anchors it to the happy path you already believe
+in. Ask it to build the ledger and read off the verdict.
+
+The ledger's row shape, the concrete buggy-impl triggers, the
+retained-behaviour and no-tests carve-outs, and the mechanical BLOCK
+rule all live in `intent-criteria.md` — it is the single source of
+truth; don't restate them here. In short: a non-empty "buggy impl still
+passes" column, or a proving line of NONE on a claim the diff is meant
+to deliver, is a **delivery gap** and BLOCKs.
+
+If your environment cannot spawn subagents, run `intent-criteria.md`
+against the three artifacts yourself in a separate, clean pass — discard
+your mental model first and work only from the diff.
 
 **Design-doc check.** If the diff makes or changes an architectural
 decision (new crate, new check tier, changed measurement semantics, new
@@ -165,7 +182,9 @@ the bottom of the comment.
 
 ### Findings
 
-**Intent (PR-description vs diff):** bullets with file:line refs, or "clean".
+**Intent (claims ledger):** ledger verdict — "clean" or the offending
+rows as `claim → proving line → buggy impl that still passes`, with
+file:line refs.
 
 **Design docs:** updated (DESIGN.md §) / not applicable / delivery gap.
 
