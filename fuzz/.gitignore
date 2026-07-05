@@ -1,0 +1,9 @@
+# cargo-fuzz build output and run state. Curated seeds and regression
+# fixtures live under seeds/ (checked in); corpus/ is the live working
+# corpus a run grows locally and is not tracked. artifacts/ holds crash
+# reproducers a run drops — promote a real one into seeds/ by hand.
+/target
+/corpus
+/artifacts
+/coverage
+Cargo.lock

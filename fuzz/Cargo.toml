@@ -1,0 +1,56 @@
+[package]
+name = "animsmith-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+rust-version = "1.88"
+
+# Detach from the main workspace: the fuzz crate is nightly-only
+# (libFuzzer sanitizer instrumentation), pulls in libfuzzer-sys, and must
+# never ship in a published crate or gate the stable PR build.
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+tempfile = "3"
+animsmith-gltf = { path = "../crates/animsmith-gltf" }
+animsmith-fbx = { path = "../crates/animsmith-fbx" }
+
+[[bin]]
+name = "gltf_load"
+path = "fuzz_targets/gltf_load.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "gltf_fix_quat_hemisphere"
+path = "fuzz_targets/gltf_fix_quat_hemisphere.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fbx_load"
+path = "fuzz_targets/fbx_load.rs"
+test = false
+doc = false
+bench = false
+
+# Targets are built and run in release mode (`cargo fuzz run --release`),
+# matching the panic semantics of the shipped CLI that invariant-1 governs:
+# debug assertions and overflow checks OFF. This is deliberate. The `gltf`
+# dependency's accessor reader carries internal `debug_assert_eq!(size, …)`
+# checks and a GLB `declared_len - HEADER_LEN` subtraction that are compiled
+# out of the release binary and cannot fire there; fuzzing with cargo-fuzz's
+# default debug-assertions-on would report crashes the real tool can't hit.
+# Hostile containers are rejected at animsmith's own boundary instead — see
+# `validate_glb_framing` and the count-0 accessor guards in the loader — and
+# AddressSanitizer stays on in release, so genuine memory-safety bugs (in
+# our code or in ufbx's C) are still caught. `debug = 1` keeps stacks
+# symbolized.
+[profile.release]
+debug = 1

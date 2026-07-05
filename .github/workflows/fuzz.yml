@@ -1,0 +1,71 @@
+name: fuzz
+
+# Time-boxed fuzzing of the loader entry points that ingest untrusted
+# files (invariant-1: lint/inspect/measure must never panic or OOM on
+# arbitrary input). Each target runs for a bounded 60s off the checked-in
+# seed corpus, so a reintroduced crash surfaces here — the regression
+# seeds under fuzz/seeds/ reproduce known crashers on the first execution.
+# Scheduled weekly (like audit.yml) and on demand; deliberately NOT a PR
+# gate, so it never slows the merge path. cargo-fuzz needs nightly +
+# AddressSanitizer, so this is Linux-only.
+
+on:
+  schedule:
+    # Weekly Monday 07:41 UTC; offset minute spreads cron load (audit.yml
+    # runs at 06:23).
+    - cron: '41 7 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [gltf_load, gltf_fix_quat_hemisphere, fbx_load]
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          # cargo-fuzz builds the standard library (`-Zbuild-std`) so the
+          # sanitizer instruments it too; that needs the source component.
+          components: rust-src
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+          cache-on-failure: true
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - name: Fuzz ${{ matrix.target }} for 60s
+        # New inputs are written to the (ephemeral) corpus dir listed
+        # first; the checked-in seeds dir is passed as read-only starting
+        # input. `--release` matches the shipped CLI's panic semantics
+        # (see fuzz/Cargo.toml); ASan stays on regardless.
+        run: |
+          mkdir -p "fuzz/corpus/${{ matrix.target }}"
+          cargo +nightly fuzz run --release "${{ matrix.target }}" \
+            "fuzz/corpus/${{ matrix.target }}" "fuzz/seeds/${{ matrix.target }}" \
+            -- -max_total_time=60 -rss_limit_mb=2048
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}/
+          if-no-files-found: ignore

@@ -1,0 +1,9 @@
+; FBX 7.4.0 project file
+FBXHeaderExtension:  {
+    FBXHeaderVersion: 1003
+    FBXVersion: 7400
+}
+Objects:  {
+    Model: 1, "Model::node", "Null" {
+    }
+}
