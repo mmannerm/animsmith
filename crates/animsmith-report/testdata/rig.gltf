@@ -135,6 +135,37 @@
      }
     }
    ]
+  },
+  {
+   "name": "idle",
+   "samplers": [
+    {
+     "input": 0,
+     "output": 1,
+     "interpolation": "LINEAR"
+    },
+    {
+     "input": 2,
+     "output": 3,
+     "interpolation": "LINEAR"
+    }
+   ],
+   "channels": [
+    {
+     "sampler": 0,
+     "target": {
+      "node": 1,
+      "path": "rotation"
+     }
+    },
+    {
+     "sampler": 1,
+     "target": {
+      "node": 0,
+      "path": "translation"
+     }
+    }
+   ]
   }
  ]
 }
