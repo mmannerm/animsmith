@@ -22,6 +22,42 @@ fn mesh_count(glb: &Path) -> usize {
         .count()
 }
 
+fn loaded_meshes(glb: &Path) -> Vec<animsmith_core::model::MeshAsset> {
+    animsmith_gltf::load(glb)
+        .expect("converted GLB loads")
+        .assets
+        .meshes
+}
+
+fn baseline_meshes(fbx: &Path, out: &Path) -> Vec<animsmith_core::model::MeshAsset> {
+    let doc = animsmith_fbx::load(fbx).expect("FBX loads");
+    animsmith_gltf::write::write(&doc, out).expect("writes baseline GLB");
+    loaded_meshes(out)
+}
+
+fn assert_meshes_match(
+    expected: &[animsmith_core::model::MeshAsset],
+    actual: &[animsmith_core::model::MeshAsset],
+) {
+    assert_eq!(actual.len(), expected.len(), "mesh count");
+    for (expected, actual) in expected.iter().zip(actual) {
+        assert_eq!(actual.name, expected.name);
+        assert_eq!(actual.node, expected.node);
+        assert_eq!(actual.skin_joints, expected.skin_joints);
+        assert_eq!(actual.skin_ibms, expected.skin_ibms);
+        assert_eq!(actual.primitives.len(), expected.primitives.len());
+        for (expected, actual) in expected.primitives.iter().zip(&actual.primitives) {
+            assert_eq!(actual.material, expected.material);
+            assert_eq!(actual.indices, expected.indices);
+            assert_eq!(actual.positions, expected.positions);
+            assert_eq!(actual.normals, expected.normals);
+            assert_eq!(actual.uvs, expected.uvs);
+            assert_eq!(actual.joints, expected.joints);
+            assert_eq!(actual.weights, expected.weights);
+        }
+    }
+}
+
 #[test]
 fn converted_mesh_is_structurally_sound() {
     let fbx = fixture();
@@ -129,10 +165,9 @@ fn cli_convert_carries_and_strips_geometry() {
 
     let carried = dir.join("carried.glb");
     convert(&carried, false);
-    assert!(
-        mesh_count(&carried) > 0,
-        "convert carries geometry from a mesh FBX"
-    );
+    let baseline = baseline_meshes(&fbx, &dir.join("baseline.glb"));
+    let carried_meshes = loaded_meshes(&carried);
+    assert_meshes_match(&baseline, &carried_meshes);
 
     let stripped = dir.join("stripped.glb");
     convert(&stripped, true);
@@ -173,4 +208,7 @@ fn cli_transform_preserves_geometry() {
 
     let meshes = mesh_count(&out);
     assert!(meshes > 0, "transform carries geometry to its output");
+    let baseline = baseline_meshes(&fbx, &dir.join("baseline.glb"));
+    let transformed_meshes = loaded_meshes(&out);
+    assert_meshes_match(&baseline, &transformed_meshes);
 }

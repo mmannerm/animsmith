@@ -20,3 +20,10 @@ if rg -n "$retired_fbx_gate" .; then
     printf 'retired env-gated FBX asset path is still referenced: %s\n' "$retired_fbx_gate" >&2
     exit 1
 fi
+
+allowed_env='^(ANIMSMITH_GOLDEN_GLB|ANIMSMITH_GOLDEN_SKIP|ANIMSMITH_VERSION)$'
+unexpected_env="$(rg -o --no-filename 'ANIMSMITH_[A-Z0-9_]+' . | sort -u | grep -Ev "$allowed_env" || true)"
+if [[ -n "$unexpected_env" ]]; then
+    printf 'unexpected ANIMSMITH_* environment reference(s):\n%s\n' "$unexpected_env" >&2
+    exit 1
+fi
