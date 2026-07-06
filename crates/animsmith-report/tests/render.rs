@@ -1,5 +1,5 @@
 use animsmith_core::Finding;
-use animsmith_core::metrics::metric_frame_count;
+use animsmith_core::metrics::{MetricGrids, metric_frame_count};
 use animsmith_core::profile::ResolvedRoles;
 use animsmith_core::sample::sample_clip;
 use base64::Engine as _;
@@ -70,10 +70,11 @@ fn pose_grid_bytes(doc: &animsmith_core::Document, clip_name: &str) -> Vec<u8> {
 #[test]
 fn render_embeds_pose_grid_and_uses_no_external_urls() {
     let doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
+    let grids = MetricGrids::new(&doc);
     let roles = ResolvedRoles::default();
     let findings: Vec<Finding> = Vec::new();
 
-    let html = animsmith_report::render(&doc, &roles, &findings, None);
+    let html = animsmith_report::render(&grids, &roles, &findings, None);
     assert_self_contained(&html);
     let data = report_data(&html);
     let clips = data["clips"].as_array().expect("clips array");
@@ -106,10 +107,11 @@ fn render_embeds_pose_grid_and_uses_no_external_urls() {
 #[test]
 fn render_respects_clip_filter() {
     let doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
+    let grids = MetricGrids::new(&doc);
     let roles = ResolvedRoles::default();
     let findings: Vec<Finding> = Vec::new();
 
-    let html = animsmith_report::render(&doc, &roles, &findings, Some("missing"));
+    let html = animsmith_report::render(&grids, &roles, &findings, Some("missing"));
     assert_self_contained(&html);
     let data = report_data(&html);
     assert_eq!(
@@ -119,7 +121,7 @@ fn render_respects_clip_filter() {
     );
 
     for name in ["walk", "idle"] {
-        let html = animsmith_report::render(&doc, &roles, &findings, Some(name));
+        let html = animsmith_report::render(&grids, &roles, &findings, Some(name));
         let data = report_data(&html);
         let clips = data["clips"].as_array().expect("clips array");
         assert_eq!(clips.len(), 1);
