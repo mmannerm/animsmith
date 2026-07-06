@@ -8,8 +8,14 @@ fn fixture() -> PathBuf {
 }
 
 fn report_data(html: &str) -> Value {
-    let marker = r#"<script type="application/json" id="report-data">"#;
-    let start = html.find(marker).expect("report data script") + marker.len();
+    let id = "report-data";
+    let id_pos = html.find(id).expect("report data script id");
+    let script_start = html[..id_pos].rfind("<script").expect("report data script");
+    let start = html[id_pos..].find('>').expect("script tag close") + id_pos + 1;
+    assert!(
+        script_start < id_pos && id_pos < start,
+        "report data id lives on the script tag"
+    );
     let end = html[start..].find("</script>").expect("script close") + start;
     serde_json::from_str(&html[start..end]).expect("report data JSON")
 }

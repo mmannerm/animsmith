@@ -87,7 +87,7 @@ gates: require-cargo-deny
     cargo clippy --workspace --all-targets -- -D warnings
     cargo check --workspace --examples
     cargo test --workspace
-    cargo test -p animsmith-gltf --test golden -- --nocapture
+    bash scripts/check-golden-skip-marker.sh
     cargo deny check
     just schema-id
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps

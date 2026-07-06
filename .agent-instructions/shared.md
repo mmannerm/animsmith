@@ -77,8 +77,8 @@ ANIMSMITH_GOLDEN_GLB=/path/to/reference-character.glb just golden
 
 The FBX mesh/skin/clip coverage uses self-authored checked-in fixtures
 and runs in normal CI. When `ANIMSMITH_GOLDEN_GLB` is unset, the golden
-test prints the grep-able marker `ANIMSMITH_GOLDEN_SKIP` under
-`--nocapture`.
+test prints the grep-able marker `ANIMSMITH_GOLDEN_SKIP`; CI and
+`just gates` assert that the marker is present.
 
 Only CC0 or procedurally generated fixtures may live in `testdata/`.
 

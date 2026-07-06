@@ -33,7 +33,7 @@ jobs:
       - run: cargo check --workspace --examples
       - run: cargo test --workspace
       - name: Golden skip marker
-        run: cargo test -p animsmith-gltf --test golden -- --nocapture
+        run: bash scripts/check-golden-skip-marker.sh
       # The published binary must also build without the C dependency.
       - run: cargo build -p animsmith --no-default-features
       - name: Build release binary
