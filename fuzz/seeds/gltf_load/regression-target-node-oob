@@ -1,0 +1,20 @@
+{
+  "asset": { "version": "2.0" },
+  "buffers": [{ "uri": "data:application/octet-stream;base64,AAAAAAAAAD8AAIA/AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/", "byteLength": 60 }],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0, "byteLength": 12 },
+    { "buffer": 0, "byteOffset": 12, "byteLength": 48 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 3, "type": "SCALAR", "min": [0], "max": [1] },
+    { "bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC4" }
+  ],
+  "nodes": [{ "name": "root" }],
+  "animations": [{
+    "name": "bad",
+    "samplers": [{ "input": 0, "output": 1, "interpolation": "LINEAR" }],
+    "channels": [{ "sampler": 0, "target": { "node": 9, "path": "rotation" } }]
+  }],
+  "scenes": [{ "nodes": [0] }],
+  "scene": 0
+}
