@@ -4,7 +4,7 @@
 
 use animsmith_core::model::*;
 use animsmith_core::profile::ResolvedRoles;
-use animsmith_core::{CheckCtx, Config, Severity, mechanical_checks, run_checks};
+use animsmith_core::{CheckCtx, Config, MetricGrids, Severity, mechanical_checks, run_checks};
 use glam::{Quat, Vec3};
 
 /// A clean 2-bone document with a rotation and a translation track.
@@ -65,7 +65,8 @@ fn clean_doc() -> Document {
 fn lint(doc: &Document) -> Vec<animsmith_core::Finding> {
     let config = Config::default();
     let roles = ResolvedRoles::default();
-    let ctx = CheckCtx::new(doc, &roles, &config);
+    let grids = MetricGrids::new(doc);
+    let ctx = CheckCtx::new(&grids, &roles, &config);
     run_checks(&ctx, &mechanical_checks())
 }
 
@@ -280,8 +281,9 @@ fn constant_rotation_track_is_noted() {
 fn measurements_report_rotation_range() {
     let doc = clean_doc();
     let config = Config::default();
+    let grids = MetricGrids::new(&doc);
     let measurements =
-        animsmith_core::measure::measure_document(&doc, &ResolvedRoles::default(), &config);
+        animsmith_core::measure::measure_document(&grids, &ResolvedRoles::default(), &config);
     let walk = &measurements["walk"];
     assert_eq!(walk.frame_count, 3);
     assert_eq!(walk.animated_bones, vec!["hips", "spine"]);

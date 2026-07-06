@@ -4,15 +4,58 @@
 //! (verified there against Blender pose-matrix FK to <0.01×) — the
 //! algorithms are kept semantically identical so the numbers reproduce.
 
-use crate::model::Clip;
+use crate::model::{Clip, Document, Property, Track};
 use crate::profile::{ResolvedRoles, Role};
-use crate::sample::PoseGrid;
+use crate::sample::{PoseGrid, sample_clip};
 use glam::Vec3;
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::rc::Rc;
 
 /// Below this per-frame foot move (metres), a clip has no real stride
 /// (idle / block / stationary action) and the seam ratio would be a
 /// divide-by-noise, so no ratio is reported.
 pub const MIN_STRIDE_STEP_M: f64 = 0.02;
+
+/// Lazily sampled metric pose grids for one document.
+///
+/// The check, measurement, and report pipelines all judge the same
+/// uniform metric grid. Sharing this owner lets callers run checks and
+/// then emit measurements or reports without sampling the same clip
+/// twice.
+#[derive(Debug)]
+pub struct MetricGrids<'a> {
+    doc: &'a Document,
+    grids: RefCell<BTreeMap<usize, Rc<PoseGrid>>>,
+}
+
+impl<'a> MetricGrids<'a> {
+    pub fn new(doc: &'a Document) -> Self {
+        Self {
+            doc,
+            grids: RefCell::new(BTreeMap::new()),
+        }
+    }
+
+    /// The document these grids sample.
+    pub fn document(&self) -> &'a Document {
+        self.doc
+    }
+
+    /// The metric pose grid for clip `clip_index`, computed once and
+    /// shared. `None` for clips too short to carry a cycle.
+    pub fn grid(&self, clip_index: usize) -> Option<Rc<PoseGrid>> {
+        let clip = self.doc.clips.get(clip_index)?;
+        let frames = metric_frame_count(clip)?;
+        Some(
+            self.grids
+                .borrow_mut()
+                .entry(clip_index)
+                .or_insert_with(|| Rc::new(sample_clip(&self.doc.skeleton, clip, frames)))
+                .clone(),
+        )
+    }
+}
 
 /// Foot-cycle metrics for one sampled clip.
 #[derive(Debug, Clone, PartialEq)]
@@ -154,6 +197,30 @@ pub fn root_motion_speed_mps(grid: &PoseGrid, roles: &ResolvedRoles) -> Option<f
     Some(dx.hypot(dz) / duration)
 }
 
+/// Maximum angular deviation (degrees) of a rotation track from its
+/// first keyed rotation.
+pub fn rotation_range_deg(track: &Track) -> Option<f64> {
+    if track.property != Property::Rotation {
+        return None;
+    }
+    let first = track.key_quat(0)?;
+    if !first.is_finite() || first.length_squared() == 0.0 {
+        return None;
+    }
+    let first = first.normalize();
+    let mut max_deg = 0.0f64;
+    for k in 1..track.key_count() {
+        if let Some(q) = track.key_quat(k)
+            && q.is_finite()
+            && q.length_squared() > 0.0
+        {
+            let deg = first.angle_between(q.normalize()).to_degrees() as f64;
+            max_deg = max_deg.max(deg);
+        }
+    }
+    Some(max_deg)
+}
+
 /// Maximum circular distance (in cycle fraction, `[0, 0.5]`) of a set of
 /// normalized phases from their circular mean. Phases live on a ring, so
 /// a naive max−min would over-report a cluster straddling the 0/1 wrap.
@@ -187,5 +254,70 @@ pub fn metric_frame_count(clip: &Clip) -> Option<usize> {
         None
     } else {
         Some(n)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::check::CheckCtx;
+    use crate::config::Config;
+    use crate::measure::measure_document;
+    use crate::model::{
+        Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
+    };
+    use crate::profile::ResolvedRoles;
+    use glam::Quat;
+    use std::rc::Rc;
+
+    fn document_with_metric_clip() -> Document {
+        Document {
+            skeleton: Skeleton {
+                bones: vec![Bone {
+                    name: "root".into(),
+                    parent: None,
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                }],
+            },
+            clips: vec![Clip {
+                name: "walk".into(),
+                duration_s: 1.0,
+                tracks: vec![Track {
+                    bone: 0,
+                    property: Property::Rotation,
+                    interpolation: Interpolation::Linear,
+                    times: vec![0.0, 0.5, 1.0],
+                    values: TrackValues::Quats(vec![
+                        Quat::IDENTITY,
+                        Quat::from_rotation_y(0.1),
+                        Quat::from_rotation_y(0.2),
+                    ]),
+                }],
+            }],
+            ..Document::default()
+        }
+    }
+
+    #[test]
+    fn metric_grids_are_shared_by_checks_and_measurements() {
+        let doc = document_with_metric_clip();
+        let roles = ResolvedRoles::default();
+        let config = Config::default();
+        let grids = MetricGrids::new(&doc);
+
+        let ctx = CheckCtx::new(&grids, &roles, &config);
+        let from_ctx = ctx.grid(0).expect("metric grid");
+        let from_owner = grids.grid(0).expect("same metric grid");
+        assert!(Rc::ptr_eq(&from_ctx, &from_owner));
+
+        let measurements = measure_document(&grids, &roles, &config);
+        assert!(measurements.contains_key("walk"));
+        let fresh_grids = MetricGrids::new(&doc);
+        assert_eq!(
+            serde_json::to_value(&measurements).expect("shared measurements serialize"),
+            serde_json::to_value(measure_document(&fresh_grids, &roles, &config))
+                .expect("plain measurements serialize")
+        );
     }
 }

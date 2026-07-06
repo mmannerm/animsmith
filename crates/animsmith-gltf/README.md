@@ -36,7 +36,8 @@ fn lint_clip(
     let doc = animsmith_gltf::load(path)?;
     let roles = animsmith_core::detect_profile(&doc.skeleton).unwrap_or_default();
     let config = animsmith_core::Config::default();
-    let ctx = animsmith_core::CheckCtx::new(&doc, &roles, &config);
+    let grids = animsmith_core::MetricGrids::new(&doc);
+    let ctx = animsmith_core::CheckCtx::new(&grids, &roles, &config);
 
     Ok(animsmith_core::run_checks(
         &ctx,

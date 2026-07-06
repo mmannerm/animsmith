@@ -8,7 +8,7 @@
 use animsmith_core::config::{ClipExpectations, Pinned};
 use animsmith_core::measure::measure_document;
 use animsmith_core::profile::{ResolvedRoles, Role, detect_profile};
-use animsmith_core::{CheckCtx, Config, Severity, all_checks, run_checks};
+use animsmith_core::{CheckCtx, Config, MetricGrids, Severity, all_checks, run_checks};
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -55,8 +55,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     );
 
-    // 4a. Measure: the raw metric map, no judgment.
-    let measurements = measure_document(&doc, &roles, &config);
+    // 4a. Measure: the raw metric map, no judgment. Share the metric
+    //     grids with linting so each clip is sampled once.
+    let grids = MetricGrids::new(&doc);
+    let measurements = measure_document(&grids, &roles, &config);
     for (clip, m) in &measurements {
         println!(
             "measured '{clip}': {:.3}s, {} frames, {} animated bones",
@@ -66,8 +68,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    // 4b. Lint: the same numbers judged against the declarations.
-    let ctx = CheckCtx::new(&doc, &roles, &config);
+    // 4b. Lint: the same sampled grids judged against the declarations.
+    let ctx = CheckCtx::new(&grids, &roles, &config);
     let findings = run_checks(&ctx, &all_checks());
     for f in &findings {
         println!(

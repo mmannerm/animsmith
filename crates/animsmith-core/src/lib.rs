@@ -11,8 +11,10 @@
 //! animsmith is still settling its catalog, JSON contract, and loader
 //! boundaries. The intended embedding surface is the data model,
 //! configuration types, measurement APIs, rig-profile APIs, and the check
-//! catalog functions re-exported from this crate root. Internal built-in
-//! check modules are private implementation details.
+//! catalog functions re-exported from this crate root. [`MetricGrids`]
+//! can be shared by checks, measurement, and reports so one sampled grid
+//! owner feeds all three consumers. Internal built-in check modules are
+//! private implementation details.
 
 #![doc = "\n\n"]
 #![doc = include_str!("../README.md")]
@@ -32,6 +34,7 @@ pub use check::{Check, CheckCtx, all_checks, mechanical_checks, run_checks};
 pub use config::{ClipExpectations, Config, GaitGroup, Pinned, SeveritySetting};
 pub use finding::{Finding, Severity, Value};
 pub use glam;
+pub use metrics::MetricGrids;
 pub use model::{
     Bone, BoneId, Clip, Document, Interpolation, Property, Skeleton, SourceInfo, Track,
     TrackValues, Transform,

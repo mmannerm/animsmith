@@ -8,10 +8,9 @@
 #![doc = include_str!("../README.md")]
 
 use animsmith_core::finding::Finding;
-use animsmith_core::metrics::metric_frame_count;
-use animsmith_core::model::Document;
+use animsmith_core::metrics::MetricGrids;
 use animsmith_core::profile::{ResolvedRoles, Role};
-use animsmith_core::sample::{PoseGrid, sample_clip};
+use animsmith_core::sample::PoseGrid;
 use base64::Engine as _;
 use serde_json::{Value, json};
 
@@ -27,13 +26,15 @@ fn esc(text: &str) -> String {
         .replace('"', "&quot;")
 }
 
-/// Render the report HTML. `clip_filter` restricts to one clip.
+/// Render the report HTML from shared metric pose grids. `clip_filter`
+/// restricts to one clip.
 pub fn render(
-    doc: &Document,
+    grids: &MetricGrids<'_>,
     roles: &ResolvedRoles,
     findings: &[Finding],
     clip_filter: Option<&str>,
 ) -> String {
+    let doc = grids.document();
     let bones: Vec<Value> = doc
         .skeleton
         .bones
@@ -50,14 +51,14 @@ pub fn render(
 
     let mut clips_json: Vec<Value> = Vec::new();
     let mut charts_html = String::new();
-    for clip in &doc.clips {
+    for (clip_index, clip) in doc.clips.iter().enumerate() {
         if clip_filter.is_some_and(|f| f != clip.name) {
             continue;
         }
-        let Some(frames) = metric_frame_count(clip) else {
+        let Some(grid) = grids.grid(clip_index) else {
             continue;
         };
-        let grid = sample_clip(&doc.skeleton, clip, frames);
+        let frames = grid.frame_count();
         let nb = doc.skeleton.bones.len();
         let mut positions = Vec::with_capacity(frames * nb * 3 * 4);
         for f in 0..frames {
@@ -80,7 +81,7 @@ pub fn render(
             "positions": base64::engine::general_purpose::STANDARD.encode(&positions),
             "trails": trails,
         }));
-        charts_html.push_str(&clip_charts(&clip.name, &grid, roles));
+        charts_html.push_str(&clip_charts(&clip.name, grid.as_ref(), roles));
     }
 
     let findings_json: Vec<Value> = findings
@@ -263,4 +264,87 @@ fn path_chart(clip: &str, label: &str, xs: &[f64], zs: &[f64]) -> String {
             .collect::<Vec<_>>()
             .join(";")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use animsmith_core::glam::Vec3;
+    use animsmith_core::model::{
+        Bone, Clip, Document, Interpolation, Property, Skeleton, SourceInfo, Track, TrackValues,
+        Transform,
+    };
+    use animsmith_core::profile::Role;
+    use animsmith_core::{CheckCtx, Config};
+
+    fn report_document() -> Document {
+        Document {
+            skeleton: Skeleton {
+                bones: vec![Bone {
+                    name: "root".into(),
+                    parent: None,
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                }],
+            },
+            clips: vec![Clip {
+                name: "walk".into(),
+                duration_s: 1.0,
+                tracks: vec![Track {
+                    bone: 0,
+                    property: Property::Translation,
+                    interpolation: Interpolation::Linear,
+                    times: vec![0.0, 0.5, 1.0],
+                    values: TrackValues::Vec3s(vec![
+                        Vec3::ZERO,
+                        Vec3::new(1.0, 0.0, 0.0),
+                        Vec3::new(2.0, 0.0, 0.0),
+                    ]),
+                }],
+            }],
+            source: SourceInfo {
+                path: Some("walk.glb".into()),
+                format: Some("gltf".into()),
+            },
+            ..Document::default()
+        }
+    }
+
+    fn report_data(html: &str) -> Value {
+        let marker = r#"<script type="application/json" id="report-data">"#;
+        let (_, tail) = html.split_once(marker).expect("report data marker");
+        let (raw, _) = tail.split_once("</script>").expect("report data close");
+        serde_json::from_str(raw).expect("report data is JSON")
+    }
+
+    #[test]
+    fn shared_grid_render_embeds_clip_data() {
+        let doc = report_document();
+        let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "root".to_string())]);
+        let config = Config::default();
+        let findings = Vec::new();
+
+        let fresh = render(&MetricGrids::new(&doc), &roles, &findings, None);
+        let grids = MetricGrids::new(&doc);
+        let ctx = CheckCtx::new(&grids, &roles, &config);
+        assert!(ctx.grid(0).is_some());
+        let shared = render(&grids, &roles, &findings, None);
+
+        assert_eq!(fresh, shared);
+        assert!(shared.contains(r#"data-kind="rootpath""#));
+
+        let data = report_data(&shared);
+        assert_eq!(data["file"], "walk.glb");
+        assert_eq!(data["clips"][0]["name"], "walk");
+        assert_eq!(data["clips"][0]["frames"], 3);
+        assert_eq!(data["clips"][0]["trails"]["root"], 0);
+
+        let positions = data["clips"][0]["positions"]
+            .as_str()
+            .expect("encoded positions");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(positions)
+            .expect("positions decode");
+        assert_eq!(bytes.len(), 3 * 3 * std::mem::size_of::<f32>());
+    }
 }

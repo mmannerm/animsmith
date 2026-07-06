@@ -3,7 +3,7 @@
 
 use animsmith_core::model::*;
 use animsmith_core::profile::ResolvedRoles;
-use animsmith_core::{CheckCtx, Config, mechanical_checks, run_checks};
+use animsmith_core::{CheckCtx, Config, MetricGrids, mechanical_checks, run_checks};
 use glam::{Quat, Vec3};
 use std::path::PathBuf;
 
@@ -91,7 +91,8 @@ fn flipped_non_unit_doc() -> Document {
 fn lint_count(doc: &Document, check_id: &str) -> usize {
     let config = Config::default();
     let roles = ResolvedRoles::default();
-    let ctx = CheckCtx::new(doc, &roles, &config);
+    let grids = MetricGrids::new(doc);
+    let ctx = CheckCtx::new(&grids, &roles, &config);
     run_checks(&ctx, &mechanical_checks())
         .iter()
         .filter(|f| f.check_id == check_id)

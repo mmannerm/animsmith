@@ -26,7 +26,8 @@ animsmith-gltf = "0.1"
 fn lint_document(doc: &animsmith_core::Document) -> Vec<animsmith_core::Finding> {
     let roles = animsmith_core::detect_profile(&doc.skeleton).unwrap_or_default();
     let config = animsmith_core::Config::default();
-    let ctx = animsmith_core::CheckCtx::new(doc, &roles, &config);
+    let grids = animsmith_core::MetricGrids::new(doc);
+    let ctx = animsmith_core::CheckCtx::new(&grids, &roles, &config);
 
     animsmith_core::run_checks(&ctx, &animsmith_core::all_checks())
 }
@@ -38,8 +39,9 @@ Typical embedding flow:
 2. Resolve rig roles with `detect_profile` or explicit
    `ResolvedRoles::from_names`.
 3. Build `Config` from your own contract format.
-4. Call `measure::measure_document`, then `CheckCtx::new`,
-   `all_checks`, and `run_checks`.
+4. Create `MetricGrids`, call `measure::measure_document` if you need
+   raw numbers, then build `CheckCtx::new` before `all_checks` and
+   `run_checks`.
 5. Map `Finding` severities into your pipeline's gate/reporting system.
 
 ## Feature Flags

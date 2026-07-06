@@ -85,16 +85,6 @@ pub enum Interpolation {
     CubicSpline,
 }
 
-impl Interpolation {
-    /// Index into a values array of keyframe `k`'s value element.
-    pub fn value_index_static(self, k: usize) -> usize {
-        match self {
-            Interpolation::CubicSpline => 3 * k + 1,
-            _ => k,
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub enum TrackValues {
     Vec3s(Vec<Vec3>),

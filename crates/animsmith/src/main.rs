@@ -5,7 +5,7 @@ mod diff;
 
 use animsmith_core::model::Document;
 use animsmith_core::profile::{ResolvedRoles, resolve_named};
-use animsmith_core::{CheckCtx, Config, Finding, Severity, all_checks, run_checks};
+use animsmith_core::{CheckCtx, Config, Finding, MetricGrids, Severity, all_checks, run_checks};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -482,11 +482,14 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             for file in &files {
                 let doc = load(file)?;
                 let roles = resolve_roles(&doc, &config);
+                let grids = MetricGrids::new(&doc);
                 reports.push(FileReport {
                     path: file.display().to_string(),
                     rig: rig_info(&doc, &roles),
                     findings: None,
-                    measurements: animsmith_core::measure::measure_document(&doc, &roles, &config),
+                    measurements: animsmith_core::measure::measure_document(
+                        &grids, &roles, &config,
+                    ),
                     meshes: animsmith_core::measure::measure_meshes(&doc.assets),
                 });
             }
@@ -570,7 +573,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             for file in &files {
                 let doc = load(file)?;
                 let roles = resolve_roles(&doc, &config);
-                let ctx = CheckCtx::new(&doc, &roles, &config);
+                let grids = MetricGrids::new(&doc);
+                let ctx = CheckCtx::new(&grids, &roles, &config);
                 let mut findings = run_checks(&ctx, &checks);
                 findings.retain(|f| !allow.iter().any(|id| id == f.check_id));
                 findings.sort_by(|a, b| {
@@ -584,7 +588,9 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     path: file.display().to_string(),
                     rig: rig_info(&doc, &roles),
                     findings: Some(findings),
-                    measurements: animsmith_core::measure::measure_document(&doc, &roles, &config),
+                    measurements: animsmith_core::measure::measure_document(
+                        &grids, &roles, &config,
+                    ),
                     // `lint` judges animation, not geometry — no meshes.
                     meshes: Vec::new(),
                 });
@@ -609,9 +615,10 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let config = load_config(cli.config.as_deref())?;
             let doc = load(&file)?;
             let roles = resolve_roles(&doc, &config);
-            let ctx = CheckCtx::new(&doc, &roles, &config);
+            let grids = MetricGrids::new(&doc);
+            let ctx = CheckCtx::new(&grids, &roles, &config);
             let findings = run_checks(&ctx, &all_checks());
-            let html = animsmith_report::render(&doc, &roles, &findings, clip.as_deref());
+            let html = animsmith_report::render(&grids, &roles, &findings, clip.as_deref());
             std::fs::write(&output, &html)
                 .map_err(|e| format!("cannot write {}: {e}", output.display()))?;
             println!(
@@ -880,8 +887,9 @@ fn load_measurements(
     }
     let doc = load(path)?;
     let roles = resolve_roles(&doc, config);
+    let grids = MetricGrids::new(&doc);
     Ok(animsmith_core::measure::measure_document(
-        &doc, &roles, config,
+        &grids, &roles, config,
     ))
 }
 
