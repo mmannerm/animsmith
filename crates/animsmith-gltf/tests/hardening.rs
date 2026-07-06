@@ -250,15 +250,33 @@ fn loader_rejects_out_of_range_animation_target_node() {
 }
 
 /// A node hierarchy with a cycle: node 0 (a root) parents node 1, and
-/// node 1 lists itself as a child. glTF requires a forest; this is
-/// malformed but structurally valid JSON that `gltf` accepts.
+/// A back-edge cycle: root 0 → 1 → 2, and node 2 lists node 1 (its own
+/// ancestor) as a child. glTF requires a forest; without the DFS visited
+/// guard this re-descends 1→2→1→2… forever. The back-edge (not a mere
+/// self-loop) is what actually exercises the re-emission the guard stops.
 const NODE_CYCLE_GLTF: &str = r#"{
   "asset": { "version": "2.0" },
   "nodes": [
     { "name": "root", "children": [1] },
-    { "name": "loop", "children": [1] }
+    { "name": "mid", "children": [2] },
+    { "name": "leaf", "children": [1] }
   ],
   "scenes": [{ "nodes": [0] }],
+  "scene": 0
+}"#;
+
+/// Two roots both claim node 2 as a child — a node with two parents,
+/// which glTF forbids. A file-order "last parent wins" pass would record
+/// C's parent as B (emitted *after* C), silently breaking `sample_clip`'s
+/// ascending FK pass; the DFS records the parent it reached C through (A).
+const NODE_MULTIPARENT_GLTF: &str = r#"{
+  "asset": { "version": "2.0" },
+  "nodes": [
+    { "name": "A", "children": [2] },
+    { "name": "B", "children": [2] },
+    { "name": "C" }
+  ],
+  "scenes": [{ "nodes": [0, 1] }],
   "scene": 0
 }"#;
 
@@ -271,7 +289,56 @@ fn loader_terminates_on_node_cycle_without_ooming() {
     // The DFS must terminate: each node is emitted at most once, so the
     // load succeeds with a bounded skeleton instead of allocating forever.
     let doc = animsmith_gltf::load(&path).expect("cyclic hierarchy loads, bounded");
-    assert_eq!(doc.skeleton.bones.len(), 2, "each node becomes one bone");
+    assert_eq!(
+        doc.skeleton.bones.len(),
+        3,
+        "each node becomes one bone once"
+    );
+    // Every parent must sort before its child — the invariant sample_clip's
+    // single ascending FK pass relies on.
+    for (id, bone) in doc.skeleton.bones.iter().enumerate() {
+        if let Some(p) = bone.parent {
+            assert!(
+                p < id,
+                "bone {id} ({}) parent {p} must precede it",
+                bone.name
+            );
+        }
+    }
+}
+
+#[test]
+fn loader_orders_multiparent_node_parent_before_child() {
+    let dir = unique_temp_dir("multiparent");
+    let path = dir.join("dag.gltf");
+    std::fs::write(&path, NODE_MULTIPARENT_GLTF).unwrap();
+
+    let doc = animsmith_gltf::load(&path).expect("multi-parent hierarchy loads, bounded");
+    // Every bone's parent id is strictly below its own — otherwise FK reads
+    // an unwritten (identity) parent transform and silently corrupts output.
+    for (id, bone) in doc.skeleton.bones.iter().enumerate() {
+        if let Some(p) = bone.parent {
+            assert!(
+                p < id,
+                "bone {id} ({}) parent {p} must precede it",
+                bone.name
+            );
+        }
+    }
+    // C is reached through the first root (A) in file order, deterministically.
+    let c = doc
+        .skeleton
+        .bones
+        .iter()
+        .position(|b| b.name == "C")
+        .expect("C present");
+    let a = doc
+        .skeleton
+        .bones
+        .iter()
+        .position(|b| b.name == "A")
+        .expect("A present");
+    assert_eq!(doc.skeleton.bones[c].parent, Some(a), "C parents to A");
 }
 
 fn glb_with_declared_length(total_len: u32) -> Vec<u8> {
@@ -298,9 +365,12 @@ fn loader_rejects_glb_length_field_far_past_eof() {
     let path = dir.join("huge-length.glb");
     std::fs::write(&path, &glb).unwrap();
 
-    // No panic, no multi-gigabyte allocation — just a LoadError.
+    // No panic, no multi-gigabyte allocation — just a LoadError. The
+    // message pins that our framing guard rejected it, not a downstream
+    // parse (which is where the allocation would have happened).
     let err = animsmith_gltf::load(&path).expect_err("bogus GLB length must be rejected");
     assert!(matches!(err, LoadError::Buffer(_)), "{err}");
+    assert!(err.to_string().contains("GLB header declares"), "{err}");
 }
 
 /// A declared length *below* the 12-byte header underflows the `gltf`
@@ -317,6 +387,7 @@ fn loader_rejects_glb_length_field_below_header_size() {
 
     let err = animsmith_gltf::load(&path).expect_err("sub-header GLB length must be rejected");
     assert!(matches!(err, LoadError::Buffer(_)), "{err}");
+    assert!(err.to_string().contains("GLB header declares"), "{err}");
 
     // The fix path shares the same guard.
     let out = dir.join("out.glb");

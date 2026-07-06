@@ -423,28 +423,42 @@ fn build_document(
 /// bone a node became.
 fn topology(doc: &gltf::Document) -> (Vec<usize>, Vec<Option<usize>>, Vec<Option<usize>>) {
     let node_count = doc.nodes().count();
-    let mut parent: Vec<Option<usize>> = vec![None; node_count];
+    // Root detection only: a node is a root if no node lists it as a child.
+    // Deliberately a bool, not the parent array — the actual parent is
+    // recorded during the DFS below (see the invariant note there).
+    let mut has_parent: Vec<bool> = vec![false; node_count];
     for node in doc.nodes() {
         for child in node.children() {
-            parent[child.index()] = Some(node.index());
+            has_parent[child.index()] = true;
         }
     }
 
     let nodes: Vec<gltf::Node> = doc.nodes().collect();
     let mut order: Vec<usize> = Vec::with_capacity(node_count);
+    let mut parent: Vec<Option<usize>> = vec![None; node_count];
     let mut stack: Vec<usize> = doc
         .nodes()
-        .filter(|n| parent[n.index()].is_none())
+        .filter(|n| !has_parent[n.index()])
         .map(|n| n.index())
         .collect();
     stack.reverse(); // keep file order among roots
-    // A `visited` guard is what keeps this DFS bounded on hostile input:
-    // glTF requires the node graph to be a forest, but a malformed file can
+    // The `visited` guard keeps this DFS bounded on hostile input: glTF
+    // requires the node graph to be a forest, but a malformed file can
     // encode a cycle (a node in its own subtree) or reuse a child across
     // parents. Without the guard the traversal re-emits such nodes forever,
     // growing `order` until it OOMs (invariant-1). Nodes trapped in a pure
     // cycle have no root to reach them, so they stay unemitted (bone_of_node
-    // None) rather than crashing. Found by the `gltf_load` fuzz target.
+    // None) rather than crashing.
+    //
+    // `parent` is recorded here rather than in a file-order pre-pass so the
+    // recorded parent is always the node the DFS *reached the child
+    // through* — which was pushed to `order` before the child. That keeps
+    // every parent's bone id below its children's, the ordering
+    // `sample_clip`'s single ascending FK pass relies on. A file-order
+    // pre-pass (last-writer-wins) could instead record a parent that sorts
+    // *after* its child when a malformed file gives a node two parents,
+    // silently corrupting every world transform. Found by the `gltf_load`
+    // fuzz target (cycle → OOM) and the audit (multi-parent → bad FK).
     let mut visited: Vec<bool> = vec![false; node_count];
     while let Some(i) = stack.pop() {
         if visited[i] {
@@ -455,6 +469,7 @@ fn topology(doc: &gltf::Document) -> (Vec<usize>, Vec<Option<usize>>, Vec<Option
         let children: Vec<usize> = nodes[i].children().map(|c| c.index()).collect();
         for &c in children.iter().rev() {
             if !visited[c] {
+                parent[c] = Some(i);
                 stack.push(c);
             }
         }
