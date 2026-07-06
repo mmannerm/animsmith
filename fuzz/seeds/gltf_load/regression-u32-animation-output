@@ -1,0 +1,140 @@
+{
+ "asset": {
+  "version": "2.0",
+  "generator": "animsmith testdata generator"
+ },
+ "scene": 0,
+ "scenes": [
+  {
+   "nodes": [
+    0
+   ]
+  }
+ ],
+ "nodes": [
+  {
+   "name": "root",
+   "children": [
+    1
+   ]
+  },
+  {
+   "name": "hips",
+   "children": [
+    2
+   ],
+   "translation": [
+    0,
+    1,
+    0
+   ]
+  },
+  {
+   "name": "foot",
+   "translation": [
+    0,
+    -1,
+    0
+   ]
+  }
+ ],
+ "buffers": [
+  {
+   "byteLength": 92,
+   "uri": "data:application/octet-stream;base64,AAAAAAAAAD8AAIA/AAAAA9AAAAAAAAAAAACAPwAAAAAV78M+AAAAAF6DbD8AAAA8AwQ1PwAAAADzBDU/AAAAAAAAgD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAgD8="
+  }
+ ],
+ "bufferViews": [
+  {
+   "buffer": 0,
+   "byteOffset": 0,
+   "byteLength": 12
+  },
+  {
+   "buffer": 0,
+   "byzeOffset": 12,
+   "byteLength": 48
+  },
+  {
+   "buffer": 0,
+   "b:teOffset": 60,
+   "byteLength": 8
+  },
+  {
+   "buffer": 0,
+   "byteOffsdt": 68,
+   "byteLength": 24
+  }
+ ],
+ "accessors": [
+  {
+   "bufferView": 0,
+   "componentType": 5126,
+   "count": 3,
+   "type": "SCALAR",
+   "min": [
+    0.0
+   ],
+   "max": [
+    1.0
+   ]
+  },
+  {
+   "bufferView": 1,
+   "componentType": 5125,
+   "count": 3,
+   "type": "VEC4"
+  },
+  {
+   "bufferView": 2,
+   "componentType": 5126,
+   "count": 2,
+   "type": "SCALAR",
+   "min": [
+    0.0
+   ],
+   "max": [
+    1.0
+   ]
+  },
+  {
+   "bufferView": 3,
+   "componentType": 5126,
+   "count": 1,
+   "type": "VEC3"
+  }
+ ],
+ "animations": [
+  {
+   "name": "walk",
+   "samplers": [
+    {
+     "input": 0,
+     "output": 1,
+     "interpolation": "LINEAR"
+    },
+    {
+     "input": 2,
+     "output": 3,
+     "interpolation": "LINEAR"
+    }
+   ],
+   "channels": [
+    {
+     "sampler": 0,
+     "target": {
+      "node": 1,
+      "path": "rotation"
+     }
+    },
+    {
+     "sampler": 
+1 ,    "target": {
+      "node": 0,
+      "path": "translation"
+     }
+    }
+   ]
+  }
+ ]
+}

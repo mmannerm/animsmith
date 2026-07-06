@@ -144,6 +144,7 @@ animsmith/
 │   ├── animsmith-report/        # self-contained HTML report generation
 │   └── animsmith/               # CLI binary (features: fbx, report — default on)
 ├── assets/viewer/              # viewer JS/CSS, inlined via include_str!
+├── fuzz/                       # cargo-fuzz targets for the untrusted-input loaders
 └── testdata/                   # CC0 rigs + procedurally corrupted fixtures
 ```
 
@@ -161,6 +162,16 @@ animsmith/
 - Toolchain: stable Rust, edition 2024, MSRV pinned in CI. License:
   MIT OR Apache-2.0. All crate names verified free on crates.io
   (2026-07-03).
+- **fuzz/**: a nightly-only cargo-fuzz workspace (detached from the main
+  workspace) with libFuzzer targets for the three entry points that ingest
+  untrusted files — `animsmith_gltf::load`, `animsmith_gltf::fix::fix_quat_hemisphere`,
+  and `animsmith_fbx::load`. These are the executable check on invariant-1
+  ("untrusted input must never panic or OOM"): targets run in release mode
+  to match the shipped CLI's panic semantics, with AddressSanitizer on. A
+  weekly CI job (`fuzz.yml`) runs each target for 60s off a checked-in seed
+  corpus; minimized crashers are committed under `fuzz/seeds/` as regression
+  fixtures, each also pinned by a unit test in `animsmith-gltf`'s hardening
+  suite. Continuous/long-running fuzzing (OSS-Fuzz) is deferred.
 
 ## 5. Core data model
 

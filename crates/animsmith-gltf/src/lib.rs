@@ -96,6 +96,85 @@ pub(crate) fn safe_external_buffer_path(uri: &str) -> Result<PathBuf, LoadError>
     Ok(out)
 }
 
+/// Reject a GLB whose 12-byte header declares a total length the file
+/// can't back, *before* handing the bytes to the `gltf` container parser.
+/// That parser computes `declared_len - HEADER_LEN`: a length below the
+/// header size underflows (panics under overflow checks, e.g. every debug
+/// build and `cargo test`), and a length past EOF drives a length-field
+/// allocation — both invariant-1 violations on arbitrary input. Plain
+/// glTF JSON (no `glTF` magic) passes through untouched. Found by the
+/// `gltf_load` / `gltf_fix_quat_hemisphere` fuzz targets (see `fuzz/`).
+pub(crate) fn validate_glb_framing(bytes: &[u8]) -> Result<(), LoadError> {
+    const GLB_MAGIC: &[u8; 4] = b"glTF";
+    const GLB_HEADER_LEN: usize = 12;
+    if !bytes.starts_with(GLB_MAGIC) {
+        return Ok(());
+    }
+    if bytes.len() < GLB_HEADER_LEN {
+        return Err(LoadError::Buffer(
+            "truncated GLB: file ends before the 12-byte header".into(),
+        ));
+    }
+    let declared =
+        u32::from_le_bytes(bytes[8..12].try_into().expect("slice has four bytes")) as usize;
+    if declared < GLB_HEADER_LEN || declared > bytes.len() {
+        return Err(LoadError::Buffer(format!(
+            "GLB header declares {declared} bytes but the file is {}",
+            bytes.len()
+        )));
+    }
+    Ok(())
+}
+
+/// Reject animation data the `gltf` crate leaves un-validated but then
+/// panics on. Its hand-written `Animation::validate` checks samplers and
+/// the sampler *index*, but not the pieces below — each slips past
+/// `Gltf::from_slice`'s validation and crashes a high-level getter on
+/// arbitrary input (invariant-1). Found by the `gltf_load` /
+/// `gltf_fix_quat_hemisphere` fuzz targets (see `fuzz/`).
+///
+/// - An unknown `target.path` (`Checked::Invalid`) or out-of-range
+///   `target.node`: `Target::property()` / `Target::node()` both
+///   `.unwrap()`.
+/// - A sampler `output` accessor typed `UNSIGNED_INT`: no valid animation
+///   output is ever U32, and `read_outputs` has no arm for it — it hits
+///   an `unreachable!()`. (Truly invalid component types are already
+///   rejected by the derived accessor validation `from_slice` runs; only
+///   this spec-valid-but-nonsensical one leaks through.)
+pub(crate) fn validate_animation_channels(root: &gltf::json::Root) -> Result<(), LoadError> {
+    use gltf::json::accessor::ComponentType;
+    use gltf::json::validation::Checked;
+    let node_count = root.nodes.len();
+    for (ai, anim) in root.animations.iter().enumerate() {
+        for (ci, channel) in anim.channels.iter().enumerate() {
+            if matches!(channel.target.path, Checked::Invalid) {
+                return Err(LoadError::Malformed(format!(
+                    "animation {ai} channel {ci}: unknown target path"
+                )));
+            }
+            if channel.target.node.value() >= node_count {
+                return Err(LoadError::Malformed(format!(
+                    "animation {ai} channel {ci}: target node index {} out of range ({node_count} nodes)",
+                    channel.target.node.value()
+                )));
+            }
+        }
+        for (si, sampler) in anim.samplers.iter().enumerate() {
+            if let Some(accessor) = root.accessors.get(sampler.output.value())
+                && matches!(
+                    accessor.component_type,
+                    Checked::Valid(ct) if ct.0 == ComponentType::U32
+                )
+            {
+                return Err(LoadError::Malformed(format!(
+                    "animation {ai} sampler {si}: output accessor has an unsupported UNSIGNED_INT component type"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Structural validation for one animation channel: key/value counts
 /// must agree (x3 for CUBICSPLINE's [in-tangent, value, out-tangent]
 /// triplets) and a track must have at least one key. Violations are
@@ -137,7 +216,20 @@ fn validate_track_lengths(
 /// `animsmith_fbx::load` uses. Consumers that judge only animation
 /// (`lint`, `inspect`) simply ignore [`Document::assets`].
 pub fn load(path: &Path) -> Result<Document, LoadError> {
-    let gltf = gltf::Gltf::open(path)?;
+    // Read the whole file, then parse from the slice rather than via
+    // `Gltf::open`: the reader path (`Glb::from_reader`) trusts the GLB
+    // header's declared length and pre-allocates `vec![0; declared_len]`
+    // before reading a byte, so a spoofed length OOMs on tiny input. The
+    // slice path validates the declared length against the bytes actually
+    // present, keeping malformed containers within invariant-1 (LoadError,
+    // never an unbounded allocation). This mirrors what `fix` already does.
+    let bytes = std::fs::read(path).map_err(|source| LoadError::Io {
+        path: path.display().to_string(),
+        source,
+    })?;
+    validate_glb_framing(&bytes)?;
+    let gltf = gltf::Gltf::from_slice(&bytes)?;
+    validate_animation_channels(gltf.document.as_json())?;
     let buffers = resolve_buffers(&gltf, path.parent())?;
     let mut doc = build_document(&gltf, &buffers, path)?;
     doc.assets = extract_assets(&gltf.document, &buffers, path.parent())?;
@@ -331,26 +423,55 @@ fn build_document(
 /// bone a node became.
 fn topology(doc: &gltf::Document) -> (Vec<usize>, Vec<Option<usize>>, Vec<Option<usize>>) {
     let node_count = doc.nodes().count();
-    let mut parent: Vec<Option<usize>> = vec![None; node_count];
+    // Root detection only: a node is a root if no node lists it as a child.
+    // Deliberately a bool, not the parent array — the actual parent is
+    // recorded during the DFS below (see the invariant note there).
+    let mut has_parent: Vec<bool> = vec![false; node_count];
     for node in doc.nodes() {
         for child in node.children() {
-            parent[child.index()] = Some(node.index());
+            has_parent[child.index()] = true;
         }
     }
 
     let nodes: Vec<gltf::Node> = doc.nodes().collect();
     let mut order: Vec<usize> = Vec::with_capacity(node_count);
+    let mut parent: Vec<Option<usize>> = vec![None; node_count];
     let mut stack: Vec<usize> = doc
         .nodes()
-        .filter(|n| parent[n.index()].is_none())
+        .filter(|n| !has_parent[n.index()])
         .map(|n| n.index())
         .collect();
     stack.reverse(); // keep file order among roots
+    // The `visited` guard keeps this DFS bounded on hostile input: glTF
+    // requires the node graph to be a forest, but a malformed file can
+    // encode a cycle (a node in its own subtree) or reuse a child across
+    // parents. Without the guard the traversal re-emits such nodes forever,
+    // growing `order` until it OOMs (invariant-1). Nodes trapped in a pure
+    // cycle have no root to reach them, so they stay unemitted (bone_of_node
+    // None) rather than crashing.
+    //
+    // `parent` is recorded here rather than in a file-order pre-pass so the
+    // recorded parent is always the node the DFS *reached the child
+    // through* — which was pushed to `order` before the child. That keeps
+    // every parent's bone id below its children's, the ordering
+    // `sample_clip`'s single ascending FK pass relies on. A file-order
+    // pre-pass (last-writer-wins) could instead record a parent that sorts
+    // *after* its child when a malformed file gives a node two parents,
+    // silently corrupting every world transform. Found by the `gltf_load`
+    // fuzz target (cycle → OOM) and the audit (multi-parent → bad FK).
+    let mut visited: Vec<bool> = vec![false; node_count];
     while let Some(i) = stack.pop() {
+        if visited[i] {
+            continue;
+        }
+        visited[i] = true;
         order.push(i);
         let children: Vec<usize> = nodes[i].children().map(|c| c.index()).collect();
         for &c in children.iter().rev() {
-            stack.push(c);
+            if !visited[c] {
+                parent[c] = Some(i);
+                stack.push(c);
+            }
         }
     }
 
