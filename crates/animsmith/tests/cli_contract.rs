@@ -755,17 +755,14 @@ fn diff_accepts_single_file_measure_report_round_trip() {
         ])
         .output()
         .expect("runs animsmith");
+    // Clean == exit 0; the "no significant movement" prose is not the
+    // contract (that's the exit code) and is left unpinned.
     assert_eq!(
         output.status.code(),
         Some(0),
         "stdout:\n{}\nstderr:\n{}",
         stdout(&output),
         stderr(&output)
-    );
-    assert!(
-        stdout(&output).contains("no significant movement"),
-        "stdout:\n{}",
-        stdout(&output)
     );
 }
 
@@ -795,11 +792,12 @@ fn diff_accepts_measurement_json_and_exits_one_for_deltas() {
         stdout(&output),
         stderr(&output)
     );
+    // The CLI contract is the envelope shape + exit code: one delta,
+    // routed to its clip. The metric/note strings are the unit suite's
+    // job (diff.rs), so they are not re-pinned here.
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_eq!(json["summary"]["deltas"].as_u64(), Some(1));
     assert_eq!(json["deltas"][0]["clip"], "walk");
-    assert_eq!(json["deltas"][0]["metric"], "duration_s");
-    assert_eq!(json["deltas"][0]["note"], "moved");
 }
 
 #[test]
@@ -820,8 +818,58 @@ fn diff_accepts_measurement_json_and_exits_zero_without_deltas() {
         .output()
         .expect("runs animsmith");
 
+    // Identical reports in, exit 0 out — the exit code is the contract,
+    // not the human-format prose.
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
-    assert!(stdout(&output).contains("no significant movement"));
+}
+
+#[test]
+fn diff_text_format_renders_deltas_and_clean_summary() {
+    // The default (human) format has its own render branch that the JSON
+    // contract tests never exercise. This is the one test that owns that
+    // branch: a dirty diff must name the moved clip and print a change
+    // summary; a clean diff must print its clean line. (The envelope /
+    // exit-code contract tests deliberately do NOT string-match this
+    // prose — pinning the renderer is this test's job, not theirs.)
+    let dir = unique_temp_dir("diff-text-format");
+    let before = dir.join("before.json");
+    let after = dir.join("after.json");
+    write_json(&before, &measurement_report(1.0));
+    write_json(&after, &measurement_report(1.1));
+
+    let dirty = animsmith()
+        .args([
+            "diff",
+            before.to_str().expect("utf-8 before path"),
+            after.to_str().expect("utf-8 after path"),
+        ])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(dirty.status.code(), Some(1), "stderr:\n{}", stderr(&dirty));
+    let out = stdout(&dirty);
+    assert!(
+        out.contains("walk"),
+        "dirty Text output names the clip:\n{out}"
+    );
+    assert!(
+        out.contains("significant change"),
+        "dirty Text output summarizes the change count:\n{out}"
+    );
+
+    let clean = animsmith()
+        .args([
+            "diff",
+            before.to_str().expect("utf-8 before path"),
+            before.to_str().expect("utf-8 before path"),
+        ])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(clean.status.code(), Some(0), "stderr:\n{}", stderr(&clean));
+    assert!(
+        stdout(&clean).contains("no significant movement"),
+        "clean Text output states no movement:\n{}",
+        stdout(&clean)
+    );
 }
 
 #[test]
