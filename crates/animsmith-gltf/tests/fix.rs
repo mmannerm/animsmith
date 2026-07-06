@@ -5,7 +5,6 @@ use animsmith_core::model::*;
 use animsmith_core::profile::ResolvedRoles;
 use animsmith_core::{CheckCtx, Config, MetricGrids, mechanical_checks, run_checks};
 use glam::{Quat, Vec3};
-use std::path::PathBuf;
 
 fn clean_quats() -> Vec<Quat> {
     [0.0f32, 0.4, 0.8, 1.2, 1.6]
@@ -107,18 +106,18 @@ fn lint_norm_count(doc: &Document) -> usize {
     lint_count(doc, "quat-norm")
 }
 
-fn unique_temp_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("animsmith-{name}-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+fn unique_temp_dir(name: &str) -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix(&format!("animsmith-{name}-"))
+        .tempdir()
+        .unwrap()
 }
 
 #[test]
 fn fix_repairs_flips_losslessly_and_idempotently() {
-    let dir = std::env::temp_dir().join("animsmith-fix-test");
-    std::fs::create_dir_all(&dir).unwrap();
-    let dirty = dir.join("dirty.glb");
-    let fixed = dir.join("fixed.glb");
+    let dir = unique_temp_dir("fix-test");
+    let dirty = dir.path().join("dirty.glb");
+    let fixed = dir.path().join("fixed.glb");
 
     let doc = flipped_doc();
     animsmith_gltf::write::write(&doc, &dirty).expect("writes");
@@ -152,9 +151,31 @@ fn fix_repairs_flips_losslessly_and_idempotently() {
         differing <= 32,
         "expected ≤32 differing bytes, got {differing}"
     );
+    // ...and those bytes are the rotation keys, not stray edits elsewhere:
+    // the sibling translation track survives byte-for-byte. Bounding the
+    // count alone leaves *where* the changes landed unconstrained; this
+    // re-asserts the untouched channel so a diff that strayed outside the
+    // rotation accessor (into translation, or its byteView padding) would
+    // fail even while staying under the 32-byte budget.
+    let trans = |doc: &Document| -> Vec<Vec3> {
+        let track = doc.clips[0]
+            .tracks
+            .iter()
+            .find(|t| t.property == Property::Translation)
+            .expect("translation track");
+        match &track.values {
+            TrackValues::Vec3s(v) => v.clone(),
+            _ => panic!("translation track must be Vec3s"),
+        }
+    };
+    assert_eq!(
+        trans(&repaired),
+        trans(&flipped_doc()),
+        "translation track must be untouched by a rotation-only fix"
+    );
 
     // Idempotent: a second pass changes nothing.
-    let again = dir.join("again.glb");
+    let again = dir.path().join("again.glb");
     let report2 = animsmith_gltf::fix::fix_quat_hemisphere(&fixed, &again).expect("re-fixes");
     assert_eq!(report2.total_fixed(), 0);
     assert_eq!(
@@ -166,8 +187,8 @@ fn fix_repairs_flips_losslessly_and_idempotently() {
 #[test]
 fn fix_quat_norm_repairs_keys_losslessly_and_idempotently() {
     let dir = unique_temp_dir("quat-norm");
-    let dirty = dir.join("dirty.glb");
-    let fixed = dir.join("fixed.glb");
+    let dirty = dir.path().join("dirty.glb");
+    let fixed = dir.path().join("fixed.glb");
 
     animsmith_gltf::write::write(&non_unit_doc(), &dirty).expect("writes");
     assert_eq!(lint_norm_count(&animsmith_gltf::load(&dirty).unwrap()), 1);
@@ -189,7 +210,7 @@ fn fix_quat_norm_repairs_keys_losslessly_and_idempotently() {
         );
     }
 
-    let again = dir.join("again.glb");
+    let again = dir.path().join("again.glb");
     let report2 = animsmith_gltf::fix::fix_quat_norm(&fixed, &again).expect("re-normalizes");
     assert_eq!(report2.total_fixed(), 0);
     assert_eq!(
@@ -217,8 +238,8 @@ fn fix_quat_norm_skips_cubic_tracks_to_preserve_tangents() {
     };
 
     let dir = unique_temp_dir("quat-norm-cubic");
-    let dirty = dir.join("dirty.glb");
-    let fixed = dir.join("fixed.glb");
+    let dirty = dir.path().join("dirty.glb");
+    let fixed = dir.path().join("fixed.glb");
     animsmith_gltf::write::write(&doc, &dirty).expect("writes");
     let before = std::fs::read(&dirty).unwrap();
 
@@ -242,8 +263,8 @@ fn fix_quat_norm_skips_cubic_tracks_to_preserve_tangents() {
 #[test]
 fn fix_session_composes_distinct_repairs_in_memory_before_writing() {
     let dir = unique_temp_dir("session-compose");
-    let dirty = dir.join("dirty.glb");
-    let fixed = dir.join("fixed.glb");
+    let dirty = dir.path().join("dirty.glb");
+    let fixed = dir.path().join("fixed.glb");
     animsmith_gltf::write::write(&flipped_non_unit_doc(), &dirty).expect("writes");
 
     let mut session = animsmith_gltf::fix::FixSession::read(&dirty).expect("opens session");
@@ -265,8 +286,8 @@ fn fix_session_composes_distinct_repairs_in_memory_before_writing() {
 #[test]
 fn malformed_external_accessor_range_is_skipped_without_panic() {
     let dir = unique_temp_dir("short-buffer");
-    let gltf = dir.join("short.gltf");
-    let bin = dir.join("short.bin");
+    let gltf = dir.path().join("short.gltf");
+    let bin = dir.path().join("short.bin");
     std::fs::write(&bin, [0u8; 8]).unwrap();
     std::fs::write(
         &gltf,
@@ -304,7 +325,7 @@ fn malformed_external_accessor_range_is_skipped_without_panic() {
 #[test]
 fn unsafe_external_buffer_uri_is_rejected() {
     let dir = unique_temp_dir("unsafe-buffer-uri");
-    let gltf = dir.join("unsafe.gltf");
+    let gltf = dir.path().join("unsafe.gltf");
     std::fs::write(
         &gltf,
         r#"{
@@ -326,9 +347,8 @@ fn unsafe_external_buffer_uri_is_rejected() {
 
 #[test]
 fn in_place_fix_works() {
-    let dir = std::env::temp_dir().join("animsmith-fix-test");
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("inplace.glb");
+    let dir = unique_temp_dir("fix-test");
+    let path = dir.path().join("inplace.glb");
     animsmith_gltf::write::write(&flipped_doc(), &path).expect("writes");
     let report = animsmith_gltf::fix::fix_quat_hemisphere(&path, &path).expect("fixes");
     assert_eq!(report.total_fixed(), 2);
@@ -356,9 +376,8 @@ fn cubic_tracks_are_fixed_by_triplet() {
         times: vec![0.0, 0.5, 1.0],
         values: TrackValues::Quats(values),
     };
-    let dir = std::env::temp_dir().join("animsmith-fix-test");
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("cubic.glb");
+    let dir = unique_temp_dir("fix-test");
+    let path = dir.path().join("cubic.glb");
     animsmith_gltf::write::write(&doc, &path).expect("writes");
     assert_eq!(lint_flip_count(&animsmith_gltf::load(&path).unwrap()), 1);
 

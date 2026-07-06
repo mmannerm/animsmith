@@ -15,7 +15,8 @@ fn converted_mesh_is_structurally_sound() {
     let doc = animsmith_fbx::load(std::path::Path::new(&fbx)).expect("FBX loads");
     assert!(!doc.assets.meshes.is_empty(), "fixture must carry meshes");
 
-    let out = std::env::temp_dir().join("animsmith-convert-mesh.glb");
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("convert-mesh.glb");
     animsmith_gltf::write::write(&doc, &out).expect("writes");
 
     let bytes = std::fs::read(&out).unwrap();
@@ -107,8 +108,7 @@ fn cli_convert_carries_and_strips_geometry() {
         eprintln!("skipped: set ANIMSMITH_MESH_FBX to run");
         return;
     };
-    let dir = std::env::temp_dir().join(format!("animsmith-cli-convert-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = tempfile::tempdir().unwrap();
 
     let mesh_count = |glb: &std::path::Path| -> usize {
         let bytes = std::fs::read(glb).unwrap();
@@ -127,14 +127,14 @@ fn cli_convert_carries_and_strips_geometry() {
         assert!(status.success(), "convert exited {status}");
     };
 
-    let carried = dir.join("carried.glb");
+    let carried = dir.path().join("carried.glb");
     convert(&carried, false);
     assert!(
         mesh_count(&carried) > 0,
         "convert carries geometry from a mesh FBX"
     );
 
-    let stripped = dir.join("stripped.glb");
+    let stripped = dir.path().join("stripped.glb");
     convert(&stripped, true);
     assert_eq!(
         mesh_count(&stripped),
@@ -159,9 +159,8 @@ fn cli_transform_preserves_geometry() {
         return;
     }
 
-    let dir = std::env::temp_dir().join(format!("animsmith-cli-transform-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let out = dir.join("transformed.glb");
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("transformed.glb");
 
     // A hold-extend is a real (non-no-op) transform; the geometry must
     // survive it.

@@ -108,16 +108,46 @@ fn slice_keeps_window_and_retimes() {
     slice(&mut clip, 0.25, 0.75, FPS);
     assert!((clip.duration_s - 0.5).abs() < 1e-9);
     let track = &clip.tracks[0];
-    assert_eq!(track.times[0], 0.0);
-    assert!(track.end_time() <= 0.5 + 0.5 / FPS as f32);
-    // Values are the original window's values, untouched.
     let orig_track = &original.tracks[0];
-    let first_kept = orig_track
-        .times
-        .iter()
-        .position(|&t| t >= 0.25 - 0.5 / FPS as f32)
-        .unwrap();
-    assert_eq!(track.key_vec3(0), orig_track.key_vec3(first_kept));
+
+    // The window [0.25, 0.75] with a half-frame epsilon at 32 fps keeps
+    // exactly original keys 8..=24 (times 8/32 = 0.25 through 24/32 =
+    // 0.75) — 17 keys — retimed so the first lands at 0 and the last at
+    // the new 0.5 s duration. Both counts are analytic, not re-derived
+    // from the epsilon rule the way the old oracle was.
+    const FIRST: usize = 8; // 8/32 = 0.25
+    const KEPT: usize = 17; // keys 8..=24 inclusive
+    assert_eq!(
+        track.key_count(),
+        KEPT,
+        "kept {} keys, want {KEPT}: {:?}",
+        track.key_count(),
+        track.times
+    );
+    assert_eq!(track.times[0], 0.0);
+    assert!(
+        (track.end_time() - 0.5).abs() < 1e-6,
+        "end {}",
+        track.end_time()
+    );
+
+    // Slice retimes; it never resamples — so every kept key carries its
+    // original value verbatim across the WHOLE window (not just key 0),
+    // at the fps-grid time (FIRST+i)/32 − 0.25.
+    for i in 0..KEPT {
+        assert_eq!(
+            track.key_vec3(i),
+            orig_track.key_vec3(FIRST + i),
+            "key {i} value must equal original key {}",
+            FIRST + i
+        );
+        let want_t = ((FIRST + i) as f32 / FPS as f32 - 0.25).clamp(0.0, 0.5);
+        assert!(
+            (track.times[i] - want_t).abs() < 1e-6,
+            "key {i} time {} != {want_t}",
+            track.times[i]
+        );
+    }
 }
 
 #[test]
@@ -139,37 +169,44 @@ fn gait_anchor_rotation_moves_phase_to_zero_losslessly() {
     let original = clip.clone();
 
     let outcome = align_gait_anchor(&skel, &mut clip, &roles, FPS).expect("aligns");
-    // The synthetic diff signal 2A·sin has its fundamental trough at
-    // 0.75 of the cycle.
+    // The synthetic L−R foot-height signal is 2A·sin(2πk/32): its
+    // fundamental trough sits at key 24 (a quarter cycle before the
+    // wrap) — phase 0.75.
     assert!(
         (outcome.phase_before - 0.75).abs() < 0.05,
         "before: {}",
         outcome.phase_before
     );
+    // The anchor must land within one frame of clip time 0. The bound is
+    // deliberately below one frame (1/32 ≈ 0.031), so a rotation off by a
+    // whole frame cannot satisfy it — the old 0.06 bound (≈ two frames)
+    // let an off-by-one rotation pass.
     assert!(
-        circular_delta(outcome.phase_after, 0.0) < 0.06,
-        "after: {}",
+        circular_delta(outcome.phase_after, 0.0) < 0.75 / KEYS as f64,
+        "after: {} (>= one frame off — off-by-one rotation?)",
         outcome.phase_after
     );
-    // The rotation is lossless: every rotated key equals the original
-    // key `shift` frames later (mod the cycle), because quantized
-    // shifts land on existing keys.
-    let base_shift = (outcome.phase_before * KEYS as f64).round() as i64;
-    let shift_keys = (base_shift + outcome.frame_offset as i64).rem_euclid(KEYS as i64) as usize;
+    // The shift is pinned ANALYTICALLY, not read back from the outcome's
+    // own `phase_before`: moving the key-24 trough to time 0 is a pure
+    // 24-frame rotation, and a clean symmetric loop needs no wrap nudge
+    // (frame_offset 0). A rotation off by one frame would shift by 23 or
+    // 25 and fail the per-key equality below — the failure the previous
+    // oracle (deriving its expected shift from the impl's outputs) could
+    // not see. Quantized shifts land on existing keys, so *every* key
+    // must match exactly, not all-but-one.
+    assert_eq!(outcome.frame_offset, 0, "clean loop needs no wrap nudge");
+    const SHIFT: usize = 24;
     let rotated = &clip.tracks[0];
     let orig = &original.tracks[0];
-    let mut matched = 0;
     for k in 0..KEYS {
-        let want = orig.key_vec3((k + shift_keys) % KEYS).unwrap();
+        let want = orig.key_vec3((k + SHIFT) % KEYS).unwrap();
         let got = rotated.key_vec3(k).unwrap();
-        if (got - want).length() < 1e-5 {
-            matched += 1;
-        }
+        assert!(
+            (got - want).length() < 1e-6,
+            "key {k}: rotated {got:?} != original key {} {want:?} — not a pure {SHIFT}-frame rotation",
+            (k + SHIFT) % KEYS
+        );
     }
-    assert!(
-        matched >= KEYS - 1,
-        "only {matched}/{KEYS} keys match a pure {shift_keys}-frame rotation"
-    );
 }
 
 #[test]
