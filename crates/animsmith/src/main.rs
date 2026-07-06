@@ -1,8 +1,7 @@
 //! The animsmith CLI: inspect, measure, lint, report, transform, fix,
 //! convert, and diff skeletal animation clips.
 
-mod diff;
-
+use animsmith_core::diff;
 use animsmith_core::model::Document;
 use animsmith_core::profile::{ResolvedRoles, resolve_named};
 use animsmith_core::{CheckCtx, Config, Finding, MetricGrids, Severity, all_checks, run_checks};

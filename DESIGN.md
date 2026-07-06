@@ -138,7 +138,7 @@ animsmith/
 ├── LICENSE-MIT / LICENSE-APACHE
 ├── THIRD-PARTY.md              # ufbx (MIT OR PDDL-1.0), vendored viewer assets
 ├── crates/
-│   ├── animsmith-core/          # data model, sampling/FK, metrics, checks, config, findings
+│   ├── animsmith-core/          # data model, sampling/FK, metrics, diffs, checks, config, findings
 │   ├── animsmith-gltf/          # glTF/GLB → core model; GLB writer for `convert`
 │   ├── animsmith-fbx/           # ufbx wrapper → core model; isolates the C build
 │   ├── animsmith-report/        # self-contained HTML report generation
