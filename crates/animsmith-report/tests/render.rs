@@ -36,6 +36,10 @@ fn assert_self_contained(html: &str) {
         "href=",
         "fetch(",
         "import(",
+        "import'//",
+        "import\"//",
+        "from'//",
+        "from\"//",
         "xmlhttprequest",
         "@import",
         "url(",
@@ -45,6 +49,12 @@ fn assert_self_contained(html: &str) {
             "external reference marker {needle:?}"
         );
     }
+}
+
+#[test]
+#[should_panic(expected = "external reference marker")]
+fn self_contained_rejects_protocol_relative_module_import() {
+    assert_self_contained("<script type=\"module\">import '//cdn.example.test/viewer.js'</script>");
 }
 
 fn pose_grid_bytes(doc: &animsmith_core::Document, clip_name: &str) -> Vec<u8> {

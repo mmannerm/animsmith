@@ -15,14 +15,19 @@ if ! grep -Fq "$marker" <<<"$output"; then
     exit 1
 fi
 
-retired_fbx_gate='ANIMSMITH_''MESH_FBX'
+retired_fbx_suffix="MESH_FBX"
+retired_fbx_gate="ANIMSMITH_${retired_fbx_suffix}"
 if git grep -n "$retired_fbx_gate" -- .; then
     printf 'retired env-gated FBX asset path is still referenced: %s\n' "$retired_fbx_gate" >&2
     exit 1
 fi
+if git grep -n "$retired_fbx_suffix" -- . ':!scripts/check-golden-skip-marker.sh'; then
+    printf 'retired env-gated FBX asset fragment is still referenced: %s\n' "$retired_fbx_suffix" >&2
+    exit 1
+fi
 
 allowed_env='^(ANIMSMITH_GOLDEN_GLB|ANIMSMITH_GOLDEN_SKIP|ANIMSMITH_VERSION)$'
-unexpected_env="$(git grep -h -o -E 'ANIMSMITH_[A-Z0-9_]+' -- . | sort -u | grep -Ev "$allowed_env" || true)"
+unexpected_env="$(git grep -h -o -E 'ANIMSMITH_[A-Z0-9_]*' -- . ':!scripts/check-golden-skip-marker.sh' | sort -u | grep -Ev "$allowed_env" || true)"
 if [[ -n "$unexpected_env" ]]; then
     printf 'unexpected ANIMSMITH_* environment reference(s):\n%s\n' "$unexpected_env" >&2
     exit 1
