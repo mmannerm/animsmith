@@ -14,3 +14,9 @@ if ! grep -Fq "$marker" <<<"$output"; then
     printf 'missing golden skip marker: %s\n' "$marker" >&2
     exit 1
 fi
+
+retired_fbx_gate='ANIMSMITH_''MESH_FBX'
+if rg -n "$retired_fbx_gate" .; then
+    printf 'retired env-gated FBX asset path is still referenced: %s\n' "$retired_fbx_gate" >&2
+    exit 1
+fi

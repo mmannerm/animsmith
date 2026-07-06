@@ -31,6 +31,7 @@ fn assert_self_contained(html: &str) {
         "src=",
         "href=",
         "fetch(",
+        "import(",
         "xmlhttprequest",
         "@import",
         "url(",
