@@ -19,11 +19,7 @@ impl Check for InPlace {
     }
 
     fn readiness(&self, ctx: &CheckCtx) -> Readiness {
-        let any = ctx
-            .doc
-            .clips
-            .iter()
-            .any(|c| ctx.config.expectations_for(&c.name).in_place.is_some());
+        let any = ctx.clip_expectations().iter().any(|e| e.in_place.is_some());
         if any {
             root_motion_readiness(ctx.roles)
         } else {
@@ -33,7 +29,7 @@ impl Check for InPlace {
 
     fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
         for (index, clip) in ctx.doc.clips.iter().enumerate() {
-            let Some(expected) = ctx.config.expectations_for(&clip.name).in_place else {
+            let Some(expected) = ctx.expectations(index).in_place else {
                 continue;
             };
             let measured = ctx

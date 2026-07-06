@@ -17,8 +17,8 @@ impl Check for Fps {
     }
 
     fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
-        for clip in &ctx.doc.clips {
-            let Some(fps) = ctx.config.expectations_for(&clip.name).fps else {
+        for (index, clip) in ctx.doc.clips.iter().enumerate() {
+            let Some(fps) = ctx.expectations(index).fps else {
                 continue;
             };
             if fps <= 0.0 {

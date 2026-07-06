@@ -33,10 +33,9 @@ impl Check for FootSlide {
         // a planted or sweeping foot is correct; individual missing
         // feet are handled per-foot in `run`.
         let any = ctx
-            .doc
-            .clips
+            .clip_expectations()
             .iter()
-            .any(|c| ctx.config.expectations_for(&c.name).speed_mps.is_some());
+            .any(|e| e.speed_mps.is_some());
         if any {
             root_motion_readiness(ctx.roles)
         } else {
@@ -52,7 +51,7 @@ impl Check for FootSlide {
         let max_slide = settings.max_slide_mps.unwrap_or(DEFAULT_MAX_SLIDE_MPS);
 
         for (index, clip) in ctx.doc.clips.iter().enumerate() {
-            let Some(pin) = ctx.config.expectations_for(&clip.name).speed_mps else {
+            let Some(pin) = ctx.expectations(index).speed_mps else {
                 continue;
             };
             let Some(grid) = ctx.grid(index) else {

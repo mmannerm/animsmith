@@ -14,11 +14,11 @@ impl Check for MissingBones {
     }
 
     fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
-        for clip in &ctx.doc.clips {
-            let Some(required) = ctx.config.expectations_for(&clip.name).animates_bones else {
+        for (index, clip) in ctx.doc.clips.iter().enumerate() {
+            let Some(required) = ctx.expectations(index).animates_bones.as_deref() else {
                 continue;
             };
-            for bone_name in &required {
+            for bone_name in required {
                 let Some(bone_id) = ctx
                     .doc
                     .skeleton
