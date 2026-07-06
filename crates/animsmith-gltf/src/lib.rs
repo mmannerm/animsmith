@@ -33,6 +33,8 @@ pub enum LoadError {
     Buffer(String),
     #[error("malformed animation data: {0}")]
     Malformed(String),
+    #[error("malformed node graph: {0}")]
+    Topology(String),
 }
 
 /// `fix` errors are classified by defect, not by phase: [`LoadError`]
@@ -282,7 +284,7 @@ fn build_document(
     let doc = &gltf.document;
 
     let nodes: Vec<gltf::Node> = doc.nodes().collect();
-    let (order, parent, bone_of_node) = topology(doc);
+    let (order, parent, bone_of_node) = topology(doc)?;
 
     let mut bones: Vec<Bone> = Vec::with_capacity(nodes.len());
     for &node_index in &order {
@@ -415,22 +417,61 @@ fn build_document(
     })
 }
 
+/// DFS order, per-node parent, and node-index → bone-id map — the three
+/// parallel arrays [`topology`] derives from the glTF node graph.
+type Topology = (Vec<usize>, Vec<Option<usize>>, Vec<Option<usize>>);
+
 /// Node-index → bone-id map (plus the raw parent array and DFS order),
 /// in the topological order `build_document` assigns bones: DFS from
 /// roots, file order among siblings, over ALL nodes (scene membership
 /// doesn't matter — animations may target unreferenced subtrees). Shared
 /// by the skeleton build and asset extraction so both agree on which
 /// bone a node became.
-fn topology(doc: &gltf::Document) -> (Vec<usize>, Vec<Option<usize>>, Vec<Option<usize>>) {
+///
+/// glTF requires the node graph to be a forest. A malformed file can
+/// break that two ways, and both are rejected as [`LoadError::Topology`]
+/// rather than silently repaired — recovering would force an arbitrary
+/// choice (which of two parents a node inherits, or dropping a cyclic
+/// subtree) that quietly corrupts every downstream world transform:
+///
+/// - **Duplicate parent** — a node claimed as a child by more than one
+///   node. Caught by the reference count below, before any traversal.
+/// - **Cycle** — a closed loop. A cycle *reachable* from a root gives its
+///   entry node a second parent, so it is caught by the duplicate-parent
+///   check above. A *rootless* cycle has no root to descend from, so the
+///   DFS never enters it and its nodes stay unreached — caught by the
+///   post-DFS reachability check. Either way the DFS never actually walks
+///   a cycle.
+///
+/// Both checks are O(nodes + edges). Because duplicate parents are
+/// rejected first, every surviving node has at most one parent, so the
+/// DFS reaches each node at most once and cannot loop — the walk is
+/// bounded without relying on cycle detection mid-traversal, keeping
+/// hostile input within invariant-1 (a `LoadError`, never a panic or
+/// OOM). The `gltf_load` fuzz target (cycle → OOM under the old
+/// best-effort recovery) and the audit (multi-parent → bad FK) motivated
+/// the hardening.
+fn topology(doc: &gltf::Document) -> Result<Topology, LoadError> {
     let node_count = doc.nodes().count();
-    // Root detection only: a node is a root if no node lists it as a child.
-    // Deliberately a bool, not the parent array — the actual parent is
-    // recorded during the DFS below (see the invariant note there).
-    let mut has_parent: Vec<bool> = vec![false; node_count];
+    // Count parent claims per node. A forest allows at most one; two or
+    // more is a duplicate-parent malformation. Also drives root detection:
+    // a node with zero claims is a root.
+    // `child.index()` is in range: `Gltf::from_slice` validates node child
+    // indices. `saturating_add` keeps the count panic-free even on a
+    // pathological file-derived edge multiplicity (invariant-1); any value
+    // above 1 is a duplicate parent regardless.
+    let mut parent_refs: Vec<u32> = vec![0; node_count];
     for node in doc.nodes() {
         for child in node.children() {
-            has_parent[child.index()] = true;
+            let refs = &mut parent_refs[child.index()];
+            *refs = refs.saturating_add(1);
         }
+    }
+    if let Some(dup) = parent_refs.iter().position(|&refs| refs > 1) {
+        return Err(LoadError::Topology(format!(
+            "node {dup} is a child of {} nodes; glTF requires a forest (one parent per node)",
+            parent_refs[dup]
+        )));
     }
 
     let nodes: Vec<gltf::Node> = doc.nodes().collect();
@@ -438,27 +479,19 @@ fn topology(doc: &gltf::Document) -> (Vec<usize>, Vec<Option<usize>>, Vec<Option
     let mut parent: Vec<Option<usize>> = vec![None; node_count];
     let mut stack: Vec<usize> = doc
         .nodes()
-        .filter(|n| !has_parent[n.index()])
+        .filter(|n| parent_refs[n.index()] == 0)
         .map(|n| n.index())
         .collect();
     stack.reverse(); // keep file order among roots
-    // The `visited` guard keeps this DFS bounded on hostile input: glTF
-    // requires the node graph to be a forest, but a malformed file can
-    // encode a cycle (a node in its own subtree) or reuse a child across
-    // parents. Without the guard the traversal re-emits such nodes forever,
-    // growing `order` until it OOMs (invariant-1). Nodes trapped in a pure
-    // cycle have no root to reach them, so they stay unemitted (bone_of_node
-    // None) rather than crashing.
-    //
-    // `parent` is recorded here rather than in a file-order pre-pass so the
-    // recorded parent is always the node the DFS *reached the child
-    // through* — which was pushed to `order` before the child. That keeps
-    // every parent's bone id below its children's, the ordering
-    // `sample_clip`'s single ascending FK pass relies on. A file-order
-    // pre-pass (last-writer-wins) could instead record a parent that sorts
-    // *after* its child when a malformed file gives a node two parents,
-    // silently corrupting every world transform. Found by the `gltf_load`
-    // fuzz target (cycle → OOM) and the audit (multi-parent → bad FK).
+    // DFS records `parent` as the node it reached the child *through*,
+    // which was pushed to `order` before the child — keeping every
+    // parent's bone id below its children's, the ordering `sample_clip`'s
+    // single ascending FK pass relies on. With duplicate parents already
+    // rejected, each child has exactly one parent, so this is unambiguous.
+    // The `visited` re-entry guard is defensive: that same one-parent
+    // property means each node is pushed at most once, so the guard is not
+    // normally hit — it keeps the walk self-bounding if that upstream
+    // guarantee is ever weakened.
     let mut visited: Vec<bool> = vec![false; node_count];
     while let Some(i) = stack.pop() {
         if visited[i] {
@@ -468,18 +501,28 @@ fn topology(doc: &gltf::Document) -> (Vec<usize>, Vec<Option<usize>>, Vec<Option
         order.push(i);
         let children: Vec<usize> = nodes[i].children().map(|c| c.index()).collect();
         for &c in children.iter().rev() {
-            if !visited[c] {
-                parent[c] = Some(i);
-                stack.push(c);
-            }
+            parent[c] = Some(i);
+            stack.push(c);
         }
+    }
+
+    // Any node the DFS never reached has a parent (it is not a root) yet no
+    // root-anchored path — it is trapped in a rootless cycle. (A cycle
+    // reachable from a root can't reach here: its entry node has two
+    // parents and was rejected above.) Reject rather than load a partial
+    // skeleton silently missing those bones.
+    if order.len() != node_count {
+        let orphan = (0..node_count).find(|&n| !visited[n]).unwrap();
+        return Err(LoadError::Topology(format!(
+            "node {orphan} is unreachable from any root; the node graph contains a cycle"
+        )));
     }
 
     let mut bone_of_node: Vec<Option<usize>> = vec![None; node_count];
     for (bone_id, &node_index) in order.iter().enumerate() {
         bone_of_node[node_index] = Some(bone_id);
     }
-    (order, parent, bone_of_node)
+    Ok((order, parent, bone_of_node))
 }
 
 /// Parse meshes (indexed or unindexed), skins (joints + inverse bind
@@ -520,7 +563,7 @@ fn extract_assets(
         });
     }
 
-    let (_order, _parent, bone_of_node) = topology(doc);
+    let (_order, _parent, bone_of_node) = topology(doc)?;
 
     for node in doc.nodes() {
         let Some(mesh) = node.mesh() else { continue };
