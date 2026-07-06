@@ -20,3 +20,6 @@ targets = ["aarch64-apple-darwin", "x86_64-pc-windows-msvc"]
 animsmith-core = { workspace = true }
 base64 = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+animsmith-gltf = { workspace = true }
