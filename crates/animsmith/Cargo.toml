@@ -45,4 +45,5 @@ serde_json = { workspace = true }
 toml = { workspace = true }
 
 [dev-dependencies]
+animsmith-fbx = { workspace = true, features = ["test-fixtures"] }
 gltf = { workspace = true }

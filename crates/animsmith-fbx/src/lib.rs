@@ -14,6 +14,10 @@ use animsmith_core::model::{
 use glam::{Mat4, Quat, Vec3};
 use std::path::Path;
 
+#[cfg(feature = "test-fixtures")]
+#[doc(hidden)]
+pub const RIGGED_TRIANGLE_FBX: &str = include_str!("../testdata/rigged_triangle.fbx");
+
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum LoadError {

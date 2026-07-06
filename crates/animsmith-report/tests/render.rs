@@ -1,7 +1,7 @@
-use animsmith_core::Finding;
 use animsmith_core::metrics::{MetricGrids, metric_frame_count};
-use animsmith_core::profile::ResolvedRoles;
+use animsmith_core::profile::{ResolvedRoles, Role};
 use animsmith_core::sample::sample_clip;
+use animsmith_core::{Finding, Severity};
 use base64::Engine as _;
 use serde_json::Value;
 use std::path::PathBuf;
@@ -77,6 +77,18 @@ fn pose_grid_bytes(doc: &animsmith_core::Document, clip_name: &str) -> Vec<u8> {
     positions
 }
 
+fn chart_roles(doc: &animsmith_core::Document) -> ResolvedRoles {
+    ResolvedRoles::from_names(
+        &doc.skeleton,
+        [
+            (Role::Root, "root".to_string()),
+            (Role::Hips, "hips".to_string()),
+            (Role::LeftFoot, "foot".to_string()),
+            (Role::RightFoot, "foot".to_string()),
+        ],
+    )
+}
+
 #[test]
 fn render_embeds_pose_grid_and_uses_no_external_urls() {
     let doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
@@ -112,6 +124,46 @@ fn render_embeds_pose_grid_and_uses_no_external_urls() {
             .expect("pose grid base64");
         assert_eq!(decoded, pose_grid_bytes(&doc, name));
     }
+}
+
+#[test]
+fn render_self_contained_with_roles_findings_and_charts() {
+    let doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
+    let grids = MetricGrids::new(&doc);
+    let roles = chart_roles(&doc);
+    let findings = vec![
+        Finding::new("fixture-check", Severity::Warning, "fixture finding")
+            .clip("walk")
+            .bone("hips")
+            .time(0.5),
+    ];
+
+    let html = animsmith_report::render(&grids, &roles, &findings, None);
+    assert_self_contained(&html);
+    assert!(
+        html.contains(r#"data-kind="gait""#),
+        "resolved foot roles render the gait chart"
+    );
+    assert!(
+        html.contains(r#"data-kind="rootpath""#),
+        "resolved root role renders the root path chart"
+    );
+
+    let data = report_data(&html);
+    assert_eq!(data["profile"], "custom");
+    assert_eq!(data["clips"][0]["trails"]["root"], 0);
+    assert_eq!(data["clips"][0]["trails"]["hips"], 1);
+    assert_eq!(data["clips"][0]["trails"]["left_foot"], 2);
+    assert_eq!(data["clips"][0]["trails"]["right_foot"], 2);
+    assert_eq!(
+        data["findings"].as_array().expect("findings array").len(),
+        1
+    );
+    assert_eq!(data["findings"][0]["check"], "fixture-check");
+    assert_eq!(data["findings"][0]["severity"], "warning");
+    assert_eq!(data["findings"][0]["clip"], "walk");
+    assert_eq!(data["findings"][0]["bone"], "hips");
+    assert_eq!(data["findings"][0]["message"], "fixture finding");
 }
 
 #[test]

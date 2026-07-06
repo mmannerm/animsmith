@@ -4,14 +4,16 @@
 
 use std::path::{Path, PathBuf};
 
-fn fixture() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/rigged_triangle.fbx")
-}
-
 fn unique_temp_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("animsmith-{name}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
+}
+
+fn write_fixture(dir: &Path) -> PathBuf {
+    let fbx = dir.join("rigged_triangle.fbx");
+    std::fs::write(&fbx, animsmith_fbx::RIGGED_TRIANGLE_FBX).expect("writes FBX fixture");
+    fbx
 }
 
 fn mesh_count(glb: &Path) -> usize {
@@ -60,12 +62,13 @@ fn assert_meshes_match(
 
 #[test]
 fn converted_mesh_is_structurally_sound() {
-    let fbx = fixture();
+    let dir = unique_temp_dir("convert-mesh");
+    let fbx = write_fixture(&dir);
     let doc = animsmith_fbx::load(&fbx).expect("FBX loads");
     assert!(!doc.assets.meshes.is_empty(), "fixture must carry meshes");
     assert_eq!(doc.assets.meshes[0].skin_joints.len(), 1);
 
-    let out = unique_temp_dir("convert-mesh").join("converted.glb");
+    let out = dir.join("converted.glb");
     animsmith_gltf::write::write(&doc, &out).expect("writes");
 
     let bytes = std::fs::read(&out).unwrap();
@@ -150,8 +153,8 @@ fn converted_mesh_is_structurally_sound() {
 /// library round-trip).
 #[test]
 fn cli_convert_carries_and_strips_geometry() {
-    let fbx = fixture();
     let dir = unique_temp_dir("cli-convert");
+    let fbx = write_fixture(&dir);
 
     let convert = |out: &Path, animation_only: bool| {
         let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_animsmith"));
@@ -183,14 +186,14 @@ fn cli_convert_carries_and_strips_geometry() {
 /// fixes).
 #[test]
 fn cli_transform_preserves_geometry() {
-    let fbx = fixture();
+    let dir = unique_temp_dir("cli-transform");
+    let fbx = write_fixture(&dir);
     let doc = animsmith_fbx::load(&fbx).expect("FBX loads");
     assert!(
         !doc.clips.is_empty(),
         "fixture carries a transformable clip"
     );
 
-    let dir = unique_temp_dir("cli-transform");
     let out = dir.join("transformed.glb");
 
     // A hold-extend is a real (non-no-op) transform; the geometry must
