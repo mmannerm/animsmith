@@ -107,7 +107,7 @@ pub(crate) fn safe_external_buffer_path(uri: &str) -> Result<PathBuf, LoadError>
 pub(crate) fn validate_glb_framing(bytes: &[u8]) -> Result<(), LoadError> {
     const GLB_MAGIC: &[u8; 4] = b"glTF";
     const GLB_HEADER_LEN: usize = 12;
-    if bytes.len() < 4 || &bytes[..4] != GLB_MAGIC {
+    if !bytes.starts_with(GLB_MAGIC) {
         return Ok(());
     }
     if bytes.len() < GLB_HEADER_LEN {
