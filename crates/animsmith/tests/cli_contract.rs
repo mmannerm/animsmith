@@ -824,6 +824,55 @@ fn diff_accepts_measurement_json_and_exits_zero_without_deltas() {
 }
 
 #[test]
+fn diff_text_format_renders_deltas_and_clean_summary() {
+    // The default (human) format has its own render branch that the JSON
+    // contract tests never exercise. This is the one test that owns that
+    // branch: a dirty diff must name the moved clip and print a change
+    // summary; a clean diff must print its clean line. (The envelope /
+    // exit-code contract tests deliberately do NOT string-match this
+    // prose — pinning the renderer is this test's job, not theirs.)
+    let dir = unique_temp_dir("diff-text-format");
+    let before = dir.join("before.json");
+    let after = dir.join("after.json");
+    write_json(&before, &measurement_report(1.0));
+    write_json(&after, &measurement_report(1.1));
+
+    let dirty = animsmith()
+        .args([
+            "diff",
+            before.to_str().expect("utf-8 before path"),
+            after.to_str().expect("utf-8 after path"),
+        ])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(dirty.status.code(), Some(1), "stderr:\n{}", stderr(&dirty));
+    let out = stdout(&dirty);
+    assert!(
+        out.contains("walk"),
+        "dirty Text output names the clip:\n{out}"
+    );
+    assert!(
+        out.contains("significant change"),
+        "dirty Text output summarizes the change count:\n{out}"
+    );
+
+    let clean = animsmith()
+        .args([
+            "diff",
+            before.to_str().expect("utf-8 before path"),
+            before.to_str().expect("utf-8 before path"),
+        ])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(clean.status.code(), Some(0), "stderr:\n{}", stderr(&clean));
+    assert!(
+        stdout(&clean).contains("no significant movement"),
+        "clean Text output states no movement:\n{}",
+        stdout(&clean)
+    );
+}
+
+#[test]
 fn diff_rejects_json_without_schema_version() {
     let dir = unique_temp_dir("diff-bare-map");
     let bare = dir.join("bare.json");
