@@ -54,7 +54,7 @@ checks.
 The corresponding CI workflows also validate the same expectations on a
 clean checkout. Coverage and the security scanners (Scorecard, CodeQL)
 run only in CI and are informational, so they are not part of the local
-gate — see below.
+gate (see below).
 
 ## no-default-features
 
