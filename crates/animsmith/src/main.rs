@@ -1,7 +1,6 @@
 //! The animsmith CLI: inspect, measure, lint, report, transform, fix,
 //! convert, and diff skeletal animation clips.
 
-use animsmith_core::diff;
 use animsmith_core::model::Document;
 use animsmith_core::profile::{ResolvedRoles, resolve_named};
 use animsmith_core::{CheckCtx, Config, Finding, MetricGrids, Severity, all_checks, run_checks};
@@ -354,7 +353,7 @@ struct DiffEnvelope {
     header: EnvelopeHeader,
     inputs: DiffInputs,
     summary: DiffSummary,
-    deltas: Vec<diff::MetricDelta>,
+    deltas: Vec<animsmith_core::diff::MetricDelta>,
 }
 
 fn main() -> ExitCode {
@@ -791,7 +790,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let config = load_config(cli.config.as_deref())?;
             let ma = load_measurements(&a, &config)?;
             let mb = load_measurements(&b, &config)?;
-            let deltas = diff::diff_measurements(&ma, &mb);
+            let deltas = animsmith_core::diff::diff_measurements(&ma, &mb);
             let has_deltas = !deltas.is_empty();
             match format {
                 Format::Json => print_json(&DiffEnvelope {
