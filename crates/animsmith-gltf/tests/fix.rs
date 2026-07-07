@@ -152,11 +152,12 @@ fn fix_repairs_flips_losslessly_and_idempotently() {
         "expected ≤32 differing bytes, got {differing}"
     );
     // ...and those bytes are the rotation keys, not stray edits elsewhere:
-    // the sibling translation track survives byte-for-byte. Bounding the
-    // count alone leaves *where* the changes landed unconstrained; this
-    // re-asserts the untouched channel so a diff that strayed outside the
-    // rotation accessor (into translation, or its byteView padding) would
-    // fail even while staying under the 32-byte budget.
+    // the sibling translation track's decoded values survive unchanged.
+    // Bounding the count alone leaves *where* the changes landed
+    // unconstrained; re-asserting the untouched channel's values (issue
+    // #35's sanctioned alternative to pinning raw byte offsets) means a
+    // diff that corrupted the translation output would fail even while
+    // staying under the 32-byte budget.
     let trans = |doc: &Document| -> Vec<Vec3> {
         let track = doc.clips[0]
             .tracks
