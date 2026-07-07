@@ -196,6 +196,13 @@ fn document_to_json(doc: &Document, buffer_uri: Option<String>, buffer_len: usiz
     root
 }
 
+/// Narrow a GLB byte length to the `u32` its header/chunk field requires,
+/// failing closed above the 4 GiB GLB limit rather than truncating (which
+/// would emit a length field disagreeing with the bytes on disk).
+fn glb_len_u32(field: &'static str, len: usize) -> Result<u32, WriteError> {
+    u32::try_from(len).map_err(|_| WriteError::TooLarge { field, bytes: len })
+}
+
 /// Serialize `doc` to `path` (`.glb` for binary, anything else as
 /// `.gltf` JSON with an embedded data-URI buffer): skeleton, animation,
 /// and any scene assets it carries ([`Document::assets`] — triangulated
@@ -436,15 +443,21 @@ pub fn write(doc: &Document, path: &Path) -> Result<(), WriteError> {
         let has_bin = !bin.is_empty();
         let bin_bytes = if has_bin { 8 + bin.len() } else { 0 };
         let total = 12 + 8 + json_bytes.len() + bin_bytes;
+        // Every GLB length field is a u32; fail closed above 4 GiB rather
+        // than truncating and emitting a header that disagrees with the
+        // bytes on disk.
+        let total_len = glb_len_u32("total GLB length", total)?;
+        let json_len = glb_len_u32("JSON chunk", json_bytes.len())?;
         let mut out = Vec::with_capacity(total);
         out.extend_from_slice(b"glTF");
         out.extend_from_slice(&2u32.to_le_bytes());
-        out.extend_from_slice(&(total as u32).to_le_bytes());
-        out.extend_from_slice(&(json_bytes.len() as u32).to_le_bytes());
+        out.extend_from_slice(&total_len.to_le_bytes());
+        out.extend_from_slice(&json_len.to_le_bytes());
         out.extend_from_slice(b"JSON");
         out.extend_from_slice(&json_bytes);
         if has_bin {
-            out.extend_from_slice(&(bin.len() as u32).to_le_bytes());
+            let bin_len = glb_len_u32("BIN chunk", bin.len())?;
+            out.extend_from_slice(&bin_len.to_le_bytes());
             out.extend_from_slice(b"BIN\0");
             out.extend_from_slice(&bin);
         }
@@ -452,5 +465,36 @@ pub fn write(doc: &Document, path: &Path) -> Result<(), WriteError> {
     } else {
         let text = serde_json::to_string_pretty(&root)?;
         std::fs::write(path, text).map_err(io_err)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::glb_len_u32;
+    use crate::WriteError;
+
+    #[test]
+    fn glb_len_u32_accepts_up_to_the_u32_limit() {
+        assert_eq!(glb_len_u32("x", 0).unwrap(), 0);
+        assert_eq!(glb_len_u32("x", 1234).unwrap(), 1234);
+        assert_eq!(glb_len_u32("x", u32::MAX as usize).unwrap(), u32::MAX);
+    }
+
+    // A length past the u32 limit is only representable where usize is
+    // wider than u32; on a 32-bit target the value can't be constructed.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn glb_len_u32_rejects_over_4gib() {
+        let too_big = u32::MAX as usize + 1;
+        let err = glb_len_u32("total GLB length", too_big).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            matches!(err, WriteError::TooLarge { field: "total GLB length", bytes } if bytes == too_big),
+            "expected TooLarge naming the field and size"
+        );
+        assert!(
+            msg.contains("4 GiB") && msg.contains("total GLB length"),
+            "message must name the limit and field: {msg}"
+        );
     }
 }

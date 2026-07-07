@@ -61,6 +61,10 @@ pub enum WriteError {
     },
     #[error("failed to serialize glTF JSON: {0}")]
     Serialize(#[from] serde_json::Error),
+    #[error(
+        "GLB too large: {field} is {bytes} bytes, exceeding the 4 GiB limit of a GLB u32 length field"
+    )]
+    TooLarge { field: &'static str, bytes: usize },
 }
 
 /// Contain an external-buffer URI to a relative child path: absolute
