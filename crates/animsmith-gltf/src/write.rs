@@ -196,6 +196,42 @@ fn document_to_json(doc: &Document, buffer_uri: Option<String>, buffer_len: usiz
     root
 }
 
+/// Narrow a GLB byte length to the `u32` its header/chunk field requires,
+/// failing closed above the 4 GiB GLB limit rather than truncating (which
+/// would emit a length field disagreeing with the bytes on disk).
+fn glb_len_u32(field: &'static str, len: usize) -> Result<u32, WriteError> {
+    u32::try_from(len).map_err(|_| WriteError::TooLarge { field, bytes: len })
+}
+
+/// The `u32` length fields of a GLB container.
+#[derive(Debug)]
+struct GlbLengths {
+    /// Total file length (12-byte header + JSON chunk + optional BIN chunk).
+    total: u32,
+    /// JSON chunk payload length.
+    json: u32,
+    /// BIN chunk payload length, or `None` when the payload is empty (the
+    /// BIN chunk is then omitted — an empty chunk is GLB_EMPTY_CHUNK).
+    bin: Option<u32>,
+}
+
+/// Plan a GLB's chunk framing from its (already 4-byte-padded) JSON and
+/// BIN payload lengths, narrowing every `u32` length field and failing
+/// closed above the 4 GiB GLB limit. The parts are checked *before* the
+/// total so an oversized JSON or BIN chunk is attributed to itself rather
+/// than masked as a total overflow (each part is `<= total`, so a
+/// total-first check could only ever report `total`).
+fn plan_glb_lengths(json_len: usize, bin_len: usize) -> Result<GlbLengths, WriteError> {
+    let json = glb_len_u32("JSON chunk", json_len)?;
+    let (bin, bin_bytes) = if bin_len > 0 {
+        (Some(glb_len_u32("BIN chunk", bin_len)?), 8 + bin_len)
+    } else {
+        (None, 0)
+    };
+    let total = glb_len_u32("total GLB length", 12 + 8 + json_len + bin_bytes)?;
+    Ok(GlbLengths { total, json, bin })
+}
+
 /// Serialize `doc` to `path` (`.glb` for binary, anything else as
 /// `.gltf` JSON with an embedded data-URI buffer): skeleton, animation,
 /// and any scene assets it carries ([`Document::assets`] — triangulated
@@ -431,20 +467,20 @@ pub fn write(doc: &Document, path: &Path) -> Result<(), WriteError> {
         while !bin.len().is_multiple_of(4) {
             bin.push(0);
         }
-        // Omit the BIN chunk entirely when there is no binary payload: a
-        // zero-length chunk is GLB_EMPTY_CHUNK to the Khronos validator.
-        let has_bin = !bin.is_empty();
-        let bin_bytes = if has_bin { 8 + bin.len() } else { 0 };
-        let total = 12 + 8 + json_bytes.len() + bin_bytes;
-        let mut out = Vec::with_capacity(total);
+        // Plan and length-check the chunk framing once, so the bytes
+        // emitted below can't diverge from what was checked.
+        let lengths = plan_glb_lengths(json_bytes.len(), bin.len())?;
+        let mut out = Vec::with_capacity(lengths.total as usize);
         out.extend_from_slice(b"glTF");
         out.extend_from_slice(&2u32.to_le_bytes());
-        out.extend_from_slice(&(total as u32).to_le_bytes());
-        out.extend_from_slice(&(json_bytes.len() as u32).to_le_bytes());
+        out.extend_from_slice(&lengths.total.to_le_bytes());
+        out.extend_from_slice(&lengths.json.to_le_bytes());
         out.extend_from_slice(b"JSON");
         out.extend_from_slice(&json_bytes);
-        if has_bin {
-            out.extend_from_slice(&(bin.len() as u32).to_le_bytes());
+        // `bin` is `Some` exactly when a non-empty BIN chunk is emitted;
+        // an empty payload omits the chunk (GLB_EMPTY_CHUNK).
+        if let Some(bin_len) = lengths.bin {
+            out.extend_from_slice(&bin_len.to_le_bytes());
             out.extend_from_slice(b"BIN\0");
             out.extend_from_slice(&bin);
         }
@@ -452,5 +488,68 @@ pub fn write(doc: &Document, path: &Path) -> Result<(), WriteError> {
     } else {
         let text = serde_json::to_string_pretty(&root)?;
         std::fs::write(path, text).map_err(io_err)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{GlbLengths, glb_len_u32, plan_glb_lengths};
+    use crate::WriteError;
+
+    #[test]
+    fn glb_len_u32_accepts_up_to_the_u32_limit() {
+        assert_eq!(glb_len_u32("x", 0).unwrap(), 0);
+        assert_eq!(glb_len_u32("x", 1234).unwrap(), 1234);
+        assert_eq!(glb_len_u32("x", u32::MAX as usize).unwrap(), u32::MAX);
+    }
+
+    // A length past the u32 limit is only representable where usize is
+    // wider than u32; on a 32-bit target the value can't be constructed.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn glb_len_u32_rejects_over_4gib() {
+        let too_big = u32::MAX as usize + 1;
+        let err = glb_len_u32("total GLB length", too_big).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            matches!(err, WriteError::TooLarge { field: "total GLB length", bytes } if bytes == too_big),
+            "expected TooLarge naming the field and size"
+        );
+        assert!(
+            msg.contains("4 GiB") && msg.contains("total GLB length"),
+            "message must name the limit and field: {msg}"
+        );
+    }
+
+    // The seam `write()` actually uses: from JSON/BIN payload lengths it
+    // derives the three u32 fields. An 8-byte JSON + 16-byte BIN gives a
+    // total of 12 (header) + 8+8 (JSON chunk) + 8+16 (BIN chunk) = 52.
+    #[test]
+    fn plan_glb_lengths_derives_the_three_fields() {
+        let GlbLengths { total, json, bin } = plan_glb_lengths(8, 16).unwrap();
+        assert_eq!((total, json, bin), (12 + 8 + 8 + 8 + 16, 8, Some(16)));
+        // Empty BIN payload → no BIN chunk, total drops the 8+bin bytes.
+        let GlbLengths { total, json, bin } = plan_glb_lengths(8, 0).unwrap();
+        assert_eq!((total, json, bin), (12 + 8 + 8, 8, None));
+    }
+
+    // Pins the writer's length-field wiring without allocating a >4 GiB
+    // document: each oversized field is attributed to *itself*, not
+    // masked as a total overflow. (Regression guard for the wiring — a
+    // `write()` that skipped `plan_glb_lengths` would drop this coverage.)
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn plan_glb_lengths_attributes_each_overflowing_field() {
+        let over = u32::MAX as usize + 1;
+        let ok = 8usize;
+        let field = |r: Result<GlbLengths, WriteError>| match r.unwrap_err() {
+            WriteError::TooLarge { field, .. } => field,
+            other => panic!("expected TooLarge, got {other:?}"),
+        };
+        assert_eq!(field(plan_glb_lengths(over, ok)), "JSON chunk");
+        assert_eq!(field(plan_glb_lengths(ok, over)), "BIN chunk");
+        // Both parts fit in u32 but their sum overflows the total.
+        let half = u32::MAX as usize / 2 + 1;
+        assert_eq!(field(plan_glb_lengths(half, half)), "total GLB length");
     }
 }
