@@ -22,6 +22,9 @@ history (accepted types live in `.commitlintrc.yml`).
 3. Review that PR. When you merge it, the `release` job tags, creates the
    GitHub Release, and publishes every crate to crates.io in dependency
    order (`animsmith-core` → `-gltf`/`-fbx`/`-report` → `animsmith`).
+   The follow-on `release_binaries` job calls `release-binaries.yml`,
+   builds CLI archives from the tag, and uploads the archives plus
+   matching `.sha256` files to that GitHub Release.
 
 crates.io publishing uses
 [Trusted Publishing](https://crates.io/docs/trusted-publishing) (GitHub
@@ -120,6 +123,14 @@ So automation begins at `0.2.0`; `0.1.0` is done by hand, once:
    git tag v0.1.0 && git push origin v0.1.0
    gh release create v0.1.0 --title v0.1.0 \
      --notes-file <(awk '/^## \[0\.1\.0\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md)
+   ```
+
+   Then dispatch the binary packaging workflow against `main` so the
+   manually created release gets the same archives and checksums as later
+   automated releases:
+
+   ```console
+   gh workflow run release-binaries.yml --ref main -f tag=v0.1.0
    ```
 
 7. Arm the release automation. Both the `release-pr` and `release` jobs

@@ -1,0 +1,139 @@
+name: release binaries
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to package.
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to package, for bootstrap or reruns.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RELEASE_TAG: ${{ inputs.tag }}
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin: animsmith
+            ext: tar.gz
+            python: python3
+          - os: macos-14
+            target: aarch64-apple-darwin
+            bin: animsmith
+            ext: tar.gz
+            python: python3
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: animsmith.exe
+            ext: zip
+            python: python
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          cache-on-failure: true
+          key: release-${{ matrix.target }}
+      - name: Build release binary
+        run: cargo build --locked -p animsmith --release --target "${{ matrix.target }}"
+      - name: Package archive
+        shell: bash
+        env:
+          ASSET_STEM: animsmith-${{ env.RELEASE_TAG }}-${{ matrix.target }}
+          ARCHIVE_EXT: ${{ matrix.ext }}
+          BIN_NAME: ${{ matrix.bin }}
+          PYTHON: ${{ matrix.python }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          binary="target/${TARGET}/release/${BIN_NAME}"
+          "${binary}" --version
+
+          staging="dist/${ASSET_STEM}"
+          mkdir -p "${staging}"
+          cp "${binary}" "${staging}/"
+          cp README.md LICENSE-APACHE LICENSE-MIT THIRD-PARTY.md "${staging}/"
+
+          "${PYTHON}" <<'PY'
+          import hashlib
+          import os
+          import tarfile
+          import zipfile
+          from pathlib import Path
+
+          asset_stem = os.environ["ASSET_STEM"]
+          archive_ext = os.environ["ARCHIVE_EXT"]
+          staging = Path("dist") / asset_stem
+          archive = Path("dist") / f"{asset_stem}.{archive_ext}"
+          files = sorted(path for path in staging.rglob("*") if path.is_file())
+
+          if archive_ext == "tar.gz":
+              with tarfile.open(archive, "w:gz") as tar:
+                  for path in files:
+                      tar.add(path, arcname=Path(asset_stem) / path.relative_to(staging))
+          elif archive_ext == "zip":
+              with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                  for path in files:
+                      zf.write(path, Path(asset_stem) / path.relative_to(staging))
+          else:
+              raise SystemExit(f"unsupported archive extension: {archive_ext}")
+
+          digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+          Path(f"{archive}.sha256").write_text(
+              f"{digest}  {archive.name}\n",
+              encoding="ascii",
+          )
+          PY
+      - name: Upload packaged binary
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-asset-${{ matrix.target }}
+          path: |
+            dist/animsmith-${{ env.RELEASE_TAG }}-${{ matrix.target }}.${{ matrix.ext }}
+            dist/animsmith-${{ env.RELEASE_TAG }}-${{ matrix.target }}.${{ matrix.ext }}.sha256
+          if-no-files-found: error
+
+  upload:
+    name: upload release assets
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: release-asset-*
+          path: dist/release-assets
+          merge-multiple: true
+      - name: Upload assets to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ls -lh dist/release-assets
+          gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null
+          gh release upload "${RELEASE_TAG}" dist/release-assets/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --clobber

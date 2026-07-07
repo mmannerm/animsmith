@@ -5,7 +5,18 @@ automation. It reads glTF/GLB everywhere; the released default build also
 reads FBX through the `fbx` feature. The CLI is tested on Linux, macOS,
 and Windows.
 
-Install the released CLI with:
+Install the released CLI by downloading the archive for your platform from
+[GitHub Releases](https://github.com/mmannerm/animsmith/releases/latest):
+
+| Platform | Archive |
+|---|---|
+| Linux x86_64 | `animsmith-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz` |
+| macOS Apple Silicon | `animsmith-vX.Y.Z-aarch64-apple-darwin.tar.gz` |
+| Windows x86_64 | `animsmith-vX.Y.Z-x86_64-pc-windows-msvc.zip` |
+
+Each archive has a matching `.sha256` checksum file.
+
+You can also install from crates.io with Cargo:
 
 ```console
 cargo install animsmith
