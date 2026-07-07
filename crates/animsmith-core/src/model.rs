@@ -11,18 +11,25 @@ pub type BoneId = usize;
 /// Node-local TRS transform.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Transform {
+    /// Translation in scene units.
     pub translation: Vec3,
+    /// Orientation relative to the parent node.
     pub rotation: Quat,
+    /// Non-uniform local scale.
     pub scale: Vec3,
 }
 
 impl Transform {
+    /// The identity transform: zero translation, identity rotation, and
+    /// unit scale.
     pub const IDENTITY: Self = Self {
         translation: Vec3::ZERO,
         rotation: Quat::IDENTITY,
         scale: Vec3::ONE,
     };
 
+    /// Convert this TRS transform to a matrix using glam's
+    /// scale-rotation-translation order.
     pub fn to_mat4(&self) -> Mat4 {
         Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.translation)
     }
@@ -34,9 +41,12 @@ impl Default for Transform {
     }
 }
 
+/// One skeleton node/bone in parent-before-child order.
 #[derive(Debug, Clone)]
 pub struct Bone {
+    /// Bone/node name as authored or normalized by the loader.
     pub name: String,
+    /// Parent bone index; `None` means this is a root bone.
     pub parent: Option<BoneId>,
     /// Rest pose, node-local. Whether this or the inverse-bind-derived
     /// rest is authoritative is a check's concern (`bind-pose`, P1).
@@ -49,23 +59,35 @@ pub struct Bone {
 /// Loaders are responsible for establishing this invariant.
 #[derive(Debug, Clone, Default)]
 pub struct Skeleton {
+    /// Bones in topological order.
     pub bones: Vec<Bone>,
 }
 
 impl Skeleton {
+    /// Name of the bone at `id`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `id` is not a valid index into [`Skeleton::bones`].
     pub fn bone_name(&self, id: BoneId) -> &str {
         &self.bones[id].name
     }
 }
 
+/// Animated property targeted by a [`Track`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Property {
+    /// Local translation channel.
     Translation,
+    /// Local rotation channel.
     Rotation,
+    /// Local scale channel.
     Scale,
 }
 
 impl Property {
+    /// Stable snake-case name used in diagnostics and serialized
+    /// metadata.
     pub fn as_str(self) -> &'static str {
         match self {
             Property::Translation => "translation",
@@ -75,9 +97,12 @@ impl Property {
     }
 }
 
+/// Interpolation mode for a [`Track`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Interpolation {
+    /// Linear interpolation between key values.
     Linear,
+    /// Hold the previous key until the next key.
     Step,
     /// glTF cubic spline: `values` holds `[in-tangent, value, out-tangent]`
     /// triplets per keyframe. Use [`Track::value_index`] to address the
@@ -85,13 +110,18 @@ pub enum Interpolation {
     CubicSpline,
 }
 
+/// Storage for a track's key values.
 #[derive(Debug, Clone)]
 pub enum TrackValues {
+    /// Translation or scale values.
     Vec3s(Vec<Vec3>),
+    /// Rotation values.
     Quats(Vec<Quat>),
 }
 
 impl TrackValues {
+    /// Number of stored values, including tangents for cubic-spline
+    /// tracks.
     pub fn len(&self) -> usize {
         match self {
             TrackValues::Vec3s(v) => v.len(),
@@ -99,6 +129,7 @@ impl TrackValues {
         }
     }
 
+    /// Whether there are no stored values.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -107,12 +138,16 @@ impl TrackValues {
 /// One animated property of one bone.
 #[derive(Debug, Clone)]
 pub struct Track {
+    /// Bone index targeted by this track.
     pub bone: BoneId,
+    /// Property animated on the target bone.
     pub property: Property,
+    /// Interpolation mode used between keys.
     pub interpolation: Interpolation,
     /// Keyframe times in seconds. Same length as the keyframe count
     /// (tangent elements in cubic tracks do not add times).
     pub times: Vec<f32>,
+    /// Key values, with cubic-spline tracks storing tangent triplets.
     pub values: TrackValues,
 }
 
@@ -147,26 +182,35 @@ impl Track {
         }
     }
 
+    /// First key time, or `0.0` for an empty track.
     pub fn start_time(&self) -> f32 {
         self.times.first().copied().unwrap_or(0.0)
     }
 
+    /// Last key time, or `0.0` for an empty track.
     pub fn end_time(&self) -> f32 {
         self.times.last().copied().unwrap_or(0.0)
     }
 }
 
+/// One animation clip targeting the document skeleton.
 #[derive(Debug, Clone)]
 pub struct Clip {
+    /// Clip name, used as the key in measurement maps and config
+    /// expectations.
     pub name: String,
     /// Clip length in seconds (max sampler end time across tracks).
     pub duration_s: f64,
+    /// Animated tracks belonging to this clip.
     pub tracks: Vec<Track>,
 }
 
+/// Loader-provided provenance for a [`Document`].
 #[derive(Debug, Clone, Default)]
 pub struct SourceInfo {
+    /// Source path, when the loader was given one.
     pub path: Option<String>,
+    /// Source format label such as `"glb"` or `"fbx"`.
     pub format: Option<String>,
 }
 
@@ -177,9 +221,13 @@ pub struct SourceInfo {
 /// and `convert` preserve geometry instead of silently dropping it.
 #[derive(Debug, Clone, Default)]
 pub struct Document {
+    /// Skeleton shared by every clip.
     pub skeleton: Skeleton,
+    /// Animation clips targeting [`Document::skeleton`].
     pub clips: Vec<Clip>,
+    /// Meshes, materials, and textures carried by the loaded scene.
     pub assets: SceneAssets,
+    /// Optional source provenance.
     pub source: SourceInfo,
 }
 
@@ -200,6 +248,7 @@ pub struct Primitive {
     pub material: Option<usize>,
     /// Triangle indices into the attribute arrays; empty = unindexed.
     pub indices: Vec<u32>,
+    /// Vertex positions in scene units.
     pub positions: Vec<Vec3>,
     /// Same length as `positions`, or empty.
     pub normals: Vec<Vec3>,
@@ -207,14 +256,18 @@ pub struct Primitive {
     pub uvs: Vec<[f32; 2]>,
     /// Indices into the owning mesh's `skin_joints`; empty if unskinned.
     pub joints: Vec<[u16; 4]>,
+    /// Skinning weights parallel to [`Primitive::joints`].
     pub weights: Vec<[f32; 4]>,
 }
 
+/// Mesh data attached to a scene node.
 #[derive(Debug, Clone, Default)]
 pub struct MeshAsset {
+    /// Mesh name.
     pub name: String,
     /// The node this mesh hangs off.
     pub node: BoneId,
+    /// Triangle-list primitives belonging to this mesh.
     pub primitives: Vec<Primitive>,
     /// Skin joints in cluster order. Empty = unskinned.
     pub skin_joints: Vec<BoneId>,
@@ -229,19 +282,25 @@ pub struct MeshAsset {
 /// as-is, no decoding).
 #[derive(Debug, Clone)]
 pub struct TextureAsset {
+    /// Encoded image bytes.
     pub bytes: Vec<u8>,
     /// "image/png" or "image/jpeg".
     pub mime: String,
 }
 
+/// Factor-only material plus an optional embedded base-color texture.
 #[derive(Debug, Clone)]
 pub struct MaterialAsset {
+    /// Material name.
     pub name: String,
     /// Multiplied with the texture when one is present (set to white
     /// by the FBX loader in that case, matching exporter convention).
     pub base_color: [f32; 4],
+    /// Metallic factor.
     pub metallic: f32,
+    /// Roughness factor.
     pub roughness: f32,
+    /// Embedded base-color texture, if one was loaded.
     pub base_color_texture: Option<TextureAsset>,
 }
 
@@ -312,8 +371,11 @@ impl Primitive {
     }
 }
 
+/// Mesh and material assets carried alongside animation data.
 #[derive(Debug, Clone, Default)]
 pub struct SceneAssets {
+    /// Meshes in document order.
     pub meshes: Vec<MeshAsset>,
+    /// Materials referenced by mesh primitives.
     pub materials: Vec<MaterialAsset>,
 }

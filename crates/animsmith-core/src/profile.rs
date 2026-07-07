@@ -8,23 +8,35 @@ use crate::model::{BoneId, Skeleton};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
+/// Semantic bone roles used by checks and measurements.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Role {
+    /// Scene or locomotion root.
     Root,
+    /// Pelvis/hips control, used as the primary body reference.
     Hips,
+    /// Spine control.
     Spine,
+    /// Head control.
     Head,
+    /// Left foot control.
     LeftFoot,
+    /// Right foot control.
     RightFoot,
+    /// Left toe control.
     LeftToe,
+    /// Right toe control.
     RightToe,
+    /// Left hand control.
     LeftHand,
+    /// Right hand control.
     RightHand,
 }
 
 impl Role {
+    /// Stable snake-case role name used in config and diagnostics.
     pub fn as_str(self) -> &'static str {
         match self {
             Role::Root => "root",
@@ -46,6 +58,7 @@ impl Role {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum NameMatcher {
+    /// Exact bone-name match, with namespace-stripped fallback.
     Exact(&'static str),
 }
 
@@ -62,9 +75,12 @@ impl NameMatcher {
     }
 }
 
+/// A named set of role-to-bone-name matchers.
 #[derive(Debug, Clone)]
 pub struct RigProfile {
+    /// Profile name used in configuration and diagnostics.
     pub name: &'static str,
+    /// Role matchers tried against a skeleton.
     pub bindings: Vec<(Role, NameMatcher)>,
 }
 
@@ -78,18 +94,22 @@ pub struct ResolvedRoles {
 }
 
 impl ResolvedRoles {
+    /// Bone id for a role, when resolved.
     pub fn get(&self, role: Role) -> Option<BoneId> {
         self.map.get(&role).copied()
     }
 
+    /// Number of resolved roles.
     pub fn len(&self) -> usize {
         self.map.len()
     }
 
+    /// Whether no roles resolved.
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
 
+    /// Iterate resolved `(role, bone_id)` pairs in role order.
     pub fn iter(&self) -> impl Iterator<Item = (Role, BoneId)> + '_ {
         self.map.iter().map(|(&r, &b)| (r, b))
     }
@@ -113,6 +133,7 @@ impl ResolvedRoles {
 }
 
 impl RigProfile {
+    /// Resolve this profile against `skeleton` by matching bone names.
     pub fn resolve(&self, skeleton: &Skeleton) -> ResolvedRoles {
         let mut map = BTreeMap::new();
         for (role, matcher) in &self.bindings {

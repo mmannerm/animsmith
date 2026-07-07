@@ -19,6 +19,12 @@ use crate::sample::{TrackSample, sample_clip, sample_track};
 /// one closest to the original boundary is kept and the rest dropped —
 /// so the output has at most one key at 0 and one at the end, stays
 /// time-monotonic, and round-trips its declared duration.
+///
+/// # Panics
+///
+/// Panics if a hand-built track violates the loader invariant that
+/// `values` contains one value per key for linear/step tracks, or one
+/// tangent-value-tangent triplet per key for cubic-spline tracks.
 pub fn slice(clip: &mut Clip, start_s: f64, end_s: f64, fps: f64) {
     let eps = (0.5 / fps) as f32;
     let (start, end) = (start_s as f32, end_s as f32);
@@ -79,6 +85,11 @@ pub fn slice(clip: &mut Clip, start_s: f64, end_s: f64, fps: f64) {
 /// Append one key per track duplicating its final value `hold_s`
 /// seconds after its last key (a linear hold — charge/block poses).
 /// The clip duration extends to the longest held end.
+///
+/// # Panics
+///
+/// Panics if a hand-built track violates the loader invariant that each
+/// key has a corresponding stored value (or cubic-spline triplet).
 pub fn hold_extend(clip: &mut Clip, hold_s: f64) {
     for track in &mut clip.tracks {
         let Some(&last) = track.times.last() else {
@@ -149,6 +160,18 @@ pub struct GaitAlignOutcome {
 /// inside phase tolerance but moves *where the wrap lands*, all three
 /// candidates are tried and the one with the cleanest wrap (lowest seam
 /// ratio) wins.
+///
+/// # Errors
+///
+/// Returns an error when the clip has no measurable stride anchor, the
+/// left-right foot amplitude is too small to define a stable phase, a
+/// non-constant cubic-spline track would need lossy resampling, or no
+/// tested rotation candidate remains measurable.
+///
+/// # Panics
+///
+/// Panics if `roles` contains bone indices outside `skeleton`, or if a
+/// hand-built clip violates the loader key/value-count invariants.
 pub fn align_gait_anchor(
     skeleton: &Skeleton,
     clip: &mut Clip,

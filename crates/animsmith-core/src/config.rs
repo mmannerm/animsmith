@@ -17,7 +17,9 @@ use std::collections::BTreeMap;
 /// A pinned expectation: declared value ± tolerance.
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub struct Pinned {
+    /// Expected value.
     pub value: f64,
+    /// Allowed absolute deviation from [`Pinned::value`].
     pub tolerance: f64,
 }
 
@@ -25,14 +27,22 @@ pub struct Pinned {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SeveritySetting {
+    /// Remove the check from the run set.
     Off,
+    /// Force non-diagnostic findings to notes.
     Note,
+    /// Force non-diagnostic findings to warnings.
     #[serde(alias = "warning")]
     Warn,
+    /// Force non-diagnostic findings to errors.
     Error,
 }
 
 impl SeveritySetting {
+    /// Convert this setting into a finding severity.
+    ///
+    /// Returns `None` for [`SeveritySetting::Off`] because disabling a
+    /// check is handled before execution.
     pub fn as_severity(self) -> Option<Severity> {
         match self {
             SeveritySetting::Off => None,
@@ -48,6 +58,8 @@ impl SeveritySetting {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CheckSettings {
+    /// Per-check severity override. `None` leaves the check's default
+    /// severity intact.
     pub severity: Option<SeveritySetting>,
     /// `loop-seam`: ratio above which the seam is a pop (default 1.5).
     pub max_ratio: Option<f64>,
@@ -108,6 +120,7 @@ impl ClipExpectations {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GaitGroup {
+    /// Clip names that should share a gait phase.
     pub clips: Vec<String>,
     /// Maximum circular spread of the members' gait phases, in cycle
     /// fraction `[0, 0.5]`.
@@ -123,8 +136,12 @@ pub struct GaitGroup {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RigConfig {
+    /// Built-in profile name, or `"auto"` to select the best built-in
+    /// match.
     #[serde(default = "default_profile")]
     pub profile: String,
+    /// Inline role-to-bone-name bindings. These are interpreted as
+    /// explicit overrides by callers that merge them with a profile.
     #[serde(default)]
     pub roles: BTreeMap<Role, String>,
 }
@@ -147,8 +164,10 @@ impl Default for RigConfig {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    /// Rig profile and inline role bindings.
     #[serde(default)]
     pub rig: RigConfig,
+    /// Per-check settings keyed by stable check id.
     #[serde(default)]
     pub checks: BTreeMap<String, CheckSettings>,
     /// Keyed by clip name or glob (`*` wildcards). An exact-name entry
@@ -156,6 +175,7 @@ pub struct Config {
     /// greater) keys win on conflict.
     #[serde(default)]
     pub clips: BTreeMap<String, ClipExpectations>,
+    /// Named gait groups consumed by the `gait-group` check.
     #[serde(default)]
     pub gait_groups: BTreeMap<String, GaitGroup>,
 }
@@ -176,6 +196,7 @@ impl Config {
         out
     }
 
+    /// Settings for a check id, or defaults when the id is not present.
     pub fn check_settings(&self, id: &str) -> CheckSettings {
         self.checks.get(id).cloned().unwrap_or_default()
     }
