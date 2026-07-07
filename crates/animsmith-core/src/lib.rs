@@ -10,11 +10,11 @@
 //! The Rust API is pre-1.0 and intentionally marked experimental while
 //! animsmith is still settling its catalog, JSON contract, and loader
 //! boundaries. The intended embedding surface is the data model,
-//! configuration types, measurement APIs, rig-profile APIs, and the check
-//! catalog functions re-exported from this crate root. [`MetricGrids`]
-//! can be shared by checks, measurement, and reports so one sampled grid
-//! owner feeds all three consumers. Internal built-in check modules are
-//! private implementation details.
+//! configuration types, measurement and diff APIs, rig-profile APIs, and
+//! the check catalog functions re-exported from this crate root.
+//! [`MetricGrids`] can be shared by checks, measurement, and reports so
+//! one sampled grid owner feeds all three consumers. Internal built-in
+//! check modules are private implementation details.
 
 #![doc = "\n\n"]
 #![doc = include_str!("../README.md")]
@@ -22,6 +22,7 @@
 pub mod check;
 mod checks;
 pub mod config;
+pub mod diff;
 pub mod finding;
 pub mod measure;
 pub mod metrics;
