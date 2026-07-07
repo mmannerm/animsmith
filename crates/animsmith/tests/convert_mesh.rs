@@ -4,6 +4,8 @@
 
 use std::path::{Path, PathBuf};
 
+const RIGGED_TRIANGLE_FBX: &str = include_str!("../../animsmith-fbx/testdata/rigged_triangle.fbx");
+
 fn unique_temp_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("animsmith-{name}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -12,7 +14,7 @@ fn unique_temp_dir(name: &str) -> PathBuf {
 
 fn write_fixture(dir: &Path) -> PathBuf {
     let fbx = dir.join("rigged_triangle.fbx");
-    std::fs::write(&fbx, animsmith_fbx::RIGGED_TRIANGLE_FBX).expect("writes FBX fixture");
+    std::fs::write(&fbx, RIGGED_TRIANGLE_FBX).expect("writes FBX fixture");
     fbx
 }
 

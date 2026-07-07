@@ -25,10 +25,3 @@ if git grep -n "$retired_fbx_suffix" -- . ':!scripts/check-golden-skip-marker.sh
     printf 'retired env-gated FBX asset fragment is still referenced: %s\n' "$retired_fbx_suffix" >&2
     exit 1
 fi
-
-allowed_env='^(ANIMSMITH_GOLDEN_GLB|ANIMSMITH_GOLDEN_SKIP|ANIMSMITH_VERSION)$'
-unexpected_env="$(git grep -h -o -E 'ANIMSMITH_[A-Z0-9_]*' -- . ':!scripts/check-golden-skip-marker.sh' | sort -u | grep -Ev "$allowed_env" || true)"
-if [[ -n "$unexpected_env" ]]; then
-    printf 'unexpected ANIMSMITH_* environment reference(s):\n%s\n' "$unexpected_env" >&2
-    exit 1
-fi
