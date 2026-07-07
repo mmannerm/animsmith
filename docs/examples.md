@@ -4,11 +4,17 @@ A cookbook of runnable workflows. Each section is a self-contained task
 you can copy into your own project — several double as CI/acceptance
 gates.
 
-Every command here runs against assets committed under
-[`examples/assets/`](../examples/assets/), so you can follow along from a
-source checkout with no downloads. The assets are procedurally
-generated; see [their README](../examples/assets/README.md) for
-provenance and how to regenerate them.
+Commands that reference [`examples/assets/`](../examples/assets/) run
+against small assets committed there, so you can follow along from a
+source checkout with no downloads; the assets are procedurally
+generated (see [their README](../examples/assets/README.md) for
+provenance and how to regenerate them). Sections that operate on your
+own rig use placeholder filenames — `character.glb`, `export.fbx`,
+`old.glb` — for assets you supply.
+
+Transcripts are real command output. Long finding messages are elided as
+`...` and the JSON envelope is shown abridged; everything else is
+verbatim, including the exit-code annotations in `# comments`.
 
 ## Running the commands
 
@@ -123,8 +129,9 @@ it *would* repair and exits 1 if anything is pending, writing nothing.
 ```console
 $ animsmith fix examples/assets/clip-dirty.glb --dry-run
   would fix[quat-norm] clip 'swing' bone 'spine': 1 key(s) unit-normalized
+1 key(s) would be fixed across 1 track(s) -> no output written
   would fix[quat-flip] clip 'swing' bone 'spine': 1 key(s) hemisphere-normalized
-                                                 # exits 1 (repairs pending)
+1 key(s) would be fixed across 1 track(s) -> no output written   # exits 1
 ```
 
 Write the repaired asset with `-o` (or `--in-place`), then confirm it
@@ -133,7 +140,9 @@ lints clean:
 ```console
 $ animsmith fix examples/assets/clip-dirty.glb -o fixed.glb
   fixed[quat-norm] clip 'swing' bone 'spine': 1 key(s) unit-normalized
+1 key(s) fixed across 1 track(s) -> fixed.glb
   fixed[quat-flip] clip 'swing' bone 'spine': 1 key(s) hemisphere-normalized
+1 key(s) fixed across 1 track(s) -> fixed.glb
 
 $ animsmith lint fixed.glb
 fixed.glb: clean                             # exits 0
@@ -144,7 +153,8 @@ the fix changed representation, not motion:
 
 ```console
 $ animsmith diff examples/assets/clip-dirty.glb fixed.glb
-no significant movement                      # exits 0
+no significant movement
+0 significant change(s)                      # exits 0
 ```
 
 Pin an exact repair set with `--repair id[,id]` (`animsmith fix --help`
@@ -166,6 +176,7 @@ Slice a sub-window (retimed to start at 0):
 ```console
 $ animsmith transform examples/assets/clip.glb -o sliced.glb --slice 0.5:1.0
   sliced 'swing' to [0.5:1]s (3 keys max)
+wrote sliced.glb (1 clip(s) transformed)
 
 $ animsmith diff examples/assets/clip.glb sliced.glb
   swing duration_s: moved 1.0000 -> 0.5000
@@ -179,6 +190,7 @@ Extend the final pose (useful for hold frames at the end of a one-shot):
 ```console
 $ animsmith transform examples/assets/clip.glb -o held.glb --hold-extend 0.5
   hold-extended 'swing' by 0.5s
+wrote held.glb (1 clip(s) transformed)
 ```
 
 Other transforms: `--gait-anchor` rotates a cyclic clip so its stride
@@ -206,6 +218,10 @@ into your game repo and point `lint` at it:
 $ animsmith lint --config examples/character.animsmith.toml character.glb
 ```
 
+Here `character.glb` is your own rig — the contract declares locomotion
+clips and gait rings, so it needs a real skeleton to fire the semantic
+checks (the committed `clip.glb` is a two-bone toy that resolves no rig).
+
 `animsmith.toml` is auto-loaded from the working directory when present,
 so committing one next to your assets makes every bare `animsmith lint`
 enforce the contract.
@@ -223,10 +239,14 @@ Demote a check while an upstream fix is pending (a `[checks.quat-flip]`
 `severity = "note"` override turns the warning into a note):
 
 ```console
+$ cat demote.toml
+[checks.quat-flip]
+severity = "note"
+
 $ animsmith lint --config demote.toml examples/assets/clip-dirty.glb
-  error[quat-norm] ...
-  note[quat-flip] ...
-1 error(s), 0 warning(s), 1 note(s)
+  error[quat-norm] clip 'swing' bone 'spine' @0.500s: non-unit rotation key ...
+  note[quat-flip] clip 'swing' bone 'spine' @0.750s: 2 hemisphere flip(s) ...
+1 error(s), 0 warning(s), 1 note(s)          # exits 1
 ```
 
 See the [README configuration section](../README.md#configuration) for
