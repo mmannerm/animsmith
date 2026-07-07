@@ -1,5 +1,6 @@
 use animsmith_core::glam::{Quat, Vec3};
 use animsmith_core::model::*;
+use animsmith_gltf::fix::{FixSession, Repair as GltfRepair};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -312,13 +313,13 @@ fn fix_dry_run_dedupes_non_adjacent_distinct_repairs_without_writing() {
     );
     assert_eq!(before, std::fs::read(&input).expect("reads input"));
     assert_eq!(
-        animsmith_gltf::fix::inspect_quat_norm(&input)
+        FixSession::inspect(&input, GltfRepair::QuatNorm)
             .expect("inspects dirty input")
             .total_fixed(),
         1
     );
     assert_eq!(
-        animsmith_gltf::fix::inspect_quat_hemisphere(&input)
+        FixSession::inspect(&input, GltfRepair::QuatFlip)
             .expect("inspects dirty input")
             .total_fixed(),
         2
@@ -492,13 +493,13 @@ fn fix_write_composes_distinct_repairs() {
     write_distinct_repair_glb(&input);
 
     assert_eq!(
-        animsmith_gltf::fix::inspect_quat_norm(&input)
+        FixSession::inspect(&input, GltfRepair::QuatNorm)
             .expect("inspects dirty input")
             .total_fixed(),
         1
     );
     assert_eq!(
-        animsmith_gltf::fix::inspect_quat_hemisphere(&input)
+        FixSession::inspect(&input, GltfRepair::QuatFlip)
             .expect("inspects dirty input")
             .total_fixed(),
         2
@@ -527,13 +528,13 @@ fn fix_write_composes_distinct_repairs() {
     assert!(out.contains("fixed[quat-flip]"), "stdout:\n{out}");
 
     assert_eq!(
-        animsmith_gltf::fix::inspect_quat_norm(&output_path)
+        FixSession::inspect(&output_path, GltfRepair::QuatNorm)
             .expect("inspects fixed output")
             .total_fixed(),
         0
     );
     assert_eq!(
-        animsmith_gltf::fix::inspect_quat_hemisphere(&output_path)
+        FixSession::inspect(&output_path, GltfRepair::QuatFlip)
             .expect("inspects fixed output")
             .total_fixed(),
         0
@@ -583,7 +584,7 @@ fn fix_write_dedupes_duplicate_repairs() {
         "duplicate repairs should be reported once:\n{out}"
     );
     assert_eq!(
-        animsmith_gltf::fix::inspect_quat_hemisphere(&output_path)
+        FixSession::inspect(&output_path, GltfRepair::QuatFlip)
             .expect("inspects fixed output")
             .total_fixed(),
         0
@@ -596,7 +597,7 @@ fn fix_in_place_writes_selected_repair() {
     let input = dir.path().join("dirty.glb");
     write_flipped_glb(&input);
     assert_eq!(
-        animsmith_gltf::fix::inspect_quat_hemisphere(&input)
+        FixSession::inspect(&input, GltfRepair::QuatFlip)
             .expect("inspects dirty input")
             .total_fixed(),
         2
@@ -615,7 +616,7 @@ fn fix_in_place_writes_selected_repair() {
 
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     assert_eq!(
-        animsmith_gltf::fix::inspect_quat_hemisphere(&input)
+        FixSession::inspect(&input, GltfRepair::QuatFlip)
             .expect("inspects fixed input")
             .total_fixed(),
         0
@@ -647,6 +648,21 @@ fn help_matches_compiled_feature_set() {
         out.contains("\n  report "),
         cfg!(feature = "report"),
         "{out}"
+    );
+}
+
+#[test]
+fn fix_help_lists_repair_possible_values() {
+    let output = animsmith()
+        .args(["fix", "--help"])
+        .output()
+        .expect("runs animsmith");
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    let out = stdout(&output);
+    assert!(
+        out.contains("[possible values: quat-norm, quat-flip]"),
+        "stdout:\n{out}"
     );
 }
 

@@ -7,6 +7,7 @@ use animsmith_core::measure::measure_document;
 use animsmith_core::profile::ResolvedRoles;
 use animsmith_core::{CheckCtx, Config, MetricGrids, Severity, mechanical_checks, run_checks};
 use animsmith_gltf::LoadError;
+use animsmith_gltf::fix::{FixSession, Repair};
 use std::path::{Path, PathBuf};
 
 fn unique_temp_dir(name: &str) -> tempfile::TempDir {
@@ -193,8 +194,8 @@ fn loader_rejects_unknown_animation_target_path() {
 
     // The fix path shares the guard.
     let out = dir.path().join("out.gltf");
-    let err =
-        animsmith_gltf::fix::fix_quat_hemisphere(&path, &out).expect_err("fix must reject it too");
+    let err = FixSession::apply_to_path(&path, &out, Repair::QuatFlip)
+        .expect_err("fix must reject it too");
     assert!(
         matches!(err, animsmith_gltf::FixError::Load(LoadError::Malformed(_))),
         "{err}"
@@ -411,8 +412,8 @@ fn loader_rejects_glb_length_field_below_header_size() {
 
     // The fix path shares the same guard.
     let out = dir.path().join("out.glb");
-    let err =
-        animsmith_gltf::fix::fix_quat_hemisphere(&path, &out).expect_err("fix must reject it too");
+    let err = FixSession::apply_to_path(&path, &out, Repair::QuatFlip)
+        .expect_err("fix must reject it too");
     assert!(
         matches!(err, animsmith_gltf::FixError::Load(LoadError::Buffer(_))),
         "{err}"
@@ -546,7 +547,7 @@ fn glb_external_buffer_fix_writes_the_buffer_not_a_false_success() {
     let dir = unique_temp_dir("glb-ext-fix");
     let glb = write_glb_with_external_buffer(dir.path());
     assert_eq!(
-        animsmith_gltf::fix::inspect_quat_hemisphere(&glb)
+        FixSession::inspect(&glb, Repair::QuatFlip)
             .expect("inspects")
             .total_fixed(),
         2
@@ -557,12 +558,12 @@ fn glb_external_buffer_fix_writes_the_buffer_not_a_false_success() {
     let out_dir = dir.path().join("out");
     std::fs::create_dir_all(&out_dir).unwrap();
     let out_glb = out_dir.join("fixed.glb");
-    let report = animsmith_gltf::fix::fix_quat_hemisphere(&glb, &out_glb).expect("fixes");
+    let report = FixSession::apply_to_path(&glb, &out_glb, Repair::QuatFlip).expect("fixes");
     assert_eq!(report.total_fixed(), 2);
 
     assert!(out_dir.join("ext.bin").exists(), "patched buffer written");
     assert_eq!(
-        animsmith_gltf::fix::inspect_quat_hemisphere(&out_glb)
+        FixSession::inspect(&out_glb, Repair::QuatFlip)
             .expect("re-inspects output")
             .total_fixed(),
         0,
@@ -570,7 +571,7 @@ fn glb_external_buffer_fix_writes_the_buffer_not_a_false_success() {
     );
     // The input pair is untouched.
     assert_eq!(
-        animsmith_gltf::fix::inspect_quat_hemisphere(&glb)
+        FixSession::inspect(&glb, Repair::QuatFlip)
             .expect("re-inspects input")
             .total_fixed(),
         2

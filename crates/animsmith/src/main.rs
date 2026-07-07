@@ -4,6 +4,8 @@
 use animsmith_core::model::Document;
 use animsmith_core::profile::{ResolvedRoles, resolve_named};
 use animsmith_core::{CheckCtx, Config, Finding, MetricGrids, Severity, all_checks, run_checks};
+use animsmith_gltf::fix::Repair;
+use clap::builder::{PossibleValue, PossibleValuesParser, TypedValueParser};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -127,7 +129,7 @@ enum Cmd {
         in_place: bool,
         /// Run exactly these repairs (comma-separated ids). Defaults to
         /// every available repair.
-        #[arg(long = "repair", value_enum, value_delimiter = ',')]
+        #[arg(long = "repair", value_parser = repair_value_parser(), value_delimiter = ',')]
         repairs: Vec<Repair>,
         /// Report what would be repaired without writing anything.
         /// Exits 1 when repairs are pending, 0 when the file is clean.
@@ -169,54 +171,30 @@ enum Format {
     Json,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Repair {
-    QuatNorm,
-    QuatFlip,
-}
-
-// Every repair must be safe, lossless, and idempotent — repair
-// taxonomy (groups, risk tiers) is deliberately deferred until a
-// repair exists that isn't (see issue #38).
-const ALL_REPAIRS: &[Repair] = &[Repair::QuatNorm, Repair::QuatFlip];
-
-impl Repair {
-    /// Stable id: the `--repair` value and the tag in printed output,
-    /// matching the corresponding check id (`quat-norm`, `quat-flip`).
-    /// The hand-written [`ValueEnum`] impl below makes this the single
-    /// source of the CLI name.
-    fn id(self) -> &'static str {
-        match self {
-            Repair::QuatNorm => "quat-norm",
-            Repair::QuatFlip => "quat-flip",
-        }
-    }
-
-    fn action(self) -> &'static str {
-        match self {
-            Repair::QuatNorm => "unit-normalized",
-            Repair::QuatFlip => "hemisphere-normalized",
-        }
-    }
-}
-
-impl ValueEnum for Repair {
-    fn value_variants<'a>() -> &'a [Self] {
-        ALL_REPAIRS
-    }
-
-    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
-        Some(clap::builder::PossibleValue::new(self.id()))
-    }
-}
-
 fn select_repairs(repairs: Vec<Repair>) -> Vec<Repair> {
     let repairs = if repairs.is_empty() {
-        ALL_REPAIRS.to_vec()
+        Repair::ALL.to_vec()
     } else {
         repairs
     };
     dedup_preserving_order(repairs)
+}
+
+fn repair_value_parser() -> impl TypedValueParser<Value = Repair> {
+    let values = Repair::ALL
+        .iter()
+        .map(|repair| PossibleValue::new(repair.id()))
+        .collect::<Vec<_>>();
+    PossibleValuesParser::new(values)
+        .map(|id| Repair::from_id(&id).expect("possible-values parser returned a known repair id"))
+}
+
+fn repair_action(repair: Repair) -> &'static str {
+    match repair {
+        Repair::QuatNorm => "unit-normalized",
+        Repair::QuatFlip => "hemisphere-normalized",
+        _ => "repaired",
+    }
 }
 
 fn dedup_preserving_order<T: Copy + Eq>(items: impl IntoIterator<Item = T>) -> Vec<T> {
@@ -443,7 +421,7 @@ fn print_fix_report(
             t.clip,
             t.bone,
             t.fixed_keys,
-            repair.action()
+            repair_action(repair)
         );
     }
     for s in &report.skipped {
@@ -734,10 +712,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 animsmith_gltf::fix::FixSession::read(&input).map_err(|e| e.to_string())?;
             let mut reports = Vec::new();
             for repair in selected {
-                let report = match repair {
-                    Repair::QuatNorm => session.fix_quat_norm(),
-                    Repair::QuatFlip => session.fix_quat_hemisphere(),
-                };
+                let report = session.apply(repair);
                 pending |= report.total_fixed() > 0;
                 reports.push((repair, report));
             }

@@ -12,7 +12,7 @@ unbounded (length-field-driven) allocation.
 | Target | Entry point | Surface |
 | --- | --- | --- |
 | `gltf_load` | `animsmith_gltf::load` | GLB container framing, embedded JSON, accessor offsets, node topology |
-| `gltf_fix_quat_hemisphere` | `animsmith_gltf::fix::fix_quat_hemisphere` | read → byte-patch rotation accessors → re-derive GLB chunk bounds on write |
+| `gltf_fix_quat_hemisphere` | `FixSession::apply_to_path(..., Repair::QuatFlip)` | read → byte-patch rotation accessors → re-derive GLB chunk bounds on write |
 | `fbx_load` | `animsmith_fbx::load` | the ufbx C-library boundary and the animation bake after it |
 
 Each target writes its fuzz bytes to a scratch file and calls the real

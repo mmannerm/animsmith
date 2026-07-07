@@ -1,7 +1,8 @@
 //! Shared harness helpers for the fuzz targets.
 //!
 //! The loaders' public entry points (`animsmith_gltf::load`,
-//! `animsmith_gltf::fix::fix_quat_hemisphere`, `animsmith_fbx::load`) take
+//! `animsmith_gltf::fix::FixSession::apply_to_path`,
+//! `animsmith_fbx::load`) take
 //! a `&Path`, so each target has to materialize its fuzz bytes on disk
 //! before calling in. We keep one scratch directory per process and reuse
 //! fixed filenames inside it, so file churn stays negligible next to the
