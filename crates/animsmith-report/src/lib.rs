@@ -3,9 +3,14 @@
 //! slice of [`animsmith_core::Finding`] values into a self-contained
 //! HTML report. The viewer is driven by the same
 //! [`animsmith_core::PoseGrid`] samples the checks judged.
+//!
+//! The returned HTML is self-contained: CSS, JavaScript, findings, charts,
+//! and sampled pose data are embedded in the string. There is no runtime
+//! CDN dependency and no JavaScript-side resampling of the clip.
 
 #![doc = "\n\n"]
 #![doc = include_str!("../README.md")]
+#![warn(missing_docs)]
 
 use animsmith_core::finding::Finding;
 use animsmith_core::metrics::MetricGrids;
@@ -26,8 +31,12 @@ fn esc(text: &str) -> String {
         .replace('"', "&quot;")
 }
 
-/// Render the report HTML from shared metric pose grids. `clip_filter`
-/// restricts to one clip.
+/// Render report HTML from shared metric pose grids.
+///
+/// `clip_filter` restricts the report to one clip name when present. The
+/// function performs no filesystem I/O and cannot report write errors;
+/// callers choose where to store or serve the returned self-contained HTML
+/// string.
 pub fn render(
     grids: &MetricGrids<'_>,
     roles: &ResolvedRoles,
