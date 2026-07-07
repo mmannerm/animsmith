@@ -1,5 +1,9 @@
 # animsmith
 
+[![CI](https://github.com/mmannerm/animsmith/actions/workflows/ci.yml/badge.svg)](https://github.com/mmannerm/animsmith/actions/workflows/ci.yml)
+[![Coverage](https://codecov.io/gh/mmannerm/animsmith/branch/main/graph/badge.svg)](https://codecov.io/gh/mmannerm/animsmith)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/mmannerm/animsmith/badge)](https://scorecard.dev/viewer/?uri=github.com/mmannerm/animsmith)
+
 A linter and workbench for skeletal animation clips. animsmith answers a
 question game teams usually answer by hand: does this exported animation
 behave like something a game runtime can actually use?

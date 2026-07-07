@@ -17,8 +17,8 @@ Install the local tools used by the gates:
 $ just install-rust-tools
 ```
 
-That installs `sccache` and `cargo-deny` if they are missing. Cargo still
-works with stock defaults.
+That installs `sccache`, `cargo-deny`, `typos-cli`, and `cargo-llvm-cov`
+if they are missing. Cargo still works with stock defaults.
 
 ## sccache
 
@@ -47,11 +47,14 @@ $ just gates
 `just gates` is the local PR gate and should be green before pushing a
 non-trivial PR. It runs formatting, clippy, workspace tests, golden skip
 marker verification, dependency checks, schema-id verification, GitHub
-community-file checks, rustdoc, no-default-features CLI tests and
-builds, release binary smoke checks, and package inventory checks.
+community-file checks, spell checking, rustdoc, no-default-features CLI
+tests and builds, release binary smoke checks, and package inventory
+checks.
 
 The corresponding CI workflows also validate the same expectations on a
-clean checkout.
+clean checkout. Coverage and the security scanners (Scorecard, CodeQL)
+run only in CI and are informational, so they are not part of the local
+gate — see below.
 
 ## no-default-features
 
@@ -93,6 +96,50 @@ When editing public docs, also check Markdown links and GitHub forms by
 inspection. The root `README.md` is also the crates.io front page for the
 `animsmith` CLI crate, so keep its links absolute and keep CLI-user
 content first.
+
+## Spell Checking
+
+`just gates` runs [`typos`](https://github.com/crate-ci/typos) over source,
+comments, and docs. Run it alone with:
+
+```console
+$ just typos
+```
+
+Domain jargon that reads as a misspelling (and binary DCC fixtures that
+embed vendor strings) is allow-listed in [`_typos.toml`](_typos.toml). Add
+new project terms there rather than rewording correct code.
+
+## Coverage
+
+Line and region coverage come from
+[`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov) (source-based
+LLVM instrumentation). Generate a local HTML report under
+`target/llvm-cov/html`:
+
+```console
+$ just coverage
+```
+
+CI runs the same tool and uploads the lcov report to Codecov, which renders
+the README badge and per-PR diff coverage. Coverage is informational and
+never blocks a merge; the `codecov.yml` project and patch statuses are set
+to `informational`. Enabling the repository on Codecov and adding the
+`CODECOV_TOKEN` secret is a one-time maintainer step (see
+[`.github/workflows/coverage.yml`](.github/workflows/coverage.yml)).
+
+## Security And Supply-Chain Scans
+
+Beyond `cargo audit` and `cargo deny` (the `audit` workflow), CI runs three
+informational security scans that report to the GitHub Security tab and are
+not wired into branch protection:
+
+- **OpenSSF Scorecard** grades repository security posture weekly and backs
+  the README badge.
+- **CodeQL** performs static analysis of the Rust sources on PRs, `main`
+  pushes, and weekly.
+- **Dependabot** ([`.github/dependabot.yml`](.github/dependabot.yml)) opens
+  grouped weekly PRs to bump Cargo dependencies and pinned Action versions.
 
 ## Package Readiness
 

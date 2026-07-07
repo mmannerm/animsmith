@@ -1,0 +1,19 @@
+# Codecov configuration. Coverage is informational for this pre-1.0
+# project: a dip annotates the PR and updates the badge but never blocks a
+# merge. See .github/workflows/coverage.yml for how the report is produced.
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
+
+comment:
+  layout: "reach, diff, files"
+  require_changes: true
+
+# The fuzz harness is nightly-only tooling and never runs under coverage.
+ignore:
+  - "fuzz/**"

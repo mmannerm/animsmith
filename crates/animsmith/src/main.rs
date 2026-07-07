@@ -846,7 +846,7 @@ fn load_measurements(
         let value: serde_json::Value = serde_json::from_str(&text)
             .map_err(|e| format!("bad JSON in {}: {e}", path.display()))?;
         // Only the versioned v1 envelope is accepted — no pre-publish
-        // legacy shapes, and no silently mis-reading a future version.
+        // legacy shapes, and no silently misreading a future version.
         match value.get("schema_version").and_then(|v| v.as_u64()) {
             Some(v) if v == u64::from(SCHEMA_VERSION) => {}
             Some(v) => {

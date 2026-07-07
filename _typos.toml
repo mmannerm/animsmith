@@ -1,0 +1,18 @@
+# Configuration for the `typos` spell checker (see .github/workflows/typos.yml).
+# Run locally with `just typos`.
+
+[files]
+# Binary DCC fixtures embed vendor strings we neither own nor can edit
+# (e.g. an "Acuracy" property name baked into an FBX). Cargo.lock is
+# machine-generated and full of crate names that read as misspellings.
+extend-exclude = [
+    "*.fbx",
+    "*.glb",
+    "Cargo.lock",
+]
+
+[default.extend-words]
+# "ue-mannequin" is the built-in Unreal Engine rig profile.
+ue = "ue"
+# PBR material term surfaced by the ufbx material API (`pbr.metalness`).
+metalness = "metalness"

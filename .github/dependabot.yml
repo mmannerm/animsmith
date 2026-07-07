@@ -1,0 +1,48 @@
+# Dependabot keeps dependencies and pinned Action versions current with
+# grouped weekly PRs. Cargo covers the main workspace and the detached
+# nightly-only fuzz crate (its own workspace); github-actions covers the
+# workflow files under .github/workflows.
+#
+# Commit prefixes map to the Conventional Commit types enforced by
+# lint-pr.yml: `build(deps)` for library dependencies and `ci(deps)` for
+# Action bumps. Dependabot appends the `deps`/`deps-dev` scope itself.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: build
+      prefix-development: build
+    groups:
+      cargo-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: cargo
+    directory: "/fuzz"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: build
+      prefix-development: build
+    groups:
+      fuzz-cargo:
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: ci
+    groups:
+      github-actions:
+        patterns:
+          - "*"
