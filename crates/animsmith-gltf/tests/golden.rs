@@ -33,6 +33,8 @@ const GOLDEN: &[(&str, Option<f64>, f64, f64)] = &[
 const SEAM_TOLERANCE: f64 = 0.02;
 const PHASE_TOLERANCE: f64 = 0.02;
 const AMPLITUDE_TOLERANCE: f64 = 0.005;
+const GOLDEN_SKIP_MARKER: &str =
+    "ANIMSMITH_GOLDEN_SKIP: set ANIMSMITH_GOLDEN_GLB to run the golden test";
 
 fn circular_delta(a: f64, b: f64) -> f64 {
     let d = (a - b).rem_euclid(1.0);
@@ -42,7 +44,7 @@ fn circular_delta(a: f64, b: f64) -> f64 {
 #[test]
 fn reproduces_reference_numbers() {
     let Ok(path) = std::env::var("ANIMSMITH_GOLDEN_GLB") else {
-        eprintln!("skipped: set ANIMSMITH_GOLDEN_GLB to run the golden test");
+        eprintln!("{GOLDEN_SKIP_MARKER}");
         return;
     };
     let doc = animsmith_gltf::load(std::path::Path::new(&path)).expect("golden GLB loads");

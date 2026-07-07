@@ -30,7 +30,7 @@ which agent did what.
 just build            # debug build of the whole workspace
 just test             # full test suite
 just gates            # everything PR CI runs: fmt --check, clippy -D warnings, test, no-default-features build
-just golden           # env-gated reference tests (needs asset paths; see Golden tests)
+just golden           # env-gated golden + CI-visible FBX tests; see Golden tests
 
 just worktree <branch>   # new worktree off fresh origin/main for a task
 just worktree-prune      # remove worktrees whose merged branch is gone
@@ -68,15 +68,17 @@ checks this.
 
 ## Golden tests
 
-Licensed assets (Mixamo, Protofactor) must NEVER be committed. Their
-reference tests are env-gated and skip silently when the variable is
-unset:
+Licensed assets (Mixamo, Protofactor) must NEVER be committed. The
+reference golden test is env-gated:
 
 ```bash
-ANIMSMITH_GOLDEN_GLB=/path/to/reference-character.glb \
-ANIMSMITH_MESH_FBX=/path/to/mesh-bearing.fbx \
-just golden
+ANIMSMITH_GOLDEN_GLB=/path/to/reference-character.glb just golden
 ```
+
+The FBX mesh/skin/clip coverage uses self-authored checked-in fixtures
+and runs in normal CI. When `ANIMSMITH_GOLDEN_GLB` is unset, the golden
+test prints the grep-able marker `ANIMSMITH_GOLDEN_SKIP`; CI and
+`just gates` assert that the marker is present.
 
 Only CC0 or procedurally generated fixtures may live in `testdata/`.
 

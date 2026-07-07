@@ -87,6 +87,7 @@ gates: require-cargo-deny
     cargo clippy --workspace --all-targets -- -D warnings
     cargo check --workspace --examples
     cargo test --workspace
+    bash scripts/check-golden-skip-marker.sh
     cargo deny check
     just schema-id
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
@@ -99,8 +100,8 @@ gates: require-cargo-deny
     cargo run -p animsmith --release --no-default-features -- --version
     just package-inventory
 
-# See .agent-instructions/shared.md for the required env vars.
-# Env-gated reference tests against licensed assets.
+# See .agent-instructions/shared.md for the required env var.
+# Env-gated reference tests against licensed assets plus CI-visible FBX coverage.
 golden:
     cargo test -p animsmith-gltf --test golden -- --nocapture
     cargo test -p animsmith --test convert_mesh -- --nocapture
