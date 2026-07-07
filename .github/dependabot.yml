@@ -5,7 +5,10 @@
 #
 # Commit prefixes map to the Conventional Commit types enforced by
 # lint-pr.yml: `build(deps)` for library dependencies and `ci(deps)` for
-# Action bumps. Dependabot appends the `deps`/`deps-dev` scope itself.
+# Action bumps. `include: scope` is what makes Dependabot append the
+# `(deps)` / `(deps-dev)` scope to the prefix; without it the prefix
+# alone (`build:` / `ci:`) would ship, which lint accepts but under-states
+# the config's intent.
 version: 2
 updates:
   - package-ecosystem: cargo
@@ -16,6 +19,7 @@ updates:
     commit-message:
       prefix: build
       prefix-development: build
+      include: scope
     groups:
       cargo-minor-patch:
         update-types:
@@ -30,6 +34,7 @@ updates:
     commit-message:
       prefix: build
       prefix-development: build
+      include: scope
     groups:
       fuzz-cargo:
         patterns:
@@ -42,6 +47,7 @@ updates:
     open-pull-requests-limit: 10
     commit-message:
       prefix: ci
+      include: scope
     groups:
       github-actions:
         patterns:
