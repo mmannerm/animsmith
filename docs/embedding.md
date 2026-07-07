@@ -78,6 +78,7 @@ Key types, all in `animsmith-core`:
 | `Config`, `ClipExpectations`, `Pinned` | what the author declares |
 | `Finding` | structured verdict: `check_id`, severity, clip/bone/time, measured vs expected |
 | `measure::ClipMeasurements` | the raw metric map `measure` emits |
+| `diff::MetricDelta` | significant movement between two measurement maps |
 
 ## Stability contracts
 

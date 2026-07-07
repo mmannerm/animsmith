@@ -1,11 +1,9 @@
-//! `animsmith diff A B` — compare the measurement maps of two inputs
-//! (asset files measured on the fly, or prior `measure` JSON reports)
-//! and report per-metric movement beyond significance thresholds.
-//! Primary use: "did this DCC re-export change anything that matters?"
+//! Compare measurement maps and report per-metric movement beyond
+//! significance thresholds.
 
-use animsmith_core::measure::ClipMeasurements;
+use crate::measure::ClipMeasurements;
 use serde::Serialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Per-metric significance thresholds: movement below these is noise
 /// (f32 quantization, re-export dust), not a change worth reporting.
@@ -125,7 +123,7 @@ pub fn diff_measurements(
             .bone_rotation_range_deg
             .keys()
             .chain(mb.bone_rotation_range_deg.keys())
-            .collect::<std::collections::BTreeSet<_>>()
+            .collect::<BTreeSet<_>>()
         {
             let va = ma.bone_rotation_range_deg.get(bone).copied();
             let vb = mb.bone_rotation_range_deg.get(bone).copied();
@@ -149,8 +147,8 @@ pub fn diff_measurements(
         }
 
         if ma.animated_bones != mb.animated_bones {
-            let a_set: std::collections::BTreeSet<_> = ma.animated_bones.iter().collect();
-            let b_set: std::collections::BTreeSet<_> = mb.animated_bones.iter().collect();
+            let a_set: BTreeSet<_> = ma.animated_bones.iter().collect();
+            let b_set: BTreeSet<_> = mb.animated_bones.iter().collect();
             let gained: Vec<_> = b_set.difference(&a_set).map(|s| s.as_str()).collect();
             let lost: Vec<_> = a_set.difference(&b_set).map(|s| s.as_str()).collect();
             deltas.push(delta(
@@ -179,23 +177,21 @@ pub fn diff_measurements(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use animsmith_core::measure::ClipMeasurements;
-    use serde_json::json;
+    use crate::measure::{ClipMeasurements, GaitMeasurement};
 
     fn clip_measurements() -> ClipMeasurements {
-        serde_json::from_value(json!({
-            "duration_s": 1.0,
-            "frame_count": 31,
-            "animated_bones": ["hips"],
-            "bone_rotation_range_deg": { "hips": 10.0 },
-            "loop_seam_ratio": 0.2,
-            "gait": {
-                "phase": 0.25,
-                "lr_amplitude_m": 0.1
-            },
-            "speed_mps": 1.0
-        }))
-        .expect("valid clip measurement fixture")
+        ClipMeasurements {
+            duration_s: 1.0,
+            frame_count: 31,
+            animated_bones: vec!["hips".into()],
+            bone_rotation_range_deg: BTreeMap::from([("hips".into(), 10.0)]),
+            loop_seam_ratio: Some(0.2),
+            gait: Some(GaitMeasurement {
+                phase: Some(0.25),
+                lr_amplitude_m: 0.1,
+            }),
+            speed_mps: Some(1.0),
+        }
     }
 
     fn measurement_map(
@@ -262,17 +258,14 @@ mod tests {
         );
     }
 
-    /// #52: anchor every documented threshold to LITERAL stimuli.
+    /// #52: anchor every documented threshold to literal stimuli.
     /// Deriving a metric's fixture from the constant under test
-    /// (`THRESHOLD * 2`, `THRESHOLD / 2`) hides a fat-fingered constant —
-    /// e.g. `DURATION_THRESHOLD_S` 0.017 → 0.17 would still pass. Concrete
-    /// numbers straddling the documented threshold catch such a typo in
-    /// either direction. `gait.phase` (circular) and `frame_count`
-    /// (integer) don't fit this over/under numeric straddle; each has
-    /// its own literal anchor — see
-    /// `single_frame_change_crosses_the_frame_count_threshold`,
-    /// `reports_significant_gait_phase_moves`, and
-    /// `compares_gait_phase_on_a_cycle`.
+    /// (`THRESHOLD * 2`, `THRESHOLD / 2`) hides a fat-fingered constant:
+    /// for example, `DURATION_THRESHOLD_S` 0.017 -> 0.17 would still pass.
+    /// Concrete numbers straddling the documented threshold catch such a
+    /// typo in either direction. `gait.phase` (circular) and `frame_count`
+    /// (integer) do not fit this over/under numeric straddle; each has its
+    /// own literal anchor.
     #[test]
     fn literal_stimuli_pin_documented_thresholds() {
         // Base fixture: duration_s 1.0, loop_seam_ratio 0.2,
@@ -379,8 +372,8 @@ mod tests {
         assert_eq!(delta.after, Some(0.1));
     }
 
-    /// #53: `frame_count` is the wrong-sign guard — a *decrease* must
-    /// still report, so an impl that only diffed increases is caught.
+    /// #53: `frame_count` is the wrong-sign guard; a decrease must still
+    /// report, so an impl that only diffed increases is caught.
     #[test]
     fn reports_frame_count_move_including_a_decrease() {
         let before = clip_measurements(); // frame_count 31
@@ -403,12 +396,9 @@ mod tests {
         );
     }
 
-    /// #52 item 2: pin the `frame_count` 0.5 threshold to a LITERAL
+    /// #52 item 2: pin the `frame_count` 0.5 threshold to a literal
     /// one-frame move. `frame_count` is integer-valued, so the tightest
-    /// possible stimulus — a single-frame change — must report; a
-    /// fat-fingered threshold (0.5 → 1.5) would silence it and fail
-    /// here. The decrease test above proves the sign is handled; this
-    /// proves the boundary sits below one frame.
+    /// possible stimulus - a single-frame change - must report.
     #[test]
     fn single_frame_change_crosses_the_frame_count_threshold() {
         let before = clip_measurements(); // frame_count 31
@@ -467,7 +457,6 @@ mod tests {
 
     #[test]
     fn reports_bone_rotation_range_appeared_and_disappeared() {
-        // A bone gaining a rotation range: before None, after Some.
         let before = clip_measurements();
         let mut after = before.clone();
         after.bone_rotation_range_deg.insert("spine".into(), 5.0);
@@ -481,7 +470,6 @@ mod tests {
         assert_eq!(delta.before, None);
         assert_eq!(delta.after, Some(5.0));
 
-        // A bone losing its rotation range: before Some, after None.
         let before = clip_measurements();
         let mut after = before.clone();
         after.bone_rotation_range_deg.remove("hips");
@@ -511,7 +499,6 @@ mod tests {
         let delta = delta_for(&deltas, "animated_bones");
         assert_eq!(delta.before, Some(1.0));
         assert_eq!(delta.after, Some(2.0));
-        // Exact note: set difference (sorted), not just a count change.
         assert_eq!(delta.note, "gained [spine, tail], lost [hips]");
     }
 }

@@ -4,10 +4,10 @@
 
 `animsmith-core` is the embedding boundary for animsmith. It contains
 the engine-agnostic data model, rig-role resolution, configuration
-types, animation and mesh measurements, sampler, findings, and built-in
-check catalog. It does not know about filesystems or file formats; pair
-it with a loader crate such as `animsmith-gltf` or `animsmith-fbx` at the
-edge of your pipeline.
+types, animation and mesh measurements, measurement diffs, sampler,
+findings, and built-in check catalog. It does not know about filesystems
+or file formats; pair it with a loader crate such as `animsmith-gltf` or
+`animsmith-fbx` at the edge of your pipeline.
 
 Use it when a Rust asset pipeline already owns its sidecar format,
 contract storage, and gate policy, but wants animsmith's animation
@@ -40,8 +40,8 @@ Typical embedding flow:
    `ResolvedRoles::from_names`.
 3. Build `Config` from your own contract format.
 4. Create `MetricGrids`, call `measure::measure_document` if you need
-   raw numbers, then build `CheckCtx::new` before `all_checks` and
-   `run_checks`.
+   raw numbers or `diff::diff_measurements` to compare two measurement
+   maps, then build `CheckCtx::new` before `all_checks` and `run_checks`.
 5. Map `Finding` severities into your pipeline's gate/reporting system.
 
 ## Feature Flags
