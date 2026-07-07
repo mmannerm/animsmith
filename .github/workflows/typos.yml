@@ -1,0 +1,27 @@
+name: typos
+
+# Source-wide spell check via `typos` (crate-ci/typos). Catches
+# misspellings in code, comments, and docs. Fast (prebuilt binary, no
+# compile). The allow-list of domain jargon lives in `_typos.toml`.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: typos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check spelling
+        uses: crate-ci/typos@v1

@@ -1,0 +1,56 @@
+name: codeql
+
+# CodeQL static analysis for Rust. Findings surface in the GitHub Security
+# tab (code scanning). Rust support is newer than the C/JS analyzers, so
+# this runs as a non-blocking scan on PRs, main pushes, and weekly to catch
+# advisories against unchanged code; it is not wired into branch protection.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly Tuesday 05:41 UTC; offset minute spreads cron load.
+    - cron: '41 5 * * 2'
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze Rust
+    runs-on: ubuntu-latest
+    permissions:
+      # Upload results to the code-scanning dashboard.
+      security-events: write
+      # Read the Actions metadata CodeQL attaches to the analysis.
+      actions: read
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: codeql
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: rust
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:rust"

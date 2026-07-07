@@ -1,0 +1,63 @@
+name: coverage
+
+# Line/region coverage via cargo-llvm-cov (source-based coverage from the
+# LLVM instrumentation the Rust toolchain already ships). The lcov report
+# is uploaded to Codecov, which renders the badge, per-PR diff coverage,
+# and the sunburst visualization. Codecov is free for public repositories.
+#
+# Coverage is informational, not a merge gate: the Codecov project/patch
+# statuses are configured `informational: true` in codecov.yml so a
+# coverage dip annotates the PR without blocking it, and the upload step
+# does not fail CI on a flaky Codecov outage.
+#
+# One-time maintainer setup: enable the repository at https://codecov.io
+# and add the `CODECOV_TOKEN` repository secret (tokenless uploads work
+# for public repos but are rate-limited and flakier).
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coverage-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: coverage
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - name: Generate coverage
+        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

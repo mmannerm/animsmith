@@ -14,6 +14,12 @@ install-rust-tools:
     if ! command -v cargo-deny >/dev/null; then
       RUSTC_WRAPPER= cargo install cargo-deny --locked
     fi
+    if ! command -v typos >/dev/null; then
+      RUSTC_WRAPPER= cargo install typos-cli --locked
+    fi
+    if ! command -v cargo-llvm-cov >/dev/null; then
+      RUSTC_WRAPPER= cargo install cargo-llvm-cov --locked
+    fi
 
 configure-sccache: require-sccache
     #!/usr/bin/env bash
@@ -59,6 +65,14 @@ require-cargo-deny:
       exit 1
     }
 
+require-typos:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v typos >/dev/null || {
+      echo "typos not found; run 'just install-rust-tools' before running gates." >&2
+      exit 1
+    }
+
 # Debug build of the whole workspace.
 build:
     cargo build --workspace
@@ -79,6 +93,16 @@ schema-id:
 github-community:
     ruby scripts/check-github-community-files.rb
 
+# Spell-check source, comments, and docs (allow-list in _typos.toml).
+typos: require-typos
+    typos
+
+# Line/region coverage via cargo-llvm-cov. Prints the summary table and
+# writes an HTML report under target/llvm-cov/html; CI uploads the lcov
+# form to Codecov (see .github/workflows/coverage.yml).
+coverage:
+    cargo llvm-cov --workspace --html
+
 # Check the crate package inventories that CI validates before release.
 package-inventory:
     bash scripts/check-package-inventory.sh
@@ -86,7 +110,7 @@ package-inventory:
 # Full local PR gate, matching CI (includes release builds — expect
 # minutes, not seconds). The GitHub workflow also verifies package
 # assembly on a clean checkout.
-gates: require-cargo-deny
+gates: require-cargo-deny require-typos
     cargo fmt --all --check
     cargo clippy --workspace --all-targets -- -D warnings
     cargo check --workspace --examples
@@ -95,6 +119,7 @@ gates: require-cargo-deny
     cargo deny check
     just schema-id
     just github-community
+    typos
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
     RUSTDOCFLAGS="-D warnings" cargo doc -p animsmith --no-default-features --no-deps
     cargo test -p animsmith --test cli_contract --no-default-features
