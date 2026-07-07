@@ -259,17 +259,22 @@ fn foot_slide_prefers_foot_over_toe_when_both_resolve() {
     let ctx = CheckCtx::new(&grids, &roles, &config);
     let findings = run_checks(&ctx, &all_checks());
     let slides = of(&findings, "foot-slide");
-    assert!(
-        !slides.is_empty(),
-        "slippery foot must flag (toe-first regression drops it): {findings:#?}"
+    // Assert the exact set of named bones is BOTH feet — not just "some
+    // finding names a foot". A one-sided regression (only the right side
+    // reordered to toe-first) still flags the left foot, so a weaker
+    // "non-empty and every finding is a foot" oracle would pass it; pin
+    // both sides so dropping either fails.
+    let mut named: Vec<&str> = slides
+        .iter()
+        .map(|f| f.bone.as_deref().expect("finding names a bone"))
+        .collect();
+    named.sort_unstable();
+    assert_eq!(
+        named,
+        ["l_foot", "r_foot"],
+        "expected a foot-slide finding on BOTH feet naming the foot bone; a one-sided \
+         toe-first (or skipped-side) regression drops one: {findings:#?}"
     );
-    for f in &slides {
-        let named = f.bone.as_deref().expect("finding names a bone");
-        assert!(
-            named == "l_foot" || named == "r_foot",
-            "foot-slide measured `{named}`, expected the foot bone — toe-first regression?"
-        );
-    }
 }
 
 // ---- in-place ---------------------------------------------------------
