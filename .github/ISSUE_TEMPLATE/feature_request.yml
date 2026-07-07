@@ -1,0 +1,46 @@
+name: Feature or enhancement
+description: Propose a new capability or workflow improvement.
+labels:
+  - type:feature
+body:
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Workflow
+      description: What game-animation workflow should animsmith support better?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the CLI, crate, report, or documentation behavior you want.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - CLI
+        - animsmith-core
+        - glTF/GLB loader
+        - FBX loader
+        - HTML report
+        - documentation
+        - unsure
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false
+  - type: textarea
+    id: docs
+    attributes:
+      label: Documentation impact
+      description: Which docs or examples would need to change?
+    validations:
+      required: false

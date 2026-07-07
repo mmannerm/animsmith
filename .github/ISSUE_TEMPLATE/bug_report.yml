@@ -1,0 +1,52 @@
+name: Bug report
+description: Report incorrect behavior in the CLI, crates, loaders, checks, or report.
+labels:
+  - type:bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please avoid attaching licensed assets unless you have permission to share them.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the incorrect behavior and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Include the command, config, asset format, and a minimal asset or synthetic fixture if possible.
+      placeholder: |
+        animsmith lint clip.glb
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output from `animsmith --version`, crate version, or commit SHA.
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - CLI
+        - animsmith-core
+        - glTF/GLB loader
+        - FBX loader
+        - HTML report
+        - documentation
+        - unsure
+    validations:
+      required: false
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context
+    validations:
+      required: false

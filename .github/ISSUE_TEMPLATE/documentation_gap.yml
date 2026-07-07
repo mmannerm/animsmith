@@ -1,0 +1,37 @@
+name: Documentation gap
+description: Request missing, stale, unclear, or example/tutorial documentation.
+labels:
+  - type:docs
+body:
+  - type: textarea
+    id: gap
+    attributes:
+      label: What documentation is missing or stale?
+      description: Link the page or describe the workflow that needs coverage.
+    validations:
+      required: true
+  - type: dropdown
+    id: audience
+    attributes:
+      label: Audience
+      options:
+        - CLI user
+        - Rust embedder
+        - Contributor
+        - Maintainer
+        - Unsure
+    validations:
+      required: false
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should the docs help someone do?
+      description: Include commands, asset types, or APIs that should be covered.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+    validations:
+      required: false

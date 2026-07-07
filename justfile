@@ -75,6 +75,10 @@ doc:
 schema-id:
     scripts/check-schema-id.sh
 
+# Validate GitHub community files and issue-form contracts.
+github-community:
+    ruby scripts/check-github-community-files.rb
+
 # Check the crate package inventories that CI validates before release.
 package-inventory:
     bash scripts/check-package-inventory.sh
@@ -90,6 +94,7 @@ gates: require-cargo-deny
     bash scripts/check-golden-skip-marker.sh
     cargo deny check
     just schema-id
+    just github-community
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
     RUSTDOCFLAGS="-D warnings" cargo doc -p animsmith --no-default-features --no-deps
     cargo test -p animsmith --test cli_contract --no-default-features
