@@ -26,23 +26,53 @@ pub struct PoseGrid {
 }
 
 impl PoseGrid {
+    fn index(&self, frame: usize, bone: usize) -> usize {
+        assert!(
+            frame < self.frame_count(),
+            "frame index {frame} outside PoseGrid frame count {}",
+            self.frame_count()
+        );
+        assert!(
+            bone < self.bone_count,
+            "bone index {bone} outside PoseGrid bone count {}",
+            self.bone_count
+        );
+        frame * self.bone_count + bone
+    }
+
+    /// Number of sampled frames.
     pub fn frame_count(&self) -> usize {
         self.times.len()
     }
 
+    /// Number of bones sampled per frame.
     pub fn bone_count(&self) -> usize {
         self.bone_count
     }
 
+    /// Local-space transform at `frame` and `bone`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if either index is outside the grid bounds.
     pub fn local(&self, frame: usize, bone: usize) -> Transform {
-        self.local[frame * self.bone_count + bone]
+        self.local[self.index(frame, bone)]
     }
 
+    /// Model-space transform at `frame` and `bone`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if either index is outside the grid bounds.
     pub fn model(&self, frame: usize, bone: usize) -> Mat4 {
-        self.model[frame * self.bone_count + bone]
+        self.model[self.index(frame, bone)]
     }
 
     /// Model-space joint position.
+    ///
+    /// # Panics
+    ///
+    /// Panics if either index is outside the grid bounds.
     pub fn model_position(&self, frame: usize, bone: usize) -> Vec3 {
         self.model(frame, bone).w_axis.truncate()
     }
@@ -60,6 +90,13 @@ pub fn default_frame_count(clip: &Clip) -> usize {
 }
 
 /// Sample `clip` on a uniform `frames`-sample grid and FK to model space.
+///
+/// # Panics
+///
+/// Panics if a skeleton bone's parent index is outside
+/// [`Skeleton::bones`]. Loader crates validate parent references before
+/// constructing a [`crate::Document`]; hand-built documents must keep
+/// the same invariant.
 pub fn sample_clip(skeleton: &Skeleton, clip: &Clip, frames: usize) -> PoseGrid {
     let frames = frames.max(2);
     let nb = skeleton.bones.len();
@@ -117,7 +154,9 @@ pub fn sample_clip(skeleton: &Skeleton, clip: &Clip, frames: usize) -> PoseGrid 
 /// One track's sampled value at a time.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TrackSample {
+    /// Sampled translation or scale value.
     Vec3(Vec3),
+    /// Sampled rotation value.
     Quat(Quat),
 }
 
@@ -237,7 +276,7 @@ fn sample_quat(track: &Track, t: f32) -> Quat {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::Property;
+    use crate::model::{Bone, Property};
 
     fn track(times: Vec<f32>, quats: Vec<Quat>) -> Track {
         Track {
@@ -257,6 +296,27 @@ mod tests {
             times,
             values: TrackValues::Vec3s(vals),
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "outside PoseGrid bone count")]
+    fn pose_grid_rejects_bone_index_at_frame_boundary() {
+        let skeleton = Skeleton {
+            bones: vec![Bone {
+                name: "root".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            }],
+        };
+        let clip = Clip {
+            name: "idle".into(),
+            duration_s: 1.0,
+            tracks: Vec::new(),
+        };
+        let grid = sample_clip(&skeleton, &clip, 2);
+
+        let _ = grid.local(0, grid.bone_count());
     }
 
     /// Issue #24: a NaN first key time made both clamp guards fail,

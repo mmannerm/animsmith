@@ -1,30 +1,54 @@
 //! Compare measurement maps and report per-metric movement beyond
 //! significance thresholds.
+//!
+//! Per-metric significance thresholds treat movement below these values
+//! as noise (f32 quantization, re-export dust), not a change worth
+//! reporting.
 
 use crate::measure::ClipMeasurements;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Per-metric significance thresholds: movement below these is noise
-/// (f32 quantization, re-export dust), not a change worth reporting.
+/// Duration movement threshold, in seconds.
 pub const DURATION_THRESHOLD_S: f64 = 0.017; // half a frame at 30 fps
+/// Bone rotation range movement threshold, in degrees.
 pub const ROTATION_RANGE_THRESHOLD_DEG: f64 = 1.0;
+/// Loop-seam ratio movement threshold.
 pub const SEAM_THRESHOLD: f64 = 0.05;
+/// Gait phase movement threshold, in circular cycle fraction.
 pub const PHASE_THRESHOLD: f64 = 0.05; // cycle fraction, circular
+/// Gait amplitude movement threshold, in metres.
 pub const AMPLITUDE_THRESHOLD_M: f64 = 0.005;
+/// Root-motion speed movement threshold, in metres per second.
 pub const SPEED_THRESHOLD_MPS: f64 = 0.1;
 
+/// One significant metric difference between two measurement maps.
 #[derive(Debug, Serialize)]
 pub struct MetricDelta {
+    /// Clip that owns the changed metric, or the added/removed clip.
     pub clip: String,
+    /// Metric path, for example `"duration_s"` or
+    /// `"bone_rotation_range_deg[hips]"`.
     pub metric: String,
+    /// Value in the before map, absent when a metric appeared or a clip
+    /// was added/removed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub before: Option<f64>,
+    /// Value in the after map, absent when a metric disappeared or a
+    /// clip was added/removed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub after: Option<f64>,
+    /// Short cause such as `"moved"`, `"appeared"`, or
+    /// `"bone no longer animated"`.
     pub note: String,
 }
 
+/// Compare two measurement maps and return only significant deltas.
+///
+/// The thresholds are intentionally fixed public constants so CLI and
+/// embedding callers agree on what counts as re-export noise. Gait phase
+/// uses circular distance, so phases near `0.0` and `1.0` compare as
+/// adjacent rather than far apart.
 pub fn diff_measurements(
     a: &BTreeMap<String, ClipMeasurements>,
     b: &BTreeMap<String, ClipMeasurements>,

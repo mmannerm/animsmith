@@ -13,8 +13,11 @@ use std::rc::Rc;
 /// roles, the configuration, and shared metric [`PoseGrid`] samples.
 #[derive(Debug)]
 pub struct CheckCtx<'a> {
+    /// Document being checked.
     pub doc: &'a Document,
+    /// Resolved rig roles for semantic checks.
     pub roles: &'a ResolvedRoles,
+    /// Effective configuration for this run.
     pub config: &'a Config,
     grids: &'a MetricGrids<'a>,
     /// Effective per-clip expectations, resolved once and aligned to
@@ -52,6 +55,10 @@ impl<'a> CheckCtx<'a> {
 
     /// Effective expectations for clip `clip_index` (resolved once in
     /// [`CheckCtx::new`]). Index into `doc.clips`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `clip_index` is outside the document's clip range.
     pub fn expectations(&self, clip_index: usize) -> &ClipExpectations {
         &self.expectations[clip_index]
     }
@@ -78,6 +85,14 @@ pub enum Readiness {
     Idle,
 }
 
+/// A lint check that can inspect a document and emit structured
+/// [`Finding`] values.
+///
+/// Custom embedders may implement this trait and pass their checks to
+/// [`run_checks`] alongside, or instead of, [`all_checks`]. Implementors
+/// should keep `run` panic-free for loader-valid documents; use
+/// [`Check::readiness`] to describe missing rig roles or configuration
+/// prerequisites.
 pub trait Check {
     /// Stable identifier, e.g. `"loop-seam"`. Used in config, JSON
     /// output, and `--select`.
@@ -91,6 +106,7 @@ pub trait Check {
         Readiness::Ready
     }
 
+    /// Execute the check and append any findings to `out`.
     fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>);
 }
 

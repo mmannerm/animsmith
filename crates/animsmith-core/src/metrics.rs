@@ -30,6 +30,7 @@ pub struct MetricGrids<'a> {
 }
 
 impl<'a> MetricGrids<'a> {
+    /// Create a lazy metric-grid cache for `doc`.
     pub fn new(doc: &'a Document) -> Self {
         Self {
             doc,
@@ -82,6 +83,13 @@ pub struct FootCycleMetrics {
 ///
 /// The grid must span `[0, duration]` — the wrap pair is
 /// `(last frame, frame 0)`. Grids under 3 frames carry no cycle.
+///
+/// # Panics
+///
+/// Panics if `roles` contains bone indices outside `grid`. Role
+/// resolutions produced by this crate are tied to the same skeleton that
+/// produced the grid; embedders that hand-build roles must preserve that
+/// relationship.
 pub fn foot_cycle_metrics(
     grid: &PoseGrid,
     roles: &ResolvedRoles,
@@ -180,6 +188,10 @@ pub fn fundamental_trough_phase(signal: &[f64]) -> Option<f64> {
 /// Horizontal (XZ-plane) root displacement over the clip, divided by
 /// duration. Uses the Root role, falling back to Hips (clips without a
 /// dedicated root bone carry travel on the hips).
+///
+/// # Panics
+///
+/// Panics if the resolved Root or Hips bone id is outside `grid`.
 pub fn root_motion_speed_mps(grid: &PoseGrid, roles: &ResolvedRoles) -> Option<f64> {
     let bone = roles.get(Role::Root).or_else(|| roles.get(Role::Hips))?;
     let frames = grid.frame_count();

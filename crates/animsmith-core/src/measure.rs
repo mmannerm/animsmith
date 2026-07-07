@@ -18,7 +18,9 @@ pub const MIN_RECORDED_ROTATION_DEG: f64 = 0.1;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Aabb {
+    /// Minimum XYZ corner.
     pub min: [f32; 3],
+    /// Maximum XYZ corner.
     pub max: [f32; 3],
 }
 
@@ -30,6 +32,7 @@ pub struct Aabb {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct MeshMeasurements {
+    /// Mesh name.
     pub name: String,
     /// Total position count across the mesh's primitives.
     pub vertex_count: u32,
@@ -44,6 +47,8 @@ pub struct MeshMeasurements {
     /// well-formed skin); `None` for an unskinned mesh.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub weight_sum_min: Option<f64>,
+    /// Maximum finite per-vertex skin-weight sum; `None` for an
+    /// unskinned mesh.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub weight_sum_max: Option<f64>,
 }
@@ -110,6 +115,7 @@ pub fn measure_meshes(assets: &SceneAssets) -> Vec<MeshMeasurements> {
         .collect()
 }
 
+/// Role-dependent gait metrics for one clip.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct GaitMeasurement {
@@ -121,9 +127,11 @@ pub struct GaitMeasurement {
     pub lr_amplitude_m: f64,
 }
 
+/// Measurements for one clip in the `measure` output map.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct ClipMeasurements {
+    /// Clip duration in seconds.
     pub duration_s: f64,
     /// Keyframe count of the longest channel.
     pub frame_count: u32,

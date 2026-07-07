@@ -1,22 +1,71 @@
-//! Docs.rs API map: [`Document`] holds skeletons, clips, and scene
-//! assets; [`measure::measure_document`] computes measurements;
-//! [`CheckCtx::new`] prepares a check run; [`run_checks`] executes
-//! [`all_checks`]. Use [`detect_profile`] or
-//! [`ResolvedRoles::from_names`] to resolve rig roles. [`PoseGrid`] is
-//! the sampled pose cache shared by semantic checks.
+//! Engine-agnostic animation linting primitives for Rust pipelines.
+//!
+//! This crate is the embedding boundary for animsmith. It owns the core
+//! data model ([`Document`], [`Skeleton`], [`Clip`], [`Track`]), rig-role
+//! resolution ([`detect_profile`], [`ResolvedRoles::from_names`]),
+//! typed configuration ([`Config`]), measurement generation
+//! ([`measure::measure_document`]), measurement diffs
+//! ([`diff::diff_measurements`]), structured findings ([`Finding`]), and
+//! check execution ([`CheckCtx`], [`all_checks`], [`run_checks`]).
+//! Loader crates such as `animsmith-gltf` and `animsmith-fbx` translate
+//! file formats into this model.
+//!
+//! # Embedding flow
+//!
+//! ```
+//! use animsmith_core::{Config, CheckCtx, Document, MetricGrids, all_checks, run_checks};
+//! use animsmith_core::measure::measure_document;
+//! use animsmith_core::ResolvedRoles;
+//!
+//! let doc = Document::default();
+//! let roles = ResolvedRoles::default();
+//! let config = Config::default();
+//! let grids = MetricGrids::new(&doc);
+//!
+//! let measurements = measure_document(&grids, &roles, &config);
+//! let ctx = CheckCtx::new(&grids, &roles, &config);
+//! let findings = run_checks(&ctx, &all_checks());
+//!
+//! assert!(measurements.is_empty());
+//! assert!(findings.is_empty());
+//! ```
+//!
+//! 1. Load or construct a [`Document`].
+//! 2. Resolve rig roles with [`detect_profile`] or
+//!    [`ResolvedRoles::from_names`].
+//! 3. Build a [`Config`] from your pipeline's contract format.
+//! 4. Create [`MetricGrids`] once, then share it across
+//!    [`measure::measure_document`], [`CheckCtx::new`], and
+//!    [`run_checks`].
+//! 5. Map [`Severity`] and [`Finding`] values into your own gate or
+//!    reporting policy.
 //!
 //! # API status
 //!
-//! The Rust API is pre-1.0 and intentionally marked experimental while
-//! animsmith is still settling its catalog, JSON contract, and loader
-//! boundaries. The intended embedding surface is the data model,
-//! configuration types, measurement and diff APIs, rig-profile APIs, and
-//! the check catalog functions re-exported from this crate root.
-//! [`MetricGrids`] can be shared by checks, measurement, and reports so
-//! one sampled grid owner feeds all three consumers. Internal built-in
-//! check modules are private implementation details.
+//! The Rust API is pre-1.0 and may still change before the first stable
+//! release. The intended extension points are the data model,
+//! configuration types, measurement and diff APIs, rig-profile APIs, the
+//! [`Check`] trait for custom checks, and the check catalog functions
+//! re-exported from this crate root. Built-in check ids, CLI exit-code
+//! semantics, and the CLI's versioned JSON envelope/schema id are treated
+//! as the most stable automation contracts. The core [`Finding`] and
+//! [`measure::ClipMeasurements`] serde shapes feed that envelope, but the
+//! envelope version itself lives in the CLI crate. The scene-asset
+//! structs in [`model`] and the pipeline-mechanical helpers in
+//! [`transform`] are public so the loader, writer, and CLI crates can
+//! share the same model, but they are less settled than the
+//! measurement/check embedding flow while the crate is pre-1.0. Metric
+//! formulas and individual Rust symbols are still subject to pre-1.0
+//! refinement.
+//!
+//! Public APIs that return [`Result`] document their `# Errors` cases.
+//! Index-based accessors and transform helpers that rely on
+//! loader-established invariants document their `# Panics` contracts.
+//! Loader-valid documents from the format crates should flow through
+//! checking, sampling, and measurement without panicking on untrusted
+//! input.
 
-#![doc = "\n\n"]
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 
 pub mod check;
