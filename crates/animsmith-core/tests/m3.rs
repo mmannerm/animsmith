@@ -156,6 +156,38 @@ fn slippery_stance_is_flagged() {
     assert_eq!(slides[0].severity, Severity::Warning);
 }
 
+/// #57: a rig whose feet resolve only as toe roles (no foot roles) must
+/// still be judged — the per-foot loop falls back to the toe, matching
+/// `foot_cycle_metrics`. Before the fix the loop skipped both feet and
+/// produced silent nothing (readiness said Ready via root/hips).
+#[test]
+fn toe_only_rig_is_evaluated_for_foot_slide() {
+    let doc = treadmill_doc(STANCE_SWEEP_M * 0.5); // slippery: 0.5 m/s deviation
+    let roles = ResolvedRoles::from_names(
+        &doc.skeleton,
+        [
+            (Role::Hips, "pelvis".to_string()),
+            (Role::LeftToe, "l_foot".to_string()),
+            (Role::RightToe, "r_foot".to_string()),
+        ],
+    );
+    let config = json_config(serde_json::json!({
+        "clips": { "walk": {
+            "in_place": true,
+            "speed_mps": { "value": 1.0, "tolerance": 0.25 }
+        }}
+    }));
+    let grids = MetricGrids::new(&doc);
+    let ctx = CheckCtx::new(&grids, &roles, &config);
+    let findings = run_checks(&ctx, &all_checks());
+    let slides = of(&findings, "foot-slide");
+    assert!(
+        !slides.is_empty(),
+        "toe-only rig produced no foot-slide finding: {findings:#?}"
+    );
+    assert_eq!(slides[0].severity, Severity::Warning);
+}
+
 // ---- in-place ---------------------------------------------------------
 
 #[test]

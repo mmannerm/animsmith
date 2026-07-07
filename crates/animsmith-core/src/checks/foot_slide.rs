@@ -65,8 +65,13 @@ impl Check for FootSlide {
             // declared speed. Root-motion clip: it must stay planted.
             let expected_speed = if root_speed >= 0.5 { 0.0 } else { pin.value };
 
-            for (role, label) in [(Role::LeftFoot, "left"), (Role::RightFoot, "right")] {
-                let Some(foot) = ctx.roles.get(role) else {
+            // Foot first, toe as fallback — matching `foot_cycle_metrics`
+            // so a rig that resolves only toe roles is still judged (#57).
+            for (side_roles, label) in [
+                ([Role::LeftFoot, Role::LeftToe], "left"),
+                ([Role::RightFoot, Role::RightToe], "right"),
+            ] {
+                let Some(foot) = side_roles.iter().find_map(|&r| ctx.roles.get(r)) else {
                     continue;
                 };
                 let frames = grid.frame_count();
