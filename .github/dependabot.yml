@@ -1,7 +1,12 @@
 # Dependabot keeps dependencies and pinned Action versions current with
-# grouped weekly PRs. Cargo covers the main workspace and the detached
+# weekly PRs. Cargo covers the main workspace and the detached
 # nightly-only fuzz crate (its own workspace); github-actions covers the
 # workflow files under .github/workflows.
+#
+# Grouping: root-Cargo minor/patch bumps, all fuzz-crate bumps, and all
+# Action bumps each collapse into one PR per ecosystem. Root-Cargo MAJOR
+# bumps are deliberately left ungrouped so each breaking upgrade gets its
+# own reviewable PR.
 #
 # Commit prefixes map to the Conventional Commit types enforced by
 # lint-pr.yml: `build(deps)` for library dependencies and `ci(deps)` for

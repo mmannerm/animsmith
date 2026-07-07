@@ -139,7 +139,10 @@ not wired into branch protection:
 - **CodeQL** performs static analysis of the Rust sources on PRs, `main`
   pushes, and weekly.
 - **Dependabot** ([`.github/dependabot.yml`](.github/dependabot.yml)) opens
-  grouped weekly PRs to bump Cargo dependencies and pinned Action versions.
+  weekly PRs to bump Cargo dependencies and pinned Action versions. Minor
+  and patch Cargo bumps and Action updates are grouped into one PR each;
+  major Cargo bumps open individually so each breaking upgrade is reviewed
+  on its own.
 
 ## Package Readiness
 
