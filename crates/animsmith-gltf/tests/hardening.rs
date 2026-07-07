@@ -339,7 +339,7 @@ const NODE_SELF_LOOP_GLTF: &str = r#"{
 #[test]
 fn loader_rejects_root_entered_cycle_as_duplicate_parent() {
     let dir = unique_temp_dir("root-entered-cycle");
-    let path = dir.join("back-edge.gltf");
+    let path = dir.path().join("back-edge.gltf");
     std::fs::write(&path, NODE_ROOT_ENTERED_CYCLE_GLTF).unwrap();
 
     // The back-edge gives the entry node a second parent, so the loader
@@ -353,7 +353,7 @@ fn loader_rejects_root_entered_cycle_as_duplicate_parent() {
 #[test]
 fn loader_rejects_self_loop_node() {
     let dir = unique_temp_dir("self-loop");
-    let path = dir.join("selfloop.gltf");
+    let path = dir.path().join("selfloop.gltf");
     std::fs::write(&path, NODE_SELF_LOOP_GLTF).unwrap();
 
     let err = animsmith_gltf::load(&path).expect_err("self-loop node must be rejected");
