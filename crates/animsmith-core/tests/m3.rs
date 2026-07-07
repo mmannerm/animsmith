@@ -188,6 +188,95 @@ fn toe_only_rig_is_evaluated_for_foot_slide() {
     assert_eq!(slides[0].severity, Severity::Warning);
 }
 
+/// #100: when a side resolves *both* a foot and a toe role, foot-slide
+/// must measure (and name) the foot — the `[foot, toe]` preference. The
+/// foot bones are slippery (so they flag) while the toe bones are planted
+/// cleanly; a foot-first loop names the foot, a toe-first regression
+/// would measure the clean toe and either drop the finding or name the
+/// toe. Locks the ordering the toe-only test (#57) can't see.
+#[test]
+fn foot_slide_prefers_foot_over_toe_when_both_resolve() {
+    let bone = |name: &str, x: f32, z: f32| Bone {
+        name: name.into(),
+        parent: Some(0),
+        rest: Transform {
+            translation: Vec3::new(x, -1.0, z),
+            ..Transform::IDENTITY
+        },
+        inverse_bind: None,
+    };
+    let skel = Skeleton {
+        bones: vec![
+            Bone {
+                name: "pelvis".into(),
+                parent: None,
+                rest: Transform {
+                    translation: Vec3::new(0.0, 1.0, 0.0),
+                    ..Transform::IDENTITY
+                },
+                inverse_bind: None,
+            },
+            bone("l_foot", 0.1, 0.0),
+            bone("r_foot", -0.1, 0.0),
+            bone("l_toe", 0.1, 0.1),
+            bone("r_toe", -0.1, 0.1),
+        ],
+    };
+    let doc = Document {
+        skeleton: skel.clone(),
+        clips: vec![Clip {
+            name: "walk".into(),
+            duration_s: 1.0,
+            tracks: vec![
+                // Slippery feet (half sweep → 0.5 m/s vs declared 1.0).
+                treadmill_track(1, skel.bones[1].rest.translation, 0.0, STANCE_SWEEP_M * 0.5),
+                treadmill_track(2, skel.bones[2].rest.translation, 0.5, STANCE_SWEEP_M * 0.5),
+                // Clean toes (full sweep → exactly the declared 1.0 m/s).
+                treadmill_track(3, skel.bones[3].rest.translation, 0.0, STANCE_SWEEP_M),
+                treadmill_track(4, skel.bones[4].rest.translation, 0.5, STANCE_SWEEP_M),
+            ],
+        }],
+        assets: Default::default(),
+        source: SourceInfo::default(),
+    };
+    let roles = ResolvedRoles::from_names(
+        &skel,
+        [
+            (Role::Hips, "pelvis".to_string()),
+            (Role::LeftFoot, "l_foot".to_string()),
+            (Role::RightFoot, "r_foot".to_string()),
+            (Role::LeftToe, "l_toe".to_string()),
+            (Role::RightToe, "r_toe".to_string()),
+        ],
+    );
+    let config = json_config(serde_json::json!({
+        "clips": { "walk": {
+            "in_place": true,
+            "speed_mps": { "value": 1.0, "tolerance": 0.25 }
+        }}
+    }));
+    let grids = MetricGrids::new(&doc);
+    let ctx = CheckCtx::new(&grids, &roles, &config);
+    let findings = run_checks(&ctx, &all_checks());
+    let slides = of(&findings, "foot-slide");
+    // Assert the exact set of named bones is BOTH feet — not just "some
+    // finding names a foot". A one-sided regression (only the right side
+    // reordered to toe-first) still flags the left foot, so a weaker
+    // "non-empty and every finding is a foot" oracle would pass it; pin
+    // both sides so dropping either fails.
+    let mut named: Vec<&str> = slides
+        .iter()
+        .map(|f| f.bone.as_deref().expect("finding names a bone"))
+        .collect();
+    named.sort_unstable();
+    assert_eq!(
+        named,
+        ["l_foot", "r_foot"],
+        "expected a foot-slide finding on BOTH feet naming the foot bone; a one-sided \
+         toe-first (or skipped-side) regression drops one: {findings:#?}"
+    );
+}
+
 // ---- in-place ---------------------------------------------------------
 
 #[test]
