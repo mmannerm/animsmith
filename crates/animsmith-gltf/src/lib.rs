@@ -233,8 +233,12 @@ pub fn load(path: &Path) -> Result<Document, LoadError> {
     let gltf = gltf::Gltf::from_slice(&bytes)?;
     validate_animation_channels(gltf.document.as_json())?;
     let buffers = resolve_buffers(&gltf, path.parent())?;
-    let mut doc = build_document(&gltf, &buffers, path)?;
-    doc.assets = extract_assets(&gltf.document, &buffers, path.parent())?;
+    // Derive the node topology once and share it: the skeleton build and
+    // asset extraction must agree on which bone each node became, and it is
+    // also where malformed graphs are rejected (so that runs once too).
+    let topo = topology(&gltf.document)?;
+    let mut doc = build_document(&gltf, &buffers, path, &topo)?;
+    doc.assets = extract_assets(&gltf.document, &buffers, path.parent(), &topo.bone_of_node);
     Ok(doc)
 }
 
@@ -283,14 +287,19 @@ fn build_document(
     gltf: &gltf::Gltf,
     buffers: &[Vec<u8>],
     path: &Path,
+    topo: &Topology,
 ) -> Result<Document, LoadError> {
     let doc = &gltf.document;
 
     let nodes: Vec<gltf::Node> = doc.nodes().collect();
-    let (order, parent, bone_of_node) = topology(doc)?;
+    let Topology {
+        order,
+        parent,
+        bone_of_node,
+    } = topo;
 
     let mut bones: Vec<Bone> = Vec::with_capacity(nodes.len());
-    for &node_index in &order {
+    for &node_index in order {
         let node = &nodes[node_index];
         let (t, r, s) = node.transform().decomposed();
         bones.push(Bone {
@@ -420,16 +429,26 @@ fn build_document(
     })
 }
 
-/// DFS order, per-node parent, and node-index → bone-id map — the three
-/// parallel arrays [`topology`] derives from the glTF node graph.
-type Topology = (Vec<usize>, Vec<Option<usize>>, Vec<Option<usize>>);
+/// The node-graph derivation [`topology`] produces once per load, shared
+/// by the skeleton build and asset extraction so both agree on which bone
+/// a node became. All three arrays are indexed by glTF node index.
+struct Topology {
+    /// Node indices in bone order: DFS from roots, file order among
+    /// siblings — the order `build_document` assigns bone ids in.
+    order: Vec<usize>,
+    /// Each node's parent node index (`None` for roots), as reached by the
+    /// DFS — always pushed to `order` before the child.
+    parent: Vec<Option<usize>>,
+    /// Each node's assigned bone id. `Some` for every node after a
+    /// successful `topology` (all nodes are reached); the `Option` keeps
+    /// index alignment and lets consumers skip gracefully.
+    bone_of_node: Vec<Option<usize>>,
+}
 
-/// Node-index → bone-id map (plus the raw parent array and DFS order),
-/// in the topological order `build_document` assigns bones: DFS from
+/// Derives the bone [`Topology`] from the glTF node graph: a DFS from the
 /// roots, file order among siblings, over ALL nodes (scene membership
-/// doesn't matter — animations may target unreferenced subtrees). Shared
-/// by the skeleton build and asset extraction so both agree on which
-/// bone a node became.
+/// doesn't matter — animations may target unreferenced subtrees). This is
+/// the order `build_document` assigns bone ids in.
 ///
 /// glTF requires the node graph to be a forest. A malformed file can
 /// break that two ways, and both are rejected as [`LoadError::Topology`]
@@ -525,7 +544,11 @@ fn topology(doc: &gltf::Document) -> Result<Topology, LoadError> {
     for (bone_id, &node_index) in order.iter().enumerate() {
         bone_of_node[node_index] = Some(bone_id);
     }
-    Ok((order, parent, bone_of_node))
+    Ok(Topology {
+        order,
+        parent,
+        bone_of_node,
+    })
 }
 
 /// Parse meshes (indexed or unindexed), skins (joints + inverse bind
@@ -542,7 +565,8 @@ fn extract_assets(
     doc: &gltf::Document,
     buffers: &[Vec<u8>],
     base: Option<&Path>,
-) -> Result<SceneAssets, LoadError> {
+    bone_of_node: &[Option<usize>],
+) -> SceneAssets {
     let mut assets = SceneAssets::default();
 
     // `doc.materials()` yields defined materials in index order (the
@@ -565,8 +589,6 @@ fn extract_assets(
             base_color_texture,
         });
     }
-
-    let (_order, _parent, bone_of_node) = topology(doc)?;
 
     for node in doc.nodes() {
         let Some(mesh) = node.mesh() else { continue };
@@ -681,7 +703,7 @@ fn extract_assets(
         });
     }
 
-    Ok(assets)
+    assets
 }
 
 /// Read an embedded glTF image into a [`TextureAsset`] (raw encoded
