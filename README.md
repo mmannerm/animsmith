@@ -168,6 +168,7 @@ for a contract-style example.
 
 ## More Documentation
 
+- [Examples cookbook](https://github.com/mmannerm/animsmith/blob/main/docs/examples.md)
 - [CLI reference](https://github.com/mmannerm/animsmith/blob/main/docs/cli.md)
 - [Embedding API](https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md)
 - [Machine-readable output](https://github.com/mmannerm/animsmith/blob/main/docs/output.md)
