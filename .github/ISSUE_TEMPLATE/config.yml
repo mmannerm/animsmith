@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Support guide
+    url: https://github.com/mmannerm/animsmith/blob/main/SUPPORT.md
+    about: Where to ask questions and file bugs, docs gaps, or feature requests.
+  - name: Security policy
+    url: https://github.com/mmannerm/animsmith/blob/main/SECURITY.md
+    about: Report vulnerabilities through private vulnerability reporting instead of public issues.
