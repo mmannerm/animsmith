@@ -167,7 +167,7 @@ animsmith/
   (2026-07-03).
 - **fuzz/**: a nightly-only cargo-fuzz workspace (detached from the main
   workspace) with libFuzzer targets for the three entry points that ingest
-  untrusted files — `animsmith_gltf::load`, `animsmith_gltf::fix::fix_quat_hemisphere`,
+  untrusted files — `animsmith_gltf::load`, `FixSession::apply_to_path(..., Repair::QuatFlip)`,
   and `animsmith_fbx::load`. These are the executable check on invariant-1
   ("untrusted input must never panic or OOM"): targets run in release mode
   to match the shipped CLI's panic semantics, with AddressSanitizer on. A

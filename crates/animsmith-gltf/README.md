@@ -46,6 +46,24 @@ fn lint_clip(
 }
 ```
 
+Byte-surgical repairs are selected through `FixSession`, so composing
+repairs only parses and writes the container once:
+
+```rust,no_run
+fn repair_quaternions(
+    input: &std::path::Path,
+    output: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use animsmith_gltf::fix::{FixSession, Repair};
+
+    let mut session = FixSession::read(input)?;
+    session.apply(Repair::QuatNorm);
+    session.apply(Repair::QuatFlip);
+    session.write(input, output)?;
+    Ok(())
+}
+```
+
 ## Feature Flags
 
 This crate has no public feature flags. In the `animsmith` CLI, glTF

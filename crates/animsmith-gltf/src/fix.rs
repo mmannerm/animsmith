@@ -55,7 +55,40 @@ impl FixReport {
     }
 }
 
+/// Byte-surgical repair to run on a [`FixSession`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Repair {
+    /// Normalize finite, non-zero LINEAR/STEP rotation keys.
+    QuatNorm,
+    /// Hemisphere-normalize adjacent rotation keys.
+    QuatFlip,
+}
+
+impl Repair {
+    /// Every repair supported by this crate.
+    pub const ALL: &'static [Self] = &[Self::QuatNorm, Self::QuatFlip];
+
+    /// Stable repair id, matching the CLI `--repair` value and the
+    /// corresponding check id.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::QuatNorm => "quat-norm",
+            Self::QuatFlip => "quat-flip",
+        }
+    }
+
+    /// Parse a stable repair id.
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|repair| repair.id() == id)
+    }
+}
+
 /// Parsed input plus mutable buffer bytes for one `fix` run.
+///
+/// Use [`FixSession::apply`] to compose repairs in memory before a
+/// single write, or [`FixSession::apply_to_path`] /
+/// [`FixSession::inspect`] for one-shot path-based use.
 pub struct FixSession {
     original: Vec<u8>,
     gltf: gltf::Gltf,
@@ -86,8 +119,36 @@ impl FixSession {
         })
     }
 
-    /// Normalize every repairable finite, non-zero rotation key in memory.
-    pub fn fix_quat_norm(&mut self) -> FixReport {
+    /// Apply one repair in memory.
+    pub fn apply(&mut self, repair: Repair) -> FixReport {
+        match repair {
+            Repair::QuatNorm => self.apply_quat_norm(),
+            Repair::QuatFlip => self.apply_quat_flip(),
+        }
+    }
+
+    /// Apply one repair to `input`, writing the (otherwise
+    /// byte-identical) result to `output`. `input` and `output` may be
+    /// the same path.
+    pub fn apply_to_path(
+        input: &Path,
+        output: &Path,
+        repair: Repair,
+    ) -> Result<FixReport, FixError> {
+        let mut session = Self::read(input)?;
+        let report = session.apply(repair);
+        session.write(input, output)?;
+        Ok(report)
+    }
+
+    /// Inspect which tracks one repair would update without writing any
+    /// bytes.
+    pub fn inspect(input: &Path, repair: Repair) -> Result<FixReport, FixError> {
+        let mut session = Self::read(input)?;
+        Ok(session.apply(repair))
+    }
+
+    fn apply_quat_norm(&mut self) -> FixReport {
         self.repair_rotation_tracks(|buffer, layout| {
             if layout.cubic {
                 let needs_repair = (0..layout.keys).any(|k| {
@@ -130,8 +191,7 @@ impl FixSession {
         })
     }
 
-    /// Hemisphere-normalize every repairable rotation track in memory.
-    pub fn fix_quat_hemisphere(&mut self) -> FixReport {
+    fn apply_quat_flip(&mut self) -> FixReport {
         self.repair_rotation_tracks(|buffer, layout| {
             let mut prev: Option<[f32; 4]> = None;
             let mut flipped = 0usize;
@@ -306,42 +366,6 @@ fn write_rotation(buffer: &mut [u8], layout: RotationLayout, element: usize, q: 
         let o = at + c * 4;
         buffer[o..o + 4].copy_from_slice(&v.to_le_bytes());
     }
-}
-
-/// Hemisphere-normalize every rotation track of `input`, writing the
-/// (otherwise byte-identical) result to `output`. `input` and `output`
-/// may be the same path.
-pub fn fix_quat_hemisphere(input: &Path, output: &Path) -> Result<FixReport, FixError> {
-    let mut session = FixSession::read(input)?;
-    let report = session.fix_quat_hemisphere();
-    session.write(input, output)?;
-    Ok(report)
-}
-
-/// Unit-normalize every finite, non-zero LINEAR/STEP rotation key of
-/// `input`, writing the (otherwise byte-identical) result to `output`.
-/// `input` and `output` may be the same path.
-pub fn fix_quat_norm(input: &Path, output: &Path) -> Result<FixReport, FixError> {
-    let mut session = FixSession::read(input)?;
-    let report = session.fix_quat_norm();
-    session.write(input, output)?;
-    Ok(report)
-}
-
-/// Inspect which rotation tracks would be hemisphere-normalized without
-/// writing any bytes.
-pub fn inspect_quat_hemisphere(input: &Path) -> Result<FixReport, FixError> {
-    let mut session = FixSession::read(input)?;
-    let report = session.fix_quat_hemisphere();
-    Ok(report)
-}
-
-/// Inspect which rotation tracks would be unit-normalized without
-/// writing any bytes.
-pub fn inspect_quat_norm(input: &Path) -> Result<FixReport, FixError> {
-    let mut session = FixSession::read(input)?;
-    let report = session.fix_quat_norm();
-    Ok(report)
 }
 
 /// Reassemble the container with the original structure and the

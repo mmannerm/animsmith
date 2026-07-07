@@ -4,6 +4,7 @@
 use animsmith_core::model::*;
 use animsmith_core::profile::ResolvedRoles;
 use animsmith_core::{CheckCtx, Config, MetricGrids, mechanical_checks, run_checks};
+use animsmith_gltf::fix::{FixSession, Repair};
 use glam::{Quat, Vec3};
 
 fn clean_quats() -> Vec<Quat> {
@@ -139,7 +140,7 @@ fn fix_repairs_flips_losslessly_and_idempotently() {
     animsmith_gltf::write::write(&doc, &dirty).expect("writes");
     assert_eq!(lint_flip_count(&animsmith_gltf::load(&dirty).unwrap()), 1);
 
-    let report = animsmith_gltf::fix::fix_quat_hemisphere(&dirty, &fixed).expect("fixes");
+    let report = FixSession::apply_to_path(&dirty, &fixed, Repair::QuatFlip).expect("fixes");
     assert_eq!(report.total_fixed(), 2, "both flipped keys repaired");
     assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
 
@@ -193,7 +194,7 @@ fn fix_repairs_flips_losslessly_and_idempotently() {
 
     // Idempotent: a second pass changes nothing.
     let again = dir.path().join("again.glb");
-    let report2 = animsmith_gltf::fix::fix_quat_hemisphere(&fixed, &again).expect("re-fixes");
+    let report2 = FixSession::apply_to_path(&fixed, &again, Repair::QuatFlip).expect("re-fixes");
     assert_eq!(report2.total_fixed(), 0);
     assert_eq!(
         std::fs::read(&fixed).unwrap(),
@@ -210,7 +211,7 @@ fn fix_quat_norm_repairs_keys_losslessly_and_idempotently() {
     animsmith_gltf::write::write(&non_unit_doc(), &dirty).expect("writes");
     assert_eq!(lint_norm_count(&animsmith_gltf::load(&dirty).unwrap()), 1);
 
-    let report = animsmith_gltf::fix::fix_quat_norm(&dirty, &fixed).expect("normalizes");
+    let report = FixSession::apply_to_path(&dirty, &fixed, Repair::QuatNorm).expect("normalizes");
     assert_eq!(report.total_fixed(), 1);
     assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
 
@@ -228,7 +229,8 @@ fn fix_quat_norm_repairs_keys_losslessly_and_idempotently() {
     }
 
     let again = dir.path().join("again.glb");
-    let report2 = animsmith_gltf::fix::fix_quat_norm(&fixed, &again).expect("re-normalizes");
+    let report2 =
+        FixSession::apply_to_path(&fixed, &again, Repair::QuatNorm).expect("re-normalizes");
     assert_eq!(report2.total_fixed(), 0);
     assert_eq!(
         std::fs::read(&fixed).unwrap(),
@@ -260,7 +262,7 @@ fn fix_quat_norm_skips_cubic_tracks_to_preserve_tangents() {
     animsmith_gltf::write::write(&doc, &dirty).expect("writes");
     let before = std::fs::read(&dirty).unwrap();
 
-    let report = animsmith_gltf::fix::fix_quat_norm(&dirty, &fixed).expect("checks cubic");
+    let report = FixSession::apply_to_path(&dirty, &fixed, Repair::QuatNorm).expect("checks cubic");
     assert_eq!(report.total_fixed(), 0);
     assert!(
         report
@@ -284,7 +286,7 @@ fn fix_quat_norm_repairs_only_keys_past_the_tolerance_boundary() {
     let fixed = dir.path().join("fixed.glb");
     animsmith_gltf::write::write(&boundary_doc(), &dirty).expect("writes");
 
-    let report = animsmith_gltf::fix::fix_quat_norm(&dirty, &fixed).expect("normalizes");
+    let report = FixSession::apply_to_path(&dirty, &fixed, Repair::QuatNorm).expect("normalizes");
     assert_eq!(
         report.total_fixed(),
         1,
@@ -322,7 +324,7 @@ fn fix_quat_norm_pins_non_finite_skip_reason() {
     animsmith_gltf::write::write(&doc_with_quats(quats), &dirty).expect("writes");
     let before = std::fs::read(&dirty).unwrap();
 
-    let report = animsmith_gltf::fix::fix_quat_norm(&dirty, &fixed).expect("normalizes");
+    let report = FixSession::apply_to_path(&dirty, &fixed, Repair::QuatNorm).expect("normalizes");
     assert_eq!(
         report.total_fixed(),
         0,
@@ -356,7 +358,7 @@ fn fix_quat_norm_pins_zero_length_skip_reason() {
     animsmith_gltf::write::write(&doc_with_quats(quats), &dirty).expect("writes");
     let before = std::fs::read(&dirty).unwrap();
 
-    let report = animsmith_gltf::fix::fix_quat_norm(&dirty, &fixed).expect("normalizes");
+    let report = FixSession::apply_to_path(&dirty, &fixed, Repair::QuatNorm).expect("normalizes");
     assert_eq!(
         report.total_fixed(),
         0,
@@ -387,11 +389,11 @@ fn fix_session_composes_distinct_repairs_in_memory_before_writing() {
     let fixed = dir.path().join("fixed.glb");
     animsmith_gltf::write::write(&flipped_non_unit_doc(), &dirty).expect("writes");
 
-    let mut session = animsmith_gltf::fix::FixSession::read(&dirty).expect("opens session");
-    let norm = session.fix_quat_norm();
+    let mut session = FixSession::read(&dirty).expect("opens session");
+    let norm = session.apply(Repair::QuatNorm);
     assert_eq!(norm.total_fixed(), 1);
 
-    let flip = session.fix_quat_hemisphere();
+    let flip = session.apply(Repair::QuatFlip);
     assert_eq!(flip.total_fixed(), 2);
     assert!(!fixed.exists(), "session should not write until requested");
 
@@ -430,7 +432,7 @@ fn malformed_external_accessor_range_is_skipped_without_panic() {
     )
     .unwrap();
 
-    let report = animsmith_gltf::fix::inspect_quat_hemisphere(&gltf).expect("inspects");
+    let report = FixSession::inspect(&gltf, Repair::QuatFlip).expect("inspects");
     assert_eq!(report.total_fixed(), 0);
     assert!(
         report
@@ -458,7 +460,7 @@ fn unsafe_external_buffer_uri_is_rejected() {
     )
     .unwrap();
 
-    let err = animsmith_gltf::fix::inspect_quat_hemisphere(&gltf).expect_err("rejects URI");
+    let err = FixSession::inspect(&gltf, Repair::QuatFlip).expect_err("rejects URI");
     assert!(
         err.to_string().contains("unsafe external buffer URI"),
         "{err}"
@@ -470,7 +472,7 @@ fn in_place_fix_works() {
     let dir = unique_temp_dir("fix-test");
     let path = dir.path().join("inplace.glb");
     animsmith_gltf::write::write(&flipped_doc(), &path).expect("writes");
-    let report = animsmith_gltf::fix::fix_quat_hemisphere(&path, &path).expect("fixes");
+    let report = FixSession::apply_to_path(&path, &path, Repair::QuatFlip).expect("fixes");
     assert_eq!(report.total_fixed(), 2);
     assert_eq!(lint_flip_count(&animsmith_gltf::load(&path).unwrap()), 0);
 }
@@ -501,7 +503,7 @@ fn cubic_tracks_are_fixed_by_triplet() {
     animsmith_gltf::write::write(&doc, &path).expect("writes");
     assert_eq!(lint_flip_count(&animsmith_gltf::load(&path).unwrap()), 1);
 
-    let report = animsmith_gltf::fix::fix_quat_hemisphere(&path, &path).expect("fixes");
+    let report = FixSession::apply_to_path(&path, &path, Repair::QuatFlip).expect("fixes");
     assert_eq!(report.total_fixed(), 1, "one triplet repaired");
     assert!(report.skipped.is_empty(), "cubic no longer skipped");
 
