@@ -326,6 +326,47 @@ fn fix_dry_run_dedupes_non_adjacent_distinct_repairs_without_writing() {
 }
 
 #[test]
+fn fix_dry_run_labels_each_repair_with_its_action() {
+    // The distinct-repair fixture needs both a quat-norm (non-unit key)
+    // and a quat-flip (hemisphere) repair on the same bone, so the report
+    // prints one per-track line per repair. Each line must carry its own
+    // action suffix; a swapped or stale Repair::action() would pair the
+    // wrong verb with the id.
+    let dir = unique_temp_dir("fix-action-labels");
+    let input = dir.path().join("dirty.glb");
+    write_distinct_repair_glb(&input);
+
+    let output = animsmith()
+        .args([
+            "fix",
+            input.to_str().expect("utf-8 input path"),
+            "--dry-run",
+            "--repair",
+            "quat-norm,quat-flip",
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    let out = stdout(&output);
+    let norm_line = out
+        .lines()
+        .find(|l| l.contains("would fix[quat-norm]"))
+        .unwrap_or_else(|| panic!("no quat-norm track line:\n{out}"));
+    assert!(
+        norm_line.contains("unit-normalized"),
+        "quat-norm line must report unit-normalized: {norm_line}"
+    );
+    let flip_line = out
+        .lines()
+        .find(|l| l.contains("would fix[quat-flip]"))
+        .unwrap_or_else(|| panic!("no quat-flip track line:\n{out}"));
+    assert!(
+        flip_line.contains("hemisphere-normalized"),
+        "quat-flip line must report hemisphere-normalized: {flip_line}"
+    );
+}
+
+#[test]
 fn fix_dry_run_on_clean_input_exits_zero() {
     let dir = unique_temp_dir("fix-dry-run-clean");
     let input = dir.path().join("clean.glb");

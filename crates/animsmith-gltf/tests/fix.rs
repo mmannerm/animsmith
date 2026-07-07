@@ -80,6 +80,22 @@ fn non_unit_doc() -> Document {
     doc_with_quats(quats)
 }
 
+/// Rotation keys bracketing the fix's `QUAT_NORM_TOLERANCE` (1e-3 on
+/// `|len - 1|`, private to `fix.rs`) tightly: key 1 is `0.99e-3` off
+/// unit (just inside) and key 3 is `1.01e-3` off (just outside). The
+/// `1e-5` margin on each side pins the threshold to `1e-3 ± 1e-5`, so a
+/// materially wrong tolerance (e.g. `1.05e-3`) or a flipped comparison
+/// direction normalizes the wrong key and the test fails. (The exact
+/// `>` vs `>=` behaviour *at* `|len-1| == tol` is immaterial — a key
+/// sitting exactly on the tolerance is harmless either way — and not
+/// robustly representable in f32, so it is deliberately not pinned.)
+fn boundary_doc() -> Document {
+    let mut quats = clean_quats();
+    quats[1] = scaled_quat(quats[1], 1.0 + 0.99e-3); // |len-1| < tol: keep
+    quats[3] = scaled_quat(quats[3], 1.0 + 1.01e-3); // |len-1| > tol: fix
+    doc_with_quats(quats)
+}
+
 fn flipped_non_unit_doc() -> Document {
     let mut quats = clean_quats();
     quats[1] = scaled_quat(-quats[1], 1.2);
@@ -258,6 +274,109 @@ fn fix_quat_norm_skips_cubic_tracks_to_preserve_tangents() {
         before,
         std::fs::read(&fixed).unwrap(),
         "cubic quat-norm skip must not rewrite animation bytes"
+    );
+}
+
+#[test]
+fn fix_quat_norm_repairs_only_keys_past_the_tolerance_boundary() {
+    let dir = unique_temp_dir("quat-norm-boundary");
+    let dirty = dir.path().join("dirty.glb");
+    let fixed = dir.path().join("fixed.glb");
+    animsmith_gltf::write::write(&boundary_doc(), &dirty).expect("writes");
+
+    let report = animsmith_gltf::fix::fix_quat_norm(&dirty, &fixed).expect("normalizes");
+    assert_eq!(
+        report.total_fixed(),
+        1,
+        "only the key past the tolerance is repaired"
+    );
+
+    // The loader stores raw components, so lengths survive the round-trip.
+    let repaired = animsmith_gltf::load(&fixed).expect("reloads");
+    let TrackValues::Quats(quats) = &repaired.clips[0].tracks[0].values else {
+        panic!("rotation track expected");
+    };
+    // Just-inside key keeps its authored (non-unit) length; a
+    // wrongly-widened tolerance or flipped comparison would normalize it
+    // (dropping the length to 1.0, ~1e-3 away — far outside this 1e-5 band).
+    assert!(
+        (quats[1].length() - (1.0 + 0.99e-3)).abs() < 1e-5,
+        "just-inside key must be left untouched: len {}",
+        quats[1].length()
+    );
+    // Just-outside key is scaled back to unit length.
+    assert!(
+        (quats[3].length() - 1.0).abs() < 1e-5,
+        "just-outside key must be normalized: len {}",
+        quats[3].length()
+    );
+}
+
+#[test]
+fn fix_quat_norm_pins_non_finite_skip_reason() {
+    let mut quats = clean_quats();
+    quats[2] = Quat::from_xyzw(f32::NAN, 0.0, 0.0, 0.0);
+    let dir = unique_temp_dir("quat-norm-nonfinite");
+    let dirty = dir.path().join("dirty.glb");
+    let fixed = dir.path().join("fixed.glb");
+    animsmith_gltf::write::write(&doc_with_quats(quats), &dirty).expect("writes");
+    let before = std::fs::read(&dirty).unwrap();
+
+    let report = animsmith_gltf::fix::fix_quat_norm(&dirty, &fixed).expect("normalizes");
+    assert_eq!(
+        report.total_fixed(),
+        0,
+        "a non-finite key is safely skipped, never scaled"
+    );
+    assert!(
+        report
+            .skipped
+            .iter()
+            .any(|reason| reason.contains("non-finite rotation key")),
+        "skipped: {:?}",
+        report.skipped
+    );
+    // The skip must be byte-surgical: a skipped key is never rewritten,
+    // so the output is identical to the input (never divided by its
+    // non-finite length, which would corrupt the key).
+    assert_eq!(
+        before,
+        std::fs::read(&fixed).unwrap(),
+        "skipping a non-finite key must not rewrite any bytes"
+    );
+}
+
+#[test]
+fn fix_quat_norm_pins_zero_length_skip_reason() {
+    let mut quats = clean_quats();
+    quats[2] = Quat::from_xyzw(0.0, 0.0, 0.0, 0.0);
+    let dir = unique_temp_dir("quat-norm-zerolen");
+    let dirty = dir.path().join("dirty.glb");
+    let fixed = dir.path().join("fixed.glb");
+    animsmith_gltf::write::write(&doc_with_quats(quats), &dirty).expect("writes");
+    let before = std::fs::read(&dirty).unwrap();
+
+    let report = animsmith_gltf::fix::fix_quat_norm(&dirty, &fixed).expect("normalizes");
+    assert_eq!(
+        report.total_fixed(),
+        0,
+        "a zero-length key cannot be normalized, so it is skipped"
+    );
+    assert!(
+        report
+            .skipped
+            .iter()
+            .any(|reason| reason.contains("zero-length rotation key")),
+        "skipped: {:?}",
+        report.skipped
+    );
+    // The skip must be byte-surgical: a zero-length key is never
+    // rewritten (dividing by its zero length would produce NaN), so the
+    // output stays identical to the input.
+    assert_eq!(
+        before,
+        std::fs::read(&fixed).unwrap(),
+        "skipping a zero-length key must not rewrite any bytes"
     );
 }
 
