@@ -249,26 +249,26 @@ fn loader_rejects_out_of_range_animation_target_node() {
     assert!(err.to_string().contains("out of range"), "{err}");
 }
 
-/// A node hierarchy with a cycle: node 0 (a root) parents node 1, and
-/// A back-edge cycle: root 0 → 1 → 2, and node 2 lists node 1 (its own
-/// ancestor) as a child. glTF requires a forest; without the DFS visited
-/// guard this re-descends 1→2→1→2… forever. The back-edge (not a mere
-/// self-loop) is what actually exercises the re-emission the guard stops.
+/// A pure node cycle with no root: node 0 lists node 1 as its child and
+/// node 1 lists node 0 back. Neither node is a root, so the DFS never
+/// descends into the cycle at all — both nodes stay unreached and the
+/// post-DFS reachability check rejects the graph (`LoadError::Topology`)
+/// rather than dropping the unreachable subtree and silently loading a
+/// bone-less skeleton.
 const NODE_CYCLE_GLTF: &str = r#"{
   "asset": { "version": "2.0" },
   "nodes": [
-    { "name": "root", "children": [1] },
-    { "name": "mid", "children": [2] },
-    { "name": "leaf", "children": [1] }
+    { "name": "a", "children": [1] },
+    { "name": "b", "children": [0] }
   ],
-  "scenes": [{ "nodes": [0] }],
+  "scenes": [{ "nodes": [] }],
   "scene": 0
 }"#;
 
 /// Two roots both claim node 2 as a child — a node with two parents,
-/// which glTF forbids. A file-order "last parent wins" pass would record
-/// C's parent as B (emitted *after* C), silently breaking `sample_clip`'s
-/// ascending FK pass; the DFS records the parent it reached C through (A).
+/// which glTF forbids (the graph is no longer a forest). Recovering would
+/// force an arbitrary winner whose bone id could sort *after* the child,
+/// silently corrupting FK output, so the loader rejects it outright.
 const NODE_MULTIPARENT_GLTF: &str = r#"{
   "asset": { "version": "2.0" },
   "nodes": [
@@ -281,64 +281,83 @@ const NODE_MULTIPARENT_GLTF: &str = r#"{
 }"#;
 
 #[test]
-fn loader_terminates_on_node_cycle_without_ooming() {
+fn loader_rejects_cyclic_node_graph() {
     let dir = unique_temp_dir("node-cycle");
     let path = dir.join("cycle.gltf");
     std::fs::write(&path, NODE_CYCLE_GLTF).unwrap();
 
-    // The DFS must terminate: each node is emitted at most once, so the
-    // load succeeds with a bounded skeleton instead of allocating forever.
-    let doc = animsmith_gltf::load(&path).expect("cyclic hierarchy loads, bounded");
-    assert_eq!(
-        doc.skeleton.bones.len(),
-        3,
-        "each node becomes one bone once"
-    );
-    // Every parent must sort before its child — the invariant sample_clip's
-    // single ascending FK pass relies on.
-    for (id, bone) in doc.skeleton.bones.iter().enumerate() {
-        if let Some(p) = bone.parent {
-            assert!(
-                p < id,
-                "bone {id} ({}) parent {p} must precede it",
-                bone.name
-            );
-        }
-    }
+    // A rootless cycle is never descended into; it is caught as unreached
+    // by the post-DFS reachability check and rejected, not loaded as a
+    // partial skeleton (invariant-1).
+    let err = animsmith_gltf::load(&path).expect_err("cyclic node graph must be rejected");
+    assert!(matches!(err, LoadError::Topology(_)), "{err}");
+    assert!(err.to_string().contains("cycle"), "{err}");
 }
 
 #[test]
-fn loader_orders_multiparent_node_parent_before_child() {
+fn loader_rejects_multiparent_node_graph() {
     let dir = unique_temp_dir("multiparent");
     let path = dir.join("dag.gltf");
     std::fs::write(&path, NODE_MULTIPARENT_GLTF).unwrap();
 
-    let doc = animsmith_gltf::load(&path).expect("multi-parent hierarchy loads, bounded");
-    // Every bone's parent id is strictly below its own — otherwise FK reads
-    // an unwritten (identity) parent transform and silently corrupts output.
-    for (id, bone) in doc.skeleton.bones.iter().enumerate() {
-        if let Some(p) = bone.parent {
-            assert!(
-                p < id,
-                "bone {id} ({}) parent {p} must precede it",
-                bone.name
-            );
-        }
-    }
-    // C is reached through the first root (A) in file order, deterministically.
-    let c = doc
-        .skeleton
-        .bones
-        .iter()
-        .position(|b| b.name == "C")
-        .expect("C present");
-    let a = doc
-        .skeleton
-        .bones
-        .iter()
-        .position(|b| b.name == "A")
-        .expect("A present");
-    assert_eq!(doc.skeleton.bones[c].parent, Some(a), "C parents to A");
+    // A node with two parents is not a forest; rejecting it avoids an
+    // arbitrary parent choice that would silently corrupt FK output.
+    let err = animsmith_gltf::load(&path).expect_err("multi-parent node graph must be rejected");
+    assert!(matches!(err, LoadError::Topology(_)), "{err}");
+    assert!(err.to_string().contains("one parent per node"), "{err}");
+}
+
+/// A cycle *entered* from a root: root(0) → A(1) → B(2), and B lists A as
+/// its child (a back-edge). Unlike the rootless cycle, the entry node A is
+/// reachable — but the back-edge makes A a child of both the root and B,
+/// so this is caught as a *duplicate parent*, not as an unreachable cycle.
+/// This pins the loader's documented claim that a root-entered cycle trips
+/// the duplicate-parent check first; without a fixture that distinction is
+/// asserted only in a comment.
+const NODE_ROOT_ENTERED_CYCLE_GLTF: &str = r#"{
+  "asset": { "version": "2.0" },
+  "nodes": [
+    { "name": "root", "children": [1] },
+    { "name": "a", "children": [2] },
+    { "name": "b", "children": [1] }
+  ],
+  "scenes": [{ "nodes": [0] }],
+  "scene": 0
+}"#;
+
+/// The degenerate cycle: a single node listing itself as its own child. It
+/// has a parent (itself) so it is not a root, and no root reaches it, so it
+/// is caught by the reachability check like any other cycle.
+const NODE_SELF_LOOP_GLTF: &str = r#"{
+  "asset": { "version": "2.0" },
+  "nodes": [{ "name": "ouroboros", "children": [0] }],
+  "scenes": [{ "nodes": [] }],
+  "scene": 0
+}"#;
+
+#[test]
+fn loader_rejects_root_entered_cycle_as_duplicate_parent() {
+    let dir = unique_temp_dir("root-entered-cycle");
+    let path = dir.join("back-edge.gltf");
+    std::fs::write(&path, NODE_ROOT_ENTERED_CYCLE_GLTF).unwrap();
+
+    // The back-edge gives the entry node a second parent, so the loader
+    // diagnoses it as a duplicate parent (not a bare cycle) — and either
+    // way must reject, never loop or load a corrupt skeleton (invariant-1).
+    let err = animsmith_gltf::load(&path).expect_err("root-entered cycle must be rejected");
+    assert!(matches!(err, LoadError::Topology(_)), "{err}");
+    assert!(err.to_string().contains("one parent per node"), "{err}");
+}
+
+#[test]
+fn loader_rejects_self_loop_node() {
+    let dir = unique_temp_dir("self-loop");
+    let path = dir.join("selfloop.gltf");
+    std::fs::write(&path, NODE_SELF_LOOP_GLTF).unwrap();
+
+    let err = animsmith_gltf::load(&path).expect_err("self-loop node must be rejected");
+    assert!(matches!(err, LoadError::Topology(_)), "{err}");
+    assert!(err.to_string().contains("cycle"), "{err}");
 }
 
 fn glb_with_declared_length(total_len: u32) -> Vec<u8> {

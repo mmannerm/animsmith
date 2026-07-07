@@ -99,11 +99,14 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: asset files or prior `
   feature, default-on in the released binary).
 - **Malformation policy**: *structural* malformation — keyframe/value
   count mismatch, zero-key channels, absolute or escaping external
-  buffer URIs — is rejected at load (operator error, exit 2; run
-  glTF-Validator for the details). *Semantic* defects — NaN times or
-  values, non-unit quaternions, hemisphere flips, seam pops — load fine
-  and are judged by the checks; sampling is panic-free under them by
-  construction.
+  buffer URIs, non-forest node graphs (cycles or a node with two
+  parents) — is rejected at load (operator error, exit 2; run
+  glTF-Validator for the details). Recovering a non-forest graph would
+  force an arbitrary parent choice or silently drop a cyclic subtree, so
+  the loader rejects rather than repairs (decision recorded for #92).
+  *Semantic* defects — NaN times or values, non-unit quaternions,
+  hemisphere flips, seam pops — load fine and are judged by the checks;
+  sampling is panic-free under them by construction.
 - `fix` intentionally requires either `-o/--output` or `--in-place` for
   writes; `--dry-run` is the check mode — it inspects only and exits `1`
   when repairs are pending, mirroring `lint`. Repairs are addressed by
