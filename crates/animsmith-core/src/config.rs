@@ -75,10 +75,12 @@ pub struct ClipExpectations {
     /// Declared locomotion speed (m/s) carried by the clip's root
     /// motion.
     pub speed_mps: Option<Pinned>,
-    /// The clip is authored in place (no net root travel). Reserved for
-    /// the `in-place` check (P1).
+    /// The clip is authored in place (no net root travel); consumed by
+    /// the `in-place` check (and exempts an in-place clip from
+    /// `root-motion-speed`).
     pub in_place: Option<bool>,
-    /// Authored frame rate. Reserved for fps expectations (P1).
+    /// Authored frame rate; consumed by the `fps` check (keys must land
+    /// on the `1/fps` grid).
     pub fps: Option<f64>,
     /// Bones that must carry keyframes and actually move
     /// (`missing-bones` presence + `frozen-bone` rotation floor).

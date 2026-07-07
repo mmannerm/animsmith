@@ -14,10 +14,11 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
-fn unique_temp_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("animsmith-cli-{name}-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("creates temp dir");
-    dir
+fn unique_temp_dir(name: &str) -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix(&format!("animsmith-cli-{name}-"))
+        .tempdir()
+        .expect("creates temp dir")
 }
 
 /// Analytic rotation sequence: consecutive y-rotations 0.4 rad apart,
@@ -208,7 +209,7 @@ fn fix_requires_an_explicit_write_target() {
 #[test]
 fn fix_dry_run_reports_without_writing() {
     let dir = unique_temp_dir("fix-dry-run");
-    let input = dir.join("dirty.glb");
+    let input = dir.path().join("dirty.glb");
     write_flipped_glb(&input);
     let before = std::fs::read(&input).expect("reads input");
 
@@ -243,7 +244,7 @@ fn fix_dry_run_reports_without_writing() {
 #[test]
 fn fix_dry_run_dedupes_duplicate_repairs() {
     let dir = unique_temp_dir("fix-dry-run-dedup");
-    let input = dir.join("dirty.glb");
+    let input = dir.path().join("dirty.glb");
     write_flipped_glb(&input);
 
     let output = animsmith()
@@ -279,7 +280,7 @@ fn fix_dry_run_dedupes_duplicate_repairs() {
 #[test]
 fn fix_dry_run_dedupes_non_adjacent_distinct_repairs_without_writing() {
     let dir = unique_temp_dir("fix-dry-run-compose");
-    let input = dir.join("dirty.glb");
+    let input = dir.path().join("dirty.glb");
     write_distinct_repair_glb(&input);
     let before = std::fs::read(&input).expect("reads input");
 
@@ -327,7 +328,7 @@ fn fix_dry_run_dedupes_non_adjacent_distinct_repairs_without_writing() {
 #[test]
 fn fix_dry_run_on_clean_input_exits_zero() {
     let dir = unique_temp_dir("fix-dry-run-clean");
-    let input = dir.join("clean.glb");
+    let input = dir.path().join("clean.glb");
     write_clean_glb(&input);
 
     let output = animsmith()
@@ -361,7 +362,7 @@ fn fix_dry_run_skipped_tracks_do_not_fail_the_check() {
     // tracks print loudly but exit 0; detection-only gating is lint's
     // job (the quat-flip check).
     let dir = unique_temp_dir("fix-dry-run-skip");
-    let input = dir.join("dirty.gltf");
+    let input = dir.path().join("dirty.gltf");
     animsmith_gltf::write::write(&sway_doc(true), &input).expect("writes gltf fixture");
 
     let output = animsmith()
@@ -413,8 +414,8 @@ fn fix_dry_run_conflicts_with_write_targets() {
 #[test]
 fn fix_default_repairs_write_output() {
     let dir = unique_temp_dir("fix-output");
-    let input = dir.join("dirty.glb");
-    let output_path = dir.join("fixed.glb");
+    let input = dir.path().join("dirty.glb");
+    let output_path = dir.path().join("fixed.glb");
     write_flipped_glb(&input);
 
     let output = animsmith()
@@ -445,8 +446,8 @@ fn fix_default_repairs_write_output() {
 #[test]
 fn fix_write_composes_distinct_repairs() {
     let dir = unique_temp_dir("fix-output-compose");
-    let input = dir.join("dirty.glb");
-    let output_path = dir.join("fixed.glb");
+    let input = dir.path().join("dirty.glb");
+    let output_path = dir.path().join("fixed.glb");
     write_distinct_repair_glb(&input);
 
     assert_eq!(
@@ -512,8 +513,8 @@ fn fix_write_composes_distinct_repairs() {
 #[test]
 fn fix_write_dedupes_duplicate_repairs() {
     let dir = unique_temp_dir("fix-output-dedup");
-    let input = dir.join("dirty.glb");
-    let output_path = dir.join("fixed.glb");
+    let input = dir.path().join("dirty.glb");
+    let output_path = dir.path().join("fixed.glb");
     write_flipped_glb(&input);
 
     let output = animsmith()
@@ -551,7 +552,7 @@ fn fix_write_dedupes_duplicate_repairs() {
 #[test]
 fn fix_in_place_writes_selected_repair() {
     let dir = unique_temp_dir("fix-in-place");
-    let input = dir.join("dirty.glb");
+    let input = dir.path().join("dirty.glb");
     write_flipped_glb(&input);
     assert_eq!(
         animsmith_gltf::fix::inspect_quat_hemisphere(&input)
@@ -732,7 +733,7 @@ fn diff_json_uses_versioned_envelope() {
 fn diff_accepts_single_file_measure_report_round_trip() {
     let dir = unique_temp_dir("diff-round-trip");
     let asset = fixture("rig.gltf");
-    let report_path = dir.join("measure.json");
+    let report_path = dir.path().join("measure.json");
 
     let measured = animsmith()
         .args([
@@ -769,8 +770,8 @@ fn diff_accepts_single_file_measure_report_round_trip() {
 #[test]
 fn diff_accepts_measurement_json_and_exits_one_for_deltas() {
     let dir = unique_temp_dir("diff-json-deltas");
-    let before = dir.join("before.json");
-    let after = dir.join("after.json");
+    let before = dir.path().join("before.json");
+    let after = dir.path().join("after.json");
     write_json(&before, &measurement_report(1.0));
     write_json(&after, &measurement_report(1.1));
 
@@ -803,8 +804,8 @@ fn diff_accepts_measurement_json_and_exits_one_for_deltas() {
 #[test]
 fn diff_accepts_measurement_json_and_exits_zero_without_deltas() {
     let dir = unique_temp_dir("diff-json-clean");
-    let before = dir.join("before.json");
-    let after = dir.join("after.json");
+    let before = dir.path().join("before.json");
+    let after = dir.path().join("after.json");
     let report = measurement_report(1.0);
     write_json(&before, &report);
     write_json(&after, &report);
@@ -832,8 +833,8 @@ fn diff_text_format_renders_deltas_and_clean_summary() {
     // exit-code contract tests deliberately do NOT string-match this
     // prose — pinning the renderer is this test's job, not theirs.)
     let dir = unique_temp_dir("diff-text-format");
-    let before = dir.join("before.json");
-    let after = dir.join("after.json");
+    let before = dir.path().join("before.json");
+    let after = dir.path().join("after.json");
     write_json(&before, &measurement_report(1.0));
     write_json(&after, &measurement_report(1.1));
 
@@ -875,7 +876,7 @@ fn diff_text_format_renders_deltas_and_clean_summary() {
 #[test]
 fn diff_rejects_json_without_schema_version() {
     let dir = unique_temp_dir("diff-bare-map");
-    let bare = dir.join("bare.json");
+    let bare = dir.path().join("bare.json");
     // A bare measurement map (a pre-publish development shape) has no
     // schema_version and must be rejected with regenerate guidance.
     std::fs::write(&bare, r#"{"walk": {"duration_s": 1.0}}"#).expect("writes bare map");
@@ -910,7 +911,7 @@ fn diff_rejects_json_without_schema_version() {
 #[test]
 fn diff_rejects_unsupported_schema_versions() {
     let dir = unique_temp_dir("diff-future-schema");
-    let future = dir.join("future.json");
+    let future = dir.path().join("future.json");
     std::fs::write(
         &future,
         r#"{"schema_version": 99, "files": [{"measurements": {}}]}"#,
@@ -942,7 +943,7 @@ fn diff_rejects_unsupported_schema_versions() {
 #[test]
 fn diff_rejects_envelope_without_files() {
     let dir = unique_temp_dir("diff-no-files");
-    let report = dir.join("no-files.json");
+    let report = dir.path().join("no-files.json");
     std::fs::write(&report, r#"{"schema_version": 1}"#).expect("writes report");
 
     let output = animsmith()
@@ -970,7 +971,7 @@ fn diff_rejects_envelope_without_files() {
 #[test]
 fn lint_counts_severities_in_summary_and_text() {
     let dir = unique_temp_dir("lint-severity-counts");
-    let input = dir.join("dirty.glb");
+    let input = dir.path().join("dirty.glb");
     write_flipped_glb(&input);
 
     // JSON: the flipped fixture produces exactly one quat-flip warning;
@@ -1077,9 +1078,9 @@ const NAN_TIME_GLTF: &str = r#"{
 #[test]
 fn malformed_track_counts_are_operator_errors_everywhere() {
     let dir = unique_temp_dir("count-mismatch-cli");
-    let input = dir.join("bad.gltf");
+    let input = dir.path().join("bad.gltf");
     std::fs::write(&input, COUNT_MISMATCH_GLTF).expect("writes fixture");
-    let out = dir.join("out.glb");
+    let out = dir.path().join("out.glb");
 
     let commands: [&[&str]; 3] = [
         &["measure", input.to_str().expect("utf-8 path")],
@@ -1111,7 +1112,7 @@ fn malformed_track_counts_are_operator_errors_everywhere() {
 #[test]
 fn nan_key_times_lint_as_errors_and_never_crash() {
     let dir = unique_temp_dir("nan-time-cli");
-    let input = dir.join("nan.gltf");
+    let input = dir.path().join("nan.gltf");
     std::fs::write(&input, NAN_TIME_GLTF).expect("writes fixture");
 
     // measure survives (exit 0): NaN is a semantic defect for lint to
@@ -1181,7 +1182,7 @@ fn lint_clean_file_exits_zero() {
 #[test]
 fn lint_warnings_pass_but_deny_warnings_fails() {
     let dir = unique_temp_dir("deny-warnings");
-    let input = dir.join("flipped.glb");
+    let input = dir.path().join("flipped.glb");
     write_flipped_glb(&input); // quat-flip → warning
     let path = input.to_str().expect("utf-8 path");
 
@@ -1216,7 +1217,7 @@ fn lint_warnings_pass_but_deny_warnings_fails() {
 #[test]
 fn lint_allow_suppresses_a_check() {
     let dir = unique_temp_dir("allow");
-    let input = dir.join("flipped.glb");
+    let input = dir.path().join("flipped.glb");
     write_flipped_glb(&input);
     let path = input.to_str().expect("utf-8 path");
 
@@ -1303,7 +1304,7 @@ fn lint_missing_file_is_operator_error() {
 #[test]
 fn lint_bad_config_is_operator_error() {
     let dir = unique_temp_dir("bad-config");
-    let config = write_config(&dir, "bad.toml", "not valid = = toml [[[\n");
+    let config = write_config(dir.path(), "bad.toml", "not valid = = toml [[[\n");
     let output = animsmith()
         .args([
             "--config",
@@ -1333,11 +1334,11 @@ fn lint_bad_config_is_operator_error() {
 #[test]
 fn config_toml_path_drives_check_behaviour() {
     let dir = unique_temp_dir("config-toml");
-    let input = dir.join("flipped.glb");
+    let input = dir.path().join("flipped.glb");
     write_flipped_glb(&input);
     let path = input.to_str().expect("utf-8 path");
     let config = write_config(
-        &dir,
+        dir.path(),
         "animsmith.toml",
         "[checks.quat-flip]\nseverity = \"off\"\n",
     );

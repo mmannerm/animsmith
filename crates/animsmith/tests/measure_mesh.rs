@@ -57,9 +57,8 @@ fn write_skinned_glb(path: &std::path::Path) {
 
 #[test]
 fn cli_measure_emits_mesh_measurements() {
-    let dir = std::env::temp_dir().join(format!("animsmith-measure-mesh-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let input = dir.join("skinned.glb");
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("skinned.glb");
     write_skinned_glb(&input);
 
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_animsmith"))
@@ -90,9 +89,8 @@ fn cli_measure_emits_mesh_measurements() {
 /// is omitted when empty, so asset-less inputs keep their v1 output.
 #[test]
 fn cli_measure_omits_meshes_when_no_geometry() {
-    let dir = std::env::temp_dir().join(format!("animsmith-measure-nomesh-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let input = dir.join("skeleton.glb");
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("skeleton.glb");
     let doc = Document {
         skeleton: Skeleton {
             bones: vec![Bone {
@@ -129,9 +127,8 @@ fn cli_measure_omits_meshes_when_no_geometry() {
 /// count still reports.
 #[test]
 fn cli_measure_omits_aabb_for_non_finite_geometry() {
-    let dir = std::env::temp_dir().join(format!("animsmith-measure-nan-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let input = dir.join("nan.glb");
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("nan.glb");
     let doc = Document {
         skeleton: Skeleton {
             bones: vec![Bone {

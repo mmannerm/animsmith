@@ -19,10 +19,9 @@ impl RootMotionSpeed {
     /// Clips whose declared `speed_mps` this check judges (root-motion
     /// clips — treadmill speeds belong to `foot-slide`).
     fn has_pending_work(ctx: &CheckCtx) -> bool {
-        ctx.doc.clips.iter().any(|c| {
-            let e = ctx.config.expectations_for(&c.name);
-            e.speed_mps.is_some() && e.in_place != Some(true)
-        })
+        ctx.clip_expectations()
+            .iter()
+            .any(|e| e.speed_mps.is_some() && e.in_place != Some(true))
     }
 }
 
@@ -41,7 +40,7 @@ impl Check for RootMotionSpeed {
 
     fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
         for (index, clip) in ctx.doc.clips.iter().enumerate() {
-            let expectations = ctx.config.expectations_for(&clip.name);
+            let expectations = ctx.expectations(index);
             let Some(pin) = expectations.speed_mps else {
                 continue;
             };

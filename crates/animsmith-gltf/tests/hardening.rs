@@ -9,10 +9,11 @@ use animsmith_core::{CheckCtx, Config, MetricGrids, Severity, mechanical_checks,
 use animsmith_gltf::LoadError;
 use std::path::{Path, PathBuf};
 
-fn unique_temp_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("animsmith-harden-{name}-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+fn unique_temp_dir(name: &str) -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix(&format!("animsmith-harden-{name}-"))
+        .tempdir()
+        .unwrap()
 }
 
 /// 3 keyframe times but only 2 VEC4 output values, via a data-URI
@@ -111,7 +112,7 @@ const ZERO_KEY_GLTF: &str = r#"{
 #[test]
 fn loader_rejects_times_values_count_mismatch() {
     let dir = unique_temp_dir("count-mismatch");
-    let path = dir.join("bad.gltf");
+    let path = dir.path().join("bad.gltf");
     std::fs::write(&path, COUNT_MISMATCH_GLTF).unwrap();
 
     let err = animsmith_gltf::load(&path).expect_err("mismatch must be rejected");
@@ -126,7 +127,7 @@ fn loader_rejects_times_values_count_mismatch() {
 #[test]
 fn loader_rejects_cubic_triplet_count_mismatch() {
     let dir = unique_temp_dir("cubic-count-mismatch");
-    let path = dir.join("bad-cubic.gltf");
+    let path = dir.path().join("bad-cubic.gltf");
     std::fs::write(&path, CUBIC_COUNT_MISMATCH_GLTF).unwrap();
 
     let err = animsmith_gltf::load(&path).expect_err("cubic mismatch must be rejected");
@@ -142,7 +143,7 @@ fn loader_rejects_cubic_triplet_count_mismatch() {
 #[test]
 fn loader_rejects_zero_key_channel() {
     let dir = unique_temp_dir("zero-key");
-    let path = dir.join("empty.gltf");
+    let path = dir.path().join("empty.gltf");
     std::fs::write(&path, ZERO_KEY_GLTF).unwrap();
 
     let err = animsmith_gltf::load(&path).expect_err("zero-key channel must be rejected");
@@ -182,7 +183,7 @@ fn gltf_with_channel_target(path: &str, node: usize) -> String {
 #[test]
 fn loader_rejects_unknown_animation_target_path() {
     let dir = unique_temp_dir("bad-target-path");
-    let path = dir.join("bad-path.gltf");
+    let path = dir.path().join("bad-path.gltf");
     std::fs::write(&path, gltf_with_channel_target("wobble", 0)).unwrap();
 
     // Would otherwise panic in gltf's `Target::property().unwrap()`.
@@ -191,7 +192,7 @@ fn loader_rejects_unknown_animation_target_path() {
     assert!(err.to_string().contains("unknown target path"), "{err}");
 
     // The fix path shares the guard.
-    let out = dir.join("out.gltf");
+    let out = dir.path().join("out.gltf");
     let err =
         animsmith_gltf::fix::fix_quat_hemisphere(&path, &out).expect_err("fix must reject it too");
     assert!(
@@ -227,7 +228,7 @@ const U32_ROTATION_OUTPUT_GLTF: &str = r#"{
 #[test]
 fn loader_rejects_unsigned_int_animation_output() {
     let dir = unique_temp_dir("u32-output");
-    let path = dir.join("u32.gltf");
+    let path = dir.path().join("u32.gltf");
     std::fs::write(&path, U32_ROTATION_OUTPUT_GLTF).unwrap();
 
     // Would otherwise hit gltf's `read_outputs` `unreachable!()`.
@@ -239,7 +240,7 @@ fn loader_rejects_unsigned_int_animation_output() {
 #[test]
 fn loader_rejects_out_of_range_animation_target_node() {
     let dir = unique_temp_dir("bad-target-node");
-    let path = dir.join("bad-node.gltf");
+    let path = dir.path().join("bad-node.gltf");
     // Only node 0 exists; target node 9 is out of range.
     std::fs::write(&path, gltf_with_channel_target("rotation", 9)).unwrap();
 
@@ -283,7 +284,7 @@ const NODE_MULTIPARENT_GLTF: &str = r#"{
 #[test]
 fn loader_rejects_cyclic_node_graph() {
     let dir = unique_temp_dir("node-cycle");
-    let path = dir.join("cycle.gltf");
+    let path = dir.path().join("cycle.gltf");
     std::fs::write(&path, NODE_CYCLE_GLTF).unwrap();
 
     // A rootless cycle is never descended into; it is caught as unreached
@@ -297,7 +298,7 @@ fn loader_rejects_cyclic_node_graph() {
 #[test]
 fn loader_rejects_multiparent_node_graph() {
     let dir = unique_temp_dir("multiparent");
-    let path = dir.join("dag.gltf");
+    let path = dir.path().join("dag.gltf");
     std::fs::write(&path, NODE_MULTIPARENT_GLTF).unwrap();
 
     // A node with two parents is not a forest; rejecting it avoids an
@@ -381,7 +382,7 @@ fn loader_rejects_glb_length_field_far_past_eof() {
     // Declared ~2.5 GiB against a 54-byte file.
     let glb = glb_with_declared_length(0x9800_0538);
     let dir = unique_temp_dir("glb-length-oom");
-    let path = dir.join("huge-length.glb");
+    let path = dir.path().join("huge-length.glb");
     std::fs::write(&path, &glb).unwrap();
 
     // No panic, no multi-gigabyte allocation — just a LoadError. The
@@ -401,7 +402,7 @@ fn loader_rejects_glb_length_field_far_past_eof() {
 fn loader_rejects_glb_length_field_below_header_size() {
     let glb = glb_with_declared_length(0); // 0 - 12 would underflow
     let dir = unique_temp_dir("glb-length-underflow");
-    let path = dir.join("tiny-length.glb");
+    let path = dir.path().join("tiny-length.glb");
     std::fs::write(&path, &glb).unwrap();
 
     let err = animsmith_gltf::load(&path).expect_err("sub-header GLB length must be rejected");
@@ -409,7 +410,7 @@ fn loader_rejects_glb_length_field_below_header_size() {
     assert!(err.to_string().contains("GLB header declares"), "{err}");
 
     // The fix path shares the same guard.
-    let out = dir.join("out.glb");
+    let out = dir.path().join("out.glb");
     let err =
         animsmith_gltf::fix::fix_quat_hemisphere(&path, &out).expect_err("fix must reject it too");
     assert!(
@@ -442,7 +443,7 @@ fn loader_rejects_unsafe_external_buffer_uris() {
         ("backslash", "..\\\\escape.bin"),
         ("bare-dotdot", ".."),
     ] {
-        let path = dir.join(format!("{label}.gltf"));
+        let path = dir.path().join(format!("{label}.gltf"));
         std::fs::write(&path, gltf_with_buffer_uri(uri)).unwrap();
         let err = animsmith_gltf::load(&path).expect_err("unsafe URI must be rejected");
         assert!(
@@ -459,7 +460,7 @@ fn loader_rejects_unsafe_external_buffer_uris() {
 #[test]
 fn nan_key_time_measures_without_panicking_and_lints_as_error() {
     let dir = unique_temp_dir("nan-time");
-    let path = dir.join("nan.gltf");
+    let path = dir.path().join("nan.gltf");
     std::fs::write(&path, NAN_TIME_GLTF).unwrap();
 
     // The NaN is semantic, not structural: the file loads, sampling
@@ -543,7 +544,7 @@ fn write_glb_with_external_buffer(dir: &Path) -> PathBuf {
 #[test]
 fn glb_external_buffer_fix_writes_the_buffer_not_a_false_success() {
     let dir = unique_temp_dir("glb-ext-fix");
-    let glb = write_glb_with_external_buffer(&dir);
+    let glb = write_glb_with_external_buffer(dir.path());
     assert_eq!(
         animsmith_gltf::fix::inspect_quat_hemisphere(&glb)
             .expect("inspects")
@@ -553,7 +554,7 @@ fn glb_external_buffer_fix_writes_the_buffer_not_a_false_success() {
 
     // Fix into a DIFFERENT directory: the repaired ext.bin must land
     // next to the output, or the "fixed" report is a lie.
-    let out_dir = dir.join("out");
+    let out_dir = dir.path().join("out");
     std::fs::create_dir_all(&out_dir).unwrap();
     let out_glb = out_dir.join("fixed.glb");
     let report = animsmith_gltf::fix::fix_quat_hemisphere(&glb, &out_glb).expect("fixes");

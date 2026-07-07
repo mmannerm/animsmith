@@ -23,10 +23,9 @@ impl Check for LoopSeam {
 
     fn readiness(&self, ctx: &CheckCtx) -> Readiness {
         let any_loop = ctx
-            .doc
-            .clips
+            .clip_expectations()
             .iter()
-            .any(|c| ctx.config.expectations_for(&c.name).looping == Some(true));
+            .any(|e| e.looping == Some(true));
         if any_loop {
             gait_readiness(ctx.roles)
         } else {
@@ -40,7 +39,7 @@ impl Check for LoopSeam {
         let min_stride_step_m = ctx.config.loop_seam_min_stride_step_m();
 
         for (index, clip) in ctx.doc.clips.iter().enumerate() {
-            if ctx.config.expectations_for(&clip.name).looping != Some(true) {
+            if ctx.expectations(index).looping != Some(true) {
                 continue;
             }
             let Some(grid) = ctx.grid(index) else {

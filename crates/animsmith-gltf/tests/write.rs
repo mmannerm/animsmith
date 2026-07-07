@@ -57,9 +57,8 @@ fn synthetic_doc() -> Document {
 
 fn assert_round_trip(extension: &str) {
     let doc = synthetic_doc();
-    let dir = std::env::temp_dir().join("animsmith-write-test");
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join(format!("roundtrip.{extension}"));
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(format!("roundtrip.{extension}"));
     animsmith_gltf::write::write(&doc, &path).expect("writes");
     let loaded = animsmith_gltf::load(&path).expect("reloads");
 
@@ -105,4 +104,66 @@ fn glb_round_trip() {
 #[test]
 fn gltf_round_trip() {
     assert_round_trip("gltf");
+}
+
+/// Collect the 4-byte chunk-type tags of a GLB, skipping the 12-byte
+/// header. Test helper — assumes well-formed chunk framing.
+fn glb_chunk_types(bytes: &[u8]) -> Vec<[u8; 4]> {
+    let mut types = Vec::new();
+    let mut off = 12;
+    while off + 8 <= bytes.len() {
+        let len = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()) as usize;
+        types.push(bytes[off + 4..off + 8].try_into().unwrap());
+        off += 8 + len;
+    }
+    types
+}
+
+/// A skeleton-only document has no animation or mesh bytes, so its buffer
+/// is empty. The writer must not emit a zero-length BIN chunk (Khronos
+/// GLB_EMPTY_CHUNK) or present-but-empty buffers/bufferViews/accessors
+/// arrays (each invalid glTF), and both containers must still reload.
+#[test]
+fn empty_document_omits_buffer_and_bin_chunk() {
+    let doc = Document {
+        skeleton: Skeleton {
+            bones: vec![Bone {
+                name: "root".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            }],
+        },
+        clips: vec![],
+        assets: Default::default(),
+        source: SourceInfo::default(),
+    };
+    let dir = tempfile::tempdir().unwrap();
+
+    let glb = dir.path().join("empty.glb");
+    animsmith_gltf::write::write(&doc, &glb).expect("writes glb");
+    let bytes = std::fs::read(&glb).unwrap();
+    assert_eq!(
+        glb_chunk_types(&bytes),
+        vec![*b"JSON"],
+        "empty doc must emit only a JSON chunk, no BIN chunk"
+    );
+
+    // The JSON must not carry empty accessor arrays or a zero-length buffer.
+    let json_len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+    let json: serde_json::Value = serde_json::from_slice(&bytes[20..20 + json_len]).unwrap();
+    for key in ["buffers", "bufferViews", "accessors"] {
+        assert!(
+            json.get(key).is_none(),
+            "{key} must be absent for an empty doc"
+        );
+    }
+
+    for ext in ["glb", "gltf"] {
+        let path = dir.path().join(format!("empty.{ext}"));
+        animsmith_gltf::write::write(&doc, &path).expect("writes");
+        let loaded = animsmith_gltf::load(&path).expect("reloads");
+        assert_eq!(loaded.skeleton.bones.len(), 1, "{ext} skeleton preserved");
+        assert!(loaded.clips.is_empty(), "{ext} has no clips");
+    }
 }

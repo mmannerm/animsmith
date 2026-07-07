@@ -258,6 +258,15 @@ fn is_constant_track(track: &Track) -> bool {
 /// sampled at `(t + shift) mod period`; times untouched. Constant
 /// tracks (rotation-invariant) are skipped; non-constant CUBICSPLINE
 /// tracks are refused upstream in [`align_gait_anchor`].
+///
+/// Uniform-framing assumption: the cycle period is `duration + 1/fps`,
+/// i.e. every track is framed on the same uniform `1/fps` grid and the
+/// open-loop wrap step spans exactly one such frame. On a clip with
+/// irregular key spacing — or tracks framed at different rates — that
+/// period is only approximate, the quantized shift may miss an existing
+/// key by a fraction of a frame, and the resample stops being exactly
+/// lossless. animsmith's pipeline emits uniformly-framed clips, so the
+/// assumption holds for the inputs this transform is applied to.
 fn rotate_values(clip: &mut Clip, phase: f64, fps: f64, frame_offset: i32) {
     let duration = clip
         .tracks

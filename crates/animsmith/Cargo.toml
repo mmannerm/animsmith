@@ -46,3 +46,4 @@ toml = { workspace = true }
 
 [dev-dependencies]
 gltf = { workspace = true }
+tempfile = { workspace = true }

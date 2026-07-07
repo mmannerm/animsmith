@@ -1,7 +1,7 @@
 //! The check abstraction, its execution context, and the built-in
 //! check sets.
 
-use crate::config::Config;
+use crate::config::{ClipExpectations, Config};
 use crate::finding::{Finding, Severity};
 use crate::metrics::MetricGrids;
 use crate::model::Document;
@@ -17,17 +17,30 @@ pub struct CheckCtx<'a> {
     pub roles: &'a ResolvedRoles,
     pub config: &'a Config,
     grids: &'a MetricGrids<'a>,
+    /// Effective per-clip expectations, resolved once and aligned to
+    /// `doc.clips`. Resolving them means overlaying every matching glob
+    /// entry (see [`Config::expectations_for`]); caching here keeps that
+    /// off the per-check hot loop, which otherwise re-resolved the same
+    /// clip once per check that reads expectations.
+    expectations: Vec<ClipExpectations>,
 }
 
 impl<'a> CheckCtx<'a> {
     /// Build a check context that shares metric pose grids with
     /// measurement or report generation.
     pub fn new(grids: &'a MetricGrids<'a>, roles: &'a ResolvedRoles, config: &'a Config) -> Self {
+        let doc = grids.document();
+        let expectations = doc
+            .clips
+            .iter()
+            .map(|c| config.expectations_for(&c.name))
+            .collect();
         Self {
-            doc: grids.document(),
+            doc,
             roles,
             config,
             grids,
+            expectations,
         }
     }
 
@@ -35,6 +48,18 @@ impl<'a> CheckCtx<'a> {
     /// shared. `None` for clips too short to carry a cycle.
     pub fn grid(&self, clip_index: usize) -> Option<Rc<PoseGrid>> {
         self.grids.grid(clip_index)
+    }
+
+    /// Effective expectations for clip `clip_index` (resolved once in
+    /// [`CheckCtx::new`]). Index into `doc.clips`.
+    pub fn expectations(&self, clip_index: usize) -> &ClipExpectations {
+        &self.expectations[clip_index]
+    }
+
+    /// Per-clip expectations in `doc.clips` order — for the readiness
+    /// predicates that scan every clip for pending work.
+    pub fn clip_expectations(&self) -> &[ClipExpectations] {
+        &self.expectations
     }
 }
 

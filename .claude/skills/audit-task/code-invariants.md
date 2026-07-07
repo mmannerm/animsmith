@@ -89,5 +89,18 @@ procedurally generated files.
 Ingestion must hand checks the file's real data: no quaternion
 renormalization, no resampling, no key deduplication at load time. The
 mechanical checks are only meaningful if they see the bytes the author
-shipped. (Space conversion in the FBX loader is the documented
-exception — it is the format's semantics, not a cleanup.)
+shipped. Two documented exceptions, both format semantics rather than
+cleanup:
+
+- **Space conversion in the FBX loader** — coordinate/unit conversion is
+  the format's meaning, not a modification of the authored motion.
+- **FBX animation baking** — the FBX loader evaluates each take through
+  `ufbx::bake_anim` (see `crates/animsmith-fbx/src/lib.rs`) rather than
+  reading raw curve keys. FBX animation is not a flat list of keyed
+  values: it layers curves, pre/post-rotation, and node transforms that
+  only a full evaluation resolves into the per-bone TRS the core model
+  and checks expect. Baking is therefore that resolution, but it does
+  resample — the baked keys (emitted as LINEAR) are not necessarily the
+  author's original curve keys, so a check reading FBX-sourced key times
+  or interpolation sees baked output, not the raw FBX curve. glTF, whose
+  on-disk form already matches the core model, is read without baking.

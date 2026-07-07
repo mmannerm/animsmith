@@ -6,10 +6,11 @@ use std::path::{Path, PathBuf};
 
 const RIGGED_TRIANGLE_FBX: &str = include_str!("../../animsmith-fbx/testdata/rigged_triangle.fbx");
 
-fn unique_temp_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("animsmith-{name}-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+fn unique_temp_dir(name: &str) -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix(&format!("animsmith-{name}-"))
+        .tempdir()
+        .unwrap()
 }
 
 fn write_fixture(dir: &Path) -> PathBuf {
@@ -65,12 +66,12 @@ fn assert_meshes_match(
 #[test]
 fn converted_mesh_is_structurally_sound() {
     let dir = unique_temp_dir("convert-mesh");
-    let fbx = write_fixture(&dir);
+    let fbx = write_fixture(dir.path());
     let doc = animsmith_fbx::load(&fbx).expect("FBX loads");
     assert!(!doc.assets.meshes.is_empty(), "fixture must carry meshes");
     assert_eq!(doc.assets.meshes[0].skin_joints.len(), 1);
 
-    let out = dir.join("converted.glb");
+    let out = dir.path().join("converted.glb");
     animsmith_gltf::write::write(&doc, &out).expect("writes");
 
     let bytes = std::fs::read(&out).unwrap();
@@ -156,7 +157,7 @@ fn converted_mesh_is_structurally_sound() {
 #[test]
 fn cli_convert_carries_and_strips_geometry() {
     let dir = unique_temp_dir("cli-convert");
-    let fbx = write_fixture(&dir);
+    let fbx = write_fixture(dir.path());
 
     let convert = |out: &Path, animation_only: bool| {
         let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_animsmith"));
@@ -168,13 +169,13 @@ fn cli_convert_carries_and_strips_geometry() {
         assert!(status.success(), "convert exited {status}");
     };
 
-    let carried = dir.join("carried.glb");
+    let carried = dir.path().join("carried.glb");
     convert(&carried, false);
-    let baseline = baseline_meshes(&fbx, &dir.join("baseline.glb"));
+    let baseline = baseline_meshes(&fbx, &dir.path().join("baseline.glb"));
     let carried_meshes = loaded_meshes(&carried);
     assert_meshes_match(&baseline, &carried_meshes);
 
-    let stripped = dir.join("stripped.glb");
+    let stripped = dir.path().join("stripped.glb");
     convert(&stripped, true);
     assert_eq!(
         mesh_count(&stripped),
@@ -189,14 +190,14 @@ fn cli_convert_carries_and_strips_geometry() {
 #[test]
 fn cli_transform_preserves_geometry() {
     let dir = unique_temp_dir("cli-transform");
-    let fbx = write_fixture(&dir);
+    let fbx = write_fixture(dir.path());
     let doc = animsmith_fbx::load(&fbx).expect("FBX loads");
     assert!(
         !doc.clips.is_empty(),
         "fixture carries a transformable clip"
     );
 
-    let out = dir.join("transformed.glb");
+    let out = dir.path().join("transformed.glb");
 
     // A hold-extend is a real (non-no-op) transform; the geometry must
     // survive it.
@@ -213,7 +214,7 @@ fn cli_transform_preserves_geometry() {
 
     let meshes = mesh_count(&out);
     assert!(meshes > 0, "transform carries geometry to its output");
-    let baseline = baseline_meshes(&fbx, &dir.join("baseline.glb"));
+    let baseline = baseline_meshes(&fbx, &dir.path().join("baseline.glb"));
     let transformed_meshes = loaded_meshes(&out);
     assert_meshes_match(&baseline, &transformed_meshes);
 }

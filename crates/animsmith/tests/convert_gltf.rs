@@ -72,11 +72,9 @@ fn write_geometry_glb(path: &std::path::Path) {
 
 #[test]
 fn cli_convert_gltf_input_carries_and_strips_geometry() {
-    let dir =
-        std::env::temp_dir().join(format!("animsmith-cli-convert-gltf-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = tempfile::tempdir().unwrap();
 
-    let input = dir.join("in.glb");
+    let input = dir.path().join("in.glb");
     write_geometry_glb(&input);
     assert_eq!(mesh_count(&input), 1, "input GLB carries a mesh");
 
@@ -91,7 +89,7 @@ fn cli_convert_gltf_input_carries_and_strips_geometry() {
     };
 
     // Default: glTF geometry now flows through the loader into the output.
-    let carried = dir.join("carried.glb");
+    let carried = dir.path().join("carried.glb");
     convert(&carried, false);
     assert_eq!(
         mesh_count(&carried),
@@ -106,7 +104,7 @@ fn cli_convert_gltf_input_carries_and_strips_geometry() {
     );
 
     // `--animation-only` still drops it, uniformly across formats.
-    let stripped = dir.join("stripped.glb");
+    let stripped = dir.path().join("stripped.glb");
     convert(&stripped, true);
     assert_eq!(
         mesh_count(&stripped),

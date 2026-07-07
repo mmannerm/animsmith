@@ -171,12 +171,7 @@ fn document_to_json(doc: &Document, buffer_uri: Option<String>, buffer_len: usiz
         .map(|(i, _)| i)
         .collect();
 
-    let mut buffer = json!({ "byteLength": buffer_len });
-    if let Some(uri) = buffer_uri {
-        buffer["uri"] = json!(uri);
-    }
-
-    json!({
+    let mut root = json!({
         "asset": {
             "version": "2.0",
             "generator": format!("animsmith {}", env!("CARGO_PKG_VERSION")),
@@ -184,8 +179,21 @@ fn document_to_json(doc: &Document, buffer_uri: Option<String>, buffer_len: usiz
         "scene": 0,
         "scenes": [{ "nodes": roots }],
         "nodes": nodes,
-        "buffers": [buffer],
-    })
+    });
+    // A glTF buffer must have byteLength ≥ 1. An empty document (no
+    // animation, no mesh bytes) has nothing to reference it — and no
+    // bufferViews or accessors either — so omit the buffer rather than
+    // emit a zero-length one, which in GLB would force an empty BIN chunk
+    // the Khronos validator rejects (GLB_EMPTY_CHUNK). The caller
+    // likewise omits the (empty) bufferViews/accessors arrays.
+    if buffer_len > 0 {
+        let mut buffer = json!({ "byteLength": buffer_len });
+        if let Some(uri) = buffer_uri {
+            buffer["uri"] = json!(uri);
+        }
+        root["buffers"] = json!([buffer]);
+    }
+    root
 }
 
 /// Serialize `doc` to `path` (`.glb` for binary, anything else as
@@ -347,8 +355,14 @@ pub fn write(doc: &Document, path: &Path) -> Result<(), WriteError> {
         ))
     };
     let mut root = document_to_json(doc, uri, buffers.bytes.len());
-    root["bufferViews"] = Value::Array(buffers.views);
-    root["accessors"] = Value::Array(buffers.accessors);
+    // Present-but-empty accessor arrays are invalid glTF (minItems 1); an
+    // empty document has none, so emit them only when populated.
+    if !buffers.views.is_empty() {
+        root["bufferViews"] = Value::Array(buffers.views);
+    }
+    if !buffers.accessors.is_empty() {
+        root["accessors"] = Value::Array(buffers.accessors);
+    }
     if !animations.is_empty() {
         root["animations"] = Value::Array(animations);
     }
@@ -417,7 +431,11 @@ pub fn write(doc: &Document, path: &Path) -> Result<(), WriteError> {
         while !bin.len().is_multiple_of(4) {
             bin.push(0);
         }
-        let total = 12 + 8 + json_bytes.len() + 8 + bin.len();
+        // Omit the BIN chunk entirely when there is no binary payload: a
+        // zero-length chunk is GLB_EMPTY_CHUNK to the Khronos validator.
+        let has_bin = !bin.is_empty();
+        let bin_bytes = if has_bin { 8 + bin.len() } else { 0 };
+        let total = 12 + 8 + json_bytes.len() + bin_bytes;
         let mut out = Vec::with_capacity(total);
         out.extend_from_slice(b"glTF");
         out.extend_from_slice(&2u32.to_le_bytes());
@@ -425,9 +443,11 @@ pub fn write(doc: &Document, path: &Path) -> Result<(), WriteError> {
         out.extend_from_slice(&(json_bytes.len() as u32).to_le_bytes());
         out.extend_from_slice(b"JSON");
         out.extend_from_slice(&json_bytes);
-        out.extend_from_slice(&(bin.len() as u32).to_le_bytes());
-        out.extend_from_slice(b"BIN\0");
-        out.extend_from_slice(&bin);
+        if has_bin {
+            out.extend_from_slice(&(bin.len() as u32).to_le_bytes());
+            out.extend_from_slice(b"BIN\0");
+            out.extend_from_slice(&bin);
+        }
         std::fs::write(path, out).map_err(io_err)
     } else {
         let text = serde_json::to_string_pretty(&root)?;

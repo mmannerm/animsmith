@@ -90,9 +90,8 @@ fn skinned_triangle() -> Document {
 
 #[test]
 fn skinned_mesh_round_trips_through_gltf_parser() {
-    let dir = std::env::temp_dir().join("animsmith-assets-test");
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("tri.glb");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tri.glb");
     let doc = skinned_triangle();
     animsmith_gltf::write::write(&doc, &path).expect("writes");
 
@@ -197,9 +196,8 @@ fn skinned_mesh_round_trips_through_gltf_parser() {
 /// clearing assets drops geometry, never the write path itself.
 #[test]
 fn clearing_assets_writes_no_geometry() {
-    let dir = std::env::temp_dir().join("animsmith-assets-test");
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("stripped.glb");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("stripped.glb");
 
     let mut doc = skinned_triangle();
     assert!(!doc.assets.meshes.is_empty(), "fixture carries a mesh");
@@ -223,9 +221,8 @@ fn clearing_assets_writes_no_geometry() {
 /// correct one emits the (mutated) animation *and* the mesh together.
 #[test]
 fn transform_pass_preserves_geometry() {
-    let dir = std::env::temp_dir().join("animsmith-assets-test");
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("transformed.glb");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("transformed.glb");
 
     // A two-key rotation clip on the root bone, carried alongside the
     // skinned mesh.
@@ -273,9 +270,8 @@ fn transform_pass_preserves_geometry() {
 /// index, normal, UV, joint, weight, or IBM entry would fail here.
 #[test]
 fn load_round_trips_meshes_skins_materials() {
-    let dir = std::env::temp_dir().join("animsmith-load-assets-test");
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("roundtrip.glb");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("roundtrip.glb");
     animsmith_gltf::write::write(&skinned_triangle(), &path).expect("writes");
 
     let doc = animsmith_gltf::load(&path).expect("loads");
@@ -344,9 +340,8 @@ fn load_round_trips_meshes_skins_materials() {
 /// bufferView-backed image just like the binary `.glb` path.
 #[test]
 fn load_reads_gltf_text_format() {
-    let dir = std::env::temp_dir().join("animsmith-load-assets-test");
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("roundtrip.gltf");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("roundtrip.gltf");
     animsmith_gltf::write::write(&skinned_triangle(), &path).expect("writes");
 
     let doc = animsmith_gltf::load(&path).expect("loads");
@@ -371,9 +366,8 @@ fn load_reads_gltf_text_format() {
 /// would fail here.
 #[test]
 fn load_preserves_unindexed_primitives() {
-    let dir = std::env::temp_dir().join("animsmith-load-assets-test");
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("unindexed.glb");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("unindexed.glb");
 
     // A single unwelded triangle: 3 distinct corners, no indices, every
     // optional attribute present with per-corner-distinct values.
@@ -447,9 +441,8 @@ fn load_preserves_unindexed_primitives() {
 /// — would produce `[0, 1]` instead of the correct `[1, 0]`.
 #[test]
 fn load_remaps_skin_joints_through_topological_bone_order() {
-    let dir = std::env::temp_dir().join("animsmith-load-assets-test");
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("reordered-skin.gltf");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("reordered-skin.gltf");
     // buffer = 3 positions (VEC3 f32): (0,0,0),(1,0,0),(0,1,0).
     std::fs::write(
         &path,
@@ -502,9 +495,8 @@ fn load_remaps_skin_joints_through_topological_bone_order() {
 /// meshes/materials without a second entry point.
 #[test]
 fn load_carries_assets() {
-    let dir = std::env::temp_dir().join("animsmith-load-assets-test");
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("has-geometry.glb");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("has-geometry.glb");
     animsmith_gltf::write::write(&skinned_triangle(), &path).expect("writes");
 
     let doc = animsmith_gltf::load(&path).expect("loads");
@@ -525,9 +517,8 @@ const TINY_PNG_B64: &str =
 /// MIME is recovered from the URI's media-type prefix (no `mimeType`).
 #[test]
 fn load_reads_data_uri_texture() {
-    let dir = std::env::temp_dir().join("animsmith-load-assets-test");
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("data-uri-image.gltf");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("data-uri-image.gltf");
     let json = format!(
         r#"{{
             "asset": {{ "version": "2.0" }},
@@ -556,10 +547,9 @@ fn load_reads_data_uri_texture() {
 /// the glTF via the same containment rule as external buffers.
 #[test]
 fn load_reads_external_file_texture() {
-    let dir = std::env::temp_dir().join("animsmith-load-assets-test-ext");
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("tex.png"), TINY_PNG).unwrap();
-    let path = dir.join("external-image.gltf");
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("tex.png"), TINY_PNG).unwrap();
+    let path = dir.path().join("external-image.gltf");
     std::fs::write(
         &path,
         r#"{
@@ -590,9 +580,8 @@ fn load_reads_external_file_texture() {
 /// Without the checked add this panics in debug builds.
 #[test]
 fn load_survives_overflowing_image_view() {
-    let dir = std::env::temp_dir().join("animsmith-load-assets-test");
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("overflow-view.gltf");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("overflow-view.gltf");
     // byteOffset = u64::MAX, byteLength = 1 → the sum overflows usize.
     std::fs::write(
         &path,
@@ -627,9 +616,8 @@ fn load_survives_overflowing_image_view() {
 /// panic (invariant: hostile input never crashes the loader).
 #[test]
 fn load_survives_zero_count_position_accessor() {
-    let dir = std::env::temp_dir().join("animsmith-load-assets-test");
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("zero-count-position.gltf");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("zero-count-position.gltf");
     std::fs::write(
         &path,
         r#"{
@@ -660,9 +648,8 @@ fn load_survives_zero_count_position_accessor() {
 /// empty attribute, never panic in the NORMAL reader.
 #[test]
 fn load_survives_zero_count_optional_accessor() {
-    let dir = std::env::temp_dir().join("animsmith-load-assets-test");
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("zero-count-normal.gltf");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("zero-count-normal.gltf");
     // buffer = 3 positions (0,0,0),(1,0,0),(0,1,0); NORMAL accessor is
     // count 0 over the same view.
     std::fs::write(
@@ -697,9 +684,8 @@ fn load_survives_zero_count_optional_accessor() {
 /// so it never silently round-trips as corrupted TRIANGLES.
 #[test]
 fn load_skips_non_triangle_primitive() {
-    let dir = std::env::temp_dir().join("animsmith-load-assets-test");
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("points-primitive.gltf");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("points-primitive.gltf");
     std::fs::write(
         &path,
         r#"{
@@ -729,9 +715,8 @@ fn load_skips_non_triangle_primitive() {
 /// IBMs stay empty) and never panics.
 #[test]
 fn load_survives_zero_count_inverse_bind_matrices() {
-    let dir = std::env::temp_dir().join("animsmith-load-assets-test");
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("zero-count-ibm.gltf");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("zero-count-ibm.gltf");
     // Valid triangle mesh + a skin whose inverseBindMatrices is a count-0
     // MAT4 accessor.
     std::fs::write(
@@ -773,9 +758,8 @@ fn load_survives_zero_count_inverse_bind_matrices() {
 /// index-read guard. `load` treats it as an unindexed primitive.
 #[test]
 fn load_survives_zero_count_indices() {
-    let dir = std::env::temp_dir().join("animsmith-load-assets-test");
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("zero-count-indices.gltf");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("zero-count-indices.gltf");
     std::fs::write(
         &path,
         r#"{
