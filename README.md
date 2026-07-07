@@ -23,7 +23,18 @@ versioned JSON envelope.
 
 ## Install
 
-For the CLI:
+Download prebuilt CLI archives from
+[GitHub Releases](https://github.com/mmannerm/animsmith/releases/latest):
+
+- `animsmith-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz` for Linux x86_64.
+- `animsmith-vX.Y.Z-aarch64-apple-darwin.tar.gz` for macOS Apple Silicon.
+- `animsmith-vX.Y.Z-x86_64-pc-windows-msvc.zip` for Windows x86_64.
+
+Each archive includes the `animsmith` binary, README, license files, and
+third-party notices. Matching `.sha256` files are published alongside the
+archives so CI or installer scripts can verify downloads.
+
+Or install from crates.io with Cargo:
 
 ```console
 $ cargo install animsmith

@@ -4,13 +4,16 @@ name: release-plz
 # version-computation + version-alignment flow removed from main.yml
 # (see #37).
 #
-# Two jobs run on every push to main:
+# Release automation runs these jobs on every push to main:
 #   - release-pr: opens/updates a release PR that bumps the shared
 #     workspace version, propagates the internal animsmith-* dependency
 #     versions, and updates CHANGELOG.md (release-plz's Keep-a-Changelog format).
 #   - release: once a release PR merges (the Cargo.toml version changes),
 #     tags, creates the GitHub Release, and publishes all five crates to
 #     crates.io in dependency order.
+#   - release-binaries: when release-plz reports a release for the CLI
+#     package, calls release-binaries.yml to attach CLI archives and checksums
+#     to that GitHub Release.
 #
 # crates.io publishing uses Trusted Publishing (GitHub OIDC): the release
 # job holds `id-token: write` and release-plz mints a short-lived token
@@ -57,6 +60,9 @@ jobs:
       contents: write # push tags + create GitHub Releases
       pull-requests: read
       id-token: write # OIDC handshake with crates.io (Trusted Publishing)
+    outputs:
+      releases_created: ${{ steps.release_plz.outputs.releases_created }}
+      release_tag: ${{ steps.release_metadata.outputs.release_tag }}
     # This job mints a crates.io token (id-token: write), so its actions are
     # SHA-pinned to remove the moving-ref exposure a tag like @stable carries.
     steps:
@@ -68,11 +74,39 @@ jobs:
         with:
           toolchain: stable
       - name: Run release-plz
+        id: release_plz
         uses: release-plz/action@e8792575c7f2366cf6ff3ccc33ead9ace5b691c7 # v0.5.130
         with:
           command: release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Select CLI release tag
+        id: release_metadata
+        if: ${{ steps.release_plz.outputs.releases_created == 'true' }}
+        env:
+          RELEASES: ${{ steps.release_plz.outputs.releases }}
+        run: |
+          set -euo pipefail
+          tag="$(
+            jq -r '.[] | select(.package_name == "animsmith") | .tag' \
+              <<<"${RELEASES}" | tail -n 1
+          )"
+          if [[ -z "${tag}" ]]; then
+            echo "release-plz reported releases but none for the animsmith CLI package" >&2
+            echo "${RELEASES}" >&2
+            exit 1
+          fi
+          echo "release_tag=${tag}" >> "${GITHUB_OUTPUT}"
+
+  release_binaries:
+    name: release binaries
+    needs: [release]
+    if: ${{ needs.release.outputs.releases_created == 'true' }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-binaries.yml
+    with:
+      tag: ${{ needs.release.outputs.release_tag }}
 
   release-pr:
     name: release-plz release-pr
