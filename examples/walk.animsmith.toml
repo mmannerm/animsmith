@@ -1,0 +1,23 @@
+# A runnable contract for the committed `walk.glb` / `walk-dirty.glb`
+# example rigs — the smallest config that makes the semantic checks fire.
+#
+#   animsmith lint --config examples/walk.animsmith.toml examples/assets/walk.glb
+#
+# See examples/character.animsmith.toml for the full game-character shape
+# (locomotion rings, speed pins, per-check overrides).
+
+[rig]
+# The rig's bone names (pelvis / foot_l / foot_r) resolve the built-in
+# ue-mannequin profile, so "auto" binds hips + feet with no inline map.
+profile = "auto"
+
+[clips.walk]
+# Declaring the clip as a loop is what arms loop-seam: it measures
+# whether the feet return to their first-frame pose relative to the hips.
+loop = true
+# The clip animates in place (no net root travel), so in-place passes.
+in_place = true
+
+[checks.loop-seam]
+# Fail a wrap discontinuity more than 1.6× the in-clip stride step.
+max_ratio = 1.6

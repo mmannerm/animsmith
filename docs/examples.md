@@ -8,8 +8,8 @@ Commands that reference [`examples/assets/`](../examples/assets/) run
 against small assets committed there, so you can follow along from a
 source checkout with no downloads; the assets are procedurally
 generated (see [their README](../examples/assets/README.md) for
-provenance and how to regenerate them). Sections that operate on your
-own rig use placeholder filenames — `character.glb`, `export.fbx`,
+provenance and how to regenerate them). The FBX-migration section
+operates on your own rig, using placeholder filenames — `export.fbx`,
 `old.glb` — for assets you supply.
 
 Transcripts are real command output. Long finding messages are elided as
@@ -209,24 +209,116 @@ rig roles. Without a resolved rig they skip with a note rather than
 guess, so a config that pins a `[rig] profile` (or inline `[rig.roles]`)
 is what makes them fire.
 
-[`examples/character.animsmith.toml`](../examples/character.animsmith.toml)
-is a worked game-character contract: locomotion loops, typed gait rings,
-a seam cap, a frozen-bone floor, and a severity override. Copy its shape
-into your game repo and point `lint` at it:
+`examples/assets/walk.glb` is a committed rig for this: a hips + two-foot
+skeleton with a one-second walk cycle. Its bone names resolve a built-in
+profile, so `inspect` binds the rig with no config at all:
 
 ```console
-$ animsmith lint --config examples/character.animsmith.toml character.glb
+$ animsmith inspect examples/assets/walk.glb
+examples/assets/walk.glb
+rig profile: ue-mannequin (3 roles)
+  hips         -> pelvis
+  left_foot    -> foot_l
+  right_foot   -> foot_r
+skeleton: 3 bones
+  pelvis
+    foot_l
+    foot_r
+clips: 1
+  walk: 1.000s, 2 tracks, 33 keys max
 ```
 
-Here `character.glb` is your own rig — the contract declares locomotion
-clips and gait rings, so it needs a real skeleton to fire the semantic
-checks (the committed `clip.glb` is a two-bone toy that resolves no rig).
+`measure` reports the semantic metrics the checks judge — the loop-seam
+ratio (the wrap discontinuity as a multiple of one in-clip step; ≈ 0
+here, since this cycle returns its feet exactly), the gait phase, and the
+L/R foot amplitude:
 
-`animsmith.toml` is auto-loaded from the working directory when present,
-so committing one next to your assets makes every bare `animsmith lint`
-enforce the contract.
+```console
+$ animsmith measure examples/assets/walk.glb          # --format json
+{
+  "command": "measure",
+  "files": [
+    {
+      "path": "examples/assets/walk.glb",
+      "rig": { "profile": "ue-mannequin", "resolved_roles": {
+        "hips": "pelvis", "left_foot": "foot_l", "right_foot": "foot_r" } },
+      "measurements": {
+        "walk": {
+          "duration_s": 1.0, "frame_count": 33,
+          "loop_seam_ratio": 8.5e-7,
+          "gait": { "phase": 0.75, "lr_amplitude_m": 0.2 },
+          "speed_mps": 0.0
+        }
+      }
+    }
+  ]
+}
+```
 
-You can also steer a run without a config file. `--select` restricts the
+[`examples/walk.animsmith.toml`](../examples/walk.animsmith.toml) is the
+contract: it declares the clip a loop (which arms `loop-seam`) and
+in-place, and caps the seam ratio. Against the clean rig every semantic
+check passes:
+
+```console
+$ animsmith lint --config examples/walk.animsmith.toml examples/assets/walk.glb
+examples/assets/walk.glb: clean              # exits 0
+```
+
+`examples/assets/walk-dirty.glb` is the same rig with the clip cut a
+quarter-cycle short, so the feet never return to their first-frame pose —
+the classic popped loop seam. The same contract catches it:
+
+```console
+$ animsmith lint --config examples/walk.animsmith.toml examples/assets/walk-dirty.glb
+examples/assets/walk-dirty.glb:
+  error[loop-seam] clip 'walk' @1.000s: loop seam pops: wrap discontinuity
+    is 6.82× the neighbouring in-clip step (cap 1.60) — the clip does not
+    close its cycle (measured 6.8152, expected 1.6000)
+1 error(s), 0 warning(s), 0 note(s)         # exits 1
+```
+
+The contract is load-bearing: a bare `animsmith lint examples/assets/walk-dirty.glb`
+(no config) reports it **clean** — with no `loop = true` declared,
+`loop-seam` has nothing to check against and skips. Semantic checks
+enforce *your* declared expectations, not a guess.
+
+### Scaling up to a full character
+
+[`examples/character.animsmith.toml`](../examples/character.animsmith.toml)
+is the full game-character shape the small walk contract grows into:
+
+```toml
+[rig]
+profile = "auto"            # or mixamo / ue-mannequin / humanoid
+
+[checks.loop-seam]
+max_ratio = 1.6             # per-check tuning
+[checks.frozen-bone]
+min_rotation_deg = 0.5
+[checks.quat-flip]
+severity = "note"           # demote while an upstream fix lands
+
+[clips."run_*"]             # glob: every run clip loops
+loop = true
+[clips.run_forward]
+speed_mps = { value = 3.1, tolerance = 0.25 }   # root-motion contract
+
+[gait_groups.run-ring]      # a directional blend ring
+clips = ["run_forward", "run_backward", "run_left", "run_right"]
+max_gait_phase_spread = 0.15   # members must stride in phase
+min_lr_amplitude_m = 0.03      # exclude near-idle members
+```
+
+A `gait_groups` block is the payoff for a real character: it holds every
+clip in a directional blend ring to the same stride phase, so runtime
+blends between them don't skate. `animsmith.toml` is auto-loaded from the
+working directory, so committing one next to your assets makes every bare
+`animsmith lint` enforce the contract.
+
+### Steering a run without a config
+
+You can also shape a run from the command line. `--select` restricts the
 run set, `--allow` suppresses findings, and `[checks.<id>] severity`
 (including `"off"`) reshapes how hard each check fails:
 
