@@ -28,6 +28,20 @@ Pass an output directory to write elsewhere:
 cargo run -p animsmith --example gen_example_assets -- /some/dir
 ```
 
+The committed `.glb` are pinned to the generator's output by
+`example_assets_match_generator_output` in
+[`crates/animsmith/tests/examples_cookbook.rs`](../../crates/animsmith/tests/examples_cookbook.rs),
+so editing the generator without rerunning it fails CI. That test file
+also covers every [cookbook](../../docs/examples.md) command that runs
+against these committed assets — the first-gate, repair, transform, and
+config-steering workflows — asserting each one's exit code plus a
+distinctive output or downstream-state check, so those commands can't
+drift out from under the docs unnoticed. (The cookbook's remaining
+examples use placeholder or FBX assets this repo doesn't ship, so they
+aren't smoke-tested here.) The guard set is maintained here rather than
+derived from the doc, so a newly documented committed-asset command
+needs its own check added.
+
 ## License
 
 Generated from this repository's source; released under the same
