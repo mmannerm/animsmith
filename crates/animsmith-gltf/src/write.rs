@@ -238,6 +238,13 @@ fn plan_glb_lengths(json_len: usize, bin_len: usize) -> Result<GlbLengths, Write
 /// meshes, skins, factor-only materials; textures are downstream
 /// pipelines' job). A `Document` with default-empty assets writes
 /// animation + skeleton only.
+///
+/// # Errors
+///
+/// Returns [`WriteError::Serialize`] if the generated glTF JSON cannot be
+/// serialized, [`WriteError::TooLarge`] if a GLB length field would exceed
+/// the format's 4 GiB `u32` limit, and [`WriteError::Io`] when the output
+/// file cannot be written.
 pub fn write(doc: &Document, path: &Path) -> Result<(), WriteError> {
     let assets = &doc.assets;
     let mut buffers = BufferBuilder::new();

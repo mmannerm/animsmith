@@ -3,9 +3,18 @@
 //! [`LoadError`]. The resulting document carries skeletons, animation
 //! clips, and scene assets in the same core model used by the glTF
 //! loader.
+//!
+//! The loader normalizes FBX scenes into animsmith's runtime-oriented
+//! coordinate space before handing them to `animsmith-core`: right-handed
+//! +Y-up axes, metres, transform-adjust conversion, helper nodes for
+//! geometric transforms, and compensated scale inheritance. Depend on this
+//! crate only when your pipeline accepts FBX input; it brings the bundled
+//! `ufbx` C build that `animsmith-core` and `animsmith-gltf` intentionally
+//! avoid.
 
 #![doc = "\n\n"]
 #![doc = include_str!("../README.md")]
+#![warn(missing_docs)]
 
 use animsmith_core::model::{
     Bone, Clip, Document, Interpolation, MaterialAsset, MeshAsset, Primitive, Property,
@@ -14,15 +23,28 @@ use animsmith_core::model::{
 use glam::{Mat4, Quat, Vec3};
 use std::path::Path;
 
+/// Errors returned while loading an FBX scene into the core model.
+///
+/// These errors describe input or parser failures. They do not represent
+/// animation check findings; once a [`Document`] loads, semantic problems
+/// are reported by `animsmith-core` checks instead.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum LoadError {
+    /// The input path could not be represented as UTF-8 for `ufbx`.
     #[error("path is not valid UTF-8: {0}")]
     Path(String),
+    /// `ufbx` rejected or could not parse the file.
     #[error("FBX parse error: {0}")]
     Fbx(String),
+    /// `ufbx` loaded the scene but failed while baking an animation take.
     #[error("animation bake failed for take {take:?}: {message}")]
-    Bake { take: String, message: String },
+    Bake {
+        /// Name of the animation take that failed to bake.
+        take: String,
+        /// Parser-provided bake failure detail.
+        message: String,
+    },
 }
 
 fn vec3(v: ufbx::Vec3) -> Vec3 {
@@ -67,6 +89,13 @@ fn mat4(m: &ufbx::Matrix) -> Mat4 {
 /// and scene assets (triangulated meshes, skins, factor-only
 /// materials). Consumers that only judge animation ignore
 /// [`Document::assets`].
+///
+/// # Errors
+///
+/// Returns [`LoadError::Path`] when the path cannot be passed to `ufbx`,
+/// [`LoadError::Fbx`] when the FBX container cannot be parsed, and
+/// [`LoadError::Bake`] when an animation stack cannot be baked into the
+/// linear TRS tracks that animsmith's checks consume.
 pub fn load(path: &Path) -> Result<Document, LoadError> {
     let filename = path
         .to_str()

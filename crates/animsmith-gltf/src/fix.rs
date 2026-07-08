@@ -35,14 +35,22 @@ const QUAT_NORM_TOLERANCE: f32 = 1e-3;
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct TrackFix {
+    /// Clip that contained the repaired rotation track.
     pub clip: String,
+    /// Bone/node name targeted by the repaired rotation track.
     pub bone: String,
+    /// Number of keyed rotations changed by the repair.
     pub fixed_keys: usize,
 }
 
+/// Summary of one byte-surgical repair pass.
+///
+/// Reports both successful track repairs and tracks that looked relevant
+/// but could not be safely patched without changing the container contract.
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct FixReport {
+    /// Rotation tracks that were patched.
     pub tracks: Vec<TrackFix>,
     /// Tracks that needed repair but were skipped (data URI, cubic,
     /// quantized, sparse, or malformed accessors), with reasons.
@@ -50,6 +58,7 @@ pub struct FixReport {
 }
 
 impl FixReport {
+    /// Total number of keyed rotations changed across all repaired tracks.
     pub fn total_fixed(&self) -> usize {
         self.tracks.iter().map(|t| t.fixed_keys).sum()
     }
@@ -97,6 +106,11 @@ pub struct FixSession {
 
 impl FixSession {
     /// Read and parse a glTF/GLB once, loading every declared buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixError::Load`] when the input cannot be read, parsed,
+    /// framed as a safe GLB, or resolved through its external buffers.
     pub fn read(input: &Path) -> Result<Self, FixError> {
         let original = std::fs::read(input).map_err(|source| LoadError::Io {
             path: input.display().to_string(),
@@ -120,6 +134,9 @@ impl FixSession {
     }
 
     /// Apply one repair in memory.
+    ///
+    /// This does not write any bytes. Call [`FixSession::write`] after one
+    /// or more repair passes to persist the patched buffers.
     pub fn apply(&mut self, repair: Repair) -> FixReport {
         match repair {
             Repair::QuatNorm => self.apply_quat_norm(),
@@ -130,6 +147,11 @@ impl FixSession {
     /// Apply one repair to `input`, writing the (otherwise
     /// byte-identical) result to `output`. `input` and `output` may be
     /// the same path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixError::Load`] for unreadable or malformed input and
+    /// [`FixError::Write`] when the patched container cannot be written.
     pub fn apply_to_path(
         input: &Path,
         output: &Path,
@@ -143,6 +165,10 @@ impl FixSession {
 
     /// Inspect which tracks one repair would update without writing any
     /// bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixError::Load`] when the input cannot be read or parsed.
     pub fn inspect(input: &Path, repair: Repair) -> Result<FixReport, FixError> {
         let mut session = Self::read(input)?;
         Ok(session.apply(repair))
@@ -335,6 +361,12 @@ impl FixSession {
     }
 
     /// Write the patched buffers, preserving the original container bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixError::Load`] if the original container framing cannot
+    /// be safely reassembled, or [`FixError::Write`] if writing the output
+    /// path fails.
     pub fn write(&self, input: &Path, output: &Path) -> Result<(), FixError> {
         write_patched(input, output, &self.original, &self.gltf, &self.buffers)
     }

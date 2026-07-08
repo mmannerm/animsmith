@@ -54,3 +54,16 @@ fn loads_self_authored_rigged_triangle_fixture() {
 
     assert_eq!(doc.assets.materials.len(), 0);
 }
+
+#[test]
+fn garbage_file_is_reported_as_fbx_parse_error() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("garbage.fbx");
+    std::fs::write(&path, b"not an fbx file").expect("write garbage input");
+
+    let err = animsmith_fbx::load(&path).expect_err("garbage input should not load");
+    assert!(
+        matches!(err, animsmith_fbx::LoadError::Fbx(_)),
+        "expected LoadError::Fbx, got {err:?}"
+    );
+}

@@ -3,9 +3,18 @@
 //! glTF/GLB, and the [`fix`] module provides byte-surgical quaternion
 //! repairs. Malformed inputs report [`LoadError`]; output failures
 //! report [`WriteError`].
+//!
+//! This crate is the glTF/GLB format edge around `animsmith-core`.
+//! Loading preserves authored animation values for checks and also carries
+//! meshes, skins, materials, and embedded textures into
+//! [`Document::assets`](animsmith_core::model::Document::assets).
+//! Writing is a model round-trip for `convert` and `transform`; use
+//! [`fix::FixSession`] when a repair must preserve every non-animation byte
+//! of the original container.
 
 #![doc = "\n\n"]
 #![doc = include_str!("../README.md")]
+#![warn(missing_docs)]
 
 pub mod fix;
 pub mod write;
@@ -19,20 +28,32 @@ use glam::{Mat4, Quat, Vec3};
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
+/// Errors returned while loading `.gltf` or `.glb` input.
+///
+/// These are structural or operator errors. Semantic animation defects,
+/// such as non-unit quaternions or seam pops, load successfully and are
+/// reported by `animsmith-core` checks.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum LoadError {
+    /// The source file or one of its external buffers could not be read.
     #[error("failed to read {path}: {source}")]
     Io {
+        /// Path that failed to read.
         path: String,
+        /// Underlying filesystem error.
         source: std::io::Error,
     },
+    /// The `gltf` parser rejected the container.
     #[error("glTF parse error: {0}")]
     Gltf(#[from] gltf::Error),
+    /// Buffer resolution or GLB framing failed.
     #[error("buffer resolution failed: {0}")]
     Buffer(String),
+    /// Animation data is structurally malformed.
     #[error("malformed animation data: {0}")]
     Malformed(String),
+    /// The node graph is not a forest that can become a skeleton.
     #[error("malformed node graph: {0}")]
     Topology(String),
 }
@@ -45,26 +66,39 @@ pub enum LoadError {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum FixError {
+    /// The input container could not be read, parsed, or safely framed.
     #[error(transparent)]
     Load(#[from] LoadError),
+    /// The patched output container could not be emitted.
     #[error(transparent)]
     Write(#[from] WriteError),
 }
 
+/// Errors returned while writing a core document as glTF/GLB.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum WriteError {
+    /// The output file could not be written.
     #[error("failed to write {path}: {source}")]
     Io {
+        /// Path that failed to write.
         path: String,
+        /// Underlying filesystem error.
         source: std::io::Error,
     },
+    /// glTF JSON serialization failed.
     #[error("failed to serialize glTF JSON: {0}")]
     Serialize(#[from] serde_json::Error),
+    /// A GLB length field would exceed the format's `u32` byte limit.
     #[error(
         "GLB too large: {field} is {bytes} bytes, exceeding the 4 GiB limit of a GLB u32 length field"
     )]
-    TooLarge { field: &'static str, bytes: usize },
+    TooLarge {
+        /// Name of the GLB length field or chunk that overflowed.
+        field: &'static str,
+        /// Actual byte count that could not fit in the GLB field.
+        bytes: usize,
+    },
 }
 
 /// Contain an external-buffer URI to a relative child path: absolute
@@ -221,6 +255,13 @@ fn validate_track_lengths(
 /// symmetric read side of [`write::write`], and the same one-call shape
 /// `animsmith_fbx::load` uses. Consumers that judge only animation
 /// (`lint`, `inspect`) simply ignore [`Document::assets`].
+///
+/// # Errors
+///
+/// Returns [`LoadError`] for unreadable files, unsafe or missing external
+/// buffers, malformed GLB framing, parser rejection, structurally invalid
+/// animation channels, or node graphs that cannot be represented as a
+/// skeleton forest.
 pub fn load(path: &Path) -> Result<Document, LoadError> {
     // Read the whole file, then parse from the slice rather than via
     // `Gltf::open`: the reader path (`Glb::from_reader`) trusts the GLB
