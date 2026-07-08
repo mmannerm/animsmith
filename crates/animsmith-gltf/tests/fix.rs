@@ -5,65 +5,17 @@ use animsmith_core::model::*;
 use animsmith_core::profile::ResolvedRoles;
 use animsmith_core::{CheckCtx, Config, MetricGrids, mechanical_checks, run_checks};
 use animsmith_gltf::fix::{FixSession, Repair};
+use animsmith_testkit::{quats_from_angles, scaled_quat, two_bone_rotation_doc};
 use glam::{Quat, Vec3};
 
 fn clean_quats() -> Vec<Quat> {
-    [0.0f32, 0.4, 0.8, 1.2, 1.6]
-        .iter()
-        .map(|&a| Quat::from_rotation_y(a))
-        .collect()
-}
-
-fn scaled_quat(q: Quat, scale: f32) -> Quat {
-    let [x, y, z, w] = q.to_array();
-    Quat::from_xyzw(x * scale, y * scale, z * scale, w * scale)
+    quats_from_angles(&[0.0, 0.4, 0.8, 1.2, 1.6])
 }
 
 fn doc_with_quats(quats: Vec<Quat>) -> Document {
-    Document {
-        skeleton: Skeleton {
-            bones: vec![
-                Bone {
-                    name: "root".into(),
-                    parent: None,
-                    rest: Transform::IDENTITY,
-                    inverse_bind: None,
-                },
-                Bone {
-                    name: "spine".into(),
-                    parent: Some(0),
-                    rest: Transform {
-                        translation: Vec3::new(0.0, 0.5, 0.0),
-                        ..Transform::IDENTITY
-                    },
-                    inverse_bind: None,
-                },
-            ],
-        },
-        clips: vec![Clip {
-            name: "sway".into(),
-            duration_s: 1.0,
-            tracks: vec![
-                Track {
-                    bone: 1,
-                    property: Property::Rotation,
-                    interpolation: Interpolation::Linear,
-                    times: vec![0.0, 0.25, 0.5, 0.75, 1.0],
-                    values: TrackValues::Quats(quats),
-                },
-                // A translation track that must remain byte-identical.
-                Track {
-                    bone: 0,
-                    property: Property::Translation,
-                    interpolation: Interpolation::Linear,
-                    times: vec![0.0, 1.0],
-                    values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::new(0.0, 0.0, 2.0)]),
-                },
-            ],
-        }],
-        assets: Default::default(),
-        source: SourceInfo::default(),
-    }
+    // The `sway` clip carries a translation track alongside the rotation
+    // track; some tests assert it stays byte-identical across a fix.
+    two_bone_rotation_doc("sway", quats, true)
 }
 
 /// A document whose rotation track has two sign-flipped keys (same

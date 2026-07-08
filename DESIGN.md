@@ -130,7 +130,8 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: asset files or prior `
 
 ## 4. Repository & crate layout
 
-One public repo, one cargo workspace, five crates. The split is driven by
+One public repo, one cargo workspace, five published crates (plus one
+`publish = false` dev crate, `animsmith-testkit`). The split is driven by
 two hard constraints: the core must be consumable with zero C compilation
 and minimal deps; FBX support pulls in a C build step most library
 consumers must never pay for.
@@ -145,7 +146,8 @@ animsmith/
 │   ├── animsmith-gltf/          # glTF/GLB → core model; GLB writer for `convert`
 │   ├── animsmith-fbx/           # ufbx wrapper → core model; isolates the C build
 │   ├── animsmith-report/        # self-contained HTML report generation
-│   └── animsmith/               # CLI binary (features: fbx, report — default on)
+│   ├── animsmith/               # CLI binary (features: fbx, report — default on)
+│   └── animsmith-testkit/       # publish=false: fixture builders shared by tests + the example asset generator
 ├── assets/viewer/              # viewer JS/CSS, inlined via include_str!
 ├── fuzz/                       # cargo-fuzz targets for the untrusted-input loaders
 └── testdata/                   # CC0 rigs + procedurally corrupted fixtures

@@ -1,10 +1,10 @@
 //! Drift guards for the examples cookbook (docs/examples.md) and its
 //! committed assets (examples/assets/). Two kinds of coverage:
 //!
-//! 1. `example_assets_match_generator_output` re-runs the asset
-//!    generator into a temp dir and asserts the bytes equal the
-//!    committed `.glb`, so the checked-in assets can never silently
-//!    drift from `gen_example_assets`.
+//! 1. `example_assets_match_generator_output` rebuilds the committed
+//!    `.glb` from the shared `animsmith-testkit` documents (the same
+//!    ones `gen_example_assets` writes) and asserts the bytes match, so
+//!    the checked-in assets can never silently drift from the generator.
 //! 2. The `cookbook_*` tests run the commands the cookbook documents
 //!    against the committed assets and assert each one's exit code plus
 //!    one distinctive substring — enough to catch the CLI's contract
@@ -37,10 +37,6 @@ fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
-fn stderr(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stderr).into_owned()
-}
-
 /// Run the CLI with `args` and return (exit code, stdout).
 fn run(args: &[&str]) -> (Option<i32>, String) {
     let output = animsmith().args(args).output().expect("runs animsmith");
@@ -51,39 +47,22 @@ fn run(args: &[&str]) -> (Option<i32>, String) {
 
 #[test]
 fn example_assets_match_generator_output() {
+    // The generator (crates/animsmith/examples/gen_example_assets.rs) and
+    // this test both write the committed assets through the same
+    // animsmith-testkit `write_example_assets` wiring, so a wrong
+    // filename, dropped asset, or swapped clean/dirty document fails here
+    // — not just when a human reruns the generator. (#117 replaced an
+    // earlier `cargo run --example` subprocess with this in-process build.)
     let tmp = unique_temp_dir("gen");
-    // Re-run the actual generator (not a copy of its logic) so this
-    // fails if the committed bytes drift from `gen_example_assets` in
-    // either direction. `env!("CARGO")` is the cargo that built this
-    // test; the build lock is free during test execution.
-    //
-    // TODO(#117): once a shared asset builder lands, call it in-process
-    // and drop this subprocess (the crate is bin-only today, so an
-    // example's code can't be imported from an integration test).
-    let output = Command::new(env!("CARGO"))
-        .args([
-            "run",
-            "--quiet",
-            "-p",
-            "animsmith",
-            "--example",
-            "gen_example_assets",
-            "--",
-        ])
-        .arg(tmp.path())
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .expect("runs the asset generator");
-    assert!(
-        output.status.success(),
-        "gen_example_assets failed:\nstdout:\n{}\nstderr:\n{}",
-        stdout(&output),
-        stderr(&output)
-    );
+    animsmith_testkit::write_example_assets(tmp.path(), |doc, path| {
+        animsmith_gltf::write::write(doc, path)
+    })
+    .expect("writes example assets");
 
     for name in ["clip.glb", "clip-dirty.glb"] {
         let committed = std::fs::read(asset(name)).expect("reads committed asset");
-        let regenerated = std::fs::read(tmp.path().join(name)).expect("reads regenerated asset");
+        let regenerated = std::fs::read(tmp.path().join(name))
+            .unwrap_or_else(|e| panic!("generator did not write {name}: {e}"));
         if committed != regenerated {
             // Report sizes/offset rather than dumping two 896-byte vectors.
             // A pure length change (identical prefix) has no differing

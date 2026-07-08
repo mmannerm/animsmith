@@ -10,6 +10,7 @@ dependencies = [
  "animsmith-fbx",
  "animsmith-gltf",
  "animsmith-report",
+ "animsmith-testkit",
  "clap",
  "gltf",
  "serde",
@@ -44,6 +45,7 @@ name = "animsmith-gltf"
 version = "0.1.0"
 dependencies = [
  "animsmith-core",
+ "animsmith-testkit",
  "base64",
  "glam",
  "gltf",
@@ -60,6 +62,14 @@ dependencies = [
  "animsmith-gltf",
  "base64",
  "serde_json",
+]
+
+[[package]]
+name = "animsmith-testkit"
+version = "0.1.0"
+dependencies = [
+ "animsmith-core",
+ "glam",
 ]
 
 [[package]]

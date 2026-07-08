@@ -1,6 +1,7 @@
-use animsmith_core::glam::{Quat, Vec3};
+use animsmith_core::glam::Quat;
 use animsmith_core::model::*;
 use animsmith_gltf::fix::{FixSession, Repair as GltfRepair};
+use animsmith_testkit::{quats_from_angles, scaled_quat, two_bone_rotation_doc};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -26,8 +27,7 @@ fn unique_temp_dir(name: &str) -> tempfile::TempDir {
 /// so every adjacent pair has a positive dot product — the clean form
 /// is exactly the un-negated sequence.
 fn sway_quats(flipped: bool) -> Vec<Quat> {
-    let angles = [0.0f32, 0.4, 0.8, 1.2, 1.6];
-    let mut quats: Vec<Quat> = angles.iter().map(|&a| Quat::from_rotation_y(a)).collect();
+    let mut quats = quats_from_angles(&[0.0, 0.4, 0.8, 1.2, 1.6]);
     if flipped {
         quats[1] = -quats[1];
         quats[3] = -quats[3];
@@ -35,46 +35,8 @@ fn sway_quats(flipped: bool) -> Vec<Quat> {
     quats
 }
 
-fn scaled_quat(q: Quat, scale: f32) -> Quat {
-    let [x, y, z, w] = q.to_array();
-    Quat::from_xyzw(x * scale, y * scale, z * scale, w * scale)
-}
-
 fn sway_doc_with_quats(quats: Vec<Quat>) -> Document {
-    Document {
-        skeleton: Skeleton {
-            bones: vec![
-                Bone {
-                    name: "root".into(),
-                    parent: None,
-                    rest: Transform::IDENTITY,
-                    inverse_bind: None,
-                },
-                Bone {
-                    name: "spine".into(),
-                    parent: Some(0),
-                    rest: Transform {
-                        translation: Vec3::new(0.0, 0.5, 0.0),
-                        ..Transform::IDENTITY
-                    },
-                    inverse_bind: None,
-                },
-            ],
-        },
-        clips: vec![Clip {
-            name: "sway".into(),
-            duration_s: 1.0,
-            tracks: vec![Track {
-                bone: 1,
-                property: Property::Rotation,
-                interpolation: Interpolation::Linear,
-                times: vec![0.0, 0.25, 0.5, 0.75, 1.0],
-                values: TrackValues::Quats(quats),
-            }],
-        }],
-        assets: Default::default(),
-        source: SourceInfo::default(),
-    }
+    two_bone_rotation_doc("sway", quats, false)
 }
 
 fn sway_doc(flipped: bool) -> Document {
