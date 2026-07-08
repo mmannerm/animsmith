@@ -21,3 +21,6 @@ animsmith-core = { workspace = true }
 ufbx = { workspace = true }
 glam = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
