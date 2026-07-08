@@ -28,10 +28,12 @@ Pass an output directory to write elsewhere:
 cargo run -p animsmith --example gen_example_assets -- /some/dir
 ```
 
-The committed `.glb` are pinned to the generator's output by
-`example_assets_match_generator_output` in
-[`crates/animsmith/tests/examples_cookbook.rs`](../../crates/animsmith/tests/examples_cookbook.rs),
-so editing the generator without rerunning it fails CI. That test file
+Both the generator and `example_assets_match_generator_output` in
+[`crates/animsmith/tests/examples_cookbook.rs`](../../crates/animsmith/tests/examples_cookbook.rs)
+write these assets through the same `write_example_assets` wiring in
+[`animsmith-testkit`](../../crates/animsmith-testkit), so changing that
+builder or its filename wiring (or hand-editing the committed bytes)
+without regenerating fails CI. That test file
 also covers every [cookbook](../../docs/examples.md) command that runs
 against these committed assets — the first-gate, repair, transform, and
 config-steering workflows — asserting each one's exit code plus a

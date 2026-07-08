@@ -1,0 +1,13 @@
+[package]
+name = "animsmith-testkit"
+description = "Internal fixture builders shared by animsmith's tests and the example asset generator (not published)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+animsmith-core = { workspace = true }
+glam = { workspace = true }
