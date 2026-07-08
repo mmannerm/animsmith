@@ -157,11 +157,15 @@ fn foot_track(bone: BoneId, rest: Vec3, sign: f32, periods: f64) -> Track {
         .collect();
     let values: Vec<Vec3> = (0..WALK_KEYS)
         .map(|k| {
-            let theta = (periods * TAU * k as f64 / (WALK_KEYS - 1) as f64) as f32;
+            let theta = periods * TAU * k as f64 / (WALK_KEYS - 1) as f64;
+            // `libm::sin` (pure Rust) is bit-identical across platforms,
+            // unlike `f32::sin`, so the committed asset regenerates
+            // byte-for-byte on Linux / macOS / Windows.
+            let swing = libm::sin(theta) as f32;
             rest + Vec3::new(
                 0.0,
-                sign * WALK_FOOT_AMPLITUDE * theta.sin(),
-                sign * WALK_STRIDE * theta.sin(),
+                sign * WALK_FOOT_AMPLITUDE * swing,
+                sign * WALK_STRIDE * swing,
             )
         })
         .collect();

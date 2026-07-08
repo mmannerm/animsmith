@@ -272,10 +272,30 @@ fn cookbook_semantic_contract() {
     assert_eq!(code, Some(0), "clean walk passes its contract");
     assert!(out.contains("clean"), "walk is clean: {out}");
 
-    // The popped-seam rig fails loop-seam under the same contract.
+    // The popped-seam rig fails loop-seam under the same contract, and
+    // that is its *only* finding (the clean rig differs by exactly this).
     let (code, out) = run(&["lint", "--config", config, dirty]);
     assert_eq!(code, Some(1), "popped seam fails loop-seam");
     assert!(out.contains("loop-seam"), "names loop-seam: {out}");
+    let (_, json) = run(&["lint", "--config", config, "--format", "json", dirty]);
+    let doc: Value = serde_json::from_str(&json).expect("lint --format json is valid JSON");
+    let findings = doc["files"][0]["findings"]
+        .as_array()
+        .expect("findings array");
+    let ids: Vec<(&str, &str)> = findings
+        .iter()
+        .map(|f| {
+            (
+                f["check_id"].as_str().unwrap_or_default(),
+                f["severity"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        ids,
+        vec![("loop-seam", "error")],
+        "the popped seam is the only finding: {ids:?}"
+    );
 
     // Without the contract, loop-seam has nothing to check and skips —
     // the semantic checks enforce declared expectations, not a guess.

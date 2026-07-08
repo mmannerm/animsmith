@@ -1,10 +1,7 @@
 //! Regenerates the committed example assets under `examples/assets/`:
-//! a tiny clean two-bone rotation clip (`clip.glb`) and a byte-identical
-//! copy with two deliberate, repairable defects — `clip-dirty.glb`. The
-//! dirty copy carries one non-unit rotation key (`quat-norm`) and one
-//! sign-flipped key (`quat-flip`); everything else matches the clean
-//! clip, so `fix` restores it exactly and `diff` shows no measurement
-//! drift.
+//! the mechanical-check clips (`clip.glb` clean, `clip-dirty.glb` with
+//! repairable `quat-norm`/`quat-flip` defects) and the semantic-check
+//! walk rigs (`walk.glb` a clean loop, `walk-dirty.glb` a popped seam).
 //!
 //! The filename↔document wiring lives in `animsmith-testkit`'s
 //! `write_example_assets`, which both this example and the guard test

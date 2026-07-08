@@ -245,7 +245,7 @@ $ animsmith measure examples/assets/walk.glb          # --format json
       "measurements": {
         "walk": {
           "duration_s": 1.0, "frame_count": 33,
-          "loop_seam_ratio": 8.5e-7,
+          "loop_seam_ratio": 1.2e-15,
           "gait": { "phase": 0.75, "lr_amplitude_m": 0.2 },
           "speed_mps": 0.0
         }
