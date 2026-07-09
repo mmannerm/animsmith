@@ -138,7 +138,6 @@ def parse_args() -> argparse.Namespace:
     )
     subcommands = parser.add_subparsers(dest="command", required=True)
     subcommands.add_parser("github-matrix", help="Print a GitHub Actions matrix as compact JSON.")
-    subcommands.add_parser("markdown-table", help="Print the generated Markdown archive table.")
     subcommands.add_parser("check-docs", help="Verify docs/cli.md matches the manifest.")
     subcommands.add_parser("write-docs", help="Update docs/cli.md from the manifest.")
     return parser.parse_args()
@@ -150,8 +149,6 @@ def main() -> None:
 
     if args.command == "github-matrix":
         print(github_matrix(targets))
-    elif args.command == "markdown-table":
-        print(markdown_table(targets))
     elif args.command == "check-docs":
         render_docs(targets, args.docs, check=True)
     elif args.command == "write-docs":

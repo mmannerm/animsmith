@@ -50,6 +50,14 @@ extras=(README.md LICENSE-APACHE LICENSE-MIT THIRD-PARTY.md)
 
 # --- release target metadata: matrix + docs -----------------------------
 
+grep -Fq 'matrix="$(python3 scripts/release-targets.py github-matrix)"' \
+  .github/workflows/release-binaries.yml \
+  || fail "release-binaries.yml must load the matrix from scripts/release-targets.py"
+grep -Fq 'matrix: ${{ fromJson(needs.release_targets.outputs.matrix) }}' \
+  .github/workflows/release-binaries.yml \
+  || fail "release-binaries.yml build job must consume the generated release target matrix"
+echo "ok: release workflow consumes the generated target matrix"
+
 "$python" "$targets_script" check-docs
 echo "ok: release target docs match release-targets.json"
 
@@ -81,9 +89,24 @@ if include != expected:
 PY
 echo "ok: release target matrix is valid"
 
-if grep -Fq "animsmith-vX.Y.Z-" README.md; then
-  fail "README.md must link to docs/cli.md instead of repeating release archive names"
-fi
+MANIFEST=release-targets.json "$python" - <<'PY'
+import json
+import os
+from pathlib import Path
+
+manifest = json.loads(Path(os.environ["MANIFEST"]).read_text(encoding="utf-8"))
+readme = Path("README.md").read_text(encoding="utf-8")
+duplicated_targets = [
+    target["target"]
+    for target in manifest["release_targets"]
+    if target["target"] in readme
+]
+if duplicated_targets:
+    raise SystemExit(
+        "README.md must link to docs/cli.md instead of repeating release target names: "
+        + ", ".join(duplicated_targets)
+    )
+PY
 echo "ok: README does not duplicate release archive names"
 
 target_fixture="$work/release-targets.json"
@@ -131,6 +154,73 @@ actual_docs="$(cat "$docs_fixture")"
   || fail "write-docs did not regenerate the release target block from the manifest"
 "$python" "$targets_script" --manifest "$target_fixture" --docs "$docs_fixture" check-docs
 echo "ok: write-docs regenerates the CLI archive table"
+
+check_bad_manifest() {
+  local name="$1"
+  local expected="$2"
+  local manifest="$work/bad-$name.json"
+  local err="$work/bad-$name.err"
+
+  cat >"$manifest"
+  if "$python" "$targets_script" --manifest "$manifest" github-matrix >/dev/null 2>"$err"; then
+    fail "$name: invalid manifest unexpectedly passed"
+  fi
+  grep -Fq "$expected" "$err" \
+    || fail "$name: expected error containing '$expected', got: $(cat "$err")"
+  echo "ok: invalid manifest rejected ($name)"
+}
+
+check_bad_manifest missing-field "missing python" <<'JSON'
+{
+  "release_targets": [
+    {
+      "platform": "Example OS",
+      "os": "ubuntu-latest",
+      "target": "example-target",
+      "binary": "animsmith",
+      "archive_extension": "tar.gz"
+    }
+  ]
+}
+JSON
+
+check_bad_manifest duplicate-target "duplicate release target example-target" <<'JSON'
+{
+  "release_targets": [
+    {
+      "platform": "Example OS",
+      "os": "ubuntu-latest",
+      "target": "example-target",
+      "binary": "animsmith",
+      "archive_extension": "tar.gz",
+      "python": "python3"
+    },
+    {
+      "platform": "Example OS 2",
+      "os": "ubuntu-latest",
+      "target": "example-target",
+      "binary": "animsmith",
+      "archive_extension": "tar.gz",
+      "python": "python3"
+    }
+  ]
+}
+JSON
+
+check_bad_manifest unsupported-extension "unsupported archive_extension '7z'" <<'JSON'
+{
+  "release_targets": [
+    {
+      "platform": "Example OS",
+      "os": "ubuntu-latest",
+      "target": "example-target",
+      "binary": "animsmith",
+      "archive_extension": "7z",
+      "python": "python3"
+    }
+  ]
+}
+JSON
 
 # --- packaging: archive contents + .sha256 ------------------------------
 
