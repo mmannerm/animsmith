@@ -27,6 +27,7 @@ EXPRESSION_PATTERN = re.compile(r"\$\{\{(.*?)\}\}")
 MATRIX_DOT_REFERENCE_PATTERN = re.compile(r"\bmatrix\.([A-Za-z_][A-Za-z0-9_-]*)\b")
 MATRIX_INDEX_REFERENCE_PATTERN = re.compile(r"""\bmatrix\s*\[\s*(['"])([A-Za-z_][A-Za-z0-9_-]*)\1\s*\]""")
 WORKFLOW_JOB_HEADER_PATTERN = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$", re.MULTILINE)
+BLOCK_SCALAR_PATTERN = re.compile(r":\s*[|>][+-]?\s*$")
 
 
 def load_targets(manifest: Path) -> list[dict[str, str]]:
@@ -205,10 +206,33 @@ def strip_yaml_comment(line: str) -> str:
     return line
 
 
+def leading_spaces(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
+
+
+def starts_block_scalar(line: str) -> bool:
+    return bool(BLOCK_SCALAR_PATTERN.search(line.rstrip()))
+
+
 def workflow_matrix_references(workflow_text: str) -> set[str]:
     references: set[str] = set()
+    block_scalar_indent: int | None = None
     for line in workflow_text.splitlines():
-        line = strip_yaml_comment(line)
+        if block_scalar_indent is not None:
+            if not line.strip():
+                continue
+            if leading_spaces(line) > block_scalar_indent:
+                scan_line = line
+            else:
+                block_scalar_indent = None
+                scan_line = strip_yaml_comment(line)
+        else:
+            scan_line = strip_yaml_comment(line)
+
+        if block_scalar_indent is None and starts_block_scalar(scan_line):
+            block_scalar_indent = leading_spaces(line)
+
+        line = scan_line
         if not line.strip():
             continue
         for expression in EXPRESSION_PATTERN.findall(line):

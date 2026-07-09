@@ -201,6 +201,27 @@ EOF
 "$python" "$targets_script" --manifest "$target_fixture" --workflow "$matrix_scope_fixture" check-workflow
 echo "ok: check-workflow scopes matrix field checks to the build job"
 
+matrix_run_block_fixture="$work/release-binaries-run-block-matrix.yml"
+cp "$workflow_fixture" "$matrix_run_block_fixture"
+cat >>"$matrix_run_block_fixture" <<'EOF'
+    steps:
+      - run: |
+          # ${{ matrix.script-ext }}
+EOF
+if "$python" "$targets_script" --manifest "$target_fixture" --docs "$docs_fixture" --workflow "$matrix_run_block_fixture" check \
+  >/dev/null 2>"$work/run-block-matrix-check.err"; then
+  fail "check accepted a build job matrix reference inside run block content"
+fi
+grep -Fq "matrix.script-ext" "$work/run-block-matrix-check.err" \
+  || fail "top-level run block matrix field error did not name script-ext: $(cat "$work/run-block-matrix-check.err")"
+if "$python" "$targets_script" --manifest "$target_fixture" --workflow "$matrix_run_block_fixture" check-workflow \
+  >/dev/null 2>"$work/run-block-matrix.err"; then
+  fail "check-workflow accepted a build job matrix reference inside run block content"
+fi
+grep -Fq "matrix.script-ext" "$work/run-block-matrix.err" \
+  || fail "run block matrix field error did not name script-ext: $(cat "$work/run-block-matrix.err")"
+echo "ok: check-workflow scans build job run block content"
+
 matrix_contract_fixture="$work/release-binaries-unknown-matrix.yml"
 cp "$workflow_fixture" "$matrix_contract_fixture"
 cat >>"$matrix_contract_fixture" <<'EOF'
