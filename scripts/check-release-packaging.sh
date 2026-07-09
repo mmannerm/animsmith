@@ -6,6 +6,8 @@
 #   1. package-release-binary.py: archive contents + matching .sha256.
 #   2. select-cli-release-tag.sh: release-present / no-release-skip /
 #      missing-CLI-tag detection branches.
+#   3. release-targets.py: one canonical release target list for workflow
+#      matrices and user-facing archive docs.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -14,6 +16,7 @@ cd "$repo_root"
 python="${PYTHON:-python3}"
 package_script="scripts/package-release-binary.py"
 select_script="scripts/select-cli-release-tag.sh"
+targets_script="scripts/release-targets.py"
 
 command -v "$python" >/dev/null || {
   echo "python3 not found; required for release packaging coverage" >&2
@@ -44,6 +47,27 @@ sha256_verify() {
 
 # Docs bundled into every release archive, mirroring release-binaries.yml.
 extras=(README.md LICENSE-APACHE LICENSE-MIT THIRD-PARTY.md)
+
+# --- release target metadata: matrix + docs -----------------------------
+
+"$python" "$targets_script" check-docs
+echo "ok: release target docs match release-targets.json"
+
+matrix="$("$python" "$targets_script" github-matrix)"
+MATRIX="$matrix" "$python" - <<'PY'
+import json
+import os
+
+matrix = json.loads(os.environ["MATRIX"])
+include = matrix.get("include")
+if not isinstance(include, list) or not include:
+    raise SystemExit("github-matrix did not emit a non-empty include list")
+for index, entry in enumerate(include, start=1):
+    missing = {"os", "target", "bin", "ext", "python"} - entry.keys()
+    if missing:
+        raise SystemExit(f"github-matrix entry {index} missing {sorted(missing)}")
+PY
+echo "ok: release target matrix is valid"
 
 # --- packaging: archive contents + .sha256 ------------------------------
 
