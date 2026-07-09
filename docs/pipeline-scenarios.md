@@ -72,7 +72,7 @@ the command-owned references:
 | Inventory, measurement, lint, and exit-code gating | [A first CLI gate](../examples/README.md#1-a-first-cli-gate) |
 | Mechanical slicing, hold extension, or gait anchoring | [Editing a clip](../examples/README.md#3-editing-a-clip) |
 | Shared clip contract and severity policy | [A project contract config](../examples/README.md#4-a-project-contract-config) |
-| FBX handoff and HTML review reports | [Migrating an FBX export](../examples/README.md#5-migrating-an-fbx-export-default-features-only) |
+| Conversion and HTML review reports | [Converting exports and generating reports](../examples/README.md#5-converting-exports-and-generating-reports-default-features-only) |
 | JSON, Markdown, and schema details | [Machine-readable output](output.md) |
 
 ## Scenario: marketplace-pack intake
@@ -86,9 +86,9 @@ Store the downloaded source in a raw, immutable location with its
 license and vendor metadata. Convert FBX assets into the format your
 pipeline uses, inspect representative files, measure the pack, then lint
 the batch before adding stricter project contract expectations. Use the
-FBX handoff recipe for conversion and reports, the first CLI gate recipe
-for inventory and batch linting, and the project contract recipe once
-clip names and policies settle.
+conversion and reporting recipe for conversion and reports, the first
+CLI gate recipe for inventory and batch linting, and the project
+contract recipe once clip names and policies settle.
 
 Use the first pass to catch obvious importer hazards: non-finite values,
 quaternion problems, inconsistent durations, scale keys, constant tracks,
@@ -164,8 +164,9 @@ clips against the previous accepted revision with `diff`, publish
 human-readable review artifacts, and gate on process exit rather than by
 scraping text. Use JSON for automation, Markdown and HTML for humans.
 Use the first CLI gate recipe for CI `lint`, the project contract recipe
-for config-backed checks, the FBX handoff recipe for `report`, and the
-machine-readable output reference for JSON and Markdown outputs.
+for config-backed checks, the conversion and reporting recipe for
+`report`, and the machine-readable output reference for JSON and
+Markdown outputs.
 
 `--deny-warnings` is a project policy choice. Many teams start by gating
 only errors, then promote warnings once the back catalog is clean.

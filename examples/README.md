@@ -12,9 +12,9 @@ Commands that reference [`examples/assets/`](assets/) run
 against small assets committed there, so you can follow along from a
 source checkout with no downloads; the assets are procedurally
 generated (see [their README](assets/README.md) for
-provenance and how to regenerate them). The FBX-migration section
-operates on your own rig, using placeholder filenames — `export.fbx`,
-`old.glb` — for assets you supply.
+provenance and how to regenerate them). The conversion and reporting
+section operates on assets you supply, using placeholder filenames —
+`export.fbx`, `old.glb` — for your own exports and baselines.
 
 Transcripts are real command output. Long finding messages are elided as
 `...` and the JSON envelope is shown abridged; everything else is
@@ -350,7 +350,7 @@ the full key reference.
 
 ---
 
-## 5. Migrating an FBX export _(default features only)_
+## 5. Converting exports and generating reports _(default features only)_
 
 `convert` normalizes an FBX (or glTF) export into a clean glTF, and
 `report` renders a self-contained HTML report with skeleton playback and
