@@ -1,15 +1,18 @@
 # Documentation
 
-Reference material for animsmith. Start with the
-[game-ready clips guide](game-ready-clips.md) for *why* the checks
-exist, and the [examples cookbook](../examples/README.md) for runnable,
-copy-into-your-project workflows; the pages here are the topic-by-topic
-references those draw on.
+Reference material for animsmith. New to the tool, or deciding whether
+your team should adopt it? Start with
+[why animsmith](why-animsmith.md). For users, the
+[game-ready clips guide](game-ready-clips.md) explains *why* the checks
+exist, and the [examples cookbook](../examples/README.md) gives
+runnable, copy-into-your-project workflows; the pages here are the
+topic-by-topic references those draw on.
 
 ## I want to…
 
 | I want to… | Go to |
 |---|---|
+| Decide whether animsmith fits my team | [Why animsmith](why-animsmith.md) |
 | Understand what "game-ready" means, and why a check fires | [Game-ready clips guide](game-ready-clips.md) |
 | Gate animation exports in CI | [Cookbook §1 — a first CLI gate](../examples/README.md#1-a-first-cli-gate) |
 | Repair a broken export | [Cookbook §2 — repairing an asset](../examples/README.md#2-repairing-an-asset) |
@@ -23,6 +26,7 @@ references those draw on.
 
 | Document | What it covers |
 |---|---|
+| [Why animsmith](why-animsmith.md) | What animsmith is, why it exists, and what it is worth per role — the adoption case for someone who has never seen the tool. |
 | [Game-ready clips guide](game-ready-clips.md) | What makes a clip game-engine friendly and why — every runtime failure mode, mapped to the checks, repairs, and config that address it. Start here for the why. |
 | [Examples cookbook](../examples/README.md) | Runnable workflows — CLI gates, repair, clip edits, contract configs, FBX migration, and library embedding. Several double as CI/acceptance gates. |
 | [cli.md](cli.md) | CLI reference: every command, flag, and exit code. |
