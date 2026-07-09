@@ -126,15 +126,19 @@ Mechanical checks run without project config:
 | `scale-keys` | warning | animated scale or non-uniform scale |
 | `constant-track` | note | multi-key tracks that never move |
 
-Semantic checks use declared expectations and rig roles:
+Contract-aware checks use declared expectations and, where needed, rig roles:
 
 | id | severity | what |
 |---|---|---|
+| `fps` | warning | duration and keys must land on the declared frame grid |
 | `loop-seam` | error | feet-relative-to-hips wrap discontinuity in declared loops |
+| `in-place` | error | declared in-place vs root-motion mode must match measured travel |
 | `gait-group` | error | stride-phase spread across a declared directional blend ring |
 | `root-motion-speed` | error | measured horizontal root travel vs a declared speed pin |
+| `foot-slide` | warning | stance feet must move consistently with declared travel |
 | `missing-bones` | error | declared animated bones missing from the skeleton or carrying no keys |
 | `frozen-bone` | error | required bones whose rotation never exceeds the configured floor |
+| `bind-pose` | warning | first frame deviating too far from the skeleton rest pose |
 
 Checks whose rig roles cannot be resolved are skipped with a note rather
 than guessed.
