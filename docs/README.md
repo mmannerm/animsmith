@@ -1,45 +1,19 @@
 # Documentation
 
-Reference material for animsmith. New to the tool, or deciding whether
-your team should adopt it? Start with
-[why animsmith](why-animsmith.md). For users, the
-[game-ready clips guide](game-ready-clips.md) explains *why* the checks
-exist, the [pipeline scenario guide](pipeline-scenarios.md) shows where
-animsmith fits in raw-to-game-ready asset processes, and the
-[examples cookbook](../examples/README.md) gives runnable,
-copy-into-your-project workflows; the pages here are the topic-by-topic
-references those draw on.
+Every animsmith document, and the task it serves — this table is the
+single routing surface; the other pages link back here rather than
+re-listing each other.
 
-## I want to…
-
-| I want to… | Go to |
+| Document | Use it to… |
 |---|---|
-| Decide whether animsmith fits my team | [Why animsmith](why-animsmith.md) |
-| Understand what "game-ready" means, and why a check fires | [Game-ready clips guide](game-ready-clips.md) |
-| Plan a raw-to-game-ready animation asset process | [Pipeline scenario guide](pipeline-scenarios.md) |
-| Gate animation exports in CI | [Cookbook §1 — a first CLI gate](../examples/README.md#1-a-first-cli-gate) |
-| Repair a broken export | [Cookbook §2 — repairing an asset](../examples/README.md#2-repairing-an-asset) |
-| Trim, extend, or re-anchor a clip | [Cookbook §3 — editing a clip](../examples/README.md#3-editing-a-clip) |
-| Encode my project's animation contract | [Cookbook §4 — a project contract config](../examples/README.md#4-a-project-contract-config) |
-| Migrate an FBX or Mixamo export to glTF | [Cookbook §5 — migrating an FBX export](../examples/README.md#5-migrating-an-fbx-export-default-features-only) |
-| Call the checks from Rust | [Cookbook §6 — embedding](../examples/README.md#6-embedding-animsmith-as-a-library-gate) + [embedding.md](embedding.md) |
-| Parse animsmith's JSON output in a pipeline | [output.md](output.md) |
-
-## Reference pages
-
-| Document | What it covers |
-|---|---|
-| [Why animsmith](why-animsmith.md) | What animsmith is, why it exists, and what it is worth by role — the adoption case for someone who has never seen the tool. |
-| [Game-ready clips guide](game-ready-clips.md) | What makes a clip game-engine friendly and why — every runtime failure mode, mapped to the checks, repairs, and config that address it. Start here when a check fires. |
-| [Pipeline scenario guide](pipeline-scenarios.md) | Where animsmith fits in raw-to-game-ready asset pipelines: marketplace intake, mocap cleanup, outsourced acceptance, CI gating, and raw/generated artifact storage. |
-| [Examples cookbook](../examples/README.md) | Runnable workflows — CLI gates, repair, clip edits, contract configs, FBX migration, and library embedding. Several double as CI/acceptance gates. |
-| [cli.md](cli.md) | CLI reference: every command, flag, and exit code. |
-| [embedding.md](embedding.md) | Driving the check catalog from Rust instead of the CLI, paired with the runnable [`embed`](../crates/animsmith/examples/embed.rs) example. |
-| [output.md](output.md) | The versioned `--format json` envelope, with the JSON Schema under [`schemas/`](schemas/). |
-
-See also the repository root: [README.md](../README.md) for an overview and
-the configuration reference, [DESIGN.md](../DESIGN.md) for architecture and
-roadmap, and [CONTRIBUTING.md](../CONTRIBUTING.md) /
-[DEVELOPMENT.md](../DEVELOPMENT.md) for working on animsmith itself.
-Dated research notes that inform the roadmap live under
-[`research/`](research/game-ready-animation-clips.md).
+| [Why animsmith](why-animsmith.md) | Decide whether animsmith fits your team — what it is, why it exists, and what it is worth by role. The canonical home of the positioning case. |
+| [Game-ready clips guide](game-ready-clips.md) | Understand what "game-ready" means and why a check fires — every runtime failure mode, mapped to the checks, repairs, and config that address it. |
+| [Pipeline scenario guide](pipeline-scenarios.md) | Plan a raw-to-game-ready asset process — marketplace intake, mocap cleanup, outsourced acceptance, CI gating, and artifact storage. |
+| [Examples cookbook](../examples/README.md) | Do the work, copy-paste style — gate exports in CI, repair a broken export, trim or re-anchor a clip, encode a project contract config, migrate FBX/Mixamo exports, embed the checks in Rust. |
+| [cli.md](cli.md) | Look up a command, flag, or exit code. |
+| [embedding.md](embedding.md) | Call the checks from Rust instead of the CLI, paired with the runnable [`embed`](../crates/animsmith/examples/embed.rs) example. |
+| [output.md](output.md) | Parse the versioned `--format json` envelope in a pipeline, validated by the JSON Schema under [`schemas/`](schemas/). |
+| [README](../README.md) | Install and quickstart, plus the check and configuration reference. |
+| [DESIGN.md](../DESIGN.md) | Follow the architecture, check-catalog rationale, and roadmap. |
+| [CONTRIBUTING.md](../CONTRIBUTING.md) / [DEVELOPMENT.md](../DEVELOPMENT.md) | Work on animsmith itself — contribution flow and development setup. |
+| [research/](research/game-ready-animation-clips.md) | Read the dated research notes that inform the roadmap. |

@@ -196,13 +196,9 @@ pipeline through `measure`, `lint`, and `diff`.
 
 ## Where to go next
 
-- [Game-ready clips guide](game-ready-clips.md) explains the runtime
-  symptoms behind each check.
-- [Examples cookbook](../examples/README.md) provides runnable commands
-  and expected output.
-- [Embedding guide](embedding.md) shows how to drive the same checks from
-  a Rust pipeline.
-- [Machine-readable output](output.md) documents the JSON envelope and
-  schema.
-- [Game-ready animation research](research/game-ready-animation-clips.md)
-  records the dated source research behind this process model.
+The [game-ready clips guide](game-ready-clips.md) explains the runtime
+symptoms behind each check, and the
+[examples cookbook](../examples/README.md) turns the stages above into
+runnable commands. Everything else — embedding, the JSON envelope, the
+dated source research behind this process model — is routed from the
+[documentation index](README.md).

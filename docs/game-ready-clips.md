@@ -270,23 +270,9 @@ rigs; `[rig] profile = "auto"` scores them against your skeleton, and
 
 The positioning case — what animsmith is, why nothing else fills this
 role, and what it is worth to each role on a team — lives in
-[why animsmith](why-animsmith.md). The short version: nothing
-open-source does game-semantics clip validation, format validators
-stop at spec conformance, engine importers surface content problems
-late with checks re-derived studio by studio, and animsmith packages
-the missing checks as a standalone, engine-agnostic, CI-friendly tool.
+[why animsmith](why-animsmith.md).
 
-Where to go next:
-
-- [Pipeline scenario guide](pipeline-scenarios.md) — where these checks
-  fit in raw-to-game-ready asset processes.
-- [Examples cookbook](../examples/README.md) — runnable workflows for
-  every symptom above.
-- [CLI reference](cli.md) — every command, flag, and exit code.
-- [Embedding guide](embedding.md) — drive the check catalog from Rust
-  in your own pipeline.
-- [DESIGN.md](../DESIGN.md) — architecture, the full check-catalog
-  rationale, and the roadmap.
-- [Game-ready animation research](research/game-ready-animation-clips.md)
-  — the dated engine survey (Unity, Unreal, Godot, Bevy, glTF) behind
-  this guide's contract, with the gaps that inform the roadmap.
+Everything else — runnable workflows for the symptoms above, pipeline
+scenarios, the CLI reference, embedding, and the dated engine survey
+behind this guide's contract — is routed from the
+[documentation index](README.md).

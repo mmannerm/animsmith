@@ -147,7 +147,15 @@ for path in \
   AGENTS.md \
   CLAUDE.md \
   .agent-instructions/shared.md \
-  .github/PULL_REQUEST_TEMPLATE.md; do
+  .github/PULL_REQUEST_TEMPLATE.md \
+  docs/README.md \
+  docs/why-animsmith.md \
+  docs/game-ready-clips.md \
+  docs/pipeline-scenarios.md \
+  docs/cli.md \
+  docs/embedding.md \
+  docs/output.md \
+  examples/README.md; do
   validate_markdown_links "$path"
 done
 for path in \

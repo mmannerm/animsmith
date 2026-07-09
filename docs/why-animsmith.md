@@ -115,10 +115,8 @@ earlier and more repeatably than the engine can.
 
 ## Where to go next
 
-- [Game-ready clips guide](game-ready-clips.md) — failure-mode depth,
-  symptom by symptom: mechanics, check, repair, config.
-- [Examples cookbook](../examples/README.md) — runnable workflows:
-  CLI gates, repair, clip edits, contract configs, embedding.
-- [Documentation index](README.md) — topic-by-topic reference pages.
-- [README](../README.md) — install, quickstart, and the check
-  catalog.
+Convinced, or curious? The
+[game-ready clips guide](game-ready-clips.md) covers each failure mode
+in depth — mechanics, check, repair, config — and everything else,
+from install to runnable workflows, is routed from the
+[documentation index](README.md).

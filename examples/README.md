@@ -423,8 +423,8 @@ We do not ship third-party assets. To try this on a real rig:
 
 Use embedding when the team already has an importer or build pipeline and
 wants animsmith's checks as a library step instead of a separate shell
-command. The pipeline-library use case is the payoff in [why animsmith
-exists](../docs/game-ready-clips.md#why-animsmith-exists): load your
+command. The pipeline-library use case is the payoff in
+[why animsmith](../docs/why-animsmith.md): load your
 asset once, map your own contract into `Config`, and surface findings in
 the same gate that owns the rest of your asset rules.
 
