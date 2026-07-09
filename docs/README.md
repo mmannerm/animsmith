@@ -26,7 +26,7 @@ topic-by-topic references those draw on.
 
 | Document | What it covers |
 |---|---|
-| [Why animsmith](why-animsmith.md) | What animsmith is, why it exists, and what it is worth per role — the adoption case for someone who has never seen the tool. |
+| [Why animsmith](why-animsmith.md) | What animsmith is, why it exists, and what it is worth by role — the adoption case for someone who has never seen the tool. |
 | [Game-ready clips guide](game-ready-clips.md) | What makes a clip game-engine friendly and why — every runtime failure mode, mapped to the checks, repairs, and config that address it. Start here for the why. |
 | [Examples cookbook](../examples/README.md) | Runnable workflows — CLI gates, repair, clip edits, contract configs, FBX migration, and library embedding. Several double as CI/acceptance gates. |
 | [cli.md](cli.md) | CLI reference: every command, flag, and exit code. |

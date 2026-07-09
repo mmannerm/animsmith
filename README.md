@@ -24,7 +24,7 @@ see the
 [game-ready clips guide](https://github.com/mmannerm/animsmith/blob/main/docs/game-ready-clips.md).
 Evaluating animsmith for your team? Start with
 [why animsmith](https://github.com/mmannerm/animsmith/blob/main/docs/why-animsmith.md)
-— what it is, why it exists, and what it is worth per role.
+— what it is, why it exists, and what it is worth by role.
 
 **Status: pre-1.0, publishing candidate.** The CLI and crates are tested
 on Linux, macOS, and Windows. The Rust API is still experimental, while

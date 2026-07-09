@@ -26,19 +26,23 @@ the mechanical problems that are provably safe to fix.
 
 Every game team answers "is this clip game-ready?" by hand today: a
 tech artist scrubbing a timeline, a reviewer squinting at a playblast,
-a bug report from playtest. Format validators stop at spec
-conformance — a walk cycle cut a quarter-stride short is perfectly
-valid glTF and still pops every second of gameplay. Engine import
-inspectors do see content problems, but they see them late, inside
-editor workflows, after engine-specific conversion has already
-reshaped the data — and every studio re-derives its custom import
-checks from scratch.
+a bug report from playtest. Nothing open-source does game-semantics
+clip validation. Format validators stop at spec conformance — a run
+cycle whose feet skate across the ground is perfectly valid glTF; the
+validator has no concept of a foot, a loop, or root motion. Engine
+importers do see content problems, but they see them late, inside
+editor workflows, after import-time conversion has already reshaped
+the data — and every studio re-derives its custom import checks from
+scratch. Academic motion-metric code lives in ML-evaluation repos, not
+artist tools.
 
 animsmith is the missing layer in between: a content quality gate and
 repair assistant for animation clips — the linter and test suite
-counterpart to engine import inspectors. It gives animation teams the
-same repeatable, reviewable, CI-friendly confidence that code teams
-expect from tests and linters.
+counterpart to engine import inspectors, packaged as a standalone Rust
+library and CLI: glTF/GLB native, FBX ingested for DCC exports,
+engine-agnostic, with machine-readable output for CI. It gives
+animation teams the same repeatable, reviewable, CI-friendly
+confidence that code teams expect from tests and linters.
 
 ## What "game-ready" means
 
@@ -62,9 +66,10 @@ exists to check all four before the engine does:
   pass/fail, machine-readable reports, and a clear path from "failed"
   to "fix in DCC" or "auto-repair safely".
 
-The [game-ready clips guide](game-ready-clips.md) walks each contract
-in depth — every runtime failure mode, and which check, repair, and
-config covers it.
+The [game-ready clips guide](game-ready-clips.md) covers the same
+ground symptom by symptom: the runtime failure you see when one of
+these contracts is violated, the mechanics behind it, and the check,
+repair, and config that address it.
 
 ## What it is worth, by role
 
@@ -110,8 +115,8 @@ earlier and more repeatably than the engine can.
 
 ## Where to go next
 
-- [Game-ready clips guide](game-ready-clips.md) — the four contracts
-  in failure-mode depth: symptom, mechanics, check, repair, config.
+- [Game-ready clips guide](game-ready-clips.md) — failure-mode depth,
+  symptom by symptom: mechanics, check, repair, config.
 - [Examples cookbook](../examples/README.md) — runnable workflows:
   CLI gates, repair, clip edits, contract configs, embedding.
 - [Documentation index](README.md) — topic-by-topic reference pages.
