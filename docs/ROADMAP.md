@@ -49,9 +49,9 @@ Open at reconcile time: documentation-requirements umbrella
 tutorials tracker
 ([#68](https://github.com/mmannerm/animsmith/issues/68)), cookbook
 motivation and routing
-([#135](https://github.com/mmannerm/animsmith/issues/135)), and
-release-archive doc dedup
-([#112](https://github.com/mmannerm/animsmith/issues/112)).
+([#135](https://github.com/mmannerm/animsmith/issues/135)), and the
+release-matrix field contract
+([#141](https://github.com/mmannerm/animsmith/issues/141)).
 
 New scope proposed by this roadmap (issue drafts in the
 [appendix](#appendix-proposed-issue-filings)):
@@ -117,6 +117,10 @@ shell completions
 
 New scope proposed by this roadmap:
 
+- **Rauta pilot with exit criteria** (B0). The concrete issue behind the
+  feedback loop this roadmap assumes: adopt the 0.1.0 release in Rauta's
+  asset pipeline, and write the observed gaps back into this document
+  before further 0.2.0/0.3.0 work is filed.
 - **Duplicate loop-endpoint detection and safe removal** (B1). The
   research note flags the duplicated final frame as a top "bad cut"
   cause; detection plus a mechanical, verifiable removal transform.
@@ -133,6 +137,17 @@ New scope proposed by this roadmap:
   measurement; declaring which clips form a transition family is a new
   config concept that must fit the existing `[clips]`/`[gait_groups]`
   shapes.
+- **Provably equivalent track pruning** (B6). The research note's
+  safe-preparation list includes dropping constant tracks and all-zero
+  curves when the result is provably equivalent; the `constant-track`
+  check already detects them, but no transform removes them yet.
+
+One research safe-preparation item is deliberately deferred rather than
+filed: an automatic before/after diff embedded in every transform's
+output. The workflow already exists manually — `animsmith diff` compares
+a raw asset against its transformed result — so wiring diff summaries
+into `transform`/`fix` output waits for Rauta pilot evidence that the
+manual step is real friction.
 
 ## 0.3.0 — Engine feedback loop
 
@@ -144,6 +159,13 @@ practical verifies, real engine import behavior instead of only judging
 the data in isolation. This is direction, not commitment — the milestone
 is expected to be re-cut after 0.2.0 and the first rounds of Rauta
 feedback.
+
+Sequencing note: the research note ranks engine profiles as P0/P1,
+trustworthy-audit work. Placing them here is a deliberate product
+decision, not a straight translation — 0.1.0 is hardening-only by its
+milestone definition, and the engine-profile config shape should be
+informed by real Rauta usage (B0) before it becomes public contract,
+rather than designed speculatively.
 
 Proposed scope (issue drafts in the appendix):
 
@@ -164,11 +186,17 @@ Proposed scope (issue drafts in the appendix):
 - **Engine import preset generation** (C3). Suggested Unity/Unreal/Godot
   import settings derived from measured data: loop flags, root motion
   source, sample rate, clip ranges.
-- **Bevy asset manifest generation** (C4) and **Bevy animation-graph RON
-  template generation** (C5). Bevy readiness is partly asset
-  addressability: stable `GltfAssetLabel` paths, named-animation
-  inventories, target-id reports, and graph templates replace fragile
-  hardcoded indices.
+- **Bevy asset manifest generation** (C4). Bevy readiness is partly
+  asset addressability: stable `GltfAssetLabel` paths, named-animation
+  inventories, and target-id reports replace fragile hardcoded indices.
+  For Rauta specifically, the manifest plus an adapter into its
+  programmatic animation-graph setup is the high-leverage surface.
+- **Bevy animation-graph template demand spike** (C5). Downgraded from a
+  committed feature: Rauta builds its animation graphs programmatically
+  and deliberately skipped graph-asset editing, so generated RON graph
+  templates have no confirmed consumer. The spike assesses demand and
+  shape (template vs manifest-driven adapter) before any implementation
+  is filed.
 - **Per-engine profile guides** (C6). One docs page per profile (Unity,
   Unreal, Godot, Bevy, glTF/generic): what the engine expects, what
   animsmith checks, common failures, threshold config, and DCC/import
@@ -225,9 +253,11 @@ than trust from the page:
 - Any check-id taxonomy change (dotted names, renames) is a separate
   pre-1.0 design decision, not implied by this roadmap.
 
-The feedback loop this roadmap assumes: 0.1.0 ships → Rauta adopts it in
-CI/CD → observed friction and gaps are written up → 0.2.0 and 0.3.0
-scope is re-reconciled here before further issues are filed.
+The feedback loop this roadmap assumes: 0.1.0 ships → the Rauta pilot
+(B0) adopts it in CI/CD → observed friction and gaps are written up →
+0.2.0 and 0.3.0 scope is re-reconciled here before further issues are
+filed. B0 is the tracked issue that makes this loop concrete instead of
+aspirational.
 
 ## Filing plan
 
@@ -238,7 +268,7 @@ Executed only after this document is reviewed:
    re-cut" caveat).
 2. File the appendix issues with the listed milestones and labels. The
    `spike` label does not exist yet and needs to be created for the
-   B2/B4/C1/C7 issues.
+   B2/B4/C1/C5/C7 issues.
 3. Re-milestone [#137](https://github.com/mmannerm/animsmith/issues/137)
    and [#72](https://github.com/mmannerm/animsmith/issues/72) into
    0.1.0; [#73](https://github.com/mmannerm/animsmith/issues/73) and
@@ -290,6 +320,21 @@ Milestone 0.1.0 · `type:feature`, `priority:medium` · no blockers.
 > deliberate feature exception in the 0.1.0 hardening milestone, needed
 > for the Rauta CI dogfooding loop.
 
+### B0 — Rauta pilot: dogfood the 0.1.0 release with exit criteria
+
+Milestone 0.2.0 · `type:chore`, `priority:high` · no blockers (starts
+when 0.1.0 ships); blocks further 0.2.0/0.3.0 filing per the roadmap's
+feedback loop.
+
+> Adopt the released 0.1.0 in Rauta's asset pipeline: build a Rauta
+> `animsmith.toml` (or embedder adapter) from the existing asset
+> contract and metadata, run `measure`/`lint`/`diff` against
+> `assets/models/character.glb` in CI, and compare results against
+> `rauta-asset-contract`. Exit criteria: the observed gaps, friction,
+> and false positives/negatives are written up and reconciled back into
+> `docs/ROADMAP.md`, re-scoping 0.2.0/0.3.0 before further issues from
+> this roadmap are filed.
+
 ### B1 — lint+transform: duplicate loop-endpoint detection and removal
 
 Milestone 0.2.0 · `type:feature`, `priority:medium` · no blockers.
@@ -307,8 +352,10 @@ Milestone 0.2.0 · `spike`, `type:feature` · blocks B3.
 > Decide the sidecar file contract for generated animation events:
 > format, schema versioning (alignment with the `schema_version`
 > discipline of the JSON envelope), stable clip identifiers, time
-> coordinates, and behavior under trim/slice/resample. Outcome is a
-> documented format decision, not code.
+> coordinates, and behavior under trim/slice/resample. Must explicitly
+> decide how animsmith sidecars interact with Rauta's existing measured
+> sidecars — a compatible producer/consumer boundary, not a second
+> source of truth. Outcome is a documented format decision, not code.
 
 ### B3 — transform: generate contact-event sidecar from foot analysis
 
@@ -336,10 +383,20 @@ Milestone 0.2.0 · `type:feature` · blocked by B4.
 > are within tolerance, so state-machine transitions do not pop. Pure
 > measurement once B4 defines the family declaration.
 
+### B6 — transform: provably equivalent track pruning
+
+Milestone 0.2.0 · `type:feature`, `priority:medium` · no blockers.
+
+> Add mechanical removal of constant tracks below tolerance and all-zero
+> curves not required by the profile, when the result is provably
+> equivalent under the existing measurement grid. The `constant-track`
+> check already detects these; this adds the verifiable transform the
+> research note's safe-preparation milestone calls for.
+
 ### C1 — Spike: engine-profile config model
 
 Milestone 0.3.0 · `spike`, `type:feature`, `priority:high` · blocks C2,
-C3, C4, C5, C6.
+C3, C4, C6.
 
 > Design engine profiles as a first-class config concept distinct from
 > rig profiles: `generic`, `unity-generic`, `unity-humanoid`, `unreal`,
@@ -379,13 +436,18 @@ Milestone 0.3.0 · `type:feature` · blocked by C1.
 > typed `GltfAssetLabel` paths, so Bevy projects stop relying on fragile
 > numeric indices and misspellable string labels.
 
-### C5 — feat: Bevy animation-graph RON template generation
+### C5 — Spike: Bevy animation-graph template demand and shape
 
-Milestone 0.3.0 · `type:feature` · blocked by C1, C4.
+Milestone 0.3.0 · `spike`, `type:feature`, `priority:low` · blocked by
+C4.
 
-> Generate a serialized Bevy animation-graph (RON) skeleton wired to the
-> manifest's clips, as a starting template for runtime graph
-> construction.
+> Assess whether generated RON animation-graph templates have a real
+> consumer before committing to them: Rauta builds its graphs
+> programmatically and deliberately skipped graph-asset editing, so a
+> C4 manifest plus a Rauta adapter into its `AnimationKind` setup may be
+> the higher-leverage surface. Outcome: a demand/shape decision
+> (template, manifest-driven adapter, or drop) — implementation is filed
+> only if the spike finds a consumer.
 
 ### C6 — docs: per-engine profile guides
 
