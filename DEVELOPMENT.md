@@ -47,9 +47,9 @@ $ just gates
 `just gates` is the local PR gate and should be green before pushing a
 non-trivial PR. It runs formatting, clippy, workspace tests, golden skip
 marker verification, dependency checks, schema-id verification, GitHub
-community-file checks, spell checking, rustdoc, no-default-features CLI
-tests and builds, release binary smoke checks, and package inventory
-checks.
+community-file checks, spell checking, rustdoc with missing public docs
+denied, no-default-features CLI tests and builds, release binary smoke
+checks, and package readiness checks.
 
 The corresponding CI workflows also validate the same expectations on a
 clean checkout. Coverage and the security scanners (Scorecard, CodeQL)
@@ -89,8 +89,10 @@ Only CC0 or procedurally generated fixtures may be committed under
 
 ## Documentation Builds
 
-Use `just doc` for rustdoc warnings-as-errors. It renders workspace docs
-and the CLI crate without default features.
+Use `just doc` for rustdoc warnings-as-errors and missing-docs
+enforcement. It renders workspace docs and the CLI crate without default
+features with `-D warnings -D missing_docs`, so all five publishable
+crates keep documented public surfaces.
 
 When editing public docs, also check Markdown links and GitHub forms by
 inspection. The root `README.md` is also the crates.io front page for the
@@ -147,21 +149,29 @@ not wired into branch protection:
 
 ## Package Readiness
 
-The package inventory gate protects publishable crate contents:
+The package inventory gate protects the publishable crate contents
+intended for crates.io:
 
 ```console
 $ just package-inventory
 ```
 
-Before release-oriented changes, also dry-run package assembly for the
-affected crate. The core crate can be checked independently:
+It verifies each publishable manifest's docs.rs metadata and README
+choice, checks that package inventories include the README, manifest,
+and source entry point, and fully verifies `animsmith-core` with
+`cargo package`. The shared include list carries workspace license and
+notice files. The dependent crates cannot run full `cargo package`
+verification until the matching `animsmith-*` dependency versions have
+been published to crates.io, so the local gate uses
+`cargo package --list` for them and the release flow publishes in
+dependency order.
+
+When the matching internal dependency versions already exist in the
+registry, also dry-run package assembly for any affected dependent crate:
 
 ```console
-$ cargo package -p animsmith-core
+$ cargo package -p animsmith-gltf
 ```
-
-Dependent crates can only fully verify against crates.io once their
-internal `animsmith-*` dependencies have been published.
 
 The release binary workflow packages CLI archives and detects the CLI
 release tag through shared scripts (`scripts/package-release-binary.py`,

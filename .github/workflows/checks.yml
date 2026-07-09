@@ -85,26 +85,23 @@ jobs:
         run: scripts/check-schema-id.sh
 
       - name: Validate GitHub community files
-        run: ruby scripts/check-github-community-files.rb
+        run: bash scripts/check-github-community-files.sh
 
-      - name: Rustdoc warnings are errors
+      - name: Rustdoc warnings and missing docs are errors
         env:
-          RUSTDOCFLAGS: -D warnings
+          RUSTDOCFLAGS: -D warnings -D missing_docs
         run: cargo doc --workspace --no-deps
 
-      - name: Rustdoc warnings are errors without default CLI features
+      - name: Rustdoc warnings and missing docs are errors without default CLI features
         env:
-          RUSTDOCFLAGS: -D warnings
+          RUSTDOCFLAGS: -D warnings -D missing_docs
         run: cargo doc -p animsmith --no-default-features --no-deps
 
       - name: CLI contract tests without default features
         run: cargo test -p animsmith --test cli_contract --no-default-features
 
-      - name: Check crate package inventories
+      - name: Check publishable crate package readiness
         run: bash scripts/check-package-inventory.sh
 
       - name: Release binary packaging contract
         run: bash scripts/check-release-packaging.sh
-
-      - name: Verify publishable core crate
-        run: cargo package -p animsmith-core

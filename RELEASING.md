@@ -4,8 +4,8 @@ Releases are automated with [release-plz](https://release-plz.dev). You
 never hand-edit versions: release-plz opens a **release PR** that bumps
 the shared workspace version, propagates the internal `animsmith-*`
 dependency versions, and updates `CHANGELOG.md`. Merging that PR tags the
-release, publishes the GitHub Release, and publishes all five crates to
-crates.io in dependency order.
+release, publishes the GitHub Release, and publishes the workspace crates
+intended for crates.io in dependency order.
 
 The workflow is `.github/workflows/release-plz.yml`; its behaviour is
 configured by `release-plz.toml`. The changelog uses release-plz's
@@ -17,7 +17,7 @@ history (accepted types live in `.commitlintrc.yml`).
 1. Merge feature/fix PRs to `main` as usual (Conventional Commits).
 2. release-plz keeps a `release-plz` PR open and up to date. It computes
    the next version from the commits since the last release — one shared
-   version across all five crates (`version_group`), so the whole
+   version across the publishable crates (`version_group`), so the whole
    workspace moves together — and writes the changelog.
 3. Review that PR. When you merge it, the `release` job tags, creates the
    GitHub Release, and publishes every crate to crates.io in dependency
@@ -60,6 +60,23 @@ is version-independent and needs no per-release change. `scripts/check-schema-id
 `docs/output.md` reference the current `$id`, and that a version-pinned
 `$id` (`/vX.Y.Z/…`) matches the workspace version. If you ever pin the
 schema URL to a release tag, update it in the same release PR.
+
+## Published README and docs links
+
+The crate READMEs are included in the crates published to crates.io.
+During pre-1.0 development, those READMEs intentionally link deeper
+repository docs to latest `main` with
+`github.com/mmannerm/animsmith/blob/main/...` or `/tree/main/...` URLs.
+That means an older published crate can send readers to newer source
+docs. For now this is accepted so reference docs stay simple while the
+API is still settling; the machine-readable JSON schema remains protected
+separately by `scripts/check-schema-id.sh`.
+
+If a future release needs version-pinned README links, update the
+READMEs, this section, and `scripts/check-package-inventory.sh` in the
+same release-oriented PR. Do not add release-time rewriting without a
+mechanical check that proves the packaged README links and the release
+tag agree.
 
 ## One-time bootstrap
 
@@ -112,7 +129,7 @@ So automation begins at `0.2.0`; `0.1.0` is done by hand, once:
    `[package.metadata.docs.rs]` so pure-Rust crates get Linux/macOS/Windows
    pages, while the C-dependent crates (`animsmith-fbx`, all-features CLI)
    use the Linux default target.
-5. On crates.io, for **each** of the five crates: Settings → Trusted
+5. On crates.io, for **each publishable crate**: Settings → Trusted
    Publishing → add publisher — repository `mmannerm/animsmith`, workflow
    `release-plz.yml`, no environment.
 6. Tag the release commit and publish the GitHub Release from the `0.1.0`
