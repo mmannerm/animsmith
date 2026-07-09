@@ -1,0 +1,37 @@
+# The contract grown in docs/mixamo-tutorial.md for a Mixamo "Walking"
+# download made with the In Place option checked:
+#
+#   animsmith lint --config examples/mixamo.animsmith.toml walking.glb
+#
+# The clip name is the FBX take name — Mixamo exports call the take
+# "mixamo.com"; check `animsmith inspect` output and adjust if yours
+# differs. No third-party bytes are committed to this repo (see the
+# asset policy in examples/README.md), so this contract is smoke-tested
+# against a procedurally generated mixamorig-named rig in
+# crates/animsmith/tests/mixamo_tutorial.rs.
+
+[rig]
+# Pin the profile instead of trusting "auto": Mixamo skeletons resolve
+# hips, spine, head, feet, toes, and hands from their mixamorig:* bone
+# names. The profile has no Root role — Mixamo rigs have no dedicated
+# root bone — so in-place and root-motion-speed judge the Hips track.
+profile = "mixamo"
+
+[clips."mixamo.com"]
+# Downloaded with In Place checked, so the walk must not travel;
+# declaring in_place arms the in-place check. loop = true arms
+# loop-seam: the feet must return to their first-frame pose.
+loop = true
+in_place = true
+
+# For the root-motion variant (downloaded without In Place), declare
+# the speed your character controller expects instead:
+#
+#   [clips."mixamo.com"]
+#   loop = true
+#   in_place = false
+#   speed_mps = { value = 1.2, tolerance = 0.15 }
+
+[checks.loop-seam]
+# Fail a wrap discontinuity more than 1.6x the in-clip stride step.
+max_ratio = 1.6

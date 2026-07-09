@@ -411,7 +411,9 @@ We do not ship third-party assets. To try this on a real rig:
   `convert` it. Mixamo is also a built-in rig profile, so
   `[rig] profile = "mixamo"` resolves its roles for the semantic checks.
   Check Adobe's current terms before redistributing any downloaded
-  asset; the safe path is to keep them out of your repo.
+  asset; the safe path is to keep them out of your repo. The
+  [Mixamo tutorial](../docs/mixamo-tutorial.md) takes one download
+  end-to-end, from this convert step through a contract config.
 - **CC0 / public-domain sources** for assets you want to commit.
 - Or **generate your own** — see the
   [asset generator](../crates/animsmith/examples/gen_example_assets.rs)
