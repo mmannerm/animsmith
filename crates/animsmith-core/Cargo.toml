@@ -18,16 +18,13 @@ targets = ["aarch64-apple-darwin", "x86_64-pc-windows-msvc"]
 
 [features]
 # Exposes `fixtures`: the analytic walk-cycle builder shared with
-# animsmith-testkit. Off by default so published builds carry neither the
-# fixture code nor its libm dependency.
-fixtures = ["dep:libm"]
+# animsmith-testkit. Off by default so published builds carry no fixture
+# code. The builder takes its sine as a parameter, so enabling this adds
+# no dependency (core stays glam + serde + thiserror only).
+fixtures = []
 
 [dependencies]
 glam = { workspace = true }
-# Pure-Rust libm: bit-identical trig across platforms, so the committed
-# example assets built on the `fixtures` builder regenerate byte-for-byte
-# on Linux / macOS / Windows. Pulled in only by the `fixtures` feature.
-libm = { workspace = true, optional = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 

@@ -127,16 +127,17 @@ const WALK_BONES: WalkBones = WalkBones {
 };
 
 /// The clean committed walk clip (`examples/assets/walk.glb`): a 1 s
-/// cycle that closes exactly, so the loop seam is ≈ 0.
+/// cycle that closes exactly, so the loop seam is ≈ 0. `libm::sin` keeps
+/// the committed bytes identical across platforms.
 fn example_walk_doc() -> Document {
-    walk_doc(&WALK_BONES, "walk", 1.0, WALK_STRIDE)
+    walk_doc(&WALK_BONES, "walk", 1.0, WALK_STRIDE, libm::sin)
 }
 
 /// The popped-seam walk clip (`examples/assets/walk-dirty.glb`): the same
 /// motion cut at ¾ of a cycle, so the feet never return to their
 /// first-frame pose and the loop seam pops.
 fn example_walk_dirty_doc() -> Document {
-    walk_doc(&WALK_BONES, "walk", 0.75, WALK_STRIDE)
+    walk_doc(&WALK_BONES, "walk", 0.75, WALK_STRIDE, libm::sin)
 }
 
 /// The committed example assets under `examples/assets/`, as

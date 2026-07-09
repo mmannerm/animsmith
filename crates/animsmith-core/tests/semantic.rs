@@ -9,7 +9,7 @@ use animsmith_core::fixtures::{
 };
 use animsmith_core::metrics::MIN_STRIDE_STEP_M;
 use animsmith_core::model::*;
-use animsmith_core::profile::ResolvedRoles;
+use animsmith_core::profile::{ResolvedRoles, Role};
 use animsmith_core::{CheckCtx, Config, MetricGrids, Severity, all_checks, run_checks};
 use glam::Vec3;
 use std::f64::consts::TAU;
@@ -27,12 +27,23 @@ fn skeleton() -> Skeleton {
     BONES.skeleton()
 }
 
+/// Explicit hips/left-foot/right-foot role map — the profile-bypass path
+/// that drives the checks directly, without relying on profile detection.
 fn roles(skel: &Skeleton) -> ResolvedRoles {
-    BONES.roles(skel)
+    ResolvedRoles::from_names(
+        skel,
+        [
+            (Role::Hips, BONES.hips.to_string()),
+            (Role::LeftFoot, BONES.left_foot.to_string()),
+            (Role::RightFoot, BONES.right_foot.to_string()),
+        ],
+    )
 }
 
 fn foot_track(bone: BoneId, rest: Vec3, sign: f32, periods: f64) -> Track {
-    fixtures::foot_track(bone, rest, sign, periods, STRIDE)
+    // Analytic assertions have tolerances, so the platform sine is fine
+    // here — no committed bytes depend on it (unlike testkit's `libm::sin`).
+    fixtures::foot_track(bone, rest, sign, periods, STRIDE, f64::sin)
 }
 
 fn doc_with_periods(periods: f64) -> Document {
@@ -40,7 +51,7 @@ fn doc_with_periods(periods: f64) -> Document {
 }
 
 fn doc_with_periods_and_stride(periods: f64, stride: f32) -> Document {
-    fixtures::walk_doc(&BONES, "walk", periods, stride)
+    fixtures::walk_doc(&BONES, "walk", periods, stride, f64::sin)
 }
 
 /// A 1 s walk cycle that closes exactly: left foot up when right is

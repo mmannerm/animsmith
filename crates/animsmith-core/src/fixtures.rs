@@ -9,15 +9,17 @@
 //! wires explicit roles over `l_foot`/`r_foot` to unit-test the checks
 //! with profile detection bypassed, while testkit uses `foot_l`/`foot_r`
 //! so the committed `walk.glb` resolves the `ue-mannequin` profile
-//! end-to-end. `periods` and `stride` are parameters for the same reason
-//! — one closed loop vs. a popped seam, a real stride vs. a tiny one.
+//! end-to-end. `periods`, `stride`, and the sine implementation are
+//! parameters for the same reason — one closed loop vs. a popped seam, a
+//! real stride vs. a tiny one, and a byte-stable trig for committed assets
+//! vs. the platform sine for tolerance-checked tests. Passing the sine in
+//! keeps this crate free of a trig dependency (see [`foot_track`]).
 //!
 //! Behind the `fixtures` feature: testkit enables it, and this crate's
 //! own tests reach it through a self dev-dependency that turns the
 //! feature on for the test build.
 
 use crate::model::*;
-use crate::profile::{ResolvedRoles, Role};
 use glam::Vec3;
 use std::f64::consts::TAU;
 
@@ -71,37 +73,33 @@ impl WalkBones {
             ],
         }
     }
-
-    /// An explicit hips/left-foot/right-foot role map over `skel` — the
-    /// profile-bypass path a semantic test uses to drive the checks
-    /// directly, without relying on profile detection.
-    pub fn roles(&self, skel: &Skeleton) -> ResolvedRoles {
-        ResolvedRoles::from_names(
-            skel,
-            [
-                (Role::Hips, self.hips.to_string()),
-                (Role::LeftFoot, self.left_foot.to_string()),
-                (Role::RightFoot, self.right_foot.to_string()),
-            ],
-        )
-    }
 }
 
 /// One foot's translation track: an antiphase vertical + fore/aft
 /// sinusoid over `periods` cycles with the given `stride`. `periods = 1.0`
 /// closes the loop exactly (seam ≈ 0); a non-integer count leaves the feet
 /// away from their first-frame pose — a popped seam.
-pub fn foot_track(bone: BoneId, rest: Vec3, sign: f32, periods: f64, stride: f32) -> Track {
+///
+/// `sin` is caller-supplied so this crate needs no trig dependency: a
+/// consumer that commits the resulting bytes (the example-asset generator)
+/// passes a platform-independent sine such as `libm::sin` for byte-stable
+/// output, while an analytic test can pass `f64::sin` — its tolerances
+/// absorb the platform sine's last-ulp wobble.
+pub fn foot_track(
+    bone: BoneId,
+    rest: Vec3,
+    sign: f32,
+    periods: f64,
+    stride: f32,
+    sin: fn(f64) -> f64,
+) -> Track {
     let times: Vec<f32> = (0..WALK_KEYS)
         .map(|k| k as f32 / (WALK_KEYS - 1) as f32)
         .collect();
     let values: Vec<Vec3> = (0..WALK_KEYS)
         .map(|k| {
             let theta = periods * TAU * k as f64 / (WALK_KEYS - 1) as f64;
-            // `libm::sin` (pure Rust) is bit-identical across platforms,
-            // unlike `f32::sin`, so the committed asset regenerates
-            // byte-for-byte on Linux / macOS / Windows.
-            let swing = libm::sin(theta) as f32;
+            let swing = sin(theta) as f32;
             rest + Vec3::new(
                 0.0,
                 sign * WALK_FOOT_AMPLITUDE * swing,
@@ -119,12 +117,33 @@ pub fn foot_track(bone: BoneId, rest: Vec3, sign: f32, periods: f64, stride: f32
 }
 
 /// The analytic walk clip over `bones`: antiphase left/right foot tracks
-/// running `periods` cycles at `stride`, in a clip named `clip`.
-pub fn walk_doc(bones: &WalkBones, clip: &str, periods: f64, stride: f32) -> Document {
+/// running `periods` cycles at `stride`, in a clip named `clip`. `sin` is
+/// the sine implementation (see [`foot_track`]).
+pub fn walk_doc(
+    bones: &WalkBones,
+    clip: &str,
+    periods: f64,
+    stride: f32,
+    sin: fn(f64) -> f64,
+) -> Document {
     let skeleton = bones.skeleton();
     let tracks = vec![
-        foot_track(1, skeleton.bones[1].rest.translation, 1.0, periods, stride),
-        foot_track(2, skeleton.bones[2].rest.translation, -1.0, periods, stride),
+        foot_track(
+            1,
+            skeleton.bones[1].rest.translation,
+            1.0,
+            periods,
+            stride,
+            sin,
+        ),
+        foot_track(
+            2,
+            skeleton.bones[2].rest.translation,
+            -1.0,
+            periods,
+            stride,
+            sin,
+        ),
     ];
     Document {
         skeleton,

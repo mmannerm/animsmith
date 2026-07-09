@@ -19,8 +19,8 @@ animsmith-gltf = "0.1"
 
 - `fixtures` (off by default) — exposes `animsmith_core::fixtures`, the
   analytic-clip fixture builders shared with animsmith's own tests and
-  example-asset generator, and pulls in `libm` for cross-platform
-  bit-identical trig. Internal to the animsmith workspace and **not**
+  example-asset generator. Adds no dependency (the builders take their
+  sine as a parameter). Internal to the animsmith workspace and **not**
   part of the crate's stable API; downstream code should not depend on
   it.
 
