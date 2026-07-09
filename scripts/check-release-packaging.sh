@@ -271,6 +271,8 @@ grep -Fq "matrix.bin" "$work/unknown-matrix-check.err" \
   || fail "top-level unknown matrix field error did not name bin: $(cat "$work/unknown-matrix-check.err")"
 grep -Fq "matrix.ext" "$work/unknown-matrix-check.err" \
   || fail "top-level unknown matrix field error did not name ext: $(cat "$work/unknown-matrix-check.err")"
+grep -Fq "scripts/release-targets.py write" "$work/unknown-matrix-check.err" \
+  || fail "top-level unknown matrix field error did not name the write remedy: $(cat "$work/unknown-matrix-check.err")"
 if "$python" "$targets_script" --manifest "$target_fixture" --workflow "$matrix_contract_fixture" check-workflow \
   >/dev/null 2>"$work/unknown-matrix.err"; then
   fail "check-workflow accepted a build job matrix reference that is not generated"
