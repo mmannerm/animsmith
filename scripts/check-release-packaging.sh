@@ -32,6 +32,16 @@ fail() {
   exit 1
 }
 
+# Verify a `<digest>  <name>` sidecar with the standard checksum tool the
+# way a downstream user would (cwd must hold both sidecar and archive).
+sha256_verify() {
+  if command -v sha256sum >/dev/null; then
+    sha256sum -c "$1" >/dev/null
+  else
+    shasum -a 256 -c "$1" >/dev/null
+  fi
+}
+
 # Docs bundled into every release archive, mirroring release-binaries.yml.
 extras=(README.md LICENSE-APACHE LICENSE-MIT THIRD-PARTY.md)
 
@@ -108,6 +118,45 @@ PY
   [[ "$sidecar_digest" == "$actual_digest" ]] \
     || fail "$ext: checksum digest mismatch ($sidecar_digest != $actual_digest)"
 
+  # A packed member round-trips byte-for-byte, not just by name.
+  local extracted="$work/extracted-$ext"
+  ARCHIVE="$archive" EXT="$ext" MEMBER="$stem/animsmith-fake" OUT="$extracted" \
+    "$python" - <<'PY'
+import os
+import tarfile
+import zipfile
+
+archive = os.environ["ARCHIVE"]
+ext = os.environ["EXT"]
+member = os.environ["MEMBER"]
+out = os.environ["OUT"]
+if ext == "tar.gz":
+    with tarfile.open(archive, "r:gz") as tar:
+        data = tar.extractfile(member).read()
+elif ext == "zip":
+    with zipfile.ZipFile(archive) as zf:
+        data = zf.read(member)
+else:
+    raise SystemExit(f"unsupported archive extension: {ext}")
+with open(out, "wb") as fh:
+    fh.write(data)
+PY
+  cmp -s "$binary" "$extracted" \
+    || fail "$ext: packed binary differs from the staged input"
+
+  # The sidecar verifies with the standard checksum tool. This exercises
+  # the actual download-verification contract and guards the two-space
+  # `<digest>  <name>` format that `awk` above would silently tolerate.
+  ( cd "$out_dir" && sha256_verify "$stem.$ext.sha256" ) \
+    || fail "$ext: sidecar failed sha256 verification"
+
+  # Mutating the archive must break verification (the digest is over the
+  # archive bytes, not the staged tree).
+  printf 'x' >>"$archive"
+  if ( cd "$out_dir" && sha256_verify "$stem.$ext.sha256" ) 2>/dev/null; then
+    fail "$ext: sidecar still verified after the archive was mutated"
+  fi
+
   echo "ok: packaging $ext -> $stem.$ext (+ .sha256)"
 }
 
@@ -136,12 +185,34 @@ tag="$(RELEASES_CREATED='' RELEASES='' "$select_script")"
 [[ -z "$tag" ]] || fail "detection: expected empty tag on empty input, got '$tag'"
 echo "ok: detection skips (no tag) when releases_created is unset"
 
-# Release cut but nothing for the CLI package -> hard error.
-if RELEASES_CREATED=true \
-   RELEASES='[{"package_name":"animsmith-core","tag":"animsmith-core-v9.9.9"}]' \
-   "$select_script" >/dev/null 2>&1; then
+# Several releases for the CLI package in one run -> the latest (last) wins.
+tag="$(
+  RELEASES_CREATED=true \
+  RELEASES='[{"package_name":"animsmith","tag":"animsmith-v1.2.3"},{"package_name":"animsmith","tag":"animsmith-v1.2.4"}]' \
+    "$select_script"
+)"
+[[ "$tag" == "animsmith-v1.2.4" ]] \
+  || fail "detection: expected the latest CLI tag animsmith-v1.2.4, got '$tag'"
+echo "ok: detection picks the latest CLI tag"
+
+# Release cut but nothing for the CLI package -> hard error naming the package.
+# `if err=$(...)` captures stderr while testing the exit code without set -e
+# aborting on the expected failure.
+if err="$(RELEASES_CREATED=true \
+  RELEASES='[{"package_name":"animsmith-core","tag":"animsmith-core-v9.9.9"}]' \
+  "$select_script" 2>&1 1>/dev/null)"; then
   fail "detection: expected failure when no CLI release tag is present"
 fi
+[[ "$err" == *animsmith* ]] \
+  || fail "detection: missing-package error should name the CLI package, got '$err'"
 echo "ok: detection fails when a release omits the CLI package"
+
+# CLI record present but with no tag field -> jq emits "null"; must error,
+# never leak a bare 'null' as a real tag.
+if RELEASES_CREATED=true RELEASES='[{"package_name":"animsmith"}]' \
+   "$select_script" >/dev/null 2>&1; then
+  fail "detection: expected failure when the CLI release has no tag field"
+fi
+echo "ok: detection fails (no bare 'null') when the CLI record has no tag"
 
 echo "release packaging contract checks passed"

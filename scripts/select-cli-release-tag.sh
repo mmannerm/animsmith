@@ -9,7 +9,6 @@
 #   RELEASES_CREATED  release-plz `releases_created` output ("true" when a
 #                     release was cut this run).
 #   RELEASES          release-plz `releases` output (JSON array).
-#   CLI_PACKAGE       package name to select (default: animsmith).
 #
 # Behaviour:
 #   - RELEASES_CREATED != "true": print nothing, exit 0 (skip binaries).
@@ -17,15 +16,20 @@
 #   - release present but no matching CLI tag: error, exit 1.
 set -euo pipefail
 
+# The CLI package whose tag drives binary packaging.
+cli_package="animsmith"
+
 releases_created="${RELEASES_CREATED:-}"
 releases="${RELEASES:-}"
-cli_package="${CLI_PACKAGE:-animsmith}"
 
 if [[ "${releases_created}" != "true" ]]; then
   # No release cut this run; nothing to package. Emit no tag.
   exit 0
 fi
 
+# release-plz can report several releases in one run; take the latest CLI
+# tag. `.tag` on a record without a tag field yields the string "null",
+# which the guard below rejects rather than emitting as a real tag.
 tag="$(
   jq -r --arg pkg "${cli_package}" \
     '.[] | select(.package_name == $pkg) | .tag' <<<"${releases}" \
