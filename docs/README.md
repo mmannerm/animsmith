@@ -30,8 +30,9 @@ references those draw on.
 | [output.md](output.md) | The versioned `--format json` envelope, with the JSON Schema under [`schemas/`](schemas/). |
 
 See also the repository root: [README.md](../README.md) for an overview and
-the configuration reference, [DESIGN.md](../DESIGN.md) for architecture and
-roadmap, and [CONTRIBUTING.md](../CONTRIBUTING.md) /
+the configuration reference, [DESIGN.md](../DESIGN.md) for architecture, and
+[CONTRIBUTING.md](../CONTRIBUTING.md) /
 [DEVELOPMENT.md](../DEVELOPMENT.md) for working on animsmith itself.
-Dated research notes that inform the roadmap live under
+The release roadmap lives at [ROADMAP.md](ROADMAP.md); the dated research
+notes that inform it live under
 [`research/`](research/game-ready-animation-clips.md).

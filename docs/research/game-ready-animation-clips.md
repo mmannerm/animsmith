@@ -7,7 +7,9 @@ product contract. The user-facing explainer of what animsmith checks and
 why is [`docs/game-ready-clips.md`](../game-ready-clips.md). Before
 converting any recommendation into an issue, reconcile it against
 `DESIGN.md`, the shipped CLI docs, the stable check ids, and any newer
-documentation that has merged since this note was written.
+documentation that has merged since this note was written. The first
+such reconciliation is the release roadmap at
+[`docs/ROADMAP.md`](../ROADMAP.md).
 
 ## Executive Summary
 
