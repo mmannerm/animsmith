@@ -2,13 +2,11 @@ name: codeql
 
 # CodeQL static analysis for Rust. Findings surface in the GitHub Security
 # tab (code scanning). Rust support is newer than the C/JS analyzers, so
-# this runs as a non-blocking scan on PRs, main pushes, and weekly to catch
-# advisories against unchanged code; it is not wired into branch protection.
+# this runs on main pushes and weekly to catch advisories against unchanged
+# code without adding another full-workspace compile to every PR.
 
 on:
   push:
-    branches: [main]
-  pull_request:
     branches: [main]
   schedule:
     # Weekly Tuesday 05:41 UTC; offset minute spreads cron load.
