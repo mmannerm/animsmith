@@ -137,9 +137,10 @@ collapsible section, with a clean summary for a passing asset:
 animsmith lint clip.glb --format markdown >> "$GITHUB_STEP_SUMMARY"
 ```
 
-Each file is rendered as a `<details>` section (expanded for short lists,
-collapsed once a file carries more than ten findings so one noisy asset
-does not bury the rest of the comment) and a footer tallies errors,
+A file with findings is rendered as a `<details>` section (expanded for
+short lists, collapsed once a file carries more than ten findings so one
+noisy asset does not bury the rest of the comment); a clean file collapses
+to a one-line `✅ Clean` summary with no section. A footer tallies errors,
 warnings, and notes across every input. The exit code is unchanged from
 text and JSON: `0` clean or warnings-only, `1` on a failing finding.
 

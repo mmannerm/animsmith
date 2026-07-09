@@ -1209,6 +1209,15 @@ fn lint_markdown_renders_findings_for_failing_asset() {
         .args(["lint", path, "--format", "markdown"])
         .output()
         .expect("runs animsmith");
+    // A failing asset exits 1 in markdown mode just like text/json — the
+    // renderer must not swallow the content-failure status.
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
     let out = stdout(&output);
 
     // Presentation surface: a heading, the per-clip table header, the

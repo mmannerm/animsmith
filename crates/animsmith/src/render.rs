@@ -1,11 +1,12 @@
-//! CLI output serializers over the report model.
+//! CLI output serializers.
 //!
 //! `docs/output.md` frames the JSON envelope as the machine-readable
-//! source of truth, with text and Markdown as presentation-only views and
-//! future serializers (SARIF, GitLab Code Quality, JUnit, CSV) layered
-//! over the same [`FileReport`] model. This module keeps those renderers
-//! in one place rather than letting them accrete as free functions in
-//! `main`.
+//! source of truth, with text and Markdown as presentation-only views
+//! over the same [`FileReport`] model. This module houses the shared JSON
+//! serializer and `lint`'s text and Markdown renderers, so they don't
+//! accrete as free functions in `main`. `measure` and `diff` still format
+//! their text inline at their call sites; future serializers (SARIF,
+//! GitLab Code Quality, JUnit, CSV) belong here alongside the JSON one.
 
 use crate::{FileReport, FindingSummary};
 use animsmith_core::Severity;
@@ -61,10 +62,12 @@ pub(crate) fn print_text(reports: &[FileReport]) {
     println!("{errors} error(s), {warnings} warning(s), {notes} note(s)");
 }
 
-/// The severity threshold at which a file's finding list is collapsed
-/// behind a closed `<details>` element rather than shown expanded. Short
-/// lists stay open so a reviewer sees them without a click; long lists
-/// collapse so one noisy asset does not bury the rest of a CI comment.
+/// The finding-count threshold at or below which a file's list stays
+/// expanded; a file carrying more than this many findings is collapsed
+/// behind a closed `<details>` element instead. Short lists stay open so
+/// a reviewer sees them without a click; long lists collapse so one noisy
+/// asset does not bury the rest of a CI comment. Kept in sync with the
+/// "more than ten" boundary documented in `docs/cli.md`.
 const MARKDOWN_COLLAPSE_AT: usize = 10;
 
 /// Render findings as GitHub/GitLab-flavored Markdown for CI comments and
@@ -81,6 +84,10 @@ pub(crate) fn print_markdown(reports: &[FileReport]) {
 /// document as a string. Keeping it side-effect free lets the per-clip
 /// grouping, cell escaping, collapse threshold, and summary tallies be
 /// unit-tested directly without spawning the CLI.
+///
+/// Findings are expected grouped by clip — the `lint` command sorts them
+/// by clip before calling — and a new table is started each time the clip
+/// changes; an unsorted slice would emit repeated per-clip headers.
 fn render_markdown(reports: &[FileReport]) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
@@ -328,9 +335,12 @@ mod tests {
                 .collect();
             render_markdown(&[report("a.glb", findings)])
         };
-        // The boundary: ten stay expanded, eleven collapse.
-        assert!(make(MARKDOWN_COLLAPSE_AT).contains("<details open>"));
-        let collapsed = make(MARKDOWN_COLLAPSE_AT + 1);
+        // Assert the boundary documented in docs/cli.md as literals — ten
+        // findings stay expanded, eleven collapse — so drifting the
+        // internal constant away from the documented "more than ten"
+        // fails here rather than silently tracking the constant.
+        assert!(make(10).contains("<details open>"));
+        let collapsed = make(11);
         assert!(collapsed.contains("<details>"), "{collapsed}");
         assert!(!collapsed.contains("<details open>"), "{collapsed}");
     }
@@ -358,17 +368,33 @@ mod tests {
     }
 
     #[test]
-    fn markdown_escapes_hostile_cell_text() {
-        // A malicious asset name carrying the table delimiter, a code-span
-        // closer, an HTML tag, and a newline must be neutralized so it can
-        // neither break the table nor inject Markdown/HTML into a comment.
-        let f = Finding::new("x", Severity::Error, "msg")
-            .clip("walk")
-            .bone("evil|`</details>\nrow");
-        let md = render_markdown(&[report("a.glb", vec![f])]);
-        // Pipe backslash-escaped, backtick replaced, newline flattened.
-        assert!(md.contains("bone `evil\\|'</details> row`"), "{md}");
-        // The raw hostile prefix never survives verbatim.
-        assert!(!md.contains("evil|`"), "{md}");
+    fn markdown_escapes_hostile_text_in_every_asset_derived_cell() {
+        // One string exercising all four `md_cell` transforms at once: a
+        // bare delimiter, an authored `\|` that must not collapse back
+        // into a delimiter, a code-span closer, an HTML tag, and a
+        // newline. Routed through every asset-derived surface — path
+        // heading, clip heading, bone location, message, and a textual
+        // value — not just the bone.
+        let hostile = "x|y\\|z`</details>\nq";
+        let esc = md_cell(hostile);
+        // The escaped form carries no live hazard: newline flattened and
+        // the only code-span closer neutralized.
+        assert!(!esc.contains('\n') && !esc.contains('`'), "{esc}");
+        // The authored `\|` is pinned: backslash pre-doubled and the pipe
+        // escaped, so `y\|z` becomes `y\\\|z` — never a bare delimiter.
+        assert!(esc.contains("y\\\\\\|z"), "{esc}");
+        let f = Finding::new("x", Severity::Error, hostile)
+            .clip(hostile)
+            .bone(hostile)
+            .measured(hostile);
+        let md = render_markdown(&[report(hostile, vec![f])]);
+        // The raw hostile string never survives anywhere, and the escaped
+        // form appears once per cell it was routed through (path, clip,
+        // bone, message, value).
+        assert!(!md.contains(hostile), "raw hostile text leaked:\n{md}");
+        assert!(
+            md.matches(esc.as_str()).count() >= 5,
+            "escaped form missing from some cell:\n{md}"
+        );
     }
 }
