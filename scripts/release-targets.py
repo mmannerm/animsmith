@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,10 @@ WORKFLOW_END_MARKER = "# release-targets:end"
 WORKFLOW_MATRIX_INDENT = "          "
 REQUIRED_FIELDS = ("platform", "os", "target", "binary", "archive_extension", "python")
 WORKFLOW_FIELDS = ("os", "target", "binary", "archive_extension", "python")
+EXPRESSION_PATTERN = re.compile(r"\$\{\{(.*?)\}\}")
+MATRIX_DOT_REFERENCE_PATTERN = re.compile(r"\bmatrix\.([A-Za-z_][A-Za-z0-9_-]*)\b")
+MATRIX_INDEX_REFERENCE_PATTERN = re.compile(r"""\bmatrix\s*\[\s*(['"])([A-Za-z_][A-Za-z0-9_-]*)\1\s*\]""")
+WORKFLOW_JOB_HEADER_PATTERN = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$", re.MULTILINE)
 
 
 def load_targets(manifest: Path) -> list[dict[str, str]]:
@@ -123,17 +128,20 @@ def replace_block(text: str, replacement: str, start_marker: str, end_marker: st
     return f"{text[:line_start]}{replacement}{trailing_newline}{text[line_end:]}"
 
 
+def display_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
 def render_file(path: Path, replacement: str, start_marker: str, end_marker: str, *, check: bool, label: str) -> None:
     original = path.read_text(encoding="utf-8")
     updated = replace_block(original, replacement, start_marker, end_marker)
     if check:
         if updated != original:
-            try:
-                path_label = path.relative_to(REPO_ROOT)
-            except ValueError:
-                path_label = path
             raise SystemExit(
-                f"{path_label} release target {label} is stale; "
+                f"{display_path(path)} release target {label} is stale; "
                 "run scripts/release-targets.py write"
             )
     else:
@@ -151,6 +159,53 @@ def render_docs(targets: list[dict[str, str]], docs_path: Path, *, check: bool) 
     )
 
 
+def workflow_job_block(workflow_text: str, workflow_path: Path, job_name: str) -> str:
+    jobs_match = re.search(r"^jobs:\s*$", workflow_text, flags=re.MULTILINE)
+    if not jobs_match:
+        raise SystemExit(
+            f"{display_path(workflow_path)} is missing jobs; "
+            "run scripts/release-targets.py write"
+        )
+
+    jobs_text = workflow_text[jobs_match.end() :]
+    matches = list(WORKFLOW_JOB_HEADER_PATTERN.finditer(jobs_text))
+    for index, match in enumerate(matches):
+        if match.group(1) == job_name:
+            start = match.end()
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(jobs_text)
+            return jobs_text[start:end]
+
+    raise SystemExit(
+        f"{display_path(workflow_path)} is missing {job_name!r} job; "
+        "run scripts/release-targets.py write"
+    )
+
+
+def workflow_matrix_references(workflow_text: str) -> set[str]:
+    references: set[str] = set()
+    for expression in EXPRESSION_PATTERN.findall(workflow_text):
+        references.update(MATRIX_DOT_REFERENCE_PATTERN.findall(expression))
+        references.update(
+            match.group(2) for match in MATRIX_INDEX_REFERENCE_PATTERN.finditer(expression)
+        )
+    return references
+
+
+def check_workflow_matrix_references(workflow_path: Path) -> None:
+    workflow_text = workflow_path.read_text(encoding="utf-8")
+    build_job = workflow_job_block(workflow_text, workflow_path, "build")
+    referenced_fields = workflow_matrix_references(build_job)
+    unknown_fields = sorted(referenced_fields - set(WORKFLOW_FIELDS))
+    if unknown_fields:
+        fields = ", ".join(f"matrix.{field}" for field in unknown_fields)
+        generated = ", ".join(f"matrix.{field}" for field in WORKFLOW_FIELDS)
+        raise SystemExit(
+            f"{display_path(workflow_path)} build job references {fields}, "
+            f"but release-targets.py only generates {generated}; "
+            "update release-targets.py and run scripts/release-targets.py write"
+        )
+
+
 def render_workflow(targets: list[dict[str, str]], workflow_path: Path, *, check: bool) -> None:
     render_file(
         workflow_path,
@@ -160,6 +215,8 @@ def render_workflow(targets: list[dict[str, str]], workflow_path: Path, *, check
         check=check,
         label="matrix",
     )
+    if check:
+        check_workflow_matrix_references(workflow_path)
 
 
 def parse_args() -> argparse.Namespace:
