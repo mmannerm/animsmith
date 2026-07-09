@@ -63,7 +63,7 @@ about the math even when exporters are not.
   information.
 - **Non-unit quaternions skew skinning.** Rotation keys must be unit
   quaternions. Engines renormalize inconsistently (or not at all); a
-  denormal key skews blend weights and skinning. The `quat-norm` check
+  non-unit key skews blend weights and skinning. The `quat-norm` check
   catches it, and `animsmith fix` repairs it losslessly — scaling a
   finite, non-zero quaternion back to unit length preserves the
   rotation it represents.
