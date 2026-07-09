@@ -179,6 +179,7 @@ for a contract-style example.
 
 - [Why animsmith](https://github.com/mmannerm/animsmith/blob/main/docs/why-animsmith.md)
 - [Game-ready clips guide](https://github.com/mmannerm/animsmith/blob/main/docs/game-ready-clips.md)
+- [Pipeline scenario guide](https://github.com/mmannerm/animsmith/blob/main/docs/pipeline-scenarios.md)
 - [Examples cookbook](https://github.com/mmannerm/animsmith/tree/main/examples)
 - [Documentation index](https://github.com/mmannerm/animsmith/tree/main/docs)
 - [CLI reference](https://github.com/mmannerm/animsmith/blob/main/docs/cli.md)

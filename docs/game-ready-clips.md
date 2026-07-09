@@ -278,6 +278,8 @@ the missing checks as a standalone, engine-agnostic, CI-friendly tool.
 
 Where to go next:
 
+- [Pipeline scenario guide](pipeline-scenarios.md) — where these checks
+  fit in raw-to-game-ready asset processes.
 - [Examples cookbook](../examples/README.md) — runnable workflows for
   every symptom above.
 - [CLI reference](cli.md) — every command, flag, and exit code.
