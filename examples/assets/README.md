@@ -1,6 +1,6 @@
 # Example assets
 
-Small glTF clips used by the [examples cookbook](../../docs/examples.md).
+Small glTF clips used by the [examples cookbook](../README.md).
 They are **procedurally generated**, not hand-authored — provenance is
 the generator source, and they can be reproduced byte-for-byte at any
 time.
@@ -36,7 +36,7 @@ write these assets through the same `write_example_assets` wiring in
 [`animsmith-testkit`](../../crates/animsmith-testkit), so changing that
 builder or its filename wiring (or hand-editing the committed bytes)
 without regenerating fails CI. That test file
-also covers every [cookbook](../../docs/examples.md) command that runs
+also covers every [cookbook](../README.md) command that runs
 against these committed assets — the first-gate, repair, transform, and
 config-steering workflows — asserting each one's exit code plus a
 distinctive output or downstream-state check, so those commands can't

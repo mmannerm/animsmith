@@ -1,5 +1,5 @@
 //! `quat-norm` — rotation keys must be unit quaternions. Engines
-//! renormalize inconsistently (or not at all); a denormal key skews
+//! renormalize inconsistently (or not at all); a non-unit key skews
 //! blend weights and skinning.
 
 use super::tracks;

@@ -1,4 +1,4 @@
-//! Drift guards for the examples cookbook (docs/examples.md) and its
+//! Drift guards for the examples cookbook (examples/README.md) and its
 //! committed assets (examples/assets/). Two kinds of coverage:
 //!
 //! 1. `example_assets_match_generator_output` rebuilds the committed
@@ -85,7 +85,7 @@ fn example_assets_match_generator_output() {
 
 // --- 2. Documented commands still behave as the cookbook shows -------
 //
-// Covers every command in docs/examples.md that runs against the
+// Covers every command in examples/README.md that runs against the
 // committed assets. The cookbook's remaining commands target placeholder
 // or FBX assets this repo does not ship (the convert/report/embed
 // sections), so they are not smoke-tested here; the worked

@@ -18,7 +18,10 @@ mechanical problems.
 glTF-Validator checks spec conformance. animsmith checks content
 semantics: loop seams, gait phase, root-motion speed, track hygiene, and
 other properties that decide whether an animation is usable in a game
-runtime.
+runtime. For the full story of what makes a clip game-ready — each
+runtime failure mode, and which check, repair, and config covers it —
+see the
+[game-ready clips guide](https://github.com/mmannerm/animsmith/blob/main/docs/game-ready-clips.md).
 
 **Status: pre-1.0, publishing candidate.** The CLI and crates are tested
 on Linux, macOS, and Windows. The Rust API is still experimental, while
@@ -168,7 +171,9 @@ for a contract-style example.
 
 ## More Documentation
 
-- [Examples cookbook](https://github.com/mmannerm/animsmith/blob/main/docs/examples.md)
+- [Game-ready clips guide](https://github.com/mmannerm/animsmith/blob/main/docs/game-ready-clips.md)
+- [Examples cookbook](https://github.com/mmannerm/animsmith/tree/main/examples)
+- [Documentation index](https://github.com/mmannerm/animsmith/tree/main/docs)
 - [CLI reference](https://github.com/mmannerm/animsmith/blob/main/docs/cli.md)
 - [Embedding API](https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md)
 - [Machine-readable output](https://github.com/mmannerm/animsmith/blob/main/docs/output.md)

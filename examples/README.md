@@ -2,12 +2,14 @@
 
 A cookbook of runnable workflows. Each section is a self-contained task
 you can copy into your own project — several double as CI/acceptance
-gates.
+gates. Each workflow addresses a runtime failure described in the
+[game-ready clips guide](../docs/game-ready-clips.md), which explains
+*why* the checks behind these commands exist.
 
-Commands that reference [`examples/assets/`](../examples/assets/) run
+Commands that reference [`examples/assets/`](assets/) run
 against small assets committed there, so you can follow along from a
 source checkout with no downloads; the assets are procedurally
-generated (see [their README](../examples/assets/README.md) for
+generated (see [their README](assets/README.md) for
 provenance and how to regenerate them). The FBX-migration section
 operates on your own rig, using placeholder filenames — `export.fbx`,
 `old.glb` — for assets you supply.
@@ -81,7 +83,7 @@ $ animsmith lint --deny-warnings examples/assets/clip-dirty.glb   # exits 1
 ```
 
 For machine consumption, `--format json` emits a versioned envelope
-(see [output.md](output.md)):
+(see [output.md](../docs/output.md)):
 
 ```console
 $ animsmith lint --format json examples/assets/clip-dirty.glb
@@ -196,7 +198,7 @@ wrote held.glb (1 clip(s) transformed)
 Other transforms: `--gait-anchor` rotates a cyclic clip so its stride
 anchor lands at t=0 (needs resolvable hips + feet roles), and `--fps N`
 sets the grid used for retiming. See
-[cli.md](cli.md#commands) for the full flag list.
+[cli.md](../docs/cli.md#commands) for the full flag list.
 
 ---
 
@@ -255,7 +257,7 @@ $ animsmith measure examples/assets/walk.glb          # --format json
 }
 ```
 
-[`examples/walk.animsmith.toml`](../examples/walk.animsmith.toml) is the
+[`examples/walk.animsmith.toml`](walk.animsmith.toml) is the
 contract: it declares the clip a loop (which arms `loop-seam`) and
 in-place, and caps the seam ratio. Against the clean rig every semantic
 check passes:
@@ -285,7 +287,7 @@ enforce *your* declared expectations, not a guess.
 
 ### Scaling up to a full character
 
-[`examples/character.animsmith.toml`](../examples/character.animsmith.toml)
+[`examples/character.animsmith.toml`](character.animsmith.toml)
 is the full game-character shape the small walk contract grows into:
 
 ```toml
@@ -385,7 +387,7 @@ format, measure, run the checks, and map findings to your gate.
 
 The runnable walkthrough is
 [`crates/animsmith/examples/embed.rs`](../crates/animsmith/examples/embed.rs),
-paired with [embedding.md](embedding.md):
+paired with [embedding.md](../docs/embedding.md):
 
 ```console
 $ cargo run -p animsmith --example embed
