@@ -82,20 +82,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Select CLI release tag
         id: release_metadata
-        if: ${{ steps.release_plz.outputs.releases_created == 'true' }}
         env:
+          RELEASES_CREATED: ${{ steps.release_plz.outputs.releases_created }}
           RELEASES: ${{ steps.release_plz.outputs.releases }}
         run: |
           set -euo pipefail
-          tag="$(
-            jq -r '.[] | select(.package_name == "animsmith") | .tag' \
-              <<<"${RELEASES}" | tail -n 1
-          )"
-          if [[ -z "${tag}" ]]; then
-            echo "release-plz reported releases but none for the animsmith CLI package" >&2
-            echo "${RELEASES}" >&2
-            exit 1
-          fi
+          tag="$(scripts/select-cli-release-tag.sh)"
           echo "release_tag=${tag}" >> "${GITHUB_OUTPUT}"
 
   release_binaries:
