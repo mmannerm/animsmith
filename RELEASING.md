@@ -29,8 +29,9 @@ history (accepted types live in `.commitlintrc.yml`).
 Supported CLI archive targets live in `release-targets.json`.
 `.github/workflows/release-binaries.yml` reads that manifest for its
 build matrix, and `scripts/release-targets.py` renders the install table
-in `docs/cli.md`. Run `just release-packaging` after changing release
-targets so the docs and workflow matrix stay in sync.
+in `docs/cli.md`. After changing release targets, run
+`scripts/release-targets.py write-docs` and then `just release-packaging`
+so the generated docs and workflow matrix stay in sync.
 
 crates.io publishing uses
 [Trusted Publishing](https://crates.io/docs/trusted-publishing) (GitHub

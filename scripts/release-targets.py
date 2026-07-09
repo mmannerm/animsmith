@@ -11,7 +11,7 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = REPO_ROOT / "release-targets.json"
-DOCS_CLI = REPO_ROOT / "docs" / "cli.md"
+DEFAULT_DOCS_CLI = REPO_ROOT / "docs" / "cli.md"
 START_MARKER = "<!-- release-targets:start -->"
 END_MARKER = "<!-- release-targets:end -->"
 SUPPORTED_ARCHIVE_EXTENSIONS = {"tar.gz", "zip"}
@@ -105,17 +105,21 @@ def replace_block(text: str, replacement: str) -> str:
     return f"{text[:start]}{replacement}{text[end:]}"
 
 
-def render_docs(targets: list[dict[str, str]], *, check: bool) -> None:
-    original = DOCS_CLI.read_text(encoding="utf-8")
+def render_docs(targets: list[dict[str, str]], docs_path: Path, *, check: bool) -> None:
+    original = docs_path.read_text(encoding="utf-8")
     updated = replace_block(original, markdown_table(targets))
     if check:
         if updated != original:
+            try:
+                docs_label = docs_path.relative_to(REPO_ROOT)
+            except ValueError:
+                docs_label = docs_path
             raise SystemExit(
-                f"{DOCS_CLI.relative_to(REPO_ROOT)} release target table is stale; "
+                f"{docs_label} release target table is stale; "
                 "run scripts/release-targets.py write-docs"
             )
     else:
-        DOCS_CLI.write_text(updated, encoding="utf-8")
+        docs_path.write_text(updated, encoding="utf-8")
 
 
 def parse_args() -> argparse.Namespace:
@@ -125,6 +129,12 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_MANIFEST,
         type=Path,
         help="Release target manifest (default: release-targets.json).",
+    )
+    parser.add_argument(
+        "--docs",
+        default=DEFAULT_DOCS_CLI,
+        type=Path,
+        help="CLI docs file to check or update (default: docs/cli.md).",
     )
     subcommands = parser.add_subparsers(dest="command", required=True)
     subcommands.add_parser("github-matrix", help="Print a GitHub Actions matrix as compact JSON.")
@@ -143,9 +153,9 @@ def main() -> None:
     elif args.command == "markdown-table":
         print(markdown_table(targets))
     elif args.command == "check-docs":
-        render_docs(targets, check=True)
+        render_docs(targets, args.docs, check=True)
     elif args.command == "write-docs":
-        render_docs(targets, check=False)
+        render_docs(targets, args.docs, check=False)
     else:  # pragma: no cover - argparse constrains this
         raise SystemExit(f"unknown command: {args.command}")
 

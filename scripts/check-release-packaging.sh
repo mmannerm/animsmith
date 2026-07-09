@@ -57,17 +57,80 @@ matrix="$("$python" "$targets_script" github-matrix)"
 MATRIX="$matrix" "$python" - <<'PY'
 import json
 import os
+from pathlib import Path
 
+manifest = json.loads(Path("release-targets.json").read_text(encoding="utf-8"))
 matrix = json.loads(os.environ["MATRIX"])
 include = matrix.get("include")
-if not isinstance(include, list) or not include:
-    raise SystemExit("github-matrix did not emit a non-empty include list")
-for index, entry in enumerate(include, start=1):
-    missing = {"os", "target", "bin", "ext", "python"} - entry.keys()
-    if missing:
-        raise SystemExit(f"github-matrix entry {index} missing {sorted(missing)}")
+expected = [
+    {
+        "os": target["os"],
+        "target": target["target"],
+        "bin": target["binary"],
+        "ext": target["archive_extension"],
+        "python": target["python"],
+    }
+    for target in manifest["release_targets"]
+]
+if include != expected:
+    raise SystemExit(
+        "github-matrix did not match release-targets.json\n"
+        f"expected: {json.dumps(expected, sort_keys=True)}\n"
+        f"got:      {json.dumps(include, sort_keys=True)}"
+    )
 PY
 echo "ok: release target matrix is valid"
+
+if grep -Fq "animsmith-vX.Y.Z-" README.md; then
+  fail "README.md must link to docs/cli.md instead of repeating release archive names"
+fi
+echo "ok: README does not duplicate release archive names"
+
+target_fixture="$work/release-targets.json"
+docs_fixture="$work/cli.md"
+cat >"$target_fixture" <<'JSON'
+{
+  "release_targets": [
+    {
+      "platform": "Example OS",
+      "os": "ubuntu-latest",
+      "target": "example-target",
+      "binary": "animsmith",
+      "archive_extension": "tar.gz",
+      "python": "python3"
+    }
+  ]
+}
+JSON
+cat >"$docs_fixture" <<'EOF'
+# fixture
+
+before
+<!-- release-targets:start -->
+stale
+<!-- release-targets:end -->
+after
+EOF
+
+"$python" "$targets_script" --manifest "$target_fixture" --docs "$docs_fixture" write-docs
+expected_docs="$(
+  cat <<'EOF'
+# fixture
+
+before
+<!-- release-targets:start -->
+| Platform | Archive |
+|---|---|
+| Example OS | `animsmith-vX.Y.Z-example-target.tar.gz` |
+<!-- release-targets:end -->
+after
+EOF
+)"
+actual_docs="$(cat "$docs_fixture")"
+[[ "$actual_docs" == "$expected_docs" ]] \
+  || fail "write-docs did not regenerate the release target block from the manifest"
+"$python" "$targets_script" --manifest "$target_fixture" --docs "$docs_fixture" check-docs
+echo "ok: write-docs regenerates the CLI archive table"
 
 # --- packaging: archive contents + .sha256 ------------------------------
 
