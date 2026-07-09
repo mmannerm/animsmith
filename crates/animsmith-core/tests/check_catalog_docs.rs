@@ -4,8 +4,6 @@ use std::collections::BTreeSet;
 const README: &str = include_str!("../../../README.md");
 const GAME_READY_CLIPS: &str = include_str!("../../../docs/game-ready-clips.md");
 
-const EXEMPTED_REGISTERED_CHECK_IDS: &[&str] = &[];
-
 const NON_CHECK_ID_LIKE_TOKENS: &[&str] = &[
     "animsmith",
     "animsmith-core",
@@ -40,6 +38,16 @@ fn docs_check_ids_match_the_registered_catalog() {
         ("docs/game-ready-clips.md", GAME_READY_CLIPS),
     ] {
         let tokens = inline_code_tokens(markdown);
+        let documented: BTreeSet<_> = tokens
+            .iter()
+            .copied()
+            .filter(|token| catalog.contains(token))
+            .collect();
+        assert_eq!(
+            documented, catalog,
+            "{path} inline-code scan must see the registered check ids"
+        );
+
         let unknown_check_ids: Vec<_> = tokens
             .iter()
             .copied()
@@ -59,7 +67,6 @@ fn assert_catalog_ids(surface: &str, documented: &BTreeSet<&str>, catalog: &BTre
         .iter()
         .copied()
         .filter(|id| !documented.contains(id))
-        .filter(|id| !EXEMPTED_REGISTERED_CHECK_IDS.contains(id))
         .collect();
     assert!(
         missing.is_empty(),
@@ -87,11 +94,8 @@ fn registered_check_ids() -> BTreeSet<&'static str> {
 
 fn readme_check_table_ids() -> BTreeSet<&'static str> {
     let tables = [
-        markdown_table_after(README, "Mechanical checks run without project config:"),
-        markdown_table_after(
-            README,
-            "Contract-aware checks use declared expectations and, where needed, rig roles:",
-        ),
+        markdown_table_after(README, "Mechanical checks"),
+        markdown_table_after(README, "Contract-aware checks"),
     ];
     tables
         .into_iter()
@@ -102,7 +106,7 @@ fn readme_check_table_ids() -> BTreeSet<&'static str> {
 }
 
 fn guide_symptom_table_ids() -> BTreeSet<&'static str> {
-    markdown_table_after(GAME_READY_CLIPS, "## From symptom to command")
+    markdown_table_after(GAME_READY_CLIPS, "From symptom to command")
         .into_iter()
         .skip(2)
         .filter_map(|row| table_cell(row, 1))
@@ -111,7 +115,7 @@ fn guide_symptom_table_ids() -> BTreeSet<&'static str> {
 }
 
 fn markdown_table_after(markdown: &'static str, marker: &str) -> Vec<&'static str> {
-    let mut lines = markdown.lines().skip_while(|line| *line != marker);
+    let mut lines = markdown.lines().skip_while(|line| !line.contains(marker));
     let Some(_) = lines.next() else {
         panic!("missing marker: {marker}");
     };
