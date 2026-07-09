@@ -11,6 +11,7 @@
 
 use animsmith_core::model::*;
 use glam::{Quat, Vec3};
+use std::f64::consts::TAU;
 use std::path::Path;
 
 /// Keyframe times every rotation fixture shares (five keys over 1 s).
@@ -106,12 +107,116 @@ fn example_dirty_doc() -> Document {
     two_bone_rotation_doc("swing", quats, false)
 }
 
+// --- Analytic walk rig (semantic checks) -----------------------------
+//
+// A hips + left/right-foot rig whose feet swing as antiphase sinusoids,
+// so the loop-seam / gait / root-motion metrics (which FK-sample foot
+// position relative to the hips) have real motion to measure.
+
+const WALK_KEYS: usize = 33; // 32 intervals over 1 s
+const WALK_FOOT_AMPLITUDE: f32 = 0.05; // vertical foot swing, metres
+const WALK_STRIDE: f32 = 0.15; // fore/aft foot swing, metres
+
+/// A `pelvis` + `foot_l` / `foot_r` skeleton. The bone names resolve the
+/// built-in `ue-mannequin` profile, so semantic checks fire under
+/// `profile = "auto"` with no inline role map.
+fn walk_skeleton() -> Skeleton {
+    let foot = |name: &str, x: f32| Bone {
+        name: name.into(),
+        parent: Some(0),
+        rest: Transform {
+            translation: Vec3::new(x, -1.0, 0.0),
+            ..Transform::IDENTITY
+        },
+        inverse_bind: None,
+    };
+    Skeleton {
+        bones: vec![
+            Bone {
+                name: "pelvis".into(),
+                parent: None,
+                rest: Transform {
+                    translation: Vec3::new(0.0, 1.0, 0.0),
+                    ..Transform::IDENTITY
+                },
+                inverse_bind: None,
+            },
+            foot("foot_l", 0.1),
+            foot("foot_r", -0.1),
+        ],
+    }
+}
+
+/// One foot's translation track: an antiphase vertical + fore/aft
+/// sinusoid over `periods` cycles. `periods = 1.0` closes the loop
+/// exactly (seam ≈ 0); a non-integer count leaves the feet away from
+/// their first-frame pose — a popped seam.
+fn foot_track(bone: BoneId, rest: Vec3, sign: f32, periods: f64) -> Track {
+    let times: Vec<f32> = (0..WALK_KEYS)
+        .map(|k| k as f32 / (WALK_KEYS - 1) as f32)
+        .collect();
+    let values: Vec<Vec3> = (0..WALK_KEYS)
+        .map(|k| {
+            let theta = periods * TAU * k as f64 / (WALK_KEYS - 1) as f64;
+            // `libm::sin` (pure Rust) is bit-identical across platforms,
+            // unlike `f32::sin`, so the committed asset regenerates
+            // byte-for-byte on Linux / macOS / Windows.
+            let swing = libm::sin(theta) as f32;
+            rest + Vec3::new(
+                0.0,
+                sign * WALK_FOOT_AMPLITUDE * swing,
+                sign * WALK_STRIDE * swing,
+            )
+        })
+        .collect();
+    Track {
+        bone,
+        property: Property::Translation,
+        interpolation: Interpolation::Linear,
+        times,
+        values: TrackValues::Vec3s(values),
+    }
+}
+
+fn walk_doc(clip: &str, periods: f64) -> Document {
+    let skeleton = walk_skeleton();
+    let tracks = vec![
+        foot_track(1, skeleton.bones[1].rest.translation, 1.0, periods),
+        foot_track(2, skeleton.bones[2].rest.translation, -1.0, periods),
+    ];
+    Document {
+        skeleton,
+        clips: vec![Clip {
+            name: clip.into(),
+            duration_s: 1.0,
+            tracks,
+        }],
+        assets: Default::default(),
+        source: SourceInfo::default(),
+    }
+}
+
+/// The clean committed walk clip (`examples/assets/walk.glb`): a 1 s
+/// cycle that closes exactly, so the loop seam is ≈ 0.
+fn example_walk_doc() -> Document {
+    walk_doc("walk", 1.0)
+}
+
+/// The popped-seam walk clip (`examples/assets/walk-dirty.glb`): the same
+/// motion cut at ¾ of a cycle, so the feet never return to their
+/// first-frame pose and the loop seam pops.
+fn example_walk_dirty_doc() -> Document {
+    walk_doc("walk", 0.75)
+}
+
 /// The committed example assets under `examples/assets/`, as
 /// `(filename, document)` pairs — the single filename↔document wiring.
-fn example_assets() -> [(&'static str, Document); 2] {
+fn example_assets() -> [(&'static str, Document); 4] {
     [
         ("clip.glb", example_clean_doc()),
         ("clip-dirty.glb", example_dirty_doc()),
+        ("walk.glb", example_walk_doc()),
+        ("walk-dirty.glb", example_walk_dirty_doc()),
     ]
 }
 

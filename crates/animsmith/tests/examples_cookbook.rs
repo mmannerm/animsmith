@@ -59,7 +59,7 @@ fn example_assets_match_generator_output() {
     })
     .expect("writes example assets");
 
-    for name in ["clip.glb", "clip-dirty.glb"] {
+    for name in ["clip.glb", "clip-dirty.glb", "walk.glb", "walk-dirty.glb"] {
         let committed = std::fs::read(asset(name)).expect("reads committed asset");
         let regenerated = std::fs::read(tmp.path().join(name))
             .unwrap_or_else(|e| panic!("generator did not write {name}: {e}"));
@@ -87,9 +87,9 @@ fn example_assets_match_generator_output() {
 //
 // Covers every command in docs/examples.md that runs against the
 // committed assets. The cookbook's remaining commands target placeholder
-// or FBX assets this repo does not ship (the `--config … character.glb`
-// line, and the convert/report/embed sections), so they are not
-// smoke-tested here; the worked config's parse is covered separately by
+// or FBX assets this repo does not ship (the convert/report/embed
+// sections), so they are not smoke-tested here; the worked
+// character.animsmith.toml parse is covered separately by
 // `example_config_parses_verbatim` in cli_contract.rs.
 
 #[test]
@@ -247,4 +247,59 @@ fn cookbook_config_steering() {
         out.contains("note[quat-flip]"),
         "override demotes quat-flip to a note: {out}"
     );
+}
+
+#[test]
+fn cookbook_semantic_contract() {
+    let walk = asset("walk.glb");
+    let walk = walk.to_str().unwrap();
+    let dirty = asset("walk-dirty.glb");
+    let dirty = dirty.to_str().unwrap();
+    let config =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/walk.animsmith.toml");
+    let config = config.to_str().unwrap();
+
+    // The rig's bone names resolve a built-in profile with no config.
+    let (code, out) = run(&["inspect", walk]);
+    assert_eq!(code, Some(0), "inspect walk");
+    assert!(
+        out.contains("ue-mannequin"),
+        "inspect detects the profile: {out}"
+    );
+
+    // The clean rig passes its contract.
+    let (code, out) = run(&["lint", "--config", config, walk]);
+    assert_eq!(code, Some(0), "clean walk passes its contract");
+    assert!(out.contains("clean"), "walk is clean: {out}");
+
+    // The popped-seam rig fails loop-seam under the same contract, and
+    // that is its *only* finding (the clean rig differs by exactly this).
+    let (code, out) = run(&["lint", "--config", config, dirty]);
+    assert_eq!(code, Some(1), "popped seam fails loop-seam");
+    assert!(out.contains("loop-seam"), "names loop-seam: {out}");
+    let (_, json) = run(&["lint", "--config", config, "--format", "json", dirty]);
+    let doc: Value = serde_json::from_str(&json).expect("lint --format json is valid JSON");
+    let findings = doc["files"][0]["findings"]
+        .as_array()
+        .expect("findings array");
+    let ids: Vec<(&str, &str)> = findings
+        .iter()
+        .map(|f| {
+            (
+                f["check_id"].as_str().unwrap_or_default(),
+                f["severity"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        ids,
+        vec![("loop-seam", "error")],
+        "the popped seam is the only finding: {ids:?}"
+    );
+
+    // Without the contract, loop-seam has nothing to check and skips —
+    // the semantic checks enforce declared expectations, not a guess.
+    let (code, out) = run(&["lint", dirty]);
+    assert_eq!(code, Some(0), "bare lint skips loop-seam");
+    assert!(out.contains("clean"), "bare lint is clean: {out}");
 }

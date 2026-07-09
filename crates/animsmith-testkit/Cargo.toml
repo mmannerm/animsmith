@@ -11,3 +11,6 @@ publish = false
 [dependencies]
 animsmith-core = { workspace = true }
 glam = { workspace = true }
+# Pure-Rust libm: bit-identical trig across platforms, so the committed
+# example assets regenerate byte-for-byte on Linux / macOS / Windows.
+libm = { workspace = true }

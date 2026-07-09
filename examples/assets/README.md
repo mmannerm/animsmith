@@ -9,6 +9,8 @@ time.
 |------|------------|
 | `clip.glb` | A clean two-bone rig (`root` → `spine`) with one 1 s rotation clip named `swing`. Lints clean (exit 0). |
 | `clip-dirty.glb` | The same clip with two deliberate, repairable defects: one non-unit rotation key (`quat-norm`) and one sign-flipped key (`quat-flip`). Everything else is identical, so `fix` restores it exactly and `diff` reports no measurement drift. |
+| `walk.glb` | A hips + two-foot rig (`pelvis` / `foot_l` / `foot_r`, resolving the `ue-mannequin` profile) with a 1 s walk cycle that closes exactly. Fires the semantic checks; passes [`walk.animsmith.toml`](../walk.animsmith.toml). |
+| `walk-dirty.glb` | The same walk cut a quarter-cycle short, so the feet don't return to their first-frame pose — a popped loop seam. Fails `loop-seam` under the same contract. |
 
 `clip-dirty.glb` is a `.glb` (not `.gltf`) on purpose: `fix` is
 byte-surgical over a GLB binary chunk and skips the data-URI buffers a
