@@ -3,85 +3,36 @@
 //! trough at phase 0.75, peak-to-peak 4·A), the loop closes exactly
 //! (seam 0), and root travel is exact.
 
+use animsmith_core::fixtures::{
+    self, WALK_FOOT_AMPLITUDE as FOOT_AMPLITUDE, WALK_KEYS as KEYS, WALK_STRIDE as STRIDE,
+    WalkBones,
+};
 use animsmith_core::metrics::MIN_STRIDE_STEP_M;
 use animsmith_core::model::*;
-use animsmith_core::profile::{ResolvedRoles, Role};
+use animsmith_core::profile::ResolvedRoles;
 use animsmith_core::{CheckCtx, Config, MetricGrids, Severity, all_checks, run_checks};
 use glam::Vec3;
 use std::f64::consts::TAU;
 
-const KEYS: usize = 33; // 32 intervals over 1 s
-const FOOT_AMPLITUDE: f32 = 0.05; // vertical swing per foot
-const STRIDE: f32 = 0.15; // fore/aft swing per foot
+/// The walk rig with explicit-role bone names: `l_foot`/`r_foot` +
+/// [`roles`] drive the checks directly, bypassing profile detection
+/// (unlike testkit's committed asset, which resolves `ue-mannequin`).
+const BONES: WalkBones = WalkBones {
+    hips: "pelvis",
+    left_foot: "l_foot",
+    right_foot: "r_foot",
+};
 
 fn skeleton() -> Skeleton {
-    Skeleton {
-        bones: vec![
-            Bone {
-                name: "pelvis".into(),
-                parent: None,
-                rest: Transform {
-                    translation: Vec3::new(0.0, 1.0, 0.0),
-                    ..Transform::IDENTITY
-                },
-                inverse_bind: None,
-            },
-            Bone {
-                name: "l_foot".into(),
-                parent: Some(0),
-                rest: Transform {
-                    translation: Vec3::new(0.1, -1.0, 0.0),
-                    ..Transform::IDENTITY
-                },
-                inverse_bind: None,
-            },
-            Bone {
-                name: "r_foot".into(),
-                parent: Some(0),
-                rest: Transform {
-                    translation: Vec3::new(-0.1, -1.0, 0.0),
-                    ..Transform::IDENTITY
-                },
-                inverse_bind: None,
-            },
-        ],
-    }
+    BONES.skeleton()
 }
 
 fn roles(skel: &Skeleton) -> ResolvedRoles {
-    ResolvedRoles::from_names(
-        skel,
-        [
-            (Role::Hips, "pelvis".to_string()),
-            (Role::LeftFoot, "l_foot".to_string()),
-            (Role::RightFoot, "r_foot".to_string()),
-        ],
-    )
-}
-
-fn foot_track_with_stride(bone: BoneId, rest: Vec3, sign: f32, periods: f64, stride: f32) -> Track {
-    let times: Vec<f32> = (0..KEYS).map(|k| k as f32 / (KEYS - 1) as f32).collect();
-    let values: Vec<Vec3> = (0..KEYS)
-        .map(|k| {
-            let theta = (periods * TAU * k as f64 / (KEYS - 1) as f64) as f32;
-            rest + Vec3::new(
-                0.0,
-                sign * FOOT_AMPLITUDE * theta.sin(),
-                sign * stride * theta.sin(),
-            )
-        })
-        .collect();
-    Track {
-        bone,
-        property: Property::Translation,
-        interpolation: Interpolation::Linear,
-        times,
-        values: TrackValues::Vec3s(values),
-    }
+    BONES.roles(skel)
 }
 
 fn foot_track(bone: BoneId, rest: Vec3, sign: f32, periods: f64) -> Track {
-    foot_track_with_stride(bone, rest, sign, periods, STRIDE)
+    fixtures::foot_track(bone, rest, sign, periods, STRIDE)
 }
 
 fn doc_with_periods(periods: f64) -> Document {
@@ -89,21 +40,7 @@ fn doc_with_periods(periods: f64) -> Document {
 }
 
 fn doc_with_periods_and_stride(periods: f64, stride: f32) -> Document {
-    let skel = skeleton();
-    let tracks = vec![
-        foot_track_with_stride(1, skel.bones[1].rest.translation, 1.0, periods, stride),
-        foot_track_with_stride(2, skel.bones[2].rest.translation, -1.0, periods, stride),
-    ];
-    Document {
-        skeleton: skel,
-        clips: vec![Clip {
-            name: "walk".into(),
-            duration_s: 1.0,
-            tracks,
-        }],
-        assets: Default::default(),
-        source: SourceInfo::default(),
-    }
+    fixtures::walk_doc(&BONES, "walk", periods, stride)
 }
 
 /// A 1 s walk cycle that closes exactly: left foot up when right is

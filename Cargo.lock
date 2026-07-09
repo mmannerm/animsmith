@@ -23,7 +23,9 @@ dependencies = [
 name = "animsmith-core"
 version = "0.1.0"
 dependencies = [
+ "animsmith-core",
  "glam",
+ "libm",
  "serde",
  "serde_json",
  "thiserror",
@@ -70,7 +72,6 @@ version = "0.1.0"
 dependencies = [
  "animsmith-core",
  "glam",
- "libm",
 ]
 
 [[package]]
