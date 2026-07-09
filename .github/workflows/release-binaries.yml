@@ -64,13 +64,13 @@ jobs:
         shell: bash
         env:
           ASSET_STEM: animsmith-${{ env.RELEASE_TAG }}-${{ matrix.target }}
-          ARCHIVE_EXT: ${{ matrix.ext }}
-          BIN_NAME: ${{ matrix.bin }}
+          ARCHIVE_EXT: ${{ matrix.archive_extension }}
+          BINARY_NAME: ${{ matrix.binary }}
           PYTHON: ${{ matrix.python }}
           TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
-          binary="target/${TARGET}/release/${BIN_NAME}"
+          binary="target/${TARGET}/release/${BINARY_NAME}"
           "${binary}" --version
           "${PYTHON}" scripts/package-release-binary.py \
             --binary "${binary}" \
@@ -82,8 +82,8 @@ jobs:
         with:
           name: release-asset-${{ matrix.target }}
           path: |
-            dist/animsmith-${{ env.RELEASE_TAG }}-${{ matrix.target }}.${{ matrix.ext }}
-            dist/animsmith-${{ env.RELEASE_TAG }}-${{ matrix.target }}.${{ matrix.ext }}.sha256
+            dist/animsmith-${{ env.RELEASE_TAG }}-${{ matrix.target }}.${{ matrix.archive_extension }}
+            dist/animsmith-${{ env.RELEASE_TAG }}-${{ matrix.target }}.${{ matrix.archive_extension }}.sha256
           if-no-files-found: error
 
   upload:

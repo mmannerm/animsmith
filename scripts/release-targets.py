@@ -69,17 +69,7 @@ def archive_name(target: dict[str, str]) -> str:
 
 
 def github_matrix(targets: list[dict[str, str]]) -> str:
-    include = [
-        {
-            "os": target["os"],
-            "target": target["target"],
-            "bin": target["binary"],
-            "ext": target["archive_extension"],
-            "python": target["python"],
-        }
-        for target in targets
-    ]
-    return json.dumps({"include": include}, separators=(",", ":"))
+    return json.dumps({"include": targets}, separators=(",", ":"))
 
 
 def markdown_table(targets: list[dict[str, str]]) -> str:

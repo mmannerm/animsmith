@@ -50,12 +50,46 @@ extras=(README.md LICENSE-APACHE LICENSE-MIT THIRD-PARTY.md)
 
 # --- release target metadata: matrix + docs -----------------------------
 
-grep -Fq 'matrix="$(python3 scripts/release-targets.py github-matrix)"' \
-  .github/workflows/release-binaries.yml \
-  || fail "release-binaries.yml must load the matrix from scripts/release-targets.py"
-grep -Fq 'matrix: ${{ fromJson(needs.release_targets.outputs.matrix) }}' \
-  .github/workflows/release-binaries.yml \
-  || fail "release-binaries.yml build job must consume the generated release target matrix"
+WORKFLOW=.github/workflows/release-binaries.yml "$python" - <<'PY'
+import os
+import re
+from pathlib import Path
+
+workflow = Path(os.environ["WORKFLOW"]).read_text(encoding="utf-8")
+
+
+def top_level_block(text: str, name: str) -> str:
+    marker = f"  {name}:\n"
+    start = text.find(marker)
+    if start == -1:
+        raise SystemExit(f"missing job {name}")
+    rest = text[start + len(marker) :]
+    next_job = re.search(r"\n  [A-Za-z0-9_-]+:\n", rest)
+    if next_job is None:
+        return rest
+    return rest[: next_job.start()]
+
+
+release_targets = top_level_block(workflow, "release_targets")
+if "python3 scripts/release-targets.py github-matrix" not in release_targets:
+    raise SystemExit("release_targets job must run scripts/release-targets.py github-matrix")
+if "GITHUB_OUTPUT" not in release_targets or "matrix=${matrix}" not in release_targets:
+    raise SystemExit("release_targets job must publish its matrix output")
+
+build = top_level_block(workflow, "build")
+if "needs: [release_targets]" not in build:
+    raise SystemExit("build job must depend on release_targets")
+if "matrix: ${{ fromJson(needs.release_targets.outputs.matrix) }}" not in build:
+    raise SystemExit("build job must consume the generated release target matrix")
+for expression in (
+    "matrix.target",
+    "matrix.binary",
+    "matrix.archive_extension",
+    "matrix.python",
+):
+    if expression not in build:
+        raise SystemExit(f"build job must consume {expression}")
+PY
 echo "ok: release workflow consumes the generated target matrix"
 
 "$python" "$targets_script" check-docs
@@ -70,16 +104,7 @@ from pathlib import Path
 manifest = json.loads(Path("release-targets.json").read_text(encoding="utf-8"))
 matrix = json.loads(os.environ["MATRIX"])
 include = matrix.get("include")
-expected = [
-    {
-        "os": target["os"],
-        "target": target["target"],
-        "bin": target["binary"],
-        "ext": target["archive_extension"],
-        "python": target["python"],
-    }
-    for target in manifest["release_targets"]
-]
+expected = manifest["release_targets"]
 if include != expected:
     raise SystemExit(
         "github-matrix did not match release-targets.json\n"
