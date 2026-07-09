@@ -18,13 +18,9 @@ const ROTATION_TIMES: [f32; 5] = [0.0, 0.25, 0.5, 0.75, 1.0];
 
 /// Unit Y-rotation keys for the given angles, in radians. Pass literal
 /// angles (not a computed ramp) so callers control the exact `f32`
-/// values — the generated glTF bytes depend on them.
-///
-/// The rotation quats are built through the pure-Rust `libm` crate
-/// rather than glam's `Quat::from_rotation_y` (whose `f32::sin_cos`
-/// routes through the platform libm and can round differently on
-/// Linux / macOS / Windows). This keeps the committed example assets
-/// byte-identical across platforms, matching the analytic walk rig.
+/// values — the generated glTF bytes depend on them. Each key is built
+/// via [`quat_from_rotation_y`], whose `libm` trig keeps the committed
+/// example assets byte-identical across platforms.
 pub fn quats_from_angles(angles: &[f32]) -> Vec<Quat> {
     angles.iter().map(|&a| quat_from_rotation_y(a)).collect()
 }
