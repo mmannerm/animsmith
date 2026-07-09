@@ -96,8 +96,9 @@ meshes, skins, materials, and textures pass through byte-identical.
   a declared frame rate should keep its keys on that rate's time grid
   and span a whole number of frames. Off-grid keys mean a resample or
   retiming step drifted; a fractional frame count means a slice cut
-  mid-frame. The `fps` check verifies both once the config declares a
-  rate.
+  mid-frame — and engines care: Unreal, for example, documents that
+  animations with non-whole end frames do not import correctly. The
+  `fps` check verifies both once the config declares a rate.
 
 When the wrong length is the *input* problem — a capture with garbage
 at the head, a one-shot that should hold its final pose — the
@@ -272,9 +273,10 @@ hand today — a tech artist scrubbing a timeline, a reviewer squinting
 at a diff, a bug report from playtest. Nothing open-source does
 game-semantics clip validation: glTF-Validator stops at spec
 conformance, engine importers give teams a place to hang custom checks
-but the checks themselves are re-derived from scratch at every studio,
-and academic metric code lives in ML-evaluation repos, not artist
-tools.
+but the checks themselves are re-derived from scratch at every studio
+— and importers surface problems late, inside the editor, after
+import-time conversion has already reshaped the data. Academic metric
+code lives in ML-evaluation repos, not artist tools.
 
 animsmith packages those checks as a standalone Rust library and CLI:
 glTF/GLB native, FBX ingested for DCC exports, engine-agnostic,
