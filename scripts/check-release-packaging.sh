@@ -55,12 +55,16 @@ echo "ok: release target workflow matrix and docs match release-targets.json"
 
 README=README.md DOCS=docs/cli.md "$python" - <<'PY'
 import os
+import re
 from pathlib import Path
 
 readme = Path(os.environ["README"]).read_text(encoding="utf-8")
 docs = Path(os.environ["DOCS"]).read_text(encoding="utf-8")
-if "docs/cli.md#install" not in readme:
-    raise SystemExit("README.md must link supported archives to docs/cli.md#install")
+match = re.search(r"\[CLI guide\]\(([^)]+)\)", readme)
+if not match:
+    raise SystemExit("README.md must link supported archives to the CLI guide")
+if match.group(1) != "https://github.com/mmannerm/animsmith/blob/main/docs/cli.md#install":
+    raise SystemExit("README.md CLI guide link must target docs/cli.md#install")
 if "\n## Install\n" not in f"\n{docs}":
     raise SystemExit("docs/cli.md must expose a ## Install anchor for README.md")
 PY
@@ -154,8 +158,7 @@ jobs:
       matrix:
         include:
           # release-targets:start
-          - platform: "Example OS"
-            os: "ubuntu-latest"
+          - os: "ubuntu-latest"
             target: "example-target"
             binary: "animsmith"
             archive_extension: "tar.gz"
@@ -180,6 +183,8 @@ if "$python" "$targets_script" --manifest "$target_fixture" --docs "$work/missin
 fi
 grep -Fq "missing <!-- release-targets:start -->" "$work/missing-start.err" \
   || fail "missing-start error did not name the missing marker: $(cat "$work/missing-start.err")"
+grep -Fq "scripts/release-targets.py write" "$work/missing-start.err" \
+  || fail "missing-start error did not name the write remedy: $(cat "$work/missing-start.err")"
 
 cat >"$work/missing-end.md" <<'EOF'
 # fixture
@@ -192,6 +197,8 @@ if "$python" "$targets_script" --manifest "$target_fixture" --docs "$work/missin
 fi
 grep -Fq "missing <!-- release-targets:end -->" "$work/missing-end.err" \
   || fail "missing-end error did not name the missing marker: $(cat "$work/missing-end.err")"
+grep -Fq "scripts/release-targets.py write" "$work/missing-end.err" \
+  || fail "missing-end error did not name the write remedy: $(cat "$work/missing-end.err")"
 echo "ok: check-docs rejects missing release target markers"
 
 check_bad_manifest() {

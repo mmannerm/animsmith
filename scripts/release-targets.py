@@ -21,6 +21,7 @@ WORKFLOW_START_MARKER = "# release-targets:start"
 WORKFLOW_END_MARKER = "# release-targets:end"
 WORKFLOW_MATRIX_INDENT = "          "
 REQUIRED_FIELDS = ("platform", "os", "target", "binary", "archive_extension", "python")
+WORKFLOW_FIELDS = ("os", "target", "binary", "archive_extension", "python")
 
 
 def load_targets(manifest: Path) -> list[dict[str, str]]:
@@ -89,7 +90,7 @@ def markdown_table(targets: list[dict[str, str]]) -> str:
 def workflow_matrix(targets: list[dict[str, str]]) -> str:
     lines = [f"{WORKFLOW_MATRIX_INDENT}{WORKFLOW_START_MARKER}"]
     for target in targets:
-        first_key, *remaining_keys = REQUIRED_FIELDS
+        first_key, *remaining_keys = WORKFLOW_FIELDS
         lines.append(
             f"{WORKFLOW_MATRIX_INDENT}- {first_key}: "
             f"{json.dumps(target[first_key])}"
@@ -106,10 +107,10 @@ def workflow_matrix(targets: list[dict[str, str]]) -> str:
 def replace_block(text: str, replacement: str, start_marker: str, end_marker: str) -> str:
     start = text.find(start_marker)
     if start == -1:
-        raise SystemExit(f"missing {start_marker}")
+        raise SystemExit(f"missing {start_marker}; run scripts/release-targets.py write")
     end = text.find(end_marker, start)
     if end == -1:
-        raise SystemExit(f"missing {end_marker}")
+        raise SystemExit(f"missing {end_marker}; run scripts/release-targets.py write")
 
     line_start = text.rfind("\n", 0, start) + 1
     line_end = text.find("\n", end)
