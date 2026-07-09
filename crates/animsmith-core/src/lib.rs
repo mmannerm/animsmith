@@ -73,6 +73,8 @@ mod checks;
 pub mod config;
 pub mod diff;
 pub mod finding;
+#[cfg(feature = "fixtures")]
+pub mod fixtures;
 pub mod measure;
 pub mod metrics;
 pub mod model;

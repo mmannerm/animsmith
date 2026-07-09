@@ -9,8 +9,11 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-animsmith-core = { workspace = true }
+# The `fixtures` feature exposes the shared analytic walk-cycle builder
+# that the committed example assets wrap.
+animsmith-core = { workspace = true, features = ["fixtures"] }
 glam = { workspace = true }
-# Pure-Rust libm: bit-identical trig across platforms, so the committed
-# example assets regenerate byte-for-byte on Linux / macOS / Windows.
+# Pure-Rust libm: bit-identical trig across platforms. Passed into the
+# fixtures builder as its sine so the committed example assets regenerate
+# byte-for-byte on Linux / macOS / Windows.
 libm = { workspace = true }

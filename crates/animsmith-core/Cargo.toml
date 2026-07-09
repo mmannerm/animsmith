@@ -16,10 +16,20 @@ categories.workspace = true
 default-target = "x86_64-unknown-linux-gnu"
 targets = ["aarch64-apple-darwin", "x86_64-pc-windows-msvc"]
 
+[features]
+# Exposes `fixtures`: the analytic walk-cycle builder shared with
+# animsmith-testkit. Off by default so published builds carry no fixture
+# code. The builder takes its sine as a parameter, so enabling this adds
+# no dependency (core stays glam + serde + thiserror only).
+fixtures = []
+
 [dependencies]
 glam = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+# Self-dependency so this crate's own tests (e.g. tests/semantic.rs) build
+# with the `fixtures` feature enabled.
+animsmith-core = { path = ".", features = ["fixtures"] }
 serde_json = { workspace = true }

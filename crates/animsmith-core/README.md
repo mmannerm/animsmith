@@ -17,8 +17,14 @@ animsmith-gltf = "0.1"
 
 ## Feature Flags
 
-This crate has no public feature flags. The workspace MSRV is Rust
-1.88.
+- `fixtures` (off by default) — exposes `animsmith_core::fixtures`, the
+  analytic-clip fixture builders shared with animsmith's own tests and
+  example-asset generator. Adds no dependency (the builders take their
+  sine as a parameter). Internal to the animsmith workspace and **not**
+  part of the crate's stable API; downstream code should not depend on
+  it.
+
+The workspace MSRV is Rust 1.88.
 
 ## More Details
 

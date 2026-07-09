@@ -23,6 +23,7 @@ dependencies = [
 name = "animsmith-core"
 version = "0.1.0"
 dependencies = [
+ "animsmith-core",
  "glam",
  "serde",
  "serde_json",
