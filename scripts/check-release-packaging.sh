@@ -186,6 +186,7 @@ matrix_comment_fixture="$work/release-binaries-commented-matrix.yml"
 cp "$workflow_fixture" "$matrix_comment_fixture"
 cat >>"$matrix_comment_fixture" <<'EOF'
     # ${{ matrix.ext }}
+    name: build # ${{ matrix.bin }}
 EOF
 "$python" "$targets_script" --manifest "$target_fixture" --workflow "$matrix_comment_fixture" check-workflow
 echo "ok: check-workflow ignores commented build job matrix references"
@@ -203,12 +204,24 @@ echo "ok: check-workflow scopes matrix field checks to the build job"
 matrix_contract_fixture="$work/release-binaries-unknown-matrix.yml"
 cp "$workflow_fixture" "$matrix_contract_fixture"
 cat >>"$matrix_contract_fixture" <<'EOF'
-    name: ${{ format('{0}-{1}', matrix.ext, matrix.bin) }}
+    name: ${{ format('{0}-{1}-{2}', matrix.ext, matrix.bin, matrix['archive-ext']) }}
 EOF
+if "$python" "$targets_script" --manifest "$target_fixture" --docs "$docs_fixture" --workflow "$matrix_contract_fixture" check \
+  >/dev/null 2>"$work/unknown-matrix-check.err"; then
+  fail "check accepted a build job matrix reference that is not generated"
+fi
+grep -Fq "matrix.archive-ext" "$work/unknown-matrix-check.err" \
+  || fail "top-level unknown matrix field error did not name archive-ext: $(cat "$work/unknown-matrix-check.err")"
+grep -Fq "matrix.bin" "$work/unknown-matrix-check.err" \
+  || fail "top-level unknown matrix field error did not name bin: $(cat "$work/unknown-matrix-check.err")"
+grep -Fq "matrix.ext" "$work/unknown-matrix-check.err" \
+  || fail "top-level unknown matrix field error did not name ext: $(cat "$work/unknown-matrix-check.err")"
 if "$python" "$targets_script" --manifest "$target_fixture" --workflow "$matrix_contract_fixture" check-workflow \
   >/dev/null 2>"$work/unknown-matrix.err"; then
   fail "check-workflow accepted a build job matrix reference that is not generated"
 fi
+grep -Fq "matrix.archive-ext" "$work/unknown-matrix.err" \
+  || fail "unknown matrix field error did not name archive-ext: $(cat "$work/unknown-matrix.err")"
 grep -Fq "matrix.bin" "$work/unknown-matrix.err" \
   || fail "unknown matrix field error did not name bin: $(cat "$work/unknown-matrix.err")"
 grep -Fq "matrix.ext" "$work/unknown-matrix.err" \

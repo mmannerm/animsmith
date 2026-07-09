@@ -24,7 +24,8 @@ WORKFLOW_MATRIX_INDENT = "          "
 REQUIRED_FIELDS = ("platform", "os", "target", "binary", "archive_extension", "python")
 WORKFLOW_FIELDS = ("os", "target", "binary", "archive_extension", "python")
 EXPRESSION_PATTERN = re.compile(r"\$\{\{(.*?)\}\}")
-MATRIX_REFERENCE_PATTERN = re.compile(r"\bmatrix\.([A-Za-z_][A-Za-z0-9_]*)\b")
+MATRIX_DOT_REFERENCE_PATTERN = re.compile(r"\bmatrix\.([A-Za-z_][A-Za-z0-9_]*)\b")
+MATRIX_INDEX_REFERENCE_PATTERN = re.compile(r"""\bmatrix\s*\[\s*(['"])([A-Za-z_][A-Za-z0-9_-]*)\1\s*\]""")
 WORKFLOW_JOB_HEADER_PATTERN = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$", re.MULTILINE)
 
 
@@ -180,13 +181,41 @@ def workflow_job_block(workflow_text: str, workflow_path: Path, job_name: str) -
     )
 
 
+def strip_yaml_comment(line: str) -> str:
+    in_single = False
+    in_double = False
+    escaped = False
+    for index, char in enumerate(line):
+        if in_double:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_double = False
+        elif in_single:
+            if char == "'":
+                in_single = False
+        elif char == "'":
+            in_single = True
+        elif char == '"':
+            in_double = True
+        elif char == "#" and (index == 0 or line[index - 1].isspace()):
+            return line[:index]
+    return line
+
+
 def workflow_matrix_references(workflow_text: str) -> set[str]:
     references: set[str] = set()
     for line in workflow_text.splitlines():
-        if line.lstrip().startswith("#"):
+        line = strip_yaml_comment(line)
+        if not line.strip():
             continue
         for expression in EXPRESSION_PATTERN.findall(line):
-            references.update(MATRIX_REFERENCE_PATTERN.findall(expression))
+            references.update(MATRIX_DOT_REFERENCE_PATTERN.findall(expression))
+            references.update(
+                match.group(2) for match in MATRIX_INDEX_REFERENCE_PATTERN.finditer(expression)
+            )
     return references
 
 
