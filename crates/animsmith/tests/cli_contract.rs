@@ -1222,9 +1222,12 @@ fn lint_markdown_renders_findings_for_failing_asset() {
     assert!(out.contains("#### clip `sway`"), "stdout:\n{out}");
     assert!(out.contains("`quat-norm`"), "stdout:\n{out}");
     assert!(out.contains("`quat-flip`"), "stdout:\n{out}");
-    // The footer tally mirrors the text summary's counts.
+    // End-to-end smoke check that the summary footer reaches stdout;
+    // per-branch tallies/grouping/escaping are pinned by the render unit
+    // tests in the binary crate. Anchor on the footer's `**N file**`
+    // prefix so this matches the aggregate line, not the per-file header.
     assert!(
-        out.contains("1 error(s) · ⚠️ 1 warning(s)"),
+        out.contains("**1 file** — ❌ 1 error(s) · ⚠️ 1 warning(s)"),
         "stdout:\n{out}"
     );
 }
