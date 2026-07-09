@@ -29,6 +29,46 @@ rescue Errno::ENOENT
   fail!("#{path} is missing")
 end
 
+def workflow_triggers(path)
+  data = load_yaml(path)
+  triggers = data["on"] || data[true]
+  fail!("#{path} must define workflow triggers") unless triggers
+  triggers
+end
+
+def workflow_trigger_config(path, name)
+  triggers = workflow_triggers(path)
+  fail!("#{path} workflow triggers must be a mapping") unless triggers.is_a?(Hash)
+
+  return triggers[name] || {} if triggers.key?(name)
+
+  nil
+end
+
+def require_workflow_trigger(path, name)
+  fail!("#{path} must run on #{name}") unless workflow_trigger_config(path, name)
+end
+
+def forbid_workflow_trigger(path, name)
+  fail!("#{path} must not run on #{name}") if workflow_trigger_config(path, name)
+end
+
+def require_main_push(path)
+  push = workflow_trigger_config(path, "push")
+  fail!("#{path} must run on push") unless push
+
+  branches = Array(push["branches"])
+  fail!("#{path} must run only on pushes to main") unless branches == ["main"]
+end
+
+def require_workflow_cron(path, cron)
+  schedule = workflow_trigger_config(path, "schedule")
+  fail!("#{path} must run on schedule") unless schedule
+
+  crons = Array(schedule).map { |entry| entry["cron"] if entry.is_a?(Hash) }.compact
+  fail!("#{path} must schedule #{cron}") unless crons.include?(cron)
+end
+
 def require_text(path, pattern, description)
   text = read(path)
   fail!("#{path} must #{description}") unless text.match?(pattern)
@@ -171,5 +211,13 @@ fail!(".github/PULL_REQUEST_TEMPLATE.md must include a Verification section") un
 require_text("SUPPORT.md", /GitHub Discussions are\s+not enabled/m, "route support with Discussions disabled")
 require_text("SUPPORT.md", %r{issues/new\?template=documentation_gap\.yml}, "link the documentation-gap issue template")
 require_text("SECURITY.md", /#{Regexp.escape(SECURITY_ADVISORY_URL)}/, "point to private vulnerability reporting")
+
+require_main_push(".github/workflows/codeql.yml")
+require_workflow_cron(".github/workflows/codeql.yml", "41 5 * * 2")
+forbid_workflow_trigger(".github/workflows/codeql.yml", "pull_request")
+
+require_workflow_trigger(".github/workflows/coverage.yml", "pull_request")
+require_main_push(".github/workflows/coverage.yml")
+require_text(".github/workflows/coverage.yml", /codecov\/codecov-action@/, "upload coverage to Codecov")
 
 puts "GitHub community files are valid"
