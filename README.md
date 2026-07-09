@@ -22,6 +22,9 @@ runtime. For the full story of what makes a clip game-ready — each
 runtime failure mode, and which check, repair, and config covers it —
 see the
 [game-ready clips guide](https://github.com/mmannerm/animsmith/blob/main/docs/game-ready-clips.md).
+Evaluating animsmith for your team? Start with
+[why animsmith](https://github.com/mmannerm/animsmith/blob/main/docs/why-animsmith.md)
+— what it is, why it exists, and what it is worth by role.
 
 **Status: pre-1.0, publishing candidate.** The CLI and crates are tested
 on Linux, macOS, and Windows. The Rust API is still experimental, while
@@ -170,6 +173,7 @@ for a contract-style example.
 
 ## More Documentation
 
+- [Why animsmith](https://github.com/mmannerm/animsmith/blob/main/docs/why-animsmith.md)
 - [Game-ready clips guide](https://github.com/mmannerm/animsmith/blob/main/docs/game-ready-clips.md)
 - [Examples cookbook](https://github.com/mmannerm/animsmith/tree/main/examples)
 - [Documentation index](https://github.com/mmannerm/animsmith/tree/main/docs)

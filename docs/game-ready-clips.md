@@ -15,8 +15,8 @@ characteristic is violated. Each section names the symptom, explains
 the mechanics behind it, and maps it to the animsmith checks, repairs,
 and configuration that address it. If you want runnable commands, each
 symptom links into the [examples cookbook](../examples/README.md); if
-you want the reasoning behind the tool itself, read to
-[the end](#why-animsmith-exists).
+you want the reasoning behind the tool itself — why it exists and what
+it is worth to your team — see [why animsmith](why-animsmith.md).
 
 ## A valid file is not a usable clip
 
@@ -268,20 +268,13 @@ rigs; `[rig] profile = "auto"` scores them against your skeleton, and
 
 ## Why animsmith exists
 
-Every game team answers the question "is this clip game-ready?" by
-hand today — a tech artist scrubbing a timeline, a reviewer squinting
-at a diff, a bug report from playtest. Nothing open-source does
-game-semantics clip validation: glTF-Validator stops at spec
-conformance, engine importers give teams a place to hang custom checks
-but the checks themselves are re-derived from scratch at every studio
-— and importers surface problems late, inside the editor, after
-import-time conversion has already reshaped the data. Academic metric
-code lives in ML-evaluation repos, not artist tools.
-
-animsmith packages those checks as a standalone Rust library and CLI:
-glTF/GLB native, FBX ingested for DCC exports, engine-agnostic,
-machine-readable output for CI, and byte-surgical repairs for the
-problems that are safe to fix mechanically.
+The positioning case — what animsmith is, why nothing else fills this
+role, and what it is worth to each role on a team — lives in
+[why animsmith](why-animsmith.md). The short version: nothing
+open-source does game-semantics clip validation, format validators
+stop at spec conformance, engine importers surface content problems
+late with checks re-derived studio by studio, and animsmith packages
+the missing checks as a standalone, engine-agnostic, CI-friendly tool.
 
 Where to go next:
 
