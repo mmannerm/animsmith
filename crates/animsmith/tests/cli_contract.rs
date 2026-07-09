@@ -1199,6 +1199,60 @@ fn lint_clean_file_exits_zero() {
 }
 
 #[test]
+fn lint_markdown_renders_findings_for_failing_asset() {
+    let dir = unique_temp_dir("markdown-findings");
+    let input = dir.path().join("dirty.glb");
+    write_distinct_repair_glb(&input); // quat-norm error + quat-flip warning
+    let path = input.to_str().expect("utf-8 path");
+
+    let output = animsmith()
+        .args(["lint", path, "--format", "markdown"])
+        .output()
+        .expect("runs animsmith");
+    let out = stdout(&output);
+
+    // Presentation surface: a heading, the per-clip table header, the
+    // collapsible section, and both findings' check ids and severities.
+    assert!(out.contains("## animsmith lint"), "stdout:\n{out}");
+    assert!(
+        out.contains("| Severity | Check | Location | Measured | Expected | Message |"),
+        "stdout:\n{out}"
+    );
+    assert!(out.contains("<details"), "stdout:\n{out}");
+    assert!(out.contains("#### clip `sway`"), "stdout:\n{out}");
+    assert!(out.contains("`quat-norm`"), "stdout:\n{out}");
+    assert!(out.contains("`quat-flip`"), "stdout:\n{out}");
+    // The footer tally mirrors the text summary's counts.
+    assert!(
+        out.contains("1 error(s) · ⚠️ 1 warning(s)"),
+        "stdout:\n{out}"
+    );
+}
+
+#[test]
+fn lint_markdown_summarizes_clean_asset() {
+    let dir = unique_temp_dir("markdown-clean");
+    let input = dir.path().join("clean.glb");
+    write_clean_glb(&input);
+    let path = input.to_str().expect("utf-8 path");
+
+    let output = animsmith()
+        .args(["lint", path, "--format", "markdown"])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    let out = stdout(&output);
+    assert!(out.contains("✅ Clean — no findings."), "stdout:\n{out}");
+    // A clean asset produces no findings table to collapse.
+    assert!(!out.contains("<details"), "stdout:\n{out}");
+}
+
+#[test]
 fn lint_warnings_pass_but_deny_warnings_fails() {
     let dir = unique_temp_dir("deny-warnings");
     let input = dir.path().join("flipped.glb");

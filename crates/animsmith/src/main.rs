@@ -69,8 +69,8 @@ enum Cmd {
         /// Input .glb, .gltf, or .fbx files.
         #[arg(required = true, value_name = "FILE")]
         files: Vec<PathBuf>,
-        #[arg(long, value_enum, default_value_t = Format::Text)]
-        format: Format,
+        #[arg(long, value_enum, default_value_t = LintFormat::Text)]
+        format: LintFormat,
         /// Treat warnings as errors for the exit code.
         #[arg(long)]
         deny_warnings: bool,
@@ -181,6 +181,17 @@ enum Cmd {
 enum Format {
     Text,
     Json,
+}
+
+/// Output format for `lint`. Adds a presentation-only Markdown rendering
+/// on top of the shared text/JSON surface, suitable for pasting into CI
+/// comments and asset-review threads. JSON stays the machine-readable
+/// source of truth; Markdown carries no schema or stability guarantees.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum LintFormat {
+    Text,
+    Json,
+    Markdown,
 }
 
 fn select_repairs(repairs: Vec<Repair>) -> Vec<Repair> {
@@ -584,8 +595,9 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 });
             }
             match format {
-                Format::Json => print_json(&ReportEnvelope::new("lint", reports)),
-                Format::Text => print_text(&reports),
+                LintFormat::Json => print_json(&ReportEnvelope::new("lint", reports)),
+                LintFormat::Text => print_text(&reports),
+                LintFormat::Markdown => print_markdown(&reports),
             }
             let fail_at = if deny_warnings {
                 Severity::Warning
@@ -953,6 +965,149 @@ fn print_text(reports: &[FileReport]) {
         }
     }
     println!("{errors} error(s), {warnings} warning(s), {notes} note(s)");
+}
+
+/// The severity threshold at which a file's finding list is collapsed
+/// behind a closed `<details>` element rather than shown expanded. Short
+/// lists stay open so a reviewer sees them without a click; long lists
+/// collapse so one noisy asset does not bury the rest of a CI comment.
+const MARKDOWN_COLLAPSE_AT: usize = 10;
+
+/// Render findings as GitHub/GitLab-flavored Markdown for CI comments and
+/// asset-review threads. Presentation-only: the JSON output is the
+/// machine-readable contract, and this layout carries no stability
+/// guarantees. Mirrors the text output's information — severity, check
+/// id, location, measured/expected values, per-clip grouping — as tables
+/// inside per-file collapsible sections.
+fn print_markdown(reports: &[FileReport]) {
+    let mut errors = 0usize;
+    let mut warnings = 0usize;
+    let mut notes = 0usize;
+
+    println!("## animsmith lint\n");
+
+    for report in reports {
+        let findings = report.findings.as_deref().unwrap_or_default();
+        if findings.is_empty() {
+            println!("### `{}`\n", md_cell(&report.path));
+            println!("✅ Clean — no findings.\n");
+            continue;
+        }
+
+        let mut file = FindingSummary::default();
+        for f in findings {
+            file.add(f.severity);
+        }
+        errors += file.error;
+        warnings += file.warning;
+        notes += file.note;
+
+        println!("### `{}`\n", md_cell(&report.path));
+        println!("{}\n", severity_line(&file));
+
+        let open = if findings.len() <= MARKDOWN_COLLAPSE_AT {
+            " open"
+        } else {
+            ""
+        };
+        let count = findings.len();
+        let plural = if count == 1 { "finding" } else { "findings" };
+        println!("<details{open}>");
+        println!("<summary><strong>{count} {plural}</strong></summary>\n");
+
+        let mut current_clip: Option<Option<&str>> = None;
+        for f in findings {
+            let clip = f.clip.as_deref();
+            if current_clip != Some(clip) {
+                current_clip = Some(clip);
+                match clip {
+                    Some(name) => println!("\n#### clip `{}`\n", md_cell(name)),
+                    None => println!("\n#### file-level\n"),
+                }
+                println!("| Severity | Check | Location | Measured | Expected | Message |");
+                println!("| --- | --- | --- | --- | --- | --- |");
+            }
+            let mut location = String::new();
+            if let Some(bone) = &f.bone {
+                location.push_str(&format!("bone `{}`", md_cell(bone)));
+            }
+            if let Some(t) = f.time_s {
+                if !location.is_empty() {
+                    location.push(' ');
+                }
+                location.push_str(&format!("@{t:.3}s"));
+            }
+            if location.is_empty() {
+                location.push('—');
+            }
+            let measured = md_value_cell(f.measured.as_ref());
+            let expected = md_value_cell(f.expected.as_ref());
+            println!(
+                "| {} {} | `{}` | {} | {} | {} | {} |",
+                severity_badge(f.severity),
+                f.severity,
+                f.check_id,
+                location,
+                measured,
+                expected,
+                md_cell(&f.message),
+            );
+        }
+        println!("\n</details>\n");
+    }
+
+    let total = FindingSummary {
+        error: errors,
+        warning: warnings,
+        note: notes,
+    };
+    let files = reports.len();
+    let file_word = if files == 1 { "file" } else { "files" };
+    println!("---\n");
+    println!("**{files} {file_word}** — {}", severity_line(&total));
+}
+
+/// A one-line severity tally for a Markdown header or footer, mirroring
+/// the text summary's error/warning/note counts.
+fn severity_line(summary: &FindingSummary) -> String {
+    format!(
+        "{} {} error(s) · {} {} warning(s) · {} {} note(s)",
+        severity_badge(Severity::Error),
+        summary.error,
+        severity_badge(Severity::Warning),
+        summary.warning,
+        severity_badge(Severity::Note),
+        summary.note,
+    )
+}
+
+/// Emoji badge for a severity, chosen to render in a GitHub/GitLab
+/// comment without a color-only cue.
+fn severity_badge(severity: Severity) -> &'static str {
+    match severity {
+        Severity::Error => "❌",
+        Severity::Warning => "⚠️",
+        Severity::Note => "ℹ️",
+    }
+}
+
+/// Render an optional measured/expected value as a Markdown table cell,
+/// wrapping present values in backticks and using an em dash for absent
+/// ones.
+fn md_value_cell(value: Option<&animsmith_core::finding::Value>) -> String {
+    match value {
+        Some(v) => format!("`{}`", md_cell(&v.to_string())),
+        None => "—".to_string(),
+    }
+}
+
+/// Escape text for a single Markdown table cell: neutralize the pipe
+/// column delimiter and flatten newlines so untrusted clip/bone names and
+/// messages cannot break the table structure.
+fn md_cell(text: &str) -> String {
+    text.replace('\\', "\\\\")
+        .replace('|', "\\|")
+        .replace(['\r', '\n'], " ")
 }
 
 fn inspect(doc: &Document, roles: &ResolvedRoles) {
