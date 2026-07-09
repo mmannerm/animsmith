@@ -48,45 +48,19 @@ numbers, `lint` for the declared contract, `fix` for safe repairs,
 
 Every scenario below becomes much more useful once the team commits an
 `animsmith.toml` next to the asset set. The exact tolerances belong to
-your project; this is the common shape:
+your project, and the config is where the team records facts such as
+which clips loop, which are in-place, what speed a locomotion clip
+promises, which bones must move, and which clips form a directional
+blend set. animsmith checks those facts against the measured asset. It
+skips role-dependent semantic checks with a note when rig roles cannot
+be resolved, rather than guessing.
 
-```toml
-[rig]
-profile = "auto"
-
-[checks.loop-seam]
-max_ratio = 1.6
-
-[checks.frozen-bone]
-min_rotation_deg = 0.5
-
-[clips."idle_*"]
-loop = true
-in_place = true
-
-[clips."run_*"]
-loop = true
-
-[clips.run_forward]
-in_place = true
-speed_mps = { value = 3.1, tolerance = 0.25 }
-
-[gait_groups.run-ring]
-clips = ["run_forward", "run_backward", "run_left", "run_right"]
-max_gait_phase_spread = 0.15
-min_lr_amplitude_m = 0.03
-```
-
-The config expresses project facts: which clips loop, which are
-in-place, what speed a locomotion clip promises, which bones must move,
-and which clips form a directional blend set. animsmith checks those
-facts against the measured asset. It skips role-dependent semantic checks
-with a note when rig roles cannot be resolved, rather than guessing.
-
-See the
-[project contract config cookbook](../examples/README.md#4-a-project-contract-config)
-for a runnable example and the
-[configuration reference](../README.md#configuration) for all keys.
+Keep the process guide focused on where the contract is used. For the
+canonical config shape, use the
+[project contract config cookbook](../examples/README.md#4-a-project-contract-config),
+the committed
+[`examples/character.animsmith.toml`](../examples/character.animsmith.toml),
+and the [configuration reference](../README.md#configuration).
 
 ## Scenario: marketplace-pack intake
 
@@ -106,10 +80,10 @@ Recommended flow:
    animsmith convert vendor/run_forward.fbx -o generated/run_forward.glb
    ```
 
-3. Inventory the pack:
+3. Inspect representative files, then measure the pack:
 
    ```console
-   animsmith inspect generated/*.glb
+   animsmith inspect generated/run_forward.glb
    animsmith measure --format json generated/*.glb > generated/measurements.json
    ```
 
