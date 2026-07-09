@@ -130,10 +130,12 @@ Recommended flow:
    animsmith transform work/attack.glb -o work/attack_hold.glb --hold-extend 0.2
    ```
 
-3. Run lint before and after DCC cleanup with the same config:
+3. Measure and lint before and after DCC cleanup with the same config:
 
    ```console
+   animsmith measure --format json work/run_forward.glb > work/run_forward.measure.json
    animsmith lint --config animsmith.toml work/run_forward.glb
+   animsmith measure --format json clean/run_forward.glb > clean/run_forward.measure.json
    animsmith lint --config animsmith.toml clean/run_forward.glb
    ```
 
