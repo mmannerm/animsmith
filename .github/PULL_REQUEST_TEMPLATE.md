@@ -8,13 +8,14 @@
 - [ ] Relevant docs updated in this PR.
 - [ ] No user-visible documentation change is required.
 - [ ] Follow-up `type:docs` issue linked: <!-- #issue -->
+- [ ] Published README/doc-link policy still matches `RELEASING.md`, when package READMEs changed.
 
 ## Verification
 
 - [ ] `just gates`
 - [ ] `just golden` or clean env-gated skip noted, when measurement/golden behavior changed.
 - [ ] `just doc`, when documentation or public Rust API changed.
-- [ ] Package/readiness checks, when manifests, READMEs, include lists, or release docs changed.
+- [ ] `just package-inventory`, when manifests, READMEs, include lists, or release docs changed.
 - [ ] Manual docs/template link review, when GitHub-facing docs changed.
 
 ## Audit

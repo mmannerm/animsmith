@@ -81,17 +81,17 @@ build:
 test:
     cargo test --workspace
 
-# Render public docs with rustdoc warnings denied.
+# Render public docs with rustdoc warnings and missing docs denied.
 doc:
-    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
-    RUSTDOCFLAGS="-D warnings" cargo doc -p animsmith --no-default-features --no-deps
+    RUSTDOCFLAGS="-D warnings -D missing_docs" cargo doc --workspace --no-deps
+    RUSTDOCFLAGS="-D warnings -D missing_docs" cargo doc -p animsmith --no-default-features --no-deps
 
 schema-id:
     scripts/check-schema-id.sh
 
 # Validate GitHub community files and issue-form contracts.
 github-community:
-    ruby scripts/check-github-community-files.rb
+    bash scripts/check-github-community-files.sh
 
 # Spell-check source, comments, and docs (allow-list in _typos.toml).
 typos: require-typos
@@ -103,7 +103,7 @@ typos: require-typos
 coverage:
     cargo llvm-cov --workspace --html
 
-# Check the crate package inventories that CI validates before release.
+# Check the publishable crate package readiness rules that CI validates.
 package-inventory:
     bash scripts/check-package-inventory.sh
 
@@ -124,8 +124,8 @@ gates: require-cargo-deny require-typos
     just schema-id
     just github-community
     typos
-    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
-    RUSTDOCFLAGS="-D warnings" cargo doc -p animsmith --no-default-features --no-deps
+    RUSTDOCFLAGS="-D warnings -D missing_docs" cargo doc --workspace --no-deps
+    RUSTDOCFLAGS="-D warnings -D missing_docs" cargo doc -p animsmith --no-default-features --no-deps
     cargo test -p animsmith --test cli_contract --no-default-features
     cargo build -p animsmith --no-default-features
     cargo build -p animsmith --release

@@ -61,6 +61,19 @@ Documentation impact includes:
   semantics.
 - Release, support, security, or contributor workflows.
 
+Mechanical freshness checks cover the parts that are cheap and reliable:
+schema URL consistency, GitHub community files and PR-template coverage,
+crate README/package inclusion, docs.rs manifest metadata, and rustdoc
+missing-docs enforcement. Semantic docs freshness remains a review
+requirement: update docs in the same PR as the behavior change, or link a
+focused `type:docs` issue.
+
+During pre-1.0 development, published package READMEs intentionally link
+deeper repository docs to latest `main` with
+`github.com/mmannerm/animsmith/blob/main/...` URLs. If a release later
+needs version-pinned README links, update [RELEASING.md](RELEASING.md)
+and the package-readiness gate in the same PR.
+
 Do not duplicate durable process rules across multiple files. This file
 owns contributor process. [DEVELOPMENT.md](DEVELOPMENT.md) owns local
 setup and verification commands. Agent files may add agent-specific
