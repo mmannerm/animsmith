@@ -37,15 +37,31 @@ fn trusted_git_root_accepts_animsmith_workspace_layout() {
 fn trusted_git_root_rejects_vendored_source_in_foreign_layout() {
     let temp = TempDir::new("foreign-layout");
     let git_root = temp.path();
-    let manifest_dir = git_root
+    let trusted_manifest_dir = git_root.join("crates").join("animsmith");
+    write_manifest(&trusted_manifest_dir);
+
+    let vendored_manifest_dir = git_root
         .join("vendor")
         .join("animsmith")
         .join("crates")
         .join("animsmith");
-    write_manifest(&manifest_dir);
+    write_manifest(&vendored_manifest_dir);
+
+    let trusted_manifest = trusted_manifest_dir
+        .join("Cargo.toml")
+        .canonicalize()
+        .expect("trusted manifest exists");
+    let vendored_manifest = vendored_manifest_dir
+        .join("Cargo.toml")
+        .canonicalize()
+        .expect("vendored manifest exists");
+    assert_ne!(
+        trusted_manifest, vendored_manifest,
+        "fixture must reach the existing-but-different manifest comparison"
+    );
 
     assert_eq!(
-        build_script::trusted_git_root_for_manifest(&manifest_dir, git_root),
+        build_script::trusted_git_root_for_manifest(&vendored_manifest_dir, git_root),
         None
     );
 }
