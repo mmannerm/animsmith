@@ -12,8 +12,9 @@
 //! end-to-end. `periods` and `stride` are parameters for the same reason
 //! — one closed loop vs. a popped seam, a real stride vs. a tiny one.
 //!
-//! Gated behind `cfg(any(test, feature = "fixtures"))`: this crate's own
-//! tests reach it directly, and testkit enables the `fixtures` feature.
+//! Behind the `fixtures` feature: testkit enables it, and this crate's
+//! own tests reach it through a self dev-dependency that turns the
+//! feature on for the test build.
 
 use crate::model::*;
 use crate::profile::{ResolvedRoles, Role};
