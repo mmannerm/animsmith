@@ -26,6 +26,13 @@ history (accepted types live in `.commitlintrc.yml`).
    builds CLI archives from the tag, and uploads the archives plus
    matching `.sha256` files to that GitHub Release.
 
+Supported CLI archive targets live in `release-targets.json`.
+`scripts/release-targets.py` renders the generated workflow matrix block in
+`.github/workflows/release-binaries.yml` and the install table in
+`docs/cli.md`. After changing release targets, run
+`scripts/release-targets.py write` and then `just release-packaging` so the
+generated docs and workflow matrix stay in sync.
+
 crates.io publishing uses
 [Trusted Publishing](https://crates.io/docs/trusted-publishing) (GitHub
 OIDC): the `release` job holds `id-token: write` and release-plz mints a
