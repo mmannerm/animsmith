@@ -136,8 +136,9 @@ not wired into branch protection:
 
 - **OpenSSF Scorecard** grades repository security posture weekly and backs
   the README badge.
-- **CodeQL** performs static analysis of the Rust sources on PRs, `main`
-  pushes, and weekly.
+- **CodeQL** performs static analysis of the Rust sources on `main` pushes
+  and weekly, keeping results in the Security tab without adding another
+  full-workspace compile to every PR.
 - **Dependabot** ([`.github/dependabot.yml`](.github/dependabot.yml)) opens
   weekly PRs to bump Cargo dependencies and pinned Action versions. Minor
   and patch Cargo bumps and Action updates are grouped into one PR each;
