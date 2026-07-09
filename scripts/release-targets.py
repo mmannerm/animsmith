@@ -24,7 +24,7 @@ WORKFLOW_MATRIX_INDENT = "          "
 REQUIRED_FIELDS = ("platform", "os", "target", "binary", "archive_extension", "python")
 WORKFLOW_FIELDS = ("os", "target", "binary", "archive_extension", "python")
 EXPRESSION_PATTERN = re.compile(r"\$\{\{(.*?)\}\}")
-MATRIX_DOT_REFERENCE_PATTERN = re.compile(r"\bmatrix\.([A-Za-z_][A-Za-z0-9_]*)\b")
+MATRIX_DOT_REFERENCE_PATTERN = re.compile(r"\bmatrix\.([A-Za-z_][A-Za-z0-9_-]*)\b")
 MATRIX_INDEX_REFERENCE_PATTERN = re.compile(r"""\bmatrix\s*\[\s*(['"])([A-Za-z_][A-Za-z0-9_-]*)\1\s*\]""")
 WORKFLOW_JOB_HEADER_PATTERN = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$", re.MULTILINE)
 

@@ -204,7 +204,7 @@ echo "ok: check-workflow scopes matrix field checks to the build job"
 matrix_contract_fixture="$work/release-binaries-unknown-matrix.yml"
 cp "$workflow_fixture" "$matrix_contract_fixture"
 cat >>"$matrix_contract_fixture" <<'EOF'
-    name: ${{ format('{0}-{1}-{2}', matrix.ext, matrix.bin, matrix['archive-ext']) }}
+    name: ${{ format('{0}-{1}-{2}-{3}', matrix.ext, matrix.bin, matrix['archive-ext'], matrix.archive_extension-extra) }}
 EOF
 if "$python" "$targets_script" --manifest "$target_fixture" --docs "$docs_fixture" --workflow "$matrix_contract_fixture" check \
   >/dev/null 2>"$work/unknown-matrix-check.err"; then
@@ -212,6 +212,8 @@ if "$python" "$targets_script" --manifest "$target_fixture" --docs "$docs_fixtur
 fi
 grep -Fq "matrix.archive-ext" "$work/unknown-matrix-check.err" \
   || fail "top-level unknown matrix field error did not name archive-ext: $(cat "$work/unknown-matrix-check.err")"
+grep -Fq "matrix.archive_extension-extra" "$work/unknown-matrix-check.err" \
+  || fail "top-level unknown matrix field error did not name archive_extension-extra: $(cat "$work/unknown-matrix-check.err")"
 grep -Fq "matrix.bin" "$work/unknown-matrix-check.err" \
   || fail "top-level unknown matrix field error did not name bin: $(cat "$work/unknown-matrix-check.err")"
 grep -Fq "matrix.ext" "$work/unknown-matrix-check.err" \
@@ -222,6 +224,8 @@ if "$python" "$targets_script" --manifest "$target_fixture" --workflow "$matrix_
 fi
 grep -Fq "matrix.archive-ext" "$work/unknown-matrix.err" \
   || fail "unknown matrix field error did not name archive-ext: $(cat "$work/unknown-matrix.err")"
+grep -Fq "matrix.archive_extension-extra" "$work/unknown-matrix.err" \
+  || fail "unknown matrix field error did not name archive_extension-extra: $(cat "$work/unknown-matrix.err")"
 grep -Fq "matrix.bin" "$work/unknown-matrix.err" \
   || fail "unknown matrix field error did not name bin: $(cat "$work/unknown-matrix.err")"
 grep -Fq "matrix.ext" "$work/unknown-matrix.err" \
