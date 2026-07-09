@@ -292,3 +292,6 @@ Where to go next:
   in your own pipeline.
 - [DESIGN.md](../DESIGN.md) — architecture, the full check-catalog
   rationale, and the roadmap.
+- [Game-ready animation research](research/game-ready-animation-clips.md)
+  — the dated engine survey (Unity, Unreal, Godot, Bevy, glTF) behind
+  this guide's contract, with the gaps that inform the roadmap.

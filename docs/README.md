@@ -33,3 +33,5 @@ See also the repository root: [README.md](../README.md) for an overview and
 the configuration reference, [DESIGN.md](../DESIGN.md) for architecture and
 roadmap, and [CONTRIBUTING.md](../CONTRIBUTING.md) /
 [DEVELOPMENT.md](../DEVELOPMENT.md) for working on animsmith itself.
+Dated research notes that inform the roadmap live under
+[`research/`](research/game-ready-animation-clips.md).
