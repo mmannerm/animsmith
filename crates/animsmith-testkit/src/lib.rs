@@ -19,7 +19,7 @@ const ROTATION_TIMES: [f32; 5] = [0.0, 0.25, 0.5, 0.75, 1.0];
 /// Unit Y-rotation keys for the given angles, in radians. Pass literal
 /// angles (not a computed ramp) so callers control the exact `f32`
 /// values — the generated glTF bytes depend on them. Each key is built
-/// via [`quat_from_rotation_y`], whose `libm` trig keeps the committed
+/// via `quat_from_rotation_y`, whose `libm` trig keeps the committed
 /// example assets byte-identical across platforms.
 pub fn quats_from_angles(angles: &[f32]) -> Vec<Quat> {
     angles.iter().map(|&a| quat_from_rotation_y(a)).collect()
