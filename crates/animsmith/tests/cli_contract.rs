@@ -1199,6 +1199,72 @@ fn lint_clean_file_exits_zero() {
 }
 
 #[test]
+fn lint_markdown_renders_findings_for_failing_asset() {
+    let dir = unique_temp_dir("markdown-findings");
+    let input = dir.path().join("dirty.glb");
+    write_distinct_repair_glb(&input); // quat-norm error + quat-flip warning
+    let path = input.to_str().expect("utf-8 path");
+
+    let output = animsmith()
+        .args(["lint", path, "--format", "markdown"])
+        .output()
+        .expect("runs animsmith");
+    // A failing asset exits 1 in markdown mode just like text/json — the
+    // renderer must not swallow the content-failure status.
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    let out = stdout(&output);
+
+    // Presentation surface: a heading, the per-clip table header, the
+    // collapsible section, and both findings' check ids and severities.
+    assert!(out.contains("## animsmith lint"), "stdout:\n{out}");
+    assert!(
+        out.contains("| Severity | Check | Location | Measured | Expected | Message |"),
+        "stdout:\n{out}"
+    );
+    assert!(out.contains("<details"), "stdout:\n{out}");
+    assert!(out.contains("#### clip `sway`"), "stdout:\n{out}");
+    assert!(out.contains("`quat-norm`"), "stdout:\n{out}");
+    assert!(out.contains("`quat-flip`"), "stdout:\n{out}");
+    // End-to-end smoke check that the summary footer reaches stdout;
+    // per-branch tallies/grouping/escaping are pinned by the render unit
+    // tests in the binary crate. Anchor on the footer's `**N file**`
+    // prefix so this matches the aggregate line, not the per-file header.
+    assert!(
+        out.contains("**1 file** — ❌ 1 error(s) · ⚠️ 1 warning(s)"),
+        "stdout:\n{out}"
+    );
+}
+
+#[test]
+fn lint_markdown_summarizes_clean_asset() {
+    let dir = unique_temp_dir("markdown-clean");
+    let input = dir.path().join("clean.glb");
+    write_clean_glb(&input);
+    let path = input.to_str().expect("utf-8 path");
+
+    let output = animsmith()
+        .args(["lint", path, "--format", "markdown"])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    let out = stdout(&output);
+    assert!(out.contains("✅ Clean — no findings."), "stdout:\n{out}");
+    // A clean asset produces no findings table to collapse.
+    assert!(!out.contains("<details"), "stdout:\n{out}");
+}
+
+#[test]
 fn lint_warnings_pass_but_deny_warnings_fails() {
     let dir = unique_temp_dir("deny-warnings");
     let input = dir.path().join("flipped.glb");

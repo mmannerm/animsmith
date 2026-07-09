@@ -24,6 +24,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+mod render;
+
 /// Exit codes, matching common asset-validation gate conventions:
 /// 0 = clean or warnings-only, 1 = error findings, 2 = operator error.
 const EXIT_FINDINGS: u8 = 1;
@@ -69,8 +71,8 @@ enum Cmd {
         /// Input .glb, .gltf, or .fbx files.
         #[arg(required = true, value_name = "FILE")]
         files: Vec<PathBuf>,
-        #[arg(long, value_enum, default_value_t = Format::Text)]
-        format: Format,
+        #[arg(long, value_enum, default_value_t = LintFormat::Text)]
+        format: LintFormat,
         /// Treat warnings as errors for the exit code.
         #[arg(long)]
         deny_warnings: bool,
@@ -181,6 +183,17 @@ enum Cmd {
 enum Format {
     Text,
     Json,
+}
+
+/// Output format for `lint`. Adds a presentation-only Markdown rendering
+/// on top of the shared text/JSON surface, suitable for pasting into CI
+/// comments and asset-review threads. JSON stays the machine-readable
+/// source of truth; Markdown carries no schema or stability guarantees.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum LintFormat {
+    Text,
+    Json,
+    Markdown,
 }
 
 fn select_repairs(repairs: Vec<Repair>) -> Vec<Repair> {
@@ -482,7 +495,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 });
             }
             match format {
-                Format::Json => print_json(&ReportEnvelope::new("measure", reports)),
+                Format::Json => render::print_json(&ReportEnvelope::new("measure", reports)),
                 Format::Text => {
                     for report in &reports {
                         println!("{}:", report.path);
@@ -584,8 +597,9 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 });
             }
             match format {
-                Format::Json => print_json(&ReportEnvelope::new("lint", reports)),
-                Format::Text => print_text(&reports),
+                LintFormat::Json => render::print_json(&ReportEnvelope::new("lint", reports)),
+                LintFormat::Text => render::print_text(&reports),
+                LintFormat::Markdown => render::print_markdown(&reports),
             }
             let fail_at = if deny_warnings {
                 Severity::Warning
@@ -780,7 +794,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let deltas = animsmith_core::diff::diff_measurements(&ma, &mb);
             let has_deltas = !deltas.is_empty();
             match format {
-                Format::Json => print_json(&DiffEnvelope {
+                Format::Json => render::print_json(&DiffEnvelope {
                     header: EnvelopeHeader::new("diff"),
                     inputs: DiffInputs {
                         before: a.display().to_string(),
@@ -906,53 +920,6 @@ fn load(path: &Path) -> Result<Document, String> {
             path.display()
         )),
     }
-}
-
-fn print_json<T: Serialize>(value: &T) {
-    let out = serde_json::to_string_pretty(value);
-    println!("{}", out.expect("report serializes"));
-}
-
-fn print_text(reports: &[FileReport]) {
-    let mut errors = 0usize;
-    let mut warnings = 0usize;
-    let mut notes = 0usize;
-    for report in reports {
-        let findings = report.findings.as_deref().unwrap_or_default();
-        if findings.is_empty() {
-            println!("{}: clean", report.path);
-            continue;
-        }
-        println!("{}:", report.path);
-        for f in findings {
-            match f.severity {
-                Severity::Error => errors += 1,
-                Severity::Warning => warnings += 1,
-                Severity::Note => notes += 1,
-            }
-            let mut location = String::new();
-            if let Some(clip) = &f.clip {
-                location.push_str(&format!(" clip '{clip}'"));
-            }
-            if let Some(bone) = &f.bone {
-                location.push_str(&format!(" bone '{bone}'"));
-            }
-            if let Some(t) = f.time_s {
-                location.push_str(&format!(" @{t:.3}s"));
-            }
-            let mut detail = String::new();
-            if let (Some(measured), Some(expected)) = (&f.measured, &f.expected) {
-                detail = format!(" (measured {measured}, expected {expected})");
-            } else if let Some(measured) = &f.measured {
-                detail = format!(" (measured {measured})");
-            }
-            println!(
-                "  {}[{}]{}: {}{}",
-                f.severity, f.check_id, location, f.message, detail
-            );
-        }
-    }
-    println!("{errors} error(s), {warnings} warning(s), {notes} note(s)");
 }
 
 fn inspect(doc: &Document, roles: &ResolvedRoles) {

@@ -48,7 +48,7 @@ reference. The help output reflects compile-time features: a
 ```console
 animsmith inspect <file>
 animsmith measure <file...> [--format text|json]
-animsmith lint <file...> [--format text|json] [--select id[,id]] [--allow id[,id]] [--deny-warnings]
+animsmith lint <file...> [--format text|json|markdown] [--select id[,id]] [--allow id[,id]] [--deny-warnings]
 animsmith report <file> -o <report.html> [--clip name]
 animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor] [--fps N]
 animsmith fix <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
@@ -124,3 +124,27 @@ Native JSON is deliberately shaped so serializers can be added later
 without redesigning the checks: SARIF for code scanning, GitLab Code
 Quality/CodeClimate for MR widgets, JUnit XML for CI dashboards, and CSV
 for ad-hoc analysis.
+
+## CI Comments (`lint --format markdown`)
+
+`lint --format markdown` renders findings as GitHub/GitLab-flavored
+Markdown for pasting into a CI comment or asset-review thread. It mirrors
+the text output's information — severity, check id, location, measured
+and expected values, per-clip grouping — as a table inside a per-file
+collapsible section, with a clean summary for a passing asset:
+
+```console
+animsmith lint clip.glb --format markdown >> "$GITHUB_STEP_SUMMARY"
+```
+
+A file with findings is rendered as a `<details>` section (expanded for
+short lists, collapsed once a file carries more than ten findings so one
+noisy asset does not bury the rest of the comment); a clean file collapses
+to a one-line `✅ Clean` summary with no section. A footer tallies errors,
+warnings, and notes across every input. The exit code is unchanged from
+text and JSON: `0` clean or warnings-only, `1` on a failing finding.
+
+Markdown is presentation-only and carries **no stability guarantees** —
+gate automation on `--format json` (see [output.md](output.md)), and
+treat the Markdown as display text that may be re-laid-out between
+releases.

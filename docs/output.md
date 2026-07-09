@@ -18,6 +18,13 @@ contract.
 }
 ```
 
+This JSON envelope is the only stable, machine-readable output. `lint`
+also offers `--format markdown`, but that rendering is presentation-only
+for CI comments and asset-review threads (see
+[cli.md](cli.md#ci-comments-lint---format-markdown)): it carries no
+schema and no stability guarantees, and its layout may change between
+releases. Parse JSON, not Markdown.
+
 `schema_version` changes only on breaking JSON changes after this first
 published envelope. Earlier development JSON shapes were not a published
 contract. Until the first manifest-versioned release that contains this
