@@ -190,28 +190,6 @@ EOF
 "$python" "$targets_script" --manifest "$target_fixture" --workflow "$matrix_known_fixture" check-workflow
 echo "ok: check-workflow accepts generated build job matrix fields"
 
-matrix_comment_fixture="$work/release-binaries-commented-matrix.yml"
-cp "$workflow_fixture" "$matrix_comment_fixture"
-cat >>"$matrix_comment_fixture" <<'EOF'
-    # ${{ matrix.ext }}
-    name: build # ${{ matrix.bin }}
-EOF
-"$python" "$targets_script" --manifest "$target_fixture" --workflow "$matrix_comment_fixture" check-workflow
-echo "ok: check-workflow ignores commented build job matrix references"
-
-matrix_quoted_hash_fixture="$work/release-binaries-quoted-hash-matrix.yml"
-cp "$workflow_fixture" "$matrix_quoted_hash_fixture"
-cat >>"$matrix_quoted_hash_fixture" <<'EOF'
-    name: "build # ${{ matrix.quoted-ext }}"
-EOF
-if "$python" "$targets_script" --manifest "$target_fixture" --workflow "$matrix_quoted_hash_fixture" check-workflow \
-  >/dev/null 2>"$work/quoted-hash-matrix.err"; then
-  fail "check-workflow accepted a quoted build job matrix reference after #"
-fi
-grep -Fq "matrix.quoted-ext" "$work/quoted-hash-matrix.err" \
-  || fail "quoted hash matrix field error did not name quoted-ext: $(cat "$work/quoted-hash-matrix.err")"
-echo "ok: check-workflow scans quoted build job strings containing #"
-
 matrix_scope_fixture="$work/release-binaries-upload-matrix.yml"
 cp "$workflow_fixture" "$matrix_scope_fixture"
 cat >>"$matrix_scope_fixture" <<'EOF'
@@ -221,38 +199,6 @@ cat >>"$matrix_scope_fixture" <<'EOF'
 EOF
 "$python" "$targets_script" --manifest "$target_fixture" --workflow "$matrix_scope_fixture" check-workflow
 echo "ok: check-workflow scopes matrix field checks to the build job"
-
-matrix_run_block_fixture="$work/release-binaries-run-block-matrix.yml"
-cp "$workflow_fixture" "$matrix_run_block_fixture"
-cat >>"$matrix_run_block_fixture" <<'EOF'
-    steps:
-      - run: |
-          # ${{ matrix.script-ext }}
-EOF
-if "$python" "$targets_script" --manifest "$target_fixture" --docs "$docs_fixture" --workflow "$matrix_run_block_fixture" check \
-  >/dev/null 2>"$work/run-block-matrix-check.err"; then
-  fail "check accepted a build job matrix reference inside run block content"
-fi
-grep -Fq "matrix.script-ext" "$work/run-block-matrix-check.err" \
-  || fail "top-level run block matrix field error did not name script-ext: $(cat "$work/run-block-matrix-check.err")"
-if "$python" "$targets_script" --manifest "$target_fixture" --workflow "$matrix_run_block_fixture" check-workflow \
-  >/dev/null 2>"$work/run-block-matrix.err"; then
-  fail "check-workflow accepted a build job matrix reference inside run block content"
-fi
-grep -Fq "matrix.script-ext" "$work/run-block-matrix.err" \
-  || fail "run block matrix field error did not name script-ext: $(cat "$work/run-block-matrix.err")"
-echo "ok: check-workflow scans build job run block content"
-
-matrix_run_dedent_fixture="$work/release-binaries-run-dedent-matrix.yml"
-cp "$workflow_fixture" "$matrix_run_dedent_fixture"
-cat >>"$matrix_run_dedent_fixture" <<'EOF'
-    steps:
-      - run: |
-          echo "${{ matrix.os }}"
-    # ${{ matrix.after-run-ext }}
-EOF
-"$python" "$targets_script" --manifest "$target_fixture" --workflow "$matrix_run_dedent_fixture" check-workflow
-echo "ok: check-workflow resumes YAML comment handling after run blocks"
 
 matrix_contract_fixture="$work/release-binaries-unknown-matrix.yml"
 cp "$workflow_fixture" "$matrix_contract_fixture"

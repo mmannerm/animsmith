@@ -27,7 +27,6 @@ EXPRESSION_PATTERN = re.compile(r"\$\{\{(.*?)\}\}")
 MATRIX_DOT_REFERENCE_PATTERN = re.compile(r"\bmatrix\.([A-Za-z_][A-Za-z0-9_-]*)\b")
 MATRIX_INDEX_REFERENCE_PATTERN = re.compile(r"""\bmatrix\s*\[\s*(['"])([A-Za-z_][A-Za-z0-9_-]*)\1\s*\]""")
 WORKFLOW_JOB_HEADER_PATTERN = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$", re.MULTILINE)
-BLOCK_SCALAR_PATTERN = re.compile(r":\s*[|>][+-]?\s*$")
 
 
 def load_targets(manifest: Path) -> list[dict[str, str]]:
@@ -182,64 +181,13 @@ def workflow_job_block(workflow_text: str, workflow_path: Path, job_name: str) -
     )
 
 
-def strip_yaml_comment(line: str) -> str:
-    in_single = False
-    in_double = False
-    escaped = False
-    for index, char in enumerate(line):
-        if in_double:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_double = False
-        elif in_single:
-            if char == "'":
-                in_single = False
-        elif char == "'":
-            in_single = True
-        elif char == '"':
-            in_double = True
-        elif char == "#" and (index == 0 or line[index - 1].isspace()):
-            return line[:index]
-    return line
-
-
-def leading_spaces(line: str) -> int:
-    return len(line) - len(line.lstrip(" "))
-
-
-def starts_block_scalar(line: str) -> bool:
-    return bool(BLOCK_SCALAR_PATTERN.search(line.rstrip()))
-
-
 def workflow_matrix_references(workflow_text: str) -> set[str]:
     references: set[str] = set()
-    block_scalar_indent: int | None = None
-    for line in workflow_text.splitlines():
-        if block_scalar_indent is not None:
-            if not line.strip():
-                continue
-            if leading_spaces(line) > block_scalar_indent:
-                scan_line = line
-            else:
-                block_scalar_indent = None
-                scan_line = strip_yaml_comment(line)
-        else:
-            scan_line = strip_yaml_comment(line)
-
-        if block_scalar_indent is None and starts_block_scalar(scan_line):
-            block_scalar_indent = leading_spaces(line)
-
-        line = scan_line
-        if not line.strip():
-            continue
-        for expression in EXPRESSION_PATTERN.findall(line):
-            references.update(MATRIX_DOT_REFERENCE_PATTERN.findall(expression))
-            references.update(
-                match.group(2) for match in MATRIX_INDEX_REFERENCE_PATTERN.finditer(expression)
-            )
+    for expression in EXPRESSION_PATTERN.findall(workflow_text):
+        references.update(MATRIX_DOT_REFERENCE_PATTERN.findall(expression))
+        references.update(
+            match.group(2) for match in MATRIX_INDEX_REFERENCE_PATTERN.finditer(expression)
+        )
     return references
 
 
