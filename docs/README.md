@@ -4,9 +4,11 @@ Reference material for animsmith. New to the tool, or deciding whether
 your team should adopt it? Start with
 [why animsmith](why-animsmith.md). For users, the
 [game-ready clips guide](game-ready-clips.md) explains *why* the checks
-exist, and the [examples cookbook](../examples/README.md) gives
-runnable, copy-into-your-project workflows; the pages here are the
-topic-by-topic references those draw on.
+exist, the [pipeline scenario guide](pipeline-scenarios.md) shows where
+animsmith fits in raw-to-game-ready asset processes, and the
+[examples cookbook](../examples/README.md) gives runnable,
+copy-into-your-project workflows; the pages here are the topic-by-topic
+references those draw on.
 
 ## I want to…
 
@@ -14,6 +16,7 @@ topic-by-topic references those draw on.
 |---|---|
 | Decide whether animsmith fits my team | [Why animsmith](why-animsmith.md) |
 | Understand what "game-ready" means, and why a check fires | [Game-ready clips guide](game-ready-clips.md) |
+| Plan a raw-to-game-ready animation asset process | [Pipeline scenario guide](pipeline-scenarios.md) |
 | Gate animation exports in CI | [Cookbook §1 — a first CLI gate](../examples/README.md#1-a-first-cli-gate) |
 | Repair a broken export | [Cookbook §2 — repairing an asset](../examples/README.md#2-repairing-an-asset) |
 | Trim, extend, or re-anchor a clip | [Cookbook §3 — editing a clip](../examples/README.md#3-editing-a-clip) |
@@ -28,6 +31,7 @@ topic-by-topic references those draw on.
 |---|---|
 | [Why animsmith](why-animsmith.md) | What animsmith is, why it exists, and what it is worth by role — the adoption case for someone who has never seen the tool. |
 | [Game-ready clips guide](game-ready-clips.md) | What makes a clip game-engine friendly and why — every runtime failure mode, mapped to the checks, repairs, and config that address it. Start here when a check fires. |
+| [Pipeline scenario guide](pipeline-scenarios.md) | Where animsmith fits in raw-to-game-ready asset pipelines: marketplace intake, mocap cleanup, outsourced acceptance, CI gating, and raw/generated artifact storage. |
 | [Examples cookbook](../examples/README.md) | Runnable workflows — CLI gates, repair, clip edits, contract configs, FBX migration, and library embedding. Several double as CI/acceptance gates. |
 | [cli.md](cli.md) | CLI reference: every command, flag, and exit code. |
 | [embedding.md](embedding.md) | Driving the check catalog from Rust instead of the CLI, paired with the runnable [`embed`](../crates/animsmith/examples/embed.rs) example. |

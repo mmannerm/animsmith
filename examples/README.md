@@ -4,15 +4,17 @@ A cookbook of runnable workflows. Each section is a self-contained task
 you can copy into your own project — several double as CI/acceptance
 gates. Each workflow addresses a runtime failure described in the
 [game-ready clips guide](../docs/game-ready-clips.md), which explains
-*why* the checks behind these commands exist.
+*why* the checks behind these commands exist. For the larger process
+that turns raw source assets into engine-facing outputs, see the
+[pipeline scenario guide](../docs/pipeline-scenarios.md).
 
 Commands that reference [`examples/assets/`](assets/) run
 against small assets committed there, so you can follow along from a
 source checkout with no downloads; the assets are procedurally
 generated (see [their README](assets/README.md) for
-provenance and how to regenerate them). The FBX-migration section
-operates on your own rig, using placeholder filenames — `export.fbx`,
-`old.glb` — for assets you supply.
+provenance and how to regenerate them). The conversion and reporting
+section operates on assets you supply, using placeholder filenames —
+`export.fbx`, `old.glb` — for your own exports and baselines.
 
 Transcripts are real command output. Long finding messages are elided as
 `...` and the JSON envelope is shown abridged; everything else is
@@ -376,7 +378,7 @@ the full key reference.
 
 ---
 
-## 5. Migrating an FBX export _(default features only)_
+## 5. Converting exports and generating reports _(default features only)_
 
 Use this workflow when a DCC or marketplace export reaches your importer
 but brings bloated constant tracks, stray scale keys, or a rig the
