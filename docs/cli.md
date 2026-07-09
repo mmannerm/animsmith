@@ -5,6 +5,8 @@ automation. It reads glTF/GLB everywhere; the released default build also
 reads FBX through the `fbx` feature. The CLI is tested on Linux, macOS,
 and Windows.
 
+## Install
+
 Install the released CLI by downloading the archive for your platform from
 [GitHub Releases](https://github.com/mmannerm/animsmith/releases/latest):
 

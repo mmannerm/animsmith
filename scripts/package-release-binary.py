@@ -21,14 +21,14 @@ import tarfile
 import zipfile
 from pathlib import Path
 
-SUPPORTED_EXTS = ("tar.gz", "zip")
+from release_archives import SUPPORTED_ARCHIVE_EXTENSIONS
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", required=True, type=Path, help="Path to the built release binary.")
     parser.add_argument("--stem", required=True, help="Archive stem, e.g. animsmith-v1.2.3-x86_64-unknown-linux-gnu.")
-    parser.add_argument("--ext", required=True, choices=SUPPORTED_EXTS, help="Archive extension.")
+    parser.add_argument("--ext", required=True, choices=SUPPORTED_ARCHIVE_EXTENSIONS, help="Archive extension.")
     parser.add_argument("--out-dir", default="dist", type=Path, help="Directory for the staging tree and archive (default: dist).")
     parser.add_argument("extras", nargs="*", type=Path, help="Extra files to include alongside the binary.")
     return parser.parse_args()

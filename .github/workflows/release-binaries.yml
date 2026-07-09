@@ -22,29 +22,32 @@ env:
   RELEASE_TAG: ${{ inputs.tag }}
 
 jobs:
-  release_targets:
-    name: load release target matrix
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.targets.outputs.matrix }}
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: refs/tags/${{ env.RELEASE_TAG }}
-          persist-credentials: false
-      - id: targets
-        name: Load release targets
-        run: |
-          set -euo pipefail
-          matrix="$(python3 scripts/release-targets.py github-matrix)"
-          echo "matrix=${matrix}" >>"${GITHUB_OUTPUT}"
-
   build:
-    needs: [release_targets]
     name: build ${{ matrix.target }}
     strategy:
       fail-fast: false
-      matrix: ${{ fromJson(needs.release_targets.outputs.matrix) }}
+      matrix:
+        include:
+          # release-targets:start
+          - platform: "Linux x86_64"
+            os: "ubuntu-latest"
+            target: "x86_64-unknown-linux-gnu"
+            binary: "animsmith"
+            archive_extension: "tar.gz"
+            python: "python3"
+          - platform: "macOS Apple Silicon"
+            os: "macos-14"
+            target: "aarch64-apple-darwin"
+            binary: "animsmith"
+            archive_extension: "tar.gz"
+            python: "python3"
+          - platform: "Windows x86_64"
+            os: "windows-latest"
+            target: "x86_64-pc-windows-msvc"
+            binary: "animsmith.exe"
+            archive_extension: "zip"
+            python: "python"
+          # release-targets:end
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

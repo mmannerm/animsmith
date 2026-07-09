@@ -32,6 +32,7 @@ Download prebuilt CLI archives from
 
 The supported platform archive names are listed in the
 [CLI guide](https://github.com/mmannerm/animsmith/blob/main/docs/cli.md#install).
+
 Each archive includes the `animsmith` binary, README, license files, and
 third-party notices. Matching `.sha256` files are published alongside the
 archives so CI or installer scripts can verify downloads.

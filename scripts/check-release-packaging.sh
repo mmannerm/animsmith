@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Local contract coverage for the release binary workflow (issue #113).
 #
-# Exercises the two pieces of release-binaries.yml / release-plz.yml that
+# Exercises the release-binaries.yml / release-plz.yml automation paths that
 # would otherwise only ever run in CI:
 #   1. package-release-binary.py: archive contents + matching .sha256.
 #   2. select-cli-release-tag.sh: release-present / no-release-skip /
@@ -48,94 +48,27 @@ sha256_verify() {
 # Docs bundled into every release archive, mirroring release-binaries.yml.
 extras=(README.md LICENSE-APACHE LICENSE-MIT THIRD-PARTY.md)
 
-# --- release target metadata: matrix + docs -----------------------------
+# --- release target metadata: workflow + docs ---------------------------
 
-WORKFLOW=.github/workflows/release-binaries.yml "$python" - <<'PY'
-import os
-import re
-from pathlib import Path
+"$python" "$targets_script" check
+echo "ok: release target workflow matrix and docs match release-targets.json"
 
-workflow = Path(os.environ["WORKFLOW"]).read_text(encoding="utf-8")
-
-
-def top_level_block(text: str, name: str) -> str:
-    marker = f"  {name}:\n"
-    start = text.find(marker)
-    if start == -1:
-        raise SystemExit(f"missing job {name}")
-    rest = text[start + len(marker) :]
-    next_job = re.search(r"\n  [A-Za-z0-9_-]+:\n", rest)
-    if next_job is None:
-        return rest
-    return rest[: next_job.start()]
-
-
-release_targets = top_level_block(workflow, "release_targets")
-if "python3 scripts/release-targets.py github-matrix" not in release_targets:
-    raise SystemExit("release_targets job must run scripts/release-targets.py github-matrix")
-if "GITHUB_OUTPUT" not in release_targets or "matrix=${matrix}" not in release_targets:
-    raise SystemExit("release_targets job must publish its matrix output")
-
-build = top_level_block(workflow, "build")
-if "needs: [release_targets]" not in build:
-    raise SystemExit("build job must depend on release_targets")
-if "matrix: ${{ fromJson(needs.release_targets.outputs.matrix) }}" not in build:
-    raise SystemExit("build job must consume the generated release target matrix")
-for expression in (
-    "matrix.target",
-    "matrix.binary",
-    "matrix.archive_extension",
-    "matrix.python",
-):
-    if expression not in build:
-        raise SystemExit(f"build job must consume {expression}")
-PY
-echo "ok: release workflow consumes the generated target matrix"
-
-"$python" "$targets_script" check-docs
-echo "ok: release target docs match release-targets.json"
-
-matrix="$("$python" "$targets_script" github-matrix)"
-MATRIX="$matrix" "$python" - <<'PY'
-import json
+README=README.md DOCS=docs/cli.md "$python" - <<'PY'
 import os
 from pathlib import Path
 
-manifest = json.loads(Path("release-targets.json").read_text(encoding="utf-8"))
-matrix = json.loads(os.environ["MATRIX"])
-include = matrix.get("include")
-expected = manifest["release_targets"]
-if include != expected:
-    raise SystemExit(
-        "github-matrix did not match release-targets.json\n"
-        f"expected: {json.dumps(expected, sort_keys=True)}\n"
-        f"got:      {json.dumps(include, sort_keys=True)}"
-    )
+readme = Path(os.environ["README"]).read_text(encoding="utf-8")
+docs = Path(os.environ["DOCS"]).read_text(encoding="utf-8")
+if "docs/cli.md#install" not in readme:
+    raise SystemExit("README.md must link supported archives to docs/cli.md#install")
+if "\n## Install\n" not in f"\n{docs}":
+    raise SystemExit("docs/cli.md must expose a ## Install anchor for README.md")
 PY
-echo "ok: release target matrix is valid"
-
-MANIFEST=release-targets.json "$python" - <<'PY'
-import json
-import os
-from pathlib import Path
-
-manifest = json.loads(Path(os.environ["MANIFEST"]).read_text(encoding="utf-8"))
-readme = Path("README.md").read_text(encoding="utf-8")
-duplicated_targets = [
-    target["target"]
-    for target in manifest["release_targets"]
-    if target["target"] in readme
-]
-if duplicated_targets:
-    raise SystemExit(
-        "README.md must link to docs/cli.md instead of repeating release target names: "
-        + ", ".join(duplicated_targets)
-    )
-PY
-echo "ok: README does not duplicate release archive names"
+echo "ok: README install link has a matching docs/cli.md anchor"
 
 target_fixture="$work/release-targets.json"
 docs_fixture="$work/cli.md"
+workflow_fixture="$work/release-binaries.yml"
 cat >"$target_fixture" <<'JSON'
 {
   "release_targets": [
@@ -160,6 +93,16 @@ stale
 after
 EOF
 
+if "$python" "$targets_script" --manifest "$target_fixture" --docs "$docs_fixture" check-docs \
+  >/dev/null 2>"$work/stale-docs.err"; then
+  fail "check-docs accepted a stale release target table"
+fi
+grep -Fq "release target table is stale" "$work/stale-docs.err" \
+  || fail "check-docs stale error did not name the stale table: $(cat "$work/stale-docs.err")"
+grep -Fq "scripts/release-targets.py write" "$work/stale-docs.err" \
+  || fail "check-docs stale error did not name the write remedy: $(cat "$work/stale-docs.err")"
+echo "ok: check-docs rejects stale release target tables"
+
 "$python" "$targets_script" --manifest "$target_fixture" --docs "$docs_fixture" write-docs
 expected_docs="$(
   cat <<'EOF'
@@ -180,6 +123,77 @@ actual_docs="$(cat "$docs_fixture")"
 "$python" "$targets_script" --manifest "$target_fixture" --docs "$docs_fixture" check-docs
 echo "ok: write-docs regenerates the CLI archive table"
 
+cat >"$workflow_fixture" <<'EOF'
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # release-targets:start
+          - target: stale-target
+          # release-targets:end
+EOF
+
+if "$python" "$targets_script" --manifest "$target_fixture" --workflow "$workflow_fixture" check-workflow \
+  >/dev/null 2>"$work/stale-workflow.err"; then
+  fail "check-workflow accepted a stale release target matrix"
+fi
+grep -Fq "release target matrix is stale" "$work/stale-workflow.err" \
+  || fail "check-workflow stale error did not name the stale matrix: $(cat "$work/stale-workflow.err")"
+grep -Fq "scripts/release-targets.py write" "$work/stale-workflow.err" \
+  || fail "check-workflow stale error did not name the write remedy: $(cat "$work/stale-workflow.err")"
+
+"$python" "$targets_script" --manifest "$target_fixture" --workflow "$workflow_fixture" write-workflow
+expected_workflow="$(
+  cat <<'EOF'
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # release-targets:start
+          - platform: "Example OS"
+            os: "ubuntu-latest"
+            target: "example-target"
+            binary: "animsmith"
+            archive_extension: "tar.gz"
+            python: "python3"
+          # release-targets:end
+EOF
+)"
+actual_workflow="$(cat "$workflow_fixture")"
+[[ "$actual_workflow" == "$expected_workflow" ]] \
+  || fail "write-workflow did not regenerate the release target matrix from the manifest"
+"$python" "$targets_script" --manifest "$target_fixture" --workflow "$workflow_fixture" check-workflow
+echo "ok: write-workflow regenerates the release matrix"
+
+cat >"$work/missing-start.md" <<'EOF'
+# fixture
+
+<!-- release-targets:end -->
+EOF
+if "$python" "$targets_script" --manifest "$target_fixture" --docs "$work/missing-start.md" check-docs \
+  >/dev/null 2>"$work/missing-start.err"; then
+  fail "check-docs accepted a table with a missing start marker"
+fi
+grep -Fq "missing <!-- release-targets:start -->" "$work/missing-start.err" \
+  || fail "missing-start error did not name the missing marker: $(cat "$work/missing-start.err")"
+
+cat >"$work/missing-end.md" <<'EOF'
+# fixture
+
+<!-- release-targets:start -->
+EOF
+if "$python" "$targets_script" --manifest "$target_fixture" --docs "$work/missing-end.md" check-docs \
+  >/dev/null 2>"$work/missing-end.err"; then
+  fail "check-docs accepted a table with a missing end marker"
+fi
+grep -Fq "missing <!-- release-targets:end -->" "$work/missing-end.err" \
+  || fail "missing-end error did not name the missing marker: $(cat "$work/missing-end.err")"
+echo "ok: check-docs rejects missing release target markers"
+
 check_bad_manifest() {
   local name="$1"
   local expected="$2"
@@ -187,7 +201,7 @@ check_bad_manifest() {
   local err="$work/bad-$name.err"
 
   cat >"$manifest"
-  if "$python" "$targets_script" --manifest "$manifest" github-matrix >/dev/null 2>"$err"; then
+  if "$python" "$targets_script" --manifest "$manifest" check-docs >/dev/null 2>"$err"; then
     fail "$name: invalid manifest unexpectedly passed"
   fi
   grep -Fq "$expected" "$err" \
