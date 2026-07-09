@@ -2,6 +2,12 @@
 
 Date: 2026-07-09
 
+Scope note: this is a dated research artifact, not the current animsmith
+product contract. Before converting any recommendation into an issue,
+reconcile it against `DESIGN.md`, the shipped CLI docs, the stable check
+ids, and any newer documentation that has merged since this note was
+written.
+
 ## Executive Summary
 
 A game-ready animation clip is not just an animation that looks good in a DCC tool. It is a clip whose data, rig assumptions, root motion behavior, loop boundaries, contact quality, metadata, compression tolerance, and import settings are predictable enough for a real-time engine and a production pipeline.
@@ -19,6 +25,60 @@ That suggests animsmith's core value proposition:
 > Animsmith should be a repeatable animation-readiness gate and repair assistant: it turns ambiguous "this animation feels broken in the engine" feedback into measurable checks, actionable reports, CI-friendly failures, and safe transforms for common engine import workflows.
 
 The best first product surface is not a full DCC replacement. It is a clip audit, measurement, normalization, and reporting tool for teams that receive raw mocap, marketplace assets, outsourced FBX files, glTF characters, or DCC exports and need them to become engine-safe assets.
+
+## Current Animsmith Reconciliation
+
+This research was written from engine and pipeline needs inward. The
+existing animsmith implementation already covers part of that surface.
+The useful planning question is therefore not "what should animsmith
+build from scratch?" but "which gaps remain after mapping the research
+against the current product?"
+
+Shipped or already documented capabilities include:
+
+- `animsmith lint` as the CI-friendly audit command, with project config,
+  stable exit codes, text output, and JSON output.
+- `animsmith measure` for raw measurements without judgment.
+- Versioned JSON output with `schema_version`.
+- A self-contained HTML `report` command.
+- Stable kebab-case check ids such as `time-monotonic`, `nan`,
+  `quat-norm`, `quat-flip`, `duration-sanity`, `scale-keys`,
+  `constant-track`, `loop-seam`, `gait-group`, `root-motion-speed`,
+  `missing-bones`, `frozen-bone`, `in-place`, `foot-slide`, `fps`, and
+  `bind-pose`.
+- Safe mechanical repairs through `fix`, including quaternion
+  normalization and hemisphere normalization.
+- Mechanical transforms such as slicing, hold extension, gait anchoring,
+  and fps-aware transforms.
+- `diff` for comparing meaningful metric changes across asset revisions.
+
+Genuinely new or underdeveloped areas surfaced by this research include:
+
+- Engine profiles distinct from rig profiles: Unity, Unreal, Godot, Bevy,
+  and generic glTF/runtime behavior.
+- Engine import prediction and optional engine readback/smoke tests.
+- Bevy-specific asset addressability: `GltfAssetLabel` manifests, named
+  animation inventories, target-id reports, and RON animation graph
+  templates.
+- Event, curve, notify, contact, and gameplay-window metadata checks.
+- Duplicate loop-endpoint detection and safe removal.
+- Blend entry/exit pose checks against declared transition families.
+- Retarget bone-map, bone-length, and rest-pose risk diagnostics.
+- Runtime-facing sidecars, including contact events and engine import
+  manifests.
+- Markdown report output, if a lightweight non-HTML artifact is useful.
+
+The check-like names later in this document are conceptual categories,
+not proposed public ids. Existing shipped check ids are public contract:
+renaming or replacing them with dotted taxonomy names would require a
+separate pre-1.0 design decision.
+
+The transform ideas also need to respect the current design guardrail:
+animsmith may rewrite clips only in ways whose correctness its own checks
+can verify. Retargeting, rest-pose rewriting, procedural foot locking,
+motion warping, stride normalization, and other artistic motion edits
+should be treated as ADR-level scope proposals unless they can be reduced
+to mechanical, measurable, reversible operations.
 
 ## What "Game-Ready" Means
 
@@ -502,35 +562,46 @@ For producers and asset pipeline owners:
 
 ### Product Requirements
 
-P0: Clip audit command
+Shipped: clip audit command
 
-- `animsmith check <asset>` runs structural, skeleton, clip, root-motion, loop, contact, and performance checks.
-- Supports project config with engine profiles.
-- Emits console summary, JSON, and Markdown/HTML report.
-- Uses stable exit codes for CI.
+- `animsmith lint <asset>` already runs structural, skeleton, clip,
+  root-motion, loop, contact, and performance checks.
+- It supports project config, stable exit codes, text output, and JSON
+  output.
+- Future work should extend this surface with engine profiles rather
+  than introduce a parallel `check` command.
 
-P0: Engine profiles
+P0/P1: Engine profiles
 
 - Built-in profiles: `generic`, `unity-generic`, `unity-humanoid`, `unreal`, `godot`, `bevy`, `gltf-runtime`.
 - Profiles define root policy, unit/axis expectations, skeleton profile, clip boundary rules, loop thresholds, contact bones, and unsupported track behavior.
 
-P0: Metrics command
+Shipped: metrics command
 
-- Reports clip duration, frame/sample rate, key count, track count, root displacement, root rotation delta, average speed, peak speed, vertical displacement, foot-slide metrics, contact phases, loop deltas, and skeleton summary.
+- `animsmith measure` already reports raw measurements without judgment.
+- Future work should add missing engine- and metadata-oriented metrics:
+  asset labels, event windows, transition pose deltas, duplicate endpoint
+  hints, import-risk fields, and Bevy target-id summaries.
 
-P0: Report format
+Shipped/P1: report formats
 
-- Human-readable report with:
+- The HTML `report` command already provides a human-readable artifact.
+- JSON output is already versioned and should remain the machine-readable
+  source of truth.
+- Markdown output would be new and useful for CI comments, issue filing,
+  and lightweight design reviews.
+- Any report should keep exposing:
   - "What failed"
   - "Why it matters in engines"
   - "How to fix"
   - "Which profile threshold was used"
   - "Raw metric values"
-- Machine-readable JSON schema with stable field names.
 
-P0: Configuration
+Shipped/P1: Configuration
 
-- Versioned project config for:
+- `animsmith.toml` already provides project config for rig profiles,
+  checks, clips, thresholds, and expectations.
+- Future config work should add engine-profile settings for:
   - skeleton profiles
   - root bones/nodes
   - contact bones
@@ -546,14 +617,16 @@ P1: Transform command
   - split/slice clips
   - trim frames
   - remove duplicate endpoint frame
-  - resample to target rate
   - normalize quaternion signs
-  - drop redundant constant tracks
-  - remove all-zero curves
-  - convert root-motion to in-place with sidecar trajectory
-  - convert in-place plus desired trajectory to root-motion where enough data exists
-  - floor-align clips
+  - drop redundant constant tracks when the result is provably equivalent
+  - remove all-zero curves when the target profile permits it
   - generate footstep/contact events
+
+Transforms that alter authored motion need a separate design decision:
+root-motion/in-place conversion, retargeting, rest-pose rewriting, floor
+alignment, key reduction with error tolerance, motion warping, procedural
+foot locking, and stride normalization are valuable ideas but exceed the
+current "mechanical and check-verifiable" bar unless narrowed.
 
 P1: Diff command
 
@@ -594,7 +667,10 @@ P3: DCC integrations
 
 ### Check Requirements
 
-Required P0 checks:
+The following are capability categories for planning. They should map
+onto existing stable ids where those exist, not replace them.
+
+Shipped or partially shipped categories:
 
 - `format.parse`
 - `format.references`
@@ -619,9 +695,8 @@ Required P0 checks:
 - `performance.key_count`
 - `performance.constant_tracks`
 - `performance.animated_scale`
-- `metadata.required_events`
 
-Recommended P1 checks:
+New or underdeveloped categories:
 
 - `retarget.bone_map_quality`
 - `retarget.rest_pose_delta`
@@ -638,6 +713,7 @@ Recommended P1 checks:
 - `bevy.gltf_asset_labels`
 - `bevy.animation_target_ids`
 - `bevy.animation_graph_readiness`
+- `metadata.required_events`
 
 ### Transform Requirements
 
@@ -779,16 +855,16 @@ Deliver:
 
 ### Second Milestone: Safe Preparation
 
-Goal: animsmith can fix common mechanical issues.
+Goal: animsmith can fix common mechanical issues whose correctness it can
+verify.
 
 Deliver:
 
 - Clip splitting/trimming.
 - Duplicate endpoint removal.
-- Track pruning.
+- Provably equivalent track pruning.
 - Quaternion normalization.
-- Resampling.
-- Root motion extraction/baking.
+- Fps-aware resampling with measured before/after diff.
 - Contact event generation.
 - Diff report for every transform.
 
@@ -806,18 +882,22 @@ Deliver:
 - Engine-readback comparison.
 - Profile-specific docs generated from check metadata.
 
-### Fourth Milestone: Retargeting and Authoring Assistance
+### Fourth Milestone: Retargeting Diagnostics and Authoring Assistance
 
-Goal: animsmith helps technical animators repair libraries.
+Goal: animsmith helps technical animators diagnose retargeting and library
+quality problems without silently becoming a DCC retargeter.
 
 Deliver:
 
-- Bone map generation and validation.
+- Bone map validation.
 - Rest-pose diagnostics.
 - Retarget risk scoring.
 - Motion library inventory.
 - Batch reports and dashboards.
 - DCC helper plugins.
+
+Actual retargeting, rest-pose rewriting, and authored-motion repair would
+need an explicit design-record update before becoming product scope.
 
 ## Product Positioning
 
@@ -835,41 +915,31 @@ The pitch differs by audience:
 
 ## Suggested Issue Backlog
 
-P0 issues:
+New issues worth filing after dedupe:
 
-- Add engine profile config model.
-- Add check result taxonomy with severity, metric values, and fix hints.
-- Add root-motion classification metrics.
-- Add loop continuity check with root-space pose delta.
-- Add foot-slide/contact check using configurable contact bones.
-- Add clip timing and whole-frame boundary validation.
-- Add track inventory and key-count budget.
-- Add JSON report schema and Markdown/HTML report.
-- Add documentation page: "What makes a clip game-ready?"
-- Add documentation page: "In-place vs root motion."
-
-P1 issues:
-
-- Add safe clip slicing/trimming transform.
 - Add duplicate endpoint detection and removal.
-- Add quaternion continuity normalization.
-- Add constant/redundant track pruning.
-- Add root-motion bake/extract transform.
-- Add generated contact events sidecar.
-- Add report diff for raw vs transformed assets.
+- Add engine profile config model distinct from rig profiles.
+- Add engine import prediction for Unity/Unreal/Godot/Bevy profiles.
 - Add Unity/Unreal/Godot/Bevy profile docs.
 - Add Bevy glTF asset-label and named-animation manifest generation.
 - Add Bevy animation graph template generation.
-
-P2 issues:
-
-- Add visual report viewer.
+- Add generated contact events sidecar.
+- Add gameplay event/window metadata checks.
+- Add blend entry/exit pose-delta checks against transition families.
+- Add retarget bone-map and bone-length diagnostics.
+- Add Markdown report output.
 - Add engine import preset generation.
 - Add headless import smoke test adapters.
 - Add Bevy runtime smoke-test harness.
-- Add retarget bone-map diagnostics.
 - Add compression error estimator.
 - Add batch library dashboard.
+
+Ideas that need ADR or design-record updates before issue filing:
+
+- Root-motion to in-place conversion, or in-place to authored trajectory.
+- Retargeting and rest-pose rewriting.
+- Procedural foot locking, motion warping, or stride normalization.
+- Key reduction with nonzero visual/motion error tolerance.
 
 ## Appendix: Source Notes
 
