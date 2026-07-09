@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Local contract coverage for the release binary workflow (issue #113).
 #
-# Exercises the two pieces of release-binaries.yml / release-plz.yml that
+# Exercises the release-binaries.yml / release-plz.yml automation paths that
 # would otherwise only ever run in CI:
 #   1. package-release-binary.py: archive contents + matching .sha256.
 #   2. select-cli-release-tag.sh: release-present / no-release-skip /
 #      missing-CLI-tag detection branches.
+#   3. release-targets.py: one canonical release target list for workflow
+#      matrices and user-facing archive docs.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -14,6 +16,7 @@ cd "$repo_root"
 python="${PYTHON:-python3}"
 package_script="scripts/package-release-binary.py"
 select_script="scripts/select-cli-release-tag.sh"
+targets_script="scripts/release-targets.py"
 
 command -v "$python" >/dev/null || {
   echo "python3 not found; required for release packaging coverage" >&2
@@ -44,6 +47,226 @@ sha256_verify() {
 
 # Docs bundled into every release archive, mirroring release-binaries.yml.
 extras=(README.md LICENSE-APACHE LICENSE-MIT THIRD-PARTY.md)
+
+# --- release target metadata: workflow + docs ---------------------------
+
+"$python" "$targets_script" check
+echo "ok: release target workflow matrix and docs match release-targets.json"
+
+README=README.md DOCS=docs/cli.md "$python" - <<'PY'
+import os
+import re
+from pathlib import Path
+
+readme = Path(os.environ["README"]).read_text(encoding="utf-8")
+docs = Path(os.environ["DOCS"]).read_text(encoding="utf-8")
+match = re.search(r"\[CLI guide\]\(([^)]+)\)", readme)
+if not match:
+    raise SystemExit("README.md must link supported archives to the CLI guide")
+if match.group(1) != "https://github.com/mmannerm/animsmith/blob/main/docs/cli.md#install":
+    raise SystemExit("README.md CLI guide link must target docs/cli.md#install")
+if "\n## Install\n" not in f"\n{docs}":
+    raise SystemExit("docs/cli.md must expose a ## Install anchor for README.md")
+PY
+echo "ok: README install link has a matching docs/cli.md anchor"
+
+target_fixture="$work/release-targets.json"
+docs_fixture="$work/cli.md"
+workflow_fixture="$work/release-binaries.yml"
+cat >"$target_fixture" <<'JSON'
+{
+  "release_targets": [
+    {
+      "platform": "Example OS",
+      "os": "ubuntu-latest",
+      "target": "example-target",
+      "binary": "animsmith",
+      "archive_extension": "tar.gz",
+      "python": "python3"
+    }
+  ]
+}
+JSON
+cat >"$docs_fixture" <<'EOF'
+# fixture
+
+before
+<!-- release-targets:start -->
+stale
+<!-- release-targets:end -->
+after
+EOF
+
+if "$python" "$targets_script" --manifest "$target_fixture" --docs "$docs_fixture" check-docs \
+  >/dev/null 2>"$work/stale-docs.err"; then
+  fail "check-docs accepted a stale release target table"
+fi
+grep -Fq "release target table is stale" "$work/stale-docs.err" \
+  || fail "check-docs stale error did not name the stale table: $(cat "$work/stale-docs.err")"
+grep -Fq "scripts/release-targets.py write" "$work/stale-docs.err" \
+  || fail "check-docs stale error did not name the write remedy: $(cat "$work/stale-docs.err")"
+echo "ok: check-docs rejects stale release target tables"
+
+"$python" "$targets_script" --manifest "$target_fixture" --docs "$docs_fixture" write-docs
+expected_docs="$(
+  cat <<'EOF'
+# fixture
+
+before
+<!-- release-targets:start -->
+| Platform | Archive |
+|---|---|
+| Example OS | `animsmith-vX.Y.Z-example-target.tar.gz` |
+<!-- release-targets:end -->
+after
+EOF
+)"
+actual_docs="$(cat "$docs_fixture")"
+[[ "$actual_docs" == "$expected_docs" ]] \
+  || fail "write-docs did not regenerate the release target block from the manifest"
+"$python" "$targets_script" --manifest "$target_fixture" --docs "$docs_fixture" check-docs
+echo "ok: write-docs regenerates the CLI archive table"
+
+cat >"$workflow_fixture" <<'EOF'
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # release-targets:start
+          - target: stale-target
+          # release-targets:end
+EOF
+
+if "$python" "$targets_script" --manifest "$target_fixture" --workflow "$workflow_fixture" check-workflow \
+  >/dev/null 2>"$work/stale-workflow.err"; then
+  fail "check-workflow accepted a stale release target matrix"
+fi
+grep -Fq "release target matrix is stale" "$work/stale-workflow.err" \
+  || fail "check-workflow stale error did not name the stale matrix: $(cat "$work/stale-workflow.err")"
+grep -Fq "scripts/release-targets.py write" "$work/stale-workflow.err" \
+  || fail "check-workflow stale error did not name the write remedy: $(cat "$work/stale-workflow.err")"
+
+"$python" "$targets_script" --manifest "$target_fixture" --workflow "$workflow_fixture" write-workflow
+expected_workflow="$(
+  cat <<'EOF'
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # release-targets:start
+          - os: "ubuntu-latest"
+            target: "example-target"
+            binary: "animsmith"
+            archive_extension: "tar.gz"
+            python: "python3"
+          # release-targets:end
+EOF
+)"
+actual_workflow="$(cat "$workflow_fixture")"
+[[ "$actual_workflow" == "$expected_workflow" ]] \
+  || fail "write-workflow did not regenerate the release target matrix from the manifest"
+"$python" "$targets_script" --manifest "$target_fixture" --workflow "$workflow_fixture" check-workflow
+echo "ok: write-workflow regenerates the release matrix"
+
+cat >"$work/missing-start.md" <<'EOF'
+# fixture
+
+<!-- release-targets:end -->
+EOF
+if "$python" "$targets_script" --manifest "$target_fixture" --docs "$work/missing-start.md" check-docs \
+  >/dev/null 2>"$work/missing-start.err"; then
+  fail "check-docs accepted a table with a missing start marker"
+fi
+grep -Fq "missing <!-- release-targets:start -->" "$work/missing-start.err" \
+  || fail "missing-start error did not name the missing marker: $(cat "$work/missing-start.err")"
+grep -Fq "scripts/release-targets.py write" "$work/missing-start.err" \
+  || fail "missing-start error did not name the write remedy: $(cat "$work/missing-start.err")"
+
+cat >"$work/missing-end.md" <<'EOF'
+# fixture
+
+<!-- release-targets:start -->
+EOF
+if "$python" "$targets_script" --manifest "$target_fixture" --docs "$work/missing-end.md" check-docs \
+  >/dev/null 2>"$work/missing-end.err"; then
+  fail "check-docs accepted a table with a missing end marker"
+fi
+grep -Fq "missing <!-- release-targets:end -->" "$work/missing-end.err" \
+  || fail "missing-end error did not name the missing marker: $(cat "$work/missing-end.err")"
+grep -Fq "scripts/release-targets.py write" "$work/missing-end.err" \
+  || fail "missing-end error did not name the write remedy: $(cat "$work/missing-end.err")"
+echo "ok: check-docs rejects missing release target markers"
+
+check_bad_manifest() {
+  local name="$1"
+  local expected="$2"
+  local manifest="$work/bad-$name.json"
+  local err="$work/bad-$name.err"
+
+  cat >"$manifest"
+  if "$python" "$targets_script" --manifest "$manifest" check-docs >/dev/null 2>"$err"; then
+    fail "$name: invalid manifest unexpectedly passed"
+  fi
+  grep -Fq "$expected" "$err" \
+    || fail "$name: expected error containing '$expected', got: $(cat "$err")"
+  echo "ok: invalid manifest rejected ($name)"
+}
+
+check_bad_manifest missing-field "missing python" <<'JSON'
+{
+  "release_targets": [
+    {
+      "platform": "Example OS",
+      "os": "ubuntu-latest",
+      "target": "example-target",
+      "binary": "animsmith",
+      "archive_extension": "tar.gz"
+    }
+  ]
+}
+JSON
+
+check_bad_manifest duplicate-target "duplicate release target example-target" <<'JSON'
+{
+  "release_targets": [
+    {
+      "platform": "Example OS",
+      "os": "ubuntu-latest",
+      "target": "example-target",
+      "binary": "animsmith",
+      "archive_extension": "tar.gz",
+      "python": "python3"
+    },
+    {
+      "platform": "Example OS 2",
+      "os": "ubuntu-latest",
+      "target": "example-target",
+      "binary": "animsmith",
+      "archive_extension": "tar.gz",
+      "python": "python3"
+    }
+  ]
+}
+JSON
+
+check_bad_manifest unsupported-extension "unsupported archive_extension '7z'" <<'JSON'
+{
+  "release_targets": [
+    {
+      "platform": "Example OS",
+      "os": "ubuntu-latest",
+      "target": "example-target",
+      "binary": "animsmith",
+      "archive_extension": "7z",
+      "python": "python3"
+    }
+  ]
+}
+JSON
 
 # --- packaging: archive contents + .sha256 ------------------------------
 
