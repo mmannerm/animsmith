@@ -23,7 +23,8 @@ WORKFLOW_END_MARKER = "# release-targets:end"
 WORKFLOW_MATRIX_INDENT = "          "
 REQUIRED_FIELDS = ("platform", "os", "target", "binary", "archive_extension", "python")
 WORKFLOW_FIELDS = ("os", "target", "binary", "archive_extension", "python")
-MATRIX_REFERENCE_PATTERN = re.compile(r"\$\{\{\s*matrix\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+EXPRESSION_PATTERN = re.compile(r"\$\{\{(.*?)\}\}")
+MATRIX_REFERENCE_PATTERN = re.compile(r"\bmatrix\.([A-Za-z_][A-Za-z0-9_]*)\b")
 WORKFLOW_JOB_HEADER_PATTERN = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$", re.MULTILINE)
 
 
@@ -179,13 +180,20 @@ def workflow_job_block(workflow_text: str, workflow_path: Path, job_name: str) -
     )
 
 
+def workflow_matrix_references(workflow_text: str) -> set[str]:
+    references: set[str] = set()
+    for line in workflow_text.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        for expression in EXPRESSION_PATTERN.findall(line):
+            references.update(MATRIX_REFERENCE_PATTERN.findall(expression))
+    return references
+
+
 def check_workflow_matrix_references(workflow_path: Path) -> None:
     workflow_text = workflow_path.read_text(encoding="utf-8")
     build_job = workflow_job_block(workflow_text, workflow_path, "build")
-    consumed_lines = "\n".join(
-        line for line in build_job.splitlines() if not line.lstrip().startswith("#")
-    )
-    referenced_fields = set(MATRIX_REFERENCE_PATTERN.findall(consumed_lines))
+    referenced_fields = workflow_matrix_references(build_job)
     unknown_fields = sorted(referenced_fields - set(WORKFLOW_FIELDS))
     if unknown_fields:
         fields = ", ".join(f"matrix.{field}" for field in unknown_fields)

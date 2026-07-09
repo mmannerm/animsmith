@@ -182,17 +182,37 @@ actual_workflow="$(cat "$workflow_fixture")"
 "$python" "$targets_script" --manifest "$target_fixture" --workflow "$workflow_fixture" check-workflow
 echo "ok: write-workflow regenerates the release matrix"
 
+matrix_comment_fixture="$work/release-binaries-commented-matrix.yml"
+cp "$workflow_fixture" "$matrix_comment_fixture"
+cat >>"$matrix_comment_fixture" <<'EOF'
+    # ${{ matrix.ext }}
+EOF
+"$python" "$targets_script" --manifest "$target_fixture" --workflow "$matrix_comment_fixture" check-workflow
+echo "ok: check-workflow ignores commented build job matrix references"
+
+matrix_scope_fixture="$work/release-binaries-upload-matrix.yml"
+cp "$workflow_fixture" "$matrix_scope_fixture"
+cat >>"$matrix_scope_fixture" <<'EOF'
+
+  upload:
+    runs-on: ${{ matrix.ext }}
+EOF
+"$python" "$targets_script" --manifest "$target_fixture" --workflow "$matrix_scope_fixture" check-workflow
+echo "ok: check-workflow scopes matrix field checks to the build job"
+
 matrix_contract_fixture="$work/release-binaries-unknown-matrix.yml"
 cp "$workflow_fixture" "$matrix_contract_fixture"
 cat >>"$matrix_contract_fixture" <<'EOF'
-    runs-on: ${{ matrix.ext }}
+    name: ${{ format('{0}-{1}', matrix.ext, matrix.bin) }}
 EOF
 if "$python" "$targets_script" --manifest "$target_fixture" --workflow "$matrix_contract_fixture" check-workflow \
   >/dev/null 2>"$work/unknown-matrix.err"; then
   fail "check-workflow accepted a build job matrix reference that is not generated"
 fi
+grep -Fq "matrix.bin" "$work/unknown-matrix.err" \
+  || fail "unknown matrix field error did not name bin: $(cat "$work/unknown-matrix.err")"
 grep -Fq "matrix.ext" "$work/unknown-matrix.err" \
-  || fail "unknown matrix field error did not name the field: $(cat "$work/unknown-matrix.err")"
+  || fail "unknown matrix field error did not name ext: $(cat "$work/unknown-matrix.err")"
 grep -Fq "only generates" "$work/unknown-matrix.err" \
   || fail "unknown matrix field error did not describe the generated contract: $(cat "$work/unknown-matrix.err")"
 echo "ok: check-workflow rejects build job matrix fields the generator does not emit"
