@@ -107,6 +107,10 @@ coverage:
 package-inventory:
     bash scripts/check-package-inventory.sh
 
+# Contract coverage for release binary packaging + CLI tag detection.
+release-packaging:
+    bash scripts/check-release-packaging.sh
+
 # Full local PR gate, matching CI (includes release builds — expect
 # minutes, not seconds). The GitHub workflow also verifies package
 # assembly on a clean checkout.
@@ -129,6 +133,7 @@ gates: require-cargo-deny require-typos
     cargo build -p animsmith --release --no-default-features
     cargo run -p animsmith --release --no-default-features -- --version
     just package-inventory
+    just release-packaging
 
 # See .agent-instructions/shared.md for the required env var.
 # Env-gated reference tests against licensed assets plus CI-visible FBX coverage.

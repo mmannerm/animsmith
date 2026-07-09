@@ -70,42 +70,11 @@ jobs:
           set -euo pipefail
           binary="target/${TARGET}/release/${BIN_NAME}"
           "${binary}" --version
-
-          staging="dist/${ASSET_STEM}"
-          mkdir -p "${staging}"
-          cp "${binary}" "${staging}/"
-          cp README.md LICENSE-APACHE LICENSE-MIT THIRD-PARTY.md "${staging}/"
-
-          "${PYTHON}" <<'PY'
-          import hashlib
-          import os
-          import tarfile
-          import zipfile
-          from pathlib import Path
-
-          asset_stem = os.environ["ASSET_STEM"]
-          archive_ext = os.environ["ARCHIVE_EXT"]
-          staging = Path("dist") / asset_stem
-          archive = Path("dist") / f"{asset_stem}.{archive_ext}"
-          files = sorted(path for path in staging.rglob("*") if path.is_file())
-
-          if archive_ext == "tar.gz":
-              with tarfile.open(archive, "w:gz") as tar:
-                  for path in files:
-                      tar.add(path, arcname=Path(asset_stem) / path.relative_to(staging))
-          elif archive_ext == "zip":
-              with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-                  for path in files:
-                      zf.write(path, Path(asset_stem) / path.relative_to(staging))
-          else:
-              raise SystemExit(f"unsupported archive extension: {archive_ext}")
-
-          digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-          Path(f"{archive}.sha256").write_text(
-              f"{digest}  {archive.name}\n",
-              encoding="ascii",
-          )
-          PY
+          "${PYTHON}" scripts/package-release-binary.py \
+            --binary "${binary}" \
+            --stem "${ASSET_STEM}" \
+            --ext "${ARCHIVE_EXT}" \
+            README.md LICENSE-APACHE LICENSE-MIT THIRD-PARTY.md
       - name: Upload packaged binary
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

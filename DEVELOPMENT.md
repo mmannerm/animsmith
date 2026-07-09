@@ -161,3 +161,12 @@ $ cargo package -p animsmith-core
 
 Dependent crates can only fully verify against crates.io once their
 internal `animsmith-*` dependencies have been published.
+
+The release binary workflow packages CLI archives and detects the CLI
+release tag through shared scripts (`scripts/package-release-binary.py`,
+`scripts/select-cli-release-tag.sh`) so both are exercised locally rather
+than only in CI:
+
+```console
+$ just release-packaging
+```

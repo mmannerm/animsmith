@@ -1,1 +1,5 @@
 /target
+
+# Python bytecode cache (release packaging script)
+__pycache__/
+*.pyc

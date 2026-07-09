@@ -103,5 +103,8 @@ jobs:
       - name: Check crate package inventories
         run: bash scripts/check-package-inventory.sh
 
+      - name: Release binary packaging contract
+        run: bash scripts/check-release-packaging.sh
+
       - name: Verify publishable core crate
         run: cargo package -p animsmith-core
