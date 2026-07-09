@@ -46,9 +46,14 @@ Every example relies on the same convention, so scripts can gate on it:
 
 ## 1. A first CLI gate
 
-Look at an asset, measure it, and lint it. `inspect` summarizes
-structure; `measure` reports metrics without judgment; `lint` runs the
-checks and sets the exit code.
+When a clip enters CI, the first question is not just whether the file
+parses — it is whether the motion is safe to ship. A gate built from
+`inspect`, `measure`, and `lint` catches the gap described in
+[a valid file is not a usable clip](../docs/game-ready-clips.md#a-valid-file-is-not-a-usable-clip):
+valid containers can still hide content problems that only show up
+after import, bake, or playtest. `inspect` summarizes structure;
+`measure` reports metrics without judgment; `lint` runs the checks and
+sets the exit code.
 
 ```console
 $ animsmith inspect examples/assets/clip.glb
@@ -124,6 +129,12 @@ The step's exit code is the gate: 1 fails the job, 0 passes it.
 
 ## 2. Repairing an asset
 
+Use repair when a clip plays as a sudden flicker, spin, or explosion,
+but the authored motion is still recoverable. The symptoms in
+[the pose flickers, spins, or explodes](../docs/game-ready-clips.md#the-pose-flickers-spins-or-explodes)
+are often quaternion representation problems, so `fix --dry-run` lets a
+gate report the exact lossless repairs before writing anything.
+
 `quat-norm` and `quat-flip` are not just checks — they are lossless,
 idempotent repairs. `fix --dry-run` is the check mode: it reports what
 it *would* repair and exits 1 if anything is pending, writing nothing.
@@ -169,6 +180,14 @@ alone should fail CI.
 
 ## 3. Editing a clip
 
+Use editing when the animation content is right but the pipeline cut is
+wrong: a capture has junk at the head, a one-shot needs a final hold, or
+a loop's stride anchor lands in the wrong place. Those are the cases in
+[the clip is the wrong length or freezes at the end](../docs/game-ready-clips.md#the-clip-is-the-wrong-length-or-freezes-at-the-end)
+and [the loop pops](../docs/game-ready-clips.md#the-loop-pops), where a
+mechanical transform can make the clip conform without touching
+geometry.
+
 `transform` applies mechanical pipeline edits — slice a window, hold the
 final pose, re-anchor a gait cycle, or resample the frame rate. Geometry
 passes through unchanged.
@@ -203,6 +222,15 @@ sets the grid used for retiming. See
 ---
 
 ## 4. A project contract config
+
+Use a contract config when the failure depends on what your game expects,
+not on file validity alone. [The character glides or runs in
+place](../docs/game-ready-clips.md#the-character-glides-or-runs-in-place),
+[feet skate when clips blend](../docs/game-ready-clips.md#feet-skate-when-clips-blend),
+and [feet slide within one
+clip](../docs/game-ready-clips.md#feet-slide-within-one-clip) all need
+declared locomotion or blend assumptions before animsmith can judge
+them.
 
 Mechanical checks run with no config. The semantic checks —
 `loop-seam`, `gait-group`, `root-motion-speed`, `frozen-bone`,
@@ -350,6 +378,16 @@ the full key reference.
 
 ## 5. Migrating an FBX export _(default features only)_
 
+Use this workflow when a DCC or marketplace export reaches your importer
+but brings bloated constant tracks, stray scale keys, or a rig the
+retargeter cannot trust. That is the hygiene side of [the file is
+bloated, or the retargeter
+chokes](../docs/game-ready-clips.md#the-file-is-bloated-or-the-retargeter-chokes)
+and the rig-contract side of [a limb is T-posed, or a bone never
+moves](../docs/game-ready-clips.md#a-limb-is-t-posed-or-a-bone-never-moves):
+convert to glTF, measure/lint/report, then compare against the previous
+asset before committing the migration.
+
 `convert` normalizes an FBX (or glTF) export into a clean glTF, and
 `report` renders a self-contained HTML report with skeleton playback and
 metric charts. Both are in the default build; a `--no-default-features`
@@ -380,6 +418,13 @@ We do not ship third-party assets. To try this on a real rig:
 ---
 
 ## 6. Embedding animsmith as a library gate
+
+Use embedding when the team already has an importer or build pipeline and
+wants animsmith's checks as a library step instead of a separate shell
+command. The pipeline-library use case is the payoff in [why animsmith
+exists](../docs/game-ready-clips.md#why-animsmith-exists): load your
+asset once, map your own contract into `Config`, and surface findings in
+the same gate that owns the rest of your asset rules.
 
 Pipelines can skip the CLI and drive the check catalog directly: load a
 document, resolve rig roles, build a `Config` from your own contract
