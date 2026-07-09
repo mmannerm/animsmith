@@ -139,6 +139,16 @@ jobs:
           # release-targets:end
 EOF
 
+if "$python" "$targets_script" --manifest "$target_fixture" --docs "$docs_fixture" --workflow "$workflow_fixture" check \
+  >/dev/null 2>"$work/stale-check.err"; then
+  fail "check accepted a stale release target matrix"
+fi
+grep -Fq "release target matrix is stale" "$work/stale-check.err" \
+  || fail "check stale error did not name the stale matrix: $(cat "$work/stale-check.err")"
+grep -Fq "scripts/release-targets.py write" "$work/stale-check.err" \
+  || fail "check stale error did not name the write remedy: $(cat "$work/stale-check.err")"
+echo "ok: check rejects stale release target workflow matrices"
+
 if "$python" "$targets_script" --manifest "$target_fixture" --workflow "$workflow_fixture" check-workflow \
   >/dev/null 2>"$work/stale-workflow.err"; then
   fail "check-workflow accepted a stale release target matrix"
@@ -171,6 +181,21 @@ actual_workflow="$(cat "$workflow_fixture")"
   || fail "write-workflow did not regenerate the release target matrix from the manifest"
 "$python" "$targets_script" --manifest "$target_fixture" --workflow "$workflow_fixture" check-workflow
 echo "ok: write-workflow regenerates the release matrix"
+
+matrix_contract_fixture="$work/release-binaries-unknown-matrix.yml"
+cp "$workflow_fixture" "$matrix_contract_fixture"
+cat >>"$matrix_contract_fixture" <<'EOF'
+    runs-on: ${{ matrix.ext }}
+EOF
+if "$python" "$targets_script" --manifest "$target_fixture" --workflow "$matrix_contract_fixture" check-workflow \
+  >/dev/null 2>"$work/unknown-matrix.err"; then
+  fail "check-workflow accepted a build job matrix reference that is not generated"
+fi
+grep -Fq "matrix.ext" "$work/unknown-matrix.err" \
+  || fail "unknown matrix field error did not name the field: $(cat "$work/unknown-matrix.err")"
+grep -Fq "only generates" "$work/unknown-matrix.err" \
+  || fail "unknown matrix field error did not describe the generated contract: $(cat "$work/unknown-matrix.err")"
+echo "ok: check-workflow rejects build job matrix fields the generator does not emit"
 
 cat >"$work/missing-start.md" <<'EOF'
 # fixture
