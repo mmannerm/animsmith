@@ -18,7 +18,9 @@ const TINY_PNG: &[u8] = &[
 
 /// Distinct JPEG-like payload; image decoding is deliberately outside the
 /// scene round-trip contract, which preserves these bytes opaquely.
-const TINY_JPEG: &[u8] = &[0xFF, 0xD8, 0xFF, 0xD9];
+const TINY_JPEG: &[u8] = &[
+    0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, b'J', b'F', b'I', b'F', 0xFF, 0xD9,
+];
 
 fn mesh_count(glb: &std::path::Path) -> usize {
     let bytes = std::fs::read(glb).unwrap();
@@ -50,7 +52,7 @@ fn first_primitive_positions(glb: &std::path::Path) -> Vec<[f32; 3]> {
 
 /// Assert that the first primitive still points through its named material to
 /// the original embedded base-color image, independent of how it is embedded.
-fn assert_embedded_base_color_texture(glb: &std::path::Path) -> usize {
+fn assert_embedded_base_color_textures(glb: &std::path::Path) -> usize {
     let bytes = std::fs::read(glb).unwrap();
     let gltf = gltf::Gltf::from_slice(&bytes).expect("valid glTF");
     let primitive = gltf
@@ -74,6 +76,21 @@ fn assert_embedded_base_color_texture(glb: &std::path::Path) -> usize {
         .expect("linked material keeps its base-color texture");
     assert_eq!(texture.mime, "image/jpeg");
     assert_eq!(texture.bytes, TINY_JPEG, "embedded image bytes survive");
+
+    let unused_texture = doc
+        .assets
+        .materials
+        .iter()
+        .find(|material| material.name == "unused-png")
+        .expect("unreferenced material survives")
+        .base_color_texture
+        .as_ref()
+        .expect("unreferenced material keeps its base-color texture");
+    assert_eq!(unused_texture.mime, "image/png");
+    assert_eq!(
+        unused_texture.bytes, TINY_PNG,
+        "unreferenced embedded image bytes survive"
+    );
     material_index
 }
 
@@ -144,14 +161,14 @@ fn write_geometry_glb(path: &std::path::Path) {
     };
     animsmith_gltf::write::write(&doc, path).expect("writes input glb");
     assert_eq!(
-        assert_embedded_base_color_texture(path),
+        assert_embedded_base_color_textures(path),
         1,
         "fixture exercises nonzero material and image linkage"
     );
 }
 
 #[test]
-fn cli_transform_preserves_embedded_base_color_texture() {
+fn cli_transform_preserves_embedded_base_color_textures() {
     let dir = tempfile::tempdir().unwrap();
     let input = dir.path().join("textured.glb");
     let output = dir.path().join("transformed.glb");
@@ -168,7 +185,7 @@ fn cli_transform_preserves_embedded_base_color_texture() {
         .expect("runs animsmith transform");
     assert!(status.success(), "transform exited {status}");
 
-    assert_embedded_base_color_texture(&output);
+    assert_embedded_base_color_textures(&output);
 }
 
 #[test]
@@ -197,7 +214,7 @@ fn cli_convert_gltf_input_carries_and_strips_geometry() {
         1,
         "convert carries glTF-input geometry through (#16)"
     );
-    assert_embedded_base_color_texture(&carried);
+    assert_embedded_base_color_textures(&carried);
     // Not just *a* mesh — the actual fixture triangle survived.
     assert_eq!(
         first_primitive_positions(&carried),
