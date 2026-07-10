@@ -67,28 +67,20 @@ cargo run -p animsmith --example embed
    severity, optional clip/bone/time, measured and expected values, and a
    message. The host decides whether warnings fail its gate.
 
-`Config::rig` is declarative data; `CheckCtx::new` does not resolve it. A
-frontend that wants the CLI's semantics should resolve the named or `auto`
-profile first, then overlay inline role/name pairs before constructing the
-context. `ResolvedRoles::from_names` ignores missing bone names and lets a
-later resolved pair for the same role win. Unresolved role-dependent checks
-emit diagnostic skip notes instead of false failures.
+Role resolution is a frontend responsibility. Use the `CheckCtx`,
+`Config::rig`, and `ResolvedRoles::from_names` rustdocs for the exact profile,
+override, and unresolved-role contracts.
 
-## Sampling, measurement, and concurrency
+## Compose the outputs you need
 
-`MetricGrids` owns a lazy cache for one borrowed `Document`. It uses
-single-threaded `Rc` / `RefCell` storage, so create one owner per document on
-each worker thread; within that thread, reuse it across every consumer.
+An embedded gate does not need to reproduce every CLI output. It can emit
+clip measurements, add mesh measurements, run findings, render HTML, or
+combine those results with host-owned checks. Share the same `MetricGrids`
+within the limits documented by its rustdoc so those consumers judge one
+sampled representation.
 
-`measure_document` returns clip measurements. Call `measure_meshes`
-separately when the pipeline also needs geometry counts, bounds, or skin
-weight statistics. Clip names are keys in the returned map and must be
-unique.
-
-The uniform metric grid spans `[0, duration]` and uses the longest track's
-key count as its resolution. That does not mean irregular authored key times
-all land on the grid. Sampling follows glTF interpolation rules and treats
-the last-to-first pair as the loop seam.
+The `MetricGrids`, `measure_document`, and `measure_meshes` rustdocs own cache
+thread-safety, sampling, measurement scope, and map-key details.
 
 ## Gate and stability contracts
 
