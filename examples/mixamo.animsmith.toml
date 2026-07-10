@@ -28,12 +28,13 @@ loop = true
 in_place = true
 
 # For the root-motion variant (downloaded without In Place), declare
-# the speed your character controller expects instead:
+# the speed your character controller expects instead (Mixamo's default
+# Walking measures ~1.79 m/s):
 #
 #   [clips."mixamo.com"]
 #   loop = true
 #   in_place = false
-#   speed_mps = { value = 1.2, tolerance = 0.15 }
+#   speed_mps = { value = 1.8, tolerance = 0.15 }
 
 [checks.loop-seam]
 # Fail a wrap discontinuity more than 1.6x the in-clip stride step.
