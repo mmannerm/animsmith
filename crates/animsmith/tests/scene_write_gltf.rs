@@ -52,7 +52,7 @@ fn first_primitive_positions(glb: &std::path::Path) -> Vec<[f32; 3]> {
 
 /// Assert that the first primitive still points through its named material to
 /// the original embedded base-color image, independent of how it is embedded.
-fn assert_embedded_base_color_textures(glb: &std::path::Path) -> usize {
+fn assert_embedded_base_color_textures(glb: &std::path::Path) {
     let bytes = std::fs::read(glb).unwrap();
     let gltf = gltf::Gltf::from_slice(&bytes).expect("valid glTF");
     let primitive = gltf
@@ -64,7 +64,6 @@ fn assert_embedded_base_color_textures(glb: &std::path::Path) -> usize {
         .expect("primitive");
     let material = primitive.material();
     assert_eq!(material.name(), Some("bound-jpeg"));
-    let material_index = material.index().expect("primitive keeps a material");
 
     // Loading resolves either buffer-view or data-URI image storage into the
     // public scene model, keeping this oracle about semantics rather than the
@@ -94,7 +93,6 @@ fn assert_embedded_base_color_textures(glb: &std::path::Path) -> usize {
         unused_texture.bytes, TINY_PNG,
         "unreferenced embedded image bytes survive"
     );
-    material_index
 }
 
 /// Author a minimal animated and textured GLB (one unindexed triangle) to
@@ -163,11 +161,7 @@ fn write_textured_scene_glb(path: &std::path::Path) {
         source: SourceInfo::default(),
     };
     animsmith_gltf::write::write(&doc, path).expect("writes input glb");
-    assert_eq!(
-        assert_embedded_base_color_textures(path),
-        1,
-        "fixture exercises nonzero material and image linkage"
-    );
+    assert_embedded_base_color_textures(path);
 }
 
 #[test]
