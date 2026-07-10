@@ -1,8 +1,6 @@
 # Documentation
 
-Every animsmith document, and the task it serves — this table is the
-single routing surface; the other pages link back here rather than
-re-listing each other.
+Find what you need by task — each page below owns one job.
 
 | Document | Use it to… |
 |---|---|

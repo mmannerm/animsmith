@@ -179,9 +179,8 @@ for a contract-style example.
 
 ## More Documentation
 
-Everything is routed from the
-[documentation index](https://github.com/mmannerm/animsmith/tree/main/docs).
-The two most common next stops:
+The [documentation index](https://github.com/mmannerm/animsmith/tree/main/docs)
+lists every guide and reference by task. Two useful next stops:
 
 - [Game-ready clips guide](https://github.com/mmannerm/animsmith/blob/main/docs/game-ready-clips.md)
   — why each check exists, failure mode by failure mode.

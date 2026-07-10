@@ -148,18 +148,20 @@ for path in \
   CLAUDE.md \
   .agent-instructions/shared.md \
   .github/PULL_REQUEST_TEMPLATE.md \
-  docs/*.md \
   examples/README.md; do
   validate_markdown_links "$path"
 done
 
-# Every top-level doc page must have a row in the docs index table, so
-# adding a doc means touching exactly one routing surface.
+# The docs pages are one set: every page gets link validation, and every
+# page except the index itself must be linked from an index-table row (a
+# `| … [](name.md) …` line — a link elsewhere in the file does not
+# count), so adding a doc page means adding exactly one table row.
 for doc in docs/*.md; do
+  validate_markdown_links "$doc"
   doc_name="$(basename "$doc")"
   [ "$doc_name" = "README.md" ] && continue
-  grep -Fq "]($doc_name)" docs/README.md \
-    || fail "docs/README.md must carry an index row linking $doc_name"
+  grep -F "]($doc_name)" docs/README.md | grep -Eq '^\|' \
+    || fail "docs/README.md must carry an index-table row linking $doc_name"
 done
 for path in \
   crates/animsmith-core/README.md \
@@ -172,7 +174,7 @@ done
 require_order README.md "cargo install animsmith" "CONTRIBUTING.md"
 require_order README.md "animsmith lint clip.glb" "CONTRIBUTING.md"
 
-require_match README.md "${REPO_TREE_URL}docs" "documentation index link"
+require_literal README.md "${REPO_TREE_URL}docs" "documentation index link"
 require_match README.md "${REPO_BLOB_URL}docs/cli[.]md" "CLI reference link"
 require_match README.md "${REPO_BLOB_URL}docs/embedding[.]md" "embedding API link"
 require_match README.md "${REPO_BLOB_URL}CONTRIBUTING[.]md" "contributor guide link"
