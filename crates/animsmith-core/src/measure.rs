@@ -228,6 +228,7 @@ mod tests {
         Bone, Clip, Document, Interpolation, MeshAsset, Primitive, Property, Skeleton, Track,
         TrackValues, Transform,
     };
+    use crate::profile::Role;
     use glam::{Quat, Vec3};
 
     fn mesh(name: &str, primitives: Vec<Primitive>) -> SceneAssets {
@@ -391,17 +392,48 @@ mod tests {
         let earlier = Clip {
             name: "duplicate".into(),
             duration_s: 1.0,
-            tracks: vec![Track {
-                bone: 0,
-                property: Property::Rotation,
-                interpolation: Interpolation::Linear,
-                times: vec![0.0, 0.5, 1.0],
-                values: TrackValues::Quats(vec![
-                    Quat::IDENTITY,
-                    Quat::from_rotation_x(0.25),
-                    Quat::from_rotation_x(0.5),
-                ]),
-            }],
+            tracks: vec![
+                Track {
+                    bone: 0,
+                    property: Property::Rotation,
+                    interpolation: Interpolation::Linear,
+                    times: vec![0.0, 0.5, 1.0],
+                    values: TrackValues::Quats(vec![
+                        Quat::IDENTITY,
+                        Quat::from_rotation_x(0.25),
+                        Quat::from_rotation_x(0.5),
+                    ]),
+                },
+                Track {
+                    bone: 0,
+                    property: Property::Translation,
+                    interpolation: Interpolation::Linear,
+                    times: vec![0.0, 0.5, 1.0],
+                    values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::Z * 0.5, Vec3::Z]),
+                },
+                Track {
+                    bone: 1,
+                    property: Property::Translation,
+                    interpolation: Interpolation::Linear,
+                    times: vec![0.0, 0.5, 1.0],
+                    values: TrackValues::Vec3s(vec![
+                        Vec3::new(-0.1, -1.0, 0.0),
+                        Vec3::new(-0.1, -0.9, 0.15),
+                        Vec3::new(-0.1, -1.0, 0.0),
+                    ]),
+                },
+                Track {
+                    bone: 2,
+                    property: Property::Translation,
+                    interpolation: Interpolation::Linear,
+                    times: vec![0.0, 0.5, 1.0],
+                    values: TrackValues::Vec3s(vec![
+                        Vec3::new(0.1, -1.0, 0.0),
+                        Vec3::new(0.1, -1.1, -0.15),
+                        Vec3::new(0.1, -1.0, 0.0),
+                    ]),
+                },
+            ],
         };
         let later = Clip {
             name: "duplicate".into(),
@@ -415,20 +447,54 @@ mod tests {
             }],
         };
         let skeleton = Skeleton {
-            bones: vec![Bone {
-                name: "root".into(),
-                parent: None,
-                rest: Transform::IDENTITY,
-                inverse_bind: None,
-            }],
+            bones: vec![
+                Bone {
+                    name: "hips".into(),
+                    parent: None,
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "left_foot".into(),
+                    parent: Some(0),
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "right_foot".into(),
+                    parent: Some(0),
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+            ],
         };
+        let roles = ResolvedRoles::from_names(
+            &skeleton,
+            [
+                (Role::Hips, "hips".into()),
+                (Role::LeftFoot, "left_foot".into()),
+                (Role::RightFoot, "right_foot".into()),
+            ],
+        );
+        let earlier_doc = Document {
+            skeleton: skeleton.clone(),
+            clips: vec![earlier.clone()],
+            ..Document::default()
+        };
+        let earlier_grids = MetricGrids::new(&earlier_doc);
+        let earlier_measurement =
+            &measure_document(&earlier_grids, &roles, &Config::default())["duplicate"];
+        assert!(earlier_measurement.loop_seam_ratio.is_some());
+        assert!(earlier_measurement.gait.is_some());
+        assert!(earlier_measurement.speed_mps.is_some());
+
         let doc = Document {
             skeleton,
             clips: vec![earlier, later],
             ..Document::default()
         };
         let grids = MetricGrids::new(&doc);
-        let measurements = measure_document(&grids, &ResolvedRoles::default(), &Config::default());
+        let measurements = measure_document(&grids, &roles, &Config::default());
 
         assert_eq!(
             serde_json::to_value(measurements).expect("duplicate measurements serialize"),
@@ -436,7 +502,7 @@ mod tests {
                 "duplicate": {
                     "duration_s": 2.0,
                     "frame_count": 2,
-                    "animated_bones": ["root"],
+                    "animated_bones": ["hips"],
                     "bone_rotation_range_deg": {},
                 }
             })

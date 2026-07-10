@@ -284,7 +284,7 @@ mod tests {
         Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
     };
     use crate::profile::ResolvedRoles;
-    use glam::Quat;
+    use glam::{Quat, Vec3};
     use std::rc::Rc;
 
     fn document_with_metric_clip() -> Document {
@@ -382,5 +382,24 @@ mod tests {
             let too_few_keys = document_with_grid_inputs(1.0, times);
             assert!(MetricGrids::new(&too_few_keys).grid(0).is_none());
         }
+    }
+
+    #[test]
+    fn grid_uses_longest_track_for_resolution() {
+        // The first track is too short by itself; the later translation
+        // track selects the grid's three-frame resolution.
+        let mut doc = document_with_grid_inputs(1.0, vec![0.0, 1.0]);
+        doc.clips[0].tracks.push(Track {
+            bone: 0,
+            property: Property::Translation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 0.5, 1.0],
+            values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::X, 2.0 * Vec3::X]),
+        });
+
+        let grid = MetricGrids::new(&doc)
+            .grid(0)
+            .expect("later longest track supplies a metric grid");
+        assert_eq!(grid.frame_count(), 3);
     }
 }
