@@ -20,6 +20,18 @@ const TINY_JPEG: &[u8] = &[
     0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, b'J', b'F', b'I', b'F', 0xFF, 0xD9,
 ];
 
+fn skin_binding_snapshot(glb: &std::path::Path) -> (Vec<BoneId>, Vec<[u32; 16]>) {
+    let doc = animsmith_gltf::load(glb).expect("loads skinned scene");
+    let mesh = doc.assets.meshes.first().expect("mesh");
+    (
+        mesh.skin_joints.clone(),
+        mesh.skin_ibms
+            .iter()
+            .map(|matrix| matrix.to_cols_array().map(f32::to_bits))
+            .collect(),
+    )
+}
+
 #[cfg(feature = "fbx")]
 #[derive(Debug, PartialEq)]
 enum ValuesSnapshot {
@@ -233,6 +245,13 @@ fn cli_transform_preserves_embedded_base_color_textures() {
     let input = dir.path().join("textured.glb");
     let output = dir.path().join("transformed.glb");
     write_textured_scene_glb(&input);
+    let input_skin = skin_binding_snapshot(&input);
+    assert_eq!(input_skin.0.len(), 1, "input fixture carries a skin joint");
+    assert_eq!(
+        input_skin.1.len(),
+        1,
+        "input fixture carries an inverse bind"
+    );
 
     let status = std::process::Command::new(env!("CARGO_BIN_EXE_animsmith"))
         .arg("transform")
@@ -246,6 +265,11 @@ fn cli_transform_preserves_embedded_base_color_textures() {
     assert!(status.success(), "transform exited {status}");
 
     assert_embedded_base_color_textures(&output);
+    assert_eq!(
+        skin_binding_snapshot(&output),
+        input_skin,
+        "transform preserves the skin joint binding and inverse bind matrix"
+    );
 }
 
 #[test]
