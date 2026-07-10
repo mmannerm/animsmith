@@ -1,8 +1,6 @@
-//! CI-run coverage that `convert` now carries glTF-input geometry (#16)
-//! and that `--animation-only` still strips it — the uniform behaviour
-//! #33 promises, exercised on an in-repo glTF (no licensed FBX needed,
-//! unlike `convert_mesh.rs`).
-#![cfg(feature = "fbx")] // the `convert` subcommand is gated on the fbx feature
+//! CI-run coverage that scene-writing commands preserve glTF-input assets.
+//! The `transform` case runs in every feature set; the `convert` case is
+//! feature-gated with its subcommand and also pins `--animation-only`.
 
 use animsmith_core::glam::{Quat, Vec3};
 use animsmith_core::model::*;
@@ -22,6 +20,7 @@ const TINY_JPEG: &[u8] = &[
     0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, b'J', b'F', b'I', b'F', 0xFF, 0xD9,
 ];
 
+#[cfg(feature = "fbx")]
 fn mesh_count(glb: &std::path::Path) -> usize {
     let bytes = std::fs::read(glb).unwrap();
     gltf::Gltf::from_slice(&bytes)
@@ -33,6 +32,7 @@ fn mesh_count(glb: &std::path::Path) -> usize {
 /// Positions of the first mesh's first primitive in a GLB — so a
 /// carry-through test can assert the actual geometry survived, not just
 /// that *a* mesh exists.
+#[cfg(feature = "fbx")]
 fn first_primitive_positions(glb: &std::path::Path) -> Vec<[f32; 3]> {
     let bytes = std::fs::read(glb).unwrap();
     let gltf = gltf::Gltf::from_slice(&bytes).expect("valid glTF");
@@ -70,7 +70,10 @@ fn assert_embedded_base_color_textures(glb: &std::path::Path) -> usize {
     // public scene model, keeping this oracle about semantics rather than the
     // writer's current representation.
     let doc = animsmith_gltf::load(glb).expect("loads output scene");
-    let texture = doc.assets.materials[material_index]
+    let loaded_material_index = doc.assets.meshes[0].primitives[0]
+        .material
+        .expect("loaded primitive keeps a material");
+    let texture = doc.assets.materials[loaded_material_index]
         .base_color_texture
         .as_ref()
         .expect("linked material keeps its base-color texture");
@@ -189,6 +192,7 @@ fn cli_transform_preserves_embedded_base_color_textures() {
 }
 
 #[test]
+#[cfg(feature = "fbx")]
 fn cli_convert_gltf_input_carries_and_strips_geometry() {
     let dir = tempfile::tempdir().unwrap();
 

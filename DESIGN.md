@@ -182,22 +182,12 @@ animsmith/
 
 Two representations of a loaded file, because checks genuinely need both:
 
-**Raw layer** — what the file says. Needed by the mechanical checks (NaN,
-quaternion flips, key density, constant tracks):
-
-```rust
-pub struct Document { pub skeleton: Skeleton, pub clips: Vec<Clip>,
-                     pub assets: SceneAssets,            // meshes/skins/materials/textures, when present
-                     pub source: SourceInfo }
-pub struct Skeleton  { pub bones: Vec<Bone> }            // topological order, parents first
-pub struct Bone      { pub name: String, pub parent: Option<BoneId>,
-                       pub rest: Transform,              // node-local TRS
-                       pub inverse_bind: Option<Mat4> }  // from skin, when present
-pub struct Clip      { pub name: String, pub duration_s: f64, pub tracks: Vec<Track> }
-pub struct Track     { pub bone: BoneId, pub property: Property,   // T | R | S
-                       pub times: Vec<f32>, pub values: TrackValues,
-                       pub interpolation: Interpolation }          // Linear | Step | CubicSpline
-```
+**Raw layer** — what the file says. The document keeps the skeleton hierarchy
+and rest pose, authored clips and tracks, optional scene assets, and source
+metadata together. Mechanical checks use this layer for defects such as NaNs,
+quaternion flips, key density, and constant tracks. Exact Rust types and fields
+belong to the `animsmith-core` model rustdocs; build them with `just doc` or use
+the package README's docs.rs link after publication.
 
 `assets` (meshes, skins, factor-only materials, and embedded base-color
 textures) is the scene-asset half of
@@ -228,14 +218,10 @@ body-relative frame derive it from resolved roles such as hips and feet.
 The metric grid is computed once per clip and shared across checks,
 measurements, and reports through the lazy `MetricGrids` owner.
 
-**Rig profiles** — checks never reference bone names; they reference
-*roles*:
-
-```rust
-pub enum Role { Root, Hips, Spine, Head, LeftFoot, RightFoot, LeftToe, RightToe, LeftHand, RightHand, /* … */ }
-pub struct RigProfile { pub name: &'static str, pub bindings: Vec<(Role, NameMatcher)> }
-// NameMatcher: Exact, with a namespace-stripped fallback ("ns:Hips" → "Hips")
-```
+**Rig profiles** — checks reference semantic roles rather than bone names.
+Profiles bind those roles to source-rig names; the exact public role set,
+binding types, and matcher fallback belong to the `animsmith-core` profile
+rustdocs.
 
 Built-in profiles ship for `mixamo` (`mixamorig:Hips`…), `ue-mannequin`
 (`pelvis`, `foot_l`…), and `humanoid` (`humanoid_ Pelvis`,
