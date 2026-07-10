@@ -367,8 +367,10 @@ mod tests {
     #[test]
     fn grid_returns_none_for_each_documented_invalid_request() {
         let valid = document_with_grid_inputs(1.0, vec![0.0, 0.5, 1.0]);
+        let valid_grids = MetricGrids::new(&valid);
+        assert!(valid_grids.grid(0).is_some());
         for clip_index in [1, 2, usize::MAX] {
-            assert!(MetricGrids::new(&valid).grid(clip_index).is_none());
+            assert!(valid_grids.grid(clip_index).is_none());
         }
 
         for duration_s in [0.0, -1.0] {

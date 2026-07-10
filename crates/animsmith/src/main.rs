@@ -2,7 +2,7 @@
 //!
 //! This crate publishes the `animsmith` command: inspect, measure, lint,
 //! report, transform, fix, convert, and diff skeletal animation clips. It
-//! is not the Rust embedding API; use `animsmith-core` plus the loader
+//! is not the Rust library API; use `animsmith-core` plus the loader
 //! crates (`animsmith-gltf`, `animsmith-fbx`) and `animsmith-report` from
 //! library code.
 //!

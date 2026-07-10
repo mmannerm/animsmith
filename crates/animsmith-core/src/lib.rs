@@ -9,7 +9,7 @@
 //! check execution ([`CheckCtx`], [`all_checks`], [`run_checks`]).
 //! The [`animsmith-gltf`] and [`animsmith-fbx`] loader crates translate file
 //! formats into this model; their docs.rs pages continue the library path for
-//! format-specific loading and writing.
+//! format-specific loading and, for glTF, writing.
 //!
 //! The [embedding guide] explains crate selection and integration
 //! boundaries. The [pipeline scenario guide] shows where an embedded gate
