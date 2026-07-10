@@ -1,4 +1,4 @@
-use animsmith_core::glam::Vec3;
+use animsmith_core::glam::{Mat4, Vec3};
 use animsmith_core::model::Property;
 use std::path::PathBuf;
 
@@ -11,6 +11,15 @@ fn assert_vec3_near(got: Vec3, want: Vec3) {
         (got - want).length() < 1e-5,
         "expected {want:?}, got {got:?}"
     );
+}
+
+fn rest_models(doc: &animsmith_core::Document) -> Vec<Mat4> {
+    let mut model = vec![Mat4::IDENTITY; doc.skeleton.bones.len()];
+    for (index, bone) in doc.skeleton.bones.iter().enumerate() {
+        let local = bone.rest.to_mat4();
+        model[index] = bone.parent.map_or(local, |parent| model[parent] * local);
+    }
+    model
 }
 
 #[test]
@@ -66,4 +75,36 @@ fn garbage_file_is_reported_as_fbx_parse_error() {
         matches!(err, animsmith_fbx::LoadError::Fbx(_)),
         "expected LoadError::Fbx, got {err:?}"
     );
+}
+
+#[test]
+fn normalizes_centimetre_z_up_scene_to_metre_y_up() {
+    let source = std::fs::read_to_string(fixture()).expect("read self-authored fixture");
+    let source = source.replacen(
+        "P: \"UpAxis\", \"int\", \"Integer\", \"\",1",
+        "P: \"UpAxis\", \"int\", \"Integer\", \"\",2",
+        1,
+    );
+    let source = source.replacen(
+        "P: \"FrontAxis\", \"int\", \"Integer\", \"\",2",
+        "P: \"FrontAxis\", \"int\", \"Integer\", \"\",1",
+        1,
+    );
+    assert!(source.contains("\"UpAxis\", \"int\", \"Integer\", \"\",2"));
+    assert!(source.contains("\"FrontAxis\", \"int\", \"Integer\", \"\",1"));
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("centimetre-z-up.fbx");
+    std::fs::write(&path, source).expect("write transformed fixture");
+    let doc = animsmith_fbx::load(&path).expect("Z-up fixture loads");
+
+    let mesh = doc.assets.meshes.first().expect("mesh loaded");
+    let primitive = mesh.primitives.first().expect("primitive loaded");
+    let model = rest_models(&doc)[mesh.node];
+    let source_x = model.transform_point3(primitive.positions[1]);
+    let source_y = model.transform_point3(primitive.positions[2]);
+
+    assert_vec3_near(source_x, Vec3::X);
+    assert_vec3_near(source_y, -Vec3::Z);
+    assert!(source_x.y.abs() < 1e-5 && source_y.y.abs() < 1e-5);
 }

@@ -187,7 +187,7 @@ and rest pose, authored clips and tracks, optional scene assets, and source
 metadata together. Mechanical checks use this layer for defects such as NaNs,
 quaternion flips, key density, and constant tracks. Exact Rust types and fields
 belong to the `animsmith-core` model rustdocs; build them with `just doc` or use
-the package README's docs.rs link after publication.
+the package README's stable docs.rs link.
 
 `assets` (meshes, skins, factor-only materials, and embedded base-color
 textures) is the scene-asset half of

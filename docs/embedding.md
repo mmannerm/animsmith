@@ -29,13 +29,13 @@ animsmith-fbx = "0.1"
 animsmith-report = "0.1"
 ```
 
-After the first crates are published, docs.rs is the canonical API
-reference:
+docs.rs is the canonical reference for published APIs. The stable package
+URLs are:
 [animsmith-core](https://docs.rs/animsmith-core),
 [animsmith-gltf](https://docs.rs/animsmith-gltf),
 [animsmith-fbx](https://docs.rs/animsmith-fbx), and
-[animsmith-report](https://docs.rs/animsmith-report). Until then, build the
-same rustdocs locally with `just doc`.
+[animsmith-report](https://docs.rs/animsmith-report). For the current workspace
+state, build the same rustdocs locally with `just doc`.
 
 Rustdoc owns signatures, type invariants, lifetimes, and the `Errors` and
 `Panics` contracts. In particular, start at the `animsmith-core` crate root;
@@ -94,23 +94,24 @@ Diagnostic skip notes stay at `Note` even when a check's configured severity
 is higher. `severity = "off"` removes a check from the run set.
 
 For v0.1, prefer the crate-root flow: loader → role resolution → `Config` →
-`MetricGrids` → measurements/checks → findings. Treat these as the durable
-automation contracts:
+`MetricGrids` → measurements/checks → findings. The durable automation
+contracts are deliberately narrower than the pre-1.0 Rust API:
 
 - built-in check ids used by config and findings;
-- measurement semantics and fixed diff significance thresholds;
 - CLI exit codes and the versioned
   [JSON envelope](output.md), when the host interoperates with the CLI.
 
-The Rust API is pre-1.0. Public model and transform types may still be
-refined, and `#[non_exhaustive]` result types should be matched with a
-fallback arm. The `Check` trait supports experiments with custom checks, but
-there is no stable plugin registry yet; wrapping animsmith findings with
-host-owned checks keeps that boundary explicit.
+The `animsmith-core` crate root owns the full
+[API status](https://docs.rs/animsmith-core) contract. Rust symbols, model and
+transform types, metric formulas, and diff thresholds may still be refined
+before 1.0. Match `#[non_exhaustive]` result types with a fallback arm. The
+`Check` trait supports experiments with custom checks, but there is no stable
+plugin registry yet; wrapping animsmith findings with host-owned checks keeps
+that boundary explicit.
 
 ## Migrating an existing pipeline
 
-Do not duplicate the command-by-command migration plan here. Use the
+For a command-by-command migration plan, use the
 [pipeline scenarios](pipeline-scenarios.md) for marketplace intake, mocap
 cleanup, outsourced acceptance, CI gating, and raw/generated artifact
 storage, then use the [cookbook](../examples/README.md) for exact commands.

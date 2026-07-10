@@ -224,7 +224,7 @@ pub fn measure_document(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{MeshAsset, Primitive};
+    use crate::model::{Clip, Document, MeshAsset, Primitive};
     use glam::Vec3;
 
     fn mesh(name: &str, primitives: Vec<Primitive>) -> SceneAssets {
@@ -381,5 +381,29 @@ mod tests {
         };
         let m = &measure_meshes(&mesh("multi", vec![a, b]))[0];
         assert_eq!(m.vertex_count, 8, "3 + 5 corners across two primitives");
+    }
+
+    #[test]
+    fn later_duplicate_clip_name_replaces_earlier_measurement() {
+        let doc = Document {
+            clips: vec![
+                Clip {
+                    name: "duplicate".into(),
+                    duration_s: 1.0,
+                    tracks: vec![],
+                },
+                Clip {
+                    name: "duplicate".into(),
+                    duration_s: 2.0,
+                    tracks: vec![],
+                },
+            ],
+            ..Document::default()
+        };
+        let grids = MetricGrids::new(&doc);
+        let measurements = measure_document(&grids, &ResolvedRoles::default(), &Config::default());
+
+        assert_eq!(measurements.len(), 1);
+        assert_eq!(measurements["duplicate"].duration_s, 2.0);
     }
 }

@@ -41,6 +41,7 @@ publishable_crates=()
 publishable_manifests=()
 publishable_members=()
 published_readmes=()
+published_doc_sources=()
 
 for member in "${workspace_members[@]}"; do
   manifest="$member/Cargo.toml"
@@ -82,6 +83,14 @@ for ((i = 0; i < ${#publishable_crates[@]}; i++)); do
   fi
   published_readmes+=("$readme")
 
+  if test -f "$member/src/lib.rs"; then
+    published_doc_sources+=("$member/src/lib.rs")
+  elif test -f "$member/src/main.rs"; then
+    published_doc_sources+=("$member/src/main.rs")
+  else
+    fail "$member must provide src/lib.rs or src/main.rs for rustdoc"
+  fi
+
   require_fixed_line \
     "$manifest" \
     "documentation = \"https://docs.rs/$crate\"" \
@@ -99,10 +108,12 @@ done
 bad_repo_links="$(
   grep -Eho 'https://github\.com/mmannerm/animsmith/(blob|tree)/[^)[:space:]]+' \
     "${published_readmes[@]}" \
+    "${published_doc_sources[@]}" \
+    DESIGN.md \
     | grep -Ev 'https://github\.com/mmannerm/animsmith/(blob|tree)/main/' || true
 )"
 if [ -n "$bad_repo_links" ]; then
-  fail "published-package README repository links must use /main/ while pre-1.0 drift is accepted: $bad_repo_links"
+  fail "published README, rustdoc, and design repository links must use /main/ while pre-1.0 drift is accepted: $bad_repo_links"
 fi
 
 for crate in "${publishable_crates[@]}"; do

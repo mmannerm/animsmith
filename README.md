@@ -67,8 +67,7 @@ animsmith-fbx = "0.1"
 animsmith-report = "0.1"
 ```
 
-API documentation is published on docs.rs when the crates are published
-to crates.io:
+Published API documentation uses these stable docs.rs URLs:
 
 - [animsmith-core](https://docs.rs/animsmith-core)
 - [animsmith-gltf](https://docs.rs/animsmith-gltf)
@@ -112,11 +111,10 @@ own gate — the
 [embedding guide](https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md)
 shows how.
 
-Pair `animsmith-core` with exactly the loader crates you need:
-`animsmith-gltf` for glTF/GLB, `animsmith-fbx` for FBX, and
+Pair `animsmith-core` with the format crates you need:
+`animsmith-gltf` for glTF/GLB and `animsmith-fbx` for FBX. Add
 `animsmith-report` when you want to generate the standalone HTML report.
-The CLI crate is not the embedding API; it is one frontend over the same
-core.
+The CLI crate is not the library API; it is one frontend over the same core.
 
 ## Checks
 

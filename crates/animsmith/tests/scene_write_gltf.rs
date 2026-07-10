@@ -29,6 +29,18 @@ fn mesh_count(glb: &std::path::Path) -> usize {
         .count()
 }
 
+#[cfg(feature = "fbx")]
+fn scene_asset_counts(glb: &std::path::Path) -> (usize, usize, usize, usize) {
+    let bytes = std::fs::read(glb).unwrap();
+    let gltf = gltf::Gltf::from_slice(&bytes).expect("valid glTF");
+    (
+        gltf.meshes().count(),
+        gltf.materials().count(),
+        gltf.images().count(),
+        gltf.textures().count(),
+    )
+}
+
 /// Positions of the first mesh's first primitive in a GLB — so a
 /// carry-through test can assert the actual geometry survived, not just
 /// that *a* mesh exists.
@@ -227,5 +239,24 @@ fn cli_convert_gltf_input_carries_and_strips_geometry() {
         mesh_count(&stripped),
         0,
         "convert --animation-only strips geometry"
+    );
+    assert_eq!(
+        scene_asset_counts(&stripped),
+        (0, 0, 0, 0),
+        "animation-only output strips meshes, materials, images, and textures"
+    );
+    let stripped_doc = animsmith_gltf::load(&stripped).expect("loads animation-only output");
+    assert!(
+        stripped_doc.assets.meshes.is_empty() && stripped_doc.assets.materials.is_empty(),
+        "animation-only output contains no orphaned scene assets"
+    );
+    assert_eq!(
+        stripped_doc
+            .clips
+            .iter()
+            .map(|clip| clip.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["spin"],
+        "animation-only output keeps the animation clip"
     );
 }

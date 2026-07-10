@@ -181,7 +181,7 @@ require_order README.md "animsmith lint clip.glb" "CONTRIBUTING.md"
 
 require_literal README.md "${REPO_TREE_URL}docs" "documentation index link"
 require_match README.md "${REPO_BLOB_URL}docs/cli[.]md" "CLI reference link"
-require_match README.md "${REPO_BLOB_URL}docs/embedding[.]md" "embedding API link"
+require_match README.md "${REPO_BLOB_URL}docs/embedding[.]md" "embedding guide link"
 require_match README.md "${REPO_BLOB_URL}CONTRIBUTING[.]md" "contributor guide link"
 require_match README.md "${REPO_BLOB_URL}DEVELOPMENT[.]md" "development setup link"
 

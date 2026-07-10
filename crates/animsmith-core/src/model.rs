@@ -381,3 +381,23 @@ pub struct SceneAssets {
     /// Materials referenced by mesh primitives.
     pub materials: Vec<MaterialAsset>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn weld_preserves_uv_seams_at_shared_positions() {
+        let mut primitive = Primitive {
+            positions: vec![Vec3::ZERO, Vec3::ZERO, Vec3::ZERO],
+            uvs: vec![[0.0, 0.0], [1.0, 0.0], [0.0, 0.0]],
+            ..Primitive::default()
+        };
+
+        primitive.weld();
+
+        assert_eq!(primitive.positions.len(), 2);
+        assert_eq!(primitive.uvs, vec![[0.0, 0.0], [1.0, 0.0]]);
+        assert_eq!(primitive.indices, vec![0, 1, 0]);
+    }
+}

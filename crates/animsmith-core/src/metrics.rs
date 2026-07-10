@@ -316,6 +316,32 @@ mod tests {
         }
     }
 
+    fn document_with_grid_inputs(duration_s: f64, times: Vec<f32>) -> Document {
+        let values = vec![Quat::IDENTITY; times.len()];
+        Document {
+            skeleton: Skeleton {
+                bones: vec![Bone {
+                    name: "root".into(),
+                    parent: None,
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                }],
+            },
+            clips: vec![Clip {
+                name: "probe".into(),
+                duration_s,
+                tracks: vec![Track {
+                    bone: 0,
+                    property: Property::Rotation,
+                    interpolation: Interpolation::Linear,
+                    times,
+                    values: TrackValues::Quats(values),
+                }],
+            }],
+            ..Document::default()
+        }
+    }
+
     #[test]
     fn metric_grids_are_shared_by_checks_and_measurements() {
         let doc = document_with_metric_clip();
@@ -336,5 +362,17 @@ mod tests {
             serde_json::to_value(measure_document(&fresh_grids, &roles, &config))
                 .expect("plain measurements serialize")
         );
+    }
+
+    #[test]
+    fn grid_returns_none_for_each_documented_invalid_request() {
+        let valid = document_with_grid_inputs(1.0, vec![0.0, 0.5, 1.0]);
+        assert!(MetricGrids::new(&valid).grid(1).is_none());
+
+        let non_positive = document_with_grid_inputs(0.0, vec![0.0, 0.5, 1.0]);
+        assert!(MetricGrids::new(&non_positive).grid(0).is_none());
+
+        let too_few_keys = document_with_grid_inputs(1.0, vec![0.0, 1.0]);
+        assert!(MetricGrids::new(&too_few_keys).grid(0).is_none());
     }
 }

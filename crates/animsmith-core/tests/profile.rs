@@ -1,7 +1,7 @@
 //! Rig-profile resolution and auto-detection.
 
 use animsmith_core::model::{Bone, Skeleton, Transform};
-use animsmith_core::profile::{Role, detect_profile};
+use animsmith_core::profile::{ResolvedRoles, Role, detect_profile};
 
 fn skeleton_of(names: &[&str]) -> Skeleton {
     Skeleton {
@@ -60,4 +60,21 @@ fn detects_ue_mannequin() {
 fn unknown_rig_detects_nothing() {
     let skel = skeleton_of(&["a", "b", "c"]);
     assert!(detect_profile(&skel).is_none());
+}
+
+#[test]
+fn explicit_names_ignore_absent_bones_and_last_resolved_pair_wins() {
+    let skel = skeleton_of(&["first", "second"]);
+    let roles = ResolvedRoles::from_names(
+        &skel,
+        [
+            (Role::Hips, "absent".to_string()),
+            (Role::Root, "first".to_string()),
+            (Role::Root, "also-absent".to_string()),
+            (Role::Root, "second".to_string()),
+        ],
+    );
+
+    assert_eq!(roles.get(Role::Root), Some(1));
+    assert_eq!(roles.get(Role::Hips), None);
 }

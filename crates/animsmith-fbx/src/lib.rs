@@ -11,13 +11,35 @@
 //! crate only when your pipeline accepts FBX input; it brings the bundled
 //! `ufbx` C build that `animsmith-core` and `animsmith-gltf` intentionally
 //! avoid.
-
+//!
+//! # Quick start
+//!
+//! ```no_run
+//! fn lint_fbx(
+//!     path: &std::path::Path,
+//! ) -> Result<Vec<animsmith_core::Finding>, Box<dyn std::error::Error>> {
+//!     let doc = animsmith_fbx::load(path)?;
+//!     let roles = animsmith_core::detect_profile(&doc.skeleton).unwrap_or_default();
+//!     let config = animsmith_core::Config::default();
+//!     let grids = animsmith_core::MetricGrids::new(&doc);
+//!     let ctx = animsmith_core::CheckCtx::new(&grids, &roles, &config);
+//!     Ok(animsmith_core::run_checks(&ctx, &animsmith_core::all_checks()))
+//! }
+//! ```
+//!
+//! # Build and API status
+//!
+//! The library crate has no public feature flags and supports the workspace
+//! MSRV, Rust 1.88. It includes the bundled `ufbx` C build. Its Rust API is
+//! pre-1.0; see `animsmith-core`'s crate-level API status for the shared
+//! stability boundary.
+//!
 //! See the GitHub [embedding guide] for crate selection and the [pipeline
 //! scenario guide] for FBX intake and conversion workflows.
 //!
 //! [embedding guide]: https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md
 //! [pipeline scenario guide]: https://github.com/mmannerm/animsmith/blob/main/docs/pipeline-scenarios.md
-
+//!
 #![warn(missing_docs)]
 
 use animsmith_core::model::{

@@ -7,8 +7,9 @@
 //! ([`measure::measure_document`]), measurement diffs
 //! ([`diff::diff_measurements`]), structured findings ([`Finding`]), and
 //! check execution ([`CheckCtx`], [`all_checks`], [`run_checks`]).
-//! Loader crates such as `animsmith-gltf` and `animsmith-fbx` translate
-//! file formats into this model.
+//! The [`animsmith-gltf`] and [`animsmith-fbx`] loader crates translate file
+//! formats into this model; their docs.rs pages continue the library path for
+//! format-specific loading and writing.
 //!
 //! The [embedding guide] explains crate selection and integration
 //! boundaries. The [pipeline scenario guide] shows where an embedded gate
@@ -18,6 +19,8 @@
 //! [embedding guide]: https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md
 //! [pipeline scenario guide]: https://github.com/mmannerm/animsmith/blob/main/docs/pipeline-scenarios.md
 //! [runnable example]: https://github.com/mmannerm/animsmith/blob/main/crates/animsmith/examples/embed.rs
+//! [`animsmith-gltf`]: https://docs.rs/animsmith-gltf
+//! [`animsmith-fbx`]: https://docs.rs/animsmith-fbx
 //!
 //! # Quick start
 //!
@@ -95,6 +98,9 @@ pub mod transform;
 pub use check::{Check, CheckCtx, all_checks, mechanical_checks, run_checks};
 pub use config::{ClipExpectations, Config, GaitGroup, Pinned, SeveritySetting};
 pub use finding::{Finding, Severity, Value};
+/// Re-export of the exact `glam` version used by animsmith's public math
+/// types, so embedders can construct [`Transform`] values without a
+/// cross-version type mismatch.
 pub use glam;
 pub use metrics::MetricGrids;
 pub use model::{

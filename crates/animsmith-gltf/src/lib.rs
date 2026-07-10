@@ -11,13 +11,53 @@
 //! Writing is a model round-trip for `convert` and `transform`; use
 //! [`fix::FixSession`] when a repair must preserve every non-animation byte
 //! of the original container.
-
+//!
+//! # Quick start
+//!
+//! Load a document and run the shared core checks:
+//!
+//! ```no_run
+//! fn lint_clip(
+//!     path: &std::path::Path,
+//! ) -> Result<Vec<animsmith_core::Finding>, Box<dyn std::error::Error>> {
+//!     let doc = animsmith_gltf::load(path)?;
+//!     let roles = animsmith_core::detect_profile(&doc.skeleton).unwrap_or_default();
+//!     let config = animsmith_core::Config::default();
+//!     let grids = animsmith_core::MetricGrids::new(&doc);
+//!     let ctx = animsmith_core::CheckCtx::new(&grids, &roles, &config);
+//!     Ok(animsmith_core::run_checks(&ctx, &animsmith_core::all_checks()))
+//! }
+//! ```
+//!
+//! Compose byte-surgical repairs through one session:
+//!
+//! ```no_run
+//! fn repair_quaternions(
+//!     input: &std::path::Path,
+//!     output: &std::path::Path,
+//! ) -> Result<(), Box<dyn std::error::Error>> {
+//!     use animsmith_gltf::fix::{FixSession, Repair};
+//!
+//!     let mut session = FixSession::read(input)?;
+//!     session.apply(Repair::QuatNorm);
+//!     session.apply(Repair::QuatFlip);
+//!     session.write(input, output)?;
+//!     Ok(())
+//! }
+//! ```
+//!
+//! # Build and API status
+//!
+//! This crate has no public feature flags and supports the workspace MSRV,
+//! Rust 1.88. Its Rust API is pre-1.0; see `animsmith-core`'s crate-level API
+//! status for the shared stability boundary.
+//!
 //! See the GitHub [embedding guide] for crate selection and the [pipeline
 //! scenario guide] for raw-to-game-ready workflows.
 //!
 //! [embedding guide]: https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md
 //! [pipeline scenario guide]: https://github.com/mmannerm/animsmith/blob/main/docs/pipeline-scenarios.md
-
+//!
 #![warn(missing_docs)]
 
 pub mod fix;
