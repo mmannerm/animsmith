@@ -16,6 +16,10 @@ const TINY_PNG: &[u8] = &[
     0x44, 0xAE, 0x42, 0x60, 0x82,
 ];
 
+/// Distinct JPEG-like payload; image decoding is deliberately outside the
+/// scene round-trip contract, which preserves these bytes opaquely.
+const TINY_JPEG: &[u8] = &[0xFF, 0xD8, 0xFF, 0xD9];
+
 fn mesh_count(glb: &std::path::Path) -> usize {
     let bytes = std::fs::read(glb).unwrap();
     gltf::Gltf::from_slice(&bytes)
@@ -44,12 +48,11 @@ fn first_primitive_positions(glb: &std::path::Path) -> Vec<[f32; 3]> {
         .collect()
 }
 
-/// Assert that the first primitive still points through its material to the
-/// original embedded base-color image.
-fn assert_embedded_base_color_texture(glb: &std::path::Path) {
+/// Assert that the first primitive still points through its named material to
+/// the original embedded base-color image, independent of how it is embedded.
+fn assert_embedded_base_color_texture(glb: &std::path::Path) -> usize {
     let bytes = std::fs::read(glb).unwrap();
     let gltf = gltf::Gltf::from_slice(&bytes).expect("valid glTF");
-    let blob = gltf.blob.as_ref().expect("BIN chunk");
     let primitive = gltf
         .meshes()
         .next()
@@ -58,24 +61,20 @@ fn assert_embedded_base_color_texture(glb: &std::path::Path) {
         .next()
         .expect("primitive");
     let material = primitive.material();
-    assert_eq!(material.index(), Some(0), "primitive keeps its material");
+    assert_eq!(material.name(), Some("bound-jpeg"));
+    let material_index = material.index().expect("primitive keeps a material");
 
-    let image = material
-        .pbr_metallic_roughness()
-        .base_color_texture()
-        .expect("material keeps its base-color texture")
-        .texture()
-        .source()
-        .source();
-    let gltf::image::Source::View { view, mime_type } = image else {
-        panic!("base-color texture must remain embedded");
-    };
-    assert_eq!(mime_type, "image/png");
-    assert_eq!(
-        &blob[view.offset()..view.offset() + view.length()],
-        TINY_PNG,
-        "embedded image bytes survive"
-    );
+    // Loading resolves either buffer-view or data-URI image storage into the
+    // public scene model, keeping this oracle about semantics rather than the
+    // writer's current representation.
+    let doc = animsmith_gltf::load(glb).expect("loads output scene");
+    let texture = doc.assets.materials[material_index]
+        .base_color_texture
+        .as_ref()
+        .expect("linked material keeps its base-color texture");
+    assert_eq!(texture.mime, "image/jpeg");
+    assert_eq!(texture.bytes, TINY_JPEG, "embedded image bytes survive");
+    material_index
 }
 
 /// Author a minimal animated and textured GLB (one unindexed triangle) to
@@ -112,45 +111,43 @@ fn write_geometry_glb(path: &std::path::Path) {
                         Vec3::new(0.0, 1.0, 0.0),
                     ],
                     uvs: vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
-                    material: Some(0),
+                    material: Some(1),
                     ..Primitive::default()
                 }],
                 skin_joints: vec![],
                 skin_ibms: vec![],
             }],
-            materials: vec![MaterialAsset {
-                name: "white".into(),
-                base_color: [1.0; 4],
-                metallic: 0.0,
-                roughness: 1.0,
-                base_color_texture: Some(TextureAsset {
-                    bytes: TINY_PNG.to_vec(),
-                    mime: "image/png".into(),
-                }),
-            }],
+            materials: vec![
+                MaterialAsset {
+                    name: "unused-png".into(),
+                    base_color: [1.0; 4],
+                    metallic: 0.0,
+                    roughness: 1.0,
+                    base_color_texture: Some(TextureAsset {
+                        bytes: TINY_PNG.to_vec(),
+                        mime: "image/png".into(),
+                    }),
+                },
+                MaterialAsset {
+                    name: "bound-jpeg".into(),
+                    base_color: [1.0; 4],
+                    metallic: 0.0,
+                    roughness: 1.0,
+                    base_color_texture: Some(TextureAsset {
+                        bytes: TINY_JPEG.to_vec(),
+                        mime: "image/jpeg".into(),
+                    }),
+                },
+            ],
         },
         source: SourceInfo::default(),
     };
     animsmith_gltf::write::write(&doc, path).expect("writes input glb");
-}
-
-#[test]
-fn cli_convert_preserves_embedded_base_color_texture() {
-    let dir = tempfile::tempdir().unwrap();
-    let input = dir.path().join("textured.glb");
-    let output = dir.path().join("converted.glb");
-    write_geometry_glb(&input);
-
-    let status = std::process::Command::new(env!("CARGO_BIN_EXE_animsmith"))
-        .arg("convert")
-        .arg(&input)
-        .arg("-o")
-        .arg(&output)
-        .status()
-        .expect("runs animsmith convert");
-    assert!(status.success(), "convert exited {status}");
-
-    assert_embedded_base_color_texture(&output);
+    assert_eq!(
+        assert_embedded_base_color_texture(path),
+        1,
+        "fixture exercises nonzero material and image linkage"
+    );
 }
 
 #[test]
@@ -200,6 +197,7 @@ fn cli_convert_gltf_input_carries_and_strips_geometry() {
         1,
         "convert carries glTF-input geometry through (#16)"
     );
+    assert_embedded_base_color_texture(&carried);
     // Not just *a* mesh — the actual fixture triangle survived.
     assert_eq!(
         first_primitive_positions(&carried),
