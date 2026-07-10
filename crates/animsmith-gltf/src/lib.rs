@@ -1,4 +1,4 @@
-//! Docs.rs API map: [`load`] reads `.gltf`/`.glb` files into an
+//! [`load`] reads `.gltf`/`.glb` files into an
 //! [`animsmith_core::Document`], [`write::write`] emits a document as
 //! glTF/GLB, and the [`fix`] module provides byte-surgical quaternion
 //! repairs. Malformed inputs report [`LoadError`]; output failures
@@ -12,8 +12,12 @@
 //! [`fix::FixSession`] when a repair must preserve every non-animation byte
 //! of the original container.
 
-#![doc = "\n\n"]
-#![doc = include_str!("../README.md")]
+//! See the GitHub [embedding guide] for crate selection and the [pipeline
+//! scenario guide] for raw-to-game-ready workflows.
+//!
+//! [embedding guide]: https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md
+//! [pipeline scenario guide]: https://github.com/mmannerm/animsmith/blob/main/docs/pipeline-scenarios.md
+
 #![warn(missing_docs)]
 
 pub mod fix;
@@ -251,10 +255,12 @@ fn validate_track_lengths(
 }
 
 /// Load a `.glb` or `.gltf` file into a core [`Document`], including the
-/// scene assets (meshes, skins, materials) its geometry describes — the
+/// scene assets (meshes, skins, materials, and embedded base-color textures)
+/// its geometry describes — the
 /// symmetric read side of [`write::write`], and the same one-call shape
 /// `animsmith_fbx::load` uses. Consumers that judge only animation
 /// (`lint`, `inspect`) simply ignore [`Document::assets`].
+/// Non-triangle primitives are skipped rather than reinterpreted.
 ///
 /// # Errors
 ///
@@ -601,9 +607,8 @@ fn topology(doc: &gltf::Document) -> Result<Topology, LoadError> {
 /// into the core [`SceneAssets`] model — the symmetric read side of
 /// [`write::write`], mirroring `animsmith-fbx`'s `extract_assets`.
 ///
-/// Vertex data is kept exactly as authored: glTF is already triangulated
-/// and Y-up, so unlike the FBX path there is no triangulation, unit
-/// conversion, or UV flip — `measure` sees the real bytes. Materials
+/// Triangle-list vertex data is kept in glTF coordinates without unit
+/// conversion or UV flipping; other primitive modes are skipped. Materials
 /// keep their glTF array index so a primitive's `material()` index maps
 /// straight into `assets.materials`.
 fn extract_assets(

@@ -28,7 +28,9 @@ The workspace MSRV is Rust 1.88.
 
 ## More Details
 
+- [API reference on docs.rs after publication](https://docs.rs/animsmith-core)
 - [Embedding animsmith in a pipeline](https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md)
+- [Raw asset to game-ready pipeline scenarios](https://github.com/mmannerm/animsmith/blob/main/docs/pipeline-scenarios.md)
 - [Workspace design](https://github.com/mmannerm/animsmith/blob/main/DESIGN.md)
 - [CLI crate and examples](https://github.com/mmannerm/animsmith/tree/main/crates/animsmith)
 

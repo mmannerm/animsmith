@@ -1,7 +1,9 @@
-//! The raw layer: clips, tracks, and the skeleton exactly as the source
-//! file authored them. Mechanical checks (NaN, quaternion flips, key
-//! density, …) read this; semantic checks read the sampled layer built
-//! from it (see [`crate::sample`]).
+//! The loader-facing layer: clips, tracks, and the skeleton before metric
+//! resampling or repair. The glTF loader preserves authored animation
+//! values; the FBX loader normalizes scene coordinates and bakes takes to
+//! linear TRS tracks. Mechanical checks (NaN, quaternion flips, key
+//! density, …) read this layer; semantic checks read the sampled layer
+//! built from it (see [`crate::sample`]).
 
 use glam::{Mat4, Quat, Vec3};
 
@@ -49,7 +51,7 @@ pub struct Bone {
     /// Parent bone index; `None` means this is a root bone.
     pub parent: Option<BoneId>,
     /// Rest pose, node-local. Whether this or the inverse-bind-derived
-    /// rest is authoritative is a check's concern (`bind-pose`, P1).
+    /// rest is authoritative is a `bind-pose` check concern.
     pub rest: Transform,
     /// Inverse bind matrix from a skin, when one references this bone.
     pub inverse_bind: Option<Mat4>,
@@ -215,7 +217,8 @@ pub struct SourceInfo {
 }
 
 /// A loaded file: one skeleton, any number of clips targeting it, and
-/// the scene assets (meshes/materials) that rode in alongside them.
+/// the scene assets (meshes, materials, and textures) that rode in alongside
+/// them.
 /// `assets` is default-empty: the check catalog judges animation and
 /// ignores it, but the load/write round-trip carries it so `transform`
 /// and `convert` preserve geometry instead of silently dropping it.
@@ -233,15 +236,14 @@ pub struct Document {
 
 // --- Scene assets (meshes/materials) -----------------------------------
 //
-// The geometry half of a [`Document`]. Populated by loaders that ingest
-// meshes (FBX today; glTF is #16) and emitted by the writer, so a full
-// conversion preserves geometry. Vertex data is unindexed (one entry
-// per triangle corner); a welding/indexing pass is a future size
-// optimization.
+// The geometry half of a [`Document`]. Populated by both format loaders and
+// emitted by the writer, so a full conversion preserves geometry. Primitives
+// may be indexed already; [`Primitive::weld`] can index unindexed exact
+// duplicates without collapsing authored seams.
 
-/// One glTF-primitive-to-be: triangles sharing a material. Attributes
-/// are per corner until [`Primitive::weld`] dedupes them into indexed
-/// form.
+/// One triangle-list primitive sharing a material. Attribute arrays may be
+/// indexed already; [`Primitive::weld`] dedupes an unindexed primitive into
+/// indexed form.
 #[derive(Debug, Clone, Default)]
 pub struct Primitive {
     /// Index into [`SceneAssets::materials`].

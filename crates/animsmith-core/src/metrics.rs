@@ -23,6 +23,10 @@ pub const MIN_STRIDE_STEP_M: f64 = 0.02;
 /// uniform metric grid. Sharing this owner lets callers run checks and
 /// then emit measurements or reports without sampling the same clip
 /// twice.
+///
+/// The cache uses `Rc` and `RefCell`, so it is intentionally neither
+/// `Send` nor `Sync`. Create one owner per document on each worker thread,
+/// then share it by reference among consumers on that thread.
 #[derive(Debug)]
 pub struct MetricGrids<'a> {
     doc: &'a Document,
@@ -44,7 +48,8 @@ impl<'a> MetricGrids<'a> {
     }
 
     /// The metric pose grid for clip `clip_index`, computed once and
-    /// shared. `None` for clips too short to carry a cycle.
+    /// shared. Returns `None` for an out-of-range index, non-positive
+    /// duration, or fewer than three keys on the longest track.
     pub fn grid(&self, clip_index: usize) -> Option<Rc<PoseGrid>> {
         let clip = self.doc.clips.get(clip_index)?;
         let frames = metric_frame_count(clip)?;

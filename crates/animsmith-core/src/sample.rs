@@ -7,9 +7,9 @@
 //! For clips declared looping, the wrap pair is `(last frame, frame 0)`
 //! — the seam definition every loop check shares.
 //!
-//! FK currently includes root bones' own transforms; excluding an
-//! asset-centering scene root is handled at the rig-profile level
-//! (`Role::Root`, M1).
+//! FK composes every skeleton node, including each root node's own local
+//! transform. Metrics that need a body-relative frame derive it from
+//! resolved roles such as hips and feet.
 
 use crate::model::{Clip, Interpolation, Skeleton, Track, TrackValues, Transform};
 use glam::{Mat4, Quat, Vec3};
@@ -78,8 +78,9 @@ impl PoseGrid {
     }
 }
 
-/// Default grid resolution for a clip: the max keyframe count across its
-/// tracks (minimum 2), so no authored key falls between samples.
+/// Default uniform-grid resolution for a clip: the maximum keyframe count
+/// across its tracks, with a minimum of 2. Irregular authored key times can
+/// still fall between these uniform samples.
 pub fn default_frame_count(clip: &Clip) -> usize {
     clip.tracks
         .iter()
@@ -94,9 +95,8 @@ pub fn default_frame_count(clip: &Clip) -> usize {
 /// # Panics
 ///
 /// Panics if a skeleton bone's parent index is outside
-/// [`Skeleton::bones`]. Loader crates validate parent references before
-/// constructing a [`crate::Document`]; hand-built documents must keep
-/// the same invariant.
+/// [`Skeleton::bones`]. Loader crates also order parents before children;
+/// hand-built documents must preserve both invariants for correct FK.
 pub fn sample_clip(skeleton: &Skeleton, clip: &Clip, frames: usize) -> PoseGrid {
     let frames = frames.max(2);
     let nb = skeleton.bones.len();

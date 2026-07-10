@@ -6,7 +6,9 @@
 //!
 //! The structs derive `Deserialize` so a frontend can parse any
 //! serde-compatible format (the CLI uses TOML); the core itself never
-//! touches a file format.
+//! touches a file format. [`crate::CheckCtx::new`] does not resolve
+//! [`Config::rig`]; the embedding frontend resolves roles first through
+//! [`crate::profile`] and passes the resulting [`crate::ResolvedRoles`].
 
 use crate::finding::Severity;
 use crate::metrics::MIN_STRIDE_STEP_M;
@@ -164,7 +166,9 @@ impl Default for RigConfig {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    /// Rig profile and inline role bindings.
+    /// Declarative rig profile and inline role bindings. Frontends resolve
+    /// these into [`crate::ResolvedRoles`] before creating a check context;
+    /// the core runner does not apply them automatically.
     #[serde(default)]
     pub rig: RigConfig,
     /// Per-check settings keyed by stable check id.

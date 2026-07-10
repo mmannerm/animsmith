@@ -62,8 +62,9 @@ For Rust pipelines, depend on the crates you need:
 [dependencies]
 animsmith-core = "0.1"
 animsmith-gltf = "0.1"
-# Optional, only when you ingest FBX:
+# Optional:
 animsmith-fbx = "0.1"
+animsmith-report = "0.1"
 ```
 
 API documentation is published on docs.rs when the crates are published

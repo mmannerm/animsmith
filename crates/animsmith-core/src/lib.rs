@@ -10,7 +10,21 @@
 //! Loader crates such as `animsmith-gltf` and `animsmith-fbx` translate
 //! file formats into this model.
 //!
-//! # Embedding flow
+//! The [embedding guide] explains crate selection and integration
+//! boundaries. The [pipeline scenario guide] shows where an embedded gate
+//! fits in marketplace intake, mocap cleanup, outsourced acceptance, and CI.
+//! A [runnable example] exercises the complete library flow.
+//!
+//! [embedding guide]: https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md
+//! [pipeline scenario guide]: https://github.com/mmannerm/animsmith/blob/main/docs/pipeline-scenarios.md
+//! [runnable example]: https://github.com/mmannerm/animsmith/blob/main/crates/animsmith/examples/embed.rs
+//!
+//! # Quick start
+//!
+//! After a format crate has loaded a [`Document`], resolve rig roles, build
+//! a [`Config`] from the host pipeline's contract, and share one
+//! [`MetricGrids`] between measurements, checks, and optional report
+//! generation:
 //!
 //! ```
 //! use animsmith_core::{Config, CheckCtx, Document, MetricGrids, all_checks, run_checks};
@@ -30,15 +44,12 @@
 //! assert!(findings.is_empty());
 //! ```
 //!
-//! 1. Load or construct a [`Document`].
-//! 2. Resolve rig roles with [`detect_profile`] or
-//!    [`ResolvedRoles::from_names`].
-//! 3. Build a [`Config`] from your pipeline's contract format.
-//! 4. Create [`MetricGrids`] once, then share it across
-//!    [`measure::measure_document`], [`CheckCtx::new`], and
-//!    [`run_checks`].
-//! 5. Map [`Severity`] and [`Finding`] values into your own gate or
-//!    reporting policy.
+//! [`CheckCtx::new`] consumes already-resolved roles; it does not interpret
+//! [`Config::rig`] automatically. Frontends may use [`detect_profile`],
+//! [`profile::resolve_named`], or [`ResolvedRoles::from_names`], then apply
+//! their own override policy before constructing the context. Checks whose
+//! required roles remain unresolved emit diagnostic skip notes rather than
+//! false failures.
 //!
 //! # API status
 //!
@@ -66,7 +77,6 @@
 //! input.
 
 #![warn(missing_docs)]
-#![doc = include_str!("../README.md")]
 
 pub mod check;
 mod checks;

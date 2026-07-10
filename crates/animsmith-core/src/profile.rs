@@ -114,7 +114,9 @@ impl ResolvedRoles {
         self.map.iter().map(|(&r, &b)| (r, b))
     }
 
-    /// Build from explicit role → bone-name pairs (config inline map).
+    /// Build from explicit role → bone-name pairs (for example a config
+    /// inline map). Pairs whose bone name is absent are ignored; when a role
+    /// appears more than once, the last resolved pair wins.
     pub fn from_names(
         skeleton: &Skeleton,
         names: impl IntoIterator<Item = (Role, String)>,

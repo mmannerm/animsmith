@@ -1,4 +1,4 @@
-//! Docs.rs API map: [`load`] reads FBX files into an
+//! [`load`] reads FBX files into an
 //! [`animsmith_core::Document`], normalizing parser errors into
 //! [`LoadError`]. The resulting document carries skeletons, animation
 //! clips, and scene assets in the same core model used by the glTF
@@ -12,8 +12,12 @@
 //! `ufbx` C build that `animsmith-core` and `animsmith-gltf` intentionally
 //! avoid.
 
-#![doc = "\n\n"]
-#![doc = include_str!("../README.md")]
+//! See the GitHub [embedding guide] for crate selection and the [pipeline
+//! scenario guide] for FBX intake and conversion workflows.
+//!
+//! [embedding guide]: https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md
+//! [pipeline scenario guide]: https://github.com/mmannerm/animsmith/blob/main/docs/pipeline-scenarios.md
+
 #![warn(missing_docs)]
 
 use animsmith_core::model::{

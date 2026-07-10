@@ -1,146 +1,145 @@
 # Embedding animsmith in a pipeline
 
-The CLI is one frontend. Asset pipelines that already have their own
-contract formats, sidecar schemas, and gates embed the library instead:
-`animsmith-core` (measurements, checks, config — no file formats, no
-I/O) plus one ingestion crate (`animsmith-gltf`, `animsmith-fbx`).
+The CLI is one frontend. Asset pipelines that already own their contract
+format, importer, build graph, and gate can call the same loaders,
+measurements, and checks in process.
 
-Add the crates you need:
+This guide covers integration decisions. Symbol-level contracts belong in
+rustdoc, the [pipeline scenario guide](pipeline-scenarios.md) owns the larger
+raw-to-game-ready process, and the [examples cookbook](../examples/README.md)
+owns runnable CLI transcripts.
+
+## Choose the crates
+
+| Crate | Use it for |
+|---|---|
+| `animsmith-core` | Required embedding boundary: data model, rig roles, config, sampling, measurements, diffs, checks, and findings. No file I/O or format dependency. |
+| `animsmith-gltf` | Load glTF/GLB, write glTF/GLB, or apply byte-surgical glTF repairs. |
+| `animsmith-fbx` | Load FBX through `ufbx`; adds a bundled C build. Omit it from glTF-only pipelines. |
+| `animsmith-report` | Render self-contained HTML from the same sampled grids and findings. |
+
+The `animsmith` crate is the CLI binary, not a library facade.
 
 ```toml
 [dependencies]
 animsmith-core = "0.1"
 animsmith-gltf = "0.1"
-# Optional, only when you ingest FBX:
+# Optional:
 animsmith-fbx = "0.1"
+animsmith-report = "0.1"
 ```
 
-Canonical API docs live on docs.rs after publish:
+After the first crates are published, docs.rs is the canonical API
+reference:
 [animsmith-core](https://docs.rs/animsmith-core),
-[animsmith-gltf](https://docs.rs/animsmith-gltf), and
-[animsmith-fbx](https://docs.rs/animsmith-fbx). `animsmith-core` is the
-embedding boundary; the CLI crate is not the library API. The Rust API
-is still pre-1.0 and experimental, so prefer the crate-root catalog
-functions and documented data/config types over internal modules.
-`animsmith-core` re-exports `glam` as `animsmith_core::glam` because its
-public types use `glam` vectors, quaternions, and matrices.
+[animsmith-gltf](https://docs.rs/animsmith-gltf),
+[animsmith-fbx](https://docs.rs/animsmith-fbx), and
+[animsmith-report](https://docs.rs/animsmith-report). Until then, build the
+same rustdocs locally with `just doc`.
 
-The worked, compiling version of everything below is
-[`crates/animsmith/examples/embed.rs`](../crates/animsmith/examples/embed.rs)
-— run it with:
+Rustdoc owns signatures, type invariants, lifetimes, and the `Errors` and
+`Panics` contracts. In particular, start at the `animsmith-core` crate root;
+it is the compact API map rather than another copy of this guide.
+
+The compiling end-to-end example is
+[`crates/animsmith/examples/embed.rs`](../crates/animsmith/examples/embed.rs):
 
 ```console
 cargo run -p animsmith --example embed
 ```
 
-## The five steps
+## Integration flow
 
-```rust
-use animsmith_core::{CheckCtx, Config, MetricGrids, all_checks, run_checks};
-use animsmith_core::measure::measure_document;
-use animsmith_core::profile::detect_profile;
+1. **Load a `Document`.** Use `animsmith_gltf::load` or
+   `animsmith_fbx::load`. glTF animation values remain authored; FBX scenes
+   are normalized to metres, right-handed +Y-up coordinates and baked into
+   linear TRS tracks. Structural failures are loader errors. Semantic
+   defects load and become findings.
+2. **Resolve rig roles.** Use `detect_profile`,
+   `profile::resolve_named`, or `ResolvedRoles::from_names`. Checks consume
+   roles, never project-specific bone names.
+3. **Build `Config`.** The CLI's TOML is only one constructor. Deserialize
+   the types from your schema or build them programmatically.
+4. **Create one `MetricGrids`.** Share it by reference with
+   `measure_document`, `CheckCtx::new`, `run_checks`, and optional report
+   rendering so each clip is sampled once.
+5. **Map results into the host.** `Finding` carries a stable check id,
+   severity, optional clip/bone/time, measured and expected values, and a
+   message. The host decides whether warnings fail its gate.
 
-// 1. Load. Values arrive exactly as authored — no renormalization,
-//    no resampling — so checks judge the real bytes.
-let doc = animsmith_gltf::load(path)?;
+`Config::rig` is declarative data; `CheckCtx::new` does not resolve it. A
+frontend that wants the CLI's semantics should resolve the named or `auto`
+profile first, then overlay inline role/name pairs before constructing the
+context. `ResolvedRoles::from_names` ignores missing bone names and lets a
+later resolved pair for the same role win. Unresolved role-dependent checks
+emit diagnostic skip notes instead of false failures.
 
-// 2. Resolve rig roles. Checks never reference bone names, only
-//    roles; auto-detection scores the built-in profiles, or bind
-//    roles explicitly with `ResolvedRoles::from_names`.
-let roles = detect_profile(&doc.skeleton).unwrap_or_default();
+## Sampling, measurement, and concurrency
 
-// 3. Declare expectations programmatically. The TOML file is just
-//    one constructor of `Config` — an embedder builds the same
-//    struct from its own contract format and never teaches
-//    animsmith that format.
-let mut config = Config::default();
-config.clips.insert("run_*".into(), /* looping, speed pins, … */);
+`MetricGrids` owns a lazy cache for one borrowed `Document`. It uses
+single-threaded `Rc` / `RefCell` storage, so create one owner per document on
+each worker thread; within that thread, reuse it across every consumer.
 
-// 4. Measure (numbers without judgment) and lint (numbers judged
-//    against the config). Share `MetricGrids` so every clip is
-//    sampled once across both consumers.
-let grids = MetricGrids::new(&doc);
-let measurements = measure_document(&grids, &roles, &config);
-let ctx = CheckCtx::new(&grids, &roles, &config);
-let findings = run_checks(&ctx, &all_checks());
+`measure_document` returns clip measurements. Call `measure_meshes`
+separately when the pipeline also needs geometry counts, bounds, or skin
+weight statistics. Clip names are keys in the returned map and must be
+unique.
 
-// 5. Map severities to your gate. The CLI's convention: exit 0 =
-//    clean or warnings-only, 1 = any Error finding, 2 = operator
-//    error (unreadable file, bad config).
-```
+The uniform metric grid spans `[0, duration]` and uses the longest track's
+key count as its resolution. That does not mean irregular authored key times
+all land on the grid. Sampling follows glTF interpolation rules and treats
+the last-to-first pair as the loop seam.
 
-Key types, all in `animsmith-core`:
+## Gate and stability contracts
 
-| Type | Role |
-|---|---|
-| `Document` / `SceneAssets` | skeleton + clips / meshes + materials |
-| `ResolvedRoles` | role → bone binding (profile or explicit) |
-| `Config`, `ClipExpectations`, `Pinned` | what the author declares |
-| `Finding` | structured verdict: `check_id`, severity, clip/bone/time, measured vs expected |
-| `measure::ClipMeasurements` | the raw metric map `measure` emits |
-| `diff::MetricDelta` | significant movement between two measurement maps |
+The CLI convention is a useful default for an embedded gate:
 
-## Stability contracts
+- no error findings: success (warnings may remain visible);
+- any `Severity::Error`: content rejection;
+- loader/config/I/O error: operator failure, kept separate from findings.
 
-Embedders can pin on these; changing any of them is a breaking change
-(see `.claude/skills/audit-task/code-invariants.md` §7):
+Diagnostic skip notes stay at `Note` even when a check's configured severity
+is higher. `severity = "off"` removes a check from the run set.
 
-- **Check ids** (`loop-seam`, `quat-flip`, …) — config keys and JSON
-  fields.
-- **JSON output schema** — versioned via `schema_version`; JSON is an
-  envelope with `tool`, `command`, `summary`, and `files`.
-- **Exit codes** — 0 / 1 / 2 as above.
-- **Measurement semantics** — the sampling model is "glTF-spec
-  interpolation on a uniform grid, wrap pair = (last frame, 0)";
-  metric changes require golden-test re-verification.
+For v0.1, prefer the crate-root flow: loader → role resolution → `Config` →
+`MetricGrids` → measurements/checks → findings. Treat these as the durable
+automation contracts:
 
-For v0.1, the most stable integration path is:
+- built-in check ids used by config and findings;
+- measurement semantics and fixed diff significance thresholds;
+- CLI exit codes and the versioned
+  [JSON envelope](output.md), when the host interoperates with the CLI.
 
-1. Load with `animsmith-gltf` or `animsmith-fbx`.
-2. Build `Config` from your own contract format.
-3. Create `MetricGrids`, then call `measure_document`,
-   `CheckCtx::new`, `all_checks`, and `run_checks`.
-4. Map `Finding` values into your gate/reporting system.
+The Rust API is pre-1.0. Public model and transform types may still be
+refined, and `#[non_exhaustive]` result types should be matched with a
+fallback arm. The `Check` trait supports experiments with custom checks, but
+there is no stable plugin registry yet; wrapping animsmith findings with
+host-owned checks keeps that boundary explicit.
 
-The `Check` trait is public because the built-in catalog uses it and
-advanced embedders may want to experiment, but custom-check/plugin
-registration is not yet a stability promise. Prefer wrapping animsmith's
-findings with your own pipeline checks until a registry API lands.
+## Migrating an existing pipeline
 
-## Migrating a script-based bake pipeline
+Do not duplicate the command-by-command migration plan here. Use the
+[pipeline scenarios](pipeline-scenarios.md) for marketplace intake, mocap
+cleanup, outsourced acceptance, CI gating, and raw/generated artifact
+storage, then use the [cookbook](../examples/README.md) for exact commands.
 
-The subcommands were designed as drop-in replacements for the pieces a
-typical Python/DCC bake pipeline accumulates. The mapping:
+For the library cutover itself:
 
-| If your pipeline has… | Replace with | Notes |
-|---|---|---|
-| An FBX→glTF converter binary (e.g. the archived FBX2glTF) | `animsmith convert in.fbx -o out.glb` | Triangulated + welded meshes, skins, factor materials, embedded PNG/JPEG base-color textures; `--animation-only` to strip geometry. Units/axes normalized to glTF conventions; scale-compensated (Maya-style) rigs handled. |
-| Quaternion normalization or hemisphere-normalization passes | `animsmith fix clip.glb -o out.glb` or `animsmith fix clip.glb --in-place` | Byte-surgical: only repaired keys change, container/meshes byte-identical; lossless and idempotent. `quat-flip` handles LINEAR/STEP/CUBICSPLINE rotation outputs; `quat-norm` handles LINEAR/STEP and skips CUBICSPLINE to preserve tangents. Use `--dry-run` to inspect first (exits 1 when repairs are pending). |
-| Frame-range slicing, final-pose hold extension, cycle re-anchoring scripts | `animsmith transform --slice a:b --hold-extend s --gait-anchor --fps n` | Slice copies keys verbatim (half-frame epsilon); gait-anchor is frame-quantized and picks the cleanest wrap of the ±1-frame candidates. |
-| Loop-seam / gait-phase / root-motion measurement scripts | `animsmith measure --format json`, or the library API above | Same numbers, golden-tested; feed them to your own sidecar/contract format via the library. |
-| A post-bake contract/validation gate | `animsmith lint --config your.toml` (or a programmatic `Config`) | See [`examples/character.animsmith.toml`](../examples/character.animsmith.toml) for a game character's contract expressed as config. |
+1. Capture accepted measurements from the old pipeline as golden values.
+2. Run the CLI and embedded path from the same `Config` until their findings
+   agree.
+3. Compare old and new measurement maps with `diff_measurements`; judge
+   motion deltas rather than binary file differences.
+4. Keep project-specific sidecars, hashes, provenance, and storage policy in
+   the host pipeline.
 
-Migration recipe that has worked in practice:
+## What the libraries do not own
 
-1. **Convert first, verify second.** Run the new converter alongside
-   the old one and compare with `animsmith diff old.glb new.glb` —
-   it compares the *measurements that matter* (seams, gait, speeds,
-   rotation ranges) rather than bytes.
-2. **Pin the old pipeline's numbers as golden values** (env-gated
-   tests against your shipped assets) before switching, so the
-   cutover is provable rather than hopeful.
-3. **Encode the contract as config last**, once lint runs clean on
-   the current assets — every pre-existing violation you discover is
-   either a real bug (fix the asset) or a tolerance your contract
-   needs to state explicitly.
-4. Keep your sidecar/hash/provenance machinery on your side of the
-   line: animsmith deliberately does not know your contract format.
+- Parsing the host's contract files into `Config`.
+- Hashing assets, tracking provenance, or deciding staleness.
+- Choosing raw/generated artifact paths or retention policy.
+- Artistic retargeting, contact cleanup, or motion editing.
 
-## What the library will not do
-
-- Parse your contract files (build `Config` yourself — that is the
-  API contract that keeps animsmith engine-agnostic).
-- Hash files, track provenance, or decide staleness (pipeline
-  concerns; you have the bytes).
-- Panic on malformed input (a `LoadError` or findings, never a crash
-  — report an issue if you find otherwise).
+Those decisions surround animsmith in the
+[raw-to-game-ready pipeline](pipeline-scenarios.md); they are not API
+responsibilities.

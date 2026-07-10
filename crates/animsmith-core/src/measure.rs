@@ -133,7 +133,8 @@ pub struct GaitMeasurement {
 pub struct ClipMeasurements {
     /// Clip duration in seconds.
     pub duration_s: f64,
-    /// Keyframe count of the longest channel.
+    /// Keyframe count of the longest channel. This also selects the uniform
+    /// metric-grid resolution, but it is not an authored frame-rate value.
     pub frame_count: u32,
     /// Bones with at least one keyframed channel, sorted.
     pub animated_bones: Vec<String>,
@@ -157,6 +158,11 @@ pub struct ClipMeasurements {
 /// Measure every clip using shared metric pose grids. Role-dependent
 /// metrics (loop seam, gait, root-motion speed) are present only where
 /// the roles resolve; pass an empty [`ResolvedRoles`] to skip them.
+///
+/// This returns clip measurements only. Call [`measure_meshes`] separately
+/// when the pipeline also needs geometry measurements. Clip names are map
+/// keys and therefore must be unique; a later duplicate replaces an earlier
+/// entry.
 pub fn measure_document(
     grids: &MetricGrids<'_>,
     roles: &ResolvedRoles,
