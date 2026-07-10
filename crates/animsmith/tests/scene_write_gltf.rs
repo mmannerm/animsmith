@@ -2,7 +2,7 @@
 //! The `transform` case runs in every feature set; the `convert` case is
 //! feature-gated with its subcommand and also pins `--animation-only`.
 
-use animsmith_core::glam::{Quat, Vec3};
+use animsmith_core::glam::{Mat4, Quat, Vec3};
 use animsmith_core::model::*;
 
 /// A valid 1×1 white PNG used to pin embedded texture bytes through the CLI.
@@ -30,11 +30,12 @@ fn mesh_count(glb: &std::path::Path) -> usize {
 }
 
 #[cfg(feature = "fbx")]
-fn scene_asset_counts(glb: &std::path::Path) -> (usize, usize, usize, usize) {
+fn scene_asset_counts(glb: &std::path::Path) -> (usize, usize, usize, usize, usize) {
     let bytes = std::fs::read(glb).unwrap();
     let gltf = gltf::Gltf::from_slice(&bytes).expect("valid glTF");
     (
         gltf.meshes().count(),
+        gltf.skins().count(),
         gltf.materials().count(),
         gltf.images().count(),
         gltf.textures().count(),
@@ -141,11 +142,13 @@ fn write_textured_scene_glb(path: &std::path::Path) {
                         Vec3::new(0.0, 1.0, 0.0),
                     ],
                     uvs: vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+                    joints: vec![[0, 0, 0, 0]; 3],
+                    weights: vec![[1.0, 0.0, 0.0, 0.0]; 3],
                     material: Some(1),
                     ..Primitive::default()
                 }],
-                skin_joints: vec![],
-                skin_ibms: vec![],
+                skin_joints: vec![0],
+                skin_ibms: vec![Mat4::IDENTITY],
             }],
             materials: vec![
                 MaterialAsset {
@@ -242,8 +245,8 @@ fn cli_convert_gltf_input_carries_and_strips_geometry() {
     );
     assert_eq!(
         scene_asset_counts(&stripped),
-        (0, 0, 0, 0),
-        "animation-only output strips meshes, materials, images, and textures"
+        (0, 0, 0, 0, 0),
+        "animation-only output strips meshes, skins, materials, images, and textures"
     );
     let stripped_doc = animsmith_gltf::load(&stripped).expect("loads animation-only output");
     assert!(

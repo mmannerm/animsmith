@@ -70,8 +70,8 @@ fn explicit_names_ignore_absent_bones_and_last_resolved_pair_wins() {
         [
             (Role::Hips, "absent".to_string()),
             (Role::Root, "first".to_string()),
-            (Role::Root, "also-absent".to_string()),
             (Role::Root, "second".to_string()),
+            (Role::Root, "also-absent".to_string()),
         ],
     );
 

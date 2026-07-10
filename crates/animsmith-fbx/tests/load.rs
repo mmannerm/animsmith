@@ -90,8 +90,26 @@ fn normalizes_centimetre_z_up_scene_to_metre_y_up() {
         "P: \"FrontAxis\", \"int\", \"Integer\", \"\",1",
         1,
     );
+    let source = source.replacen(
+        "P: \"FrontAxisSign\", \"int\", \"Integer\", \"\",1",
+        "P: \"FrontAxisSign\", \"int\", \"Integer\", \"\",-1",
+        1,
+    );
+    let source = source.replacen(
+        "Vertices: *9 { a: 0,0,0,100,0,0,0,100,0 }",
+        "Vertices: *9 { a: 0,0,0,100,0,0,0,100,100 }",
+        1,
+    );
+    let source = source.replacen(
+        "C: \"OP\",3004,3003,\"d|X\"",
+        "C: \"OP\",3004,3003,\"d|Z\"",
+        1,
+    );
     assert!(source.contains("\"UpAxis\", \"int\", \"Integer\", \"\",2"));
     assert!(source.contains("\"FrontAxis\", \"int\", \"Integer\", \"\",1"));
+    assert!(source.contains("\"FrontAxisSign\", \"int\", \"Integer\", \"\",-1"));
+    assert!(source.contains("0,100,100"));
+    assert!(source.contains("3004,3003,\"d|Z\""));
 
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join("centimetre-z-up.fbx");
@@ -102,9 +120,20 @@ fn normalizes_centimetre_z_up_scene_to_metre_y_up() {
     let primitive = mesh.primitives.first().expect("primitive loaded");
     let model = rest_models(&doc)[mesh.node];
     let source_x = model.transform_point3(primitive.positions[1]);
-    let source_y = model.transform_point3(primitive.positions[2]);
+    let source_yz = model.transform_point3(primitive.positions[2]);
 
     assert_vec3_near(source_x, Vec3::X);
-    assert_vec3_near(source_y, -Vec3::Z);
-    assert!(source_x.y.abs() < 1e-5 && source_y.y.abs() < 1e-5);
+    assert_vec3_near(source_yz, Vec3::Y - Vec3::Z);
+
+    let translation = doc.clips[0]
+        .tracks
+        .iter()
+        .find(|track| track.bone == 1 && track.property == Property::Translation)
+        .expect("root translation track");
+    assert_vec3_near(
+        translation
+            .key_vec3(translation.key_count() - 1)
+            .expect("final translation key"),
+        Vec3::Y,
+    );
 }

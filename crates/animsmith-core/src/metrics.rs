@@ -367,12 +367,18 @@ mod tests {
     #[test]
     fn grid_returns_none_for_each_documented_invalid_request() {
         let valid = document_with_grid_inputs(1.0, vec![0.0, 0.5, 1.0]);
-        assert!(MetricGrids::new(&valid).grid(1).is_none());
+        for clip_index in [1, 2, usize::MAX] {
+            assert!(MetricGrids::new(&valid).grid(clip_index).is_none());
+        }
 
-        let non_positive = document_with_grid_inputs(0.0, vec![0.0, 0.5, 1.0]);
-        assert!(MetricGrids::new(&non_positive).grid(0).is_none());
+        for duration_s in [0.0, -1.0] {
+            let non_positive = document_with_grid_inputs(duration_s, vec![0.0, 0.5, 1.0]);
+            assert!(MetricGrids::new(&non_positive).grid(0).is_none());
+        }
 
-        let too_few_keys = document_with_grid_inputs(1.0, vec![0.0, 1.0]);
-        assert!(MetricGrids::new(&too_few_keys).grid(0).is_none());
+        for times in [vec![], vec![0.0], vec![0.0, 1.0]] {
+            let too_few_keys = document_with_grid_inputs(1.0, times);
+            assert!(MetricGrids::new(&too_few_keys).grid(0).is_none());
+        }
     }
 }

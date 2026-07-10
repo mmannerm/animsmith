@@ -224,8 +224,11 @@ pub fn measure_document(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Clip, Document, MeshAsset, Primitive};
-    use glam::Vec3;
+    use crate::model::{
+        Bone, Clip, Document, Interpolation, MeshAsset, Primitive, Property, Skeleton, Track,
+        TrackValues, Transform,
+    };
+    use glam::{Quat, Vec3};
 
     fn mesh(name: &str, primitives: Vec<Primitive>) -> SceneAssets {
         SceneAssets {
@@ -385,25 +388,58 @@ mod tests {
 
     #[test]
     fn later_duplicate_clip_name_replaces_earlier_measurement() {
+        let earlier = Clip {
+            name: "duplicate".into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 0,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 0.5, 1.0],
+                values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::X, Vec3::X * 2.0]),
+            }],
+        };
+        let later = Clip {
+            name: "duplicate".into(),
+            duration_s: 2.0,
+            tracks: vec![Track {
+                bone: 0,
+                property: Property::Rotation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 2.0],
+                values: TrackValues::Quats(vec![Quat::IDENTITY, Quat::from_rotation_x(0.5)]),
+            }],
+        };
+        let skeleton = Skeleton {
+            bones: vec![Bone {
+                name: "root".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            }],
+        };
         let doc = Document {
-            clips: vec![
-                Clip {
-                    name: "duplicate".into(),
-                    duration_s: 1.0,
-                    tracks: vec![],
-                },
-                Clip {
-                    name: "duplicate".into(),
-                    duration_s: 2.0,
-                    tracks: vec![],
-                },
-            ],
+            skeleton: skeleton.clone(),
+            clips: vec![earlier, later.clone()],
             ..Document::default()
         };
         let grids = MetricGrids::new(&doc);
         let measurements = measure_document(&grids, &ResolvedRoles::default(), &Config::default());
 
-        assert_eq!(measurements.len(), 1);
-        assert_eq!(measurements["duplicate"].duration_s, 2.0);
+        let expected_doc = Document {
+            skeleton,
+            clips: vec![later],
+            ..Document::default()
+        };
+        let expected_grids = MetricGrids::new(&expected_doc);
+        let expected = measure_document(
+            &expected_grids,
+            &ResolvedRoles::default(),
+            &Config::default(),
+        );
+        assert_eq!(
+            serde_json::to_value(measurements).expect("duplicate measurements serialize"),
+            serde_json::to_value(expected).expect("single later measurement serializes")
+        );
     }
 }

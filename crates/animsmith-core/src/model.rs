@@ -397,7 +397,21 @@ mod tests {
         primitive.weld();
 
         assert_eq!(primitive.positions.len(), 2);
-        assert_eq!(primitive.uvs, vec![[0.0, 0.0], [1.0, 0.0]]);
-        assert_eq!(primitive.indices, vec![0, 1, 0]);
+        let reconstructed_corners = primitive
+            .indices
+            .iter()
+            .map(|&index| {
+                let index = index as usize;
+                (primitive.positions[index], primitive.uvs[index])
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            reconstructed_corners,
+            vec![
+                (Vec3::ZERO, [0.0, 0.0]),
+                (Vec3::ZERO, [1.0, 0.0]),
+                (Vec3::ZERO, [0.0, 0.0]),
+            ]
+        );
     }
 }
