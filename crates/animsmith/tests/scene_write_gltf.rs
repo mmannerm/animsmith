@@ -21,6 +21,63 @@ const TINY_JPEG: &[u8] = &[
 ];
 
 #[cfg(feature = "fbx")]
+#[derive(Debug, PartialEq)]
+enum ValuesSnapshot {
+    Vec3s(Vec<[u32; 3]>),
+    Quats(Vec<[u32; 4]>),
+}
+
+#[cfg(feature = "fbx")]
+#[derive(Debug, PartialEq)]
+struct TrackSnapshot {
+    bone: BoneId,
+    property: Property,
+    interpolation: Interpolation,
+    times: Vec<u32>,
+    values: ValuesSnapshot,
+}
+
+#[cfg(feature = "fbx")]
+#[derive(Debug, PartialEq)]
+struct ClipSnapshot {
+    name: String,
+    duration: u64,
+    tracks: Vec<TrackSnapshot>,
+}
+
+#[cfg(feature = "fbx")]
+fn clip_snapshot(clip: &Clip) -> ClipSnapshot {
+    ClipSnapshot {
+        name: clip.name.clone(),
+        duration: clip.duration_s.to_bits(),
+        tracks: clip
+            .tracks
+            .iter()
+            .map(|track| TrackSnapshot {
+                bone: track.bone,
+                property: track.property,
+                interpolation: track.interpolation,
+                times: track.times.iter().map(|time| time.to_bits()).collect(),
+                values: match &track.values {
+                    TrackValues::Vec3s(values) => ValuesSnapshot::Vec3s(
+                        values
+                            .iter()
+                            .map(|value| value.to_array().map(f32::to_bits))
+                            .collect(),
+                    ),
+                    TrackValues::Quats(values) => ValuesSnapshot::Quats(
+                        values
+                            .iter()
+                            .map(|value| value.to_array().map(f32::to_bits))
+                            .collect(),
+                    ),
+                },
+            })
+            .collect(),
+    }
+}
+
+#[cfg(feature = "fbx")]
 fn scene_asset_counts(glb: &std::path::Path) -> (usize, usize, usize, usize, usize) {
     let bytes = std::fs::read(glb).unwrap();
     let gltf = gltf::Gltf::from_slice(&bytes).expect("valid glTF");
@@ -198,6 +255,7 @@ fn cli_convert_gltf_input_carries_and_strips_geometry() {
 
     let input = dir.path().join("in.glb");
     write_textured_scene_glb(&input);
+    let input_doc = animsmith_gltf::load(&input).expect("loads authored input");
     assert_eq!(
         scene_asset_counts(&input),
         (1, 1, 2, 2, 2),
@@ -247,9 +305,13 @@ fn cli_convert_gltf_input_carries_and_strips_geometry() {
         stripped_doc
             .clips
             .iter()
-            .map(|clip| clip.name.as_str())
+            .map(clip_snapshot)
             .collect::<Vec<_>>(),
-        vec!["spin"],
-        "animation-only output keeps the animation clip"
+        input_doc
+            .clips
+            .iter()
+            .map(clip_snapshot)
+            .collect::<Vec<_>>(),
+        "animation-only output keeps every clip field unchanged"
     );
 }
