@@ -248,3 +248,27 @@ fn tutorial_mechanical_steps_are_noops_on_the_clean_walk() {
         "one no-op summary line per default repair: {out}"
     );
 }
+
+#[test]
+fn contract_auto_loads_from_the_working_directory() {
+    // Step 6's transcripts run bare `animsmith lint` with the contract
+    // saved as ./animsmith.toml — pin the auto-load path they rely on:
+    // the same popped loop that fails under --config must fail with the
+    // config merely present in the working directory.
+    let tmp = tempfile::tempdir().expect("temp dir");
+    write_walk(tmp.path(), "walking-popped.glb", 0.75);
+    std::fs::copy(config_path(), tmp.path().join("animsmith.toml")).expect("copies contract");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_animsmith"))
+        .current_dir(tmp.path())
+        .args(["lint", "walking-popped.glb"])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "auto-loaded contract fails the popped loop"
+    );
+    let out = String::from_utf8_lossy(&output.stdout);
+    assert!(out.contains("loop-seam"), "names loop-seam: {out}");
+}

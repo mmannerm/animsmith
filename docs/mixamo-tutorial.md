@@ -7,9 +7,12 @@ fixable, and grow a project contract config from the results.
 This is the bring-your-own-asset counterpart to the
 [examples cookbook](../examples/README.md): the cookbook runs against
 small assets committed to this repo, while this tutorial runs against
-a real marketplace rig you download yourself. Each step links into the
-[game-ready clips guide](game-ready-clips.md) for *why* it matters
-rather than re-explaining.
+a real marketplace rig you download yourself. Each step links to the
+guide that owns its *why* rather than re-explaining — the
+[game-ready clips guide](game-ready-clips.md) for everything the
+checks judge, and the
+[pipeline scenario guide](pipeline-scenarios.md) for acquiring and
+handling the raw asset.
 
 **About the transcripts.** The command output in this tutorial is
 real, captured from a small generated rig that carries the same
@@ -214,8 +217,9 @@ here.) The numbers become the contract:
 `loop_seam_ratio` near zero says the cycle closes, `speed_mps` of zero
 confirms the In Place download, and the gait numbers seed a
 [blend-ring group](game-ready-clips.md#feet-skate-when-clips-blend)
-once you have more than one direction. Declare what must stay true in
-`animsmith.toml`:
+once you have more than one direction. Declare what must stay true by
+saving this as `animsmith.toml` next to your clip — animsmith
+auto-loads it from the working directory:
 
 ```toml
 [rig]
@@ -229,9 +233,11 @@ in_place = true
 max_ratio = 1.6
 ```
 
-This is the committed
+The same contract is committed as
 [`examples/mixamo.animsmith.toml`](../examples/mixamo.animsmith.toml)
-— it pins the profile rather than trusting auto-detection, declares
+for reference (from a repo checkout, pass it with
+`--config examples/mixamo.animsmith.toml` instead of saving a local
+copy). It pins the profile rather than trusting auto-detection, declares
 the clip a loop (arming `loop-seam`) and in-place (arming `in-place`,
 judged on the Hips track per the callout above). Every key, glob
 pattern, and severity override is documented in the
@@ -249,7 +255,7 @@ speed_mps = { value = 1.2, tolerance = 0.15 }
 Lint against the contract:
 
 ```console
-$ animsmith lint --config examples/mixamo.animsmith.toml walking.glb
+$ animsmith lint walking.glb
 walking.glb: clean
 0 error(s), 0 warning(s), 0 note(s)          # exits 0
 ```
@@ -259,7 +265,7 @@ copy whose cycle was cut short, the classic
 [popped loop](game-ready-clips.md#the-loop-pops):
 
 ```console
-$ animsmith lint --config examples/mixamo.animsmith.toml walking-popped.glb
+$ animsmith lint walking-popped.glb
 walking-popped.glb:
   error[loop-seam] clip 'mixamo.com' @1.000s: loop seam pops: wrap discontinuity
     is 6.82× the neighbouring in-clip step (cap 1.60) — the clip does not
