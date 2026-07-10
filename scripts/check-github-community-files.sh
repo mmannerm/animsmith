@@ -152,10 +152,12 @@ for path in \
   validate_markdown_links "$path"
 done
 
-# The docs pages are one set: every page gets link validation, and every
-# page except the index itself must be linked from an index-table row (a
-# `| … [](name.md) …` line — a link elsewhere in the file does not
-# count), so adding a doc page means adding exactly one table row.
+# The top-level docs pages are one set: every page gets link validation,
+# and every page except the index itself must be linked from at least one
+# index-table row (a `| … [](name.md) …` line — a link elsewhere in the
+# file does not count). Nested dirs (research/, schemas/) are outside the
+# indexed set, and preventing a second routing list elsewhere is review
+# policy, not something this oracle can prove.
 # Forward constraint for a generated docs site (GitHub Pages/mdBook):
 # its navigation (e.g. SUMMARY.md) must be derived from this index table
 # or a shared manifest — never a second hand-maintained routing list.
