@@ -48,3 +48,4 @@ toml = { workspace = true }
 gltf = { workspace = true }
 tempfile = { workspace = true }
 animsmith-testkit = { workspace = true }
+pulldown-cmark = { workspace = true }

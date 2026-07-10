@@ -147,8 +147,26 @@ for path in \
   AGENTS.md \
   CLAUDE.md \
   .agent-instructions/shared.md \
-  .github/PULL_REQUEST_TEMPLATE.md; do
+  .github/PULL_REQUEST_TEMPLATE.md \
+  examples/README.md; do
   validate_markdown_links "$path"
+done
+
+# The top-level docs pages are one set: every page gets link validation
+# here, and every page except the index itself must be linked from a row
+# of the Document index table — enforced by the markdown-parser-backed
+# workspace test crates/animsmith/tests/docs_index.rs (pulldown-cmark),
+# which runs under `cargo test --workspace`. Nested dirs (research/,
+# schemas/) are outside the indexed set, and preventing a second routing
+# list elsewhere is review policy, not something a gate can prove.
+# Forward constraint for a generated docs site (GitHub Pages/mdBook):
+# its navigation (e.g. SUMMARY.md) must be derived from this index table
+# or a shared manifest — never a second hand-maintained routing list.
+# Note the index also rows pages outside docs/ (../README.md,
+# ../examples/README.md); a site build must decide link-vs-include for
+# those rather than assume the set is docs/*.md.
+for doc in docs/*.md; do
+  validate_markdown_links "$doc"
 done
 for path in \
   crates/animsmith-core/README.md \
@@ -161,6 +179,7 @@ done
 require_order README.md "cargo install animsmith" "CONTRIBUTING.md"
 require_order README.md "animsmith lint clip.glb" "CONTRIBUTING.md"
 
+require_literal README.md "${REPO_TREE_URL}docs" "documentation index link"
 require_match README.md "${REPO_BLOB_URL}docs/cli[.]md" "CLI reference link"
 require_match README.md "${REPO_BLOB_URL}docs/embedding[.]md" "embedding API link"
 require_match README.md "${REPO_BLOB_URL}CONTRIBUTING[.]md" "contributor guide link"
