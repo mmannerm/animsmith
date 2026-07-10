@@ -152,98 +152,21 @@ for path in \
   validate_markdown_links "$path"
 done
 
-# The top-level docs pages are one set: every page gets link validation,
-# and every page except the index itself must be linked from at least one
-# row of the Document index table — the contiguous pipe-line block that
-# starts at the first `| Document |` header. Pipe-lines elsewhere in the
-# file (fenced examples, standalone lines) do not count. Nested dirs
-# (research/, schemas/) are outside the indexed set, and preventing a
-# second routing list elsewhere is review policy, not something this
-# oracle can prove.
+# The top-level docs pages are one set: every page gets link validation
+# here, and every page except the index itself must be linked from a row
+# of the Document index table — enforced by the markdown-parser-backed
+# workspace test crates/animsmith/tests/docs_index.rs (pulldown-cmark),
+# which runs under `cargo test --workspace`. Nested dirs (research/,
+# schemas/) are outside the indexed set, and preventing a second routing
+# list elsewhere is review policy, not something a gate can prove.
 # Forward constraint for a generated docs site (GitHub Pages/mdBook):
 # its navigation (e.g. SUMMARY.md) must be derived from this index table
 # or a shared manifest — never a second hand-maintained routing list.
 # Note the index also rows pages outside docs/ (../README.md,
 # ../examples/README.md); a site build must decide link-vs-include for
 # those rather than assume the set is docs/*.md.
-# Rows of the Document index table: the pipe-line block whose
-# `| Document |` header sits outside any code fence and is followed by a
-# markdown table-delimiter row. Fenced or delimiter-less candidates are
-# skipped rather than selected.
-docs_index_rows() {
-  local index_file="$1"
-
-  awk '
-    /^(```|~~~)/ { in_fence = !in_fence; next }
-    in_fence { next }
-    !in_table && /^\| Document \|/ {
-      if ((getline delim) > 0 && delim ~ /^\|[-: |]+\|$/) { in_table = 1 }
-      next
-    }
-    in_table && /^\|/ { print; next }
-    in_table { exit }
-  ' "$index_file"
-}
-
-# Whether the extracted rows carry a syntactically valid markdown link
-# to the page — `[text](name.md)`, not a bare `](name.md)` fragment.
-index_rows_link_page() {
-  local index_rows="$1"
-  local doc_name="$2"
-
-  printf '%s\n' "$index_rows" | grep -Eq "\[[^][]+\]\(${doc_name//./[.]}\)"
-}
-
-require_index_row() {
-  local index_rows="$1"
-  local doc_name="$2"
-
-  index_rows_link_page "$index_rows" "$doc_name" \
-    || fail "docs/README.md must carry an index-table row linking $doc_name"
-}
-
-# Oracle self-test (the check-release-packaging.sh pattern): the real
-# table must be found past a fenced decoy table, a genuine row must
-# count, and a malformed cell, prose link, fenced row, or standalone
-# pipe line must not.
-self_test_index="$(mktemp)"
-trap 'rm -f "$self_test_index"' EXIT
-cat > "$self_test_index" <<'SELFTEST'
-# Documentation
-
-```text
-| Document | Use it to… |
-|---|---|
-| [decoy.md](decoy.md) | A fake table inside a code fence, before the real one. |
-```
-
-| Document | Use it to… |
-|---|---|
-| [real.md](real.md) | A genuine index-table row. |
-| malformed ](broken.md) cell without an opening bracket |
-
-Some prose with a loose [prose.md](prose.md) link.
-
-| standalone pipe line with [loose.md](loose.md) outside the table |
-SELFTEST
-self_test_rows="$(docs_index_rows "$self_test_index")"
-rm -f "$self_test_index"
-trap - EXIT
-index_rows_link_page "$self_test_rows" real.md \
-  || fail "index-row oracle self-test: a genuine table row must count"
-for fake in decoy.md broken.md prose.md loose.md; do
-  if index_rows_link_page "$self_test_rows" "$fake"; then
-    fail "index-row oracle self-test: ${fake} must not count as an index row"
-  fi
-done
-
-docs_readme_rows="$(docs_index_rows docs/README.md)"
-[ -n "$docs_readme_rows" ] || fail "docs/README.md must carry the Document index table"
 for doc in docs/*.md; do
   validate_markdown_links "$doc"
-  doc_name="$(basename "$doc")"
-  [ "$doc_name" = "README.md" ] && continue
-  require_index_row "$docs_readme_rows" "$doc_name"
 done
 for path in \
   crates/animsmith-core/README.md \
