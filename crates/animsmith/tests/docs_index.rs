@@ -18,10 +18,11 @@ fn repo_path(rel: &str) -> PathBuf {
         .join(rel)
 }
 
-/// Link destinations (fragments stripped) inside the first table whose
-/// leading header cell is exactly `Document` — the index table's
-/// declared shape. Rendered-link destinations only: text that merely
-/// looks like a link never produces a `Tag::Link` event.
+/// Link destinations (fragments stripped) in the **Document column** —
+/// the first cell of each body row — of the first table whose leading
+/// header cell is exactly `Document`. A link in a description cell is
+/// not a row for that page, and text that merely looks like a link
+/// never produces a `Tag::Link` event.
 fn document_index_link_targets(markdown: &str) -> BTreeSet<String> {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_TABLES);
@@ -31,6 +32,7 @@ fn document_index_link_targets(markdown: &str) -> BTreeSet<String> {
     let mut head_first_cell: Option<String> = None;
     let mut collecting_first_cell = false;
     let mut is_index_table = false;
+    let mut body_cell_index = 0usize;
 
     for event in Parser::new_ext(markdown, options) {
         match event {
@@ -53,7 +55,13 @@ fn document_index_link_targets(markdown: &str) -> BTreeSet<String> {
                     cell.push_str(&text);
                 }
             }
-            Event::Start(Tag::Link { dest_url, .. }) if is_index_table => {
+            Event::Start(Tag::TableRow) if is_index_table => body_cell_index = 0,
+            Event::Start(Tag::TableCell) if is_index_table && !in_head => {
+                body_cell_index += 1;
+            }
+            Event::Start(Tag::Link { dest_url, .. })
+                if is_index_table && !in_head && body_cell_index == 1 =>
+            {
                 let target = dest_url.split('#').next().unwrap_or_default();
                 targets.insert(target.to_owned());
             }
@@ -123,6 +131,7 @@ fn oracle_counts_only_rendered_links_inside_the_document_table() {
         |---|---|\n\
         | [real.md](real.md) | a genuine row |\n\
         | [fragment.md](fragment.md#section) | anchor stripped |\n\
+        | [real.md](real.md) | see also [wrong-column.md](wrong-column.md), which has no row |\n\
         | malformed ](broken.md) cell without an opening bracket |\n\n\
         Prose with a loose [prose.md](prose.md) link.\n\n\
         | standalone pipe line with [loose.md](loose.md) outside any table |\n";
@@ -134,6 +143,6 @@ fn oracle_counts_only_rendered_links_inside_the_document_table() {
         .collect();
     assert_eq!(
         targets, expected,
-        "only rendered links in the Document table count"
+        "only rendered links in the Document column count"
     );
 }
