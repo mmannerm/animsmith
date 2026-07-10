@@ -156,6 +156,12 @@ done
 # page except the index itself must be linked from an index-table row (a
 # `| … [](name.md) …` line — a link elsewhere in the file does not
 # count), so adding a doc page means adding exactly one table row.
+# Forward constraint for a generated docs site (GitHub Pages/mdBook):
+# its navigation (e.g. SUMMARY.md) must be derived from this index table
+# or a shared manifest — never a second hand-maintained routing list.
+# Note the index also rows pages outside docs/ (../README.md,
+# ../examples/README.md); a site build must decide link-vs-include for
+# those rather than assume the set is docs/*.md.
 for doc in docs/*.md; do
   validate_markdown_links "$doc"
   doc_name="$(basename "$doc")"
