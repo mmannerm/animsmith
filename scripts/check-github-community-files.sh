@@ -154,22 +154,68 @@ done
 
 # The top-level docs pages are one set: every page gets link validation,
 # and every page except the index itself must be linked from at least one
-# index-table row (a `| … [](name.md) …` line — a link elsewhere in the
-# file does not count). Nested dirs (research/, schemas/) are outside the
-# indexed set, and preventing a second routing list elsewhere is review
-# policy, not something this oracle can prove.
+# row of the Document index table — the contiguous pipe-line block that
+# starts at the first `| Document |` header. Pipe-lines elsewhere in the
+# file (fenced examples, standalone lines) do not count. Nested dirs
+# (research/, schemas/) are outside the indexed set, and preventing a
+# second routing list elsewhere is review policy, not something this
+# oracle can prove.
 # Forward constraint for a generated docs site (GitHub Pages/mdBook):
 # its navigation (e.g. SUMMARY.md) must be derived from this index table
 # or a shared manifest — never a second hand-maintained routing list.
 # Note the index also rows pages outside docs/ (../README.md,
 # ../examples/README.md); a site build must decide link-vs-include for
 # those rather than assume the set is docs/*.md.
+docs_index_rows() {
+  local index_file="$1"
+
+  awk '
+    !in_table && /^\| Document \|/ { in_table = 1 }
+    in_table && /^\|/ { print; next }
+    in_table { exit }
+  ' "$index_file"
+}
+
+require_index_row() {
+  local index_file="$1"
+  local doc_name="$2"
+
+  docs_index_rows "$index_file" | grep -Fq "](${doc_name})" \
+    || fail "$index_file must carry an index-table row linking $doc_name"
+}
+
+# Oracle self-test: pipe-lines outside the Document table — fenced
+# examples or standalone lines — must not satisfy the row check.
+self_test_index="$(mktemp)"
+cat > "$self_test_index" <<'SELFTEST'
+# Documentation
+
+| Document | Use it to… |
+|---|---|
+| [real.md](real.md) | A genuine index-table row. |
+
+Some prose with a loose [prose.md](prose.md) link.
+
+```text
+| [fenced.md](fenced.md) | A fake row inside a code fence. |
+```
+
+| standalone pipe line with [loose.md](loose.md) outside the table |
+SELFTEST
+docs_index_rows "$self_test_index" | grep -Fq "](real.md)" \
+  || fail "index-row oracle self-test: a genuine table row must count"
+for fake in prose.md fenced.md loose.md; do
+  if docs_index_rows "$self_test_index" | grep -Fq "](${fake})"; then
+    fail "index-row oracle self-test: ${fake} link outside the table must not count"
+  fi
+done
+rm -f "$self_test_index"
+
 for doc in docs/*.md; do
   validate_markdown_links "$doc"
   doc_name="$(basename "$doc")"
   [ "$doc_name" = "README.md" ] && continue
-  grep -F "]($doc_name)" docs/README.md | grep -Eq '^\|' \
-    || fail "docs/README.md must carry an index-table row linking $doc_name"
+  require_index_row docs/README.md "$doc_name"
 done
 for path in \
   crates/animsmith-core/README.md \
