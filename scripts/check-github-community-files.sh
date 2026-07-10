@@ -174,7 +174,7 @@ docs_index_rows() {
   local index_file="$1"
 
   awk '
-    /^```/ { in_fence = !in_fence; next }
+    /^(```|~~~)/ { in_fence = !in_fence; next }
     in_fence { next }
     !in_table && /^\| Document \|/ {
       if ((getline delim) > 0 && delim ~ /^\|[-: |]+\|$/) { in_table = 1 }
