@@ -21,15 +21,6 @@ const TINY_JPEG: &[u8] = &[
 ];
 
 #[cfg(feature = "fbx")]
-fn mesh_count(glb: &std::path::Path) -> usize {
-    let bytes = std::fs::read(glb).unwrap();
-    gltf::Gltf::from_slice(&bytes)
-        .expect("valid glTF")
-        .meshes()
-        .count()
-}
-
-#[cfg(feature = "fbx")]
 fn scene_asset_counts(glb: &std::path::Path) -> (usize, usize, usize, usize, usize) {
     let bytes = std::fs::read(glb).unwrap();
     let gltf = gltf::Gltf::from_slice(&bytes).expect("valid glTF");
@@ -207,7 +198,11 @@ fn cli_convert_gltf_input_carries_and_strips_geometry() {
 
     let input = dir.path().join("in.glb");
     write_textured_scene_glb(&input);
-    assert_eq!(mesh_count(&input), 1, "input GLB carries a mesh");
+    assert_eq!(
+        scene_asset_counts(&input),
+        (1, 1, 2, 2, 2),
+        "input GLB carries the complete scene-asset fixture"
+    );
 
     let convert = |out: &std::path::Path, animation_only: bool| {
         let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_animsmith"));
@@ -223,9 +218,9 @@ fn cli_convert_gltf_input_carries_and_strips_geometry() {
     let carried = dir.path().join("carried.glb");
     convert(&carried, false);
     assert_eq!(
-        mesh_count(&carried),
-        1,
-        "convert carries glTF-input geometry through (#16)"
+        scene_asset_counts(&carried),
+        (1, 1, 2, 2, 2),
+        "convert carries the complete glTF scene-asset set through"
     );
     assert_embedded_base_color_textures(&carried);
     // Not just *a* mesh — the actual fixture triangle survived.
@@ -238,11 +233,6 @@ fn cli_convert_gltf_input_carries_and_strips_geometry() {
     // `--animation-only` still drops it, uniformly across formats.
     let stripped = dir.path().join("stripped.glb");
     convert(&stripped, true);
-    assert_eq!(
-        mesh_count(&stripped),
-        0,
-        "convert --animation-only strips geometry"
-    );
     assert_eq!(
         scene_asset_counts(&stripped),
         (0, 0, 0, 0, 0),
