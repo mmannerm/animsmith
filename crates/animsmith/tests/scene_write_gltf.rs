@@ -99,7 +99,7 @@ fn assert_embedded_base_color_textures(glb: &std::path::Path) -> usize {
 
 /// Author a minimal animated and textured GLB (one unindexed triangle) to
 /// feed the public scene-writing commands as input.
-fn write_geometry_glb(path: &std::path::Path) {
+fn write_textured_scene_glb(path: &std::path::Path) {
     let doc = Document {
         skeleton: Skeleton {
             bones: vec![Bone {
@@ -175,7 +175,7 @@ fn cli_transform_preserves_embedded_base_color_textures() {
     let dir = tempfile::tempdir().unwrap();
     let input = dir.path().join("textured.glb");
     let output = dir.path().join("transformed.glb");
-    write_geometry_glb(&input);
+    write_textured_scene_glb(&input);
 
     let status = std::process::Command::new(env!("CARGO_BIN_EXE_animsmith"))
         .arg("transform")
@@ -197,7 +197,7 @@ fn cli_convert_gltf_input_carries_and_strips_geometry() {
     let dir = tempfile::tempdir().unwrap();
 
     let input = dir.path().join("in.glb");
-    write_geometry_glb(&input);
+    write_textured_scene_glb(&input);
     assert_eq!(mesh_count(&input), 1, "input GLB carries a mesh");
 
     let convert = |out: &std::path::Path, animation_only: bool| {
