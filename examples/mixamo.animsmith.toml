@@ -5,9 +5,12 @@
 #
 # The clip name is the FBX take name — Mixamo exports call the take
 # "mixamo.com"; check `animsmith inspect` output and adjust if yours
-# differs. No third-party bytes are committed to this repo (see the
-# asset policy in examples/README.md), so this contract is smoke-tested
-# against a procedurally generated mixamorig-named rig in
+# differs. Every key is documented in the configuration reference:
+# https://github.com/mmannerm/animsmith/blob/main/README.md#configuration
+#
+# No third-party bytes are committed to this repo (see the asset policy
+# in examples/README.md), so this contract is smoke-tested against a
+# procedurally generated mixamorig-named rig in
 # crates/animsmith/tests/mixamo_tutorial.rs.
 
 [rig]

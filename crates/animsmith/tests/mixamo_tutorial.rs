@@ -14,7 +14,9 @@
 
 use animsmith_core::fixtures::{WALK_STRIDE, WalkBones, walk_doc};
 use animsmith_core::glam::Vec3;
-use animsmith_core::model::{Document, Interpolation, Property, Track, TrackValues};
+use animsmith_core::model::{
+    Bone, Document, Interpolation, Property, Track, TrackValues, Transform,
+};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -42,10 +44,37 @@ fn write_doc(dir: &Path, name: &str, doc: &Document) -> String {
     path.to_str().expect("utf-8 path").to_owned()
 }
 
+/// Append the rest of Mixamo's role-bearing bones as static children,
+/// so the stand-in resolves the same nine roles as a real download.
+/// Spine, head, toes, and hands carry no tracks; they ride the animated
+/// bones and change no walk metric.
+fn add_static_mixamo_bones(doc: &mut Document) {
+    let statics: [(&str, usize, Vec3); 6] = [
+        ("mixamorig:Spine", 0, Vec3::new(0.0, 0.3, 0.0)),
+        ("mixamorig:Head", 3, Vec3::new(0.0, 0.4, 0.0)),
+        ("mixamorig:LeftToeBase", 1, Vec3::new(0.0, -0.05, 0.15)),
+        ("mixamorig:RightToeBase", 2, Vec3::new(0.0, -0.05, 0.15)),
+        ("mixamorig:LeftHand", 3, Vec3::new(0.5, 0.1, 0.0)),
+        ("mixamorig:RightHand", 3, Vec3::new(-0.5, 0.1, 0.0)),
+    ];
+    for (name, parent, translation) in statics {
+        doc.skeleton.bones.push(Bone {
+            name: name.into(),
+            parent: Some(parent),
+            rest: Transform {
+                translation,
+                ..Transform::IDENTITY
+            },
+            inverse_bind: None,
+        });
+    }
+}
+
 /// Write a mixamorig-named walk covering `periods` cycles into `dir`.
 /// 1.0 closes the loop exactly; 0.75 pops the seam.
 fn write_walk(dir: &Path, name: &str, periods: f64) -> String {
-    let doc = walk_doc(&MIXAMO_BONES, MIXAMO_TAKE, periods, WALK_STRIDE, f64::sin);
+    let mut doc = walk_doc(&MIXAMO_BONES, MIXAMO_TAKE, periods, WALK_STRIDE, f64::sin);
+    add_static_mixamo_bones(&mut doc);
     write_doc(dir, name, &doc)
 }
 
@@ -54,6 +83,7 @@ fn write_walk(dir: &Path, name: &str, periods: f64) -> String {
 /// rig has no root bone for it to live on).
 fn write_traveling_walk(dir: &Path, name: &str, travel_m: f32) -> String {
     let mut doc = walk_doc(&MIXAMO_BONES, MIXAMO_TAKE, 1.0, WALK_STRIDE, f64::sin);
+    add_static_mixamo_bones(&mut doc);
     let rest = doc.skeleton.bones[0].rest.translation;
     doc.clips[0].tracks.push(Track {
         bone: 0,
@@ -103,8 +133,8 @@ fn mixamo_profile_resolves_mixamorig_names() {
     let (code, out) = run(&["inspect", &walk]);
     assert_eq!(code, Some(0), "inspect exits 0");
     assert!(
-        out.contains("rig profile: mixamo"),
-        "inspect detects the mixamo profile: {out}"
+        out.contains("rig profile: mixamo (9 roles)"),
+        "inspect resolves all nine mixamo roles: {out}"
     );
 
     // `measure --format json` reports the resolved roles the tutorial
@@ -124,6 +154,16 @@ fn mixamo_profile_resolves_mixamorig_names() {
     );
     let m = &doc["files"][0]["measurements"][MIXAMO_TAKE];
     assert_eq!(
+        m["duration_s"].as_f64(),
+        Some(1.0),
+        "one-second cycle as the transcript shows: {m}"
+    );
+    assert_eq!(
+        m["frame_count"].as_u64(),
+        Some(33),
+        "grid resolution as the transcript shows: {m}"
+    );
+    assert_eq!(
         m["speed_mps"].as_f64(),
         Some(0.0),
         "the in-place stand-in has zero hip travel: {m}"
@@ -136,6 +176,11 @@ fn mixamo_profile_resolves_mixamorig_names() {
     assert!(
         (phase - 0.75).abs() < 1e-6,
         "analytic gait phase of the walk fixture: {m}"
+    );
+    let amplitude = m["gait"]["lr_amplitude_m"].as_f64().expect("lr amplitude");
+    assert!(
+        (amplitude - 0.2).abs() < 1e-3,
+        "analytic stride amplitude of the walk fixture: {m}"
     );
 }
 
@@ -189,11 +234,17 @@ fn tutorial_mechanical_steps_are_noops_on_the_clean_walk() {
     assert!(out.contains("clean"), "mechanical checks are clean: {out}");
 
     // Step 5: `fix --dry-run` on a clean file is a no-op that exits 0 —
-    // the tutorial's "safe to run unconditionally" claim.
+    // the tutorial's "safe to run unconditionally" claim, with exactly
+    // one summary line per default repair (quat-norm, quat-flip), as
+    // the transcript shows.
     let (code, out) = run(&["fix", "--dry-run", &clean]);
     assert_eq!(code, Some(0), "no pending repairs exits 0");
-    assert!(
-        out.contains("0 key(s) would be fixed") && out.contains("no output written"),
-        "dry-run reports the no-op without writing: {out}"
+    let noop_lines = out
+        .lines()
+        .filter(|l| *l == "0 key(s) would be fixed across 0 track(s) -> no output written")
+        .count();
+    assert_eq!(
+        noop_lines, 2,
+        "one no-op summary line per default repair: {out}"
     );
 }

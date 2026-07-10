@@ -11,21 +11,26 @@ a real marketplace rig you download yourself. Each step links into the
 [game-ready clips guide](game-ready-clips.md) for *why* it matters
 rather than re-explaining.
 
-**Assets and transcripts.** This repo commits no third-party bytes and
-ships no download scripts (see the
-[asset policy](../examples/README.md#asset-policy)), so the command
-output shown here comes from the repo's procedurally generated
-stand-in — a minimal rig with Mixamo's `mixamorig:*` bone names and
-its `mixamo.com` take name. Your download has a full humanoid
-skeleton, so expect more bones and more findings, not different
-behavior. The profile resolution and the final contract config are
-smoke-tested against that stand-in in
-[`crates/animsmith/tests/mixamo_tutorial.rs`](../crates/animsmith/tests/mixamo_tutorial.rs);
-the download- and FBX-specific steps are docs-only because testing
-them would require committing Mixamo bytes.
+**About the transcripts.** The command output in this tutorial is
+real, captured from a small generated rig that carries the same
+`mixamorig:*` bone names, the same nine profile roles, and the same
+`mixamo.com` take name as a real download (this repo does not ship
+Mixamo's own files — see the
+[asset policy](../examples/README.md#asset-policy)). Your download
+will show many more bones — fingers, twist joints — and possibly more
+findings; the roles, the commands, and the behavior are the same.
 
-**Build requirements.** Step 2 (`convert`) needs the default build —
-the `fbx` feature is not in `--no-default-features` binaries (see
+<!-- Contributor note, deliberately outside the rendered prose: the
+stand-in transcripts and the committed contract are drift-guarded by
+crates/animsmith/tests/mixamo_tutorial.rs. The download- and
+FBX-specific steps (1-2) are docs-only because testing them would
+require committing Mixamo bytes, which the asset policy forbids -
+recorded here per issue 68's smoke-test-or-record requirement. -->
+
+**Build requirements.** `convert` (step 2) ships in the default
+install — it sits behind the `fbx` feature, which is enabled unless
+you opted out. If you installed with `--no-default-features`, use the
+default build for this one step (see
 [feature flags](cli.md#feature-flags)). Everything from step 3 on
 works in any build.
 
@@ -49,8 +54,8 @@ keep them out of public repos and do not commit them here.
 4. Download as **FBX Binary** with skin. The skin is optional for
    linting, but keeping it lets `report` render the mesh later.
 
-Keep the downloaded FBX as your immutable raw source and treat every
-animsmith output as a derived artifact — the
+We recommend keeping the downloaded FBX as your immutable raw source
+and treating every animsmith output as a derived artifact — the
 [pipeline scenario guide](pipeline-scenarios.md) explains that
 raw-vs-generated split.
 
@@ -65,28 +70,44 @@ animsmith lints FBX directly, so conversion is not required to run
 checks — but glTF/GLB is the native format for the rest of the
 pipeline (`fix`, `transform`, and `diff` operate on glTF), and a
 convert-once step gives later commands a stable baseline to compare
-against. Bone and clip counts vary by character; the numbers above are
-illustrative.
+against. A conversion that succeeds proves the container is
+well-formed, not that the motion is usable —
+[a valid file is not a usable clip](game-ready-clips.md#a-valid-file-is-not-a-usable-clip)
+— which is what steps 4–6 judge. Bone and clip counts vary by
+character; the numbers above are illustrative.
 
 ## 3. Inspect the rig
 
 ```console
 $ animsmith inspect walking.glb
 walking.glb
-rig profile: mixamo (3 roles)
+rig profile: mixamo (9 roles)
   hips         -> mixamorig:Hips
+  spine        -> mixamorig:Spine
+  head         -> mixamorig:Head
   left_foot    -> mixamorig:LeftFoot
   right_foot   -> mixamorig:RightFoot
-skeleton: 3 bones
+  left_toe     -> mixamorig:LeftToeBase
+  right_toe    -> mixamorig:RightToeBase
+  left_hand    -> mixamorig:LeftHand
+  right_hand   -> mixamorig:RightHand
+skeleton: 9 bones
   mixamorig:Hips
     mixamorig:LeftFoot
+      mixamorig:LeftToeBase
     mixamorig:RightFoot
+      mixamorig:RightToeBase
+    mixamorig:Spine
+      mixamorig:Head
+      mixamorig:LeftHand
+      mixamorig:RightHand
 clips: 1
   mixamo.com: 1.000s, 2 tracks, 33 keys max
 ```
 
-(Output from the stand-in rig — a real download resolves more roles:
-spine, head, toes, and hands too.)
+These are the same nine roles a real download resolves; your skeleton
+list will just be longer (~65 bones — the extras are fingers, twist
+joints, and other bones that carry no role).
 
 Two things to read off this output:
 
@@ -140,9 +161,11 @@ $ animsmith fix walking.glb --dry-run
 ```
 
 (One summary line per default repair — `quat-norm`, then `quat-flip`.)
-`fix` applies only repairs that are provably lossless (`quat-norm`,
-`quat-flip`), so it is safe to run unconditionally; on a clean export
-it is a no-op, as here. When a re-export does pick up defects:
+`fix` applies only repairs that are provably lossless: `quat-norm` and
+`quat-flip`, the representation defects behind
+[the pose flickers, spins, or explodes](game-ready-clips.md#the-pose-flickers-spins-or-explodes).
+That makes it safe to run unconditionally; on a clean export it is a
+no-op, as here. When a re-export does pick up defects:
 
 ```console
 $ animsmith fix walking.glb -o walking-fixed.glb
@@ -171,7 +194,7 @@ $ animsmith measure --format json walking.glb
     {
       "path": "walking.glb",
       "rig": { "profile": "mixamo", "resolved_roles": {
-        "hips": "mixamorig:Hips",
+        "hips": "mixamorig:Hips", "spine": "mixamorig:Spine",
         "left_foot": "mixamorig:LeftFoot", "right_foot": "mixamorig:RightFoot" } },
       "measurements": {
         "mixamo.com": {
@@ -186,7 +209,8 @@ $ animsmith measure --format json walking.glb
 }
 ```
 
-(Abridged, from the stand-in rig.) The numbers become the contract:
+(Abridged — all nine roles resolve; head, toes, and hands are elided
+here.) The numbers become the contract:
 `loop_seam_ratio` near zero says the cycle closes, `speed_mps` of zero
 confirms the In Place download, and the gait numbers seed a
 [blend-ring group](game-ready-clips.md#feet-skate-when-clips-blend)
@@ -209,9 +233,11 @@ This is the committed
 [`examples/mixamo.animsmith.toml`](../examples/mixamo.animsmith.toml)
 — it pins the profile rather than trusting auto-detection, declares
 the clip a loop (arming `loop-seam`) and in-place (arming `in-place`,
-judged on the Hips track per the callout above). For a root-motion
-download, swap the in-place declaration for a speed pin, using the
-`speed_mps` that `measure` reported as the starting value:
+judged on the Hips track per the callout above). Every key, glob
+pattern, and severity override is documented in the
+[configuration reference](../README.md#configuration). For a
+root-motion download, swap the in-place declaration for a speed pin,
+using the `speed_mps` that `measure` reported as the starting value:
 
 ```toml
 [clips."mixamo.com"]
