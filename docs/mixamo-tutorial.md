@@ -136,8 +136,10 @@ move.
 ```console
 $ animsmith fix walking.glb --dry-run
 0 key(s) would be fixed across 0 track(s) -> no output written
+0 key(s) would be fixed across 0 track(s) -> no output written
 ```
 
+(One summary line per default repair — `quat-norm`, then `quat-flip`.)
 `fix` applies only repairs that are provably lossless (`quat-norm`,
 `quat-flip`), so it is safe to run unconditionally; on a clean export
 it is a no-op, as here. When a re-export does pick up defects:
