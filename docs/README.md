@@ -16,4 +16,6 @@ re-listing each other.
 | [README](../README.md) | Install and quickstart, plus the check and configuration reference. |
 | [DESIGN.md](../DESIGN.md) | Follow the architecture, check-catalog rationale, and roadmap. |
 | [CONTRIBUTING.md](../CONTRIBUTING.md) / [DEVELOPMENT.md](../DEVELOPMENT.md) | Work on animsmith itself — contribution flow and development setup. |
+| [RELEASING.md](../RELEASING.md) | Cut a release — the release-plz flow, the manual 0.1.0 bootstrap, and the published-doc-link policy. |
+| [SUPPORT.md](../SUPPORT.md) / [SECURITY.md](../SECURITY.md) | Get help, file a bug, or report a vulnerability privately. |
 | [research/](research/game-ready-animation-clips.md) | Read the dated research notes that inform the roadmap. |
