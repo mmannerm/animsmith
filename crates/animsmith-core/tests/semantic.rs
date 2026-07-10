@@ -83,6 +83,20 @@ fn lint_unresolved(doc: &Document, config: &Config) -> Vec<animsmith_core::Findi
     run_checks(&ctx, &all_checks())
 }
 
+fn assert_loop_seam_is_skipped_for_unresolved_roles(findings: &[animsmith_core::Finding]) {
+    let loop_seam: Vec<_> = findings
+        .iter()
+        .filter(|f| f.check_id == "loop-seam")
+        .collect();
+    assert_eq!(
+        loop_seam.len(),
+        1,
+        "expected unresolved-role note: {loop_seam:#?}"
+    );
+    assert_eq!(loop_seam[0].severity, Severity::Note);
+    assert!(loop_seam[0].message.contains("hips/foot"));
+}
+
 fn json_config(json: serde_json::Value) -> Config {
     serde_json::from_value(json).expect("config parses")
 }
@@ -139,7 +153,7 @@ fn clean_loop_passes_loop_seam() {
 #[test]
 fn check_ctx_does_not_resolve_declarative_rig_config() {
     let doc = walk_doc();
-    let config = json_config(serde_json::json!({
+    let inline_config = json_config(serde_json::json!({
         "rig": {
             "profile": "auto",
             "roles": {
@@ -150,19 +164,21 @@ fn check_ctx_does_not_resolve_declarative_rig_config() {
         },
         "clips": { "walk": { "loop": true } }
     }));
+    assert_loop_seam_is_skipped_for_unresolved_roles(&lint_unresolved(&doc, &inline_config));
 
-    let findings = lint_unresolved(&doc, &config);
-    let loop_seam: Vec<_> = findings
-        .iter()
-        .filter(|f| f.check_id == "loop-seam")
-        .collect();
-    assert_eq!(
-        loop_seam.len(),
-        1,
-        "expected unresolved-role note: {loop_seam:#?}"
-    );
-    assert_eq!(loop_seam[0].severity, Severity::Note);
-    assert!(loop_seam[0].message.contains("hips/foot"));
+    // `ue-mannequin` resolves this renamed walk rig when a frontend applies
+    // `Config::rig`; `CheckCtx` must still preserve the supplied empty map.
+    let mut profile_doc = doc;
+    profile_doc.skeleton.bones[1].name = "foot_l".into();
+    profile_doc.skeleton.bones[2].name = "foot_r".into();
+    let profile_config = json_config(serde_json::json!({
+        "rig": { "profile": "ue-mannequin" },
+        "clips": { "walk": { "loop": true } }
+    }));
+    assert_loop_seam_is_skipped_for_unresolved_roles(&lint_unresolved(
+        &profile_doc,
+        &profile_config,
+    ));
 }
 
 #[test]
