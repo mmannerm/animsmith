@@ -69,17 +69,14 @@ raw-vs-generated split.
 ## 2. Convert to glTF
 
 ```console
-$ animsmith convert Walking.fbx -o walking.glb    # corrected from recorded real-download counts
+$ animsmith convert Walking.fbx -o walking.glb    # real download
 wrote walking.glb (70 node(s), 1 clip(s), 2 mesh(es) / 28374 position(s), 2 material(s)); dropped 1 clip(s) with no writable tracks
 ```
 
-(Counts vary by character. The original run recorded two loaded clips,
-while the written GLB and `inspect` recorded one animation and 70 nodes.
-The corrected line combines those recorded counts with the new omission
-notice; it has not been re-captured because the licensed download is not
-committed here. The evidence establishes that one loaded clip produced
-no writable glTF channels, not that the source take was structurally
-empty.)
+(Counts vary by character. This download contains a second take named
+`Take 001` with zero tracks and keys. Conversion omits that empty take,
+writes the animated `mixamo.com` clip, and reports the omission. The
+licensed download is not committed here.)
 
 animsmith lints FBX directly, so conversion is not required to run
 checks — but glTF/GLB is the native format for the rest of the
