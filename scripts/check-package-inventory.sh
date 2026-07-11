@@ -40,6 +40,7 @@ done < <(
 publishable_crates=()
 publishable_manifests=()
 publishable_members=()
+unpublished_crates=()
 published_readmes=()
 published_doc_sources=()
 
@@ -53,6 +54,7 @@ for member in "${workspace_members[@]}"; do
   test -n "$crate" || fail "$manifest must define package.name"
 
   if grep -Eq '^[[:space:]]*publish[[:space:]]*=[[:space:]]*false' "$manifest"; then
+    unpublished_crates+=("$crate")
     continue
   fi
 
@@ -62,6 +64,32 @@ for member in "${workspace_members[@]}"; do
 done
 
 test "${#publishable_crates[@]}" -gt 0 || fail "workspace has no publishable crates"
+
+# Cargo retains versioned dev-dependencies in a published manifest. Internal
+# fixture crates that are deliberately not published must therefore be used
+# only as path-only dev-dependencies, which Cargo omits from the package.
+for manifest in "${publishable_manifests[@]}"; do
+  for unpublished_crate in "${unpublished_crates[@]}"; do
+    invalid_dependency="$(
+      awk -v dependency="$unpublished_crate" '
+        /^\[[^]]+\]$/ { section = $0 }
+        $0 ~ "^[[:space:]]*" dependency "[[:space:]]*=" {
+          is_dev = section ~ /dev-dependencies\]$/
+          has_path = $0 ~ /path[[:space:]]*=/
+          has_workspace = $0 ~ /workspace[[:space:]]*=/
+          has_version = $0 ~ /version[[:space:]]*=/
+          if (!is_dev || !has_path || has_workspace || has_version) {
+            print section ": " $0
+          }
+        }
+      ' "$manifest"
+    )"
+
+    if test -n "$invalid_dependency"; then
+      fail "$manifest must reference unpublished workspace crate $unpublished_crate only as a path-only dev-dependency: $invalid_dependency"
+    fi
+  done
+done
 
 for ((i = 0; i < ${#publishable_crates[@]}; i++)); do
   crate="${publishable_crates[$i]}"
