@@ -515,8 +515,11 @@ fn fixture_repo_valid_links_pass_and_each_mutation_fails() {
 /// discovery, or the root README — fails a fixed assertion here.
 /// Every fixture docs page carries its own named diagnostic (an
 /// implementation that merely counts a page without validating it
-/// fails), and `docs/extra.md` is an arbitrary, non-mandated name (an
-/// implementation hard-coding the well-known docs page names fails).
+/// fails), `docs/extra.md` is an arbitrary, non-mandated name (an
+/// implementation hard-coding the well-known docs page names fails),
+/// and the root README's relative link points at an existing target,
+/// so its diagnostic appears only under the absolute-only policy (an
+/// implementation validating it in relative mode fails).
 #[test]
 fn fixture_repo_enumeration_gates_mandated_members_and_missing_files() {
     let dir = tempfile::tempdir().expect("creates fixture repo");
@@ -549,6 +552,13 @@ fn fixture_repo_enumeration_gates_mandated_members_and_missing_files() {
         "# mycrate\n\nA published README links [relative](../../docs/README.md).\n",
     )
     .expect("writes crate readme");
+    // The relative target exists, so this diagnostic appears only when
+    // the root README really runs in absolute-only mode.
+    std::fs::write(
+        root.join("README.md"),
+        "# Root\n\nThe front page links [relative](docs/README.md).\n",
+    )
+    .expect("writes root readme");
 
     let (docs_pages, errors) = validate_repo(root);
     assert_eq!(docs_pages, 3, "directory listing must see all docs pages");
@@ -560,6 +570,7 @@ fn fixture_repo_enumeration_gates_mandated_members_and_missing_files() {
         "examples/README.md: links to missing local target missing-example.md",
         "crates/mycrate/README.md: published file must use absolute links, \
          found ../../docs/README.md",
+        "README.md: published file must use absolute links, found docs/README.md",
     ];
     let expected_missing = [
         "CONTRIBUTING.md",
@@ -570,7 +581,6 @@ fn fixture_repo_enumeration_gates_mandated_members_and_missing_files() {
         "CLAUDE.md",
         ".agent-instructions/shared.md",
         ".github/PULL_REQUEST_TEMPLATE.md",
-        "README.md",
     ];
     for required in expected_diagnostics {
         assert!(
