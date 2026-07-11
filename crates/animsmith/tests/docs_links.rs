@@ -104,9 +104,15 @@ fn github_slug(text: &str) -> String {
 
 /// The anchor set GitHub generates for a page's headings, including
 /// the `-1`, `-2`, … suffixes it appends to repeated headings.
+/// Deduplication follows github-slugger: a suffixed candidate that
+/// collides with an anchor already taken (e.g. a literal `Workflow 1`
+/// heading followed by duplicate `Workflow`s, or vice versa) keeps
+/// bumping the base counter until the candidate is free, so `Workflow`,
+/// `Workflow`, `Workflow 1` yields `workflow`, `workflow-1`,
+/// `workflow-1-1`.
 fn heading_anchors(markdown: &str) -> BTreeSet<String> {
     let mut anchors = BTreeSet::new();
-    let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     let mut heading_text: Option<String> = None;
 
     for event in Parser::new_ext(markdown, gfm_options()) {
@@ -114,14 +120,14 @@ fn heading_anchors(markdown: &str) -> BTreeSet<String> {
             Event::Start(Tag::Heading { .. }) => heading_text = Some(String::new()),
             Event::End(TagEnd::Heading(_)) => {
                 if let Some(text) = heading_text.take() {
-                    let slug = github_slug(&text);
-                    let repeats = seen.entry(slug.clone()).or_insert(0);
-                    anchors.insert(if *repeats == 0 {
-                        slug.clone()
-                    } else {
-                        format!("{slug}-{repeats}")
-                    });
-                    *repeats += 1;
+                    let base = github_slug(&text);
+                    let mut candidate = base.clone();
+                    while anchors.contains(&candidate) {
+                        let count = counts.entry(base.clone()).or_insert(0);
+                        *count += 1;
+                        candidate = format!("{base}-{count}");
+                    }
+                    anchors.insert(candidate);
                 }
             }
             Event::Text(text) | Event::Code(text) => {
@@ -353,6 +359,7 @@ fn heading_anchors_follow_github_slugging() {
         ## A limb is T-posed, or a bone never moves\n\n\
         ## Workflow\n\n\
         ## Workflow\n\n\
+        ## Workflow 1\n\n\
         ## speed_mps & `loop = true`\n";
 
     let expected: BTreeSet<String> = [
@@ -361,6 +368,9 @@ fn heading_anchors_follow_github_slugging() {
         "a-limb-is-t-posed-or-a-bone-never-moves",
         "workflow",
         "workflow-1",
+        // The literal `Workflow 1` heading collides with the suffixed
+        // duplicate above it; github-slugger resolves it to -1-1.
+        "workflow-1-1",
         "speed_mps--loop--true",
     ]
     .into_iter()
@@ -428,10 +438,22 @@ fn fixture_repo_valid_links_pass_and_each_mutation_fails() {
              [blob-missing]({REPO_BLOB_URL}docs/nope.md)\n\
              [tree-missing]({REPO_TREE_URL}nonexistent-dir)\n\
              [empty]()\n\n\
+             Rendered position is irrelevant — table, list, and\n\
+             blockquote links are validated too:\n\n\
+             | Broken in a table |\n\
+             | --- |\n\
+             | [table](missing-table.md) |\n\n\
+             - [list](missing-list.md)\n\n\
+             > [quote](missing-quote.md)\n\n\
              [gone]: docs/nope.md\n"
         ),
     )
     .expect("writes bad");
+    std::fs::write(
+        root.join("bad2.md"),
+        "# Bad Two\n\nAlso links [stale](docs/guide.md#missing-heading).\n",
+    )
+    .expect("writes bad2");
 
     let mut cache = BTreeMap::new();
 
@@ -452,13 +474,20 @@ fn fixture_repo_valid_links_pass_and_each_mutation_fails() {
 
     let mut errors = Vec::new();
     validate_file(root, "bad.md", false, &mut cache, &mut errors);
+    validate_file(root, "bad2.md", false, &mut cache, &mut errors);
     let expected_fragments = [
-        "anchor in docs/guide.md#missing-heading matches no heading in docs/guide.md",
+        // Every linking source is named: the same stale heading is
+        // reported once per file that links it.
+        "bad.md: anchor in docs/guide.md#missing-heading matches no heading in docs/guide.md",
+        "bad2.md: anchor in docs/guide.md#missing-heading matches no heading in docs/guide.md",
         "anchor in docs/guide.md#workflow-2 matches no heading in docs/guide.md",
         "links to missing local target docs/nope.md",
         "links to missing local target missing-multiline.md",
         "links to missing local target missing angle.md",
         "links to missing local target missing.png",
+        "links to missing local target missing-table.md",
+        "links to missing local target missing-list.md",
+        "links to missing local target missing-quote.md",
         "anchor in #nowhere matches no heading in bad.md",
         &format!("anchor in {REPO_BLOB_URL}docs/guide.md#missing-heading matches no heading"),
         &format!("links to missing repository file {REPO_BLOB_URL}docs/nope.md"),
@@ -478,32 +507,56 @@ fn fixture_repo_valid_links_pass_and_each_mutation_fails() {
     );
 }
 
-/// The enumeration wiring itself, pinned on a fixture: a new
-/// `docs/*.md` page joins the gated set by directory listing alone,
-/// and a gated file that is missing is an error, not a silent skip.
+/// The enumeration wiring itself, pinned on a fixture independently of
+/// the implementation's own lists: the members issue #173 mandates
+/// (`examples/README.md` and the `docs/*.md` pages, here the literal
+/// `docs/README.md` and `docs/game-ready-clips.md`) are gated, a crate
+/// README is discovered and held to the absolute-only policy, docs
+/// pages join by directory listing alone, and a gated file that is
+/// missing is an error, not a silent skip. Dropping any of these from
+/// the gated set fails a named assertion below, not a self-derived
+/// expectation.
 #[test]
-fn fixture_repo_enumeration_gates_new_docs_pages_and_missing_files() {
+fn fixture_repo_enumeration_gates_mandated_members_and_missing_files() {
     let dir = tempfile::tempdir().expect("creates fixture repo");
     let root = dir.path();
     std::fs::create_dir_all(root.join("docs")).expect("creates docs/");
-    std::fs::write(root.join("docs/guide.md"), "# Guide\n\nSelf-contained.\n")
-        .expect("writes guide");
+    std::fs::create_dir_all(root.join("examples")).expect("creates examples/");
+    std::fs::create_dir_all(root.join("crates/mycrate")).expect("creates crates/mycrate/");
+    std::fs::write(root.join("docs/README.md"), "# Documentation\n\nIndex.\n")
+        .expect("writes docs index");
     std::fs::write(
-        root.join("docs/extra.md"),
-        "# Extra\n\nA new page with a [broken](missing-target.md) link.\n",
+        root.join("docs/game-ready-clips.md"),
+        "# Game-ready clips\n\nA symptom links [broken](missing-symptom.md).\n",
     )
-    .expect("writes extra");
+    .expect("writes symptom guide");
+    std::fs::write(
+        root.join("examples/README.md"),
+        "# Examples\n\nA cookbook links [broken](missing-example.md).\n",
+    )
+    .expect("writes examples readme");
+    std::fs::write(
+        root.join("crates/mycrate/README.md"),
+        "# mycrate\n\nA published README links [relative](../../docs/README.md).\n",
+    )
+    .expect("writes crate readme");
 
     let (docs_pages, errors) = validate_repo(root);
     assert_eq!(docs_pages, 2, "directory listing must see both docs pages");
-    assert!(
-        errors
-            .iter()
-            .any(|e| e == "docs/extra.md: links to missing local target missing-target.md"),
-        "a new docs page must be gated without any list edit; got {errors:#?}"
-    );
+    for required in [
+        "docs/game-ready-clips.md: links to missing local target missing-symptom.md",
+        "examples/README.md: links to missing local target missing-example.md",
+        "crates/mycrate/README.md: published file must use absolute links, \
+         found ../../docs/README.md",
+    ] {
+        assert!(
+            errors.iter().any(|e| e == required),
+            "mandated gated member must be validated: {required:?}; got {errors:#?}"
+        );
+    }
     for rel in RELATIVE_LINK_FILES
         .iter()
+        .filter(|rel| **rel != "examples/README.md")
         .chain(std::iter::once(&"README.md"))
     {
         assert!(
@@ -515,7 +568,7 @@ fn fixture_repo_enumeration_gates_new_docs_pages_and_missing_files() {
     }
     assert_eq!(
         errors.len(),
-        RELATIVE_LINK_FILES.len() + 2,
-        "exactly the broken link plus the missing gated files: {errors:#?}"
+        RELATIVE_LINK_FILES.len() + 3,
+        "exactly the three member findings plus the missing gated files: {errors:#?}"
     );
 }
