@@ -21,6 +21,9 @@ allow = [
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Path-only dev-dependencies on unpublished workspace fixtures are validated
+# by scripts/check-package-inventory.sh and intentionally omit a version.
+allow-wildcard-paths = true
 highlight = "all"
 skip = [
     { crate = "winnow@0.7.15", reason = "toml 0.9 currently pulls winnow 0.7 while toml_parser pulls 1.0" },
