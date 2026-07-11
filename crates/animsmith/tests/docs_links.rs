@@ -507,15 +507,16 @@ fn fixture_repo_valid_links_pass_and_each_mutation_fails() {
     );
 }
 
-/// The enumeration wiring itself, pinned on a fixture independently of
-/// the implementation's own lists: the members issue #173 mandates
-/// (`examples/README.md` and the `docs/*.md` pages, here the literal
-/// `docs/README.md` and `docs/game-ready-clips.md`) are gated, a crate
-/// README is discovered and held to the absolute-only policy, docs
-/// pages join by directory listing alone, and a gated file that is
-/// missing is an error, not a silent skip. Dropping any of these from
-/// the gated set fails a named assertion below, not a self-derived
-/// expectation.
+/// The enumeration wiring itself, pinned on a fixture with a fully
+/// independent oracle: every expected diagnostic below is a literal
+/// string, never derived from the implementation's own lists, so
+/// dropping any member from the gated set — a community file from
+/// `RELATIVE_LINK_FILES`, the docs directory listing, the crate-README
+/// discovery, or the root README — fails a fixed assertion here.
+/// Every fixture docs page carries its own named diagnostic (an
+/// implementation that merely counts a page without validating it
+/// fails), and `docs/extra.md` is an arbitrary, non-mandated name (an
+/// implementation hard-coding the well-known docs page names fails).
 #[test]
 fn fixture_repo_enumeration_gates_mandated_members_and_missing_files() {
     let dir = tempfile::tempdir().expect("creates fixture repo");
@@ -523,13 +524,21 @@ fn fixture_repo_enumeration_gates_mandated_members_and_missing_files() {
     std::fs::create_dir_all(root.join("docs")).expect("creates docs/");
     std::fs::create_dir_all(root.join("examples")).expect("creates examples/");
     std::fs::create_dir_all(root.join("crates/mycrate")).expect("creates crates/mycrate/");
-    std::fs::write(root.join("docs/README.md"), "# Documentation\n\nIndex.\n")
-        .expect("writes docs index");
+    std::fs::write(
+        root.join("docs/README.md"),
+        "# Documentation\n\nThe index links [broken](missing-index.md).\n",
+    )
+    .expect("writes docs index");
     std::fs::write(
         root.join("docs/game-ready-clips.md"),
         "# Game-ready clips\n\nA symptom links [broken](missing-symptom.md).\n",
     )
     .expect("writes symptom guide");
+    std::fs::write(
+        root.join("docs/extra.md"),
+        "# Extra\n\nA new page links [broken](missing-extra.md).\n",
+    )
+    .expect("writes extra page");
     std::fs::write(
         root.join("examples/README.md"),
         "# Examples\n\nA cookbook links [broken](missing-example.md).\n",
@@ -542,23 +551,34 @@ fn fixture_repo_enumeration_gates_mandated_members_and_missing_files() {
     .expect("writes crate readme");
 
     let (docs_pages, errors) = validate_repo(root);
-    assert_eq!(docs_pages, 2, "directory listing must see both docs pages");
-    for required in [
+    assert_eq!(docs_pages, 3, "directory listing must see all docs pages");
+
+    let expected_diagnostics = [
+        "docs/README.md: links to missing local target missing-index.md",
         "docs/game-ready-clips.md: links to missing local target missing-symptom.md",
+        "docs/extra.md: links to missing local target missing-extra.md",
         "examples/README.md: links to missing local target missing-example.md",
         "crates/mycrate/README.md: published file must use absolute links, \
          found ../../docs/README.md",
-    ] {
+    ];
+    let expected_missing = [
+        "CONTRIBUTING.md",
+        "DEVELOPMENT.md",
+        "SUPPORT.md",
+        "SECURITY.md",
+        "AGENTS.md",
+        "CLAUDE.md",
+        ".agent-instructions/shared.md",
+        ".github/PULL_REQUEST_TEMPLATE.md",
+        "README.md",
+    ];
+    for required in expected_diagnostics {
         assert!(
             errors.iter().any(|e| e == required),
             "mandated gated member must be validated: {required:?}; got {errors:#?}"
         );
     }
-    for rel in RELATIVE_LINK_FILES
-        .iter()
-        .filter(|rel| **rel != "examples/README.md")
-        .chain(std::iter::once(&"README.md"))
-    {
+    for rel in expected_missing {
         assert!(
             errors
                 .iter()
@@ -568,7 +588,7 @@ fn fixture_repo_enumeration_gates_mandated_members_and_missing_files() {
     }
     assert_eq!(
         errors.len(),
-        RELATIVE_LINK_FILES.len() + 3,
-        "exactly the three member findings plus the missing gated files: {errors:#?}"
+        expected_diagnostics.len() + expected_missing.len(),
+        "exactly the member diagnostics plus the missing gated files: {errors:#?}"
     );
 }
