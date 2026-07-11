@@ -197,8 +197,18 @@ fn cli_convert_carries_and_strips_geometry() {
         if animation_only {
             cmd.arg("--animation-only");
         }
-        let status = cmd.status().expect("runs animsmith");
-        assert!(status.success(), "convert exited {status}");
+        let output = cmd.output().expect("runs animsmith");
+        assert!(
+            output.status.success(),
+            "convert exited {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr),
+        );
+        let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
+        assert!(
+            !stdout.contains("dropped"),
+            "a fully serialized document must not report dropped clips: {stdout}"
+        );
     };
 
     let carried = dir.path().join("carried.glb");
@@ -224,10 +234,14 @@ fn cli_convert_summary_reports_written_artifact_and_dropped_empty_take() {
     let dir = unique_temp_dir("cli-convert-summary");
     let fbx = write_fixture_with_empty_take(dir.path());
     let source = animsmith_fbx::load(&fbx).expect("FBX with empty take loads");
-    assert_eq!(source.clips.len(), 2, "fixture has two loaded takes");
-    assert!(
-        source.clips.iter().any(|clip| clip.tracks.is_empty()),
-        "fixture has one empty take"
+    assert_eq!(
+        source
+            .clips
+            .iter()
+            .map(|clip| (clip.name.as_str(), clip.tracks.is_empty()))
+            .collect::<Vec<_>>(),
+        vec![("take", false), ("empty", true)],
+        "the added empty take is distinct from the animated take"
     );
 
     let out = dir.path().join("converted.glb");
@@ -241,15 +255,44 @@ fn cli_convert_summary_reports_written_artifact_and_dropped_empty_take() {
     assert!(output.status.success(), "convert exited {}", output.status);
 
     let written = animsmith_gltf::load(&out).expect("converted GLB loads");
-    assert_eq!(written.clips.len(), 1, "empty take is not serialized");
+    assert_eq!(
+        (
+            source
+                .clips
+                .iter()
+                .map(|clip| clip.name.as_str())
+                .collect::<Vec<_>>(),
+            written
+                .clips
+                .iter()
+                .map(|clip| clip.name.as_str())
+                .collect::<Vec<_>>(),
+        ),
+        (vec!["take", "empty"], vec!["take"]),
+        "the empty take is the source clip omitted from the artifact"
+    );
+    let written_corners: usize = written
+        .assets
+        .meshes
+        .iter()
+        .flat_map(|mesh| mesh.primitives.iter())
+        .map(|primitive| primitive.positions.len())
+        .sum();
+    let dropped_clips = source.clips.len() - written.clips.len();
     let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
     assert_eq!(
         stdout,
         format!(
-            "wrote {} ({} bones, 1 clip(s), 1 mesh(es) / 3 corners, 0 material(s)); dropped 1 clip(s) with no writable tracks\n",
+            "wrote {} ({} bones, {} clip(s), {} mesh(es) / {} corners, {} material(s)); dropped {} clip(s) with no writable tracks\n",
             out.display(),
             written.skeleton.bones.len(),
+            written.clips.len(),
+            written.assets.meshes.len(),
+            written_corners,
+            written.assets.materials.len(),
+            dropped_clips,
         ),
+        "the CLI summary matches the written artifact"
     );
 }
 

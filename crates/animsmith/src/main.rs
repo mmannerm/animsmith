@@ -776,30 +776,22 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             if animation_only {
                 doc.assets = animsmith_core::model::SceneAssets::default();
             }
-            animsmith_gltf::write::write(&doc, &output).map_err(|e| e.to_string())?;
-            // Report the artifact that was actually serialized, rather than
-            // the loader-facing document. The writer omits clips with no
-            // writable channels and can add mesh-holder nodes, so source
-            // counts are not necessarily output counts.
-            let written = animsmith_gltf::load(&output)
-                .map_err(|e| format!("failed to verify {} after writing: {e}", output.display()))?;
-            let dropped_clips = doc.clips.len().saturating_sub(written.clips.len());
-            let vertices: usize = written
-                .assets
-                .meshes
-                .iter()
-                .flat_map(|m| m.primitives.iter().map(|p| p.positions.len()))
-                .sum();
+            let summary = animsmith_gltf::write::write_with_summary(&doc, &output)
+                .map_err(|e| e.to_string())?;
             print!(
-                "wrote {} ({} bones, {} clip(s), {} mesh(es) / {vertices} corners, {} material(s))",
+                "wrote {} ({} bones, {} clip(s), {} mesh(es) / {} corners, {} material(s))",
                 output.display(),
-                written.skeleton.bones.len(),
-                written.clips.len(),
-                written.assets.meshes.len(),
-                written.assets.materials.len(),
+                summary.bones,
+                summary.clips,
+                summary.meshes,
+                summary.corners,
+                summary.materials,
             );
-            if dropped_clips > 0 {
-                print!("; dropped {dropped_clips} clip(s) with no writable tracks");
+            if summary.clips_without_writable_tracks > 0 {
+                print!(
+                    "; dropped {} clip(s) with no writable tracks",
+                    summary.clips_without_writable_tracks
+                );
             }
             println!();
             Ok(ExitCode::SUCCESS)

@@ -16,6 +16,27 @@ use base64::Engine as _;
 use serde_json::{Value, json};
 use std::path::Path;
 
+/// Counts of the scene data emitted by [`write_with_summary`].
+///
+/// These values describe the generated glTF, which can differ from the input
+/// [`Document`] when an animation clip has no writable channels or a skinned
+/// mesh requires an additional holder node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WriteSummary {
+    /// Number of nodes emitted in the glTF skeleton/scene graph.
+    pub bones: usize,
+    /// Number of animations emitted.
+    pub clips: usize,
+    /// Number of meshes emitted.
+    pub meshes: usize,
+    /// Number of primitive positions emitted, reported as mesh corners by the CLI.
+    pub corners: usize,
+    /// Number of materials emitted.
+    pub materials: usize,
+    /// Number of input clips omitted because none of their tracks were writable.
+    pub clips_without_writable_tracks: usize,
+}
+
 struct BufferBuilder {
     bytes: Vec<u8>,
     views: Vec<Value>,
@@ -247,9 +268,23 @@ fn plan_glb_lengths(json_len: usize, bin_len: usize) -> Result<GlbLengths, Write
 /// the format's 4 GiB `u32` limit, and [`WriteError::Io`] when the output
 /// file cannot be written.
 pub fn write(doc: &Document, path: &Path) -> Result<(), WriteError> {
+    write_with_summary(doc, path).map(|_| ())
+}
+
+/// Serialize `doc` like [`write`] and return counts for the generated glTF.
+///
+/// The returned [`WriteSummary`] is produced from the same JSON assembly that
+/// is serialized, so callers can report output counts without reopening and
+/// reparsing the written file.
+///
+/// # Errors
+///
+/// Returns the same [`WriteError`] variants as [`write`].
+pub fn write_with_summary(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
     let assets = &doc.assets;
     let mut buffers = BufferBuilder::new();
     let mut animations: Vec<Value> = Vec::new();
+    let mut clips_without_writable_tracks = 0;
 
     for clip in &doc.clips {
         let mut samplers: Vec<Value> = Vec::new();
@@ -299,6 +334,8 @@ pub fn write(doc: &Document, path: &Path) -> Result<(), WriteError> {
                 "samplers": samplers,
                 "channels": channels,
             }));
+        } else {
+            clips_without_writable_tracks += 1;
         }
     }
 
@@ -462,6 +499,21 @@ pub fn write(doc: &Document, path: &Path) -> Result<(), WriteError> {
         }
     }
 
+    let array_len = |key: &str| root.get(key).and_then(Value::as_array).map_or(0, Vec::len);
+    let summary = WriteSummary {
+        bones: array_len("nodes"),
+        clips: array_len("animations"),
+        meshes: array_len("meshes"),
+        corners: assets
+            .meshes
+            .iter()
+            .flat_map(|mesh| mesh.primitives.iter())
+            .map(|primitive| primitive.positions.len())
+            .sum(),
+        materials: array_len("materials"),
+        clips_without_writable_tracks,
+    };
+
     let io_err = |e: std::io::Error| WriteError::Io {
         path: path.display().to_string(),
         source: e,
@@ -492,11 +544,12 @@ pub fn write(doc: &Document, path: &Path) -> Result<(), WriteError> {
             out.extend_from_slice(b"BIN\0");
             out.extend_from_slice(&bin);
         }
-        std::fs::write(path, out).map_err(io_err)
+        std::fs::write(path, out).map_err(io_err)?;
     } else {
         let text = serde_json::to_string_pretty(&root)?;
-        std::fs::write(path, text).map_err(io_err)
+        std::fs::write(path, text).map_err(io_err)?;
     }
+    Ok(summary)
 }
 
 #[cfg(test)]

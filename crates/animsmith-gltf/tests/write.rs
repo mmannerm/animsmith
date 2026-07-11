@@ -59,8 +59,27 @@ fn assert_round_trip(extension: &str) {
     let doc = synthetic_doc();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(format!("roundtrip.{extension}"));
-    animsmith_gltf::write::write(&doc, &path).expect("writes");
+    let summary = animsmith_gltf::write::write_with_summary(&doc, &path).expect("writes");
     let loaded = animsmith_gltf::load(&path).expect("reloads");
+
+    assert_eq!(
+        summary,
+        animsmith_gltf::write::WriteSummary {
+            bones: loaded.skeleton.bones.len(),
+            clips: loaded.clips.len(),
+            meshes: loaded.assets.meshes.len(),
+            corners: loaded
+                .assets
+                .meshes
+                .iter()
+                .flat_map(|mesh| mesh.primitives.iter())
+                .map(|primitive| primitive.positions.len())
+                .sum(),
+            materials: loaded.assets.materials.len(),
+            clips_without_writable_tracks: 0,
+        },
+        "write summary matches the {extension} artifact"
+    );
 
     assert_eq!(loaded.skeleton.bones.len(), 2);
     assert_eq!(loaded.skeleton.bones[1].name, "spine");
@@ -104,6 +123,35 @@ fn glb_round_trip() {
 #[test]
 fn gltf_round_trip() {
     assert_round_trip("gltf");
+}
+
+#[test]
+fn write_summary_counts_each_clip_without_writable_tracks() {
+    let mut doc = synthetic_doc();
+    doc.clips.extend(["empty-a", "empty-b"].map(|name| Clip {
+        name: name.into(),
+        duration_s: 0.0,
+        tracks: vec![],
+    }));
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("omitted-empty-clips.glb");
+
+    let summary = animsmith_gltf::write::write_with_summary(&doc, &path).expect("writes");
+    let loaded = animsmith_gltf::load(&path).expect("reloads");
+
+    assert_eq!(
+        (
+            summary.clips,
+            summary.clips_without_writable_tracks,
+            loaded
+                .clips
+                .iter()
+                .map(|clip| clip.name.as_str())
+                .collect::<Vec<_>>(),
+        ),
+        (1, 2, vec!["sway"]),
+        "two empty source clips are omitted and the emitted clip is preserved"
+    );
 }
 
 /// Collect the 4-byte chunk-type tags of a GLB, skipping the 12-byte

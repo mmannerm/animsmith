@@ -292,8 +292,34 @@ fn cli_convert_gltf_input_carries_and_strips_geometry() {
         if animation_only {
             cmd.arg("--animation-only");
         }
-        let status = cmd.status().expect("runs animsmith");
-        assert!(status.success(), "convert exited {status}");
+        let output = cmd.output().expect("runs animsmith");
+        assert!(
+            output.status.success(),
+            "convert exited {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr),
+        );
+        let written = animsmith_gltf::load(out).expect("loads converted output");
+        let corners: usize = written
+            .assets
+            .meshes
+            .iter()
+            .flat_map(|mesh| mesh.primitives.iter())
+            .map(|primitive| primitive.positions.len())
+            .sum();
+        assert_eq!(
+            String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+            format!(
+                "wrote {} ({} bones, {} clip(s), {} mesh(es) / {} corners, {} material(s))\n",
+                out.display(),
+                written.skeleton.bones.len(),
+                written.clips.len(),
+                written.assets.meshes.len(),
+                corners,
+                written.assets.materials.len(),
+            ),
+            "convert summary matches the written artifact"
+        );
     };
 
     // Default: glTF geometry now flows through the loader into the output.
