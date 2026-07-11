@@ -982,29 +982,3 @@ fn inspect(doc: &Document, roles: &ResolvedRoles) {
         );
     }
 }
-
-#[cfg(test)]
-mod write_summary_tests {
-    use super::format_write_summary;
-    use animsmith_core::model::Document;
-    use std::path::Path;
-
-    #[test]
-    fn formatter_uses_every_writer_count_and_general_omission_count() {
-        let dir = tempfile::tempdir().expect("creates temp dir");
-        let mut summary =
-            animsmith_gltf::write::write(&Document::default(), &dir.path().join("empty.glb"))
-                .expect("writes empty document");
-        summary.nodes = 11;
-        summary.animations = 7;
-        summary.meshes = 5;
-        summary.primitive_positions = 13;
-        summary.materials = 17;
-        summary.clips_without_writable_tracks = 3;
-
-        assert_eq!(
-            format_write_summary(Path::new("artifact.glb"), &summary),
-            "wrote artifact.glb (11 node(s), 7 clip(s), 5 mesh(es) / 13 position(s), 17 material(s)); dropped 3 clip(s) with no writable tracks"
-        );
-    }
-}

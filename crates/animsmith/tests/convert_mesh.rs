@@ -307,20 +307,47 @@ fn cli_transform_preserves_geometry() {
 
     // A hold-extend is a real (non-no-op) transform; the geometry must
     // survive it.
-    let status = std::process::Command::new(env!("CARGO_BIN_EXE_animsmith"))
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_animsmith"))
         .arg("transform")
         .arg(&fbx)
         .arg("-o")
         .arg(&out)
         .arg("--hold-extend")
         .arg("0.25")
-        .status()
+        .output()
         .expect("runs animsmith");
-    assert!(status.success(), "transform exited {status}");
+    assert!(
+        output.status.success(),
+        "transform exited {}: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
 
-    let meshes = mesh_count(&out);
-    assert!(meshes > 0, "transform carries geometry to its output");
+    let written = animsmith_gltf::load(&out).expect("loads transformed GLB");
+    assert!(
+        !written.assets.meshes.is_empty(),
+        "transform carries geometry to its output"
+    );
+    let positions = written
+        .assets
+        .meshes
+        .iter()
+        .flat_map(|mesh| mesh.primitives.iter())
+        .map(|primitive| primitive.positions.len())
+        .sum::<usize>();
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        format!(
+            "  hold-extended 'take' by 0.25s\nwrote {} ({} node(s), {} clip(s), {} mesh(es) / {} position(s), {} material(s))\n",
+            out.display(),
+            written.skeleton.bones.len(),
+            written.clips.len(),
+            written.assets.meshes.len(),
+            positions,
+            written.assets.materials.len(),
+        ),
+        "transform summary matches its written artifact"
+    );
     let baseline = baseline_meshes(&fbx, &dir.path().join("baseline.glb"));
-    let transformed_meshes = loaded_meshes(&out);
-    assert_meshes_match(&baseline, &transformed_meshes);
+    assert_meshes_match(&baseline, &written.assets.meshes);
 }
