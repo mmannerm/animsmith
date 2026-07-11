@@ -271,7 +271,6 @@ pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
     let assets = &doc.assets;
     let mut buffers = BufferBuilder::new();
     let mut animations: Vec<Value> = Vec::new();
-    let mut clips_without_writable_tracks = 0;
 
     for clip in &doc.clips {
         let mut samplers: Vec<Value> = Vec::new();
@@ -321,8 +320,6 @@ pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
                 "samplers": samplers,
                 "channels": channels,
             }));
-        } else {
-            clips_without_writable_tracks += 1;
         }
     }
 
@@ -487,18 +484,36 @@ pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
     }
 
     let array_len = |key: &str| root.get(key).and_then(Value::as_array).map_or(0, Vec::len);
+    let primitive_positions = root
+        .get("meshes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|mesh| mesh.get("primitives").and_then(Value::as_array))
+        .flatten()
+        .filter_map(|primitive| {
+            primitive
+                .pointer("/attributes/POSITION")
+                .and_then(Value::as_u64)
+                .and_then(|index| usize::try_from(index).ok())
+        })
+        .filter_map(|index| {
+            root.get("accessors")
+                .and_then(Value::as_array)
+                .and_then(|accessors| accessors.get(index))
+                .and_then(|accessor| accessor.get("count"))
+                .and_then(Value::as_u64)
+                .and_then(|count| usize::try_from(count).ok())
+        })
+        .sum();
+    let animations = array_len("animations");
     let summary = WriteSummary {
         nodes: array_len("nodes"),
-        animations: array_len("animations"),
+        animations,
         meshes: array_len("meshes"),
-        primitive_positions: assets
-            .meshes
-            .iter()
-            .flat_map(|mesh| mesh.primitives.iter())
-            .map(|primitive| primitive.positions.len())
-            .sum(),
+        primitive_positions,
         materials: array_len("materials"),
-        clips_without_writable_tracks,
+        clips_without_writable_tracks: doc.clips.len() - animations,
     };
 
     let io_err = |e: std::io::Error| WriteError::Io {

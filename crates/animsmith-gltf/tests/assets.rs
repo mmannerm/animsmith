@@ -93,10 +93,15 @@ fn skinned_mesh_round_trips_through_gltf_parser() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("tri.glb");
     let doc = skinned_triangle();
-    animsmith_gltf::write::write(&doc, &path).expect("writes");
+    let summary = animsmith_gltf::write::write(&doc, &path).expect("writes");
 
     let bytes = std::fs::read(&path).unwrap();
     let gltf = gltf::Gltf::from_slice(&bytes).expect("valid glTF");
+    assert_eq!(
+        (summary.nodes, gltf.nodes().count()),
+        (doc.skeleton.bones.len() + 1, doc.skeleton.bones.len() + 1),
+        "summary and raw glTF include the skinned-mesh holder node"
+    );
     let blob = gltf.blob.clone().expect("BIN chunk");
     let get = |b: gltf::Buffer| -> Option<&[u8]> { Some(&blob[..b.length()]) };
 

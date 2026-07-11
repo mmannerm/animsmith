@@ -144,6 +144,16 @@ fn write_summary_counts_each_clip_without_writable_tracks() {
             values: TrackValues::Vec3s(vec![]),
         }],
     });
+    let mut mixed = doc.clips[0].clone();
+    mixed.name = "mixed".into();
+    mixed.tracks.push(Track {
+        bone: 0,
+        property: Property::Translation,
+        interpolation: Interpolation::Linear,
+        times: vec![],
+        values: TrackValues::Vec3s(vec![]),
+    });
+    doc.clips.push(mixed);
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("omitted-empty-clips.glb");
 
@@ -160,8 +170,8 @@ fn write_summary_counts_each_clip_without_writable_tracks() {
                 .map(|clip| clip.name.as_str())
                 .collect::<Vec<_>>(),
         ),
-        (1, 3, vec!["sway"]),
-        "empty clips and a non-writable track are omitted while the emitted clip is preserved"
+        (2, 3, vec!["sway", "mixed"]),
+        "empty clips are omitted while a mixed writable/non-writable clip is preserved"
     );
 }
 

@@ -777,22 +777,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 doc.assets = animsmith_core::model::SceneAssets::default();
             }
             let summary = animsmith_gltf::write::write(&doc, &output).map_err(|e| e.to_string())?;
-            print!(
-                "wrote {} ({} node(s), {} clip(s), {} mesh(es) / {} position(s), {} material(s))",
-                output.display(),
-                summary.nodes,
-                summary.animations,
-                summary.meshes,
-                summary.primitive_positions,
-                summary.materials,
-            );
-            if summary.clips_without_writable_tracks > 0 {
-                print!(
-                    "; dropped {} clip(s) with no writable tracks",
-                    summary.clips_without_writable_tracks
-                );
-            }
-            println!();
+            println!("{}", format_convert_summary(&output, &summary));
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Diff { a, b, format } => {
@@ -835,6 +820,50 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 ExitCode::SUCCESS
             })
         }
+    }
+}
+
+#[cfg(feature = "fbx")]
+fn format_convert_summary(output: &Path, summary: &animsmith_gltf::write::WriteSummary) -> String {
+    let mut text = format!(
+        "wrote {} ({} node(s), {} clip(s), {} mesh(es) / {} position(s), {} material(s))",
+        output.display(),
+        summary.nodes,
+        summary.animations,
+        summary.meshes,
+        summary.primitive_positions,
+        summary.materials,
+    );
+    if summary.clips_without_writable_tracks > 0 {
+        text.push_str(&format!(
+            "; dropped {} clip(s) with no writable tracks",
+            summary.clips_without_writable_tracks
+        ));
+    }
+    text
+}
+
+#[cfg(all(test, feature = "fbx"))]
+mod convert_summary_tests {
+    use super::format_convert_summary;
+    use animsmith_gltf::write::WriteSummary;
+    use std::path::Path;
+
+    #[test]
+    fn formatter_uses_every_writer_count_and_general_omission_count() {
+        let summary = WriteSummary {
+            nodes: 11,
+            animations: 7,
+            meshes: 5,
+            primitive_positions: 13,
+            materials: 17,
+            clips_without_writable_tracks: 3,
+        };
+
+        assert_eq!(
+            format_convert_summary(Path::new("artifact.glb"), &summary),
+            "wrote artifact.glb (11 node(s), 7 clip(s), 5 mesh(es) / 13 position(s), 17 material(s)); dropped 3 clip(s) with no writable tracks"
+        );
     }
 }
 

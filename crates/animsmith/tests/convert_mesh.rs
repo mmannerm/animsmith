@@ -5,6 +5,8 @@
 use std::path::{Path, PathBuf};
 
 const RIGGED_TRIANGLE_FBX: &str = include_str!("../../animsmith-fbx/testdata/rigged_triangle.fbx");
+const RIGGED_TRIANGLE_WITH_EMPTY_TAKE_FBX: &str =
+    include_str!("../../animsmith-fbx/testdata/rigged_triangle_empty_take.fbx");
 
 fn unique_temp_dir(name: &str) -> tempfile::TempDir {
     tempfile::Builder::new()
@@ -20,34 +22,9 @@ fn write_fixture(dir: &Path) -> PathBuf {
 }
 
 fn write_fixture_with_empty_take(dir: &Path) -> PathBuf {
-    let source = RIGGED_TRIANGLE_FBX
-        .replacen("Count: 8", "Count: 10", 1)
-        .replacen(
-            "ObjectType: \"AnimationStack\" { Count: 1 }",
-            "ObjectType: \"AnimationStack\" { Count: 2 }",
-            1,
-        )
-        .replacen(
-            "ObjectType: \"AnimationLayer\" { Count: 1 }",
-            "ObjectType: \"AnimationLayer\" { Count: 2 }",
-            1,
-        )
-        .replacen(
-            "\tAnimationLayer: 3002, \"AnimLayer::BaseLayer\", \"\" {}",
-            concat!(
-                "\tAnimationLayer: 3002, \"AnimLayer::BaseLayer\", \"\" {}\n",
-                "\tAnimationStack: 3011, \"AnimStack::empty\", \"\" {}\n",
-                "\tAnimationLayer: 3012, \"AnimLayer::EmptyLayer\", \"\" {}",
-            ),
-            1,
-        )
-        .replacen(
-            "\tC: \"OO\",3002,3001",
-            "\tC: \"OO\",3002,3001\n\tC: \"OO\",3012,3011",
-            1,
-        );
     let fbx = dir.join("rigged_triangle_with_empty_take.fbx");
-    std::fs::write(&fbx, source).expect("writes FBX fixture with empty take");
+    std::fs::write(&fbx, RIGGED_TRIANGLE_WITH_EMPTY_TAKE_FBX)
+        .expect("writes FBX fixture with empty take");
     fbx
 }
 

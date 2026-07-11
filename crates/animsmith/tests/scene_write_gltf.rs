@@ -300,6 +300,11 @@ fn cli_convert_gltf_input_carries_and_strips_geometry() {
             String::from_utf8_lossy(&output.stderr),
         );
         let written = animsmith_gltf::load(out).expect("loads converted output");
+        assert_eq!(
+            (written.assets.meshes.len(), written.assets.materials.len()),
+            if animation_only { (0, 0) } else { (1, 2) },
+            "summary fixture pins non-zero default and zero animation-only asset counts"
+        );
         let corners: usize = written
             .assets
             .meshes
