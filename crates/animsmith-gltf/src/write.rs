@@ -24,13 +24,13 @@ use std::path::Path;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WriteSummary {
     /// Number of nodes emitted in the glTF skeleton/scene graph.
-    pub bones: usize,
+    pub nodes: usize,
     /// Number of animations emitted.
-    pub clips: usize,
+    pub animations: usize,
     /// Number of meshes emitted.
     pub meshes: usize,
-    /// Number of primitive positions emitted, reported as mesh corners by the CLI.
-    pub corners: usize,
+    /// Number of primitive positions emitted.
+    pub primitive_positions: usize,
     /// Number of materials emitted.
     pub materials: usize,
     /// Number of input clips omitted because none of their tracks were writable.
@@ -488,10 +488,10 @@ pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
 
     let array_len = |key: &str| root.get(key).and_then(Value::as_array).map_or(0, Vec::len);
     let summary = WriteSummary {
-        bones: array_len("nodes"),
-        clips: array_len("animations"),
+        nodes: array_len("nodes"),
+        animations: array_len("animations"),
         meshes: array_len("meshes"),
-        corners: assets
+        primitive_positions: assets
             .meshes
             .iter()
             .flat_map(|mesh| mesh.primitives.iter())

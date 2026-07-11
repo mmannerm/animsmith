@@ -65,10 +65,10 @@ fn assert_round_trip(extension: &str) {
     assert_eq!(
         summary,
         animsmith_gltf::write::WriteSummary {
-            bones: loaded.skeleton.bones.len(),
-            clips: loaded.clips.len(),
+            nodes: loaded.skeleton.bones.len(),
+            animations: loaded.clips.len(),
             meshes: loaded.assets.meshes.len(),
-            corners: loaded
+            primitive_positions: loaded
                 .assets
                 .meshes
                 .iter()
@@ -152,7 +152,7 @@ fn write_summary_counts_each_clip_without_writable_tracks() {
 
     assert_eq!(
         (
-            summary.clips,
+            summary.animations,
             summary.clips_without_writable_tracks,
             loaded
                 .clips

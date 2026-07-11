@@ -778,12 +778,12 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             }
             let summary = animsmith_gltf::write::write(&doc, &output).map_err(|e| e.to_string())?;
             print!(
-                "wrote {} ({} bones, {} clip(s), {} mesh(es) / {} corners, {} material(s))",
+                "wrote {} ({} node(s), {} clip(s), {} mesh(es) / {} position(s), {} material(s))",
                 output.display(),
-                summary.bones,
-                summary.clips,
+                summary.nodes,
+                summary.animations,
                 summary.meshes,
-                summary.corners,
+                summary.primitive_positions,
                 summary.materials,
             );
             if summary.clips_without_writable_tracks > 0 {

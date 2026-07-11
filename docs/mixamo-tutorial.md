@@ -70,7 +70,7 @@ raw-vs-generated split.
 
 ```console
 $ animsmith convert Walking.fbx -o walking.glb    # real download
-wrote walking.glb (70 bones, 1 clip(s), 2 mesh(es) / 28374 corners, 2 material(s)); dropped 1 clip(s) with no writable tracks
+wrote walking.glb (70 node(s), 1 clip(s), 2 mesh(es) / 28374 position(s), 2 material(s)); dropped 1 clip(s) with no writable tracks
 ```
 
 (Counts vary by character. This download carries a second, empty FBX

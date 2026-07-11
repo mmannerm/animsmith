@@ -310,7 +310,7 @@ fn cli_convert_gltf_input_carries_and_strips_geometry() {
         assert_eq!(
             String::from_utf8(output.stdout).expect("stdout is UTF-8"),
             format!(
-                "wrote {} ({} bones, {} clip(s), {} mesh(es) / {} corners, {} material(s))\n",
+                "wrote {} ({} node(s), {} clip(s), {} mesh(es) / {} position(s), {} material(s))\n",
                 out.display(),
                 written.skeleton.bones.len(),
                 written.clips.len(),

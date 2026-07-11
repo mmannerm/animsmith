@@ -216,7 +216,7 @@ fn cli_convert_carries_and_strips_geometry() {
         assert_eq!(
             stdout,
             format!(
-                "wrote {} ({} bones, {} clip(s), {} mesh(es) / {} corners, {} material(s))\n",
+                "wrote {} ({} node(s), {} clip(s), {} mesh(es) / {} position(s), {} material(s))\n",
                 out.display(),
                 written.skeleton.bones.len(),
                 written.clips.len(),
@@ -300,7 +300,7 @@ fn cli_convert_summary_reports_written_artifact_and_dropped_empty_take() {
     assert_eq!(
         stdout,
         format!(
-            "wrote {} ({} bones, {} clip(s), {} mesh(es) / {} corners, {} material(s)); dropped {} clip(s) with no writable tracks\n",
+            "wrote {} ({} node(s), {} clip(s), {} mesh(es) / {} position(s), {} material(s)); dropped {} clip(s) with no writable tracks\n",
             out.display(),
             written.skeleton.bones.len(),
             written.clips.len(),
