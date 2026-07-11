@@ -19,6 +19,38 @@ fn write_fixture(dir: &Path) -> PathBuf {
     fbx
 }
 
+fn write_fixture_with_empty_take(dir: &Path) -> PathBuf {
+    let source = RIGGED_TRIANGLE_FBX
+        .replacen("Count: 8", "Count: 10", 1)
+        .replacen(
+            "ObjectType: \"AnimationStack\" { Count: 1 }",
+            "ObjectType: \"AnimationStack\" { Count: 2 }",
+            1,
+        )
+        .replacen(
+            "ObjectType: \"AnimationLayer\" { Count: 1 }",
+            "ObjectType: \"AnimationLayer\" { Count: 2 }",
+            1,
+        )
+        .replacen(
+            "\tAnimationLayer: 3002, \"AnimLayer::BaseLayer\", \"\" {}",
+            concat!(
+                "\tAnimationLayer: 3002, \"AnimLayer::BaseLayer\", \"\" {}\n",
+                "\tAnimationStack: 3011, \"AnimStack::empty\", \"\" {}\n",
+                "\tAnimationLayer: 3012, \"AnimLayer::EmptyLayer\", \"\" {}",
+            ),
+            1,
+        )
+        .replacen(
+            "\tC: \"OO\",3002,3001",
+            "\tC: \"OO\",3002,3001\n\tC: \"OO\",3012,3011",
+            1,
+        );
+    let fbx = dir.join("rigged_triangle_with_empty_take.fbx");
+    std::fs::write(&fbx, source).expect("writes FBX fixture with empty take");
+    fbx
+}
+
 fn mesh_count(glb: &Path) -> usize {
     let bytes = std::fs::read(glb).unwrap();
     gltf::Gltf::from_slice(&bytes)
@@ -181,6 +213,43 @@ fn cli_convert_carries_and_strips_geometry() {
         mesh_count(&stripped),
         0,
         "convert --animation-only strips geometry"
+    );
+}
+
+/// The convert summary describes the serialized glTF, not the FBX loader's
+/// intermediate document. Empty FBX takes are retained by the loader but have
+/// no glTF channels, so the writer deliberately omits them.
+#[test]
+fn cli_convert_summary_reports_written_artifact_and_dropped_empty_take() {
+    let dir = unique_temp_dir("cli-convert-summary");
+    let fbx = write_fixture_with_empty_take(dir.path());
+    let source = animsmith_fbx::load(&fbx).expect("FBX with empty take loads");
+    assert_eq!(source.clips.len(), 2, "fixture has two loaded takes");
+    assert!(
+        source.clips.iter().any(|clip| clip.tracks.is_empty()),
+        "fixture has one empty take"
+    );
+
+    let out = dir.path().join("converted.glb");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_animsmith"))
+        .arg("convert")
+        .arg(&fbx)
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("runs animsmith");
+    assert!(output.status.success(), "convert exited {}", output.status);
+
+    let written = animsmith_gltf::load(&out).expect("converted GLB loads");
+    assert_eq!(written.clips.len(), 1, "empty take is not serialized");
+    let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
+    assert_eq!(
+        stdout,
+        format!(
+            "wrote {} ({} bones, 1 clip(s), 1 mesh(es) / 3 corners, 0 material(s)); dropped 1 clip(s) with no writable tracks\n",
+            out.display(),
+            written.skeleton.bones.len(),
+        ),
     );
 }
 

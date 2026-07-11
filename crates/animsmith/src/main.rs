@@ -777,20 +777,31 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 doc.assets = animsmith_core::model::SceneAssets::default();
             }
             animsmith_gltf::write::write(&doc, &output).map_err(|e| e.to_string())?;
-            let vertices: usize = doc
+            // Report the artifact that was actually serialized, rather than
+            // the loader-facing document. The writer omits clips with no
+            // writable channels and can add mesh-holder nodes, so source
+            // counts are not necessarily output counts.
+            let written = animsmith_gltf::load(&output)
+                .map_err(|e| format!("failed to verify {} after writing: {e}", output.display()))?;
+            let dropped_clips = doc.clips.len().saturating_sub(written.clips.len());
+            let vertices: usize = written
                 .assets
                 .meshes
                 .iter()
                 .flat_map(|m| m.primitives.iter().map(|p| p.positions.len()))
                 .sum();
-            println!(
+            print!(
                 "wrote {} ({} bones, {} clip(s), {} mesh(es) / {vertices} corners, {} material(s))",
                 output.display(),
-                doc.skeleton.bones.len(),
-                doc.clips.len(),
-                doc.assets.meshes.len(),
-                doc.assets.materials.len(),
+                written.skeleton.bones.len(),
+                written.clips.len(),
+                written.assets.meshes.len(),
+                written.assets.materials.len(),
             );
+            if dropped_clips > 0 {
+                print!("; dropped {dropped_clips} clip(s) with no writable tracks");
+            }
+            println!();
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Diff { a, b, format } => {
