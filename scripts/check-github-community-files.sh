@@ -37,39 +37,6 @@ require_literal() {
   grep -Fq -- "$literal" "$path" || fail "$path must include $description"
 }
 
-validate_markdown_links() {
-  local path="$1"
-  local absolute_only="${2:-false}"
-  local url url_no_anchor target local_path
-
-  require_file "$path"
-  while IFS= read -r url; do
-    case "$url" in
-      \#*) continue ;;
-    esac
-
-    url_no_anchor="${url%%#*}"
-    case "$url" in
-      http://*|https://*)
-        if [[ "$url_no_anchor" == "$REPO_BLOB_URL"* ]]; then
-          target="${url_no_anchor#"$REPO_BLOB_URL"}"
-          test -f "$target" || fail "$path links to missing repository file $url"
-        elif [[ "$url_no_anchor" == "$REPO_TREE_URL"* ]]; then
-          target="${url_no_anchor#"$REPO_TREE_URL"}"
-          test -d "$target" || fail "$path links to missing repository directory $url"
-        fi
-        ;;
-      *)
-        if [ "$absolute_only" = true ]; then
-          fail "$path must use absolute links, found $url"
-        fi
-        local_path="$(dirname "$path")/$url_no_anchor"
-        test -e "$local_path" || fail "$path links to missing local target $url"
-        ;;
-    esac
-  done < <(grep -Eo '\[[^]]+\]\([^)]+\)' "$path" | sed -E 's/^[^()]*\(([^)]*)\)$/\1/' || true)
-}
-
 require_order() {
   local path="$1"
   local first="$2"
@@ -138,43 +105,14 @@ require_workflow_cron() {
   require_literal "$path" "cron: '$cron'" "schedule $cron"
 }
 
-validate_markdown_links README.md true
-for path in \
-  CONTRIBUTING.md \
-  DEVELOPMENT.md \
-  SUPPORT.md \
-  SECURITY.md \
-  AGENTS.md \
-  CLAUDE.md \
-  .agent-instructions/shared.md \
-  .github/PULL_REQUEST_TEMPLATE.md \
-  examples/README.md; do
-  validate_markdown_links "$path"
-done
-
-# The top-level docs pages are one set: every page gets link validation
-# here, and every page except the index itself must be linked from a row
-# of the Document index table — enforced by the markdown-parser-backed
-# workspace test crates/animsmith/tests/docs_index.rs (pulldown-cmark),
-# which runs under `cargo test --workspace`. Nested dirs (research/,
-# schemas/) are outside the indexed set, and preventing a second routing
-# list elsewhere is review policy, not something a gate can prove.
-# Forward constraint for a generated docs site (GitHub Pages/mdBook):
-# its navigation (e.g. SUMMARY.md) must be derived from this index table
-# or a shared manifest — never a second hand-maintained routing list.
-# Note the index also rows pages outside docs/ (../README.md,
-# ../examples/README.md); a site build must decide link-vs-include for
-# those rather than assume the set is docs/*.md.
-for doc in docs/*.md; do
-  validate_markdown_links "$doc"
-done
-for path in \
-  crates/animsmith-core/README.md \
-  crates/animsmith-gltf/README.md \
-  crates/animsmith-fbx/README.md \
-  crates/animsmith-report/README.md; do
-  validate_markdown_links "$path" true
-done
+# Markdown link validation (target existence, #anchor resolution, and
+# the absolute-only policy for published READMEs) lives in the
+# markdown-parser-backed workspace test crates/animsmith/tests/
+# docs_links.rs (pulldown-cmark), which runs under `cargo test
+# --workspace`; its sibling docs_index.rs keeps the Document-index
+# completeness gate. This script keeps the assertions that are
+# genuinely string-shaped: required literals, ordering, issue-form and
+# workflow contracts.
 
 require_order README.md "cargo install animsmith" "CONTRIBUTING.md"
 require_order README.md "animsmith lint clip.glb" "CONTRIBUTING.md"

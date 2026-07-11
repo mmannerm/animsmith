@@ -94,10 +94,11 @@ enforcement. It renders workspace docs and the CLI crate without default
 features with `-D warnings -D missing_docs`, so all five publishable
 crates keep documented public surfaces.
 
-When editing public docs, also check Markdown links and GitHub forms by
-inspection. The root `README.md` is also the crates.io front page for the
-`animsmith` CLI crate, so keep its links absolute and keep CLI-user
-content first.
+When editing public docs, `cargo test --workspace` validates Markdown
+link targets and `#anchor`s in the gated doc set (the `docs_links`
+test); review GitHub forms and rendering by inspection. The root
+`README.md` is also the crates.io front page for the `animsmith` CLI
+crate, so keep its links absolute and keep CLI-user content first.
 
 ## Spell Checking
 

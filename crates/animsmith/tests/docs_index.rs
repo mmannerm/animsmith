@@ -5,8 +5,17 @@
 //! `pulldown-cmark` (the parser rustdoc uses) rather than by pattern
 //! matching, so fenced or indented decoy tables, delimiter-less fake
 //! headers, and malformed link fragments cannot satisfy the gate.
-//! Link *targets* (does the linked file exist?) stay covered by
-//! `scripts/check-github-community-files.sh`.
+//! Link *targets* and `#anchor`s are covered by the sibling gate
+//! `docs_links.rs`. Nested dirs (research/, schemas/) are outside the
+//! indexed set, and preventing a second routing list elsewhere is
+//! review policy, not something a gate can prove.
+//!
+//! Forward constraint for a generated docs site (GitHub Pages/mdBook):
+//! its navigation (e.g. SUMMARY.md) must be derived from this index
+//! table or a shared manifest — never a second hand-maintained routing
+//! list. Note the index also rows pages outside docs/ (../README.md,
+//! ../examples/README.md); a site build must decide link-vs-include
+//! for those rather than assume the set is docs/*.md.
 
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use std::collections::BTreeSet;
