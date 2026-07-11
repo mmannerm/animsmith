@@ -271,7 +271,7 @@ pub fn write(doc: &Document, path: &Path) -> Result<(), WriteError> {
     write_with_summary(doc, path).map(|_| ())
 }
 
-/// Serialize `doc` like [`write`] and return counts for the generated glTF.
+/// Serialize `doc` like [`write()`] and return counts for the generated glTF.
 ///
 /// The returned [`WriteSummary`] is produced from the same JSON assembly that
 /// is serialized, so callers can report output counts without reopening and
@@ -279,7 +279,7 @@ pub fn write(doc: &Document, path: &Path) -> Result<(), WriteError> {
 ///
 /// # Errors
 ///
-/// Returns the same [`WriteError`] variants as [`write`].
+/// Returns the same [`WriteError`] variants as [`write()`].
 pub fn write_with_summary(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
     let assets = &doc.assets;
     let mut buffers = BufferBuilder::new();
