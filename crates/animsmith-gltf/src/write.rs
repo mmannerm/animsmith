@@ -1,5 +1,5 @@
 //! Minimal glTF 2.0 writer for `convert`/`transform`: emits the
-//! skeleton (node hierarchy + rest TRS), every clip's animation tracks,
+//! skeleton (node hierarchy + rest TRS), each clip's writable animation tracks,
 //! and whatever scene assets the [`Document`] carries ([`Document::assets`]
 //! — triangulated meshes, skins, factor-only materials, and embedded
 //! base-color textures). A document with default-empty assets writes
@@ -18,10 +18,14 @@ use std::path::Path;
 
 /// Counts of the scene data emitted by [`write()`].
 ///
-/// These values describe the generated glTF, which can differ from the input
-/// [`Document`] when an animation clip has no writable channels or a skinned
-/// mesh requires an additional holder node.
+/// The first five fields describe the generated glTF, which can differ from the
+/// input [`Document`] when an animation clip has no writable channels, a
+/// skinned mesh requires an additional holder node, or materials are omitted
+/// because the document has no meshes. [`Self::clips_without_writable_tracks`]
+/// is intentionally an input-to-output delta rather than an artifact count so
+/// callers can explain omitted source clips.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct WriteSummary {
     /// Number of nodes emitted in the glTF skeleton/scene graph.
     pub nodes: usize,

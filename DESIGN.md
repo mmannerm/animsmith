@@ -421,8 +421,9 @@ to *that* frame N. Determinism is the feature.
 - **`convert`** emits glTF 2.0 GLB: nodes + skin (computed IBMs) + one
   animation per clip with at least one writable track; mesh + weights when
   present; `--animation-only` to strip mesh. The glTF writer returns counts
-  derived from the emitted artifact, which `convert` uses for its summary and
-  to report source clips omitted because they have no writable tracks.
+  derived from the emitted artifact, which both `convert` and `transform` use
+  for their summaries and to report source clips omitted because they have no
+  writable tracks.
   Explicitly *not* an art exporter — no material fidelity promise. Both
   `convert` and `transform` share one `load`→`write` round-trip over `Document`
   (assets included), so geometry survives a transform pass and

@@ -62,24 +62,21 @@ fn assert_round_trip(extension: &str) {
     let summary = animsmith_gltf::write::write(&doc, &path).expect("writes");
     let loaded = animsmith_gltf::load(&path).expect("reloads");
 
+    assert_eq!(summary.nodes, loaded.skeleton.bones.len());
+    assert_eq!(summary.animations, loaded.clips.len());
+    assert_eq!(summary.meshes, loaded.assets.meshes.len());
     assert_eq!(
-        summary,
-        animsmith_gltf::write::WriteSummary {
-            nodes: loaded.skeleton.bones.len(),
-            animations: loaded.clips.len(),
-            meshes: loaded.assets.meshes.len(),
-            primitive_positions: loaded
-                .assets
-                .meshes
-                .iter()
-                .flat_map(|mesh| mesh.primitives.iter())
-                .map(|primitive| primitive.positions.len())
-                .sum(),
-            materials: loaded.assets.materials.len(),
-            clips_without_writable_tracks: 0,
-        },
-        "write summary matches the {extension} artifact"
+        summary.primitive_positions,
+        loaded
+            .assets
+            .meshes
+            .iter()
+            .flat_map(|mesh| mesh.primitives.iter())
+            .map(|primitive| primitive.positions.len())
+            .sum::<usize>()
     );
+    assert_eq!(summary.materials, loaded.assets.materials.len());
+    assert_eq!(summary.clips_without_writable_tracks, 0);
 
     assert_eq!(loaded.skeleton.bones.len(), 2);
     assert_eq!(loaded.skeleton.bones[1].name, "spine");
@@ -176,7 +173,31 @@ fn write_summary_counts_each_clip_without_writable_tracks() {
 }
 
 #[test]
-fn write_summary_uses_emitted_material_count() {
+fn write_summary_counts_a_clip_whose_only_track_targets_an_unknown_bone() {
+    let mut doc = synthetic_doc();
+    let mut invalid_track = doc.clips[0].tracks[0].clone();
+    invalid_track.bone = doc.skeleton.bones.len();
+    doc.clips = vec![Clip {
+        name: "unknown-bone".into(),
+        duration_s: 1.0,
+        tracks: vec![invalid_track],
+    }];
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("unknown-bone.glb");
+
+    let summary = animsmith_gltf::write::write(&doc, &path).expect("writes");
+    let loaded = animsmith_gltf::load(&path).expect("reloads");
+
+    assert_eq!(summary.animations, 0);
+    assert_eq!(summary.clips_without_writable_tracks, 1);
+    assert!(
+        loaded.clips.is_empty(),
+        "the unknown-bone clip is absent from the artifact"
+    );
+}
+
+#[test]
+fn write_summary_omits_materials_when_document_has_no_meshes() {
     let mut doc = synthetic_doc();
     doc.assets.materials.push(MaterialAsset {
         name: "unused".into(),
@@ -186,7 +207,7 @@ fn write_summary_uses_emitted_material_count() {
         base_color_texture: None,
     });
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("unused-material.glb");
+    let path = dir.path().join("meshless-material.glb");
 
     let summary = animsmith_gltf::write::write(&doc, &path).expect("writes");
     let loaded = animsmith_gltf::load(&path).expect("reloads");
@@ -198,7 +219,7 @@ fn write_summary_uses_emitted_material_count() {
             loaded.assets.materials.len(),
         ),
         (1, 0, 0),
-        "an unreferenced source material is absent from the artifact and its summary"
+        "a source material is absent from a meshless artifact and its summary"
     );
 }
 

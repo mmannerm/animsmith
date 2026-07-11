@@ -705,8 +705,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     None => format!("{} has no clips", input.display()),
                 });
             }
-            animsmith_gltf::write::write(&doc, &output).map_err(|e| e.to_string())?;
-            println!("wrote {} ({touched} clip(s) transformed)", output.display());
+            let summary = animsmith_gltf::write::write(&doc, &output).map_err(|e| e.to_string())?;
+            println!("{}", format_write_summary(&output, &summary));
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Fix {
@@ -777,7 +777,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 doc.assets = animsmith_core::model::SceneAssets::default();
             }
             let summary = animsmith_gltf::write::write(&doc, &output).map_err(|e| e.to_string())?;
-            println!("{}", format_convert_summary(&output, &summary));
+            println!("{}", format_write_summary(&output, &summary));
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Diff { a, b, format } => {
@@ -823,8 +823,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
     }
 }
 
-#[cfg(feature = "fbx")]
-fn format_convert_summary(output: &Path, summary: &animsmith_gltf::write::WriteSummary) -> String {
+fn format_write_summary(output: &Path, summary: &animsmith_gltf::write::WriteSummary) -> String {
     let mut text = format!(
         "wrote {} ({} node(s), {} clip(s), {} mesh(es) / {} position(s), {} material(s))",
         output.display(),
@@ -841,30 +840,6 @@ fn format_convert_summary(output: &Path, summary: &animsmith_gltf::write::WriteS
         ));
     }
     text
-}
-
-#[cfg(all(test, feature = "fbx"))]
-mod convert_summary_tests {
-    use super::format_convert_summary;
-    use animsmith_gltf::write::WriteSummary;
-    use std::path::Path;
-
-    #[test]
-    fn formatter_uses_every_writer_count_and_general_omission_count() {
-        let summary = WriteSummary {
-            nodes: 11,
-            animations: 7,
-            meshes: 5,
-            primitive_positions: 13,
-            materials: 17,
-            clips_without_writable_tracks: 3,
-        };
-
-        assert_eq!(
-            format_convert_summary(Path::new("artifact.glb"), &summary),
-            "wrote artifact.glb (11 node(s), 7 clip(s), 5 mesh(es) / 13 position(s), 17 material(s)); dropped 3 clip(s) with no writable tracks"
-        );
-    }
 }
 
 /// Measurements for `diff`: an asset file (measured now) or a prior
@@ -1004,6 +979,32 @@ fn inspect(doc: &Document, roles: &ResolvedRoles) {
             clip.duration_s,
             clip.tracks.len(),
             keys
+        );
+    }
+}
+
+#[cfg(test)]
+mod write_summary_tests {
+    use super::format_write_summary;
+    use animsmith_core::model::Document;
+    use std::path::Path;
+
+    #[test]
+    fn formatter_uses_every_writer_count_and_general_omission_count() {
+        let dir = tempfile::tempdir().expect("creates temp dir");
+        let mut summary =
+            animsmith_gltf::write::write(&Document::default(), &dir.path().join("empty.glb"))
+                .expect("writes empty document");
+        summary.nodes = 11;
+        summary.animations = 7;
+        summary.meshes = 5;
+        summary.primitive_positions = 13;
+        summary.materials = 17;
+        summary.clips_without_writable_tracks = 3;
+
+        assert_eq!(
+            format_write_summary(Path::new("artifact.glb"), &summary),
+            "wrote artifact.glb (11 node(s), 7 clip(s), 5 mesh(es) / 13 position(s), 17 material(s)); dropped 3 clip(s) with no writable tracks"
         );
     }
 }
