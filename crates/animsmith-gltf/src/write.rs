@@ -1,8 +1,9 @@
 //! Minimal glTF 2.0 writer for `convert`/`transform`: emits the
 //! skeleton (node hierarchy + rest TRS), every clip's animation tracks,
 //! and whatever scene assets the [`Document`] carries ([`Document::assets`]
-//! — triangulated meshes, skins, and factor-only materials). A document
-//! with default-empty assets writes animation + skeleton only, so
+//! — triangulated meshes, skins, factor-only materials, and embedded
+//! base-color textures). A document with default-empty assets writes
+//! animation + skeleton only, so
 //! animation data can still enter glTF-based tooling (including animsmith
 //! itself) straight from a DCC export.
 //!
@@ -235,9 +236,9 @@ fn plan_glb_lengths(json_len: usize, bin_len: usize) -> Result<GlbLengths, Write
 /// Serialize `doc` to `path` (`.glb` for binary, anything else as
 /// `.gltf` JSON with an embedded data-URI buffer): skeleton, animation,
 /// and any scene assets it carries ([`Document::assets`] — triangulated
-/// meshes, skins, factor-only materials; textures are downstream
-/// pipelines' job). A `Document` with default-empty assets writes
-/// animation + skeleton only.
+/// meshes, skins, factor-only materials, and embedded PNG/JPEG base-color
+/// textures). A `Document` with default-empty assets writes animation and
+/// skeleton only.
 ///
 /// # Errors
 ///

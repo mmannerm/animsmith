@@ -1,15 +1,40 @@
-//! Docs.rs API map: [`render`] turns an
-//! [`animsmith_core::Document`], [`animsmith_core::ResolvedRoles`], and
-//! slice of [`animsmith_core::Finding`] values into a self-contained
-//! HTML report. The viewer is driven by the same
-//! [`animsmith_core::PoseGrid`] samples the checks judged.
+//! [`render`] turns [`animsmith_core::MetricGrids`],
+//! [`animsmith_core::ResolvedRoles`], and a slice of
+//! [`animsmith_core::Finding`] values into a self-contained HTML report.
+//! The viewer is driven by the same [`animsmith_core::PoseGrid`] samples
+//! the checks judged.
 //!
 //! The returned HTML is self-contained: CSS, JavaScript, findings, charts,
 //! and sampled pose data are embedded in the string. There is no runtime
 //! CDN dependency and no JavaScript-side resampling of the clip.
-
-#![doc = "\n\n"]
-#![doc = include_str!("../README.md")]
+//!
+//! # Quick start
+//!
+//! ```no_run
+//! fn write_report(
+//!     doc: &animsmith_core::Document,
+//!     roles: &animsmith_core::ResolvedRoles,
+//!     findings: &[animsmith_core::Finding],
+//! ) -> std::io::Result<()> {
+//!     let grids = animsmith_core::MetricGrids::new(doc);
+//!     let html = animsmith_report::render(&grids, roles, findings, None);
+//!     std::fs::write("report.html", html)
+//! }
+//! ```
+//!
+//! # Build and API status
+//!
+//! The library crate has no public feature flags and supports the workspace
+//! MSRV, Rust 1.88. Its Rust API is pre-1.0; see `animsmith-core`'s crate-level
+//! API status for the shared stability boundary.
+//!
+//! See the GitHub [embedding guide] for composing this crate with checks and
+//! the [pipeline scenario guide] for CI and outsourced-acceptance reporting
+//! workflows.
+//!
+//! [embedding guide]: https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md
+//! [pipeline scenario guide]: https://github.com/mmannerm/animsmith/blob/main/docs/pipeline-scenarios.md
+//!
 #![warn(missing_docs)]
 
 use animsmith_core::finding::Finding;

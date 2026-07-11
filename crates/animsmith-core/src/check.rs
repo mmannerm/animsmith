@@ -31,6 +31,10 @@ pub struct CheckCtx<'a> {
 impl<'a> CheckCtx<'a> {
     /// Build a check context that shares metric pose grids with
     /// measurement or report generation.
+    ///
+    /// `roles` must already reflect any [`Config::rig`](crate::Config::rig)
+    /// profile and inline overrides; constructing a context does not resolve
+    /// that declarative configuration.
     pub fn new(grids: &'a MetricGrids<'a>, roles: &'a ResolvedRoles, config: &'a Config) -> Self {
         let doc = grids.document();
         let expectations = doc

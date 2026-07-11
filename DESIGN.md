@@ -182,28 +182,19 @@ animsmith/
 
 Two representations of a loaded file, because checks genuinely need both:
 
-**Raw layer** — what the file says. Needed by the mechanical checks (NaN,
-quaternion flips, key density, constant tracks):
+**Raw layer** — what the file says. The document keeps the skeleton hierarchy
+and rest pose, authored clips and tracks, optional scene assets, and source
+metadata together. Mechanical checks use this layer for defects such as NaNs,
+quaternion flips, key density, and constant tracks. Exact Rust types and fields
+belong to the `animsmith-core` model rustdocs; build them with `just doc` or use
+the package README's stable docs.rs link.
 
-```rust
-pub struct Document { pub skeleton: Skeleton, pub clips: Vec<Clip>,
-                     pub assets: SceneAssets,            // meshes/skins/materials, when the input carries them
-                     pub source: SourceInfo }
-pub struct Skeleton  { pub bones: Vec<Bone> }            // topological order, parents first
-pub struct Bone      { pub name: String, pub parent: Option<BoneId>,
-                       pub rest: Transform,              // node-local TRS
-                       pub inverse_bind: Option<Mat4> }  // from skin, when present
-pub struct Clip      { pub name: String, pub duration_s: f64, pub tracks: Vec<Track> }
-pub struct Track     { pub bone: BoneId, pub property: Property,   // T | R | S
-                       pub times: Vec<f32>, pub values: TrackValues,
-                       pub interpolation: Interpolation }          // Linear | Step | CubicSpline
-```
-
-`assets` (meshes, skins, factor-only materials) is the geometry half of
+`assets` (meshes, skins, factor-only materials, and embedded base-color
+textures) is the scene-asset half of
 the document. Both the FBX and glTF loaders populate it from a single
 `load` (there is no separate assets-carrying entry point — the two
-loaders share one shape); it is empty only when the input carries no
-geometry. The check catalog ignores it — checks judge animation — but it
+loaders share one shape); it is empty when the input carries no scene
+assets. The check catalog ignores it — checks judge animation — but it
 rides the one `load`/`write` round-trip, so `transform` and `convert`
 preserve geometry rather than silently dropping it, and `measure`
 reports mesh-level measurements (vertex count, AABB, joints-per-vertex,
@@ -221,19 +212,16 @@ channel key count, or explicit fps), glTF-spec interpolation semantics
 (lerp for T/S, shortest-path slerp for R with negation on `dot < 0`, STEP
 hold, cubic-spline Hermite), clamp at ends. For clips declared `loop`,
 the wrap pair is `(last frame, frame 0)` — the seam definition every loop
-check shares. FK accumulates local TRS to model space; the scene-root
-transform is excluded so measurements are independent of asset centering.
+check shares. FK accumulates every skeleton node's local TRS to model
+space, including each root node's own transform. Metrics that need a
+body-relative frame derive it from resolved roles such as hips and feet.
 The metric grid is computed once per clip and shared across checks,
 measurements, and reports through the lazy `MetricGrids` owner.
 
-**Rig profiles** — checks never reference bone names; they reference
-*roles*:
-
-```rust
-pub enum Role { Root, Hips, Spine, Head, LeftFoot, RightFoot, LeftToe, RightToe, LeftHand, RightHand, /* … */ }
-pub struct RigProfile { pub name: String, pub bindings: Vec<(Role, NameMatcher)> }
-// NameMatcher: Exact | Suffix | Glob, with an optional namespace-strip pass ("ns:Hips" → "Hips")
-```
+**Rig profiles** — checks reference semantic roles rather than bone names.
+Profiles bind those roles to source-rig names; the exact public role set,
+binding types, and matcher fallback belong to the `animsmith-core` profile
+rustdocs.
 
 Built-in profiles ship for `mixamo` (`mixamorig:Hips`…), `ue-mannequin`
 (`pelvis`, `foot_l`…), and `humanoid` (`humanoid_ Pelvis`,

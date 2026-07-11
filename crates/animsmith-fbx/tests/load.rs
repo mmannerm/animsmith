@@ -1,4 +1,4 @@
-use animsmith_core::glam::Vec3;
+use animsmith_core::glam::{Mat4, Vec3};
 use animsmith_core::model::Property;
 use std::path::PathBuf;
 
@@ -11,6 +11,15 @@ fn assert_vec3_near(got: Vec3, want: Vec3) {
         (got - want).length() < 1e-5,
         "expected {want:?}, got {got:?}"
     );
+}
+
+fn rest_models(doc: &animsmith_core::Document) -> Vec<Mat4> {
+    let mut model = vec![Mat4::IDENTITY; doc.skeleton.bones.len()];
+    for (index, bone) in doc.skeleton.bones.iter().enumerate() {
+        let local = bone.rest.to_mat4();
+        model[index] = bone.parent.map_or(local, |parent| model[parent] * local);
+    }
+    model
 }
 
 #[test]
@@ -65,5 +74,66 @@ fn garbage_file_is_reported_as_fbx_parse_error() {
     assert!(
         matches!(err, animsmith_fbx::LoadError::Fbx(_)),
         "expected LoadError::Fbx, got {err:?}"
+    );
+}
+
+#[test]
+fn normalizes_centimetre_z_up_scene_to_metre_y_up() {
+    let source = std::fs::read_to_string(fixture()).expect("read self-authored fixture");
+    let source = source.replacen(
+        "P: \"UpAxis\", \"int\", \"Integer\", \"\",1",
+        "P: \"UpAxis\", \"int\", \"Integer\", \"\",2",
+        1,
+    );
+    let source = source.replacen(
+        "P: \"FrontAxis\", \"int\", \"Integer\", \"\",2",
+        "P: \"FrontAxis\", \"int\", \"Integer\", \"\",1",
+        1,
+    );
+    let source = source.replacen(
+        "P: \"FrontAxisSign\", \"int\", \"Integer\", \"\",1",
+        "P: \"FrontAxisSign\", \"int\", \"Integer\", \"\",-1",
+        1,
+    );
+    let source = source.replacen(
+        "Vertices: *9 { a: 0,0,0,100,0,0,0,100,0 }",
+        "Vertices: *9 { a: 0,0,0,100,0,0,0,100,100 }",
+        1,
+    );
+    let source = source.replacen(
+        "C: \"OP\",3004,3003,\"d|X\"",
+        "C: \"OP\",3004,3003,\"d|Z\"",
+        1,
+    );
+    assert!(source.contains("\"UpAxis\", \"int\", \"Integer\", \"\",2"));
+    assert!(source.contains("\"FrontAxis\", \"int\", \"Integer\", \"\",1"));
+    assert!(source.contains("\"FrontAxisSign\", \"int\", \"Integer\", \"\",-1"));
+    assert!(source.contains("0,100,100"));
+    assert!(source.contains("3004,3003,\"d|Z\""));
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("centimetre-z-up.fbx");
+    std::fs::write(&path, source).expect("write transformed fixture");
+    let doc = animsmith_fbx::load(&path).expect("Z-up fixture loads");
+
+    let mesh = doc.assets.meshes.first().expect("mesh loaded");
+    let primitive = mesh.primitives.first().expect("primitive loaded");
+    let model = rest_models(&doc)[mesh.node];
+    let source_x = model.transform_point3(primitive.positions[1]);
+    let source_yz = model.transform_point3(primitive.positions[2]);
+
+    assert_vec3_near(source_x, Vec3::X);
+    assert_vec3_near(source_yz, Vec3::Y - Vec3::Z);
+
+    let translation = doc.clips[0]
+        .tracks
+        .iter()
+        .find(|track| track.bone == 1 && track.property == Property::Translation)
+        .expect("root translation track");
+    assert_vec3_near(
+        translation
+            .key_vec3(translation.key_count() - 1)
+            .expect("final translation key"),
+        Vec3::Y,
     );
 }

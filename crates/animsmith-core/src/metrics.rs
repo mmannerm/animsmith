@@ -23,6 +23,10 @@ pub const MIN_STRIDE_STEP_M: f64 = 0.02;
 /// uniform metric grid. Sharing this owner lets callers run checks and
 /// then emit measurements or reports without sampling the same clip
 /// twice.
+///
+/// The cache uses `Rc` and `RefCell`, so it is intentionally neither
+/// `Send` nor `Sync`. Create one owner per document on each worker thread,
+/// then share it by reference among consumers on that thread.
 #[derive(Debug)]
 pub struct MetricGrids<'a> {
     doc: &'a Document,
@@ -44,7 +48,8 @@ impl<'a> MetricGrids<'a> {
     }
 
     /// The metric pose grid for clip `clip_index`, computed once and
-    /// shared. `None` for clips too short to carry a cycle.
+    /// shared. Returns `None` for an out-of-range index, non-positive
+    /// duration, or fewer than three keys on the longest track.
     pub fn grid(&self, clip_index: usize) -> Option<Rc<PoseGrid>> {
         let clip = self.doc.clips.get(clip_index)?;
         let frames = metric_frame_count(clip)?;
@@ -279,7 +284,7 @@ mod tests {
         Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
     };
     use crate::profile::ResolvedRoles;
-    use glam::Quat;
+    use glam::{Quat, Vec3};
     use std::rc::Rc;
 
     fn document_with_metric_clip() -> Document {
@@ -311,6 +316,32 @@ mod tests {
         }
     }
 
+    fn document_with_grid_inputs(duration_s: f64, times: Vec<f32>) -> Document {
+        let values = vec![Quat::IDENTITY; times.len()];
+        Document {
+            skeleton: Skeleton {
+                bones: vec![Bone {
+                    name: "root".into(),
+                    parent: None,
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                }],
+            },
+            clips: vec![Clip {
+                name: "probe".into(),
+                duration_s,
+                tracks: vec![Track {
+                    bone: 0,
+                    property: Property::Rotation,
+                    interpolation: Interpolation::Linear,
+                    times,
+                    values: TrackValues::Quats(values),
+                }],
+            }],
+            ..Document::default()
+        }
+    }
+
     #[test]
     fn metric_grids_are_shared_by_checks_and_measurements() {
         let doc = document_with_metric_clip();
@@ -331,5 +362,44 @@ mod tests {
             serde_json::to_value(measure_document(&fresh_grids, &roles, &config))
                 .expect("plain measurements serialize")
         );
+    }
+
+    #[test]
+    fn grid_returns_none_for_each_documented_invalid_request() {
+        let valid = document_with_grid_inputs(1.0, vec![0.0, 0.5, 1.0]);
+        let valid_grids = MetricGrids::new(&valid);
+        assert!(valid_grids.grid(0).is_some());
+        for clip_index in [1, 2, usize::MAX] {
+            assert!(valid_grids.grid(clip_index).is_none());
+        }
+
+        for duration_s in [0.0, -1.0] {
+            let non_positive = document_with_grid_inputs(duration_s, vec![0.0, 0.5, 1.0]);
+            assert!(MetricGrids::new(&non_positive).grid(0).is_none());
+        }
+
+        for times in [vec![], vec![0.0], vec![0.0, 1.0]] {
+            let too_few_keys = document_with_grid_inputs(1.0, times);
+            assert!(MetricGrids::new(&too_few_keys).grid(0).is_none());
+        }
+    }
+
+    #[test]
+    fn grid_uses_longest_track_for_resolution() {
+        // The first track is too short by itself; the later translation
+        // track selects the grid's three-frame resolution.
+        let mut doc = document_with_grid_inputs(1.0, vec![0.0, 1.0]);
+        doc.clips[0].tracks.push(Track {
+            bone: 0,
+            property: Property::Translation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 0.5, 1.0],
+            values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::X, 2.0 * Vec3::X]),
+        });
+
+        let grid = MetricGrids::new(&doc)
+            .grid(0)
+            .expect("later longest track supplies a metric grid");
+        assert_eq!(grid.frame_count(), 3);
     }
 }

@@ -133,7 +133,8 @@ pub struct GaitMeasurement {
 pub struct ClipMeasurements {
     /// Clip duration in seconds.
     pub duration_s: f64,
-    /// Keyframe count of the longest channel.
+    /// Keyframe count of the longest channel. This also selects the uniform
+    /// metric-grid resolution, but it is not an authored frame-rate value.
     pub frame_count: u32,
     /// Bones with at least one keyframed channel, sorted.
     pub animated_bones: Vec<String>,
@@ -157,6 +158,11 @@ pub struct ClipMeasurements {
 /// Measure every clip using shared metric pose grids. Role-dependent
 /// metrics (loop seam, gait, root-motion speed) are present only where
 /// the roles resolve; pass an empty [`ResolvedRoles`] to skip them.
+///
+/// This returns clip measurements only. Call [`measure_meshes`] separately
+/// when the pipeline also needs geometry measurements. Clip names are map
+/// keys and therefore must be unique; a later duplicate replaces an earlier
+/// entry.
 pub fn measure_document(
     grids: &MetricGrids<'_>,
     roles: &ResolvedRoles,
@@ -218,8 +224,12 @@ pub fn measure_document(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{MeshAsset, Primitive};
-    use glam::Vec3;
+    use crate::model::{
+        Bone, Clip, Document, Interpolation, MeshAsset, Primitive, Property, Skeleton, Track,
+        TrackValues, Transform,
+    };
+    use crate::profile::Role;
+    use glam::{Quat, Vec3};
 
     fn mesh(name: &str, primitives: Vec<Primitive>) -> SceneAssets {
         SceneAssets {
@@ -375,5 +385,127 @@ mod tests {
         };
         let m = &measure_meshes(&mesh("multi", vec![a, b]))[0];
         assert_eq!(m.vertex_count, 8, "3 + 5 corners across two primitives");
+    }
+
+    #[test]
+    fn later_duplicate_clip_name_replaces_earlier_measurement() {
+        let earlier = Clip {
+            name: "duplicate".into(),
+            duration_s: 1.0,
+            tracks: vec![
+                Track {
+                    bone: 0,
+                    property: Property::Rotation,
+                    interpolation: Interpolation::Linear,
+                    times: vec![0.0, 0.5, 1.0],
+                    values: TrackValues::Quats(vec![
+                        Quat::IDENTITY,
+                        Quat::from_rotation_x(0.25),
+                        Quat::from_rotation_x(0.5),
+                    ]),
+                },
+                Track {
+                    bone: 0,
+                    property: Property::Translation,
+                    interpolation: Interpolation::Linear,
+                    times: vec![0.0, 0.5, 1.0],
+                    values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::Z * 0.5, Vec3::Z]),
+                },
+                Track {
+                    bone: 1,
+                    property: Property::Translation,
+                    interpolation: Interpolation::Linear,
+                    times: vec![0.0, 0.5, 1.0],
+                    values: TrackValues::Vec3s(vec![
+                        Vec3::new(-0.1, -1.0, 0.0),
+                        Vec3::new(-0.1, -0.9, 0.15),
+                        Vec3::new(-0.1, -1.0, 0.0),
+                    ]),
+                },
+                Track {
+                    bone: 2,
+                    property: Property::Translation,
+                    interpolation: Interpolation::Linear,
+                    times: vec![0.0, 0.5, 1.0],
+                    values: TrackValues::Vec3s(vec![
+                        Vec3::new(0.1, -1.0, 0.0),
+                        Vec3::new(0.1, -1.1, -0.15),
+                        Vec3::new(0.1, -1.0, 0.0),
+                    ]),
+                },
+            ],
+        };
+        let later = Clip {
+            name: "duplicate".into(),
+            duration_s: 2.0,
+            tracks: vec![Track {
+                bone: 0,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 2.0],
+                values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::X]),
+            }],
+        };
+        let skeleton = Skeleton {
+            bones: vec![
+                Bone {
+                    name: "hips".into(),
+                    parent: None,
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "left_foot".into(),
+                    parent: Some(0),
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "right_foot".into(),
+                    parent: Some(0),
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+            ],
+        };
+        let roles = ResolvedRoles::from_names(
+            &skeleton,
+            [
+                (Role::Hips, "hips".into()),
+                (Role::LeftFoot, "left_foot".into()),
+                (Role::RightFoot, "right_foot".into()),
+            ],
+        );
+        let earlier_doc = Document {
+            skeleton: skeleton.clone(),
+            clips: vec![earlier.clone()],
+            ..Document::default()
+        };
+        let earlier_grids = MetricGrids::new(&earlier_doc);
+        let earlier_measurement =
+            &measure_document(&earlier_grids, &roles, &Config::default())["duplicate"];
+        assert!(earlier_measurement.loop_seam_ratio.is_some());
+        assert!(earlier_measurement.gait.is_some());
+        assert!(earlier_measurement.speed_mps.is_some());
+
+        let doc = Document {
+            skeleton,
+            clips: vec![earlier, later],
+            ..Document::default()
+        };
+        let grids = MetricGrids::new(&doc);
+        let measurements = measure_document(&grids, &roles, &Config::default());
+
+        assert_eq!(
+            serde_json::to_value(measurements).expect("duplicate measurements serialize"),
+            serde_json::json!({
+                "duplicate": {
+                    "duration_s": 2.0,
+                    "frame_count": 2,
+                    "animated_bones": ["hips"],
+                    "bone_rotation_range_deg": {},
+                }
+            })
+        );
     }
 }

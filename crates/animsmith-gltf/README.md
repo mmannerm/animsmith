@@ -21,7 +21,7 @@ single call, matching `animsmith-fbx`. Consumers that judge only
 animation ignore `assets`; `measure` reports mesh-level measurements
 from it and `convert` carries it through.
 
-## Usage
+## Install
 
 ```toml
 [dependencies]
@@ -29,40 +29,8 @@ animsmith-core = "0.1"
 animsmith-gltf = "0.1"
 ```
 
-```rust,no_run
-fn lint_clip(
-    path: &std::path::Path,
-) -> Result<Vec<animsmith_core::Finding>, Box<dyn std::error::Error>> {
-    let doc = animsmith_gltf::load(path)?;
-    let roles = animsmith_core::detect_profile(&doc.skeleton).unwrap_or_default();
-    let config = animsmith_core::Config::default();
-    let grids = animsmith_core::MetricGrids::new(&doc);
-    let ctx = animsmith_core::CheckCtx::new(&grids, &roles, &config);
-
-    Ok(animsmith_core::run_checks(
-        &ctx,
-        &animsmith_core::all_checks(),
-    ))
-}
-```
-
-Byte-surgical repairs are selected through `FixSession`, so composing
-repairs only parses and writes the container once:
-
-```rust,no_run
-fn repair_quaternions(
-    input: &std::path::Path,
-    output: &std::path::Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use animsmith_gltf::fix::{FixSession, Repair};
-
-    let mut session = FixSession::read(input)?;
-    session.apply(Repair::QuatNorm);
-    session.apply(Repair::QuatFlip);
-    session.write(input, output)?;
-    Ok(())
-}
-```
+The compiling load/check and repair examples live in the crate-level API
+documentation.
 
 ## Feature Flags
 
@@ -73,7 +41,9 @@ including in `--no-default-features` builds. The workspace MSRV is Rust
 
 ## More Detail
 
-- [Embedding animsmith in a pipeline](https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md)
+- [API reference on docs.rs](https://docs.rs/animsmith-gltf)
+- [Embedding guide](https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md)
+- [Raw asset to game-ready pipeline scenarios](https://github.com/mmannerm/animsmith/blob/main/docs/pipeline-scenarios.md)
 - [CLI reference](https://github.com/mmannerm/animsmith/blob/main/docs/cli.md)
 - [Workspace design](https://github.com/mmannerm/animsmith/blob/main/DESIGN.md)
 

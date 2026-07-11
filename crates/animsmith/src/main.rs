@@ -2,7 +2,7 @@
 //!
 //! This crate publishes the `animsmith` command: inspect, measure, lint,
 //! report, transform, fix, convert, and diff skeletal animation clips. It
-//! is not the Rust embedding API; use `animsmith-core` plus the loader
+//! is not the Rust library API; use `animsmith-core` plus the loader
 //! crates (`animsmith-gltf`, `animsmith-fbx`) and `animsmith-report` from
 //! library code.
 //!
@@ -10,6 +10,12 @@
 //! includes FBX input and HTML reports; `--no-default-features` leaves a
 //! pure-Rust glTF-only binary with report generation and FBX conversion
 //! omitted.
+//!
+//! The GitHub [pipeline scenario guide] maps these commands to marketplace
+//! intake, mocap cleanup, outsourced acceptance, CI, and artifact-storage
+//! workflows.
+//!
+//! [pipeline scenario guide]: https://github.com/mmannerm/animsmith/blob/main/docs/pipeline-scenarios.md
 
 #![warn(missing_docs)]
 
@@ -100,7 +106,7 @@ enum Cmd {
     },
     /// Apply mechanical clip transforms.
     #[command(
-        long_about = "Apply pipeline-mechanical clip transforms and write the result as glTF, carrying through any geometry the input brought (FBX or glTF meshes/skins/materials). Operations apply to every clip, or one clip via --clip."
+        long_about = "Apply pipeline-mechanical clip transforms and write the result as glTF, carrying through any scene assets the input brought (FBX or glTF meshes, skins, materials, and embedded base-color textures). Operations apply to every clip, or one clip via --clip."
     )]
     Transform {
         /// Input .glb, .gltf, or .fbx file.
@@ -152,7 +158,7 @@ enum Cmd {
     },
     /// Convert FBX or glTF input to glTF.
     #[command(
-        long_about = "Convert FBX or glTF input to glTF: skeleton, animation, triangulated meshes, skins, and factor-only materials. A glTF input is re-emitted carrying its geometry; --animation-only drops it. Texture wiring stays a downstream concern. Output format by extension: .glb binary, .gltf JSON with an embedded buffer."
+        long_about = "Convert FBX or glTF input to glTF: skeleton, animation, triangulated meshes, skins, factor-only materials, and embedded PNG/JPEG base-color textures. A glTF input is re-emitted carrying its geometry; --animation-only drops it. Output format by extension: .glb binary, .gltf JSON with an embedded buffer."
     )]
     #[cfg(feature = "fbx")]
     Convert {
