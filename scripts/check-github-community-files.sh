@@ -107,9 +107,10 @@ require_workflow_cron() {
 
 # Markdown link validation (target existence, #anchor resolution, and
 # the absolute-only policy for published READMEs) lives in the
-# markdown-parser-backed workspace tests crates/animsmith/tests/
-# docs_links.rs and docs_index.rs (pulldown-cmark), which run under
-# `cargo test --workspace`. This script keeps the assertions that are
+# markdown-parser-backed workspace test crates/animsmith/tests/
+# docs_links.rs (pulldown-cmark), which runs under `cargo test
+# --workspace`; its sibling docs_index.rs keeps the Document-index
+# completeness gate. This script keeps the assertions that are
 # genuinely string-shaped: required literals, ordering, issue-form and
 # workflow contracts.
 

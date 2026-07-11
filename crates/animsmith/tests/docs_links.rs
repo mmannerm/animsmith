@@ -26,7 +26,7 @@ const REPO_TREE_URL: &str = "https://github.com/mmannerm/animsmith/tree/main/";
 
 /// Gated files where relative in-repo links are the norm. The
 /// top-level `docs/*.md` pages join this set by directory listing in
-/// the gate test, so a new page is gated without editing this list.
+/// `validate_repo`, so a new page is gated without editing this list.
 const RELATIVE_LINK_FILES: &[&str] = &[
     "CONTRIBUTING.md",
     "DEVELOPMENT.md",
@@ -40,14 +40,27 @@ const RELATIVE_LINK_FILES: &[&str] = &[
 ];
 
 /// READMEs bundled into published crates render off-repo (crates.io),
-/// so relative links would break there: absolute repo URLs only.
-const ABSOLUTE_ONLY_FILES: &[&str] = &[
-    "README.md",
-    "crates/animsmith-core/README.md",
-    "crates/animsmith-gltf/README.md",
-    "crates/animsmith-fbx/README.md",
-    "crates/animsmith-report/README.md",
-];
+/// so relative links would break there: absolute repo URLs only. The
+/// root README is the crates.io front page for the `animsmith` CLI
+/// crate; crate READMEs join by directory listing, so a new crate
+/// README is gated without editing any list.
+fn absolute_only_files(root: &Path) -> Vec<String> {
+    let mut files = vec!["README.md".to_owned()];
+    if let Ok(entries) = std::fs::read_dir(root.join("crates")) {
+        for entry in entries {
+            let entry = entry.expect("directory entry");
+            if entry.path().join("README.md").is_file() {
+                let name = entry.file_name();
+                files.push(format!(
+                    "crates/{}/README.md",
+                    name.to_str().expect("utf-8 crate dir")
+                ));
+            }
+        }
+    }
+    files.sort();
+    files
+}
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -148,10 +161,33 @@ fn cached_anchors<'a>(
     })
 }
 
+/// The one anchor rule shared by the intra-file, `blob/main`, and
+/// relative branches: a `#fragment` on an existing `.md` target must
+/// name one of its headings. Fragments on non-`.md` targets (e.g.
+/// source-line anchors) are GitHub-UI concerns a checkout cannot
+/// resolve, so they are skipped.
+fn check_md_anchor(
+    cache: &mut BTreeMap<PathBuf, BTreeSet<String>>,
+    target_path: &Path,
+    target_display: &str,
+    fragment: Option<&str>,
+    rel: &str,
+    url: &str,
+    errors: &mut Vec<String>,
+) {
+    if let Some(fragment) = fragment
+        && target_display.ends_with(".md")
+        && target_path.is_file()
+        && !cached_anchors(cache, target_path).contains(fragment)
+    {
+        errors.push(format!(
+            "{rel}: anchor in {url} matches no heading in {target_display}"
+        ));
+    }
+}
+
 /// Validate every rendered link in one gated file, appending one
-/// message per broken link. Anchors are validated only against `.md`
-/// targets; fragments on other targets (e.g. source-line anchors) are
-/// GitHub-UI concerns a checkout cannot resolve.
+/// message per broken link.
 fn validate_file(
     root: &Path,
     rel: &str,
@@ -175,11 +211,7 @@ fn validate_file(
         }
 
         if let Some(fragment) = url.strip_prefix('#') {
-            if !cached_anchors(cache, &path).contains(fragment) {
-                errors.push(format!(
-                    "{rel}: intra-file anchor '{url}' matches no heading"
-                ));
-            }
+            check_md_anchor(cache, &path, rel, Some(fragment), rel, &url, errors);
             continue;
         }
 
@@ -189,13 +221,8 @@ fn validate_file(
                 let target_path = root.join(target);
                 if !target_path.is_file() {
                     errors.push(format!("{rel}: links to missing repository file {url}"));
-                } else if let Some(fragment) = fragment
-                    && target.ends_with(".md")
-                    && !cached_anchors(cache, &target_path).contains(fragment)
-                {
-                    errors.push(format!(
-                        "{rel}: anchor in {url} matches no heading in {target}"
-                    ));
+                } else {
+                    check_md_anchor(cache, &target_path, target, fragment, rel, &url, errors);
                 }
             } else if let Some(target) = base.strip_prefix(REPO_TREE_URL)
                 && !root.join(target).is_dir()
@@ -224,29 +251,23 @@ fn validate_file(
             errors.push(format!("{rel}: links to missing local target {url}"));
             continue;
         }
-        if let Some(fragment) = fragment
-            && base.ends_with(".md")
-            && target_path.is_file()
-            && !cached_anchors(cache, &target_path).contains(fragment)
-        {
-            errors.push(format!(
-                "{rel}: anchor in {url} matches no heading in {base}"
-            ));
-        }
+        check_md_anchor(cache, &target_path, base, fragment, rel, &url, errors);
     }
 }
 
-#[test]
-fn gated_markdown_links_resolve() {
-    let root = repo_root();
+/// Walk the full gated set under `root`: the published (absolute-only)
+/// READMEs, the curated relative-link files, and every top-level
+/// `docs/*.md` by directory listing. Returns the docs-page count so
+/// callers can assert the enumeration saw a non-empty docs set.
+fn validate_repo(root: &Path) -> (usize, Vec<String>) {
     let mut cache = BTreeMap::new();
     let mut errors = Vec::new();
 
-    for rel in ABSOLUTE_ONLY_FILES {
-        validate_file(&root, rel, true, &mut cache, &mut errors);
+    for rel in absolute_only_files(root) {
+        validate_file(root, &rel, true, &mut cache, &mut errors);
     }
     for rel in RELATIVE_LINK_FILES {
-        validate_file(&root, rel, false, &mut cache, &mut errors);
+        validate_file(root, rel, false, &mut cache, &mut errors);
     }
 
     let mut docs_pages = 0usize;
@@ -261,15 +282,26 @@ fn gated_markdown_links_resolve() {
             .expect("utf-8 doc name");
         docs_pages += 1;
         validate_file(
-            &root,
+            root,
             &format!("docs/{name}"),
             false,
             &mut cache,
             &mut errors,
         );
     }
-    assert!(docs_pages > 0, "docs/ must carry gated markdown pages");
+    (docs_pages, errors)
+}
 
+#[test]
+fn gated_markdown_links_resolve() {
+    let root = repo_root();
+    assert!(
+        absolute_only_files(&root).len() > 1,
+        "crates/ must carry published-crate READMEs"
+    );
+
+    let (docs_pages, errors) = validate_repo(&root);
+    assert!(docs_pages > 0, "docs/ must carry gated markdown pages");
     assert!(
         errors.is_empty(),
         "broken documentation links:\n{}",
@@ -338,7 +370,9 @@ fn heading_anchors_follow_github_slugging() {
 }
 
 /// End-to-end mutation catalog over a fixture repo: the valid link
-/// forms pass, and each defect class fails with its own message.
+/// forms pass — including code-shaped decoys around broken targets,
+/// dedupe-suffix anchors, and skipped fragments on non-`.md` targets —
+/// and each defect class fails with its own message.
 #[test]
 fn fixture_repo_valid_links_pass_and_each_mutation_fails() {
     let dir = tempfile::tempdir().expect("creates fixture repo");
@@ -346,17 +380,27 @@ fn fixture_repo_valid_links_pass_and_each_mutation_fails() {
     std::fs::create_dir_all(root.join("docs")).expect("creates docs/");
     std::fs::write(
         root.join("docs/guide.md"),
-        "# Guide\n\n## Real heading\n\nBody with a [self](#real-heading) link.\n",
+        "# Guide\n\n## Real heading\n\n## Workflow\n\n## Workflow\n\n\
+         Body with a [self](#real-heading) link.\n",
     )
     .expect("writes guide");
+    std::fs::write(root.join("src.rs"), "// a non-markdown link target\n").expect("writes src.rs");
     std::fs::write(
         root.join("good.md"),
         format!(
             "# Good\n\n\
              [anchor](docs/guide.md#real-heading), [dir](docs),\n\
+             [dedupe](docs/guide.md#workflow-1),\n\
              [blob]({REPO_BLOB_URL}docs/guide.md#real-heading),\n\
              [tree]({REPO_TREE_URL}docs), and\n\
-             [external](https://example.com/unchecked#whatever).\n"
+             [external](https://example.com/unchecked#whatever).\n\n\
+             Fragments on non-markdown targets are GitHub-UI anchors,\n\
+             skipped: [line](src.rs#L1) and [blob-line]({REPO_BLOB_URL}src.rs#L1).\n\n\
+             Code-shaped decoys around broken targets stay invisible:\n\n\
+             ```text\n\
+             [fenced decoy](never-a-file.md)\n\
+             ```\n\n\
+             and an inline `[span decoy](also-never.md)` link.\n"
         ),
     )
     .expect("writes good");
@@ -374,7 +418,11 @@ fn fixture_repo_valid_links_pass_and_each_mutation_fails() {
         format!(
             "# Bad\n\n\
              [stale](docs/guide.md#missing-heading)\n\
+             [dedupe-stale](docs/guide.md#workflow-2)\n\
              [missing][gone]\n\
+             [multi-\nline](missing-multiline.md)\n\
+             [angle](<missing angle.md>)\n\
+             ![image](missing.png)\n\
              [self](#nowhere)\n\
              [blob-stale]({REPO_BLOB_URL}docs/guide.md#missing-heading)\n\
              [blob-missing]({REPO_BLOB_URL}docs/nope.md)\n\
@@ -406,8 +454,12 @@ fn fixture_repo_valid_links_pass_and_each_mutation_fails() {
     validate_file(root, "bad.md", false, &mut cache, &mut errors);
     let expected_fragments = [
         "anchor in docs/guide.md#missing-heading matches no heading in docs/guide.md",
+        "anchor in docs/guide.md#workflow-2 matches no heading in docs/guide.md",
         "links to missing local target docs/nope.md",
-        "intra-file anchor '#nowhere' matches no heading",
+        "links to missing local target missing-multiline.md",
+        "links to missing local target missing angle.md",
+        "links to missing local target missing.png",
+        "anchor in #nowhere matches no heading in bad.md",
         &format!("anchor in {REPO_BLOB_URL}docs/guide.md#missing-heading matches no heading"),
         &format!("links to missing repository file {REPO_BLOB_URL}docs/nope.md"),
         &format!("links to missing repository directory {REPO_TREE_URL}nonexistent-dir"),
@@ -423,5 +475,47 @@ fn fixture_repo_valid_links_pass_and_each_mutation_fails() {
         errors.len(),
         expected_fragments.len(),
         "each mutation fails exactly once: {errors:#?}"
+    );
+}
+
+/// The enumeration wiring itself, pinned on a fixture: a new
+/// `docs/*.md` page joins the gated set by directory listing alone,
+/// and a gated file that is missing is an error, not a silent skip.
+#[test]
+fn fixture_repo_enumeration_gates_new_docs_pages_and_missing_files() {
+    let dir = tempfile::tempdir().expect("creates fixture repo");
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("docs")).expect("creates docs/");
+    std::fs::write(root.join("docs/guide.md"), "# Guide\n\nSelf-contained.\n")
+        .expect("writes guide");
+    std::fs::write(
+        root.join("docs/extra.md"),
+        "# Extra\n\nA new page with a [broken](missing-target.md) link.\n",
+    )
+    .expect("writes extra");
+
+    let (docs_pages, errors) = validate_repo(root);
+    assert_eq!(docs_pages, 2, "directory listing must see both docs pages");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e == "docs/extra.md: links to missing local target missing-target.md"),
+        "a new docs page must be gated without any list edit; got {errors:#?}"
+    );
+    for rel in RELATIVE_LINK_FILES
+        .iter()
+        .chain(std::iter::once(&"README.md"))
+    {
+        assert!(
+            errors
+                .iter()
+                .any(|e| e == &format!("{rel}: gated file is missing")),
+            "absent gated file {rel} must be an error; got {errors:#?}"
+        );
+    }
+    assert_eq!(
+        errors.len(),
+        RELATIVE_LINK_FILES.len() + 2,
+        "exactly the broken link plus the missing gated files: {errors:#?}"
     );
 }
