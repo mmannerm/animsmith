@@ -204,10 +204,27 @@ fn cli_convert_carries_and_strips_geometry() {
             output.status,
             String::from_utf8_lossy(&output.stderr),
         );
+        let written = animsmith_gltf::load(out).expect("loads converted output");
+        let corners: usize = written
+            .assets
+            .meshes
+            .iter()
+            .flat_map(|mesh| mesh.primitives.iter())
+            .map(|primitive| primitive.positions.len())
+            .sum();
         let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
-        assert!(
-            !stdout.contains("dropped"),
-            "a fully serialized document must not report dropped clips: {stdout}"
+        assert_eq!(
+            stdout,
+            format!(
+                "wrote {} ({} bones, {} clip(s), {} mesh(es) / {} corners, {} material(s))\n",
+                out.display(),
+                written.skeleton.bones.len(),
+                written.clips.len(),
+                written.assets.meshes.len(),
+                corners,
+                written.assets.materials.len(),
+            ),
+            "a fully serialized FBX document keeps the ordinary summary shape"
         );
     };
 

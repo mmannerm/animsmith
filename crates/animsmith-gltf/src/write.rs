@@ -16,7 +16,7 @@ use base64::Engine as _;
 use serde_json::{Value, json};
 use std::path::Path;
 
-/// Counts of the scene data emitted by [`write_with_summary`].
+/// Counts of the scene data emitted by [`write()`].
 ///
 /// These values describe the generated glTF, which can differ from the input
 /// [`Document`] when an animation clip has no writable channels or a skinned
@@ -267,20 +267,7 @@ fn plan_glb_lengths(json_len: usize, bin_len: usize) -> Result<GlbLengths, Write
 /// serialized, [`WriteError::TooLarge`] if a GLB length field would exceed
 /// the format's 4 GiB `u32` limit, and [`WriteError::Io`] when the output
 /// file cannot be written.
-pub fn write(doc: &Document, path: &Path) -> Result<(), WriteError> {
-    write_with_summary(doc, path).map(|_| ())
-}
-
-/// Serialize `doc` like [`write()`] and return counts for the generated glTF.
-///
-/// The returned [`WriteSummary`] is produced from the same JSON assembly that
-/// is serialized, so callers can report output counts without reopening and
-/// reparsing the written file.
-///
-/// # Errors
-///
-/// Returns the same [`WriteError`] variants as [`write()`].
-pub fn write_with_summary(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
+pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
     let assets = &doc.assets;
     let mut buffers = BufferBuilder::new();
     let mut animations: Vec<Value> = Vec::new();

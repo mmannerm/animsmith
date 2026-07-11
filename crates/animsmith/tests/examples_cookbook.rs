@@ -55,7 +55,7 @@ fn example_assets_match_generator_output() {
     // earlier `cargo run --example` subprocess with this in-process build.)
     let tmp = unique_temp_dir("gen");
     animsmith_testkit::write_example_assets(tmp.path(), |doc, path| {
-        animsmith_gltf::write::write(doc, path)
+        animsmith_gltf::write::write(doc, path).map(|_| ())
     })
     .expect("writes example assets");
 

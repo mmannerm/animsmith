@@ -776,8 +776,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             if animation_only {
                 doc.assets = animsmith_core::model::SceneAssets::default();
             }
-            let summary = animsmith_gltf::write::write_with_summary(&doc, &output)
-                .map_err(|e| e.to_string())?;
+            let summary = animsmith_gltf::write::write(&doc, &output).map_err(|e| e.to_string())?;
             print!(
                 "wrote {} ({} bones, {} clip(s), {} mesh(es) / {} corners, {} material(s))",
                 output.display(),
