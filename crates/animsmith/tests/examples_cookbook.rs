@@ -7,9 +7,9 @@
 //!    the checked-in assets can never silently drift from the generator.
 //! 2. The `cookbook_*` tests run the commands the cookbook documents
 //!    against the committed assets and assert each one's exit code plus
-//!    one distinctive substring — enough to catch the CLI's contract
-//!    drifting out from under the docs, without pinning brittle
-//!    verbatim transcripts.
+//!    a distinctive contract detail. The user-visible `transform`
+//!    transcripts are pinned verbatim because they include the complete
+//!    written-artifact summary.
 
 use serde_json::Value;
 use std::path::PathBuf;
@@ -197,7 +197,13 @@ fn cookbook_transform() {
 
     let (code, out) = run(&["transform", clean, "-o", sliced, "--slice", "0.5:1.0"]);
     assert_eq!(code, Some(0), "slice exits 0");
-    assert!(out.contains("sliced"), "reports the slice: {out}");
+    assert_eq!(
+        out,
+        format!(
+            "  sliced 'swing' to [0.5:1]s (3 keys max)\nwrote {sliced} (2 node(s), 1 clip(s), 0 mesh(es) / 0 position(s), 0 material(s))\n"
+        ),
+        "slice transcript matches the cookbook"
+    );
 
     let (code, out) = run(&["diff", clean, sliced]);
     assert_eq!(code, Some(1), "slice moves measurements, diff exits 1");
@@ -208,7 +214,13 @@ fn cookbook_transform() {
 
     let (code, out) = run(&["transform", clean, "-o", held, "--hold-extend", "0.5"]);
     assert_eq!(code, Some(0), "hold-extend exits 0");
-    assert!(out.contains("hold-extended"), "reports the hold: {out}");
+    assert_eq!(
+        out,
+        format!(
+            "  hold-extended 'swing' by 0.5s\nwrote {held} (2 node(s), 1 clip(s), 0 mesh(es) / 0 position(s), 0 material(s))\n"
+        ),
+        "hold transcript matches the cookbook"
+    );
 
     // Reuse the written file: the hold extends the clip's duration, so a
     // diff against the source reports movement — guards a no-write success.

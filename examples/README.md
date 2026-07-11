@@ -199,7 +199,7 @@ Slice a sub-window (retimed to start at 0):
 ```console
 $ animsmith transform examples/assets/clip.glb -o sliced.glb --slice 0.5:1.0
   sliced 'swing' to [0.5:1]s (3 keys max)
-wrote sliced.glb (1 clip(s) transformed)
+wrote sliced.glb (2 node(s), 1 clip(s), 0 mesh(es) / 0 position(s), 0 material(s))
 
 $ animsmith diff examples/assets/clip.glb sliced.glb
   swing duration_s: moved 1.0000 -> 0.5000
@@ -213,7 +213,7 @@ Extend the final pose (useful for hold frames at the end of a one-shot):
 ```console
 $ animsmith transform examples/assets/clip.glb -o held.glb --hold-extend 0.5
   hold-extended 'swing' by 0.5s
-wrote held.glb (1 clip(s) transformed)
+wrote held.glb (2 node(s), 1 clip(s), 0 mesh(es) / 0 position(s), 0 material(s))
 ```
 
 Other transforms: `--gait-anchor` rotates a cyclic clip so its stride
