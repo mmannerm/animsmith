@@ -275,6 +275,7 @@ pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
     let assets = &doc.assets;
     let mut buffers = BufferBuilder::new();
     let mut animations: Vec<Value> = Vec::new();
+    let mut clips_without_writable_tracks = 0usize;
 
     for clip in &doc.clips {
         let mut samplers: Vec<Value> = Vec::new();
@@ -318,7 +319,9 @@ pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
                 },
             }));
         }
-        if !channels.is_empty() {
+        if channels.is_empty() {
+            clips_without_writable_tracks += 1;
+        } else {
             animations.push(json!({
                 "name": clip.name,
                 "samplers": samplers,
@@ -517,7 +520,7 @@ pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
         meshes: array_len("meshes"),
         primitive_positions,
         materials: array_len("materials"),
-        clips_without_writable_tracks: doc.clips.len() - animations,
+        clips_without_writable_tracks,
     };
 
     let io_err = |e: std::io::Error| WriteError::Io {
