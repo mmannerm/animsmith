@@ -5,6 +5,8 @@
 use std::path::{Path, PathBuf};
 
 const RIGGED_TRIANGLE_FBX: &str = include_str!("../../animsmith-fbx/testdata/rigged_triangle.fbx");
+const RIGGED_TRIANGLE_WITH_EMPTY_TAKE_FBX: &str =
+    include_str!("../../animsmith-fbx/testdata/rigged_triangle_empty_take.fbx");
 
 fn unique_temp_dir(name: &str) -> tempfile::TempDir {
     tempfile::Builder::new()
@@ -16,6 +18,13 @@ fn unique_temp_dir(name: &str) -> tempfile::TempDir {
 fn write_fixture(dir: &Path) -> PathBuf {
     let fbx = dir.join("rigged_triangle.fbx");
     std::fs::write(&fbx, RIGGED_TRIANGLE_FBX).expect("writes FBX fixture");
+    fbx
+}
+
+fn write_fixture_with_empty_take(dir: &Path) -> PathBuf {
+    let fbx = dir.join("rigged_triangle_with_empty_take.fbx");
+    std::fs::write(&fbx, RIGGED_TRIANGLE_WITH_EMPTY_TAKE_FBX)
+        .expect("writes FBX fixture with empty take");
     fbx
 }
 
@@ -165,8 +174,35 @@ fn cli_convert_carries_and_strips_geometry() {
         if animation_only {
             cmd.arg("--animation-only");
         }
-        let status = cmd.status().expect("runs animsmith");
-        assert!(status.success(), "convert exited {status}");
+        let output = cmd.output().expect("runs animsmith");
+        assert!(
+            output.status.success(),
+            "convert exited {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr),
+        );
+        let written = animsmith_gltf::load(out).expect("loads converted output");
+        let corners: usize = written
+            .assets
+            .meshes
+            .iter()
+            .flat_map(|mesh| mesh.primitives.iter())
+            .map(|primitive| primitive.positions.len())
+            .sum();
+        let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
+        assert_eq!(
+            stdout,
+            format!(
+                "wrote {} ({} node(s), {} clip(s), {} mesh(es) / {} position(s), {} material(s))\n",
+                out.display(),
+                written.skeleton.bones.len(),
+                written.clips.len(),
+                written.assets.meshes.len(),
+                corners,
+                written.assets.materials.len(),
+            ),
+            "a fully serialized FBX document keeps the ordinary summary shape"
+        );
     };
 
     let carried = dir.path().join("carried.glb");
@@ -181,6 +217,76 @@ fn cli_convert_carries_and_strips_geometry() {
         mesh_count(&stripped),
         0,
         "convert --animation-only strips geometry"
+    );
+}
+
+/// The convert summary describes the serialized glTF, not the FBX loader's
+/// intermediate document. Empty FBX takes are retained by the loader but have
+/// no glTF channels, so the writer deliberately omits them.
+#[test]
+fn cli_convert_summary_reports_written_artifact_and_dropped_empty_take() {
+    let dir = unique_temp_dir("cli-convert-summary");
+    let fbx = write_fixture_with_empty_take(dir.path());
+    let source = animsmith_fbx::load(&fbx).expect("FBX with empty take loads");
+    assert_eq!(
+        source
+            .clips
+            .iter()
+            .map(|clip| (clip.name.as_str(), clip.tracks.is_empty()))
+            .collect::<Vec<_>>(),
+        vec![("take", false), ("empty", true)],
+        "the added empty take is distinct from the animated take"
+    );
+
+    let out = dir.path().join("converted.glb");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_animsmith"))
+        .arg("convert")
+        .arg(&fbx)
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("runs animsmith");
+    assert!(output.status.success(), "convert exited {}", output.status);
+
+    let written = animsmith_gltf::load(&out).expect("converted GLB loads");
+    assert_eq!(
+        (
+            source
+                .clips
+                .iter()
+                .map(|clip| clip.name.as_str())
+                .collect::<Vec<_>>(),
+            written
+                .clips
+                .iter()
+                .map(|clip| clip.name.as_str())
+                .collect::<Vec<_>>(),
+        ),
+        (vec!["take", "empty"], vec!["take"]),
+        "the empty take is the source clip omitted from the artifact"
+    );
+    let written_corners: usize = written
+        .assets
+        .meshes
+        .iter()
+        .flat_map(|mesh| mesh.primitives.iter())
+        .map(|primitive| primitive.positions.len())
+        .sum();
+    let dropped_clips = source.clips.len() - written.clips.len();
+    let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
+    assert_eq!(
+        stdout,
+        format!(
+            "wrote {} ({} node(s), {} clip(s), {} mesh(es) / {} position(s), {} material(s)); dropped {} clip(s) with no writable tracks\n",
+            out.display(),
+            written.skeleton.bones.len(),
+            written.clips.len(),
+            written.assets.meshes.len(),
+            written_corners,
+            written.assets.materials.len(),
+            dropped_clips,
+        ),
+        "the CLI summary matches the written artifact"
     );
 }
 
@@ -201,20 +307,47 @@ fn cli_transform_preserves_geometry() {
 
     // A hold-extend is a real (non-no-op) transform; the geometry must
     // survive it.
-    let status = std::process::Command::new(env!("CARGO_BIN_EXE_animsmith"))
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_animsmith"))
         .arg("transform")
         .arg(&fbx)
         .arg("-o")
         .arg(&out)
         .arg("--hold-extend")
         .arg("0.25")
-        .status()
+        .output()
         .expect("runs animsmith");
-    assert!(status.success(), "transform exited {status}");
+    assert!(
+        output.status.success(),
+        "transform exited {}: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
 
-    let meshes = mesh_count(&out);
-    assert!(meshes > 0, "transform carries geometry to its output");
+    let written = animsmith_gltf::load(&out).expect("loads transformed GLB");
+    assert!(
+        !written.assets.meshes.is_empty(),
+        "transform carries geometry to its output"
+    );
+    let positions = written
+        .assets
+        .meshes
+        .iter()
+        .flat_map(|mesh| mesh.primitives.iter())
+        .map(|primitive| primitive.positions.len())
+        .sum::<usize>();
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        format!(
+            "  hold-extended 'take' by 0.25s\nwrote {} ({} node(s), {} clip(s), {} mesh(es) / {} position(s), {} material(s))\n",
+            out.display(),
+            written.skeleton.bones.len(),
+            written.clips.len(),
+            written.assets.meshes.len(),
+            positions,
+            written.assets.materials.len(),
+        ),
+        "transform summary matches its written artifact"
+    );
     let baseline = baseline_meshes(&fbx, &dir.path().join("baseline.glb"));
-    let transformed_meshes = loaded_meshes(&out);
-    assert_meshes_match(&baseline, &transformed_meshes);
+    assert_meshes_match(&baseline, &written.assets.meshes);
 }

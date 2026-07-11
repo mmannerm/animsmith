@@ -705,8 +705,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     None => format!("{} has no clips", input.display()),
                 });
             }
-            animsmith_gltf::write::write(&doc, &output).map_err(|e| e.to_string())?;
-            println!("wrote {} ({touched} clip(s) transformed)", output.display());
+            let summary = animsmith_gltf::write::write(&doc, &output).map_err(|e| e.to_string())?;
+            println!("{}", format_write_summary(&output, &summary));
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Fix {
@@ -776,21 +776,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             if animation_only {
                 doc.assets = animsmith_core::model::SceneAssets::default();
             }
-            animsmith_gltf::write::write(&doc, &output).map_err(|e| e.to_string())?;
-            let vertices: usize = doc
-                .assets
-                .meshes
-                .iter()
-                .flat_map(|m| m.primitives.iter().map(|p| p.positions.len()))
-                .sum();
-            println!(
-                "wrote {} ({} bones, {} clip(s), {} mesh(es) / {vertices} corners, {} material(s))",
-                output.display(),
-                doc.skeleton.bones.len(),
-                doc.clips.len(),
-                doc.assets.meshes.len(),
-                doc.assets.materials.len(),
-            );
+            let summary = animsmith_gltf::write::write(&doc, &output).map_err(|e| e.to_string())?;
+            println!("{}", format_write_summary(&output, &summary));
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Diff { a, b, format } => {
@@ -834,6 +821,25 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             })
         }
     }
+}
+
+fn format_write_summary(output: &Path, summary: &animsmith_gltf::write::WriteSummary) -> String {
+    let mut text = format!(
+        "wrote {} ({} node(s), {} clip(s), {} mesh(es) / {} position(s), {} material(s))",
+        output.display(),
+        summary.nodes,
+        summary.animations,
+        summary.meshes,
+        summary.primitive_positions,
+        summary.materials,
+    );
+    if summary.clips_without_writable_tracks > 0 {
+        text.push_str(&format!(
+            "; dropped {} clip(s) with no writable tracks",
+            summary.clips_without_writable_tracks
+        ));
+    }
+    text
 }
 
 /// Measurements for `diff`: an asset file (measured now) or a prior

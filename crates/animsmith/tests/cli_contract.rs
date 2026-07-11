@@ -96,6 +96,46 @@ fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
+const EMPTY_ANIMATION_GLTF: &str = r#"{
+  "asset": { "version": "2.0" },
+  "nodes": [{ "name": "root" }],
+  "animations": [{ "name": "empty", "samplers": [], "channels": [] }],
+  "scenes": [{ "nodes": [0] }],
+  "scene": 0
+}"#;
+
+#[test]
+fn transform_summary_reports_a_loaded_clip_omitted_from_the_artifact() {
+    let dir = unique_temp_dir("transform-empty-animation");
+    let input = dir.path().join("empty-animation.gltf");
+    let output_path = dir.path().join("transformed.glb");
+    std::fs::write(&input, EMPTY_ANIMATION_GLTF).expect("writes empty animation fixture");
+
+    let output = animsmith()
+        .arg("transform")
+        .arg(&input)
+        .arg("-o")
+        .arg(&output_path)
+        .output()
+        .expect("runs transform");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    let written = animsmith_gltf::load(&output_path).expect("loads transformed output");
+    assert!(written.clips.is_empty(), "empty animation is not emitted");
+    assert_eq!(
+        stdout(&output),
+        format!(
+            "wrote {} (1 node(s), 0 clip(s), 0 mesh(es) / 0 position(s), 0 material(s)); dropped 1 clip(s) with no writable tracks\n",
+            output_path.display()
+        )
+    );
+}
+
 #[test]
 fn fix_rejects_unknown_repair_ids() {
     // Nonexistent input on purpose: flag validation must produce exit 2

@@ -25,7 +25,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&out_dir)?;
 
     animsmith_testkit::write_example_assets(&out_dir, |doc, path| {
-        animsmith_gltf::write::write(doc, path).inspect(|()| println!("wrote {}", path.display()))
+        animsmith_gltf::write::write(doc, path)
+            .inspect(|_| println!("wrote {}", path.display()))
+            .map(|_| ())
     })?;
 
     Ok(())

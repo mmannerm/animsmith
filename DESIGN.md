@@ -418,13 +418,17 @@ to *that* frame N. Determinism is the feature.
   modes into resampled TRS keys (rate from the FBX TimeMode,
   overridable). Each anim stack (take) becomes one core `Clip`. This
   sidesteps the entire FBX-curve-semantics swamp.
-- **`convert`** emits glTF 2.0 GLB: nodes + skin (computed IBMs) +
-  animations always; mesh + weights when present; `--animation-only` to
-  strip mesh. Explicitly *not* an art exporter — no material fidelity
-  promise. Both `convert` and `transform` share one `load`→`write`
-  round-trip over `Document` (assets included), so geometry survives a
-  transform pass and `--animation-only` clears it uniformly across input
-  formats (it is the only lever that drops geometry).
+- **`convert`** emits glTF 2.0 GLB: nodes + skin (computed IBMs) + one
+  animation per clip with at least one writable track; mesh + weights when
+  present; `--animation-only` to strip mesh. The glTF writer returns counts
+  derived from the emitted artifact, which both `convert` and `transform` use
+  for their summaries and to report source clips omitted because they have no
+  writable tracks.
+  Explicitly *not* an art exporter — no material fidelity promise. Both
+  `convert` and `transform` share one `load`→`write` round-trip over `Document`
+  (assets included), so geometry survives a transform pass and
+  `--animation-only` clears it uniformly across input formats (it is the only
+  lever that drops geometry).
 - **FBX pitfalls double as checks** when linting `.fbx` directly: source
   unit ≠ 1m (warn even though we convert), Z-up source, namespace-prefixed
   bone names (profile matcher strips), default "Take 001" naming (feeds

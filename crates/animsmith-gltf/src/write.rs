@@ -1,5 +1,5 @@
 //! Minimal glTF 2.0 writer for `convert`/`transform`: emits the
-//! skeleton (node hierarchy + rest TRS), every clip's animation tracks,
+//! skeleton (node hierarchy + rest TRS), each clip's writable animation tracks,
 //! and whatever scene assets the [`Document`] carries ([`Document::assets`]
 //! — triangulated meshes, skins, factor-only materials, and embedded
 //! base-color textures). A document with default-empty assets writes
@@ -15,6 +15,31 @@ use animsmith_core::model::{Document, Interpolation, Property, TrackValues};
 use base64::Engine as _;
 use serde_json::{Value, json};
 use std::path::Path;
+
+/// Counts of the scene data emitted by [`write()`].
+///
+/// The first five fields describe the generated glTF, which can differ from the
+/// input [`Document`] when an animation clip has no writable channels, a
+/// skinned mesh requires an additional holder node, or materials are omitted
+/// because the document has no meshes. [`Self::clips_without_writable_tracks`]
+/// is intentionally an input-to-output delta rather than an artifact count so
+/// callers can explain omitted source clips.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct WriteSummary {
+    /// Number of nodes emitted in the glTF skeleton/scene graph.
+    pub nodes: usize,
+    /// Number of animations emitted.
+    pub animations: usize,
+    /// Number of meshes emitted.
+    pub meshes: usize,
+    /// Number of primitive positions emitted.
+    pub primitive_positions: usize,
+    /// Number of materials emitted.
+    pub materials: usize,
+    /// Number of input clips omitted because none of their tracks were writable.
+    pub clips_without_writable_tracks: usize,
+}
 
 struct BufferBuilder {
     bytes: Vec<u8>,
@@ -246,10 +271,11 @@ fn plan_glb_lengths(json_len: usize, bin_len: usize) -> Result<GlbLengths, Write
 /// serialized, [`WriteError::TooLarge`] if a GLB length field would exceed
 /// the format's 4 GiB `u32` limit, and [`WriteError::Io`] when the output
 /// file cannot be written.
-pub fn write(doc: &Document, path: &Path) -> Result<(), WriteError> {
+pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
     let assets = &doc.assets;
     let mut buffers = BufferBuilder::new();
     let mut animations: Vec<Value> = Vec::new();
+    let mut clips_without_writable_tracks = 0usize;
 
     for clip in &doc.clips {
         let mut samplers: Vec<Value> = Vec::new();
@@ -293,7 +319,9 @@ pub fn write(doc: &Document, path: &Path) -> Result<(), WriteError> {
                 },
             }));
         }
-        if !channels.is_empty() {
+        if channels.is_empty() {
+            clips_without_writable_tracks += 1;
+        } else {
             animations.push(json!({
                 "name": clip.name,
                 "samplers": samplers,
@@ -462,6 +490,39 @@ pub fn write(doc: &Document, path: &Path) -> Result<(), WriteError> {
         }
     }
 
+    let array_len = |key: &str| root.get(key).and_then(Value::as_array).map_or(0, Vec::len);
+    let primitive_positions = root
+        .get("meshes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|mesh| mesh.get("primitives").and_then(Value::as_array))
+        .flatten()
+        .filter_map(|primitive| {
+            primitive
+                .pointer("/attributes/POSITION")
+                .and_then(Value::as_u64)
+                .and_then(|index| usize::try_from(index).ok())
+        })
+        .filter_map(|index| {
+            root.get("accessors")
+                .and_then(Value::as_array)
+                .and_then(|accessors| accessors.get(index))
+                .and_then(|accessor| accessor.get("count"))
+                .and_then(Value::as_u64)
+                .and_then(|count| usize::try_from(count).ok())
+        })
+        .sum();
+    let animations = array_len("animations");
+    let summary = WriteSummary {
+        nodes: array_len("nodes"),
+        animations,
+        meshes: array_len("meshes"),
+        primitive_positions,
+        materials: array_len("materials"),
+        clips_without_writable_tracks,
+    };
+
     let io_err = |e: std::io::Error| WriteError::Io {
         path: path.display().to_string(),
         source: e,
@@ -492,11 +553,12 @@ pub fn write(doc: &Document, path: &Path) -> Result<(), WriteError> {
             out.extend_from_slice(b"BIN\0");
             out.extend_from_slice(&bin);
         }
-        std::fs::write(path, out).map_err(io_err)
+        std::fs::write(path, out).map_err(io_err)?;
     } else {
         let text = serde_json::to_string_pretty(&root)?;
-        std::fs::write(path, text).map_err(io_err)
+        std::fs::write(path, text).map_err(io_err)?;
     }
+    Ok(summary)
 }
 
 #[cfg(test)]

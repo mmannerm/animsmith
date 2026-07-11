@@ -59,8 +59,24 @@ fn assert_round_trip(extension: &str) {
     let doc = synthetic_doc();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(format!("roundtrip.{extension}"));
-    animsmith_gltf::write::write(&doc, &path).expect("writes");
+    let summary = animsmith_gltf::write::write(&doc, &path).expect("writes");
     let loaded = animsmith_gltf::load(&path).expect("reloads");
+
+    assert_eq!(summary.nodes, loaded.skeleton.bones.len());
+    assert_eq!(summary.animations, loaded.clips.len());
+    assert_eq!(summary.meshes, loaded.assets.meshes.len());
+    assert_eq!(
+        summary.primitive_positions,
+        loaded
+            .assets
+            .meshes
+            .iter()
+            .flat_map(|mesh| mesh.primitives.iter())
+            .map(|primitive| primitive.positions.len())
+            .sum::<usize>()
+    );
+    assert_eq!(summary.materials, loaded.assets.materials.len());
+    assert_eq!(summary.clips_without_writable_tracks, 0);
 
     assert_eq!(loaded.skeleton.bones.len(), 2);
     assert_eq!(loaded.skeleton.bones[1].name, "spine");
@@ -104,6 +120,107 @@ fn glb_round_trip() {
 #[test]
 fn gltf_round_trip() {
     assert_round_trip("gltf");
+}
+
+#[test]
+fn write_summary_counts_each_clip_without_writable_tracks() {
+    let mut doc = synthetic_doc();
+    doc.clips.extend(["empty-a", "empty-b"].map(|name| Clip {
+        name: name.into(),
+        duration_s: 0.0,
+        tracks: vec![],
+    }));
+    doc.clips.push(Clip {
+        name: "empty-track".into(),
+        duration_s: 0.0,
+        tracks: vec![Track {
+            bone: 0,
+            property: Property::Translation,
+            interpolation: Interpolation::Linear,
+            times: vec![],
+            values: TrackValues::Vec3s(vec![]),
+        }],
+    });
+    let mut mixed = doc.clips[0].clone();
+    mixed.name = "mixed".into();
+    mixed.tracks.push(Track {
+        bone: 0,
+        property: Property::Translation,
+        interpolation: Interpolation::Linear,
+        times: vec![],
+        values: TrackValues::Vec3s(vec![]),
+    });
+    doc.clips.push(mixed);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("omitted-empty-clips.glb");
+
+    let summary = animsmith_gltf::write::write(&doc, &path).expect("writes");
+    let loaded = animsmith_gltf::load(&path).expect("reloads");
+
+    assert_eq!(
+        (
+            summary.animations,
+            summary.clips_without_writable_tracks,
+            loaded
+                .clips
+                .iter()
+                .map(|clip| clip.name.as_str())
+                .collect::<Vec<_>>(),
+        ),
+        (2, 3, vec!["sway", "mixed"]),
+        "empty clips are omitted while a mixed writable/non-writable clip is preserved"
+    );
+}
+
+#[test]
+fn write_summary_counts_a_clip_whose_only_track_targets_an_unknown_bone() {
+    let mut doc = synthetic_doc();
+    let mut invalid_track = doc.clips[0].tracks[0].clone();
+    invalid_track.bone = doc.skeleton.bones.len();
+    doc.clips = vec![Clip {
+        name: "unknown-bone".into(),
+        duration_s: 1.0,
+        tracks: vec![invalid_track],
+    }];
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("unknown-bone.glb");
+
+    let summary = animsmith_gltf::write::write(&doc, &path).expect("writes");
+    let loaded = animsmith_gltf::load(&path).expect("reloads");
+
+    assert_eq!(summary.animations, 0);
+    assert_eq!(summary.clips_without_writable_tracks, 1);
+    assert!(
+        loaded.clips.is_empty(),
+        "the unknown-bone clip is absent from the artifact"
+    );
+}
+
+#[test]
+fn write_summary_omits_materials_when_document_has_no_meshes() {
+    let mut doc = synthetic_doc();
+    doc.assets.materials.push(MaterialAsset {
+        name: "unused".into(),
+        base_color: [1.0; 4],
+        metallic: 0.0,
+        roughness: 1.0,
+        base_color_texture: None,
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("meshless-material.glb");
+
+    let summary = animsmith_gltf::write::write(&doc, &path).expect("writes");
+    let loaded = animsmith_gltf::load(&path).expect("reloads");
+
+    assert_eq!(
+        (
+            doc.assets.materials.len(),
+            summary.materials,
+            loaded.assets.materials.len(),
+        ),
+        (1, 0, 0),
+        "a source material is absent from a meshless artifact and its summary"
+    );
 }
 
 /// Collect the 4-byte chunk-type tags of a GLB, skipping the 12-byte

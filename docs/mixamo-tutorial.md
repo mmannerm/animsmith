@@ -70,12 +70,13 @@ raw-vs-generated split.
 
 ```console
 $ animsmith convert Walking.fbx -o walking.glb    # real download
-wrote walking.glb (68 bones, 2 clip(s), 2 mesh(es) / 28374 corners, 2 material(s))
+wrote walking.glb (70 node(s), 1 clip(s), 2 mesh(es) / 28374 position(s), 2 material(s)); dropped 1 clip(s) with no writable tracks
 ```
 
-(Counts vary by character. The summary's clip count can disagree with
-the written file — this download's GLB carries one animation, as
-`inspect` shows below; the discrepancy is tracked as issue 178.)
+(Counts vary by character. This download contains a second take named
+`Take 001` with zero tracks and keys. Conversion omits that empty take,
+writes the animated `mixamo.com` clip, and reports the omission. The
+licensed download is not committed here.)
 
 animsmith lints FBX directly, so conversion is not required to run
 checks — but glTF/GLB is the native format for the rest of the
