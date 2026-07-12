@@ -4,9 +4,11 @@
 [![Coverage](https://codecov.io/gh/mmannerm/animsmith/branch/main/graph/badge.svg)](https://codecov.io/gh/mmannerm/animsmith)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/mmannerm/animsmith/badge)](https://scorecard.dev/viewer/?uri=github.com/mmannerm/animsmith)
 
-A linter and workbench for skeletal animation clips. animsmith answers a
-question game teams usually answer by hand: does this exported animation
-behave like something a game runtime can actually use?
+A linter and workbench for skeletal animation clips. animsmith turns a
+question game teams answer by hand — is this exported animation ready
+for our game? — into measured, repeatable evidence: it checks what the
+file and your declared contract can establish, and reports what it
+could not evaluate.
 
 animsmith checks glTF/GLB and FBX clips for broken quaternions,
 degenerate durations, popped loop seams, gait-phase drift, root-motion
@@ -17,11 +19,14 @@ mechanical problems.
 
 glTF-Validator checks spec conformance. animsmith checks content
 semantics: loop seams, gait phase, root-motion speed, track hygiene, and
-other properties that decide whether an animation is usable in a game
-runtime. For the full story of what makes a clip game-ready — each
-runtime failure mode, and which check, repair, and config covers it —
-see the
-[game-ready clips guide](https://github.com/mmannerm/animsmith/blob/main/docs/game-ready-clips.md).
+other properties that commonly break clips only after engine import.
+What "game-ready" means here is staged evidence, not certification of
+an unspecified runtime: the
+[game-ready clips guide](https://github.com/mmannerm/animsmith/blob/main/docs/game-ready-clips.md#the-readiness-ladder)
+defines the readiness ladder — what animsmith validates, what needs
+your declarations, and what stays with your engine and team — and
+walks each runtime failure mode with the check, repair, and config
+that covers it.
 Evaluating animsmith for your team? Start with
 [why animsmith](https://github.com/mmannerm/animsmith/blob/main/docs/why-animsmith.md)
 — what it is, why it exists, and what it is worth by role.
@@ -94,9 +99,9 @@ $ animsmith fix clip.glb -o fixed.glb
 $ animsmith fix clip.glb --dry-run
 ```
 
-Exit codes are `0` for clean or warnings-only runs, `1` for error
-findings, and `2` for operator errors. `--deny-warnings` promotes
-warnings to a failing run.
+Exit codes are `0` for runs with no failing findings (warnings and
+skip notes may remain), `1` for error findings, and `2` for operator
+errors. `--deny-warnings` promotes warnings to a failing run.
 
 The HTML report is a single self-contained file with no CDN dependency.
 It plays back the exact pose-grid frames judged by the checks, with

@@ -4,10 +4,12 @@ Where animsmith fits in an animation asset pipeline.
 
 This guide is the process-level companion to the
 [game-ready clips guide](game-ready-clips.md) and the
-[examples cookbook](../examples/README.md). The game-ready guide explains
-why a check fires; the cookbook gives runnable command transcripts. This
-page shows how teams place those commands in the larger path from raw
-source animation to engine-facing, reviewable, CI-gated assets.
+[examples cookbook](../examples/README.md). The game-ready guide defines
+the [readiness ladder](game-ready-clips.md#the-readiness-ladder) and
+explains why a check fires; the cookbook gives runnable command
+transcripts. This page shows how teams place those commands in the
+larger path from raw source animation to engine-facing, reviewable,
+CI-gated assets.
 
 The common shape:
 
@@ -80,7 +82,16 @@ the command-owned references:
 Marketplace packs usually arrive as many clips with inconsistent naming,
 export settings, skeletons, and quality. The intake goal is to sort the
 pack into "usable now", "needs cleanup", and "reject or replace" before
-artists build gameplay on top of it.
+artists build gameplay on top of it — and to record what each verdict
+is based on.
+
+Intake evidence comes from running animsmith on the actual delivered
+files. Vendor preview media and partial sample downloads cannot
+establish raw loop boundaries, complete blend-set compatibility, exact
+rig and channel behavior, or how a clip will integrate in your runtime.
+Treat vendor claims as context, keep them distinct from run-backed
+findings in the intake notes, and preserve open unknowns instead of
+rounding them to "fine".
 
 Store the downloaded source in a raw, immutable location with its
 license and vendor metadata. Convert FBX assets into the format your
@@ -89,6 +100,19 @@ the batch before adding stricter project contract expectations. Use the
 conversion and reporting recipe for conversion and reports, the first
 CLI gate recipe for inventory and batch linting, and the project
 contract recipe once clip names and policies settle.
+
+Record intake as a coverage matrix over the representative files rather
+than one verdict per file: what was evaluated and clean, what was
+evaluated and produced findings, and what was not evaluated — because
+no expectations are declared yet, because a rig role did not resolve
+(the run reports a `skipped:` note), or because a check was disabled.
+Not-evaluated cells are neither pass nor fail; they stay visible until
+the contract grows to cover them or the team accepts them:
+
+| File | Evaluated clean | Findings | Not evaluated |
+|---|---|---|---|
+| `run_forward.glb` | mechanical checks except `scale-keys` | `scale-keys` warning | loop, speed, and gait checks — no expectations declared yet |
+| `idle.glb` | mechanical checks, `loop-seam` | — | `root-motion-speed` — no `speed_mps` declared |
 
 Use the first pass to catch obvious importer hazards: non-finite values,
 quaternion problems, inconsistent durations, scale keys, constant tracks,
@@ -135,9 +159,15 @@ Use exit codes as the automation boundary:
 
 | Exit code | Acceptance meaning |
 |---:|---|
-| 0 | Accepted by the lint contract. |
+| 0 | No failing findings from the checks that evaluated; warnings and `skipped:` notes may remain for review. |
 | 1 | Rejected until findings are fixed, or the contract is intentionally updated. |
 | 2 | Delivery or command error: missing file, unreadable asset, bad config, or unsupported format. |
+
+Exit `0` does not assert that every declared check evaluated. A
+delivery whose rig the profile cannot resolve skips the role-dependent
+checks with a note and still exits `0`, so an acceptance gate should
+also review skip notes and the resolved rig roles in the JSON output
+before accepting.
 
 Use the project contract recipe for the shared `animsmith.toml`, then
 pair the first CLI gate recipe with the machine-readable output

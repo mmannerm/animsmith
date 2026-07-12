@@ -91,7 +91,8 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: asset files or prior `
 - `lint` = measure + judge against config. `measure` is lint minus
   judgment — it emits the raw measurement map (the substrate other
   pipelines pin their own contracts to).
-- **Exit codes**: `0` clean or warnings-only, `1` at least one
+- **Exit codes**: `0` no failing findings (warnings and notes,
+  including `skipped:` diagnostics, may remain), `1` at least one
   error-severity finding (or pending repairs under `fix --dry-run`),
   `2` operator/tool error (unreadable file, bad config).
   `--deny-warnings` promotes warnings to errors.

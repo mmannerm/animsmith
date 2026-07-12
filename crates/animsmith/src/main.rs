@@ -33,7 +33,8 @@ use std::process::ExitCode;
 mod render;
 
 /// Exit codes, matching common asset-validation gate conventions:
-/// 0 = clean or warnings-only, 1 = error findings, 2 = operator error.
+/// 0 = no failing findings (warnings/notes allowed), 1 = error
+/// findings, 2 = operator error.
 const EXIT_FINDINGS: u8 = 1;
 const EXIT_OPERATOR: u8 = 2;
 

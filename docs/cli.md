@@ -63,9 +63,15 @@ animsmith diff <before> <after> [--format text|json]
 
 | Code | Meaning |
 |---:|---|
-| 0 | Clean, or warnings only. |
+| 0 | No failing findings: clean, warnings-only, or notes-only (including `skipped:` notes). |
 | 1 | At least one failing finding, a significant `diff`, or pending repairs under `fix --dry-run`. |
 | 2 | Operator/tool error: unreadable input, bad config, unsupported format, or invalid flags. |
+
+A skipped role-dependent check reports a `skipped:` note and does not
+fail the run — exit `0` means no failing findings among the checks
+that evaluated, not that every declared check evaluated; see
+[reading a lint run](game-ready-clips.md#reading-a-lint-run) for the
+full outcome vocabulary.
 
 Use `lint --deny-warnings` when CI should fail on warnings as well as
 errors. `fix --dry-run` is the repair check mode: it exits 1 when the
@@ -142,7 +148,7 @@ short lists, collapsed once a file carries more than ten findings so one
 noisy asset does not bury the rest of the comment); a clean file collapses
 to a one-line `✅ Clean` summary with no section. A footer tallies errors,
 warnings, and notes across every input. The exit code is unchanged from
-text and JSON: `0` clean or warnings-only, `1` on a failing finding.
+text and JSON — see [Exit Codes](#exit-codes).
 
 Markdown is presentation-only and carries **no stability guarantees** —
 gate automation on `--format json` (see [output.md](output.md)), and

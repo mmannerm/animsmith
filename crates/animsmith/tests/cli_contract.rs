@@ -1339,6 +1339,54 @@ fn lint_warnings_pass_but_deny_warnings_fails() {
     );
 }
 
+/// The acceptance-gate composition docs/game-ready-clips.md and
+/// docs/pipeline-scenarios.md promise: a role-dependent check with
+/// declared work on an unresolvable rig reports a note-severity
+/// finding whose message carries the documented `skipped:` prefix in
+/// the v1 envelope, and the run exits 0 — including under
+/// `--deny-warnings`, which promotes warnings only, never notes.
+#[test]
+fn lint_skip_note_serializes_as_note_and_exits_zero() {
+    let dir = unique_temp_dir("skip-note");
+    let input = dir.path().join("sway.glb");
+    write_clean_glb(&input); // root->spine rig: no hips/foot roles resolve
+    let config = dir.path().join("animsmith.toml");
+    std::fs::write(&config, "[clips.sway]\nloop = true\n").expect("writes config");
+
+    for deny in [false, true] {
+        let mut args = vec![
+            "--config",
+            config.to_str().expect("utf-8 config path"),
+            "lint",
+            input.to_str().expect("utf-8 input path"),
+            "--format",
+            "json",
+        ];
+        if deny {
+            args.push("--deny-warnings");
+        }
+        let output = animsmith().args(&args).output().expect("runs animsmith");
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "skip notes must not fail the run (deny-warnings: {deny}):\n{}",
+            stderr(&output)
+        );
+        let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+        assert_eq!(json["summary"]["findings"]["note"], 1, "{json:#}");
+        let finding = &json["files"][0]["findings"][0];
+        assert_eq!(finding["check_id"], "loop-seam", "{json:#}");
+        assert_eq!(finding["severity"], "note", "{json:#}");
+        assert!(
+            finding["message"]
+                .as_str()
+                .expect("message is a string")
+                .starts_with("skipped:"),
+            "documented skip prefix missing: {json:#}"
+        );
+    }
+}
+
 #[test]
 fn lint_allow_suppresses_a_check() {
     let dir = unique_temp_dir("allow");
