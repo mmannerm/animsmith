@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "animsmith"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "animsmith-core",
  "animsmith-fbx",
@@ -22,7 +22,7 @@ dependencies = [
 
 [[package]]
 name = "animsmith-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "animsmith-core",
  "glam",
@@ -33,7 +33,7 @@ dependencies = [
 
 [[package]]
 name = "animsmith-fbx"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "animsmith-core",
  "glam",
@@ -44,7 +44,7 @@ dependencies = [
 
 [[package]]
 name = "animsmith-gltf"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "animsmith-core",
  "animsmith-testkit",
@@ -58,7 +58,7 @@ dependencies = [
 
 [[package]]
 name = "animsmith-report"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "animsmith-core",
  "animsmith-gltf",
@@ -68,7 +68,7 @@ dependencies = [
 
 [[package]]
 name = "animsmith-testkit"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "animsmith-core",
  "glam",
