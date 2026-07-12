@@ -5,7 +5,7 @@ Find what you need by task — each page below owns one job.
 | Document | Use it to… |
 |---|---|
 | [Why animsmith](why-animsmith.md) | Decide whether animsmith fits your team — what it is, why it exists, and what it is worth by role. The canonical home of the positioning case. |
-| [Game-ready clips guide](game-ready-clips.md) | Understand what "game-ready" means and why a check fires — every runtime failure mode, mapped to the checks, repairs, and config that address it. |
+| [Game-ready clips guide](game-ready-clips.md) | Understand what "game-ready" means — the staged readiness ladder and what animsmith validates at each level — and why a check fires: every runtime failure mode, mapped to the checks, repairs, and config that address it. |
 | [Pipeline scenario guide](pipeline-scenarios.md) | Plan a raw-to-game-ready asset process — marketplace intake, mocap cleanup, outsourced acceptance, CI gating, and artifact storage. |
 | [Examples cookbook](../examples/README.md) | Do the work, copy-paste style — gate exports in CI, repair a broken export, trim or re-anchor a clip, encode a project contract config, migrate FBX/Mixamo exports, embed the checks in Rust. |
 | [Mixamo tutorial](mixamo-tutorial.md) | Take a real Mixamo download end-to-end — download, convert, inspect, lint, fix, and grow a contract config with the built-in `mixamo` rig profile. |

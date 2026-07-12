@@ -9,14 +9,16 @@ errors — the file is spec-conformant — they are *content* problems that
 only surface after the slowest step of the pipeline: engine import, a
 bake, a playtest.
 
-This document describes the characteristics that make a clip
-game-engine friendly, organized by the runtime symptom you see when a
-characteristic is violated. Each section names the symptom, explains
-the mechanics behind it, and maps it to the animsmith checks, repairs,
-and configuration that address it. If you want runnable commands, each
-symptom links into the [examples cookbook](../examples/README.md); if
-you want the reasoning behind the tool itself — why it exists and what
-it is worth to your team — see [why animsmith](why-animsmith.md).
+This document defines what "game-ready" means here — the
+[readiness ladder](#the-readiness-ladder) below stages the evidence
+from file-ready data to shipped acceptance — and then describes the
+checkable characteristics, organized by the runtime symptom you see
+when one is violated. Each symptom section explains the mechanics and
+maps them to the animsmith checks, repairs, and configuration that
+address them. If you want runnable commands, each symptom links into
+the [examples cookbook](../examples/README.md); if you want the
+reasoning behind the tool itself — why it exists and what it is worth
+to your team — see [why animsmith](why-animsmith.md).
 
 ## A valid file is not a usable clip
 
@@ -47,6 +49,109 @@ export.fbx` seconds after a DCC export catches "the loop pops" or
 import and bake. And the **CI gate** — the same checks with
 machine-readable output and stable exit codes hold every committed
 asset to the contract, so a re-export can't silently drift.
+
+## The readiness ladder
+
+"Game-ready" is not one property a tool can certify, because most of
+it is relative to a consumer: *your* engine, *your* controllers,
+*your* bar for quality. It is a ladder of evidence, and each level
+has a different owner. animsmith's job is to make the early levels
+checked and repeatable, make the declared middle measurable, and say
+plainly what it did not evaluate — not to stamp the whole ladder.
+
+1. **File-ready** — the data is parseable, finite, and mechanically
+   valid: no NaN/Inf, monotonic key times, unit quaternions, sane
+   durations, clean track hygiene. This is animsmith's primary
+   generic coverage: the mechanical checks (`nan`, `time-monotonic`,
+   `quat-norm`, `quat-flip`, `duration-sanity`, `scale-keys`,
+   `constant-track`) run on every file with no configuration, and
+   `fix` repairs the losslessly repairable defects.
+
+2. **Clip-ready** — the clip honors what you declared about it: loop
+   closure, duration and frame grid, in-place vs root-motion policy,
+   required bone motion, bind-pose consistency. Strong, config-backed
+   coverage where a check exists: `fps`, `loop-seam`, `in-place`,
+   `root-motion-speed`, `foot-slide`, `missing-bones`, `frozen-bone`,
+   and `bind-pose` judge exactly the expectations you declare — and
+   the checks that need rig roles skip with a note instead of
+   guessing when a role cannot be resolved. `foot-slide` is the
+   research-grade member: its contact detection is heuristic, so it
+   ships as a warning.
+
+3. **Set-ready** — clips that blend or sync together are compatible
+   as a set. Generic measurement and checking where implemented:
+   `gait-group` holds a declared directional blend ring to a shared
+   stride phase, `measure` supplies the per-clip numbers, and
+   `animsmith diff` catches drift between revisions. Set
+   compatibility beyond the implemented checks is yours to review.
+
+4. **Rig and use prerequisites** — which bones play which roles on
+   the target rig, which bones a clip must animate, and what each
+   clip is for. A shared boundary: you supply the meaning (a rig
+   profile or `[rig.roles]`, `animates_bones`, per-clip
+   expectations), and animsmith resolves roles against the skeleton,
+   checks the declarations, and reports the resolved roles it used.
+   Nothing at this level can be inferred from the file alone.
+
+5. **Runtime integration** — importer behavior, blend-graph
+   topology, animation target IDs, masks, sync and reset behavior,
+   and the poses your engine actually evaluates. Consumer-owned:
+   animsmith ships no runtime-integration checks, and its
+   measurements come from its own documented sampling model — a
+   model of engine samplers, not a reproduction of yours.
+
+6. **Gameplay, artistic, and production acceptance** — controller
+   feel and timing, readability, visual quality, provenance,
+   reproducibility, shipping sign-off. Consumer-owned: reports and
+   measurements inform the review; people make the call.
+
+A clean run is evidence, and evidence has scope: it covers the checks
+that ran, on the file that ran, against the contract you declared.
+Only an actual animsmith run on the actual file establishes that
+evidence — a vendor's preview video, a different sample from the same
+pack, or a hand-me-down report establishes nothing about this export.
+And validation at one level supplies prerequisites and evidence for
+the levels above it, not blanket certification of them: a mechanically
+pristine, contract-clean clip can still be rejected by your importer,
+your blend graph, or your art director.
+
+### Reading a lint run
+
+One `animsmith lint` run answers five independent questions. Keep
+them separate when you automate on the output:
+
+- **Was the check active?** The full catalog runs by default;
+  `--select` narrows the run set, and `[checks.<id>] severity =
+  "off"` removes a check entirely. An inactive check contributes
+  nothing to the output — silence, not a verdict.
+- **Did it apply here?** Contract-aware checks judge only declared
+  expectations. With no `loop = true` clip in the config, `loop-seam`
+  has nothing to judge and stays silent. Silence from an idle check
+  is not evidence either.
+- **Was the work evaluated?** When declared work exists but a
+  prerequisite is missing — typically an unresolved rig role — the
+  check is skipped and reports a note whose message begins with
+  `skipped:`, exempt from severity overrides. A check can also
+  complete part of its work: `gait-group` still validates that
+  declared ring members exist in the file when unresolved roles keep
+  it from measuring phase, and the skipped measurement reports the
+  note.
+- **What did the evaluated work find?** Content findings at note,
+  warning, or error severity, carrying clip, bone, time, and
+  measured-vs-expected context.
+- **What blocks?** Gate policy is yours, not animsmith's verdict:
+  exit `1` on error findings, `--deny-warnings` to promote warnings,
+  per-check severity overrides, `--allow` to suppress a check's
+  findings. Skip notes never fail a run — exit `0` means no failing
+  findings among the work that was evaluated, not that everything
+  was evaluated. A gate that requires full coverage must review skip
+  notes too.
+
+There is deliberately no single "pass" state: a run can complete with
+warnings, and it can evaluate some declared work while skipping the
+rest. See [machine-readable output](output.md) for how findings — and
+their current limits as a coverage signal — appear in the versioned
+JSON envelope.
 
 ---
 

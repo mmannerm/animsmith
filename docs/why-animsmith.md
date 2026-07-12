@@ -13,14 +13,14 @@ instead.
 animsmith validates, measures, reports, and prepares skeletal
 animation clips for game-engine import and runtime use.
 
-Concretely: point it at a glTF/GLB or FBX export and it tells you —
+Concretely: point it at a glTF/GLB or FBX export and it answers —
 before engine import, in seconds, with frame- and bone-level detail —
-whether the clip will behave in a game runtime. Does the loop pop? Do
+questions that otherwise wait for a playtest: Does the loop pop? Do
 the feet slide? Does the measured root-motion speed match what the
 character controller expects? Did this re-export silently change the
-motion? It answers from the command line, from CI via stable exit
-codes and versioned JSON, or from Rust as a library — and it repairs
-the mechanical problems that are provably safe to fix.
+motion? It works from the command line, from CI via stable exit codes
+and versioned JSON, or from Rust as a library — and it repairs the
+mechanical problems that are provably safe to fix.
 
 ## Why it exists
 
@@ -46,30 +46,32 @@ confidence that code teams expect from tests and linters.
 
 ## What "game-ready" means
 
-A clip is game-ready when it holds four contracts at once. animsmith
-exists to check all four before the engine does:
+"Game-ready" is staged evidence, not a stamp — a clip is ready *for a
+consumer*, and the last stages of readiness belong to that consumer.
+The [readiness ladder](game-ready-clips.md#the-readiness-ladder) is
+the canonical definition; it stages the evidence from file-ready data
+to shipped acceptance. What animsmith contributes splits three ways:
 
-- **Runtime contract** — the engine can import, sample, blend, and
-  compress the clip predictably: finite values, unit rotations,
-  monotonic key times, sane durations and key counts, no data the
-  importer will silently discard.
-- **Character controller contract** — the clip's spatial behavior
-  matches the gameplay system that drives it: in-place vs root-motion
-  classification is explicit, measured speed and stride match the
-  locomotion design, feet stay planted when they should.
-- **Retargeting contract** — the clip is usable on the intended rigs
-  without silent degradation: expected hierarchy and bone names,
-  known rest pose and units, no tracks the target engine drops
-  without telling anyone.
-- **Pipeline contract** — the state of an asset is understandable and
-  reviewable: stable naming, actionable findings instead of vague
-  pass/fail, machine-readable reports, and a clear path from "failed"
-  to "fix in DCC" or "auto-repair safely".
+- **Validated generically, on every file:** the data is mechanically
+  sound — finite values, unit rotations, monotonic key times, sane
+  durations, no accidental scale animation or export bloat — and the
+  losslessly repairable defects are repaired.
+- **Validated against your declarations:** the semantic contracts
+  only you can state — which clips loop, which are authored in
+  place, what speed they promise, which bones must move, which clips
+  blend as a set — declared in a project config, resolved through a
+  rig profile, and skipped with a note rather than guessed when a
+  prerequisite is missing.
+- **Consumer-owned:** importer and blend-graph behavior, controller
+  feel, artistic quality, and shipping sign-off. animsmith's reports
+  and measurements are evidence for that review, not a substitute
+  for it — no standalone tool can certify behavior inside a runtime
+  it has never seen.
 
-The [game-ready clips guide](game-ready-clips.md) covers the same
-ground symptom by symptom: the runtime failure you see when one of
-these contracts is violated, the mechanics behind it, and the check,
-repair, and config that address it.
+The [game-ready clips guide](game-ready-clips.md) covers the
+measurable ground symptom by symptom: the runtime failure you see
+when a declared contract is violated, the mechanics behind it, and
+the check, repair, and config that address it.
 
 ## What it is worth, by role
 
@@ -92,7 +94,7 @@ become measured numbers checked against declared tolerances, and
 re-export before it reaches a playtest.
 
 **Producers and pipeline owners** turn outsourced-asset acceptance
-into measurable requirements: a machine-readable definition of "done"
+into measurable requirements: a machine-readable acceptance contract
 that both sides can run, fewer review round-trips, and asset state
 that is visible in a report rather than in someone's head.
 

@@ -52,6 +52,16 @@ optional `time_s`, optional measured/expected values, and a human message.
 Treat `check_id` as the stable key for automation; treat `message` as
 display text.
 
+The findings array also carries evaluation-coverage diagnostics: a
+check with declared work whose prerequisite is missing — typically an
+unresolved rig role — reports a `note` finding whose message begins
+with `skipped:`. The v1 envelope has no separate coverage field, so a
+skip note is not structurally distinguishable from a content note, and
+an absent finding does not distinguish a completed clean evaluation
+from a check that was idle for this document and config, disabled with
+`severity = "off"`, or outside `--select`. Gate on findings and exit
+codes; do not infer evaluation coverage from silence.
+
 `measure` reports static (animation-independent) geometry when the input
 carries meshes (FBX always; glTF when the file has mesh data). Each entry
 in `files[].meshes` is:
