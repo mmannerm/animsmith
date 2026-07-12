@@ -506,6 +506,11 @@ fn gait_group_skip_note_is_isolated_and_reasoned() {
     assert_eq!(group.len(), 1, "one gait-group note: {group:#?}");
     assert_eq!(group[0].severity, Severity::Note);
     assert!(
+        group[0].message.starts_with("skipped:"),
+        "skip-notes carry the documented `skipped:` prefix: {}",
+        group[0].message
+    );
+    assert!(
         group[0].message.contains("hips/foot"),
         "{}",
         group[0].message
@@ -585,7 +590,11 @@ fn skip_note_is_exempt_from_severity_override() {
         Severity::Note,
         "skip-note must stay a Note despite severity = error"
     );
-    assert!(seam[0].message.contains("skipped"), "{}", seam[0].message);
+    assert!(
+        seam[0].message.starts_with("skipped:"),
+        "skip-notes carry the documented `skipped:` prefix: {}",
+        seam[0].message
+    );
 }
 
 /// #28: `severity = "off"` removes the check entirely — not even its
@@ -627,6 +636,11 @@ fn unresolved_roles_yield_one_note_per_pending_check() {
             "{id}: expected one skip-note, got {notes:#?}"
         );
         assert_eq!(notes[0].severity, Severity::Note, "{id} not a Note");
+        assert!(
+            notes[0].message.starts_with("skipped:"),
+            "{id}: skip-notes carry the documented `skipped:` prefix: {}",
+            notes[0].message
+        );
     }
 }
 
