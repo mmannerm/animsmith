@@ -40,7 +40,7 @@ Every example relies on the same convention, so scripts can gate on it:
 
 | Code | Meaning |
 |---:|---|
-| 0 | Clean, or warnings only. |
+| 0 | No failing findings; warnings and skip notes may remain. |
 | 1 | A failing finding, a significant `diff`, or pending `fix --dry-run` repairs. |
 | 2 | Operator error: unreadable input, bad config, bad flags. |
 

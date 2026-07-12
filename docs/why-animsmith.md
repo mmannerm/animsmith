@@ -57,10 +57,9 @@ to shipped acceptance. What animsmith contributes splits three ways:
   durations, no accidental scale animation or export bloat — and the
   losslessly repairable defects are repaired.
 - **Validated against your declarations:** the semantic contracts
-  only you can state — which clips loop, which are authored in
-  place, what speed they promise, which bones must move, which clips
-  blend as a set — declared in a project config, resolved through a
-  rig profile, and skipped with a note rather than guessed when a
+  only you can state — loops, in-place policy, speed pins, required
+  bones, blend sets — declared in a project config, resolved through
+  a rig profile, and skipped with a note rather than guessed when a
   prerequisite is missing.
 - **Consumer-owned:** importer and blend-graph behavior, controller
   feel, artistic quality, and shipping sign-off. animsmith's reports

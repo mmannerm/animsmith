@@ -22,7 +22,7 @@ semantics: loop seams, gait phase, root-motion speed, track hygiene, and
 other properties that commonly break clips only after engine import.
 What "game-ready" means here is staged evidence, not certification of
 an unspecified runtime: the
-[game-ready clips guide](https://github.com/mmannerm/animsmith/blob/main/docs/game-ready-clips.md)
+[game-ready clips guide](https://github.com/mmannerm/animsmith/blob/main/docs/game-ready-clips.md#the-readiness-ladder)
 defines the readiness ladder — what animsmith validates, what needs
 your declarations, and what stays with your engine and team — and
 walks each runtime failure mode with the check, repair, and config
@@ -99,9 +99,9 @@ $ animsmith fix clip.glb -o fixed.glb
 $ animsmith fix clip.glb --dry-run
 ```
 
-Exit codes are `0` for clean or warnings-only runs, `1` for error
-findings, and `2` for operator errors. `--deny-warnings` promotes
-warnings to a failing run.
+Exit codes are `0` for runs with no failing findings (warnings and
+skip notes may remain), `1` for error findings, and `2` for operator
+errors. `--deny-warnings` promotes warnings to a failing run.
 
 The HTML report is a single self-contained file with no CDN dependency.
 It plays back the exact pose-grid frames judged by the checks, with

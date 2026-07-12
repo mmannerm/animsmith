@@ -111,7 +111,7 @@ the contract grows to cover them or the team accepts them:
 
 | File | Evaluated clean | Findings | Not evaluated |
 |---|---|---|---|
-| `run_forward.glb` | mechanical checks | `scale-keys` warning | loop, speed, and gait checks — no expectations declared yet |
+| `run_forward.glb` | mechanical checks except `scale-keys` | `scale-keys` warning | loop, speed, and gait checks — no expectations declared yet |
 | `idle.glb` | mechanical checks, `loop-seam` | — | `root-motion-speed` — no `speed_mps` declared |
 
 Use the first pass to catch obvious importer hazards: non-finite values,

@@ -34,14 +34,16 @@ them differently:
 
 - **Mechanical characteristics** hold for every clip, with no knowledge
   of your project: finite values, monotonic key times, unit
-  quaternions, consistent durations. animsmith checks these out of the
-  box, and repairs the losslessly-repairable ones.
-- **Semantic characteristics** are contracts only you can declare: *this*
-  clip loops, *this* one is authored in place, *these four* form a
-  blend ring. animsmith checks these against a
+  quaternions, consistent durations.
+- **Semantic characteristics** are contracts only you can declare:
+  *this* clip loops, *this* one is authored in place, *these four*
+  form a blend ring — declared in a
   [project config](../examples/README.md#4-a-project-contract-config)
-  plus a resolved rig profile — and skips them with a note, rather than
-  guessing, when either is missing.
+  and resolved through a rig profile.
+
+These two groups are the first two levels of the
+[readiness ladder](#the-readiness-ladder), which states what animsmith
+does about each.
 
 Two loops benefit. The **artist inner loop** — `animsmith lint
 export.fbx` seconds after a DCC export catches "the loop pops" or
@@ -65,7 +67,8 @@ plainly what it did not evaluate — not to stamp the whole ladder.
    generic coverage: the mechanical checks (`nan`, `time-monotonic`,
    `quat-norm`, `quat-flip`, `duration-sanity`, `scale-keys`,
    `constant-track`) run on every file with no configuration, and
-   `fix` repairs the losslessly repairable defects.
+   `fix` repairs the two losslessly repairable defect classes
+   (`quat-norm`, `quat-flip`).
 
 2. **Clip-ready** — the clip honors what you declared about it: loop
    closure, duration and frame grid, in-place vs root-motion policy,
@@ -74,9 +77,9 @@ plainly what it did not evaluate — not to stamp the whole ladder.
    `root-motion-speed`, `foot-slide`, `missing-bones`, `frozen-bone`,
    and `bind-pose` judge exactly the expectations you declare — and
    the checks that need rig roles skip with a note instead of
-   guessing when a role cannot be resolved. `foot-slide` is the
-   research-grade member: its contact detection is heuristic, so it
-   ships as a warning.
+   guessing when a role cannot be resolved. One member is heuristic:
+   `foot-slide` ships as a warning (see
+   [feet slide within one clip](#feet-slide-within-one-clip)).
 
 3. **Set-ready** — clips that blend or sync together are compatible
    as a set. Generic measurement and checking where implemented:
@@ -108,12 +111,12 @@ plainly what it did not evaluate — not to stamp the whole ladder.
 A clean run is evidence, and evidence has scope: it covers the checks
 that ran, on the file that ran, against the contract you declared.
 Only an actual animsmith run on the actual file establishes that
-evidence — a vendor's preview video, a different sample from the same
-pack, or a hand-me-down report establishes nothing about this export.
-And validation at one level supplies prerequisites and evidence for
-the levels above it, not blanket certification of them: a mechanically
-pristine, contract-clean clip can still be rejected by your importer,
-your blend graph, or your art director.
+evidence — nothing transfers from vendor previews, other files in the
+pack, or another export's report. And where generic validation touches
+a later level, it supplies prerequisites or evidence for that level,
+never blanket certification of it: a mechanically pristine,
+contract-clean clip can still be rejected by your importer, your blend
+graph, or your art director.
 
 ### Reading a lint run
 

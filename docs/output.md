@@ -59,8 +59,10 @@ with `skipped:`. The v1 envelope has no separate coverage field, so a
 skip note is not structurally distinguishable from a content note, and
 an absent finding does not distinguish a completed clean evaluation
 from a check that was idle for this document and config, disabled with
-`severity = "off"`, or outside `--select`. Gate on findings and exit
-codes; do not infer evaluation coverage from silence.
+`severity = "off"`, or outside `--select` —
+[reading a lint run](game-ready-clips.md#reading-a-lint-run) separates
+those states. Gate on findings and exit codes; do not infer evaluation
+coverage from silence.
 
 `measure` reports static (animation-independent) geometry when the input
 carries meshes (FBX always; glTF when the file has mesh data). Each entry
