@@ -148,7 +148,7 @@ short lists, collapsed once a file carries more than ten findings so one
 noisy asset does not bury the rest of the comment); a clean file collapses
 to a one-line `✅ Clean` summary with no section. A footer tallies errors,
 warnings, and notes across every input. The exit code is unchanged from
-text and JSON: `0` clean or warnings-only, `1` on a failing finding.
+text and JSON — see [Exit Codes](#exit-codes).
 
 Markdown is presentation-only and carries **no stability guarantees** —
 gate automation on `--format json` (see [output.md](output.md)), and
