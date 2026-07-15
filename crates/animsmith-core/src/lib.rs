@@ -85,6 +85,7 @@ pub mod check;
 mod checks;
 pub mod config;
 pub mod diff;
+pub mod evaluation;
 pub mod finding;
 #[cfg(feature = "fixtures")]
 pub mod fixtures;
@@ -97,6 +98,10 @@ pub mod transform;
 
 pub use check::{Check, CheckCtx, all_checks, mechanical_checks, run_checks};
 pub use config::{ClipExpectations, Config, GaitGroup, Pinned, SeveritySetting};
+pub use evaluation::{
+    Applicability, CheckEvaluation, CheckOutput, CheckSelection, ConfigurationState, CoverageGap,
+    EvaluationScope, EvaluationState, SelectionState, evaluate_checks,
+};
 pub use finding::{Finding, Severity, Value};
 /// Re-export of the exact `glam` version used by animsmith's public math
 /// types, so embedders can construct [`Transform`] values without a

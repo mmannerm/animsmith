@@ -8,6 +8,7 @@
 
 use crate::check::{Check, CheckCtx, Readiness};
 use crate::checks::gait_readiness;
+use crate::evaluation::{CheckOutput, CoverageGap, EvaluationScope};
 use crate::finding::{Finding, Severity};
 use crate::metrics::{MIN_STRIDE_STEP_M, circular_phase_spread, foot_cycle_metrics};
 
@@ -31,96 +32,115 @@ impl Check for GaitGroup {
     }
 
     fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
-        // Roles gate the metric work only. `Some(reason)` means the rig
-        // did not resolve — measurable coherence is skipped with one
-        // exempt diagnostic, but member existence is still validated.
-        let roles_skip_reason = match gait_readiness(ctx.roles) {
-            Readiness::Ready => None,
-            Readiness::Skipped(reason) => Some(reason),
-            Readiness::Idle => None,
-        };
-        let mut roles_noted = false;
-
-        for (group_name, group) in &ctx.config.gait_groups {
-            let mut measured: Vec<(&str, f64)> = Vec::new();
-            for clip_name in &group.clips {
-                let Some(index) = ctx.doc.clips.iter().position(|c| &c.name == clip_name) else {
-                    out.push(
-                        Finding::new(
-                            self.id(),
-                            Severity::Error,
-                            format!("gait group '{group_name}' member not found in file"),
-                        )
-                        .clip(clip_name.clone()),
-                    );
-                    continue;
-                };
-                if let Some(reason) = &roles_skip_reason {
-                    // Member exists but the rig does not resolve: emit
-                    // one exempt skip-note for the whole check, then
-                    // stop measuring (member existence is already done).
-                    if !roles_noted {
-                        roles_noted = true;
-                        out.push(
-                            Finding::new(self.id(), Severity::Note, format!("skipped: {reason}"))
-                                .as_diagnostic(),
-                        );
-                    }
-                    continue;
-                }
-                // Roles resolved; `None` here means the member clip is
-                // too short to carry a cycle — a real problem for a
-                // declared ring member.
-                let gait = ctx
-                    .grid(index)
-                    .and_then(|grid| foot_cycle_metrics(&grid, ctx.roles, MIN_STRIDE_STEP_M));
-                let Some(metrics) = gait else {
-                    out.push(
-                        Finding::new(
-                            self.id(),
-                            Severity::Error,
-                            format!(
-                                "gait group '{group_name}' member has no measurable gait \
-                                 (clip too short) — the group's coherence is unverified"
-                            ),
-                        )
-                        .clip(clip_name.clone()),
-                    );
-                    continue;
-                };
-                if metrics.lr_amplitude_m < group.min_lr_amplitude_m {
-                    continue; // phase-confidence floor: too little alternation
-                }
-                if let Some(phase) = metrics.gait_phase {
-                    measured.push((clip_name, phase));
-                }
-            }
-            if measured.len() < 2 {
-                continue;
-            }
-            let phases: Vec<f64> = measured.iter().map(|(_, p)| *p).collect();
-            let spread = circular_phase_spread(&phases);
-            if spread > group.max_gait_phase_spread {
-                let listing = measured
-                    .iter()
-                    .map(|(n, p)| format!("{n}={p:.2}"))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                out.push(
-                    Finding::new(
-                        self.id(),
-                        Severity::Error,
-                        format!(
-                            "gait group '{group_name}': stride-anchor phases spread by \
-                             {spread:.2} cycle (cap {cap:.2}) — directional blends \
-                             between these clips will skate or pop. Measured: [{listing}]",
-                            cap = group.max_gait_phase_spread,
-                        ),
-                    )
-                    .measured(spread)
-                    .expected(group.max_gait_phase_spread),
-                );
-            }
+        if let Some(gap) = run_content(ctx, out) {
+            out.push(
+                Finding::new(
+                    self.id(),
+                    Severity::Note,
+                    format!("skipped: {}", gap.message),
+                )
+                .as_diagnostic(),
+            );
         }
     }
+
+    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+        let mut findings = Vec::new();
+        let gap = run_content(ctx, &mut findings);
+        let mut output = CheckOutput {
+            findings,
+            evaluated_scopes: vec![EvaluationScope::new("member_existence")],
+            gaps: Vec::new(),
+        };
+        if let Some(gap) = gap {
+            output
+                .gaps
+                .push(gap.scope(EvaluationScope::new("phase_coherence")));
+        } else {
+            output
+                .evaluated_scopes
+                .push(EvaluationScope::new("phase_coherence"));
+        }
+        output
+    }
+}
+
+/// Run the content-evaluation portions of gait-group. Member existence always
+/// runs; unresolved roles become one typed gap for phase-coherence work.
+fn run_content(ctx: &CheckCtx, out: &mut Vec<Finding>) -> Option<CoverageGap> {
+    let roles_gap = match gait_readiness(ctx.roles) {
+        Readiness::Ready => None,
+        Readiness::Skipped(gap) => Some(gap),
+        Readiness::Idle => None,
+    };
+
+    for (group_name, group) in &ctx.config.gait_groups {
+        let mut measured: Vec<(&str, f64)> = Vec::new();
+        for clip_name in &group.clips {
+            let Some(index) = ctx.doc.clips.iter().position(|c| &c.name == clip_name) else {
+                out.push(
+                    Finding::new(
+                        "gait-group",
+                        Severity::Error,
+                        format!("gait group '{group_name}' member not found in file"),
+                    )
+                    .clip(clip_name.clone()),
+                );
+                continue;
+            };
+            if roles_gap.is_some() {
+                continue;
+            }
+            let gait = ctx
+                .grid(index)
+                .and_then(|grid| foot_cycle_metrics(&grid, ctx.roles, MIN_STRIDE_STEP_M));
+            let Some(metrics) = gait else {
+                out.push(
+                    Finding::new(
+                        "gait-group",
+                        Severity::Error,
+                        format!(
+                            "gait group '{group_name}' member has no measurable gait \
+                             (clip too short) — the group's coherence is unverified"
+                        ),
+                    )
+                    .clip(clip_name.clone()),
+                );
+                continue;
+            };
+            if metrics.lr_amplitude_m < group.min_lr_amplitude_m {
+                continue;
+            }
+            if let Some(phase) = metrics.gait_phase {
+                measured.push((clip_name, phase));
+            }
+        }
+        if measured.len() < 2 {
+            continue;
+        }
+        let phases: Vec<f64> = measured.iter().map(|(_, p)| *p).collect();
+        let spread = circular_phase_spread(&phases);
+        if spread > group.max_gait_phase_spread {
+            let listing = measured
+                .iter()
+                .map(|(n, p)| format!("{n}={p:.2}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push(
+                Finding::new(
+                    "gait-group",
+                    Severity::Error,
+                    format!(
+                        "gait group '{group_name}': stride-anchor phases spread by \
+                         {spread:.2} cycle (cap {cap:.2}) — directional blends \
+                         between these clips will skate or pop. Measured: [{listing}]",
+                        cap = group.max_gait_phase_spread,
+                    ),
+                )
+                .measured(spread)
+                .expected(group.max_gait_phase_spread),
+            );
+        }
+    }
+    roles_gap
 }

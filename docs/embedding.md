@@ -67,6 +67,14 @@ cargo run -p animsmith --example embed
    severity, optional clip/bone/time, measured and expected values, and a
    message. The host decides whether warnings fail its gate.
 
+For issue #193's provisional v2 experiment, call `evaluate_checks` with the
+full catalog and a `CheckSelection`. It returns one `CheckEvaluation` per
+catalog check, including disabled, unselected, not-applicable, partial, and
+not-evaluated work. `CoverageGap::code` and `EvaluationScope::code` are the
+machine fields; never reconstruct coverage by parsing a message. The older
+`run_checks` API remains the v1 findings projection while the preview is
+tested by real embedders.
+
 Role resolution is a frontend responsibility. Use the `CheckCtx`,
 `Config::rig`, and `ResolvedRoles::from_names` rustdocs for the exact profile,
 override, and unresolved-role contracts.
@@ -92,6 +100,11 @@ The CLI convention is a useful default for an embedded gate:
 
 Diagnostic skip notes stay at `Note` even when a check's configured severity
 is higher. `severity = "off"` removes a check from the run set.
+
+In the provisional v2 API, those same prerequisite skips are typed coverage
+gaps instead of note findings, and disabled/unselected checks remain visible
+without executing. Coverage is nonblocking by default; the embedding host
+owns any required-check or release-lane policy.
 
 For v0.1, prefer the crate-root flow: loader → role resolution → `Config` →
 `MetricGrids` → measurements/checks → findings. The durable automation

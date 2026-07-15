@@ -126,6 +126,11 @@ contract is the source of truth and is versioned with `schema_version`.
 See [output.md](output.md) and
 [schemas/output-v1.schema.json](schemas/output-v1.schema.json).
 
+`lint --format json-v2-preview` is an explicit experimental surface for issue
+#193's coverage/findings separation. It does not replace v1 JSON yet; see the
+[preview contract](output.md#provisional-v2-coverage-preview) and
+[`output-v2-preview.schema.json`](schemas/output-v2-preview.schema.json).
+
 Native JSON is deliberately shaped so serializers can be added later
 without redesigning the checks: SARIF for code scanning, GitLab Code
 Quality/CodeClimate for MR widgets, JUnit XML for CI dashboards, and CSV

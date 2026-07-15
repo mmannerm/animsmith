@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/mmannerm/animsmith/main/docs/schemas/output-v2-preview.schema.json",
+  "title": "animsmith output v2 preview",
+  "description": "Experimental coverage/findings contract used to incubate schema v2. Field names may change before v2 is finalized.",
+  "type": "object",
+  "required": ["schema_version", "schema", "tool", "command", "summary", "files"],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "schema": { "type": "string", "format": "uri" },
+    "tool": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "const": "animsmith" },
+        "version": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "command": { "const": "lint" },
+    "summary": { "type": "object", "additionalProperties": true },
+    "files": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/file_report" }
+    }
+  },
+  "$defs": {
+    "file_report": {
+      "type": "object",
+      "required": ["path", "rig", "checks", "measurements"],
+      "properties": {
+        "path": { "type": "string" },
+        "rig": { "type": "object" },
+        "checks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/check_evaluation" }
+        },
+        "measurements": { "type": "object" },
+        "meshes": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "check_evaluation": {
+      "type": "object",
+      "required": [
+        "check_id",
+        "selection",
+        "configuration",
+        "applicability",
+        "evaluation",
+        "findings"
+      ],
+      "properties": {
+        "check_id": { "type": "string" },
+        "selection": { "enum": ["selected", "unselected"] },
+        "configuration": { "enum": ["enabled", "disabled"] },
+        "applicability": { "enum": ["applicable", "not_applicable"] },
+        "evaluation": { "enum": ["complete", "partial", "not_evaluated"] },
+        "findings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/finding" }
+        },
+        "evaluated_scopes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/scope" }
+        },
+        "gaps": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/gap" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "finding": {
+      "type": "object",
+      "required": ["check_id", "severity", "message"],
+      "properties": {
+        "check_id": { "type": "string" },
+        "severity": { "enum": ["note", "warning", "error"] },
+        "message": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "scope": {
+      "type": "object",
+      "required": ["code"],
+      "properties": {
+        "code": { "type": "string" },
+        "subject": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "gap": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "scope": { "$ref": "#/$defs/scope" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

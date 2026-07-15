@@ -2,6 +2,7 @@
 //! check sets.
 
 use crate::config::{ClipExpectations, Config};
+use crate::evaluation::{CheckOutput, CoverageGap};
 use crate::finding::{Finding, Severity};
 use crate::metrics::MetricGrids;
 use crate::model::Document;
@@ -84,7 +85,7 @@ pub enum Readiness {
     /// but a prerequisite — a rig role — is unresolved. The runner
     /// emits one standardized skip-note carrying `reason` at `Note`
     /// severity, exempt from overrides. `reason` states what is needed.
-    Skipped(String),
+    Skipped(CoverageGap),
     /// No pending work for this document/config; stay silent.
     Idle,
 }
@@ -112,6 +113,17 @@ pub trait Check {
 
     /// Execute the check and append any findings to `out`.
     fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>);
+
+    /// Evaluate the check for the provisional v2 result model.
+    ///
+    /// The default treats [`Check::run`] as one complete work unit. Checks
+    /// with independently executable sub-work override this to report typed
+    /// gaps and completed scopes without encoding them as findings.
+    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+        let mut findings = Vec::new();
+        self.run(ctx, &mut findings);
+        CheckOutput::complete(findings)
+    }
 }
 
 /// The mechanical P0 checks: no rig profile, no config required.
@@ -163,10 +175,14 @@ pub fn run_checks(ctx: &CheckCtx, checks: &[Box<dyn Check>]) -> Vec<Finding> {
         }
         match check.readiness(ctx) {
             Readiness::Idle => {}
-            Readiness::Skipped(reason) => {
+            Readiness::Skipped(gap) => {
                 out.push(
-                    Finding::new(check.id(), Severity::Note, format!("skipped: {reason}"))
-                        .as_diagnostic(),
+                    Finding::new(
+                        check.id(),
+                        Severity::Note,
+                        format!("skipped: {}", gap.message),
+                    )
+                    .as_diagnostic(),
                 );
             }
             Readiness::Ready => {

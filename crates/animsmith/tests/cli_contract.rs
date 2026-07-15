@@ -754,6 +754,149 @@ fn lint_json_uses_versioned_envelope() {
 }
 
 #[test]
+fn lint_json_v2_preview_exposes_complete_clean_and_unselected_checks() {
+    let output = animsmith()
+        .args([
+            "lint",
+            fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
+            "--format",
+            "json-v2-preview",
+            "--select",
+            "nan",
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(json["schema_version"], 2);
+    assert!(
+        json["schema"]
+            .as_str()
+            .is_some_and(|s| s.ends_with("output-v2-preview.schema.json"))
+    );
+    let checks = json["files"][0]["checks"].as_array().expect("checks");
+    let nan = checks
+        .iter()
+        .find(|check| check["check_id"] == "nan")
+        .expect("nan record");
+    assert_eq!(nan["selection"], "selected");
+    assert_eq!(nan["configuration"], "enabled");
+    assert_eq!(nan["applicability"], "applicable");
+    assert_eq!(nan["evaluation"], "complete");
+    assert_eq!(nan["findings"], json!([]));
+    let duration = checks
+        .iter()
+        .find(|check| check["check_id"] == "duration-sanity")
+        .expect("duration record");
+    assert_eq!(duration["selection"], "unselected");
+    assert_eq!(duration["evaluation"], "not_evaluated");
+}
+
+#[test]
+fn lint_json_v2_preview_keeps_disabled_distinct_from_unselected() {
+    let dir = unique_temp_dir("v2-disabled");
+    let config = write_config(
+        dir.path(),
+        "disabled.toml",
+        "[checks.nan]\nseverity = \"off\"\n",
+    );
+    let output = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args([
+            "lint",
+            fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
+            "--format",
+            "json-v2-preview",
+            "--select",
+            "nan",
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    let checks = json["files"][0]["checks"].as_array().expect("checks");
+    let nan = checks
+        .iter()
+        .find(|check| check["check_id"] == "nan")
+        .expect("nan record");
+    assert_eq!(nan["selection"], "selected");
+    assert_eq!(nan["configuration"], "disabled");
+    assert_eq!(nan["evaluation"], "not_evaluated");
+    let duration = checks
+        .iter()
+        .find(|check| check["check_id"] == "duration-sanity")
+        .expect("duration record");
+    assert_eq!(duration["selection"], "unselected");
+    assert_eq!(duration["configuration"], "enabled");
+}
+
+#[test]
+fn lint_json_v2_preview_gait_group_can_carry_finding_and_coverage_gap() {
+    let dir = unique_temp_dir("v2-partial-gait");
+    let config = write_config(
+        dir.path(),
+        "partial.toml",
+        "[gait_groups.ring]\nclips = [\"walk\", \"missing\"]\nmax_gait_phase_spread = 0.1\n",
+    );
+    let output = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args([
+            "lint",
+            fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
+            "--format",
+            "json-v2-preview",
+            "--select",
+            "gait-group",
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    let gait = json["files"][0]["checks"]
+        .as_array()
+        .expect("checks")
+        .iter()
+        .find(|check| check["check_id"] == "gait-group")
+        .expect("gait-group record");
+    assert_eq!(gait["applicability"], "applicable");
+    assert_eq!(gait["evaluation"], "partial");
+    assert_eq!(gait["findings"][0]["severity"], "error");
+    assert_eq!(gait["findings"][0]["clip"], "missing");
+    assert_eq!(gait["gaps"][0]["code"], "roles_unresolved");
+    assert_eq!(gait["gaps"][0]["scope"]["code"], "phase_coherence");
+    assert_eq!(gait["evaluated_scopes"][0]["code"], "member_existence");
+}
+
+#[test]
+fn lint_json_v2_preview_rejects_allow_instead_of_deleting_evidence() {
+    let output = animsmith()
+        .args([
+            "lint",
+            fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
+            "--format",
+            "json-v2-preview",
+            "--allow",
+            "nan",
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stdout(&output).is_empty());
+    assert!(stderr(&output).contains("preview results retain every content finding"));
+}
+
+#[test]
 fn diff_json_uses_versioned_envelope() {
     let path = fixture("rig.gltf");
     let output = animsmith()

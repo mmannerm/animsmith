@@ -156,6 +156,16 @@ rest. See [machine-readable output](output.md) for how findings — and
 their current limits as a coverage signal — appear in the versioned
 JSON envelope.
 
+The explicit `lint --format json-v2-preview` experiment represents the first
+four questions above as separate selection, configuration, applicability, and
+evaluation fields; it represents skipped work as typed gaps rather than
+findings. That statement applies only to work the preview model actually
+classifies. Most checks currently expose whole-check coverage, while
+`gait-group` is the proving partial-work case. Silent internal early exits in
+other semantic checks still need to be audited before final v2 can claim
+work-unit-complete coverage. The preview therefore improves evidence without
+turning it into runtime certification.
+
 ---
 
 ## The pose flickers, spins, or explodes
