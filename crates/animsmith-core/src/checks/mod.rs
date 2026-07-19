@@ -19,7 +19,6 @@ pub mod scale_keys;
 pub mod time_monotonic;
 
 use crate::check::Readiness;
-use crate::evaluation::CoverageGap;
 use crate::model::{Document, Track};
 use crate::profile::{ResolvedRoles, Role};
 
@@ -30,12 +29,9 @@ pub(crate) fn root_motion_readiness(roles: &ResolvedRoles) -> Readiness {
     if roles.get(Role::Root).is_some() || roles.get(Role::Hips).is_some() {
         Readiness::Ready
     } else {
-        Readiness::Skipped(CoverageGap::new(
-            "roles_unresolved",
-            format!(
-                "root/hips role not resolved (rig profile '{}')",
-                roles.profile
-            ),
+        Readiness::Skipped(format!(
+            "root/hips role not resolved (rig profile '{}')",
+            roles.profile
         ))
     }
 }
@@ -53,12 +49,9 @@ pub(crate) fn gait_readiness(roles: &ResolvedRoles) -> Readiness {
     if roles.get(Role::Hips).is_some() && has_foot {
         Readiness::Ready
     } else {
-        Readiness::Skipped(CoverageGap::new(
-            "roles_unresolved",
-            format!(
-                "hips/foot roles not resolved (rig profile '{}') — needs hips and at least one foot role",
-                roles.profile
-            ),
+        Readiness::Skipped(format!(
+            "hips/foot roles not resolved (rig profile '{}') — needs hips and at least one foot role",
+            roles.profile
         ))
     }
 }

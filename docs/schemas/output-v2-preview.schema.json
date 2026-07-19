@@ -7,7 +7,9 @@
   "required": ["schema_version", "schema", "tool", "command", "summary", "files"],
   "properties": {
     "schema_version": { "const": 2 },
-    "schema": { "type": "string", "format": "uri" },
+    "schema": {
+      "const": "https://raw.githubusercontent.com/mmannerm/animsmith/main/docs/schemas/output-v2-preview.schema.json"
+    },
     "tool": {
       "type": "object",
       "required": ["name", "version"],

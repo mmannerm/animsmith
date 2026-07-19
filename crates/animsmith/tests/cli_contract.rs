@@ -6,6 +6,8 @@ use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
+const V2_PREVIEW_SCHEMA_URL: &str = "https://raw.githubusercontent.com/mmannerm/animsmith/main/docs/schemas/output-v2-preview.schema.json";
+
 fn animsmith() -> Command {
     Command::new(env!("CARGO_BIN_EXE_animsmith"))
 }
@@ -770,11 +772,7 @@ fn lint_json_v2_preview_exposes_complete_clean_and_unselected_checks() {
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_eq!(json["schema_version"], 2);
-    assert!(
-        json["schema"]
-            .as_str()
-            .is_some_and(|s| s.ends_with("output-v2-preview.schema.json"))
-    );
+    assert_eq!(json["schema"], V2_PREVIEW_SCHEMA_URL);
     let checks = json["files"][0]["checks"].as_array().expect("checks");
     let nan = checks
         .iter()
@@ -875,6 +873,79 @@ fn lint_json_v2_preview_gait_group_can_carry_finding_and_coverage_gap() {
     assert_eq!(gait["gaps"][0]["code"], "roles_unresolved");
     assert_eq!(gait["gaps"][0]["scope"]["code"], "phase_coherence");
     assert_eq!(gait["evaluated_scopes"][0]["code"], "member_existence");
+}
+
+#[test]
+fn lint_json_v2_preview_exit_policy_uses_findings_not_coverage_gaps() {
+    let warning_dir = unique_temp_dir("v2-warning-exit");
+    let warning_input = warning_dir.path().join("flipped.glb");
+    write_flipped_glb(&warning_input);
+
+    for (deny, expected) in [(false, 0), (true, 1)] {
+        let mut args = vec![
+            "lint",
+            warning_input.to_str().expect("utf-8 input path"),
+            "--format",
+            "json-v2-preview",
+            "--select",
+            "quat-flip",
+        ];
+        if deny {
+            args.push("--deny-warnings");
+        }
+        let output = animsmith().args(&args).output().expect("runs animsmith");
+        assert_eq!(
+            output.status.code(),
+            Some(expected),
+            "warning exit (deny-warnings: {deny}):\n{}",
+            stderr(&output)
+        );
+        let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+        let quat_flip = json["files"][0]["checks"]
+            .as_array()
+            .expect("checks")
+            .iter()
+            .find(|check| check["check_id"] == "quat-flip")
+            .expect("quat-flip record");
+        assert_eq!(quat_flip["findings"][0]["severity"], "warning");
+        assert!(quat_flip["gaps"].is_null());
+    }
+
+    let gap_dir = unique_temp_dir("v2-gap-exit");
+    let gap_input = gap_dir.path().join("sway.glb");
+    write_clean_glb(&gap_input);
+    let config = write_config(gap_dir.path(), "gap.toml", "[clips.sway]\nloop = true\n");
+    for deny in [false, true] {
+        let mut args = vec![
+            "--config",
+            config.to_str().expect("utf-8 config path"),
+            "lint",
+            gap_input.to_str().expect("utf-8 input path"),
+            "--format",
+            "json-v2-preview",
+            "--select",
+            "loop-seam",
+        ];
+        if deny {
+            args.push("--deny-warnings");
+        }
+        let output = animsmith().args(&args).output().expect("runs animsmith");
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "coverage gap must not gate (deny-warnings: {deny}):\n{}",
+            stderr(&output)
+        );
+        let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+        let loop_seam = json["files"][0]["checks"]
+            .as_array()
+            .expect("checks")
+            .iter()
+            .find(|check| check["check_id"] == "loop-seam")
+            .expect("loop-seam record");
+        assert_eq!(loop_seam["findings"], json!([]));
+        assert_eq!(loop_seam["gaps"][0]["code"], "roles_unresolved");
+    }
 }
 
 #[test]

@@ -39,6 +39,10 @@ Issue #193 is incubating a result model that represents content findings and
 evaluation coverage separately. During that experiment, `lint --format
 json-v2-preview` emits `schema_version: 2` against
 [`output-v2-preview.schema.json`](schemas/output-v2-preview.schema.json).
+Its `schema` field is exactly
+`https://raw.githubusercontent.com/mmannerm/animsmith/main/docs/schemas/output-v2-preview.schema.json`;
+the preview schema's `$id`, the CLI constant, and this documented URL are
+checked together to prevent contract drift.
 The spelling and field names are intentionally preview-only; default
 `--format json` remains the published v1 contract.
 
@@ -56,7 +60,10 @@ text. Disabled and unselected checks are activation states, not artificial
 gaps. A not-applicable check is not reported as a clean evaluation. Partial
 `gait-group` evaluation is the proving case: member-existence validation can
 complete (and can emit a content error) while role-dependent phase coherence
-reports a `roles_unresolved` gap.
+reports a `roles_unresolved`, `insufficient_measurable_members`, or
+`members_not_evaluated` gap. Legacy custom checks that emit diagnostic
+findings through `run` retain that incomplete evidence as a
+`legacy_diagnostic` gap rather than a v2 content finding.
 
 The preview deliberately rejects `--allow` instead of deleting findings from
 machine evidence. Content errors still exit 1, warnings exit 0 unless denied,

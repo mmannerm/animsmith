@@ -46,6 +46,7 @@ const EXIT_OPERATOR: u8 = 2;
 const SCHEMA_VERSION: u32 = 1;
 const SCHEMA_URL: &str =
     "https://raw.githubusercontent.com/mmannerm/animsmith/main/docs/schemas/output-v1.schema.json";
+const V2_PREVIEW_SCHEMA_URL: &str = "https://raw.githubusercontent.com/mmannerm/animsmith/main/docs/schemas/output-v2-preview.schema.json";
 
 #[derive(Parser)]
 #[command(
@@ -397,7 +398,7 @@ impl V2PreviewEnvelope {
         }
         Self {
             schema_version: 2,
-            schema: "https://raw.githubusercontent.com/mmannerm/animsmith/main/docs/schemas/output-v2-preview.schema.json",
+            schema: V2_PREVIEW_SCHEMA_URL,
             tool: ToolInfo::current(),
             command: "lint",
             summary: V2PreviewSummary {

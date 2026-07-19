@@ -63,14 +63,112 @@ impl Check for Blocked {
     }
 
     fn readiness(&self, _ctx: &CheckCtx) -> Readiness {
-        Readiness::Skipped(CoverageGap::new(
-            "roles_unresolved",
-            "arbitrary display message",
-        ))
+        Readiness::Skipped("arbitrary display message".to_string())
     }
 
     fn run(&self, _ctx: &CheckCtx, _out: &mut Vec<Finding>) {
         panic!("blocked check must not execute")
+    }
+}
+
+struct ReadyButUnevaluated;
+
+impl Check for ReadyButUnevaluated {
+    fn id(&self) -> &'static str {
+        "ready-but-unevaluated"
+    }
+
+    fn run(&self, _ctx: &CheckCtx, _out: &mut Vec<Finding>) {
+        panic!("typed evaluation must not fall back to run")
+    }
+
+    fn evaluate(&self, _ctx: &CheckCtx) -> CheckOutput {
+        CheckOutput {
+            findings: Vec::new(),
+            evaluated_scopes: Vec::new(),
+            gaps: vec![CoverageGap::new("input_unavailable", "nothing evaluated")],
+        }
+    }
+}
+
+struct DiagnosticCheck;
+
+impl Check for DiagnosticCheck {
+    fn id(&self) -> &'static str {
+        "diagnostic"
+    }
+
+    fn run(&self, _ctx: &CheckCtx, out: &mut Vec<Finding>) {
+        out.push(
+            Finding::new(self.id(), Severity::Note, "prerequisite unavailable").as_diagnostic(),
+        );
+    }
+}
+
+struct TypedDiagnosticCheck;
+
+impl Check for TypedDiagnosticCheck {
+    fn id(&self) -> &'static str {
+        "typed-diagnostic"
+    }
+
+    fn run(&self, _ctx: &CheckCtx, _out: &mut Vec<Finding>) {
+        panic!("typed evaluator must not fall back to run")
+    }
+
+    fn evaluate(&self, _ctx: &CheckCtx) -> CheckOutput {
+        CheckOutput::complete(vec![
+            Finding::new(
+                self.id(),
+                Severity::Warning,
+                "typed prerequisite unavailable",
+            )
+            .as_diagnostic(),
+        ])
+    }
+}
+
+struct MixedDiagnosticCheck;
+
+impl Check for MixedDiagnosticCheck {
+    fn id(&self) -> &'static str {
+        "mixed-diagnostic"
+    }
+
+    fn run(&self, _ctx: &CheckCtx, out: &mut Vec<Finding>) {
+        out.push(Finding::new(
+            self.id(),
+            Severity::Warning,
+            "content warning",
+        ));
+        out.push(Finding::new(self.id(), Severity::Note, "some work unavailable").as_diagnostic());
+    }
+}
+
+struct PoisonCheck {
+    id: &'static str,
+    idle: bool,
+}
+
+impl Check for PoisonCheck {
+    fn id(&self) -> &'static str {
+        self.id
+    }
+
+    fn readiness(&self, _ctx: &CheckCtx) -> Readiness {
+        if self.idle {
+            Readiness::Idle
+        } else {
+            Readiness::Ready
+        }
+    }
+
+    fn run(&self, _ctx: &CheckCtx, _out: &mut Vec<Finding>) {
+        panic!("inactive check {} must not run", self.id)
+    }
+
+    fn evaluate(&self, _ctx: &CheckCtx) -> CheckOutput {
+        panic!("inactive check {} must not evaluate", self.id)
     }
 }
 
@@ -97,6 +195,7 @@ fn catalog() -> Vec<Box<dyn Check>> {
         Box::new(Partial),
         Box::new(Blocked),
         Box::new(Idle),
+        Box::new(ReadyButUnevaluated),
     ]
 }
 
@@ -113,7 +212,7 @@ fn with_ctx(f: impl FnOnce(&CheckCtx<'_>)) {
 fn records_complete_findings_partial_blocked_and_not_applicable_without_messages() {
     with_ctx(|ctx| {
         let records = evaluate_checks(ctx, &catalog(), CheckSelection::All);
-        assert_eq!(records.len(), 5);
+        assert_eq!(records.len(), 6);
 
         let complete = &records[0];
         assert_eq!(complete.evaluation, EvaluationState::Complete);
@@ -138,6 +237,17 @@ fn records_complete_findings_partial_blocked_and_not_applicable_without_messages
         assert_eq!(idle.applicability, Applicability::NotApplicable);
         assert_eq!(idle.evaluation, EvaluationState::NotEvaluated);
         assert!(idle.gaps.is_empty());
+
+        let ready_but_unevaluated = &records[5];
+        assert_eq!(
+            ready_but_unevaluated.applicability,
+            Applicability::Applicable
+        );
+        assert_eq!(
+            ready_but_unevaluated.evaluation,
+            EvaluationState::NotEvaluated
+        );
+        assert_eq!(ready_but_unevaluated.gaps[0].code, "input_unavailable");
     });
 }
 
@@ -147,7 +257,7 @@ fn disabled_and_unselected_are_independent_and_never_execute() {
     let roles = ResolvedRoles::default();
     let config = Config {
         checks: BTreeMap::from([(
-            "finding".to_string(),
+            "disabled".to_string(),
             CheckSettings {
                 severity: Some(SeveritySetting::Off),
                 ..CheckSettings::default()
@@ -157,14 +267,87 @@ fn disabled_and_unselected_are_independent_and_never_execute() {
     };
     let grids = MetricGrids::new(&doc);
     let ctx = CheckCtx::new(&grids, &roles, &config);
-    let selected = BTreeSet::from(["finding".to_string()]);
-    let records = evaluate_checks(&ctx, &catalog(), CheckSelection::Only(&selected));
+    let selected = BTreeSet::from(["disabled".to_string()]);
+    let poison_catalog: Vec<Box<dyn Check>> = vec![
+        Box::new(PoisonCheck {
+            id: "unselected-ready",
+            idle: false,
+        }),
+        Box::new(PoisonCheck {
+            id: "disabled",
+            idle: false,
+        }),
+        Box::new(PoisonCheck {
+            id: "unselected-idle",
+            idle: true,
+        }),
+    ];
+    let records = evaluate_checks(&ctx, &poison_catalog, CheckSelection::Only(&selected));
 
     assert_eq!(records[0].selection, SelectionState::Unselected);
     assert_eq!(records[0].configuration, ConfigurationState::Enabled);
+    assert_eq!(records[0].applicability, Applicability::Applicable);
+    assert_eq!(records[0].evaluation, EvaluationState::NotEvaluated);
     assert_eq!(records[1].selection, SelectionState::Selected);
     assert_eq!(records[1].configuration, ConfigurationState::Disabled);
+    assert_eq!(records[1].applicability, Applicability::Applicable);
     assert!(records[1].findings.is_empty());
+    assert_eq!(records[2].selection, SelectionState::Unselected);
+    assert_eq!(records[2].configuration, ConfigurationState::Enabled);
+    assert_eq!(records[2].applicability, Applicability::NotApplicable);
+    assert_eq!(records[2].evaluation, EvaluationState::NotEvaluated);
+}
+
+#[test]
+fn legacy_diagnostics_never_become_v2_content_findings() {
+    let doc = Document::default();
+    let roles = ResolvedRoles::default();
+    let config = Config {
+        checks: BTreeMap::from([
+            (
+                "diagnostic".to_string(),
+                CheckSettings {
+                    severity: Some(SeveritySetting::Error),
+                    ..CheckSettings::default()
+                },
+            ),
+            (
+                "typed-diagnostic".to_string(),
+                CheckSettings {
+                    severity: Some(SeveritySetting::Error),
+                    ..CheckSettings::default()
+                },
+            ),
+            (
+                "mixed-diagnostic".to_string(),
+                CheckSettings {
+                    severity: Some(SeveritySetting::Error),
+                    ..CheckSettings::default()
+                },
+            ),
+        ]),
+        ..Config::default()
+    };
+    let grids = MetricGrids::new(&doc);
+    let ctx = CheckCtx::new(&grids, &roles, &config);
+    let checks: Vec<Box<dyn Check>> = vec![
+        Box::new(DiagnosticCheck),
+        Box::new(TypedDiagnosticCheck),
+        Box::new(MixedDiagnosticCheck),
+    ];
+    let records = evaluate_checks(&ctx, &checks, CheckSelection::All);
+
+    for record in &records[..2] {
+        assert_eq!(record.evaluation, EvaluationState::NotEvaluated);
+        assert!(record.findings.is_empty());
+        assert_eq!(record.gaps.len(), 1);
+        assert_eq!(record.gaps[0].code, "legacy_diagnostic");
+    }
+    let mixed = &records[2];
+    assert_eq!(mixed.evaluation, EvaluationState::Partial);
+    assert_eq!(mixed.findings.len(), 1);
+    assert_eq!(mixed.findings[0].severity, Severity::Error);
+    assert_eq!(mixed.gaps[0].code, "legacy_diagnostic");
 }
 
 #[test]

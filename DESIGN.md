@@ -357,6 +357,19 @@ learns an embedder's contract schema.
   measurements. The top-level envelope leaves room for multi-file runs,
   future metadata, and additional formats without changing per-file
   records.
+- **Provisional coverage JSON** (`lint --format json-v2-preview`): an
+  experimental schema-v2 envelope emits one record per catalog check and
+  represents selection, configuration, applicability, evaluation coverage,
+  content findings, completed scopes, and typed coverage gaps independently.
+  It is additive during the #193/Rauta adapter experiment: the published v1
+  JSON and the existing Rust `Readiness::Skipped(String)` / `run_checks` API
+  remain unchanged. The embedded `evaluate_checks` adapter maps retained v1
+  readiness text into typed v2 gaps and converts legacy diagnostic findings
+  into `legacy_diagnostic` gaps, so they never enter the v2 content-findings
+  channel or masquerade as completed-clean work. CLI exit status is derived only from
+  content severity (warnings block only with `--deny-warnings`); coverage
+  gaps are evidence and remain nonblocking by default. Field names and final
+  policy are not stable until the experiment feeds back into #193.
 - **Future serializers**: no game-industry standard exists for skeletal
   animation lint results. Keep native JSON as the source of truth, then
   add serializers where downstream tools expect them: SARIF for code

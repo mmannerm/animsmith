@@ -2,7 +2,7 @@
 //! check sets.
 
 use crate::config::{ClipExpectations, Config};
-use crate::evaluation::{CheckOutput, CoverageGap};
+use crate::evaluation::CheckOutput;
 use crate::finding::{Finding, Severity};
 use crate::metrics::MetricGrids;
 use crate::model::Document;
@@ -85,7 +85,7 @@ pub enum Readiness {
     /// but a prerequisite — a rig role — is unresolved. The runner
     /// emits one standardized skip-note carrying `reason` at `Note`
     /// severity, exempt from overrides. `reason` states what is needed.
-    Skipped(CoverageGap),
+    Skipped(String),
     /// No pending work for this document/config; stay silent.
     Idle,
 }
@@ -118,7 +118,9 @@ pub trait Check {
     ///
     /// The default treats [`Check::run`] as one complete work unit. Checks
     /// with independently executable sub-work override this to report typed
-    /// gaps and completed scopes without encoding them as findings.
+    /// gaps and completed scopes without encoding them as findings. The v2
+    /// runner converts any legacy diagnostic findings into
+    /// `legacy_diagnostic` gaps before classifying coverage.
     fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
         let mut findings = Vec::new();
         self.run(ctx, &mut findings);
@@ -175,14 +177,10 @@ pub fn run_checks(ctx: &CheckCtx, checks: &[Box<dyn Check>]) -> Vec<Finding> {
         }
         match check.readiness(ctx) {
             Readiness::Idle => {}
-            Readiness::Skipped(gap) => {
+            Readiness::Skipped(reason) => {
                 out.push(
-                    Finding::new(
-                        check.id(),
-                        Severity::Note,
-                        format!("skipped: {}", gap.message),
-                    )
-                    .as_diagnostic(),
+                    Finding::new(check.id(), Severity::Note, format!("skipped: {reason}"))
+                        .as_diagnostic(),
                 );
             }
             Readiness::Ready => {

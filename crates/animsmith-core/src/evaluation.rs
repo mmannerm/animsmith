@@ -225,7 +225,7 @@ pub fn evaluate_checks(
 
             match readiness {
                 Readiness::Idle => unreachable!("not-applicable returned above"),
-                Readiness::Skipped(gap) => CheckEvaluation {
+                Readiness::Skipped(reason) => CheckEvaluation {
                     check_id: check.id(),
                     selection: selection_state,
                     configuration,
@@ -233,10 +233,30 @@ pub fn evaluate_checks(
                     evaluation: EvaluationState::NotEvaluated,
                     findings: Vec::new(),
                     evaluated_scopes: Vec::new(),
-                    gaps: vec![gap],
+                    // The retained v1 readiness API carries display text.
+                    // v2's adapter owns the typed representation rather than
+                    // changing that public enum out from under embedders.
+                    gaps: vec![CoverageGap::new("roles_unresolved", reason)],
                 },
                 Readiness::Ready => {
                     let mut output = check.evaluate(ctx);
+                    // Legacy `run` implementations may encode unavailable
+                    // work as diagnostic findings. Preserve that evidence as
+                    // a typed gap rather than either promoting it to content
+                    // or misreporting the check as completed-clean. Apply the
+                    // boundary here so custom `evaluate` implementations get
+                    // the same protection.
+                    let mut content_findings = Vec::with_capacity(output.findings.len());
+                    for finding in std::mem::take(&mut output.findings) {
+                        if finding.diagnostic {
+                            output
+                                .gaps
+                                .push(CoverageGap::new("legacy_diagnostic", finding.message));
+                        } else {
+                            content_findings.push(finding);
+                        }
+                    }
+                    output.findings = content_findings;
                     if let Some(severity) = setting.and_then(SeveritySetting::as_severity) {
                         for finding in &mut output.findings {
                             finding.severity = severity;
@@ -244,7 +264,7 @@ pub fn evaluate_checks(
                     }
                     let evaluation = if output.gaps.is_empty() {
                         EvaluationState::Complete
-                    } else if output.evaluated_scopes.is_empty() {
+                    } else if output.evaluated_scopes.is_empty() && output.findings.is_empty() {
                         EvaluationState::NotEvaluated
                     } else {
                         EvaluationState::Partial
