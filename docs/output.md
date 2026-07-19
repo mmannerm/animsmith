@@ -65,6 +65,12 @@ reports a `roles_unresolved`, `insufficient_measurable_members`, or
 findings through `run` retain that incomplete evidence as a
 `legacy_diagnostic` gap rather than a v2 content finding.
 
+Preview file records deliberately retain animation measurements and optional
+mesh measurements alongside check evaluations so the CLI experiment exposes
+the same measurement evidence available to an embedded adapter. Their
+inclusion is experiment evidence, not a decision that final v2 must use this
+exact envelope shape.
+
 The preview deliberately rejects `--allow` instead of deleting findings from
 machine evidence. Content errors still exit 1, warnings exit 0 unless denied,
 and coverage gaps are visible but nonblocking by default. Operator failures

@@ -232,6 +232,7 @@ fn records_complete_findings_partial_blocked_and_not_applicable_without_messages
         assert_eq!(blocked.applicability, Applicability::Applicable);
         assert_eq!(blocked.evaluation, EvaluationState::NotEvaluated);
         assert_eq!(blocked.gaps[0].code, "roles_unresolved");
+        assert_eq!(blocked.gaps[0].message, "arbitrary display message");
 
         let idle = &records[4];
         assert_eq!(idle.applicability, Applicability::NotApplicable);
@@ -337,17 +338,23 @@ fn legacy_diagnostics_never_become_v2_content_findings() {
     ];
     let records = evaluate_checks(&ctx, &checks, CheckSelection::All);
 
-    for record in &records[..2] {
+    for (record, expected_message) in records[..2]
+        .iter()
+        .zip(["prerequisite unavailable", "typed prerequisite unavailable"])
+    {
         assert_eq!(record.evaluation, EvaluationState::NotEvaluated);
         assert!(record.findings.is_empty());
         assert_eq!(record.gaps.len(), 1);
         assert_eq!(record.gaps[0].code, "legacy_diagnostic");
+        assert_eq!(record.gaps[0].message, expected_message);
     }
     let mixed = &records[2];
     assert_eq!(mixed.evaluation, EvaluationState::Partial);
     assert_eq!(mixed.findings.len(), 1);
     assert_eq!(mixed.findings[0].severity, Severity::Error);
+    assert_eq!(mixed.findings[0].message, "content warning");
     assert_eq!(mixed.gaps[0].code, "legacy_diagnostic");
+    assert_eq!(mixed.gaps[0].message, "some work unavailable");
 }
 
 #[test]

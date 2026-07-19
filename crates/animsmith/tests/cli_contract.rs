@@ -7,6 +7,81 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 
 const V2_PREVIEW_SCHEMA_URL: &str = "https://raw.githubusercontent.com/mmannerm/animsmith/main/docs/schemas/output-v2-preview.schema.json";
+const V2_PREVIEW_SCHEMA: &str = include_str!("../../../docs/schemas/output-v2-preview.schema.json");
+
+fn assert_required_properties(schema: &Value, instance: &Value, path: &str) {
+    let object = instance
+        .as_object()
+        .unwrap_or_else(|| panic!("expected object at {path}, got {instance}"));
+    for key in schema["required"]
+        .as_array()
+        .expect("schema required array")
+    {
+        let key = key.as_str().expect("required property name");
+        assert!(object.contains_key(key), "missing required {path}.{key}");
+    }
+}
+
+/// Keep emitted records aligned with the schema's required-field contract.
+/// Full JSON Schema semantics belong to a standards implementation, not this
+/// CLI test; focused value assertions below cover the preview's state enums.
+fn assert_v2_preview_required_fields(instance: &Value) {
+    let schema: Value = serde_json::from_str(V2_PREVIEW_SCHEMA).expect("valid preview schema");
+    assert_required_properties(&schema, instance, "$");
+    for (file_index, file) in instance["files"]
+        .as_array()
+        .expect("preview files")
+        .iter()
+        .enumerate()
+    {
+        assert_required_properties(
+            &schema["$defs"]["file_report"],
+            file,
+            &format!("$.files[{file_index}]"),
+        );
+        for (check_index, check) in file["checks"]
+            .as_array()
+            .expect("preview checks")
+            .iter()
+            .enumerate()
+        {
+            assert_required_properties(
+                &schema["$defs"]["check_evaluation"],
+                check,
+                &format!("$.files[{file_index}].checks[{check_index}]"),
+            );
+        }
+    }
+}
+
+fn assert_evaluation_summary_matches_checks(instance: &Value) {
+    let checks: Vec<_> = instance["files"]
+        .as_array()
+        .expect("preview files")
+        .iter()
+        .flat_map(|file| file["checks"].as_array().expect("preview checks"))
+        .collect();
+    let summary = &instance["summary"]["evaluations"];
+    for (field, dimension, value) in [
+        ("complete", "evaluation", "complete"),
+        ("partial", "evaluation", "partial"),
+        ("not_evaluated", "evaluation", "not_evaluated"),
+        ("not_applicable", "applicability", "not_applicable"),
+        ("disabled", "configuration", "disabled"),
+        ("unselected", "selection", "unselected"),
+    ] {
+        let expected = checks
+            .iter()
+            .filter(|check| check[dimension] == value)
+            .count();
+        assert_eq!(summary[field], expected, "summary.{field}");
+    }
+    let expected_gaps: usize = checks
+        .iter()
+        .map(|check| check["gaps"].as_array().map_or(0, Vec::len))
+        .sum();
+    assert_eq!(summary["gaps"], expected_gaps, "summary.gaps");
+}
 
 fn animsmith() -> Command {
     Command::new(env!("CARGO_BIN_EXE_animsmith"))
@@ -789,6 +864,15 @@ fn lint_json_v2_preview_exposes_complete_clean_and_unselected_checks() {
         .expect("duration record");
     assert_eq!(duration["selection"], "unselected");
     assert_eq!(duration["evaluation"], "not_evaluated");
+    let gait_group = checks
+        .iter()
+        .find(|check| check["check_id"] == "gait-group")
+        .expect("gait-group record");
+    assert_eq!(gait_group["selection"], "unselected");
+    assert_eq!(gait_group["applicability"], "not_applicable");
+    assert_eq!(gait_group["evaluation"], "not_evaluated");
+    assert_evaluation_summary_matches_checks(&json);
+    assert_v2_preview_required_fields(&json);
 }
 
 #[test]
@@ -873,6 +957,11 @@ fn lint_json_v2_preview_gait_group_can_carry_finding_and_coverage_gap() {
     assert_eq!(gait["gaps"][0]["code"], "roles_unresolved");
     assert_eq!(gait["gaps"][0]["scope"]["code"], "phase_coherence");
     assert_eq!(gait["evaluated_scopes"][0]["code"], "member_existence");
+    assert_eq!(json["summary"]["evaluations"]["partial"], 1);
+    assert_eq!(json["summary"]["evaluations"]["gaps"], 1);
+    assert_eq!(json["summary"]["findings"]["error"], 1);
+    assert_evaluation_summary_matches_checks(&json);
+    assert_v2_preview_required_fields(&json);
 }
 
 #[test]
