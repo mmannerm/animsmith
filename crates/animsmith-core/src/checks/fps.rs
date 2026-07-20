@@ -39,11 +39,11 @@ impl Check for Fps {
             let Some(fps) = ctx.expectations(index).fps else {
                 continue;
             };
-            if fps <= 0.0 {
+            if !fps.is_finite() || fps <= 0.0 {
                 gaps.push(
                     CoverageGap::new(
-                        CoverageGapCode::custom("invalid_declared_fps"),
-                        format!("clip declares a non-positive frame rate ({fps})"),
+                        CoverageGapCode::INVALID_DECLARED_FPS,
+                        format!("clip declares a non-positive or non-finite frame rate ({fps})"),
                     )
                     .scope(EvaluationScope::new("frame_grid").subject(&clip.name)),
                 );
@@ -94,10 +94,6 @@ impl Check for Fps {
                 );
             }
         }
-        match (evaluated_scopes.is_empty(), gaps.is_empty()) {
-            (_, true) => CheckOutput::complete_scoped(findings, evaluated_scopes),
-            (true, false) => CheckOutput::not_evaluated(gaps),
-            (false, false) => CheckOutput::partial(findings, evaluated_scopes, gaps),
-        }
+        CheckOutput::from_coverage(findings, evaluated_scopes, gaps)
     }
 }

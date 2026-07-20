@@ -149,8 +149,8 @@ Contract-aware checks use declared expectations and, where needed, rig roles:
 | `frozen-bone` | error | required bones whose rotation never exceeds the configured floor |
 | `bind-pose` | warning | first frame deviating too far from the skeleton rest pose |
 
-Checks whose rig roles cannot be resolved are skipped with a note rather
-than guessed.
+Checks whose rig roles cannot be resolved report a typed, nonblocking
+coverage gap rather than guessing or manufacturing a content finding.
 
 ## Configuration
 

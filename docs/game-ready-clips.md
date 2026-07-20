@@ -76,8 +76,8 @@ plainly what it did not evaluate — not to stamp the whole ladder.
    coverage where a check exists: `fps`, `loop-seam`, `in-place`,
    `root-motion-speed`, `foot-slide`, `missing-bones`, `frozen-bone`,
    and `bind-pose` judge exactly the expectations you declare — and
-   the checks that need rig roles skip with a note instead of
-   guessing when a role cannot be resolved. One member is heuristic:
+   the checks that need rig roles report a typed coverage gap instead
+   of guessing when a role cannot be resolved. One member is heuristic:
    `foot-slide` ships as a warning (see
    [feet slide within one clip](#feet-slide-within-one-clip)).
 

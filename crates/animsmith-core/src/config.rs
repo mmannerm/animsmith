@@ -31,12 +31,12 @@ pub struct Pinned {
 pub enum SeveritySetting {
     /// Remove the check from the run set.
     Off,
-    /// Force non-diagnostic findings to notes.
+    /// Force content findings to notes.
     Note,
-    /// Force non-diagnostic findings to warnings.
+    /// Force content findings to warnings.
     #[serde(alias = "warning")]
     Warn,
-    /// Force non-diagnostic findings to errors.
+    /// Force content findings to errors.
     Error,
 }
 

@@ -215,10 +215,16 @@ fn min_stride_step_config_controls_tiny_stride_ratio() {
     let default_measurements =
         animsmith_core::measure::measure_document(&default_grids, &roles, &default_floor);
     assert_eq!(default_measurements["walk"].loop_seam_ratio, None);
-    let default_findings = lint_with(&doc, &default_floor);
-    assert!(
-        !default_findings.iter().any(|f| f.check_id == "loop-seam"),
-        "default floor should suppress tiny-stride seam ratio: {default_findings:#?}"
+    let default_ctx = CheckCtx::new(&default_grids, &roles, &default_floor);
+    let default_records = evaluate_checks(&default_ctx, &all_checks(), CheckSelection::All)
+        .expect("valid built-in catalog");
+    let seam = check(&default_records, "loop-seam");
+    assert_eq!(seam.evaluation, EvaluationState::NotEvaluated);
+    assert!(seam.findings.is_empty());
+    assert_eq!(seam.gaps[0].code.as_str(), "measurement_unavailable");
+    assert_eq!(
+        seam.gaps[0].scope.as_ref().unwrap().subject.as_deref(),
+        Some("walk")
     );
 
     let tuned_grids = MetricGrids::new(&doc);
@@ -251,11 +257,13 @@ fn zero_stride_floor_does_not_report_stationary_ratio() {
     let grids = MetricGrids::new(&doc);
     let measurements = animsmith_core::measure::measure_document(&grids, &roles, &config);
     assert_eq!(measurements["walk"].loop_seam_ratio, None);
-    let findings = lint_with(&doc, &config);
-    assert!(
-        !findings.iter().any(|f| f.check_id == "loop-seam"),
-        "zero stride should not produce loop-seam finding: {findings:#?}"
-    );
+    let ctx = CheckCtx::new(&grids, &roles, &config);
+    let records =
+        evaluate_checks(&ctx, &all_checks(), CheckSelection::All).expect("valid built-in catalog");
+    let seam = check(&records, "loop-seam");
+    assert_eq!(seam.evaluation, EvaluationState::NotEvaluated);
+    assert!(seam.findings.is_empty());
+    assert_eq!(seam.gaps[0].code.as_str(), "measurement_unavailable");
 }
 
 #[test]

@@ -54,8 +54,8 @@ your project, and the config is where the team records facts such as
 which clips loop, which are in-place, what speed a locomotion clip
 promises, which bones must move, and which clips form a directional
 blend set. animsmith checks those facts against the measured asset. It
-skips role-dependent semantic checks with a note when rig roles cannot
-be resolved, rather than guessing.
+records typed, nonblocking coverage gaps when rig roles cannot be resolved,
+rather than guessing.
 
 Keep the process guide focused on where the contract is used. For the
 canonical config shape, use the
@@ -105,7 +105,7 @@ Record intake as a coverage matrix over the representative files rather
 than one verdict per file: what was evaluated and clean, what was
 evaluated and produced findings, and what was not evaluated — because
 no expectations are declared yet, because a rig role did not resolve
-(the run reports a `skipped:` note), or because a check was disabled.
+(the result carries a typed coverage gap), or because a check was disabled.
 Not-evaluated cells are neither pass nor fail; they stay visible until
 the contract grows to cover them or the team accepts them:
 

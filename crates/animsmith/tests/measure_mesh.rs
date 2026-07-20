@@ -107,6 +107,16 @@ fn cli_lint_json_emits_mesh_measurements() {
 
     let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid JSON");
     assert_body_mesh(&report["files"][0]["measurements"]["meshes"][0]);
+    let findings: usize = report["files"][0]["checks"]
+        .as_array()
+        .expect("lint check records")
+        .iter()
+        .map(|check| check["findings"].as_array().expect("findings").len())
+        .sum();
+    assert_eq!(
+        findings, 0,
+        "measurement-only mesh evidence must not create findings"
+    );
 }
 
 /// A skeleton-only glTF (no geometry) emits no `meshes` key — the field

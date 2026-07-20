@@ -188,6 +188,21 @@ fn disabled_unselected_and_not_applicable_are_independent_and_never_execute() {
     assert_eq!(records[1].applicability, Applicability::Applicable);
     assert_eq!(records[2].selection, SelectionState::Unselected);
     assert_eq!(records[2].applicability, Applicability::NotApplicable);
+
+    for record in &records {
+        assert!(
+            record.findings.is_empty(),
+            "inactive check emitted findings"
+        );
+        assert!(
+            record.evaluated_scopes.is_empty(),
+            "inactive check claimed evaluated scopes"
+        );
+        assert!(
+            record.gaps.is_empty(),
+            "inactive check emitted coverage gaps"
+        );
+    }
 }
 
 #[test]
@@ -249,4 +264,28 @@ fn partial_constructor_rejects_missing_completed_scope() {
             "missing",
         )],
     );
+}
+
+#[test]
+#[should_panic(expected = "partial evaluation requires a gap")]
+fn partial_constructor_rejects_missing_gap() {
+    let _ = CheckOutput::partial(
+        Vec::new(),
+        vec![EvaluationScope::new("completed")],
+        Vec::new(),
+    );
+}
+
+#[test]
+#[should_panic(expected = "not-evaluated output requires a coverage gap")]
+fn not_evaluated_constructor_rejects_missing_gap() {
+    let _ = CheckOutput::not_evaluated(Vec::new());
+}
+
+#[test]
+fn complete_constructor_has_no_coverage_evidence() {
+    let output = CheckOutput::complete(Vec::new());
+    assert_eq!(output.evaluation(), EvaluationState::Complete);
+    assert!(output.evaluated_scopes().is_empty());
+    assert!(output.gaps().is_empty());
 }

@@ -56,7 +56,11 @@ impl Check for BindPose {
                 let Some(first) = track.key_quat(0) else {
                     continue;
                 };
-                if !first.is_finite() || first.length_squared() == 0.0 {
+                if !first.is_finite()
+                    || first.length_squared() == 0.0
+                    || !bone.rest.rotation.is_finite()
+                    || bone.rest.rotation.length_squared() == 0.0
+                {
                     continue;
                 }
                 let deg = bone
@@ -74,7 +78,7 @@ impl Check for BindPose {
             if counted < 3 {
                 gaps.push(
                     CoverageGap::new(
-                        CoverageGapCode::custom("insufficient_rotation_evidence"),
+                        CoverageGapCode::INSUFFICIENT_ROTATION_EVIDENCE,
                         format!(
                             "only {counted} usable first-frame rotation track(s); at least three are required"
                         ),
@@ -105,10 +109,6 @@ impl Check for BindPose {
                 );
             }
         }
-        match (evaluated_scopes.is_empty(), gaps.is_empty()) {
-            (_, true) => CheckOutput::complete_scoped(findings, evaluated_scopes),
-            (true, false) => CheckOutput::not_evaluated(gaps),
-            (false, false) => CheckOutput::partial(findings, evaluated_scopes, gaps),
-        }
+        CheckOutput::from_coverage(findings, evaluated_scopes, gaps)
     }
 }

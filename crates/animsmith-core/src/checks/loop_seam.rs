@@ -73,10 +73,17 @@ impl Check for LoopSeam {
                 );
                 continue;
             };
-            evaluated_scopes.push(scope);
             let Some(ratio) = metrics.loop_seam_ratio else {
-                continue; // stationary loop: the completed judgment has no ratio
+                gaps.push(
+                    CoverageGap::new(
+                        CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                        "the clip has no usable stride step for normalizing its loop seam",
+                    )
+                    .scope(scope),
+                );
+                continue;
             };
+            evaluated_scopes.push(scope);
             if ratio > max_ratio {
                 findings.push(
                     Finding::new(
@@ -95,10 +102,6 @@ impl Check for LoopSeam {
                 );
             }
         }
-        match (evaluated_scopes.is_empty(), gaps.is_empty()) {
-            (_, true) => CheckOutput::complete_scoped(findings, evaluated_scopes),
-            (true, false) => CheckOutput::not_evaluated(gaps),
-            (false, false) => CheckOutput::partial(findings, evaluated_scopes, gaps),
-        }
+        CheckOutput::from_coverage(findings, evaluated_scopes, gaps)
     }
 }

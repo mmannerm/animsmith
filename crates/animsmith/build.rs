@@ -37,10 +37,7 @@ fn source_info() -> Option<SourceInfo> {
     }
     let git_root = trusted_git_root()?;
     let revision = successful_git_text(&git_root, ["rev-parse", "HEAD"])?;
-    let status = git(
-        &git_root,
-        ["status", "--porcelain", "--untracked-files=normal"],
-    )?;
+    let status = git(&git_root, ["status", "--porcelain", "--untracked-files=no"])?;
     if !status.status.success() {
         return None;
     }
@@ -99,6 +96,22 @@ fn watch_git_metadata() {
     println!("cargo:rerun-if-changed={git_dir}/HEAD");
     println!("cargo:rerun-if-changed={git_dir}/index");
     println!("cargo:rerun-if-changed={git_dir}/refs/tags");
+
+    // Dirty state is part of the machine-readable source identity. Cargo
+    // otherwise would not rerun this build script for an unstaged edit, so
+    // watch every tracked file whose state contributes to that bit.
+    let Some(output) = git(&git_root, ["ls-files"]) else {
+        return;
+    };
+    if !output.status.success() {
+        return;
+    }
+    let Ok(files) = String::from_utf8(output.stdout) else {
+        return;
+    };
+    for file in files.lines().filter(|file| !file.is_empty()) {
+        println!("cargo:rerun-if-changed={}", git_root.join(file).display());
+    }
 }
 
 fn trusted_git_root() -> Option<PathBuf> {

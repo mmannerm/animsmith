@@ -59,8 +59,8 @@ to shipped acceptance. What animsmith contributes splits three ways:
 - **Validated against your declarations:** the semantic contracts
   only you can state — loops, in-place policy, speed pins, required
   bones, blend sets — declared in a project config, resolved through
-  a rig profile, and skipped with a note rather than guessed when a
-  prerequisite is missing.
+  a rig profile, with missing prerequisites recorded as typed,
+  nonblocking coverage gaps rather than guessed.
 - **Consumer-owned:** importer and blend-graph behavior, controller
   feel, artistic quality, and shipping sign-off. animsmith's reports
   and measurements are evidence for that review, not a substitute

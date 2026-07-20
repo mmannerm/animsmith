@@ -90,10 +90,6 @@ impl Check for InPlace {
                 );
             }
         }
-        match (evaluated_scopes.is_empty(), gaps.is_empty()) {
-            (_, true) => CheckOutput::complete_scoped(findings, evaluated_scopes),
-            (true, false) => CheckOutput::not_evaluated(gaps),
-            (false, false) => CheckOutput::partial(findings, evaluated_scopes, gaps),
-        }
+        CheckOutput::from_coverage(findings, evaluated_scopes, gaps)
     }
 }

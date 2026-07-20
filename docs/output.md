@@ -1,8 +1,9 @@
 # Machine-Readable Output
 
 animsmith's native JSON is the stable source of truth for pipeline adapters.
-Text, Markdown, HTML, and future CI serializers are presentation views over
-the same evaluation results.
+Text and Markdown lint output are presentation views over the same evaluation
+results. The HTML report remains a sampled-motion view with content findings;
+future machine serializers should project the JSON contract.
 
 ## Contract identities
 
@@ -67,9 +68,9 @@ Both commands put evidence under `files[].measurements`:
 `clips` maps clip names to duration, frame count, animated bones, rotation
 ranges, and optional role-dependent gait, seam, and speed metrics. `meshes`
 is omitted when empty; when present it carries vertex counts, finite AABBs,
-skin influence counts, and weight-sum ranges. The current AABB and scale
-semantics remain defined by measurement contract v1 and can be revised by a
-later measurement-contract version.
+skin influence counts, and weight-sum ranges. Measurement contract v1 preserves
+the currently implemented fields. Issue #190 remains the authority for their
+geometry-domain semantics and can advance the nested contract independently.
 
 Lint adds exactly one `files[].checks[]` record for every built-in catalog
 check. Each record keeps these dimensions independent:

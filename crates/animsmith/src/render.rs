@@ -304,7 +304,10 @@ fn md_cell(text: &str) -> String {
 mod tests {
     use super::*;
     use crate::RigInfo;
-    use animsmith_core::Finding;
+    use animsmith_core::{
+        Applicability, CheckEvaluation, ConfigurationState, CoverageGap, CoverageGapCode,
+        EvaluationScope, EvaluationState, Finding, SelectionState,
+    };
     use std::collections::BTreeMap;
 
     /// A minimal lint `FileReport`; only `path` and `findings` drive the
@@ -451,6 +454,34 @@ mod tests {
         assert!(
             md.matches(esc.as_str()).count() >= 5,
             "escaped form missing from some cell:\n{md}"
+        );
+    }
+
+    #[test]
+    fn markdown_escapes_hostile_coverage_gap_subjects_and_messages() {
+        let hostile = "x|y`</details>\nq";
+        let escaped = md_cell(hostile);
+        let mut file = report("gap.glb", Vec::new());
+        file.checks = Some(vec![CheckEvaluation {
+            check_id: "foot-slide",
+            selection: SelectionState::Selected,
+            configuration: ConfigurationState::Enabled,
+            applicability: Applicability::Applicable,
+            evaluation: EvaluationState::NotEvaluated,
+            findings: Vec::new(),
+            evaluated_scopes: Vec::new(),
+            gaps: vec![
+                CoverageGap::new(CoverageGapCode::ROLES_UNRESOLVED, hostile)
+                    .scope(EvaluationScope::new("foot_stance").subject(hostile)),
+            ],
+        }]);
+
+        let md = render_markdown(&[file]);
+        assert!(!md.contains(hostile), "raw hostile gap text leaked:\n{md}");
+        assert_eq!(
+            md.matches(&escaped).count(),
+            2,
+            "subject and message:\n{md}"
         );
     }
 }

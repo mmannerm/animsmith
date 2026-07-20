@@ -240,8 +240,8 @@ them.
 Mechanical checks run with no config. The semantic checks —
 `loop-seam`, `gait-group`, `root-motion-speed`, `frozen-bone`,
 `in-place`, `foot-slide` — need declared expectations *and* resolvable
-rig roles. Without a resolved rig they skip with a note rather than
-guess, so a config that pins a `[rig] profile` (or inline `[rig.roles]`)
+rig roles. Without a resolved rig they report a typed coverage gap rather
+than guess, so a config that pins a `[rig] profile` (or inline `[rig.roles]`)
 is what makes them fire.
 
 `examples/assets/walk.glb` is a committed rig for this: a hips + two-foot

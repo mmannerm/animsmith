@@ -1,8 +1,8 @@
 //! Rig profiles: checks never reference bone names, they reference
 //! *roles*. A profile maps roles to name matchers; built-ins cover the
 //! common rigs and auto-detection scores every built-in by resolved-role
-//! coverage. A check whose required roles don't resolve is skipped with
-//! a note — never a false failure.
+//! coverage. A check whose required roles do not resolve reports a typed
+//! coverage gap — never a false failure.
 
 use crate::config::RigConfig;
 use crate::model::{BoneId, Skeleton};
@@ -37,7 +37,7 @@ pub enum Role {
 }
 
 impl Role {
-    /// Stable snake-case role name used in config and diagnostics.
+    /// Stable snake-case role name used in config and result messages.
     pub fn as_str(self) -> &'static str {
         match self {
             Role::Root => "root",
@@ -79,7 +79,7 @@ impl NameMatcher {
 /// A named set of role-to-bone-name matchers.
 #[derive(Debug, Clone)]
 pub struct RigProfile {
-    /// Profile name used in configuration and diagnostics.
+    /// Profile name used in configuration and result messages.
     pub name: &'static str,
     /// Role matchers tried against a skeleton.
     pub bindings: Vec<(Role, NameMatcher)>,

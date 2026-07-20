@@ -211,7 +211,8 @@ pub fn root_motion_speed_mps(grid: &PoseGrid, roles: &ResolvedRoles) -> Option<f
     let b = grid.model_position(frames - 1, bone);
     let dx = (b.x - a.x) as f64;
     let dz = (b.z - a.z) as f64;
-    Some(dx.hypot(dz) / duration)
+    let speed = dx.hypot(dz) / duration;
+    speed.is_finite().then_some(speed)
 }
 
 /// Maximum angular deviation (degrees) of a rotation track from its

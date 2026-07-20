@@ -100,6 +100,10 @@ impl CoverageGapCode {
     pub const INSUFFICIENT_MEASURABLE_MEMBERS: Self = Self("insufficient_measurable_members");
     /// Some configured gait-group members did not produce a phase measurement.
     pub const MEMBERS_NOT_EVALUATED: Self = Self("members_not_evaluated");
+    /// A declared frame rate was zero, negative, or non-finite.
+    pub const INVALID_DECLARED_FPS: Self = Self("invalid_declared_fps");
+    /// Too few usable rotation tracks existed for bind-pose comparison.
+    pub const INSUFFICIENT_ROTATION_EVIDENCE: Self = Self("insufficient_rotation_evidence");
 
     /// Construct a stable custom code.
     ///
@@ -164,6 +168,33 @@ pub struct CheckOutput {
 }
 
 impl CheckOutput {
+    /// Classify coverage from completed scopes and gaps.
+    ///
+    /// No gaps means complete work. Gaps plus completed scopes mean partial
+    /// work. Gaps without completed scopes mean no applicable work completed.
+    ///
+    /// # Panics
+    ///
+    /// Panics if findings are supplied without a completed scope while gaps
+    /// are present. Unevaluated work cannot produce content judgments.
+    pub fn from_coverage(
+        findings: Vec<Finding>,
+        evaluated_scopes: Vec<EvaluationScope>,
+        gaps: Vec<CoverageGap>,
+    ) -> Self {
+        if gaps.is_empty() {
+            Self::complete_scoped(findings, evaluated_scopes)
+        } else if evaluated_scopes.is_empty() {
+            assert!(
+                findings.is_empty(),
+                "not-evaluated output cannot carry content findings"
+            );
+            Self::not_evaluated(gaps)
+        } else {
+            Self::partial(findings, evaluated_scopes, gaps)
+        }
+    }
+
     /// Construct a complete atomic output from content findings.
     pub fn complete(findings: Vec<Finding>) -> Self {
         Self::complete_scoped(findings, Vec::new())

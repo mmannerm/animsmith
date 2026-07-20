@@ -34,7 +34,7 @@ impl Check for FootSlide {
     fn applicability(&self, ctx: &CheckCtx) -> Applicability {
         // Foot-slide needs the travel mode (root/hips) to know whether
         // a planted or sweeping foot is correct; individual missing
-        // feet are handled per-foot in `run`.
+        // feet are handled per-foot in `evaluate`.
         if ctx
             .clip_expectations()
             .iter()
@@ -167,10 +167,6 @@ impl Check for FootSlide {
                 }
             }
         }
-        match (evaluated_scopes.is_empty(), gaps.is_empty()) {
-            (_, true) => CheckOutput::complete_scoped(findings, evaluated_scopes),
-            (true, false) => CheckOutput::not_evaluated(gaps),
-            (false, false) => CheckOutput::partial(findings, evaluated_scopes, gaps),
-        }
+        CheckOutput::from_coverage(findings, evaluated_scopes, gaps)
     }
 }
