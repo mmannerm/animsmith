@@ -80,7 +80,7 @@ $ animsmith lint examples/assets/clip-dirty.glb
 examples/assets/clip-dirty.glb:
   error[quat-norm] clip 'swing' bone 'spine' @0.500s: non-unit rotation key ...
   warning[quat-flip] clip 'swing' bone 'spine' @0.750s: 2 hemisphere flip(s) ...
-1 error(s), 1 warning(s), 0 note(s)          # exits 1
+1 error(s), 1 warning(s), 0 note(s), 0 coverage gap(s)   # exits 1
 ```
 
 Warnings alone keep the exit code at 0. Use `--deny-warnings` when CI
@@ -90,28 +90,36 @@ should fail on warnings too:
 $ animsmith lint --deny-warnings examples/assets/clip-dirty.glb   # exits 1
 ```
 
-For machine consumption, `--format json` emits a versioned envelope
-(see [output.md](../docs/output.md)):
+For machine consumption, `--format json` emits the v2 result envelope
+(see [output.md](../docs/output.md)). This `jq` projection keeps the example
+short while showing where content findings and independently versioned
+measurement evidence live:
 
 ```console
-$ animsmith lint --format json examples/assets/clip-dirty.glb
+$ animsmith lint --format json examples/assets/clip-dirty.glb | jq \
+    '{schema_version, schema, command,
+      check: (.files[0].checks[] | select(.check_id == "quat-norm")),
+      measurements: (.files[0].measurements | {schema_version, schema})}'
 {
-  "schema_version": 1,
+  "schema_version": 2,
+  "schema": "urn:animsmith:schema:output:2",
   "command": "lint",
-  "summary": { "files": 1, "findings": { "error": 1, "warning": 1, "note": 0 } },
-  "files": [
-    {
-      "path": "examples/assets/clip-dirty.glb",
-      "findings": [
-        { "check_id": "quat-norm", "severity": "error", "clip": "swing",
-          "bone": "spine", "time_s": 0.5, "measured": 1.05, "expected": 1.0,
-          "message": "non-unit rotation key (worst at key 2)" },
-        { "check_id": "quat-flip", "severity": "warning", "clip": "swing",
-          "bone": "spine", "time_s": 0.75, "measured": 2.0,
-          "message": "2 hemisphere flip(s) between adjacent rotation keys ..." }
-      ]
-    }
-  ]
+  "check": {
+    "check_id": "quat-norm",
+    "selection": "selected",
+    "configuration": "enabled",
+    "applicability": "applicable",
+    "evaluation": "complete",
+    "findings": [
+      { "check_id": "quat-norm", "severity": "error", "clip": "swing",
+        "bone": "spine", "time_s": 0.5, "measured": 1.05, "expected": 1.0,
+        "message": "non-unit rotation key (worst at key 2)" }
+    ]
+  },
+  "measurements": {
+    "schema_version": 1,
+    "schema": "urn:animsmith:schema:measurements:1"
+  }
 }
 ```
 
@@ -271,7 +279,12 @@ L/R foot amplitude:
 ```console
 $ animsmith measure examples/assets/walk.glb          # --format json
 {
+  "schema_version": 2,
+  "schema": "urn:animsmith:schema:output:2",
+  "tool": { "name": "animsmith", "version": "0.1.0",
+            "source": { "revision": null, "dirty": null } },
   "command": "measure",
+  "summary": { "files": 1 },
   "files": [
     {
       "path": "examples/assets/walk.glb",
@@ -282,6 +295,8 @@ $ animsmith measure examples/assets/walk.glb          # --format json
         "schema": "urn:animsmith:schema:measurements:1",
         "clips": { "walk": {
           "duration_s": 1.0, "frame_count": 33,
+          "animated_bones": ["foot_l", "foot_r"],
+          "bone_rotation_range_deg": {},
           "loop_seam_ratio": 1.2e-15,
           "gait": { "phase": 0.75, "lr_amplitude_m": 0.2 },
           "speed_mps": 0.0
@@ -377,7 +392,7 @@ severity = "note"
 $ animsmith lint --config demote.toml examples/assets/clip-dirty.glb
   error[quat-norm] clip 'swing' bone 'spine' @0.500s: non-unit rotation key ...
   note[quat-flip] clip 'swing' bone 'spine' @0.750s: 2 hemisphere flip(s) ...
-1 error(s), 0 warning(s), 1 note(s)          # exits 1
+1 error(s), 0 warning(s), 1 note(s), 0 coverage gap(s)   # exits 1
 ```
 
 See the [README configuration section](../README.md#configuration) for

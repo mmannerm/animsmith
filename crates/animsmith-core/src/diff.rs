@@ -53,6 +53,7 @@ pub fn diff_measurements(
     a: &BTreeMap<String, ClipMeasurements>,
     b: &BTreeMap<String, ClipMeasurements>,
 ) -> Vec<MetricDelta> {
+    let finite = |value: Option<f64>| value.filter(|value| value.is_finite());
     let mut deltas = Vec::new();
     let delta =
         |clip: &str, metric: &str, before: Option<f64>, after: Option<f64>, note: String| {
@@ -102,8 +103,8 @@ pub fn diff_measurements(
 
         push_num(
             "duration_s",
-            Some(ma.duration_s),
-            Some(mb.duration_s),
+            finite(Some(ma.duration_s)),
+            finite(Some(mb.duration_s)),
             DURATION_THRESHOLD_S,
             false,
         );
@@ -116,29 +117,29 @@ pub fn diff_measurements(
         );
         push_num(
             "loop_seam_ratio",
-            ma.loop_seam_ratio,
-            mb.loop_seam_ratio,
+            finite(ma.loop_seam_ratio),
+            finite(mb.loop_seam_ratio),
             SEAM_THRESHOLD,
             false,
         );
         push_num(
             "gait.phase",
-            ma.gait.as_ref().and_then(|g| g.phase),
-            mb.gait.as_ref().and_then(|g| g.phase),
+            finite(ma.gait.as_ref().and_then(|g| g.phase)),
+            finite(mb.gait.as_ref().and_then(|g| g.phase)),
             PHASE_THRESHOLD,
             true,
         );
         push_num(
             "gait.lr_amplitude_m",
-            ma.gait.as_ref().map(|g| g.lr_amplitude_m),
-            mb.gait.as_ref().map(|g| g.lr_amplitude_m),
+            finite(ma.gait.as_ref().map(|g| g.lr_amplitude_m)),
+            finite(mb.gait.as_ref().map(|g| g.lr_amplitude_m)),
             AMPLITUDE_THRESHOLD_M,
             false,
         );
         push_num(
             "speed_mps",
-            ma.speed_mps,
-            mb.speed_mps,
+            finite(ma.speed_mps),
+            finite(mb.speed_mps),
             SPEED_THRESHOLD_MPS,
             false,
         );
@@ -149,8 +150,8 @@ pub fn diff_measurements(
             .chain(mb.bone_rotation_range_deg.keys())
             .collect::<BTreeSet<_>>()
         {
-            let va = ma.bone_rotation_range_deg.get(bone).copied();
-            let vb = mb.bone_rotation_range_deg.get(bone).copied();
+            let va = finite(ma.bone_rotation_range_deg.get(bone).copied());
+            let vb = finite(mb.bone_rotation_range_deg.get(bone).copied());
             let moved = match (va, vb) {
                 (Some(x), Some(y)) => (x - y).abs() > ROTATION_RANGE_THRESHOLD_DEG,
                 _ => true,

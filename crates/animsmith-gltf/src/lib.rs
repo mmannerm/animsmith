@@ -496,7 +496,12 @@ fn build_document(
                 &times,
                 &values,
             )?;
-            duration = duration.max(times.last().copied().unwrap_or(0.0) as f64);
+            duration = times
+                .iter()
+                .copied()
+                .filter(|time| time.is_finite())
+                .map(f64::from)
+                .fold(duration, f64::max);
             tracks.push(Track {
                 bone,
                 property,

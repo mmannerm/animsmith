@@ -112,4 +112,32 @@ fn configured_resolution_labels_unresolved_and_inline_only_rigs() {
     let custom = resolve_configured_roles(&skel, &config.rig);
     assert_eq!(custom.profile, "custom");
     assert_eq!(custom.get(Role::Hips), Some(0));
+
+    let invalid_inline: Config = serde_json::from_value(serde_json::json!({
+        "rig": { "roles": { "hips": "absent" } }
+    }))
+    .unwrap();
+    let unresolved = resolve_configured_roles(&skel, &invalid_inline.rig);
+    assert_eq!(unresolved.profile, "unknown");
+    assert!(unresolved.is_empty());
+
+    let named_without_matches: Config = serde_json::from_value(serde_json::json!({
+        "rig": { "profile": "ue-mannequin" }
+    }))
+    .unwrap();
+    let unresolved = resolve_configured_roles(&skel, &named_without_matches.rig);
+    assert_eq!(unresolved.profile, "unknown");
+    assert!(unresolved.is_empty());
+
+    let named_skel = skeleton_of(&["root", "pelvis", "foot_l", "foot_r"]);
+    let invalid_override: Config = serde_json::from_value(serde_json::json!({
+        "rig": {
+            "profile": "ue-mannequin",
+            "roles": { "left_foot": "absent" }
+        }
+    }))
+    .unwrap();
+    let named = resolve_configured_roles(&named_skel, &invalid_override.rig);
+    assert_eq!(named.profile, "ue-mannequin");
+    assert_eq!(named.get(Role::LeftFoot), Some(2));
 }

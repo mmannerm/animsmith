@@ -5,7 +5,7 @@ use animsmith_core::config::{CheckSettings, SeveritySetting};
 use animsmith_core::{
     Applicability, CheckOutput, CheckSelection, Config, ConfigurationState, CoverageGap,
     CoverageGapCode, Document, EvaluationError, EvaluationScope, EvaluationState, Finding,
-    MetricGrids, ResolvedRoles, SelectionState, Severity, evaluate_checks,
+    MetricGrids, ResolvedRoles, SelectionState, Severity, Value, evaluate_checks,
 };
 
 struct Complete;
@@ -288,4 +288,23 @@ fn complete_constructor_has_no_coverage_evidence() {
     assert_eq!(output.evaluation(), EvaluationState::Complete);
     assert!(output.evaluated_scopes().is_empty());
     assert!(output.gaps().is_empty());
+}
+
+#[test]
+fn finding_omits_non_finite_optional_numbers_even_after_public_field_mutation() {
+    let mut finding = Finding::new("finite-json", Severity::Error, "bad number")
+        .time(f32::INFINITY)
+        .measured(f64::NAN)
+        .expected(f64::NEG_INFINITY);
+    assert!(finding.time_s.is_none());
+    assert!(finding.measured.is_none());
+    assert!(finding.expected.is_none());
+
+    finding.time_s = Some(f32::INFINITY);
+    finding.measured = Some(Value::Number(f64::NAN));
+    finding.expected = Some(Value::Number(f64::INFINITY));
+    let json = serde_json::to_value(&finding).expect("finding serializes");
+    assert!(json.get("time_s").is_none());
+    assert!(json.get("measured").is_none());
+    assert!(json.get("expected").is_none());
 }

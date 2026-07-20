@@ -179,12 +179,12 @@ enum Cmd {
     },
     /// Compare animation measurements.
     #[command(
-        long_about = "Compare the measurements of two inputs (asset files or prior `measure` JSON) and report movement beyond significance thresholds. Exits 1 on significant movement."
+        long_about = "Compare the measurements of two inputs (asset files or prior single-file `measure` or `lint` JSON) and report movement beyond significance thresholds. Exits 1 on significant movement."
     )]
     Diff {
-        /// Before input: asset file or single-file `measure --format json` report.
+        /// Before input: asset file or single-file v2 `measure`/`lint` JSON report.
         a: PathBuf,
-        /// After input: asset file or single-file `measure --format json` report.
+        /// After input: asset file or single-file v2 `measure`/`lint` JSON report.
         b: PathBuf,
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,

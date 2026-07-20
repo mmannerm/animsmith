@@ -49,6 +49,7 @@ impl Check for DurationSanity {
                 .iter()
                 .filter(|t| t.key_count() >= 2)
                 .map(|t| t.end_time())
+                .filter(|end| end.is_finite())
                 .collect();
             if ends.is_empty() {
                 continue;

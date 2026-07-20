@@ -43,11 +43,18 @@ for removed_schema in \
 done
 
 legacy=$(rg -n \
-  'JsonV2Preview|json-v2-preview|run_checks|as_diagnostic|legacy_diagnostic|enum Readiness|Finding::diagnostic|output-v2-preview' \
+  'JsonV2Preview|json-v2-preview|run_checks|as_diagnostic|legacy_diagnostic|enum Readiness|Finding::diagnostic|output-v2-preview|skips? with a note|skipped with a note' \
   crates/animsmith/src crates/animsmith-core/src crates/animsmith-gltf/src \
   docs README.md DESIGN.md examples || true)
 if [ -n "$legacy" ]; then
   fail "removed v1/preview API or format remains:\n$legacy"
+fi
+
+legacy_envelope=$(rg -n -U \
+  '"schema_version":[[:space:]]*1,[[:space:]]*\n[[:space:]]*"command"' \
+  docs README.md DESIGN.md examples || true)
+if [ -n "$legacy_envelope" ]; then
+  fail "removed outer output-v1 envelope remains:\n$legacy_envelope"
 fi
 
 if [ "$failures" -ne 0 ]; then

@@ -233,13 +233,11 @@ pub fn resolve_named(skeleton: &Skeleton, profile: &str) -> Option<ResolvedRoles
 /// for inline-only resolution, or `<profile>+custom` when both contribute.
 pub fn resolve_configured_roles(skeleton: &Skeleton, rig: &RigConfig) -> ResolvedRoles {
     let base = resolve_named(skeleton, &rig.profile).unwrap_or_default();
-    if rig.roles.is_empty() {
-        let mut roles = base;
-        if roles.profile.is_empty() {
-            roles.profile = "unknown".into();
-        }
-        return roles;
-    }
+    let base_contributed = !base.is_empty();
+    let inline_contributed = rig
+        .roles
+        .values()
+        .any(|name| skeleton.bones.iter().any(|bone| bone.name == *name));
 
     let mut pairs: Vec<_> = base
         .iter()
@@ -248,10 +246,11 @@ pub fn resolve_configured_roles(skeleton: &Skeleton, rig: &RigConfig) -> Resolve
     pairs.extend(rig.roles.iter().map(|(role, name)| (*role, name.clone())));
 
     let mut resolved = ResolvedRoles::from_names(skeleton, pairs);
-    resolved.profile = if base.profile.is_empty() {
-        "custom".into()
-    } else {
-        format!("{}+custom", base.profile)
+    resolved.profile = match (base_contributed, inline_contributed) {
+        (false, false) => "unknown".into(),
+        (false, true) => "custom".into(),
+        (true, false) => base.profile,
+        (true, true) => format!("{}+custom", base.profile),
     };
     resolved
 }

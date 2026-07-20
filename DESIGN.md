@@ -85,7 +85,7 @@ animsmith report  <file> -o report.html [--clip name]
 animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor]
 animsmith fix     <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
 animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb> [--animation-only]
-animsmith diff    <A> <B> [--format text|json]     # A/B: asset files or prior `measure` JSON
+animsmith diff    <A> <B> [--format text|json]     # A/B: assets or single-file v2 measure/lint JSON
 ```
 
 - `lint` = measure + judge against config. `measure` is lint minus

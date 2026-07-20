@@ -87,7 +87,7 @@ $ animsmith lint clip.glb
 clip.glb:
   warning[quat-flip] clip 'walk' bone 'hips' @0.533s: 1 hemisphere flip(s) ...
   note[constant-track] clip 'walk' bone 'ik_target': scale track has 90 keys but never moves
-0 error(s), 1 warning(s), 1 note(s)
+0 error(s), 1 warning(s), 1 note(s), 0 coverage gap(s)
 
 $ animsmith lint export.fbx
 $ animsmith measure clip.glb

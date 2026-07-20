@@ -521,10 +521,10 @@ fn all_missing_group_members_remain_content_errors_without_a_role_gap() {
     );
 }
 
-/// The member-not-found Error stays an Error even under a severity
-/// override — it is a config violation, not a diagnostic.
+/// A member-not-found result remains a content finding, so the ordinary
+/// per-check severity override can demote its default error to a warning.
 #[test]
-fn missing_group_member_error_survives_severity_override() {
+fn missing_group_member_content_error_honors_severity_override() {
     let doc = walk_doc();
     let config = json_config(serde_json::json!({
         "checks": { "gait-group": { "severity": "warn" } },

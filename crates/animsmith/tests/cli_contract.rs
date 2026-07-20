@@ -1788,6 +1788,28 @@ const NAN_TIME_GLTF: &str = r#"{
   "scene": 0
 }"#;
 
+/// First and last keyframe times are NaN and +Inf; values remain valid.
+const NONFINITE_TIME_GLTF: &str = r#"{
+  "asset": { "version": "2.0" },
+  "buffers": [{ "uri": "data:application/octet-stream;base64,AADAfwAAAD8AAIB/AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/", "byteLength": 60 }],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0, "byteLength": 12 },
+    { "buffer": 0, "byteOffset": 12, "byteLength": 48 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 3, "type": "SCALAR", "min": [0], "max": [1] },
+    { "bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC4" }
+  ],
+  "nodes": [{ "name": "root" }],
+  "animations": [{
+    "name": "poisoned",
+    "samplers": [{ "input": 0, "output": 1, "interpolation": "LINEAR" }],
+    "channels": [{ "sampler": 0, "target": { "node": 0, "path": "rotation" } }]
+  }],
+  "scenes": [{ "nodes": [0] }],
+  "scene": 0
+}"#;
+
 #[test]
 fn malformed_track_counts_are_operator_errors_everywhere() {
     let dir = unique_temp_dir("count-mismatch-cli");
@@ -1859,6 +1881,32 @@ fn nan_key_times_lint_as_errors_and_never_crash() {
         "stdout:\n{}",
         stdout(&output)
     );
+}
+
+#[test]
+fn non_finite_key_times_never_escape_as_schema_invalid_nulls() {
+    let dir = unique_temp_dir("nonfinite-time-json");
+    let input = dir.path().join("nonfinite.gltf");
+    std::fs::write(&input, NONFINITE_TIME_GLTF).expect("writes fixture");
+
+    for (command, expected_exit) in [("measure", 0), ("lint", 1)] {
+        let output = animsmith()
+            .args([command, input.to_str().unwrap(), "--format", "json"])
+            .output()
+            .expect("runs animsmith");
+        assert_eq!(
+            output.status.code(),
+            Some(expected_exit),
+            "{command} stderr:\n{}",
+            stderr(&output)
+        );
+        let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+        assert_output_schema_valid(&json);
+        assert_eq!(
+            json["files"][0]["measurements"]["clips"]["poisoned"]["duration_s"],
+            0.5
+        );
+    }
 }
 
 // --- #30: exit-code, config-path, and inspect contract ---

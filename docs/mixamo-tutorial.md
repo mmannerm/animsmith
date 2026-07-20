@@ -180,7 +180,7 @@ walking.glb:
   warning[scale-keys] clip 'mixamo.com' bone 'mixamorig:Hips': scale animation present ...
   note[constant-track] clip 'mixamo.com' bone 'mixamorig:Spine': translation track has 2 keys but never moves — export bloat
   ...
-0 error(s), 1 warning(s), 103 note(s)
+0 error(s), 1 warning(s), 103 note(s), 1 coverage gap(s)
 ```
 
 Of the clip's 156 tracks, 103 never move — pure
@@ -228,7 +228,12 @@ The semantic checks need *your* expectations declared. Start from what
 ```console
 $ animsmith measure --format json walking.glb
 {
+  "schema_version": 2,
+  "schema": "urn:animsmith:schema:output:2",
+  "tool": { "name": "animsmith", "version": "0.1.0",
+            "source": { "revision": null, "dirty": null } },
   "command": "measure",
+  "summary": { "files": 1 },
   "files": [
     {
       "path": "walking.glb",
@@ -240,6 +245,8 @@ $ animsmith measure --format json walking.glb
         "schema": "urn:animsmith:schema:measurements:1",
         "clips": { "mixamo.com": {
           "duration_s": 1.0, "frame_count": 33,
+          "animated_bones": ["mixamorig:Hips", "mixamorig:LeftFoot", "mixamorig:RightFoot"],
+          "bone_rotation_range_deg": { "mixamorig:Hips": 3.2 },
           "loop_seam_ratio": 1.2e-15,
           "gait": { "phase": 0.75, "lr_amplitude_m": 0.2 },
           "speed_mps": 0.0
@@ -337,7 +344,7 @@ walking.glb:
     left foot skates during stance: speed deviates 0.52 m/s from the
     expected 0.00 m/s (cap 0.30) — foot plants will slip at runtime ...
   warning[foot-slide] clip 'mixamo.com' bone 'mixamorig:RightFoot' @0.833s: ...
-0 error(s), 3 warning(s), 103 note(s)             # exits 0
+0 error(s), 3 warning(s), 103 note(s), 0 coverage gap(s)   # exits 0
 ```
 
 Whether that stance drift is acceptable for your game is exactly the

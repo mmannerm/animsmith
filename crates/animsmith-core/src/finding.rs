@@ -68,14 +68,17 @@ pub struct Finding {
     /// Bone associated with the finding, when applicable.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bone: Option<String>,
-    /// Time in seconds associated with the finding, when applicable.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Finite time in seconds associated with the finding, when applicable.
+    /// Non-finite values are omitted from serialized output.
+    #[serde(skip_serializing_if = "non_finite_time_or_none")]
     pub time_s: Option<f32>,
-    /// Measured value that triggered the finding.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Measured value that triggered the finding. Non-finite numeric values
+    /// are omitted from serialized output.
+    #[serde(skip_serializing_if = "non_finite_value_or_none")]
     pub measured: Option<Value>,
-    /// Expected value or threshold for the finding.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Expected value or threshold for the finding. Non-finite numeric values
+    /// are omitted from serialized output.
+    #[serde(skip_serializing_if = "non_finite_value_or_none")]
     pub expected: Option<Value>,
     /// Human-readable explanation.
     pub message: String,
@@ -110,21 +113,40 @@ impl Finding {
 
     /// Attach a clip time in seconds.
     pub fn time(mut self, t: f32) -> Self {
-        self.time_s = Some(t);
+        self.time_s = t.is_finite().then_some(t);
         self
     }
 
     /// Attach a measured value.
     pub fn measured(mut self, v: impl Into<Value>) -> Self {
-        self.measured = Some(v.into());
+        let value = v.into();
+        self.measured = value.is_finite().then_some(value);
         self
     }
 
     /// Attach an expected value or threshold.
     pub fn expected(mut self, v: impl Into<Value>) -> Self {
-        self.expected = Some(v.into());
+        let value = v.into();
+        self.expected = value.is_finite().then_some(value);
         self
     }
+}
+
+impl Value {
+    fn is_finite(&self) -> bool {
+        match self {
+            Self::Number(number) => number.is_finite(),
+            Self::Text(_) => true,
+        }
+    }
+}
+
+fn non_finite_time_or_none(value: &Option<f32>) -> bool {
+    value.is_none_or(|time| !time.is_finite())
+}
+
+fn non_finite_value_or_none(value: &Option<Value>) -> bool {
+    value.as_ref().is_none_or(|value| !value.is_finite())
 }
 
 impl From<f64> for Value {
