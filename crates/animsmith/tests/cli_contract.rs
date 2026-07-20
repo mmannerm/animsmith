@@ -6,6 +6,83 @@ use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
+const V2_PREVIEW_SCHEMA_URL: &str = "https://raw.githubusercontent.com/mmannerm/animsmith/main/docs/schemas/output-v2-preview.schema.json";
+const V2_PREVIEW_SCHEMA: &str = include_str!("../../../docs/schemas/output-v2-preview.schema.json");
+
+fn assert_required_properties(schema: &Value, instance: &Value, path: &str) {
+    let object = instance
+        .as_object()
+        .unwrap_or_else(|| panic!("expected object at {path}, got {instance}"));
+    for key in schema["required"]
+        .as_array()
+        .expect("schema required array")
+    {
+        let key = key.as_str().expect("required property name");
+        assert!(object.contains_key(key), "missing required {path}.{key}");
+    }
+}
+
+/// Keep emitted records aligned with the schema's required-field contract.
+/// Full JSON Schema semantics belong to a standards implementation, not this
+/// CLI test; focused value assertions below cover the preview's state enums.
+fn assert_v2_preview_required_fields(instance: &Value) {
+    let schema: Value = serde_json::from_str(V2_PREVIEW_SCHEMA).expect("valid preview schema");
+    assert_required_properties(&schema, instance, "$");
+    for (file_index, file) in instance["files"]
+        .as_array()
+        .expect("preview files")
+        .iter()
+        .enumerate()
+    {
+        assert_required_properties(
+            &schema["$defs"]["file_report"],
+            file,
+            &format!("$.files[{file_index}]"),
+        );
+        for (check_index, check) in file["checks"]
+            .as_array()
+            .expect("preview checks")
+            .iter()
+            .enumerate()
+        {
+            assert_required_properties(
+                &schema["$defs"]["check_evaluation"],
+                check,
+                &format!("$.files[{file_index}].checks[{check_index}]"),
+            );
+        }
+    }
+}
+
+fn assert_evaluation_summary_matches_checks(instance: &Value) {
+    let checks: Vec<_> = instance["files"]
+        .as_array()
+        .expect("preview files")
+        .iter()
+        .flat_map(|file| file["checks"].as_array().expect("preview checks"))
+        .collect();
+    let summary = &instance["summary"]["evaluations"];
+    for (field, dimension, value) in [
+        ("complete", "evaluation", "complete"),
+        ("partial", "evaluation", "partial"),
+        ("not_evaluated", "evaluation", "not_evaluated"),
+        ("not_applicable", "applicability", "not_applicable"),
+        ("disabled", "configuration", "disabled"),
+        ("unselected", "selection", "unselected"),
+    ] {
+        let expected = checks
+            .iter()
+            .filter(|check| check[dimension] == value)
+            .count();
+        assert_eq!(summary[field], expected, "summary.{field}");
+    }
+    let expected_gaps: usize = checks
+        .iter()
+        .map(|check| check["gaps"].as_array().map_or(0, Vec::len))
+        .sum();
+    assert_eq!(summary["gaps"], expected_gaps, "summary.gaps");
+}
+
 fn animsmith() -> Command {
     Command::new(env!("CARGO_BIN_EXE_animsmith"))
 }
@@ -751,6 +828,232 @@ fn lint_json_uses_versioned_envelope() {
     assert_eq!(json["summary"]["files"], 1);
     assert!(json["files"][0]["findings"].is_array());
     assert!(json["files"][0]["measurements"]["walk"]["duration_s"].is_number());
+}
+
+#[test]
+fn lint_json_v2_preview_exposes_complete_clean_and_unselected_checks() {
+    let output = animsmith()
+        .args([
+            "lint",
+            fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
+            "--format",
+            "json-v2-preview",
+            "--select",
+            "nan",
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(json["schema_version"], 2);
+    assert_eq!(json["schema"], V2_PREVIEW_SCHEMA_URL);
+    let checks = json["files"][0]["checks"].as_array().expect("checks");
+    let nan = checks
+        .iter()
+        .find(|check| check["check_id"] == "nan")
+        .expect("nan record");
+    assert_eq!(nan["selection"], "selected");
+    assert_eq!(nan["configuration"], "enabled");
+    assert_eq!(nan["applicability"], "applicable");
+    assert_eq!(nan["evaluation"], "complete");
+    assert_eq!(nan["findings"], json!([]));
+    let duration = checks
+        .iter()
+        .find(|check| check["check_id"] == "duration-sanity")
+        .expect("duration record");
+    assert_eq!(duration["selection"], "unselected");
+    assert_eq!(duration["evaluation"], "not_evaluated");
+    let gait_group = checks
+        .iter()
+        .find(|check| check["check_id"] == "gait-group")
+        .expect("gait-group record");
+    assert_eq!(gait_group["selection"], "unselected");
+    assert_eq!(gait_group["applicability"], "not_applicable");
+    assert_eq!(gait_group["evaluation"], "not_evaluated");
+    assert_evaluation_summary_matches_checks(&json);
+    assert_v2_preview_required_fields(&json);
+}
+
+#[test]
+fn lint_json_v2_preview_keeps_disabled_distinct_from_unselected() {
+    let dir = unique_temp_dir("v2-disabled");
+    let config = write_config(
+        dir.path(),
+        "disabled.toml",
+        "[checks.nan]\nseverity = \"off\"\n",
+    );
+    let output = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args([
+            "lint",
+            fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
+            "--format",
+            "json-v2-preview",
+            "--select",
+            "nan",
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    let checks = json["files"][0]["checks"].as_array().expect("checks");
+    let nan = checks
+        .iter()
+        .find(|check| check["check_id"] == "nan")
+        .expect("nan record");
+    assert_eq!(nan["selection"], "selected");
+    assert_eq!(nan["configuration"], "disabled");
+    assert_eq!(nan["evaluation"], "not_evaluated");
+    let duration = checks
+        .iter()
+        .find(|check| check["check_id"] == "duration-sanity")
+        .expect("duration record");
+    assert_eq!(duration["selection"], "unselected");
+    assert_eq!(duration["configuration"], "enabled");
+}
+
+#[test]
+fn lint_json_v2_preview_gait_group_can_carry_finding_and_coverage_gap() {
+    let dir = unique_temp_dir("v2-partial-gait");
+    let config = write_config(
+        dir.path(),
+        "partial.toml",
+        "[gait_groups.ring]\nclips = [\"walk\", \"missing\"]\nmax_gait_phase_spread = 0.1\n",
+    );
+    let output = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args([
+            "lint",
+            fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
+            "--format",
+            "json-v2-preview",
+            "--select",
+            "gait-group",
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    let gait = json["files"][0]["checks"]
+        .as_array()
+        .expect("checks")
+        .iter()
+        .find(|check| check["check_id"] == "gait-group")
+        .expect("gait-group record");
+    assert_eq!(gait["applicability"], "applicable");
+    assert_eq!(gait["evaluation"], "partial");
+    assert_eq!(gait["findings"][0]["severity"], "error");
+    assert_eq!(gait["findings"][0]["clip"], "missing");
+    assert_eq!(gait["gaps"][0]["code"], "roles_unresolved");
+    assert_eq!(gait["gaps"][0]["scope"]["code"], "phase_coherence");
+    assert_eq!(gait["evaluated_scopes"][0]["code"], "member_existence");
+    assert_eq!(json["summary"]["evaluations"]["partial"], 1);
+    assert_eq!(json["summary"]["evaluations"]["gaps"], 1);
+    assert_eq!(json["summary"]["findings"]["error"], 1);
+    assert_evaluation_summary_matches_checks(&json);
+    assert_v2_preview_required_fields(&json);
+}
+
+#[test]
+fn lint_json_v2_preview_exit_policy_uses_findings_not_coverage_gaps() {
+    let warning_dir = unique_temp_dir("v2-warning-exit");
+    let warning_input = warning_dir.path().join("flipped.glb");
+    write_flipped_glb(&warning_input);
+
+    for (deny, expected) in [(false, 0), (true, 1)] {
+        let mut args = vec![
+            "lint",
+            warning_input.to_str().expect("utf-8 input path"),
+            "--format",
+            "json-v2-preview",
+            "--select",
+            "quat-flip",
+        ];
+        if deny {
+            args.push("--deny-warnings");
+        }
+        let output = animsmith().args(&args).output().expect("runs animsmith");
+        assert_eq!(
+            output.status.code(),
+            Some(expected),
+            "warning exit (deny-warnings: {deny}):\n{}",
+            stderr(&output)
+        );
+        let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+        let quat_flip = json["files"][0]["checks"]
+            .as_array()
+            .expect("checks")
+            .iter()
+            .find(|check| check["check_id"] == "quat-flip")
+            .expect("quat-flip record");
+        assert_eq!(quat_flip["findings"][0]["severity"], "warning");
+        assert!(quat_flip["gaps"].is_null());
+    }
+
+    let gap_dir = unique_temp_dir("v2-gap-exit");
+    let gap_input = gap_dir.path().join("sway.glb");
+    write_clean_glb(&gap_input);
+    let config = write_config(gap_dir.path(), "gap.toml", "[clips.sway]\nloop = true\n");
+    for deny in [false, true] {
+        let mut args = vec![
+            "--config",
+            config.to_str().expect("utf-8 config path"),
+            "lint",
+            gap_input.to_str().expect("utf-8 input path"),
+            "--format",
+            "json-v2-preview",
+            "--select",
+            "loop-seam",
+        ];
+        if deny {
+            args.push("--deny-warnings");
+        }
+        let output = animsmith().args(&args).output().expect("runs animsmith");
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "coverage gap must not gate (deny-warnings: {deny}):\n{}",
+            stderr(&output)
+        );
+        let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+        let loop_seam = json["files"][0]["checks"]
+            .as_array()
+            .expect("checks")
+            .iter()
+            .find(|check| check["check_id"] == "loop-seam")
+            .expect("loop-seam record");
+        assert_eq!(loop_seam["findings"], json!([]));
+        assert_eq!(loop_seam["gaps"][0]["code"], "roles_unresolved");
+    }
+}
+
+#[test]
+fn lint_json_v2_preview_rejects_allow_instead_of_deleting_evidence() {
+    let output = animsmith()
+        .args([
+            "lint",
+            fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
+            "--format",
+            "json-v2-preview",
+            "--allow",
+            "nan",
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stdout(&output).is_empty());
+    assert!(stderr(&output).contains("preview results retain every content finding"));
 }
 
 #[test]

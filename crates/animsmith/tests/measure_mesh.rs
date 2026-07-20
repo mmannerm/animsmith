@@ -1,7 +1,6 @@
 //! CI-run coverage that `measure` emits per-mesh geometry measurements
 //! (#16) end-to-end through the real CLI on an in-repo glTF — vertex
 //! count, AABB, joints-per-vertex, and weight-sum range.
-#![cfg(feature = "fbx")] // convert/measure share the assets-aware loader path
 
 use animsmith_core::glam::{Mat4, Vec3};
 use animsmith_core::model::*;
@@ -55,6 +54,20 @@ fn write_skinned_glb(path: &std::path::Path) {
     animsmith_gltf::write::write(&doc, path).expect("writes skinned glb");
 }
 
+fn assert_body_mesh(mesh: &serde_json::Value) {
+    assert_eq!(mesh["name"], "body");
+    assert_eq!(mesh["vertex_count"], 3);
+    assert_eq!(mesh["aabb"]["min"], serde_json::json!([0.0, 0.0, 0.0]));
+    assert_eq!(mesh["aabb"]["max"], serde_json::json!([2.0, 4.0, 0.0]));
+    assert_eq!(mesh["max_joints_per_vertex"], 2);
+    let lo = mesh["weight_sum_min"].as_f64().expect("weight_sum_min");
+    let hi = mesh["weight_sum_max"].as_f64().expect("weight_sum_max");
+    assert!(
+        (lo - 1.0).abs() < 1e-6 && (hi - 1.0).abs() < 1e-6,
+        "weights normalized"
+    );
+}
+
 #[test]
 fn cli_measure_emits_mesh_measurements() {
     let dir = tempfile::tempdir().unwrap();
@@ -71,18 +84,31 @@ fn cli_measure_emits_mesh_measurements() {
     assert!(out.status.success(), "measure exited {}", out.status);
 
     let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid JSON");
-    let mesh = &report["files"][0]["meshes"][0];
-    assert_eq!(mesh["name"], "body");
-    assert_eq!(mesh["vertex_count"], 3);
-    assert_eq!(mesh["aabb"]["min"], serde_json::json!([0.0, 0.0, 0.0]));
-    assert_eq!(mesh["aabb"]["max"], serde_json::json!([2.0, 4.0, 0.0]));
-    assert_eq!(mesh["max_joints_per_vertex"], 2);
-    let lo = mesh["weight_sum_min"].as_f64().expect("weight_sum_min");
-    let hi = mesh["weight_sum_max"].as_f64().expect("weight_sum_max");
-    assert!(
-        (lo - 1.0).abs() < 1e-6 && (hi - 1.0).abs() < 1e-6,
-        "weights normalized"
-    );
+    assert_body_mesh(&report["files"][0]["meshes"][0]);
+}
+
+/// The provisional v2 lint envelope intentionally matches the embedded
+/// evaluator's mesh-measurement evidence instead of v1 lint's animation-only
+/// projection.
+#[test]
+fn cli_v2_preview_emits_mesh_measurements() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("skinned.glb");
+    write_skinned_glb(&input);
+
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_animsmith"))
+        .arg("lint")
+        .arg(&input)
+        .arg("--format")
+        .arg("json-v2-preview")
+        .arg("--select")
+        .arg("nan")
+        .output()
+        .expect("runs animsmith");
+    assert!(out.status.success(), "preview lint exited {}", out.status);
+
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid JSON");
+    assert_body_mesh(&report["files"][0]["meshes"][0]);
 }
 
 /// A skeleton-only glTF (no geometry) emits no `meshes` key — the field

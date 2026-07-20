@@ -2,6 +2,7 @@
 //! check sets.
 
 use crate::config::{ClipExpectations, Config};
+use crate::evaluation::CheckOutput;
 use crate::finding::{Finding, Severity};
 use crate::metrics::MetricGrids;
 use crate::model::Document;
@@ -112,6 +113,19 @@ pub trait Check {
 
     /// Execute the check and append any findings to `out`.
     fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>);
+
+    /// Evaluate the check for the provisional v2 result model.
+    ///
+    /// The default treats [`Check::run`] as one complete work unit. Checks
+    /// with independently executable sub-work override this to report typed
+    /// gaps and completed scopes without encoding them as findings. The v2
+    /// runner converts any legacy diagnostic findings into
+    /// `legacy_diagnostic` gaps before classifying coverage.
+    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+        let mut findings = Vec::new();
+        self.run(ctx, &mut findings);
+        CheckOutput::complete(findings)
+    }
 }
 
 /// The mechanical P0 checks: no rig profile, no config required.

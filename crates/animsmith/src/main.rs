@@ -21,12 +21,15 @@
 
 use animsmith_core::model::Document;
 use animsmith_core::profile::{ResolvedRoles, resolve_named};
-use animsmith_core::{CheckCtx, Config, Finding, MetricGrids, Severity, all_checks, run_checks};
+use animsmith_core::{
+    Applicability, CheckCtx, CheckEvaluation, CheckSelection, Config, ConfigurationState,
+    EvaluationState, Finding, MetricGrids, Severity, all_checks, evaluate_checks, run_checks,
+};
 use animsmith_gltf::fix::Repair;
 use clap::builder::{PossibleValue, PossibleValuesParser, TypedValueParser};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -43,6 +46,7 @@ const EXIT_OPERATOR: u8 = 2;
 const SCHEMA_VERSION: u32 = 1;
 const SCHEMA_URL: &str =
     "https://raw.githubusercontent.com/mmannerm/animsmith/main/docs/schemas/output-v1.schema.json";
+const V2_PREVIEW_SCHEMA_URL: &str = "https://raw.githubusercontent.com/mmannerm/animsmith/main/docs/schemas/output-v2-preview.schema.json";
 
 #[derive(Parser)]
 #[command(
@@ -200,6 +204,9 @@ enum Format {
 enum LintFormat {
     Text,
     Json,
+    /// Experimental schema-v2 coverage model. Field names may change before
+    /// the final v2 contract replaces v1 JSON.
+    JsonV2Preview,
     Markdown,
 }
 
@@ -323,6 +330,85 @@ struct ReportEnvelope {
     header: EnvelopeHeader,
     summary: ReportSummary,
     files: Vec<FileReport>,
+}
+
+#[derive(Serialize)]
+struct V2PreviewFileReport {
+    path: String,
+    rig: RigInfo,
+    checks: Vec<CheckEvaluation>,
+    measurements: BTreeMap<String, animsmith_core::measure::ClipMeasurements>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    meshes: Vec<animsmith_core::measure::MeshMeasurements>,
+}
+
+#[derive(Default, Serialize)]
+struct EvaluationSummary {
+    complete: usize,
+    partial: usize,
+    not_evaluated: usize,
+    not_applicable: usize,
+    disabled: usize,
+    unselected: usize,
+    gaps: usize,
+}
+
+#[derive(Serialize)]
+struct V2PreviewSummary {
+    files: usize,
+    findings: FindingSummary,
+    evaluations: EvaluationSummary,
+}
+
+#[derive(Serialize)]
+struct V2PreviewEnvelope {
+    schema_version: u32,
+    schema: &'static str,
+    tool: ToolInfo,
+    command: &'static str,
+    summary: V2PreviewSummary,
+    files: Vec<V2PreviewFileReport>,
+}
+
+impl V2PreviewEnvelope {
+    fn new(files: Vec<V2PreviewFileReport>) -> Self {
+        let mut findings = FindingSummary::default();
+        let mut evaluations = EvaluationSummary::default();
+        for file in &files {
+            for check in &file.checks {
+                for finding in &check.findings {
+                    findings.add(finding.severity);
+                }
+                match check.evaluation {
+                    EvaluationState::Complete => evaluations.complete += 1,
+                    EvaluationState::Partial => evaluations.partial += 1,
+                    EvaluationState::NotEvaluated => evaluations.not_evaluated += 1,
+                }
+                if check.applicability == Applicability::NotApplicable {
+                    evaluations.not_applicable += 1;
+                }
+                if check.configuration == ConfigurationState::Disabled {
+                    evaluations.disabled += 1;
+                }
+                if check.selection == animsmith_core::SelectionState::Unselected {
+                    evaluations.unselected += 1;
+                }
+                evaluations.gaps += check.gaps.len();
+            }
+        }
+        Self {
+            schema_version: 2,
+            schema: V2_PREVIEW_SCHEMA_URL,
+            tool: ToolInfo::current(),
+            command: "lint",
+            summary: V2PreviewSummary {
+                files: files.len(),
+                findings,
+                evaluations,
+            },
+            files,
+        }
+    }
 }
 
 impl ReportEnvelope {
@@ -474,6 +560,67 @@ fn print_fix_report(
     );
 }
 
+fn validate_check_selection(
+    checks: &[Box<dyn animsmith_core::Check>],
+    select: &[String],
+) -> Result<(), String> {
+    let known: Vec<&str> = checks.iter().map(|check| check.id()).collect();
+    for id in select {
+        if !known.contains(&id.as_str()) {
+            return Err(format!(
+                "--select: unknown check '{id}' (known: {})",
+                known.join(", ")
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn run_lint_v2_preview(
+    files: &[PathBuf],
+    config: &Config,
+    checks: &[Box<dyn animsmith_core::Check>],
+    select: &[String],
+    deny_warnings: bool,
+) -> Result<ExitCode, String> {
+    let selected: BTreeSet<String> = select.iter().cloned().collect();
+    let selection = if selected.is_empty() {
+        CheckSelection::All
+    } else {
+        CheckSelection::Only(&selected)
+    };
+    let mut reports = Vec::new();
+    let mut worst = Severity::Note;
+    for file in files {
+        let doc = load(file)?;
+        let roles = resolve_roles(&doc, config);
+        let grids = MetricGrids::new(&doc);
+        let ctx = CheckCtx::new(&grids, &roles, config);
+        let evaluations = evaluate_checks(&ctx, checks, selection);
+        for finding in evaluations.iter().flat_map(|check| &check.findings) {
+            worst = worst.max(finding.severity);
+        }
+        reports.push(V2PreviewFileReport {
+            path: file.display().to_string(),
+            rig: rig_info(&doc, &roles),
+            checks: evaluations,
+            measurements: animsmith_core::measure::measure_document(&grids, &roles, config),
+            meshes: animsmith_core::measure::measure_meshes(&doc.assets),
+        });
+    }
+    render::print_json(&V2PreviewEnvelope::new(reports));
+    let fail_at = if deny_warnings {
+        Severity::Warning
+    } else {
+        Severity::Error
+    };
+    Ok(if worst >= fail_at {
+        ExitCode::from(EXIT_FINDINGS)
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
 fn run(cli: Cli) -> Result<ExitCode, String> {
     match cli.cmd {
         Cmd::Inspect { file } => {
@@ -564,16 +711,17 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let config = load_config(cli.config.as_deref())?;
             require_files(&files)?;
             let mut checks = all_checks();
-            if !select.is_empty() {
-                let known: Vec<&str> = checks.iter().map(|c| c.id()).collect();
-                for id in &select {
-                    if !known.contains(&id.as_str()) {
-                        return Err(format!(
-                            "--select: unknown check '{id}' (known: {})",
-                            known.join(", ")
-                        ));
-                    }
+            validate_check_selection(&checks, &select)?;
+            if format == LintFormat::JsonV2Preview {
+                if !allow.is_empty() {
+                    return Err(
+                        "--allow is not supported with --format json-v2-preview; preview results retain every content finding"
+                            .into(),
+                    );
                 }
+                return run_lint_v2_preview(&files, &config, &checks, &select, deny_warnings);
+            }
+            if !select.is_empty() {
                 checks.retain(|c| select.iter().any(|id| id == c.id()));
             }
             let mut reports = Vec::new();
@@ -606,6 +754,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             match format {
                 LintFormat::Json => render::print_json(&ReportEnvelope::new("lint", reports)),
                 LintFormat::Text => render::print_text(&reports),
+                LintFormat::JsonV2Preview => unreachable!("preview returned above"),
                 LintFormat::Markdown => render::print_markdown(&reports),
             }
             let fail_at = if deny_warnings {

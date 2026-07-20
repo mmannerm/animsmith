@@ -10,7 +10,10 @@ use animsmith_core::fixtures::{
 use animsmith_core::metrics::MIN_STRIDE_STEP_M;
 use animsmith_core::model::*;
 use animsmith_core::profile::{ResolvedRoles, Role};
-use animsmith_core::{CheckCtx, Config, MetricGrids, Severity, all_checks, run_checks};
+use animsmith_core::{
+    CheckCtx, CheckSelection, Config, EvaluationState, MetricGrids, Severity, all_checks,
+    evaluate_checks, run_checks,
+};
 use glam::Vec3;
 use std::f64::consts::TAU;
 
@@ -376,6 +379,84 @@ fn missing_group_member_is_flagged() {
     );
 }
 
+#[test]
+fn unresolved_phase_coherence_is_a_typed_gap_not_completed_work() {
+    let doc = walk_doc();
+    let config = json_config(serde_json::json!({
+        "gait_groups": { "ring": {
+            "clips": ["walk", "no_such_clip"],
+            "max_gait_phase_spread": 0.1
+        }}
+    }));
+    let roles = roles(&doc.skeleton);
+    let grids = MetricGrids::new(&doc);
+    let ctx = CheckCtx::new(&grids, &roles, &config);
+    let checks = all_checks();
+    let records = evaluate_checks(&ctx, &checks, CheckSelection::All);
+    let gait = records
+        .iter()
+        .find(|record| record.check_id == "gait-group")
+        .expect("gait-group record");
+
+    assert_eq!(gait.evaluation, EvaluationState::Partial);
+    assert!(
+        gait.evaluated_scopes
+            .iter()
+            .any(|scope| scope.code == "member_existence")
+    );
+    assert!(
+        !gait
+            .evaluated_scopes
+            .iter()
+            .any(|scope| scope.code == "phase_coherence")
+    );
+    assert_eq!(gait.gaps[0].code, "insufficient_measurable_members");
+    assert_eq!(
+        gait.gaps[0].scope.as_ref().unwrap().subject.as_deref(),
+        Some("ring")
+    );
+}
+
+#[test]
+fn gait_phase_coverage_distinguishes_complete_and_partial_groups() {
+    let mut doc = walk_doc();
+    let mut second = doc.clips[0].clone();
+    second.name = "walk_b".into();
+    doc.clips.push(second);
+
+    for (clips, expected_evaluation, expected_gap) in [
+        (vec!["walk", "walk_b"], EvaluationState::Complete, None),
+        (
+            vec!["walk", "walk_b", "missing"],
+            EvaluationState::Partial,
+            Some("members_not_evaluated"),
+        ),
+    ] {
+        let config = json_config(serde_json::json!({
+            "gait_groups": { "ring": {
+                "clips": clips,
+                "max_gait_phase_spread": 0.1,
+                "min_lr_amplitude_m": 0.05
+            }}
+        }));
+        let roles = roles(&doc.skeleton);
+        let grids = MetricGrids::new(&doc);
+        let ctx = CheckCtx::new(&grids, &roles, &config);
+        let checks = all_checks();
+        let records = evaluate_checks(&ctx, &checks, CheckSelection::All);
+        let gait = records
+            .iter()
+            .find(|record| record.check_id == "gait-group")
+            .expect("gait-group record");
+
+        assert_eq!(gait.evaluation, expected_evaluation);
+        assert!(gait.evaluated_scopes.iter().any(|scope| {
+            scope.code == "phase_coherence" && scope.subject.as_deref() == Some("ring")
+        }));
+        assert_eq!(gait.gaps.first().map(|gap| gap.code), expected_gap);
+    }
+}
+
 /// #28 (Codex audit): a gait-group member-not-found is a config error
 /// detectable without a rig, so it must still surface when roles are
 /// unresolved — not be hidden behind the roles skip-note. The existing
@@ -403,6 +484,30 @@ fn missing_group_member_is_flagged_even_when_roles_unresolved() {
         .filter(|f| f.check_id == "gait-group" && f.severity == Severity::Note)
         .collect();
     assert_eq!(notes.len(), 1, "expected one skip-note: {notes:#?}");
+}
+
+#[test]
+fn all_missing_group_members_do_not_add_a_roles_skip_note() {
+    let doc = walk_doc();
+    let config = json_config(serde_json::json!({
+        "gait_groups": { "ring": {
+            "clips": ["missing_a", "missing_b"],
+            "max_gait_phase_spread": 0.1
+        }}
+    }));
+    let findings = lint_unresolved(&doc, &config);
+    let group: Vec<_> = findings
+        .iter()
+        .filter(|finding| finding.check_id == "gait-group")
+        .collect();
+
+    assert_eq!(group.len(), 2, "only missing-member errors: {group:#?}");
+    assert!(
+        group
+            .iter()
+            .all(|finding| finding.severity == Severity::Error),
+        "role diagnostics require existing phase work: {group:#?}"
+    );
 }
 
 /// The member-not-found Error stays an Error even under a severity

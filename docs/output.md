@@ -33,6 +33,50 @@ to the matching `vX.Y.Z` tag once that tag will contain the schema.
 Additive fields may appear within the same version; consumers should
 ignore fields they do not understand.
 
+## Provisional v2 coverage preview
+
+Issue #193 is incubating a result model that represents content findings and
+evaluation coverage separately. During that experiment, `lint --format
+json-v2-preview` emits `schema_version: 2` against
+[`output-v2-preview.schema.json`](schemas/output-v2-preview.schema.json).
+Its `schema` field is exactly
+`https://raw.githubusercontent.com/mmannerm/animsmith/main/docs/schemas/output-v2-preview.schema.json`;
+the preview schema's `$id`, the CLI constant, and this documented URL are
+checked together to prevent contract drift.
+The spelling and field names are intentionally preview-only; default
+`--format json` remains the published v1 contract.
+
+Each preview `files[].checks[]` record independently reports:
+
+- `selection`: `selected` or `unselected`;
+- `configuration`: `enabled` or `disabled`;
+- `applicability`: `applicable` or `not_applicable`;
+- `evaluation`: `complete`, `partial`, or `not_evaluated`;
+- content `findings`;
+- completed `evaluated_scopes` and typed coverage `gaps`.
+
+Gap `code` and scope `code` are the machine fields; messages remain display
+text. Disabled and unselected checks are activation states, not artificial
+gaps. A not-applicable check is not reported as a clean evaluation. Partial
+`gait-group` evaluation is the proving case: member-existence validation can
+complete (and can emit a content error) while role-dependent phase coherence
+reports a `roles_unresolved`, `insufficient_measurable_members`, or
+`members_not_evaluated` gap. Legacy custom checks that emit diagnostic
+findings through `run` retain that incomplete evidence as a
+`legacy_diagnostic` gap rather than a v2 content finding.
+
+Preview file records deliberately retain animation measurements and optional
+mesh measurements alongside check evaluations so the CLI experiment exposes
+the same measurement evidence available to an embedded adapter. Their
+inclusion is experiment evidence, not a decision that final v2 must use this
+exact envelope shape.
+
+The preview deliberately rejects `--allow` instead of deleting findings from
+machine evidence. Content errors still exit 1, warnings exit 0 unless denied,
+and coverage gaps are visible but nonblocking by default. Operator failures
+remain exit 2 plus stderr during the experiment; whether final v2 adds a JSON
+operator-error envelope is still an open contract decision.
+
 ## `measure` and `lint`
 
 `measure --format json` emits `files[].measurements` and omits
