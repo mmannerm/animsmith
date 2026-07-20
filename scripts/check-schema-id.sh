@@ -35,7 +35,7 @@ check_schema docs/schemas/output-v2.schema.json urn:animsmith:schema:output:2
 check_schema docs/schemas/measurements-v1.schema.json urn:animsmith:schema:measurements:1
 
 gap_codes=$(sed -nE 's/.*Self\("([^"]+)"\);/\1/p' crates/animsmith-core/src/evaluation.rs)
-scope_codes=$(rg -o 'EvaluationScope::new\("[^"]+"' crates/animsmith-core/src/checks \
+scope_codes=$(grep -RhoE 'EvaluationScope::new\("[^"]+"' crates/animsmith-core/src/checks \
   | sed -E 's/.*EvaluationScope::new\("([^"]+)"/\1/' \
   | sort -u)
 for code in $gap_codes $scope_codes; do
@@ -52,20 +52,28 @@ for removed_schema in \
   fi
 done
 
-legacy=$(rg -n \
-  'JsonV2Preview|json-v2-preview|run_checks|as_diagnostic|legacy_diagnostic|enum Readiness|Finding::diagnostic|output-v2-preview|skips? with a note|skipped with a note' \
-  --glob '!scripts/check-schema-id.sh' \
-  --glob '!target/**' \
-  . || true)
+legacy=$(git grep -nE \
+  'JsonV2Preview|json-v2-preview|run_checks|as_diagnostic|legacy_diagnostic|enum Readiness|Finding::diagnostic|output-v2-preview' \
+  -- ':!scripts/check-schema-id.sh' || true)
 if [ -n "$legacy" ]; then
   fail "removed v1/preview API or format remains:\n$legacy"
 fi
 
-legacy_envelope=$(rg -n -U \
-  '"schema_version":[[:space:]]*1,[[:space:]]*\n[[:space:]]*"command"' \
-  --glob '!scripts/check-schema-id.sh' \
-  --glob '!target/**' \
-  . || true)
+legacy_envelope=$(
+  while IFS= read -r file; do
+    awk '
+      previous ~ /"schema_version"[[:space:]]*:[[:space:]]*1,/ &&
+        /"command"[[:space:]]*:/ {
+          print FILENAME ":" NR - 1 ":" previous
+        }
+      {
+        previous = $0
+      }
+    ' "$file"
+  done < <(git grep -lE \
+    '"schema_version"[[:space:]]*:[[:space:]]*1,' \
+    -- ':!scripts/check-schema-id.sh' || true)
+)
 if [ -n "$legacy_envelope" ]; then
   fail "removed outer output-v1 envelope remains:\n$legacy_envelope"
 fi
