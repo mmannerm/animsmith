@@ -156,12 +156,10 @@ impl CoverageGap {
 
 /// Validated output from one selected, enabled, applicable check.
 ///
-/// Private fields and the constructors keep coverage states internally
-/// consistent: partial work has both completed scopes and gaps, while wholly
-/// unevaluated work has gaps and cannot carry content findings.
+/// Coverage state is derived from completed scopes and gaps rather than cached,
+/// so the Rust value and serialized classification cannot drift apart.
 #[derive(Debug, Clone)]
 pub struct CheckOutput {
-    evaluation: EvaluationState,
     findings: Vec<Finding>,
     evaluated_scopes: Vec<EvaluationScope>,
     gaps: Vec<CoverageGap>,
@@ -182,81 +180,37 @@ impl CheckOutput {
         evaluated_scopes: Vec<EvaluationScope>,
         gaps: Vec<CoverageGap>,
     ) -> Self {
-        if gaps.is_empty() {
-            Self::complete_scoped(findings, evaluated_scopes)
-        } else if evaluated_scopes.is_empty() {
+        if !gaps.is_empty() && evaluated_scopes.is_empty() {
             assert!(
                 findings.is_empty(),
                 "not-evaluated output cannot carry content findings"
             );
-            Self::not_evaluated(gaps)
-        } else {
-            Self::partial(findings, evaluated_scopes, gaps)
+        }
+        Self {
+            findings,
+            evaluated_scopes,
+            gaps,
         }
     }
 
     /// Construct a complete atomic output from content findings.
     pub fn complete(findings: Vec<Finding>) -> Self {
-        Self::complete_scoped(findings, Vec::new())
-    }
-
-    /// Construct a complete output with explicit completed scopes.
-    pub fn complete_scoped(findings: Vec<Finding>, evaluated_scopes: Vec<EvaluationScope>) -> Self {
         Self {
-            evaluation: EvaluationState::Complete,
             findings,
-            evaluated_scopes,
+            evaluated_scopes: Vec::new(),
             gaps: Vec::new(),
         }
     }
 
-    /// Construct a partial output.
-    ///
-    /// # Panics
-    ///
-    /// Panics if either `evaluated_scopes` or `gaps` is empty. That would
-    /// contradict the meaning of partial coverage and is an implementor bug,
-    /// not an input-dependent runtime condition.
-    pub fn partial(
-        findings: Vec<Finding>,
-        evaluated_scopes: Vec<EvaluationScope>,
-        gaps: Vec<CoverageGap>,
-    ) -> Self {
-        assert!(
-            !evaluated_scopes.is_empty(),
-            "partial evaluation requires a completed scope"
-        );
-        assert!(!gaps.is_empty(), "partial evaluation requires a gap");
-        Self {
-            evaluation: EvaluationState::Partial,
-            findings,
-            evaluated_scopes,
-            gaps,
-        }
-    }
-
-    /// Construct an output where no applicable work completed.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `gaps` is empty. Applicable work cannot be described as not
-    /// evaluated without explaining the missing coverage.
-    pub fn not_evaluated(gaps: Vec<CoverageGap>) -> Self {
-        assert!(
-            !gaps.is_empty(),
-            "not-evaluated output requires a coverage gap"
-        );
-        Self {
-            evaluation: EvaluationState::NotEvaluated,
-            findings: Vec::new(),
-            evaluated_scopes: Vec::new(),
-            gaps,
-        }
-    }
-
     /// Evaluation coverage represented by this output.
-    pub const fn evaluation(&self) -> EvaluationState {
-        self.evaluation
+    pub fn evaluation(&self) -> EvaluationState {
+        if self.gaps.is_empty() {
+            EvaluationState::Complete
+        } else if self.evaluated_scopes.is_empty() {
+            EvaluationState::NotEvaluated
+        } else {
+            EvaluationState::Partial
+        }
     }
 
     /// Content findings emitted by evaluated work.
@@ -282,12 +236,8 @@ impl CheckOutput {
         Vec<EvaluationScope>,
         Vec<CoverageGap>,
     ) {
-        (
-            self.evaluation,
-            self.findings,
-            self.evaluated_scopes,
-            self.gaps,
-        )
+        let evaluation = self.evaluation();
+        (evaluation, self.findings, self.evaluated_scopes, self.gaps)
     }
 }
 

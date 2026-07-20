@@ -24,7 +24,7 @@ check_schema() {
   if [ "$schema_const" != "$expected" ]; then
     fail "$file properties.schema const must be $expected (found ${schema_const:-none})"
   fi
-  for reference in crates/animsmith/src/main.rs docs/output.md; do
+  for reference in crates/animsmith-core/src/contract.rs docs/output.md; do
     if ! grep -Fq "$expected" "$reference"; then
       fail "$reference does not reference schema identity $expected"
     fi
@@ -33,6 +33,16 @@ check_schema() {
 
 check_schema docs/schemas/output-v2.schema.json urn:animsmith:schema:output:2
 check_schema docs/schemas/measurements-v1.schema.json urn:animsmith:schema:measurements:1
+
+gap_codes=$(sed -nE 's/.*Self\("([^"]+)"\);/\1/p' crates/animsmith-core/src/evaluation.rs)
+scope_codes=$(rg -o 'EvaluationScope::new\("[^"]+"' crates/animsmith-core/src/checks \
+  | sed -E 's/.*EvaluationScope::new\("([^"]+)"/\1/' \
+  | sort -u)
+for code in $gap_codes $scope_codes; do
+  if ! grep -Fq "\`$code\`" docs/output.md; then
+    fail "docs/output.md does not document built-in gap/scope code $code"
+  fi
+done
 
 for removed_schema in \
   docs/schemas/output-v1.schema.json \
@@ -44,15 +54,18 @@ done
 
 legacy=$(rg -n \
   'JsonV2Preview|json-v2-preview|run_checks|as_diagnostic|legacy_diagnostic|enum Readiness|Finding::diagnostic|output-v2-preview|skips? with a note|skipped with a note' \
-  crates/animsmith/src crates/animsmith-core/src crates/animsmith-gltf/src \
-  docs README.md DESIGN.md examples || true)
+  --glob '!scripts/check-schema-id.sh' \
+  --glob '!target/**' \
+  . || true)
 if [ -n "$legacy" ]; then
   fail "removed v1/preview API or format remains:\n$legacy"
 fi
 
 legacy_envelope=$(rg -n -U \
   '"schema_version":[[:space:]]*1,[[:space:]]*\n[[:space:]]*"command"' \
-  docs README.md DESIGN.md examples || true)
+  --glob '!scripts/check-schema-id.sh' \
+  --glob '!target/**' \
+  . || true)
 if [ -n "$legacy_envelope" ]; then
   fail "removed outer output-v1 envelope remains:\n$legacy_envelope"
 fi

@@ -8,9 +8,27 @@
 //! their text inline at their call sites; future serializers (SARIF,
 //! GitLab Code Quality, JUnit, CSV) belong here alongside the JSON one.
 
-use crate::{FileReport, FindingSummary};
-use animsmith_core::{CoverageGap, Severity};
+use animsmith_core::{CoverageGap, CoverageGapCode, FileReport, Finding, Severity};
 use serde::Serialize;
+use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet};
+
+#[derive(Default)]
+struct FindingSummary {
+    error: usize,
+    warning: usize,
+    note: usize,
+}
+
+impl FindingSummary {
+    fn add(&mut self, severity: Severity) {
+        match severity {
+            Severity::Error => self.error += 1,
+            Severity::Warning => self.warning += 1,
+            Severity::Note => self.note += 1,
+        }
+    }
+}
 
 /// Serialize any envelope as pretty JSON — the machine-readable contract
 /// shared by `measure`, `lint`, and `diff`.
@@ -21,19 +39,27 @@ pub(crate) fn print_json<T: Serialize>(value: &T) {
 
 /// Human-readable one-line-per-finding text output for `lint`.
 pub(crate) fn print_text(reports: &[FileReport]) {
+    print!("{}", render_text(reports));
+}
+
+fn render_text(reports: &[FileReport]) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
     let mut errors = 0usize;
     let mut warnings = 0usize;
     let mut notes = 0usize;
     let mut gaps = 0usize;
     for report in reports {
-        let findings = &report.presentation_findings;
-        let coverage_gaps: Vec<_> = coverage_gaps(report).collect();
-        if findings.is_empty() && coverage_gaps.is_empty() {
-            println!("{}: clean", report.path);
+        let findings = presentation_findings(report);
+        let coverage_groups = coverage_gap_groups(report);
+        let file_gap_count: usize = coverage_groups.iter().map(|group| group.gaps.len()).sum();
+        if findings.is_empty() && coverage_groups.is_empty() {
+            let _ = writeln!(out, "{}: clean", text_atom(report.path()));
             continue;
         }
-        println!("{}:", report.path);
-        for f in findings {
+        let _ = writeln!(out, "{}:", text_atom(report.path()));
+        for f in &findings {
             match f.severity {
                 Severity::Error => errors += 1,
                 Severity::Warning => warnings += 1,
@@ -41,48 +67,151 @@ pub(crate) fn print_text(reports: &[FileReport]) {
             }
             let mut location = String::new();
             if let Some(clip) = &f.clip {
-                location.push_str(&format!(" clip '{clip}'"));
+                location.push_str(&format!(" clip '{}'", text_atom(clip)));
             }
             if let Some(bone) = &f.bone {
-                location.push_str(&format!(" bone '{bone}'"));
+                location.push_str(&format!(" bone '{}'", text_atom(bone)));
             }
             if let Some(t) = f.time_s {
                 location.push_str(&format!(" @{t:.3}s"));
             }
             let mut detail = String::new();
             if let (Some(measured), Some(expected)) = (&f.measured, &f.expected) {
-                detail = format!(" (measured {measured}, expected {expected})");
+                detail = format!(
+                    " (measured {}, expected {})",
+                    text_atom(&measured.to_string()),
+                    text_atom(&expected.to_string())
+                );
             } else if let Some(measured) = &f.measured {
-                detail = format!(" (measured {measured})");
+                detail = format!(" (measured {})", text_atom(&measured.to_string()));
             }
-            println!(
+            let _ = writeln!(
+                out,
                 "  {}[{}]{}: {}{}",
-                f.severity, f.check_id, location, f.message, detail
+                f.severity,
+                f.check_id,
+                location,
+                text_atom(&f.message),
+                detail
             );
         }
-        for (check_id, gap) in coverage_gaps {
-            gaps += 1;
-            let scope = gap.scope.as_ref().map_or_else(String::new, |scope| {
-                scope.subject.as_ref().map_or_else(
-                    || format!(" {}", scope.code),
-                    |subject| format!(" {} '{subject}'", scope.code),
-                )
-            });
-            println!(
-                "  coverage[{check_id}]{scope}: {}: {}",
-                gap.code, gap.message
+        gaps += file_gap_count;
+        for group in coverage_groups {
+            let scopes = summarized_group_values(
+                group
+                    .gaps
+                    .iter()
+                    .filter_map(|gap| gap.scope.as_ref().map(|scope| scope.code)),
+            );
+            let subjects = summarized_group_values(group.gaps.iter().filter_map(|gap| {
+                gap.scope
+                    .as_ref()
+                    .and_then(|scope| scope.subject.as_deref())
+            }));
+            let messages =
+                summarized_group_values(group.gaps.iter().map(|gap| gap.message.as_str()));
+            let mut context = Vec::new();
+            if !scopes.is_empty() {
+                context.push(format!("scopes: {}", text_atom(&scopes)));
+            }
+            if !subjects.is_empty() {
+                context.push(format!("subjects: {}", text_atom(&subjects)));
+            }
+            let context = if context.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", context.join("; "))
+            };
+            let _ = writeln!(
+                out,
+                "  coverage[{}] {} ×{}{}: {}",
+                group.check_id,
+                group.code,
+                group.gaps.len(),
+                context,
+                text_atom(&messages),
             );
         }
     }
-    println!("{errors} error(s), {warnings} warning(s), {notes} note(s), {gaps} coverage gap(s)");
+    let _ = writeln!(
+        out,
+        "{errors} error(s), {warnings} warning(s), {notes} note(s), {gaps} coverage gap(s)"
+    );
+    out
 }
 
-fn coverage_gaps(report: &FileReport) -> impl Iterator<Item = (&str, &CoverageGap)> {
-    report
-        .checks
-        .iter()
+fn presentation_findings(report: &FileReport) -> Vec<&Finding> {
+    let mut findings: Vec<_> = report
+        .checks()
+        .into_iter()
         .flat_map(|checks| checks.iter())
-        .flat_map(|check| check.gaps.iter().map(move |gap| (check.check_id, gap)))
+        .flat_map(|check| &check.findings)
+        .collect();
+    findings.sort_by(|a, b| {
+        (a.clip.as_deref(), std::cmp::Reverse(a.severity))
+            .cmp(&(b.clip.as_deref(), std::cmp::Reverse(b.severity)))
+    });
+    findings
+}
+
+struct CoverageGapGroup<'a> {
+    check_id: &'a str,
+    code: CoverageGapCode,
+    gaps: Vec<&'a CoverageGap>,
+}
+
+fn coverage_gap_groups(report: &FileReport) -> Vec<CoverageGapGroup<'_>> {
+    let mut groups: BTreeMap<(&str, CoverageGapCode), Vec<&CoverageGap>> = BTreeMap::new();
+    for check in report.checks().unwrap_or_default() {
+        for gap in &check.gaps {
+            groups
+                .entry((check.check_id, gap.code))
+                .or_default()
+                .push(gap);
+        }
+    }
+    groups
+        .into_iter()
+        .map(|((check_id, code), gaps)| CoverageGapGroup {
+            check_id,
+            code,
+            gaps,
+        })
+        .collect()
+}
+
+fn summarized_group_values<'a>(values: impl IntoIterator<Item = &'a str>) -> String {
+    const DISPLAY_LIMIT: usize = 5;
+    let values: BTreeSet<_> = values.into_iter().collect();
+    let shown = values
+        .iter()
+        .take(DISPLAY_LIMIT)
+        .copied()
+        .collect::<Vec<_>>()
+        .join(", ");
+    if values.len() > DISPLAY_LIMIT {
+        format!("{shown}, … +{} more", values.len() - DISPLAY_LIMIT)
+    } else {
+        shown
+    }
+}
+
+/// Escape terminal control characters while leaving ordinary Unicode text
+/// readable. Each untrusted value therefore remains on one physical line and
+/// cannot inject ANSI terminal commands.
+pub(crate) fn text_atom(text: &str) -> Cow<'_, str> {
+    if !text.chars().any(char::is_control) {
+        return Cow::Borrowed(text);
+    }
+    let mut escaped = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if ch.is_control() {
+            escaped.extend(ch.escape_default());
+        } else {
+            escaped.push(ch);
+        }
+    }
+    Cow::Owned(escaped)
 }
 
 /// The finding-count threshold at or below which a file's list stays
@@ -120,24 +249,25 @@ fn render_markdown(reports: &[FileReport]) -> String {
     let _ = writeln!(out, "## animsmith lint\n");
 
     for report in reports {
-        let findings = &report.presentation_findings;
-        let gaps: Vec<_> = coverage_gaps(report).collect();
-        if findings.is_empty() && gaps.is_empty() {
-            let _ = writeln!(out, "### `{}`\n", md_cell(&report.path));
+        let findings = presentation_findings(report);
+        let gap_groups = coverage_gap_groups(report);
+        let gap_count: usize = gap_groups.iter().map(|group| group.gaps.len()).sum();
+        if findings.is_empty() && gap_groups.is_empty() {
+            let _ = writeln!(out, "### `{}`\n", md_cell(report.path()));
             let _ = writeln!(out, "✅ Clean — no findings or coverage gaps.\n");
             continue;
         }
 
         let mut file = FindingSummary::default();
-        for f in findings {
+        for f in &findings {
             file.add(f.severity);
         }
         total.error += file.error;
         total.warning += file.warning;
         total.note += file.note;
-        total_gaps += gaps.len();
+        total_gaps += gap_count;
 
-        let _ = writeln!(out, "### `{}`\n", md_cell(&report.path));
+        let _ = writeln!(out, "### `{}`\n", md_cell(report.path()));
         let _ = writeln!(out, "{}\n", severity_line(&file));
 
         if !findings.is_empty() {
@@ -155,7 +285,7 @@ fn render_markdown(reports: &[FileReport]) -> String {
             );
 
             let mut current_clip: Option<Option<&str>> = None;
-            for f in findings {
+            for f in &findings {
                 let clip = f.clip.as_deref();
                 if current_clip != Some(clip) {
                     current_clip = Some(clip);
@@ -201,26 +331,49 @@ fn render_markdown(reports: &[FileReport]) -> String {
             let _ = writeln!(out, "\n</details>\n");
         }
 
-        if !gaps.is_empty() {
+        if !gap_groups.is_empty() {
             let _ = writeln!(out, "<details open>");
             let _ = writeln!(
                 out,
                 "<summary><strong>{} coverage gap(s)</strong></summary>\n",
-                gaps.len()
+                gap_count
             );
-            let _ = writeln!(out, "| Check | Code | Scope | Subject | Message |");
-            let _ = writeln!(out, "| --- | --- | --- | --- | --- |");
-            for (check_id, gap) in gaps {
-                let scope = gap.scope.as_ref();
+            let _ = writeln!(
+                out,
+                "| Check | Code | Count | Scopes | Subjects | Messages |"
+            );
+            let _ = writeln!(out, "| --- | --- | ---: | --- | --- | --- |");
+            for group in gap_groups {
+                let scopes = summarized_group_values(
+                    group
+                        .gaps
+                        .iter()
+                        .filter_map(|gap| gap.scope.as_ref().map(|scope| scope.code)),
+                );
+                let subjects = summarized_group_values(group.gaps.iter().filter_map(|gap| {
+                    gap.scope
+                        .as_ref()
+                        .and_then(|scope| scope.subject.as_deref())
+                }));
+                let messages =
+                    summarized_group_values(group.gaps.iter().map(|gap| gap.message.as_str()));
                 let _ = writeln!(
                     out,
-                    "| `{check_id}` | `{}` | `{}` | `{}` | `{}` |",
-                    gap.code,
-                    scope.map_or("—", |scope| scope.code),
-                    scope
-                        .and_then(|scope| scope.subject.as_deref())
-                        .map_or_else(|| "—".into(), md_cell),
-                    md_cell(&gap.message),
+                    "| `{}` | `{}` | {} | `{}` | `{}` | `{}` |",
+                    group.check_id,
+                    group.code,
+                    group.gaps.len(),
+                    if scopes.is_empty() {
+                        "—".into()
+                    } else {
+                        md_cell(&scopes)
+                    },
+                    if subjects.is_empty() {
+                        "—".into()
+                    } else {
+                        md_cell(&subjects)
+                    },
+                    md_cell(&messages),
                 );
             }
             let _ = writeln!(out, "\n</details>\n");
@@ -303,26 +456,37 @@ fn md_cell(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::RigInfo;
     use animsmith_core::{
-        Applicability, CheckEvaluation, ConfigurationState, CoverageGap, CoverageGapCode,
-        EvaluationScope, EvaluationState, Finding, SelectionState,
+        Applicability, CheckEvaluation, ConfigurationState, CoverageGap, CoverageGapCode, Document,
+        EvaluationScope, EvaluationState, Finding, MeasurementContract, ResolvedRoles, RigInfo,
+        SelectionState,
     };
     use std::collections::BTreeMap;
 
-    /// A minimal lint `FileReport`; only `path` and `findings` drive the
-    /// Markdown renderer, so the rig/measurements/meshes are left empty.
     fn report(path: &str, findings: Vec<Finding>) -> FileReport {
-        FileReport {
-            path: path.to_string(),
-            rig: RigInfo {
-                profile: "unknown".to_string(),
-                resolved_roles: BTreeMap::new(),
-            },
-            checks: None,
-            measurements: crate::MeasurementContract::new(BTreeMap::new(), Vec::new()),
-            presentation_findings: findings,
-        }
+        report_with_checks(
+            path,
+            vec![CheckEvaluation {
+                check_id: "test",
+                selection: SelectionState::Selected,
+                configuration: ConfigurationState::Enabled,
+                applicability: Applicability::Applicable,
+                evaluation: EvaluationState::Complete,
+                findings,
+                evaluated_scopes: Vec::new(),
+                gaps: Vec::new(),
+            }],
+        )
+    }
+
+    fn report_with_checks(path: &str, checks: Vec<CheckEvaluation>) -> FileReport {
+        let doc = Document::default();
+        FileReport::lint(
+            path,
+            RigInfo::from_resolved(&doc, &ResolvedRoles::default()),
+            checks,
+            MeasurementContract::new(BTreeMap::new(), Vec::new()),
+        )
     }
 
     #[test]
@@ -461,20 +625,22 @@ mod tests {
     fn markdown_escapes_hostile_coverage_gap_subjects_and_messages() {
         let hostile = "x|y`</details>\nq";
         let escaped = md_cell(hostile);
-        let mut file = report("gap.glb", Vec::new());
-        file.checks = Some(vec![CheckEvaluation {
-            check_id: "foot-slide",
-            selection: SelectionState::Selected,
-            configuration: ConfigurationState::Enabled,
-            applicability: Applicability::Applicable,
-            evaluation: EvaluationState::NotEvaluated,
-            findings: Vec::new(),
-            evaluated_scopes: Vec::new(),
-            gaps: vec![
-                CoverageGap::new(CoverageGapCode::ROLES_UNRESOLVED, hostile)
-                    .scope(EvaluationScope::new("foot_stance").subject(hostile)),
-            ],
-        }]);
+        let file = report_with_checks(
+            "gap.glb",
+            vec![CheckEvaluation {
+                check_id: "foot-slide",
+                selection: SelectionState::Selected,
+                configuration: ConfigurationState::Enabled,
+                applicability: Applicability::Applicable,
+                evaluation: EvaluationState::NotEvaluated,
+                findings: Vec::new(),
+                evaluated_scopes: Vec::new(),
+                gaps: vec![
+                    CoverageGap::new(CoverageGapCode::ROLES_UNRESOLVED, hostile)
+                        .scope(EvaluationScope::new("foot_stance").subject(hostile)),
+                ],
+            }],
+        );
 
         let md = render_markdown(&[file]);
         assert!(!md.contains(hostile), "raw hostile gap text leaked:\n{md}");
@@ -483,5 +649,78 @@ mod tests {
             2,
             "subject and message:\n{md}"
         );
+    }
+
+    #[test]
+    fn text_escapes_controls_in_findings_and_coverage_gaps() {
+        let hostile = "forged\nline\u{1b}[31m";
+        let file = report_with_checks(
+            hostile,
+            vec![CheckEvaluation {
+                check_id: "foot-slide",
+                selection: SelectionState::Selected,
+                configuration: ConfigurationState::Enabled,
+                applicability: Applicability::Applicable,
+                evaluation: EvaluationState::Partial,
+                findings: vec![
+                    Finding::new("foot-slide", Severity::Warning, hostile)
+                        .clip(hostile)
+                        .bone(hostile)
+                        .measured(hostile),
+                ],
+                evaluated_scopes: vec![EvaluationScope::new("left_foot_stance")],
+                gaps: vec![
+                    CoverageGap::new(CoverageGapCode::ROLES_UNRESOLVED, hostile)
+                        .scope(EvaluationScope::new("right_foot_stance").subject(hostile)),
+                ],
+            }],
+        );
+
+        let text = render_text(&[file]);
+        assert!(!text.contains(hostile), "raw control text leaked:\n{text}");
+        assert!(text.contains("\\n"), "newline was not escaped:\n{text}");
+        assert!(text.contains("\\u{1b}"), "escape was not escaped:\n{text}");
+    }
+
+    #[test]
+    fn repeated_coverage_gaps_are_grouped_without_losing_the_count() {
+        let gaps = ["walk_a", "walk_b"]
+            .into_iter()
+            .map(|clip| {
+                CoverageGap::new(CoverageGapCode::ROLES_UNRESOLVED, "feet unresolved")
+                    .scope(EvaluationScope::new("foot_stance").subject(clip))
+            })
+            .collect();
+        let file = report_with_checks(
+            "many.glb",
+            vec![CheckEvaluation {
+                check_id: "foot-slide",
+                selection: SelectionState::Selected,
+                configuration: ConfigurationState::Enabled,
+                applicability: Applicability::Applicable,
+                evaluation: EvaluationState::NotEvaluated,
+                findings: Vec::new(),
+                evaluated_scopes: Vec::new(),
+                gaps,
+            }],
+        );
+
+        let text = render_text(std::slice::from_ref(&file));
+        assert_eq!(text.matches("coverage[foot-slide]").count(), 1, "{text}");
+        assert!(text.contains("roles_unresolved ×2"), "{text}");
+        assert!(text.contains("2 coverage gap(s)"), "{text}");
+
+        let markdown = render_markdown(&[file]);
+        assert_eq!(
+            markdown
+                .matches("| `foot-slide` | `roles_unresolved`")
+                .count(),
+            1
+        );
+        assert!(
+            markdown.contains("| `roles_unresolved` | 2 |"),
+            "{markdown}"
+        );
+        assert!(markdown.contains("2 coverage gap(s)"), "{markdown}");
     }
 }

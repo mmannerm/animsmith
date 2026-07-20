@@ -214,6 +214,83 @@ fn foot_slide_records_partial_evidence_when_one_side_is_unresolved() {
     assert_eq!(right_gap.code, CoverageGapCode::ROLES_UNRESOLVED);
 }
 
+#[test]
+fn declared_motion_checks_report_unmeasurable_non_finite_root_motion() {
+    let mut doc = treadmill_doc(STANCE_SWEEP_M);
+    let times = vec![0.0, 0.5, 1.0];
+    doc.clips[0].tracks.push(Track {
+        bone: 0,
+        property: Property::Translation,
+        interpolation: Interpolation::Linear,
+        times,
+        values: TrackValues::Vec3s(vec![
+            Vec3::new(-f32::MAX, 1.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(f32::MAX, 1.0, 0.0),
+        ]),
+    });
+    let config = json_config(serde_json::json!({
+        "clips": { "walk": {
+            "in_place": false,
+            "speed_mps": { "value": 1.0, "tolerance": 0.25 }
+        }}
+    }));
+    let resolved = roles(&doc.skeleton);
+    let grids = MetricGrids::new(&doc);
+    let ctx = CheckCtx::new(&grids, &resolved, &config);
+    let records =
+        evaluate_checks(&ctx, &all_checks(), CheckSelection::All).expect("built-in catalog");
+
+    for id in ["in-place", "root-motion-speed", "foot-slide"] {
+        let record = records
+            .iter()
+            .find(|record| record.check_id == id)
+            .expect("declared-motion check record");
+        let gap = record
+            .gaps
+            .iter()
+            .find(|gap| gap.code == CoverageGapCode::MEASUREMENT_UNAVAILABLE)
+            .unwrap_or_else(|| panic!("{id} did not report missing measurement: {record:#?}"));
+        assert_eq!(gap.scope.as_ref().unwrap().subject.as_deref(), Some("walk"));
+        assert!(gap.message.contains("root-motion speed"));
+    }
+}
+
+#[test]
+fn foot_slide_reports_whole_clip_gap_when_metric_grid_is_too_short() {
+    let mut doc = treadmill_doc(STANCE_SWEEP_M);
+    for track in &mut doc.clips[0].tracks {
+        track.times.truncate(2);
+        match &mut track.values {
+            TrackValues::Vec3s(values) => values.truncate(2),
+            _ => panic!("treadmill fixture uses translation tracks"),
+        }
+    }
+    let config = json_config(serde_json::json!({
+        "clips": { "walk": {
+            "in_place": true,
+            "speed_mps": { "value": 1.0, "tolerance": 0.25 }
+        }}
+    }));
+    let resolved = roles(&doc.skeleton);
+    let grids = MetricGrids::new(&doc);
+    let ctx = CheckCtx::new(&grids, &resolved, &config);
+    let records =
+        evaluate_checks(&ctx, &all_checks(), CheckSelection::All).expect("built-in catalog");
+    let foot_slide = records
+        .iter()
+        .find(|record| record.check_id == "foot-slide")
+        .expect("foot-slide record");
+    let gap = foot_slide
+        .gaps
+        .iter()
+        .find(|gap| gap.code == CoverageGapCode::MEASUREMENT_UNAVAILABLE)
+        .expect("too-short clip gap");
+    assert_eq!(gap.scope.as_ref().unwrap().code, "foot_stance");
+    assert_eq!(gap.scope.as_ref().unwrap().subject.as_deref(), Some("walk"));
+    assert!(gap.message.contains("too short"));
+}
+
 /// #57: a rig whose feet resolve only as toe roles (no foot roles) must
 /// still be judged — the per-foot loop falls back to the toe, matching
 /// `foot_cycle_metrics`. Before the fix the loop skipped both feet and

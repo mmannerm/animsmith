@@ -93,6 +93,14 @@ sampled representation.
 The `MetricGrids`, `measure_document`, and `measure_meshes` rustdocs own cache
 thread-safety, sampling, measurement scope, and map-key details.
 
+When the host needs to exchange the same JSON as the CLI, construct
+`MeasurementContract`, `FileReport`, and `ReportEnvelope` from
+`animsmith-core::contract`. That module owns both immutable URNs and derives
+the lint/measure summary from the supplied records. The compiling example
+emits a full schema-valid lint envelope; embedded producers do not need to
+copy private CLI structs or hard-code protocol identities. Host-specific
+sidecars remain appropriate when CLI interoperability is not needed.
+
 ## Gate and stability contracts
 
 The CLI convention is a useful default for an embedded gate:

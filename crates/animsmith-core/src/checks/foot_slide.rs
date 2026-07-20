@@ -94,11 +94,11 @@ impl Check for FootSlide {
                 ([Role::LeftFoot, Role::LeftToe], "left"),
                 ([Role::RightFoot, Role::RightToe], "right"),
             ] {
-                let scope = EvaluationScope::new(if label == "left" {
-                    "left_foot_stance"
+                let scope = if label == "left" {
+                    EvaluationScope::new("left_foot_stance")
                 } else {
-                    "right_foot_stance"
-                })
+                    EvaluationScope::new("right_foot_stance")
+                }
                 .subject(&clip.name);
                 let Some(foot) = side_roles.iter().find_map(|&r| ctx.roles.get(r)) else {
                     gaps.push(
@@ -111,16 +111,6 @@ impl Check for FootSlide {
                     continue;
                 };
                 let frames = grid.frame_count();
-                if frames < 3 {
-                    gaps.push(
-                        CoverageGap::new(
-                            CoverageGapCode::MEASUREMENT_UNAVAILABLE,
-                            "fewer than three sampled frames are available",
-                        )
-                        .scope(scope),
-                    );
-                    continue;
-                }
                 evaluated_scopes.push(scope);
                 let heights: Vec<f64> = (0..frames)
                     .map(|f| grid.model_position(f, foot).y as f64)

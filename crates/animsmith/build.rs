@@ -36,8 +36,12 @@ fn source_info() -> Option<SourceInfo> {
         return packaged_source_info(&packaged);
     }
     let git_root = trusted_git_root()?;
-    let revision = successful_git_text(&git_root, ["rev-parse", "HEAD"])?;
-    let status = git(&git_root, ["status", "--porcelain", "--untracked-files=no"])?;
+    git_source_info(&git_root)
+}
+
+pub(crate) fn git_source_info(git_root: &Path) -> Option<SourceInfo> {
+    let revision = valid_revision(&successful_git_text(git_root, ["rev-parse", "HEAD"])?)?;
+    let status = git(git_root, ["status", "--porcelain", "--untracked-files=no"])?;
     if !status.status.success() {
         return None;
     }
@@ -49,11 +53,16 @@ fn source_info() -> Option<SourceInfo> {
 
 pub(crate) fn packaged_source_info(path: &Path) -> Option<SourceInfo> {
     let value: serde_json::Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
-    let revision = value.get("git")?.get("sha1")?.as_str()?.to_owned();
+    let revision = valid_revision(value.get("git")?.get("sha1")?.as_str()?)?;
     Some(SourceInfo {
         revision,
         dirty: None,
     })
+}
+
+fn valid_revision(revision: &str) -> Option<String> {
+    (revision.len() == 40 && revision.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| revision.to_owned())
 }
 
 fn git_version(package_version: &str) -> Option<String> {
