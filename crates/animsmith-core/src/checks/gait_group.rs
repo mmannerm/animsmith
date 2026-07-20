@@ -2,13 +2,15 @@
 //! a gait phase (the stride anchor from the L−R foot-height
 //! fundamental). If their cycles don't align, runtime blends between
 //! them skate the feet. Members with too little L/R alternation are
-//! excluded from the spread (their phase is noise); a member whose gait
-//! cannot be measured at all is an error, so the group's coherence is
-//! never silently unverified.
+//! excluded from the spread (their phase is noise). Unmeasurable work is
+//! represented as a typed coverage gap, so the group's coherence is never
+//! silently reported as verified.
 
-use crate::check::{Check, CheckCtx, Readiness};
-use crate::checks::gait_readiness;
-use crate::evaluation::{CheckOutput, CoverageGap, EvaluationScope};
+use crate::check::{Check, CheckCtx};
+use crate::checks::gait_gap;
+use crate::evaluation::{
+    Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope,
+};
 use crate::finding::{Finding, Severity};
 use crate::metrics::{MIN_STRIDE_STEP_M, circular_phase_spread, foot_cycle_metrics};
 
@@ -19,29 +21,11 @@ impl Check for GaitGroup {
         "gait-group"
     }
 
-    // gait-group is always Ready when groups exist: member existence is
-    // config validation that needs no rig roles, so it must run even on
-    // an unresolved rig. The role-dependent metric work inside `run` is
-    // gated separately, emitting one exempt skip-note.
-    fn readiness(&self, ctx: &CheckCtx) -> Readiness {
+    fn applicability(&self, ctx: &CheckCtx) -> Applicability {
         if ctx.config.gait_groups.is_empty() {
-            Readiness::Idle
+            Applicability::NotApplicable
         } else {
-            Readiness::Ready
-        }
-    }
-
-    fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
-        let coverage = run_content(ctx, out);
-        if let Some(gap) = coverage.role_diagnostic {
-            out.push(
-                Finding::new(
-                    self.id(),
-                    Severity::Note,
-                    format!("skipped: {}", gap.message),
-                )
-                .as_diagnostic(),
-            );
+            Applicability::Applicable
         }
     }
 
@@ -51,10 +35,10 @@ impl Check for GaitGroup {
         coverage
             .evaluated_scopes
             .insert(0, EvaluationScope::new("member_existence"));
-        CheckOutput {
-            findings,
-            evaluated_scopes: coverage.evaluated_scopes,
-            gaps: coverage.gaps,
+        if coverage.gaps.is_empty() {
+            CheckOutput::complete_scoped(findings, coverage.evaluated_scopes)
+        } else {
+            CheckOutput::partial(findings, coverage.evaluated_scopes, coverage.gaps)
         }
     }
 }
@@ -63,17 +47,12 @@ impl Check for GaitGroup {
 struct GaitCoverage {
     evaluated_scopes: Vec<EvaluationScope>,
     gaps: Vec<CoverageGap>,
-    role_diagnostic: Option<CoverageGap>,
 }
 
 /// Run the content-evaluation portions of gait-group. Member existence always
 /// runs; every group reports whether phase coherence ran or why it did not.
 fn run_content(ctx: &CheckCtx, out: &mut Vec<Finding>) -> GaitCoverage {
-    let roles_gap = match gait_readiness(ctx.roles) {
-        Readiness::Ready => None,
-        Readiness::Skipped(reason) => Some(CoverageGap::new("roles_unresolved", reason)),
-        Readiness::Idle => None,
-    };
+    let roles_gap = gait_gap(ctx.roles);
     let mut coverage = GaitCoverage::default();
 
     for (group_name, group) in &ctx.config.gait_groups {
@@ -99,17 +78,6 @@ fn run_content(ctx: &CheckCtx, out: &mut Vec<Finding>) -> GaitCoverage {
                 .grid(index)
                 .and_then(|grid| foot_cycle_metrics(&grid, ctx.roles, MIN_STRIDE_STEP_M));
             let Some(metrics) = gait else {
-                out.push(
-                    Finding::new(
-                        "gait-group",
-                        Severity::Error,
-                        format!(
-                            "gait group '{group_name}' member has no measurable gait \
-                             (clip too short) — the group's coherence is unverified"
-                        ),
-                    )
-                    .clip(clip_name.clone()),
-                );
                 continue;
             };
             if metrics.lr_amplitude_m < group.min_lr_amplitude_m {
@@ -124,7 +92,6 @@ fn run_content(ctx: &CheckCtx, out: &mut Vec<Finding>) -> GaitCoverage {
         if existing_members > 0
             && let Some(gap) = &roles_gap
         {
-            coverage.role_diagnostic.get_or_insert_with(|| gap.clone());
             coverage.gaps.push(gap.clone().scope(phase_scope));
             continue;
         }
@@ -159,7 +126,7 @@ fn run_content(ctx: &CheckCtx, out: &mut Vec<Finding>) -> GaitCoverage {
         if !group.clips.is_empty() && (measured.len() < 2 || measured.len() < group.clips.len()) {
             let (code, message) = if measured.len() < 2 {
                 (
-                    "insufficient_measurable_members",
+                    CoverageGapCode::INSUFFICIENT_MEASURABLE_MEMBERS,
                     format!(
                         "gait group '{group_name}' has {} measurable phase member(s); at least two are required",
                         measured.len()
@@ -167,7 +134,7 @@ fn run_content(ctx: &CheckCtx, out: &mut Vec<Finding>) -> GaitCoverage {
                 )
             } else {
                 (
-                    "members_not_evaluated",
+                    CoverageGapCode::MEMBERS_NOT_EVALUATED,
                     format!(
                         "gait group '{group_name}' evaluated {} of {} configured member(s)",
                         measured.len(),

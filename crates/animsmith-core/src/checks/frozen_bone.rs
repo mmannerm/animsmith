@@ -6,6 +6,7 @@
 //! without flagging subtle idle sway.
 
 use crate::check::{Check, CheckCtx};
+use crate::evaluation::{Applicability, CheckOutput};
 use crate::finding::{Finding, Severity};
 use crate::metrics::rotation_range_deg;
 
@@ -18,7 +19,20 @@ impl Check for FrozenBone {
         "frozen-bone"
     }
 
-    fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
+    fn applicability(&self, ctx: &CheckCtx) -> Applicability {
+        if ctx
+            .clip_expectations()
+            .iter()
+            .any(|expectations| expectations.animates_bones.is_some())
+        {
+            Applicability::Applicable
+        } else {
+            Applicability::NotApplicable
+        }
+    }
+
+    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+        let mut findings = Vec::new();
         let floor = ctx
             .config
             .check_settings(self.id())
@@ -53,7 +67,7 @@ impl Check for FrozenBone {
                     }
                 }
                 if has_any_track && max_deg < floor {
-                    out.push(
+                    findings.push(
                         Finding::new(
                             self.id(),
                             Severity::Error,
@@ -71,5 +85,6 @@ impl Check for FrozenBone {
                 }
             }
         }
+        CheckOutput::complete(findings)
     }
 }

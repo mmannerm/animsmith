@@ -1,4 +1,5 @@
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -7,9 +8,55 @@ fn main() {
     watch_git_metadata();
 
     let package_version = env::var("CARGO_PKG_VERSION").expect("Cargo sets CARGO_PKG_VERSION");
-    let version = git_version(&package_version).unwrap_or(package_version);
+    let version = resolved_version(&package_version, git_version(&package_version));
 
     println!("cargo:rustc-env=ANIMSMITH_VERSION={version}");
+    if let Some(source) = source_info() {
+        println!("cargo:rustc-env=ANIMSMITH_GIT_REVISION={}", source.revision);
+        if let Some(dirty) = source.dirty {
+            println!("cargo:rustc-env=ANIMSMITH_GIT_DIRTY={dirty}");
+        }
+    }
+}
+
+pub(crate) fn resolved_version(package_version: &str, git_version: Option<String>) -> String {
+    git_version.unwrap_or_else(|| package_version.to_owned())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SourceInfo {
+    pub(crate) revision: String,
+    pub(crate) dirty: Option<bool>,
+}
+
+fn source_info() -> Option<SourceInfo> {
+    let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR")?);
+    let packaged = manifest_dir.join(".cargo_vcs_info.json");
+    if packaged.is_file() {
+        return packaged_source_info(&packaged);
+    }
+    let git_root = trusted_git_root()?;
+    let revision = successful_git_text(&git_root, ["rev-parse", "HEAD"])?;
+    let status = git(
+        &git_root,
+        ["status", "--porcelain", "--untracked-files=normal"],
+    )?;
+    if !status.status.success() {
+        return None;
+    }
+    Some(SourceInfo {
+        revision,
+        dirty: Some(!status.stdout.is_empty()),
+    })
+}
+
+pub(crate) fn packaged_source_info(path: &Path) -> Option<SourceInfo> {
+    let value: serde_json::Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
+    let revision = value.get("git")?.get("sha1")?.as_str()?.to_owned();
+    Some(SourceInfo {
+        revision,
+        dirty: None,
+    })
 }
 
 fn git_version(package_version: &str) -> Option<String> {
@@ -19,7 +66,11 @@ fn git_version(package_version: &str) -> Option<String> {
 }
 
 fn git_describe(git_root: &Path) -> Option<String> {
-    let output = git(git_root, ["describe", "--tags", "--dirty", "--always"])?;
+    successful_git_text(git_root, ["describe", "--tags", "--dirty", "--always"])
+}
+
+fn successful_git_text<const N: usize>(git_root: &Path, args: [&str; N]) -> Option<String> {
+    let output = git(git_root, args)?;
     if !output.status.success() {
         return None;
     }

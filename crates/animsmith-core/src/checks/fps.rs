@@ -4,6 +4,9 @@
 //! fractional frame count means a slice cut mid-frame.
 
 use crate::check::{Check, CheckCtx};
+use crate::evaluation::{
+    Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope,
+};
 use crate::finding::{Finding, Severity};
 
 /// Allowed distance from the frame grid, in frames.
@@ -16,17 +19,40 @@ impl Check for Fps {
         "fps"
     }
 
-    fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
+    fn applicability(&self, ctx: &CheckCtx) -> Applicability {
+        if ctx
+            .clip_expectations()
+            .iter()
+            .any(|expectations| expectations.fps.is_some())
+        {
+            Applicability::Applicable
+        } else {
+            Applicability::NotApplicable
+        }
+    }
+
+    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+        let mut findings = Vec::new();
+        let mut evaluated_scopes = Vec::new();
+        let mut gaps = Vec::new();
         for (index, clip) in ctx.doc.clips.iter().enumerate() {
             let Some(fps) = ctx.expectations(index).fps else {
                 continue;
             };
             if fps <= 0.0 {
+                gaps.push(
+                    CoverageGap::new(
+                        CoverageGapCode::custom("invalid_declared_fps"),
+                        format!("clip declares a non-positive frame rate ({fps})"),
+                    )
+                    .scope(EvaluationScope::new("frame_grid").subject(&clip.name)),
+                );
                 continue;
             }
+            evaluated_scopes.push(EvaluationScope::new("frame_grid").subject(&clip.name));
             let frames = clip.duration_s * fps;
             if (frames - frames.round()).abs() > GRID_TOLERANCE_FRAMES {
-                out.push(
+                findings.push(
                     Finding::new(
                         self.id(),
                         Severity::Warning,
@@ -53,7 +79,7 @@ impl Check for Fps {
                 }
             }
             if let Some((err, t, property)) = worst {
-                out.push(
+                findings.push(
                     Finding::new(
                         self.id(),
                         Severity::Warning,
@@ -67,6 +93,11 @@ impl Check for Fps {
                     .measured(err),
                 );
             }
+        }
+        match (evaluated_scopes.is_empty(), gaps.is_empty()) {
+            (_, true) => CheckOutput::complete_scoped(findings, evaluated_scopes),
+            (true, false) => CheckOutput::not_evaluated(gaps),
+            (false, false) => CheckOutput::partial(findings, evaluated_scopes, gaps),
         }
     }
 }

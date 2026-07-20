@@ -4,6 +4,7 @@
 //! expectations from config arrive with M1.
 
 use crate::check::{Check, CheckCtx};
+use crate::evaluation::CheckOutput;
 use crate::finding::{Finding, Severity};
 
 /// Channel end-time spread beyond this is flagged (half a frame at
@@ -17,18 +18,19 @@ impl Check for DurationSanity {
         "duration-sanity"
     }
 
-    fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
+    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+        let mut findings = Vec::new();
         let doc = ctx.doc;
         for clip in &doc.clips {
             if clip.tracks.is_empty() {
-                out.push(
+                findings.push(
                     Finding::new(self.id(), Severity::Warning, "clip has no tracks")
                         .clip(&clip.name),
                 );
                 continue;
             }
             if clip.duration_s <= 0.0 || !clip.duration_s.is_finite() {
-                out.push(
+                findings.push(
                     Finding::new(
                         self.id(),
                         Severity::Error,
@@ -54,7 +56,7 @@ impl Check for DurationSanity {
             let max = ends.iter().copied().fold(f32::MIN, f32::max);
             let min = ends.iter().copied().fold(f32::MAX, f32::min);
             if max - min > END_SPREAD_TOLERANCE_S {
-                out.push(
+                findings.push(
                     Finding::new(
                         self.id(),
                         Severity::Warning,
@@ -69,5 +71,6 @@ impl Check for DurationSanity {
                 );
             }
         }
+        CheckOutput::complete(findings)
     }
 }

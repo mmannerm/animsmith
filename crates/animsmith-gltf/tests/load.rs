@@ -3,7 +3,8 @@
 
 use animsmith_core::profile::ResolvedRoles;
 use animsmith_core::{
-    CheckCtx, Config, MetricGrids, Severity, mechanical_checks, run_checks, sample_clip,
+    CheckCtx, CheckSelection, Config, MetricGrids, Severity, evaluate_checks, mechanical_checks,
+    sample_clip,
 };
 use std::path::PathBuf;
 
@@ -34,7 +35,11 @@ fn fixture_is_lint_clean() {
     let roles = ResolvedRoles::default();
     let grids = MetricGrids::new(&doc);
     let ctx = CheckCtx::new(&grids, &roles, &config);
-    let findings = run_checks(&ctx, &mechanical_checks());
+    let findings: Vec<_> = evaluate_checks(&ctx, &mechanical_checks(), CheckSelection::All)
+        .expect("valid built-in catalog")
+        .into_iter()
+        .flat_map(|check| check.findings)
+        .collect();
     let serious: Vec<_> = findings
         .iter()
         .filter(|f| f.severity >= Severity::Warning)

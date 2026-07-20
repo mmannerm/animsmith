@@ -5,6 +5,7 @@
 
 use super::tracks;
 use crate::check::{Check, CheckCtx};
+use crate::evaluation::CheckOutput;
 use crate::finding::{Finding, Severity};
 use crate::model::Property;
 
@@ -15,7 +16,8 @@ impl Check for QuatFlip {
         "quat-flip"
     }
 
-    fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
+    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+        let mut findings = Vec::new();
         let doc = ctx.doc;
         for (clip, bone, track) in tracks(doc) {
             if track.property != Property::Rotation {
@@ -36,7 +38,7 @@ impl Check for QuatFlip {
                 }
             }
             if let Some(k) = first {
-                out.push(
+                findings.push(
                     Finding::new(
                         self.id(),
                         Severity::Warning,
@@ -54,5 +56,6 @@ impl Check for QuatFlip {
                 );
             }
         }
+        CheckOutput::complete(findings)
     }
 }

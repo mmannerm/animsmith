@@ -6,6 +6,7 @@
 
 use super::tracks;
 use crate::check::{Check, CheckCtx};
+use crate::evaluation::CheckOutput;
 use crate::finding::{Finding, Severity};
 use crate::model::Property;
 
@@ -25,7 +26,8 @@ impl Check for ScaleKeys {
         "scale-keys"
     }
 
-    fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
+    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+        let mut findings = Vec::new();
         let doc = ctx.doc;
         for (clip, bone, track) in tracks(doc) {
             if track.property != Property::Scale {
@@ -48,7 +50,7 @@ impl Check for ScaleKeys {
                 }
             }
             if scaling {
-                out.push(
+                findings.push(
                     Finding::new(
                         self.id(),
                         Severity::Warning,
@@ -60,7 +62,7 @@ impl Check for ScaleKeys {
                 );
             }
             if let Some(k) = non_uniform_at {
-                out.push(
+                findings.push(
                     Finding::new(
                         self.id(),
                         Severity::Warning,
@@ -72,5 +74,6 @@ impl Check for ScaleKeys {
                 );
             }
         }
+        CheckOutput::complete(findings)
     }
 }

@@ -55,29 +55,32 @@ cargo run -p animsmith --example embed
    are normalized to metres, right-handed +Y-up coordinates and baked into
    linear TRS tracks. Structural failures are loader errors. Semantic
    defects load and become findings.
-2. **Resolve rig roles.** Use `detect_profile`,
-   `profile::resolve_named`, or `ResolvedRoles::from_names`. Checks consume
-   roles, never project-specific bone names.
+2. **Resolve rig roles.** Use `resolve_configured_roles` to apply the same
+   named/auto profile plus inline-override policy as the CLI. Lower-level
+   `detect_profile`, `profile::resolve_named`, and
+   `ResolvedRoles::from_names` remain available when a host intentionally
+   owns a different policy. Checks consume roles, never project-specific bone
+   names.
 3. **Build `Config`.** The CLI's TOML is only one constructor. Deserialize
    the types from your schema or build them programmatically.
 4. **Create one `MetricGrids`.** Share it by reference with
-   `measure_document`, `CheckCtx::new`, `run_checks`, and optional report
+   `measure_document`, `CheckCtx::new`, `evaluate_checks`, and optional report
    rendering so each clip is sampled once.
 5. **Map results into the host.** `Finding` carries a stable check id,
    severity, optional clip/bone/time, measured and expected values, and a
    message. The host decides whether warnings fail its gate.
 
-For issue #193's provisional v2 experiment, call `evaluate_checks` with the
-full catalog and a `CheckSelection`. It returns one `CheckEvaluation` per
+Call `evaluate_checks` with the full catalog and a `CheckSelection`. It
+returns one `CheckEvaluation` per
 catalog check, including disabled, unselected, not-applicable, partial, and
 not-evaluated work. `CoverageGap::code` and `EvaluationScope::code` are the
-machine fields; never reconstruct coverage by parsing a message. The older
-`run_checks` API remains the v1 findings projection while the preview is
-tested by real embedders.
+machine fields; never reconstruct coverage by parsing a message. Content
+findings are nested under their owning check and coverage gaps are never
+encoded as findings.
 
-Role resolution is a frontend responsibility. Use the `CheckCtx`,
-`Config::rig`, and `ResolvedRoles::from_names` rustdocs for the exact profile,
-override, and unresolved-role contracts.
+Role resolution remains an explicit frontend step. Use
+`resolve_configured_roles`, `CheckCtx`, and `Config::rig` rustdocs for the
+exact profile, override, and unresolved-role contracts.
 
 ## Compose the outputs you need
 
@@ -98,13 +101,10 @@ The CLI convention is a useful default for an embedded gate:
 - any `Severity::Error`: content rejection;
 - loader/config/I/O error: operator failure, kept separate from findings.
 
-Diagnostic skip notes stay at `Note` even when a check's configured severity
-is higher. `severity = "off"` removes a check from the run set.
-
-In the provisional v2 API, those same prerequisite skips are typed coverage
-gaps instead of note findings, and disabled/unselected checks remain visible
-without executing. Coverage is nonblocking by default; the embedding host
-owns any required-check or release-lane policy.
+Missing prerequisites are typed coverage gaps, and disabled/unselected checks
+remain visible without executing. Severity overrides apply only to content
+findings. Coverage is nonblocking by default; the embedding host owns any
+required-check or release-lane policy.
 
 For v0.1, prefer the crate-root flow: loader → role resolution → `Config` →
 `MetricGrids` → measurements/checks → findings. The durable automation

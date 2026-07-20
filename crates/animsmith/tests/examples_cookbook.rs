@@ -107,13 +107,18 @@ fn cookbook_first_gate() {
     assert_eq!(code, Some(0), "measure clean exits 0");
     let doc: Value = serde_json::from_str(&out).expect("measure --format json is valid JSON");
     assert!(
-        doc["files"][0]["measurements"].get("swing").is_some(),
+        doc["files"][0]["measurements"]["clips"]
+            .get("swing")
+            .is_some(),
         "measure reports the clip's metrics: {out}"
     );
 
     let (code, out) = run(&["lint", clean]);
     assert_eq!(code, Some(0), "lint clean exits 0");
-    assert!(out.contains("clean"), "lint reports clean: {out}");
+    assert!(
+        out.contains("0 error(s)"),
+        "lint reports no findings: {out}"
+    );
 
     let (code, out) = run(&["lint", dirty]);
     assert_eq!(code, Some(1), "lint dirty exits 1");
@@ -146,11 +151,12 @@ fn cookbook_first_gate() {
     let (code, out) = run(&["lint", "--format", "json", dirty]);
     assert_eq!(code, Some(1), "json lint dirty exits 1");
     let doc: Value = serde_json::from_str(&out).expect("lint --format json is valid JSON");
-    let ids: Vec<&str> = doc["files"][0]["findings"]
+    let ids: Vec<&str> = doc["files"][0]["checks"]
         .as_array()
-        .expect("findings array")
+        .expect("checks array")
         .iter()
-        .filter_map(|f| f["check_id"].as_str())
+        .flat_map(|check| check["findings"].as_array().unwrap())
+        .filter_map(|finding| finding["check_id"].as_str())
         .collect();
     assert!(
         ids.contains(&"quat-norm") && ids.contains(&"quat-flip"),
@@ -175,7 +181,10 @@ fn cookbook_repair_roundtrip() {
 
     let (code, out) = run(&["lint", fixed]);
     assert_eq!(code, Some(0), "repaired asset lints clean");
-    assert!(out.contains("clean"), "repaired asset is clean: {out}");
+    assert!(
+        out.contains("0 error(s)"),
+        "repaired asset has no findings: {out}"
+    );
 
     let (code, out) = run(&["diff", dirty, fixed]);
     assert_eq!(code, Some(0), "lossless repair diffs clean");
@@ -282,7 +291,7 @@ fn cookbook_semantic_contract() {
     // The clean rig passes its contract.
     let (code, out) = run(&["lint", "--config", config, walk]);
     assert_eq!(code, Some(0), "clean walk passes its contract");
-    assert!(out.contains("clean"), "walk is clean: {out}");
+    assert!(out.contains("0 error(s)"), "walk has no findings: {out}");
 
     // The popped-seam rig fails loop-seam under the same contract, and
     // that is its *only* finding (the clean rig differs by exactly this).
@@ -291,15 +300,15 @@ fn cookbook_semantic_contract() {
     assert!(out.contains("loop-seam"), "names loop-seam: {out}");
     let (_, json) = run(&["lint", "--config", config, "--format", "json", dirty]);
     let doc: Value = serde_json::from_str(&json).expect("lint --format json is valid JSON");
-    let findings = doc["files"][0]["findings"]
+    let ids: Vec<(&str, &str)> = doc["files"][0]["checks"]
         .as_array()
-        .expect("findings array");
-    let ids: Vec<(&str, &str)> = findings
+        .expect("checks array")
         .iter()
-        .map(|f| {
+        .flat_map(|check| check["findings"].as_array().unwrap())
+        .map(|finding| {
             (
-                f["check_id"].as_str().unwrap_or_default(),
-                f["severity"].as_str().unwrap_or_default(),
+                finding["check_id"].as_str().unwrap_or_default(),
+                finding["severity"].as_str().unwrap_or_default(),
             )
         })
         .collect();
@@ -313,5 +322,12 @@ fn cookbook_semantic_contract() {
     // the semantic checks enforce declared expectations, not a guess.
     let (code, out) = run(&["lint", dirty]);
     assert_eq!(code, Some(0), "bare lint skips loop-seam");
-    assert!(out.contains("clean"), "bare lint is clean: {out}");
+    assert!(
+        !out.contains("loop-seam"),
+        "bare lint does not run loop-seam: {out}"
+    );
+    assert!(
+        out.contains("0 error(s)"),
+        "bare lint has no findings: {out}"
+    );
 }

@@ -84,7 +84,7 @@ pub struct FootCycleMetrics {
 
 /// Measure the foot cycle of a clip from its pose grid. Requires the
 /// Hips role and at least one foot role; returns `None` otherwise (the
-/// caller decides whether that's a skip-note or nothing).
+/// caller decides which typed coverage gap represents the missing metric).
 ///
 /// The grid must span `[0, duration]` — the wrap pair is
 /// `(last frame, frame 0)`. Grids under 3 frames carry no cycle.

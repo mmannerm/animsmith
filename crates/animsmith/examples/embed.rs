@@ -8,7 +8,9 @@
 use animsmith_core::config::{ClipExpectations, Pinned};
 use animsmith_core::measure::measure_document;
 use animsmith_core::profile::{ResolvedRoles, Role, detect_profile};
-use animsmith_core::{CheckCtx, Config, MetricGrids, Severity, all_checks, run_checks};
+use animsmith_core::{
+    CheckCtx, CheckSelection, Config, MetricGrids, Severity, all_checks, evaluate_checks,
+};
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -70,7 +72,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 4b. Lint: the same sampled grids judged against the declarations.
     let ctx = CheckCtx::new(&grids, &roles, &config);
-    let findings = run_checks(&ctx, &all_checks());
+    let evaluations = evaluate_checks(&ctx, &all_checks(), CheckSelection::All)?;
+    let findings: Vec<_> = evaluations
+        .iter()
+        .flat_map(|check| &check.findings)
+        .collect();
     for f in &findings {
         println!(
             "  {}[{}] {}: {}",

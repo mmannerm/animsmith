@@ -2,6 +2,7 @@
 
 use animsmith_core::model::{Bone, Skeleton, Transform};
 use animsmith_core::profile::{ResolvedRoles, Role, detect_profile};
+use animsmith_core::{Config, resolve_configured_roles};
 
 fn skeleton_of(names: &[&str]) -> Skeleton {
     Skeleton {
@@ -77,4 +78,38 @@ fn explicit_names_ignore_absent_bones_and_last_resolved_pair_wins() {
 
     assert_eq!(roles.get(Role::Root), Some(1));
     assert_eq!(roles.get(Role::Hips), None);
+}
+
+#[test]
+fn configured_resolution_applies_inline_roles_over_the_named_profile() {
+    let skel = skeleton_of(&["root", "pelvis", "foot_l", "foot_r", "custom_foot"]);
+    let config: Config = serde_json::from_value(serde_json::json!({
+        "rig": {
+            "profile": "ue-mannequin",
+            "roles": { "left_foot": "custom_foot" }
+        }
+    }))
+    .unwrap();
+
+    let roles = resolve_configured_roles(&skel, &config.rig);
+    assert_eq!(roles.profile, "ue-mannequin+custom");
+    assert_eq!(roles.get(Role::Root), Some(0));
+    assert_eq!(roles.get(Role::LeftFoot), Some(4));
+    assert_eq!(roles.get(Role::RightFoot), Some(3));
+}
+
+#[test]
+fn configured_resolution_labels_unresolved_and_inline_only_rigs() {
+    let skel = skeleton_of(&["pelvis_custom"]);
+    let unknown = resolve_configured_roles(&skel, &Config::default().rig);
+    assert_eq!(unknown.profile, "unknown");
+    assert!(unknown.is_empty());
+
+    let config: Config = serde_json::from_value(serde_json::json!({
+        "rig": { "roles": { "hips": "pelvis_custom" } }
+    }))
+    .unwrap();
+    let custom = resolve_configured_roles(&skel, &config.rig);
+    assert_eq!(custom.profile, "custom");
+    assert_eq!(custom.get(Role::Hips), Some(0));
 }

@@ -1,15 +1,16 @@
-//! Provisional v2 evaluation records.
+//! Typed check-evaluation records.
 //!
-//! This module separates check activation, applicability, evaluation
-//! coverage, content findings, and coverage gaps. It is intentionally
-//! additive while the v2 contract is incubated with real embedders; the v1
-//! [`crate::run_checks`] API remains available during the experiment.
+//! Selection, configuration, applicability, evaluation coverage, content
+//! findings, and coverage gaps are independent dimensions. The types in this
+//! module are the single execution/result boundary for both CLI and embedded
+//! consumers.
 
 use std::collections::BTreeSet;
+use std::fmt;
 
 use serde::Serialize;
 
-use crate::check::{Check, CheckCtx, Readiness};
+use crate::check::{Check, CheckCtx};
 use crate::config::SeveritySetting;
 use crate::finding::Finding;
 
@@ -47,9 +48,9 @@ pub enum Applicability {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EvaluationState {
-    /// All currently modelled work completed.
+    /// All modelled work completed.
     Complete,
-    /// Some work completed and some has a typed coverage gap.
+    /// Some modelled work completed and some has a typed coverage gap.
     Partial,
     /// No applicable work was evaluated.
     NotEvaluated,
@@ -81,12 +82,51 @@ impl EvaluationScope {
     }
 }
 
+/// Stable machine code for an evaluation-coverage gap.
+///
+/// Built-in codes are constants. Custom checks may construct their own code;
+/// embedders should namespace custom values so they cannot collide with future
+/// built-ins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(transparent)]
+pub struct CoverageGapCode(&'static str);
+
+impl CoverageGapCode {
+    /// Required rig roles could not be resolved.
+    pub const ROLES_UNRESOLVED: Self = Self("roles_unresolved");
+    /// A metric needed by declared work could not be produced.
+    pub const MEASUREMENT_UNAVAILABLE: Self = Self("measurement_unavailable");
+    /// Fewer than two gait-group members produced a phase measurement.
+    pub const INSUFFICIENT_MEASURABLE_MEMBERS: Self = Self("insufficient_measurable_members");
+    /// Some configured gait-group members did not produce a phase measurement.
+    pub const MEMBERS_NOT_EVALUATED: Self = Self("members_not_evaluated");
+
+    /// Construct a stable custom code.
+    ///
+    /// Custom checks should use a namespaced value such as
+    /// `acme:reference_unavailable`.
+    pub const fn custom(code: &'static str) -> Self {
+        Self(code)
+    }
+
+    /// Return the serialized snake-case or namespaced code.
+    pub const fn as_str(self) -> &'static str {
+        self.0
+    }
+}
+
+impl fmt::Display for CoverageGapCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
 /// A typed reason applicable work could not be evaluated.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CoverageGap {
-    /// Stable machine code such as `roles_unresolved`.
-    pub code: &'static str,
-    /// Human-readable display text. Automation must use [`CoverageGap::code`].
+    /// Stable machine code. Automation must not parse [`CoverageGap::message`].
+    pub code: CoverageGapCode,
+    /// Human-readable display text.
     pub message: String,
     /// Optional work scope affected by the gap.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -95,7 +135,7 @@ pub struct CoverageGap {
 
 impl CoverageGap {
     /// Construct a whole-check coverage gap.
-    pub fn new(code: &'static str, message: impl Into<String>) -> Self {
+    pub fn new(code: CoverageGapCode, message: impl Into<String>) -> Self {
         Self {
             code,
             message: message.into(),
@@ -110,31 +150,117 @@ impl CoverageGap {
     }
 }
 
-/// Output produced by one selected, enabled, applicable check.
-#[derive(Debug, Clone, Default, Serialize)]
+/// Validated output from one selected, enabled, applicable check.
+///
+/// Private fields and the constructors keep coverage states internally
+/// consistent: partial work has both completed scopes and gaps, while wholly
+/// unevaluated work has gaps and cannot carry content findings.
+#[derive(Debug, Clone)]
 pub struct CheckOutput {
-    /// Content judgements only; coverage diagnostics belong in `gaps`.
-    pub findings: Vec<Finding>,
-    /// Stable identifiers for work that completed cleanly or with findings.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub evaluated_scopes: Vec<EvaluationScope>,
-    /// Work that could not be evaluated.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub gaps: Vec<CoverageGap>,
+    evaluation: EvaluationState,
+    findings: Vec<Finding>,
+    evaluated_scopes: Vec<EvaluationScope>,
+    gaps: Vec<CoverageGap>,
 }
 
 impl CheckOutput {
-    /// Construct a complete output from content findings.
+    /// Construct a complete atomic output from content findings.
     pub fn complete(findings: Vec<Finding>) -> Self {
+        Self::complete_scoped(findings, Vec::new())
+    }
+
+    /// Construct a complete output with explicit completed scopes.
+    pub fn complete_scoped(findings: Vec<Finding>, evaluated_scopes: Vec<EvaluationScope>) -> Self {
         Self {
+            evaluation: EvaluationState::Complete,
             findings,
-            evaluated_scopes: Vec::new(),
+            evaluated_scopes,
             gaps: Vec::new(),
         }
     }
+
+    /// Construct a partial output.
+    ///
+    /// # Panics
+    ///
+    /// Panics if either `evaluated_scopes` or `gaps` is empty. That would
+    /// contradict the meaning of partial coverage and is an implementor bug,
+    /// not an input-dependent runtime condition.
+    pub fn partial(
+        findings: Vec<Finding>,
+        evaluated_scopes: Vec<EvaluationScope>,
+        gaps: Vec<CoverageGap>,
+    ) -> Self {
+        assert!(
+            !evaluated_scopes.is_empty(),
+            "partial evaluation requires a completed scope"
+        );
+        assert!(!gaps.is_empty(), "partial evaluation requires a gap");
+        Self {
+            evaluation: EvaluationState::Partial,
+            findings,
+            evaluated_scopes,
+            gaps,
+        }
+    }
+
+    /// Construct an output where no applicable work completed.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `gaps` is empty. Applicable work cannot be described as not
+    /// evaluated without explaining the missing coverage.
+    pub fn not_evaluated(gaps: Vec<CoverageGap>) -> Self {
+        assert!(
+            !gaps.is_empty(),
+            "not-evaluated output requires a coverage gap"
+        );
+        Self {
+            evaluation: EvaluationState::NotEvaluated,
+            findings: Vec::new(),
+            evaluated_scopes: Vec::new(),
+            gaps,
+        }
+    }
+
+    /// Evaluation coverage represented by this output.
+    pub const fn evaluation(&self) -> EvaluationState {
+        self.evaluation
+    }
+
+    /// Content findings emitted by evaluated work.
+    pub fn findings(&self) -> &[Finding] {
+        &self.findings
+    }
+
+    /// Stable identifiers for work that completed.
+    pub fn evaluated_scopes(&self) -> &[EvaluationScope] {
+        &self.evaluated_scopes
+    }
+
+    /// Typed reasons work did not complete.
+    pub fn gaps(&self) -> &[CoverageGap] {
+        &self.gaps
+    }
+
+    fn into_parts(
+        self,
+    ) -> (
+        EvaluationState,
+        Vec<Finding>,
+        Vec<EvaluationScope>,
+        Vec<CoverageGap>,
+    ) {
+        (
+            self.evaluation,
+            self.findings,
+            self.evaluated_scopes,
+            self.gaps,
+        )
+    }
 }
 
-/// Provisional v2 record for one catalog check.
+/// Final v2 record for one catalog check.
 #[derive(Debug, Clone, Serialize)]
 pub struct CheckEvaluation {
     /// Stable check id.
@@ -162,7 +288,7 @@ pub struct CheckEvaluation {
 pub enum CheckSelection<'a> {
     /// Select the whole supplied catalog.
     All,
-    /// Select only the named ids. Unknown ids are a frontend error.
+    /// Select only the named ids.
     Only(&'a BTreeSet<String>),
 }
 
@@ -175,112 +301,112 @@ impl CheckSelection<'_> {
     }
 }
 
+/// Invalid catalog or check output supplied to [`evaluate_checks`].
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum EvaluationError {
+    /// Two catalog entries used the same stable check id.
+    #[error("duplicate check id {0:?}")]
+    DuplicateCheckId(&'static str),
+    /// Explicit selection named an id absent from the supplied catalog.
+    #[error("unknown selected check id {0:?}")]
+    UnknownSelection(String),
+    /// A nested finding claimed a different check id than its parent record.
+    #[error("check {check_id:?} emitted a finding for {finding_check_id:?}")]
+    FindingCheckIdMismatch {
+        /// Parent check id.
+        check_id: &'static str,
+        /// Mismatched nested finding id.
+        finding_check_id: &'static str,
+    },
+}
+
 /// Evaluate a full catalog into one record per check.
 ///
 /// Selection and `severity = "off"` are recorded independently. Inactive
-/// checks never execute, but their cheap readiness predicate still establishes
-/// generic applicability. Coverage gaps are nonblocking evidence; callers own
-/// any stricter policy.
+/// checks never evaluate, but their cheap applicability predicate still
+/// establishes whether declared work exists. Coverage gaps are nonblocking
+/// evidence; callers own any stricter policy.
+///
+/// # Errors
+///
+/// Returns an error for duplicate catalog ids, unknown explicitly selected
+/// ids, or a nested finding whose id disagrees with its parent check.
 pub fn evaluate_checks(
     ctx: &CheckCtx<'_>,
     checks: &[Box<dyn Check>],
     selection: CheckSelection<'_>,
-) -> Vec<CheckEvaluation> {
-    checks
-        .iter()
-        .map(|check| {
-            let selection_state = if selection.contains(check.id()) {
-                SelectionState::Selected
-            } else {
-                SelectionState::Unselected
-            };
-            let setting = ctx.config.check_settings(check.id()).severity;
-            let configuration = if setting == Some(SeveritySetting::Off) {
-                ConfigurationState::Disabled
-            } else {
-                ConfigurationState::Enabled
-            };
-            let readiness = check.readiness(ctx);
-            let applicability = if matches!(readiness, Readiness::Idle) {
-                Applicability::NotApplicable
-            } else {
-                Applicability::Applicable
-            };
+) -> Result<Vec<CheckEvaluation>, EvaluationError> {
+    let mut catalog_ids = BTreeSet::new();
+    for check in checks {
+        if !catalog_ids.insert(check.id()) {
+            return Err(EvaluationError::DuplicateCheckId(check.id()));
+        }
+    }
+    if let CheckSelection::Only(selected) = selection
+        && let Some(unknown) = selected
+            .iter()
+            .find(|id| !catalog_ids.contains(id.as_str()))
+    {
+        return Err(EvaluationError::UnknownSelection(unknown.clone()));
+    }
 
-            if selection_state == SelectionState::Unselected
-                || configuration == ConfigurationState::Disabled
-                || applicability == Applicability::NotApplicable
-            {
-                return CheckEvaluation {
-                    check_id: check.id(),
-                    selection: selection_state,
-                    configuration,
-                    applicability,
-                    evaluation: EvaluationState::NotEvaluated,
-                    findings: Vec::new(),
-                    evaluated_scopes: Vec::new(),
-                    gaps: Vec::new(),
-                };
-            }
+    let mut records = Vec::with_capacity(checks.len());
+    for check in checks {
+        let selection_state = if selection.contains(check.id()) {
+            SelectionState::Selected
+        } else {
+            SelectionState::Unselected
+        };
+        let setting = ctx.config.check_settings(check.id()).severity;
+        let configuration = if setting == Some(SeveritySetting::Off) {
+            ConfigurationState::Disabled
+        } else {
+            ConfigurationState::Enabled
+        };
+        let applicability = check.applicability(ctx);
 
-            match readiness {
-                Readiness::Idle => unreachable!("not-applicable returned above"),
-                Readiness::Skipped(reason) => CheckEvaluation {
+        if selection_state == SelectionState::Unselected
+            || configuration == ConfigurationState::Disabled
+            || applicability == Applicability::NotApplicable
+        {
+            records.push(CheckEvaluation {
+                check_id: check.id(),
+                selection: selection_state,
+                configuration,
+                applicability,
+                evaluation: EvaluationState::NotEvaluated,
+                findings: Vec::new(),
+                evaluated_scopes: Vec::new(),
+                gaps: Vec::new(),
+            });
+            continue;
+        }
+
+        let (evaluation, mut findings, evaluated_scopes, gaps) = check.evaluate(ctx).into_parts();
+        for finding in &findings {
+            if finding.check_id != check.id() {
+                return Err(EvaluationError::FindingCheckIdMismatch {
                     check_id: check.id(),
-                    selection: selection_state,
-                    configuration,
-                    applicability,
-                    evaluation: EvaluationState::NotEvaluated,
-                    findings: Vec::new(),
-                    evaluated_scopes: Vec::new(),
-                    // The retained v1 readiness API carries display text.
-                    // v2's adapter owns the typed representation rather than
-                    // changing that public enum out from under embedders.
-                    gaps: vec![CoverageGap::new("roles_unresolved", reason)],
-                },
-                Readiness::Ready => {
-                    let mut output = check.evaluate(ctx);
-                    // Legacy `run` implementations may encode unavailable
-                    // work as diagnostic findings. Preserve that evidence as
-                    // a typed gap rather than either promoting it to content
-                    // or misreporting the check as completed-clean. Apply the
-                    // boundary here so custom `evaluate` implementations get
-                    // the same protection.
-                    let mut content_findings = Vec::with_capacity(output.findings.len());
-                    for finding in std::mem::take(&mut output.findings) {
-                        if finding.diagnostic {
-                            output
-                                .gaps
-                                .push(CoverageGap::new("legacy_diagnostic", finding.message));
-                        } else {
-                            content_findings.push(finding);
-                        }
-                    }
-                    output.findings = content_findings;
-                    if let Some(severity) = setting.and_then(SeveritySetting::as_severity) {
-                        for finding in &mut output.findings {
-                            finding.severity = severity;
-                        }
-                    }
-                    let evaluation = if output.gaps.is_empty() {
-                        EvaluationState::Complete
-                    } else if output.evaluated_scopes.is_empty() && output.findings.is_empty() {
-                        EvaluationState::NotEvaluated
-                    } else {
-                        EvaluationState::Partial
-                    };
-                    CheckEvaluation {
-                        check_id: check.id(),
-                        selection: selection_state,
-                        configuration,
-                        applicability,
-                        evaluation,
-                        findings: output.findings,
-                        evaluated_scopes: output.evaluated_scopes,
-                        gaps: output.gaps,
-                    }
-                }
+                    finding_check_id: finding.check_id,
+                });
             }
-        })
-        .collect()
+        }
+        if let Some(severity) = setting.and_then(SeveritySetting::as_severity) {
+            for finding in &mut findings {
+                finding.severity = severity;
+            }
+        }
+        records.push(CheckEvaluation {
+            check_id: check.id(),
+            selection: selection_state,
+            configuration,
+            applicability,
+            evaluation,
+            findings,
+            evaluated_scopes,
+            gaps,
+        });
+    }
+    Ok(records)
 }

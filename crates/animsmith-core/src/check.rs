@@ -2,8 +2,7 @@
 //! check sets.
 
 use crate::config::{ClipExpectations, Config};
-use crate::evaluation::CheckOutput;
-use crate::finding::{Finding, Severity};
+use crate::evaluation::{Applicability, CheckOutput};
 use crate::metrics::MetricGrids;
 use crate::model::Document;
 use crate::profile::ResolvedRoles;
@@ -68,64 +67,39 @@ impl<'a> CheckCtx<'a> {
         &self.expectations[clip_index]
     }
 
-    /// Per-clip expectations in `doc.clips` order — for the readiness
-    /// predicates that scan every clip for pending work.
+    /// Per-clip expectations in `doc.clips` order, used by cheap
+    /// applicability predicates that scan for declared work.
     pub fn clip_expectations(&self) -> &[ClipExpectations] {
         &self.expectations
     }
 }
 
-/// Whether a check can run against a document — decided by the runner
-/// *before* `run`, so requirement diagnostics are emitted in one place
-/// and never subject to per-check severity overrides.
-pub enum Readiness {
-    /// Requirements met; run the check.
-    Ready,
-    /// The check has pending work (relevant expectations are declared)
-    /// but a prerequisite — a rig role — is unresolved. The runner
-    /// emits one standardized skip-note carrying `reason` at `Note`
-    /// severity, exempt from overrides. `reason` states what is needed.
-    Skipped(String),
-    /// No pending work for this document/config; stay silent.
-    Idle,
-}
-
-/// A lint check that can inspect a document and emit structured
-/// [`Finding`] values.
+/// A lint check that can inspect a document and emit typed evaluation
+/// coverage plus structured content findings.
 ///
 /// Custom embedders may implement this trait and pass their checks to
-/// [`run_checks`] alongside, or instead of, [`all_checks`]. Implementors
-/// should keep `run` panic-free for loader-valid documents; use
-/// [`Check::readiness`] to describe missing rig roles or configuration
-/// prerequisites.
+/// [`crate::evaluate_checks`] alongside, or instead of, [`all_checks`].
+/// Implementors should keep both methods panic-free for loader-valid
+/// documents. Applicability describes whether declared work exists;
+/// unavailable prerequisites or measurements belong in typed coverage gaps
+/// returned from [`Check::evaluate`].
 pub trait Check {
     /// Stable identifier, e.g. `"loop-seam"`. Used in config, JSON
     /// output, and `--select`.
     fn id(&self) -> &'static str;
 
-    /// Whether the check's prerequisites are met. The default is
-    /// [`Readiness::Ready`] — mechanical checks need no rig or config.
-    /// Role-dependent checks override this to declare their needs so
-    /// the runner, not the check, owns skip-note emission.
-    fn readiness(&self, _ctx: &CheckCtx) -> Readiness {
-        Readiness::Ready
-    }
-
-    /// Execute the check and append any findings to `out`.
-    fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>);
-
-    /// Evaluate the check for the provisional v2 result model.
+    /// Whether this document and configuration declare work for the check.
     ///
-    /// The default treats [`Check::run`] as one complete work unit. Checks
-    /// with independently executable sub-work override this to report typed
-    /// gaps and completed scopes without encoding them as findings. The v2
-    /// runner converts any legacy diagnostic findings into
-    /// `legacy_diagnostic` gaps before classifying coverage.
-    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
-        let mut findings = Vec::new();
-        self.run(ctx, &mut findings);
-        CheckOutput::complete(findings)
+    /// The runner calls this cheap predicate even for disabled or unselected
+    /// checks so applicability remains an independent result dimension. It
+    /// must not perform the check's substantive evaluation.
+    fn applicability(&self, _ctx: &CheckCtx) -> Applicability {
+        Applicability::Applicable
     }
+
+    /// Evaluate every modelled work unit, returning content findings and
+    /// explicit coverage. Missing prerequisites are gaps, never findings.
+    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput;
 }
 
 /// The mechanical P0 checks: no rig profile, no config required.
@@ -154,48 +128,4 @@ pub fn all_checks() -> Vec<Box<dyn Check>> {
     checks.push(Box::new(crate::checks::bind_pose::BindPose));
     checks.push(Box::new(crate::checks::foot_slide::FootSlide));
     checks
-}
-
-/// Run `checks`, honouring per-check severity settings:
-///
-/// - `severity = "off"` removes the check from the run set — it never
-///   executes (no wasted sampling, no discarded findings).
-/// - Any other override replaces the severity of the check's
-///   *violations*. Diagnostics — the requirement skip-notes emitted by
-///   the runner (via [`Check::readiness`]) and any a check marks with
-///   [`Finding::as_diagnostic`] — are exempt, so declaring `severity =
-///   "error"` never turns a "roles unresolved" note into a false
-///   failure.
-pub fn run_checks(ctx: &CheckCtx, checks: &[Box<dyn Check>]) -> Vec<Finding> {
-    use crate::config::SeveritySetting;
-
-    let mut out = Vec::new();
-    for check in checks {
-        let setting = ctx.config.check_settings(check.id()).severity;
-        if setting == Some(SeveritySetting::Off) {
-            continue; // off removes the check from the run set
-        }
-        match check.readiness(ctx) {
-            Readiness::Idle => {}
-            Readiness::Skipped(reason) => {
-                out.push(
-                    Finding::new(check.id(), Severity::Note, format!("skipped: {reason}"))
-                        .as_diagnostic(),
-                );
-            }
-            Readiness::Ready => {
-                let mut findings = Vec::new();
-                check.run(ctx, &mut findings);
-                if let Some(severity) = setting.and_then(SeveritySetting::as_severity) {
-                    for f in &mut findings {
-                        if !f.diagnostic {
-                            f.severity = severity;
-                        }
-                    }
-                }
-                out.append(&mut findings);
-            }
-        }
-    }
-    out
 }

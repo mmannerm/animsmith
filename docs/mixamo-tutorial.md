@@ -162,13 +162,15 @@ Two things to read off this output:
 
 ```console
 $ animsmith lint walking.glb
-walking.glb: clean
-0 error(s), 0 warning(s), 0 note(s)
+walking.glb:
+  coverage[bind-pose] first_frame_rest_delta 'mixamo.com': insufficient_rotation_evidence: ...
+0 error(s), 0 warning(s), 0 note(s), 1 coverage gap(s)
 ```
 
-With no config, only the mechanical checks run — the ones that need no
-declared expectations: NaNs, non-unit or hemisphere-flipped
-quaternions, degenerate durations, animated scale, constant tracks.
+With no config, expectation-driven checks are not applicable. Mechanical
+checks still evaluate, as does `bind-pose`; this analytic fixture has no
+rotation tracks, so bind-pose records a nonblocking coverage gap rather than
+claiming a clean evaluation.
 Findings like `constant-track` notes are normal on a marketplace rig.
 From the real download (abridged):
 
@@ -234,12 +236,14 @@ $ animsmith measure --format json walking.glb
         "hips": "mixamorig:Hips", "spine": "mixamorig:Spine",
         "left_foot": "mixamorig:LeftFoot", "right_foot": "mixamorig:RightFoot" } },
       "measurements": {
-        "mixamo.com": {
+        "schema_version": 1,
+        "schema": "urn:animsmith:schema:measurements:1",
+        "clips": { "mixamo.com": {
           "duration_s": 1.0, "frame_count": 33,
           "loop_seam_ratio": 1.2e-15,
           "gait": { "phase": 0.75, "lr_amplitude_m": 0.2 },
           "speed_mps": 0.0
-        }
+        } }
       }
     }
   ]
@@ -281,8 +285,9 @@ Lint against the contract:
 
 ```console
 $ animsmith lint walking.glb
-walking.glb: clean
-0 error(s), 0 warning(s), 0 note(s)          # exits 0
+walking.glb:
+  coverage[bind-pose] first_frame_rest_delta 'mixamo.com': insufficient_rotation_evidence: ...
+0 error(s), 0 warning(s), 0 note(s), 1 coverage gap(s)   # exits 0
 ```
 
 And this is what a violation looks like — the same contract against a
@@ -295,7 +300,7 @@ walking-popped.glb:
   error[loop-seam] clip 'mixamo.com' @1.000s: loop seam pops: wrap discontinuity
     is 6.82× the neighbouring in-clip step (cap 1.60) — the clip does not
     close its cycle (measured 6.8152, expected 1.6000)
-1 error(s), 0 warning(s), 0 note(s)          # exits 1
+1 error(s), 0 warning(s), 0 note(s), 1 coverage gap(s)   # exits 1
 ```
 
 The contract also catches downloading the wrong variant. The real

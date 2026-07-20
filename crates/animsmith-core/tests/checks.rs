@@ -4,7 +4,9 @@
 
 use animsmith_core::model::*;
 use animsmith_core::profile::ResolvedRoles;
-use animsmith_core::{CheckCtx, Config, MetricGrids, Severity, mechanical_checks, run_checks};
+use animsmith_core::{
+    CheckCtx, CheckSelection, Config, MetricGrids, Severity, evaluate_checks, mechanical_checks,
+};
 use glam::{Quat, Vec3};
 
 /// A clean 2-bone document with a rotation and a translation track.
@@ -67,7 +69,11 @@ fn lint(doc: &Document) -> Vec<animsmith_core::Finding> {
     let roles = ResolvedRoles::default();
     let grids = MetricGrids::new(doc);
     let ctx = CheckCtx::new(&grids, &roles, &config);
-    run_checks(&ctx, &mechanical_checks())
+    evaluate_checks(&ctx, &mechanical_checks(), CheckSelection::All)
+        .expect("valid built-in catalog")
+        .into_iter()
+        .flat_map(|check| check.findings)
+        .collect()
 }
 
 fn assert_single(doc: &Document, check_id: &str, severity: Severity) {

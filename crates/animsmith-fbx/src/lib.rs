@@ -23,7 +23,12 @@
 //!     let config = animsmith_core::Config::default();
 //!     let grids = animsmith_core::MetricGrids::new(&doc);
 //!     let ctx = animsmith_core::CheckCtx::new(&grids, &roles, &config);
-//!     Ok(animsmith_core::run_checks(&ctx, &animsmith_core::all_checks()))
+//!     let results = animsmith_core::evaluate_checks(
+//!         &ctx,
+//!         &animsmith_core::all_checks(),
+//!         animsmith_core::CheckSelection::All,
+//!     )?;
+//!     Ok(results.into_iter().flat_map(|check| check.findings).collect())
 //! }
 //! ```
 //!

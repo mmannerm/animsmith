@@ -18,26 +18,27 @@ pub mod root_motion_speed;
 pub mod scale_keys;
 pub mod time_monotonic;
 
-use crate::check::Readiness;
+use crate::evaluation::{CoverageGap, CoverageGapCode};
 use crate::model::{Document, Track};
 use crate::profile::{ResolvedRoles, Role};
 
-/// Roles a locomotion check needs to measure root travel: a `root`
-/// bone, or `hips` as a fallback. Returns [`Readiness::Ready`] when
-/// resolved, otherwise a skip-note reason.
-pub(crate) fn root_motion_readiness(roles: &ResolvedRoles) -> Readiness {
+/// Return the typed prerequisite gap for root-motion work, if any.
+pub(crate) fn root_motion_gap(roles: &ResolvedRoles) -> Option<CoverageGap> {
     if roles.get(Role::Root).is_some() || roles.get(Role::Hips).is_some() {
-        Readiness::Ready
+        None
     } else {
-        Readiness::Skipped(format!(
-            "root/hips role not resolved (rig profile '{}')",
-            roles.profile
+        Some(CoverageGap::new(
+            CoverageGapCode::ROLES_UNRESOLVED,
+            format!(
+                "root/hips role not resolved (rig profile '{}')",
+                roles.profile
+            ),
         ))
     }
 }
 
-/// Roles a gait check needs: `hips` plus at least one foot/toe.
-pub(crate) fn gait_readiness(roles: &ResolvedRoles) -> Readiness {
+/// Return the typed prerequisite gap for gait work, if any.
+pub(crate) fn gait_gap(roles: &ResolvedRoles) -> Option<CoverageGap> {
     let has_foot = [
         Role::LeftFoot,
         Role::LeftToe,
@@ -47,11 +48,14 @@ pub(crate) fn gait_readiness(roles: &ResolvedRoles) -> Readiness {
     .iter()
     .any(|&r| roles.get(r).is_some());
     if roles.get(Role::Hips).is_some() && has_foot {
-        Readiness::Ready
+        None
     } else {
-        Readiness::Skipped(format!(
-            "hips/foot roles not resolved (rig profile '{}') — needs hips and at least one foot role",
-            roles.profile
+        Some(CoverageGap::new(
+            CoverageGapCode::ROLES_UNRESOLVED,
+            format!(
+                "hips/foot roles not resolved (rig profile '{}') — needs hips and at least one foot role",
+                roles.profile
+            ),
         ))
     }
 }

@@ -5,6 +5,7 @@
 
 use super::tracks;
 use crate::check::{Check, CheckCtx};
+use crate::evaluation::CheckOutput;
 use crate::finding::{Finding, Severity};
 
 /// A first key later than this is flagged (half a frame at 30 fps).
@@ -22,7 +23,8 @@ impl Check for TimeMonotonic {
         "time-monotonic"
     }
 
-    fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
+    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+        let mut findings = Vec::new();
         let doc = ctx.doc;
         for (clip, bone, track) in tracks(doc) {
             let times = &track.times;
@@ -30,7 +32,7 @@ impl Check for TimeMonotonic {
                 continue;
             }
             if times[0] < -NEGATIVE_TIME_TOLERANCE_S {
-                out.push(
+                findings.push(
                     Finding::new(
                         self.id(),
                         Severity::Error,
@@ -43,7 +45,7 @@ impl Check for TimeMonotonic {
                 );
             }
             if let Some(k) = (1..times.len()).find(|&k| times[k] <= times[k - 1]) {
-                out.push(
+                findings.push(
                     Finding::new(
                         self.id(),
                         Severity::Error,
@@ -60,7 +62,7 @@ impl Check for TimeMonotonic {
                 );
             }
             if times[0] > FIRST_KEY_SLACK_S {
-                out.push(
+                findings.push(
                     Finding::new(
                         self.id(),
                         Severity::Note,
@@ -79,5 +81,6 @@ impl Check for TimeMonotonic {
                 );
             }
         }
+        CheckOutput::complete(findings)
     }
 }

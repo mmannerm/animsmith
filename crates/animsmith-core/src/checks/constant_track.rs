@@ -6,6 +6,7 @@
 
 use super::tracks;
 use crate::check::{Check, CheckCtx};
+use crate::evaluation::CheckOutput;
 use crate::finding::{Finding, Severity};
 use crate::model::TrackValues;
 
@@ -24,7 +25,8 @@ impl Check for ConstantTrack {
         "constant-track"
     }
 
-    fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
+    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+        let mut findings = Vec::new();
         let doc = ctx.doc;
         for (clip, bone, track) in tracks(doc) {
             if track.key_count() < 2 {
@@ -58,7 +60,7 @@ impl Check for ConstantTrack {
                 }
             };
             if constant {
-                out.push(
+                findings.push(
                     Finding::new(
                         self.id(),
                         Severity::Note,
@@ -73,5 +75,6 @@ impl Check for ConstantTrack {
                 );
             }
         }
+        CheckOutput::complete(findings)
     }
 }

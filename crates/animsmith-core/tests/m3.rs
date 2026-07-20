@@ -5,7 +5,9 @@
 
 use animsmith_core::model::*;
 use animsmith_core::profile::{ResolvedRoles, Role};
-use animsmith_core::{CheckCtx, Config, MetricGrids, Severity, all_checks, run_checks};
+use animsmith_core::{
+    CheckCtx, CheckSelection, Config, MetricGrids, Severity, all_checks, evaluate_checks,
+};
 use glam::{Quat, Vec3};
 
 const KEYS: usize = 33; // 32 intervals over 1 s
@@ -109,7 +111,11 @@ fn lint_with(doc: &Document, config: &Config) -> Vec<animsmith_core::Finding> {
     let roles = roles(&doc.skeleton);
     let grids = MetricGrids::new(doc);
     let ctx = CheckCtx::new(&grids, &roles, config);
-    run_checks(&ctx, &all_checks())
+    evaluate_checks(&ctx, &all_checks(), CheckSelection::All)
+        .expect("valid built-in catalog")
+        .into_iter()
+        .flat_map(|check| check.findings)
+        .collect()
 }
 
 fn json_config(json: serde_json::Value) -> Config {
@@ -179,7 +185,11 @@ fn toe_only_rig_is_evaluated_for_foot_slide() {
     }));
     let grids = MetricGrids::new(&doc);
     let ctx = CheckCtx::new(&grids, &roles, &config);
-    let findings = run_checks(&ctx, &all_checks());
+    let findings: Vec<_> = evaluate_checks(&ctx, &all_checks(), CheckSelection::All)
+        .expect("valid built-in catalog")
+        .into_iter()
+        .flat_map(|check| check.findings)
+        .collect();
     let slides = of(&findings, "foot-slide");
     assert!(
         !slides.is_empty(),
@@ -257,7 +267,11 @@ fn foot_slide_prefers_foot_over_toe_when_both_resolve() {
     }));
     let grids = MetricGrids::new(&doc);
     let ctx = CheckCtx::new(&grids, &roles, &config);
-    let findings = run_checks(&ctx, &all_checks());
+    let findings: Vec<_> = evaluate_checks(&ctx, &all_checks(), CheckSelection::All)
+        .expect("valid built-in catalog")
+        .into_iter()
+        .flat_map(|check| check.findings)
+        .collect();
     let slides = of(&findings, "foot-slide");
     // Assert the exact set of named bones is BOTH feet — not just "some
     // finding names a foot". A one-sided regression (only the right side

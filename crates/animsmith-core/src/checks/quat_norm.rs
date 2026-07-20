@@ -4,6 +4,7 @@
 
 use super::tracks;
 use crate::check::{Check, CheckCtx};
+use crate::evaluation::CheckOutput;
 use crate::finding::{Finding, Severity};
 use crate::model::Property;
 
@@ -18,7 +19,8 @@ impl Check for QuatNorm {
         "quat-norm"
     }
 
-    fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
+    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+        let mut findings = Vec::new();
         let doc = ctx.doc;
         for (clip, bone, track) in tracks(doc) {
             if track.property != Property::Rotation {
@@ -40,7 +42,7 @@ impl Check for QuatNorm {
                 }
             }
             if let Some((k, len)) = worst {
-                out.push(
+                findings.push(
                     Finding::new(
                         self.id(),
                         Severity::Error,
@@ -54,5 +56,6 @@ impl Check for QuatNorm {
                 );
             }
         }
+        CheckOutput::complete(findings)
     }
 }

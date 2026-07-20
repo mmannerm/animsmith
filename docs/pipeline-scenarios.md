@@ -159,14 +159,14 @@ Use exit codes as the automation boundary:
 
 | Exit code | Acceptance meaning |
 |---:|---|
-| 0 | No failing findings from the checks that evaluated; warnings and `skipped:` notes may remain for review. |
+| 0 | No failing findings from the checks that evaluated; warnings, notes, and coverage gaps may remain for review. |
 | 1 | Rejected until findings are fixed, or the contract is intentionally updated. |
 | 2 | Delivery or command error: missing file, unreadable asset, bad config, or unsupported format. |
 
 Exit `0` does not assert that every declared check evaluated. A
-delivery whose rig the profile cannot resolve skips the role-dependent
-checks with a note and still exits `0`, so an acceptance gate should
-also review skip notes and the resolved rig roles in the JSON output
+delivery whose rig the profile cannot resolve records role-dependent work as
+coverage gaps and still exits `0`, so an acceptance gate should also review
+gaps and the resolved rig roles in the JSON output
 before accepting.
 
 Use the project contract recipe for the shared `animsmith.toml`, then

@@ -3,8 +3,11 @@
 //! expect no baked travel; root-motion clips are the opposite. A
 //! mismatch makes the character glide or run in place at runtime.
 
-use crate::check::{Check, CheckCtx, Readiness};
-use crate::checks::root_motion_readiness;
+use crate::check::{Check, CheckCtx};
+use crate::checks::root_motion_gap;
+use crate::evaluation::{
+    Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope,
+};
 use crate::finding::{Finding, Severity};
 use crate::metrics::root_motion_speed_mps;
 
@@ -18,29 +21,48 @@ impl Check for InPlace {
         "in-place"
     }
 
-    fn readiness(&self, ctx: &CheckCtx) -> Readiness {
-        let any = ctx.clip_expectations().iter().any(|e| e.in_place.is_some());
-        if any {
-            root_motion_readiness(ctx.roles)
+    fn applicability(&self, ctx: &CheckCtx) -> Applicability {
+        if ctx
+            .clip_expectations()
+            .iter()
+            .any(|expectations| expectations.in_place.is_some())
+        {
+            Applicability::Applicable
         } else {
-            Readiness::Idle
+            Applicability::NotApplicable
         }
     }
 
-    fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
+    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+        let mut findings = Vec::new();
+        let mut evaluated_scopes = Vec::new();
+        let mut gaps = Vec::new();
         for (index, clip) in ctx.doc.clips.iter().enumerate() {
             let Some(expected) = ctx.expectations(index).in_place else {
                 continue;
             };
+            let scope = EvaluationScope::new("travel_mode").subject(&clip.name);
+            if let Some(gap) = root_motion_gap(ctx.roles) {
+                gaps.push(gap.scope(scope));
+                continue;
+            }
             let measured = ctx
                 .grid(index)
                 .and_then(|grid| root_motion_speed_mps(&grid, ctx.roles));
             let Some(speed) = measured else {
-                continue; // roles resolve (readiness gate); degenerate clip
+                gaps.push(
+                    CoverageGap::new(
+                        CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                        "root-motion speed could not be measured",
+                    )
+                    .scope(scope),
+                );
+                continue;
             };
+            evaluated_scopes.push(scope);
             let travels = speed >= TRAVEL_THRESHOLD_MPS;
             if expected && travels {
-                out.push(
+                findings.push(
                     Finding::new(
                         self.id(),
                         Severity::Error,
@@ -54,7 +76,7 @@ impl Check for InPlace {
                     .expected(0.0f64),
                 );
             } else if !expected && !travels {
-                out.push(
+                findings.push(
                     Finding::new(
                         self.id(),
                         Severity::Error,
@@ -67,6 +89,11 @@ impl Check for InPlace {
                     .measured(speed),
                 );
             }
+        }
+        match (evaluated_scopes.is_empty(), gaps.is_empty()) {
+            (_, true) => CheckOutput::complete_scoped(findings, evaluated_scopes),
+            (true, false) => CheckOutput::not_evaluated(gaps),
+            (false, false) => CheckOutput::partial(findings, evaluated_scopes, gaps),
         }
     }
 }

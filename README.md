@@ -99,8 +99,8 @@ $ animsmith fix clip.glb -o fixed.glb
 $ animsmith fix clip.glb --dry-run
 ```
 
-Exit codes are `0` for runs with no failing findings (warnings and
-skip notes may remain), `1` for error findings, and `2` for operator
+Exit codes are `0` for runs with no failing findings (warnings, notes, and
+coverage gaps may remain), `1` for error findings, and `2` for operator
 errors. `--deny-warnings` promotes warnings to a failing run.
 
 The HTML report is a single self-contained file with no CDN dependency.

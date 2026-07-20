@@ -6,8 +6,9 @@ use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
-const V2_PREVIEW_SCHEMA_URL: &str = "https://raw.githubusercontent.com/mmannerm/animsmith/main/docs/schemas/output-v2-preview.schema.json";
-const V2_PREVIEW_SCHEMA: &str = include_str!("../../../docs/schemas/output-v2-preview.schema.json");
+const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:2";
+const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:1";
+const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v2.schema.json");
 
 fn assert_required_properties(schema: &Value, instance: &Value, path: &str) {
     let object = instance
@@ -25,12 +26,12 @@ fn assert_required_properties(schema: &Value, instance: &Value, path: &str) {
 /// Keep emitted records aligned with the schema's required-field contract.
 /// Full JSON Schema semantics belong to a standards implementation, not this
 /// CLI test; focused value assertions below cover the preview's state enums.
-fn assert_v2_preview_required_fields(instance: &Value) {
-    let schema: Value = serde_json::from_str(V2_PREVIEW_SCHEMA).expect("valid preview schema");
+fn assert_v2_required_fields(instance: &Value) {
+    let schema: Value = serde_json::from_str(OUTPUT_SCHEMA).expect("valid output schema");
     assert_required_properties(&schema, instance, "$");
     for (file_index, file) in instance["files"]
         .as_array()
-        .expect("preview files")
+        .expect("output files")
         .iter()
         .enumerate()
     {
@@ -41,7 +42,7 @@ fn assert_v2_preview_required_fields(instance: &Value) {
         );
         for (check_index, check) in file["checks"]
             .as_array()
-            .expect("preview checks")
+            .expect("output checks")
             .iter()
             .enumerate()
         {
@@ -57,15 +58,23 @@ fn assert_v2_preview_required_fields(instance: &Value) {
 fn assert_evaluation_summary_matches_checks(instance: &Value) {
     let checks: Vec<_> = instance["files"]
         .as_array()
-        .expect("preview files")
+        .expect("output files")
         .iter()
-        .flat_map(|file| file["checks"].as_array().expect("preview checks"))
+        .flat_map(|file| file["checks"].as_array().expect("output checks"))
         .collect();
-    let summary = &instance["summary"]["evaluations"];
+    let summary = &instance["summary"]["checks"];
     for (field, dimension, value) in [
         ("complete", "evaluation", "complete"),
         ("partial", "evaluation", "partial"),
         ("not_evaluated", "evaluation", "not_evaluated"),
+    ] {
+        let expected = checks
+            .iter()
+            .filter(|check| check[dimension] == value)
+            .count();
+        assert_eq!(summary["evaluation"][field], expected, "summary.{field}");
+    }
+    for (field, dimension, value) in [
         ("not_applicable", "applicability", "not_applicable"),
         ("disabled", "configuration", "disabled"),
         ("unselected", "selection", "unselected"),
@@ -74,13 +83,36 @@ fn assert_evaluation_summary_matches_checks(instance: &Value) {
             .iter()
             .filter(|check| check[dimension] == value)
             .count();
-        assert_eq!(summary[field], expected, "summary.{field}");
+        assert_eq!(summary[dimension][field], expected, "summary.{field}");
     }
     let expected_gaps: usize = checks
         .iter()
         .map(|check| check["gaps"].as_array().map_or(0, Vec::len))
         .sum();
     assert_eq!(summary["gaps"], expected_gaps, "summary.gaps");
+    let total = checks.len();
+    assert_eq!(summary["total"], total);
+    for fields in [
+        &["selected", "unselected"][..],
+        &["enabled", "disabled"][..],
+        &["applicable", "not_applicable"][..],
+        &["complete", "partial", "not_evaluated"][..],
+    ] {
+        let axis = if fields[0] == "selected" {
+            "selection"
+        } else if fields[0] == "enabled" {
+            "configuration"
+        } else if fields[0] == "applicable" {
+            "applicability"
+        } else {
+            "evaluation"
+        };
+        let sum: u64 = fields
+            .iter()
+            .map(|field| summary[axis][field].as_u64().unwrap())
+            .sum();
+        assert_eq!(sum, total as u64, "{axis} partition");
+    }
 }
 
 fn animsmith() -> Command {
@@ -149,16 +181,22 @@ fn write_json(path: &std::path::Path, value: &Value) {
 
 fn measurement_report(duration_s: f64) -> Value {
     json!({
-        "schema_version": 1,
+        "schema_version": 2,
+        "schema": OUTPUT_SCHEMA_ID,
+        "command": "measure",
         "files": [{
             "path": "fixture.gltf",
             "rig": { "profile": "unknown" },
             "measurements": {
-                "walk": {
-                    "duration_s": duration_s,
-                    "frame_count": 31,
-                    "animated_bones": [],
-                    "bone_rotation_range_deg": {}
+                "schema_version": 1,
+                "schema": MEASUREMENTS_SCHEMA_ID,
+                "clips": {
+                    "walk": {
+                        "duration_s": duration_s,
+                        "frame_count": 31,
+                        "animated_bones": [],
+                        "bone_rotation_range_deg": {}
+                    }
                 }
             }
         }]
@@ -746,13 +784,14 @@ fn fix_help_lists_repair_possible_values() {
 }
 
 #[test]
-fn version_starts_with_manifest_version() {
+fn version_uses_the_composed_build_version_at_the_cli_boundary() {
     let output = animsmith()
         .arg("--version")
         .output()
         .expect("runs animsmith");
 
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert!(stderr(&output).is_empty(), "stderr:\n{}", stderr(&output));
     let out = stdout(&output);
     assert!(
         out.starts_with(concat!("animsmith ", env!("CARGO_PKG_VERSION"))),
@@ -774,28 +813,25 @@ fn measure_json_uses_versioned_envelope() {
 
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
-    assert_eq!(json["schema_version"], 1);
+    assert_eq!(json["schema_version"], 2);
+    assert_eq!(json["schema"], OUTPUT_SCHEMA_ID);
     assert_eq!(json["tool"]["name"], "animsmith");
-    assert!(
-        json["tool"]["version"]
-            .as_str()
-            .is_some_and(|s| s.starts_with(env!("CARGO_PKG_VERSION"))),
-        "{json:#}"
-    );
+    assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
+    assert!(json["tool"]["source"].is_object());
+    if let Some(revision) = json["tool"]["source"]["revision"].as_str() {
+        assert_eq!(revision.len(), 40, "full source revision: {revision}");
+        assert!(revision.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    }
     assert_eq!(json["command"], "measure");
     assert_eq!(json["summary"]["files"], 1);
-    assert_eq!(json["summary"]["findings"]["error"], 0);
-    assert!(
-        json["schema"]
-            .as_str()
-            .is_some_and(|s| s.ends_with("output-v1.schema.json"))
-    );
 
     let files = json["files"].as_array().expect("files array");
     assert_eq!(files.len(), 1);
     assert_eq!(files[0]["rig"]["profile"], "unknown");
-    assert!(files[0]["findings"].is_null());
-    assert!(files[0]["measurements"]["walk"]["duration_s"].is_number());
+    assert!(files[0]["checks"].is_null());
+    assert_eq!(files[0]["measurements"]["schema_version"], 1);
+    assert_eq!(files[0]["measurements"]["schema"], MEASUREMENTS_SCHEMA_ID);
+    assert!(files[0]["measurements"]["clips"]["walk"]["duration_s"].is_number());
 }
 
 #[test]
@@ -812,32 +848,26 @@ fn lint_json_uses_versioned_envelope() {
 
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
-    assert_eq!(json["schema_version"], 1);
-    assert!(
-        json["schema"]
-            .as_str()
-            .is_some_and(|s| s.ends_with("output-v1.schema.json"))
-    );
+    assert_eq!(json["schema_version"], 2);
+    assert_eq!(json["schema"], OUTPUT_SCHEMA_ID);
     assert_eq!(json["tool"]["name"], "animsmith");
-    assert!(
-        json["tool"]["version"]
-            .as_str()
-            .is_some_and(|s| s.starts_with(env!("CARGO_PKG_VERSION")))
-    );
+    assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(json["command"], "lint");
     assert_eq!(json["summary"]["files"], 1);
-    assert!(json["files"][0]["findings"].is_array());
-    assert!(json["files"][0]["measurements"]["walk"]["duration_s"].is_number());
+    assert!(json["files"][0]["checks"].is_array());
+    assert!(json["files"][0]["measurements"]["clips"]["walk"]["duration_s"].is_number());
+    assert_evaluation_summary_matches_checks(&json);
+    assert_v2_required_fields(&json);
 }
 
 #[test]
-fn lint_json_v2_preview_exposes_complete_clean_and_unselected_checks() {
+fn lint_json_exposes_complete_clean_and_unselected_checks() {
     let output = animsmith()
         .args([
             "lint",
             fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
             "--format",
-            "json-v2-preview",
+            "json",
             "--select",
             "nan",
         ])
@@ -847,7 +877,7 @@ fn lint_json_v2_preview_exposes_complete_clean_and_unselected_checks() {
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_eq!(json["schema_version"], 2);
-    assert_eq!(json["schema"], V2_PREVIEW_SCHEMA_URL);
+    assert_eq!(json["schema"], OUTPUT_SCHEMA_ID);
     let checks = json["files"][0]["checks"].as_array().expect("checks");
     let nan = checks
         .iter()
@@ -872,11 +902,11 @@ fn lint_json_v2_preview_exposes_complete_clean_and_unselected_checks() {
     assert_eq!(gait_group["applicability"], "not_applicable");
     assert_eq!(gait_group["evaluation"], "not_evaluated");
     assert_evaluation_summary_matches_checks(&json);
-    assert_v2_preview_required_fields(&json);
+    assert_v2_required_fields(&json);
 }
 
 #[test]
-fn lint_json_v2_preview_keeps_disabled_distinct_from_unselected() {
+fn lint_json_keeps_disabled_distinct_from_unselected() {
     let dir = unique_temp_dir("v2-disabled");
     let config = write_config(
         dir.path(),
@@ -890,7 +920,7 @@ fn lint_json_v2_preview_keeps_disabled_distinct_from_unselected() {
             "lint",
             fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
             "--format",
-            "json-v2-preview",
+            "json",
             "--select",
             "nan",
         ])
@@ -916,7 +946,7 @@ fn lint_json_v2_preview_keeps_disabled_distinct_from_unselected() {
 }
 
 #[test]
-fn lint_json_v2_preview_gait_group_can_carry_finding_and_coverage_gap() {
+fn lint_json_gait_group_can_carry_finding_and_coverage_gap() {
     let dir = unique_temp_dir("v2-partial-gait");
     let config = write_config(
         dir.path(),
@@ -930,7 +960,7 @@ fn lint_json_v2_preview_gait_group_can_carry_finding_and_coverage_gap() {
             "lint",
             fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
             "--format",
-            "json-v2-preview",
+            "json",
             "--select",
             "gait-group",
         ])
@@ -957,15 +987,15 @@ fn lint_json_v2_preview_gait_group_can_carry_finding_and_coverage_gap() {
     assert_eq!(gait["gaps"][0]["code"], "roles_unresolved");
     assert_eq!(gait["gaps"][0]["scope"]["code"], "phase_coherence");
     assert_eq!(gait["evaluated_scopes"][0]["code"], "member_existence");
-    assert_eq!(json["summary"]["evaluations"]["partial"], 1);
-    assert_eq!(json["summary"]["evaluations"]["gaps"], 1);
+    assert_eq!(json["summary"]["checks"]["evaluation"]["partial"], 1);
+    assert_eq!(json["summary"]["checks"]["gaps"], 1);
     assert_eq!(json["summary"]["findings"]["error"], 1);
     assert_evaluation_summary_matches_checks(&json);
-    assert_v2_preview_required_fields(&json);
+    assert_v2_required_fields(&json);
 }
 
 #[test]
-fn lint_json_v2_preview_exit_policy_uses_findings_not_coverage_gaps() {
+fn lint_json_exit_policy_uses_findings_not_coverage_gaps() {
     let warning_dir = unique_temp_dir("v2-warning-exit");
     let warning_input = warning_dir.path().join("flipped.glb");
     write_flipped_glb(&warning_input);
@@ -975,7 +1005,7 @@ fn lint_json_v2_preview_exit_policy_uses_findings_not_coverage_gaps() {
             "lint",
             warning_input.to_str().expect("utf-8 input path"),
             "--format",
-            "json-v2-preview",
+            "json",
             "--select",
             "quat-flip",
         ];
@@ -1011,7 +1041,7 @@ fn lint_json_v2_preview_exit_policy_uses_findings_not_coverage_gaps() {
             "lint",
             gap_input.to_str().expect("utf-8 input path"),
             "--format",
-            "json-v2-preview",
+            "json",
             "--select",
             "loop-seam",
         ];
@@ -1038,13 +1068,13 @@ fn lint_json_v2_preview_exit_policy_uses_findings_not_coverage_gaps() {
 }
 
 #[test]
-fn lint_json_v2_preview_rejects_allow_instead_of_deleting_evidence() {
+fn lint_json_rejects_allow_instead_of_deleting_evidence() {
     let output = animsmith()
         .args([
             "lint",
             fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
             "--format",
-            "json-v2-preview",
+            "json",
             "--allow",
             "nan",
         ])
@@ -1053,7 +1083,7 @@ fn lint_json_v2_preview_rejects_allow_instead_of_deleting_evidence() {
 
     assert_eq!(output.status.code(), Some(2));
     assert!(stdout(&output).is_empty());
-    assert!(stderr(&output).contains("preview results retain every content finding"));
+    assert!(stderr(&output).contains("machine-readable results retain every content finding"));
 }
 
 #[test]
@@ -1072,18 +1102,10 @@ fn diff_json_uses_versioned_envelope() {
 
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
-    assert_eq!(json["schema_version"], 1);
-    assert!(
-        json["schema"]
-            .as_str()
-            .is_some_and(|s| s.ends_with("output-v1.schema.json"))
-    );
+    assert_eq!(json["schema_version"], 2);
+    assert_eq!(json["schema"], OUTPUT_SCHEMA_ID);
     assert_eq!(json["tool"]["name"], "animsmith");
-    assert!(
-        json["tool"]["version"]
-            .as_str()
-            .is_some_and(|s| s.starts_with(env!("CARGO_PKG_VERSION")))
-    );
+    assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(json["command"], "diff");
     assert_eq!(json["summary"]["deltas"], 0);
     assert_eq!(json["deltas"].as_array().expect("deltas array").len(), 0);
@@ -1184,6 +1206,84 @@ fn diff_accepts_measurement_json_and_exits_zero_without_deltas() {
     // Identical reports in, exit 0 out — the exit code is the contract,
     // not the human-format prose.
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+}
+
+#[test]
+fn diff_compares_decoded_numbers_not_json_lexical_spelling() {
+    let dir = unique_temp_dir("diff-json-number-spelling");
+    let before = dir.path().join("before.json");
+    let after = dir.path().join("after.json");
+    let mut integer = measurement_report(1.0);
+    integer["files"][0]["measurements"]["clips"]["walk"]["duration_s"] = json!(1);
+    let decimal = measurement_report(1.0);
+    let integer_text = serde_json::to_string(&integer).unwrap();
+    let decimal_text = serde_json::to_string(&decimal).unwrap();
+    assert!(integer_text.contains("\"duration_s\":1,"));
+    assert!(decimal_text.contains("\"duration_s\":1.0,"));
+    write_json(&before, &integer);
+    write_json(&after, &decimal);
+
+    let output = animsmith()
+        .args([
+            "diff",
+            before.to_str().unwrap(),
+            after.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["summary"]["deltas"], 0);
+}
+
+#[test]
+fn diff_rejects_alpha_v1_reports() {
+    let dir = unique_temp_dir("diff-v1-report");
+    let old = dir.path().join("v1.json");
+    std::fs::write(&old, r#"{"schema_version":1,"files":[]}"#).unwrap();
+
+    let output = animsmith()
+        .args([
+            "diff",
+            old.to_str().unwrap(),
+            fixture("rig.gltf").to_str().unwrap(),
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stdout(&output).is_empty());
+    assert!(stderr(&output).contains("schema_version 1"));
+}
+
+#[test]
+fn diff_rejects_non_measurement_report_commands() {
+    let dir = unique_temp_dir("diff-wrong-command");
+    let report_path = dir.path().join("diff.json");
+    let mut report = measurement_report(1.0);
+    report["command"] = json!("diff");
+    write_json(&report_path, &report);
+
+    let output = animsmith()
+        .args([
+            "diff",
+            report_path.to_str().unwrap(),
+            fixture("rig.gltf").to_str().unwrap(),
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stdout(&output).is_empty());
+    assert!(stderr(&output).contains("reads only measure or lint reports"));
 }
 
 #[test]
@@ -1306,7 +1406,11 @@ fn diff_rejects_unsupported_schema_versions() {
 fn diff_rejects_envelope_without_files() {
     let dir = unique_temp_dir("diff-no-files");
     let report = dir.path().join("no-files.json");
-    std::fs::write(&report, r#"{"schema_version": 1}"#).expect("writes report");
+    std::fs::write(
+        &report,
+        r#"{"schema_version":2,"schema":"urn:animsmith:schema:output:2","command":"measure"}"#,
+    )
+    .expect("writes report");
 
     let output = animsmith()
         .args([
@@ -1354,7 +1458,13 @@ fn lint_counts_severities_in_summary_and_text() {
     assert_eq!(json["summary"]["findings"]["warning"], 1, "{json:#}");
     assert_eq!(json["summary"]["findings"]["error"], 0, "{json:#}");
     assert_eq!(json["summary"]["findings"]["note"], 0, "{json:#}");
-    assert_eq!(json["files"][0]["findings"][0]["severity"], "warning");
+    let quat_flip = json["files"][0]["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["check_id"] == "quat-flip")
+        .unwrap();
+    assert_eq!(quat_flip["findings"][0]["severity"], "warning");
 
     // Text mode counts through the same severity match.
     let output = animsmith()
@@ -1523,7 +1633,7 @@ fn example_config() -> PathBuf {
 }
 
 #[test]
-fn lint_clean_file_exits_zero() {
+fn lint_file_with_only_coverage_gaps_exits_zero() {
     let output = animsmith()
         .args(["lint", fixture("rig.gltf").to_str().expect("utf-8 path")])
         .output()
@@ -1535,7 +1645,12 @@ fn lint_clean_file_exits_zero() {
         stderr(&output)
     );
     assert!(
-        stdout(&output).contains("clean"),
+        stdout(&output).contains("coverage[bind-pose]"),
+        "stdout:\n{}",
+        stdout(&output)
+    );
+    assert!(
+        stdout(&output).contains("0 error(s)"),
         "stdout:\n{}",
         stdout(&output)
     );
@@ -1585,7 +1700,7 @@ fn lint_markdown_renders_findings_for_failing_asset() {
 }
 
 #[test]
-fn lint_markdown_summarizes_clean_asset() {
+fn lint_markdown_surfaces_nonblocking_coverage_gaps() {
     let dir = unique_temp_dir("markdown-clean");
     let input = dir.path().join("clean.glb");
     write_clean_glb(&input);
@@ -1602,9 +1717,12 @@ fn lint_markdown_summarizes_clean_asset() {
         stderr(&output)
     );
     let out = stdout(&output);
-    assert!(out.contains("✅ Clean — no findings."), "stdout:\n{out}");
-    // A clean asset produces no findings table to collapse.
-    assert!(!out.contains("<details"), "stdout:\n{out}");
+    assert!(out.contains("0 error(s)"), "stdout:\n{out}");
+    assert!(out.contains("coverage gap(s)"), "stdout:\n{out}");
+    assert!(
+        out.contains("`insufficient_rotation_evidence`"),
+        "stdout:\n{out}"
+    );
 }
 
 #[test]
@@ -1642,15 +1760,11 @@ fn lint_warnings_pass_but_deny_warnings_fails() {
     );
 }
 
-/// The acceptance-gate composition docs/game-ready-clips.md and
-/// docs/pipeline-scenarios.md promise: a role-dependent check with
-/// declared work on an unresolvable rig reports a note-severity
-/// finding whose message carries the documented `skipped:` prefix in
-/// the v1 envelope, and the run exits 0 — including under
-/// `--deny-warnings`, which promotes warnings only, never notes.
+/// Declared work on an unresolved rig is a typed, nonblocking coverage gap,
+/// never a content finding. `--deny-warnings` does not change that policy.
 #[test]
-fn lint_skip_note_serializes_as_note_and_exits_zero() {
-    let dir = unique_temp_dir("skip-note");
+fn lint_unresolved_roles_serialize_as_a_gap_and_exit_zero() {
+    let dir = unique_temp_dir("coverage-gap");
     let input = dir.path().join("sway.glb");
     write_clean_glb(&input); // root->spine rig: no hips/foot roles resolve
     let config = dir.path().join("animsmith.toml");
@@ -1672,21 +1786,20 @@ fn lint_skip_note_serializes_as_note_and_exits_zero() {
         assert_eq!(
             output.status.code(),
             Some(0),
-            "skip notes must not fail the run (deny-warnings: {deny}):\n{}",
+            "coverage gaps must not fail the run (deny-warnings: {deny}):\n{}",
             stderr(&output)
         );
         let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
-        assert_eq!(json["summary"]["findings"]["note"], 1, "{json:#}");
-        let finding = &json["files"][0]["findings"][0];
-        assert_eq!(finding["check_id"], "loop-seam", "{json:#}");
-        assert_eq!(finding["severity"], "note", "{json:#}");
-        assert!(
-            finding["message"]
-                .as_str()
-                .expect("message is a string")
-                .starts_with("skipped:"),
-            "documented skip prefix missing: {json:#}"
-        );
+        assert_eq!(json["summary"]["findings"]["note"], 0, "{json:#}");
+        let loop_seam = json["files"][0]["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|check| check["check_id"] == "loop-seam")
+            .unwrap();
+        assert_eq!(loop_seam["evaluation"], "not_evaluated", "{json:#}");
+        assert_eq!(loop_seam["findings"], json!([]), "{json:#}");
+        assert_eq!(loop_seam["gaps"][0]["code"], "roles_unresolved", "{json:#}");
     }
 }
 

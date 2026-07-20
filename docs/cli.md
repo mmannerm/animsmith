@@ -63,13 +63,13 @@ animsmith diff <before> <after> [--format text|json]
 
 | Code | Meaning |
 |---:|---|
-| 0 | No failing findings: clean, warnings-only, or notes-only (including `skipped:` notes). |
+| 0 | No failing findings: clean, warnings-only, notes-only, or coverage gaps only. |
 | 1 | At least one failing finding, a significant `diff`, or pending repairs under `fix --dry-run`. |
 | 2 | Operator/tool error: unreadable input, bad config, unsupported format, or invalid flags. |
 
-A skipped role-dependent check reports a `skipped:` note and does not
-fail the run — exit `0` means no failing findings among the checks
-that evaluated, not that every declared check evaluated; see
+A role-dependent check with missing prerequisites reports a typed coverage
+gap and does not fail the run — exit `0` means no failing findings among the
+checks that evaluated, not that every declared check evaluated; see
 [reading a lint run](game-ready-clips.md#reading-a-lint-run) for the
 full outcome vocabulary.
 
@@ -124,12 +124,14 @@ animsmith fix clip.glb --repair quat-norm,quat-flip -o fixed.glb
 `measure`, `lint`, and `diff` support `--format json`. The native JSON
 contract is the source of truth and is versioned with `schema_version`.
 See [output.md](output.md) and
-[schemas/output-v1.schema.json](schemas/output-v1.schema.json).
+[`output-v2.schema.json`](schemas/output-v2.schema.json). Nested measurement
+evidence has its own
+[`measurements-v1.schema.json`](schemas/measurements-v1.schema.json) contract.
+Alpha-era v1 and preview reports are not retained; regenerate them before
+using `diff`.
 
-`lint --format json-v2-preview` is an explicit experimental surface for issue
-#193's coverage/findings separation. It does not replace v1 JSON yet; see the
-[preview contract](output.md#provisional-v2-coverage-preview) and
-[`output-v2-preview.schema.json`](schemas/output-v2-preview.schema.json).
+Machine-readable lint rejects `--allow` so it cannot erase evidence. The flag
+remains a presentation and exit-policy convenience for text and Markdown.
 
 Native JSON is deliberately shaped so serializers can be added later
 without redesigning the checks: SARIF for code scanning, GitLab Code
@@ -141,7 +143,7 @@ for ad-hoc analysis.
 `lint --format markdown` renders findings as GitHub/GitLab-flavored
 Markdown for pasting into a CI comment or asset-review thread. It mirrors
 the text output's information — severity, check id, location, measured
-and expected values, per-clip grouping — as a table inside a per-file
+and expected values, per-clip grouping, and typed coverage gaps — as tables inside a per-file
 collapsible section, with a clean summary for a passing asset:
 
 ```console
@@ -150,10 +152,10 @@ animsmith lint clip.glb --format markdown >> "$GITHUB_STEP_SUMMARY"
 
 A file with findings is rendered as a `<details>` section (expanded for
 short lists, collapsed once a file carries more than ten findings so one
-noisy asset does not bury the rest of the comment); a clean file collapses
-to a one-line `✅ Clean` summary with no section. A footer tallies errors,
-warnings, and notes across every input. The exit code is unchanged from
-text and JSON — see [Exit Codes](#exit-codes).
+noisy asset does not bury the rest of the comment). A file with neither
+findings nor gaps collapses to a one-line `✅ Clean` summary. A footer tallies
+errors, warnings, notes, and gaps across every input. The exit code is
+unchanged from text and JSON — see [Exit Codes](#exit-codes).
 
 Markdown is presentation-only and carries **no stability guarantees** —
 gate automation on `--format json` (see [output.md](output.md)), and

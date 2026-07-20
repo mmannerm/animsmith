@@ -40,7 +40,7 @@ Every example relies on the same convention, so scripts can gate on it:
 
 | Code | Meaning |
 |---:|---|
-| 0 | No failing findings; warnings and skip notes may remain. |
+| 0 | No failing findings; warnings, notes, and coverage gaps may remain. |
 | 1 | A failing finding, a significant `diff`, or pending `fix --dry-run` repairs. |
 | 2 | Operator error: unreadable input, bad config, bad flags. |
 
@@ -68,8 +68,9 @@ clips: 1
   swing: 1.000s, 1 tracks, 5 keys max
 
 $ animsmith lint examples/assets/clip.glb
-examples/assets/clip.glb: clean
-0 error(s), 0 warning(s), 0 note(s)          # exits 0
+examples/assets/clip.glb:
+  coverage[bind-pose] first_frame_rest_delta 'swing': insufficient_rotation_evidence: ...
+0 error(s), 0 warning(s), 0 note(s), 1 coverage gap(s)   # exits 0
 ```
 
 A defective asset produces findings and a non-zero exit:
@@ -160,7 +161,9 @@ $ animsmith fix examples/assets/clip-dirty.glb -o fixed.glb
 1 key(s) fixed across 1 track(s) -> fixed.glb
 
 $ animsmith lint fixed.glb
-fixed.glb: clean                             # exits 0
+fixed.glb:
+  coverage[bind-pose] first_frame_rest_delta 'swing': insufficient_rotation_evidence: ...
+0 error(s), 0 warning(s), 0 note(s), 1 coverage gap(s)   # exits 0
 ```
 
 Because the repairs are lossless, `diff` confirms no measurement moved —
@@ -275,12 +278,14 @@ $ animsmith measure examples/assets/walk.glb          # --format json
       "rig": { "profile": "ue-mannequin", "resolved_roles": {
         "hips": "pelvis", "left_foot": "foot_l", "right_foot": "foot_r" } },
       "measurements": {
-        "walk": {
+        "schema_version": 1,
+        "schema": "urn:animsmith:schema:measurements:1",
+        "clips": { "walk": {
           "duration_s": 1.0, "frame_count": 33,
           "loop_seam_ratio": 1.2e-15,
           "gait": { "phase": 0.75, "lr_amplitude_m": 0.2 },
           "speed_mps": 0.0
-        }
+        } }
       }
     }
   ]
@@ -294,7 +299,9 @@ check passes:
 
 ```console
 $ animsmith lint --config examples/walk.animsmith.toml examples/assets/walk.glb
-examples/assets/walk.glb: clean              # exits 0
+examples/assets/walk.glb:
+  coverage[bind-pose] first_frame_rest_delta 'walk': insufficient_rotation_evidence: ...
+0 error(s), 0 warning(s), 0 note(s), 1 coverage gap(s)   # exits 0
 ```
 
 `examples/assets/walk-dirty.glb` is the same rig with the clip cut a
@@ -307,12 +314,12 @@ examples/assets/walk-dirty.glb:
   error[loop-seam] clip 'walk' @1.000s: loop seam pops: wrap discontinuity
     is 6.82× the neighbouring in-clip step (cap 1.60) — the clip does not
     close its cycle (measured 6.8152, expected 1.6000)
-1 error(s), 0 warning(s), 0 note(s)         # exits 1
+1 error(s), 0 warning(s), 0 note(s), 1 coverage gap(s)  # exits 1
 ```
 
 The contract is load-bearing: a bare `animsmith lint examples/assets/walk-dirty.glb`
-(no config) reports it **clean** — with no `loop = true` declared,
-`loop-seam` has nothing to check against and skips. Semantic checks
+(no config) reports no findings — with no `loop = true` declared,
+`loop-seam` is explicitly not applicable. Semantic checks
 enforce *your* declared expectations, not a guess.
 
 ### Scaling up to a full character

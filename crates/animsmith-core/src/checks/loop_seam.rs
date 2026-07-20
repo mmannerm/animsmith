@@ -5,8 +5,11 @@
 //! that. Judged only on clips declared `loop = true`; the ratio itself
 //! is always available via `measure`.
 
-use crate::check::{Check, CheckCtx, Readiness};
-use crate::checks::gait_readiness;
+use crate::check::{Check, CheckCtx};
+use crate::checks::gait_gap;
+use crate::evaluation::{
+    Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope,
+};
 use crate::finding::{Finding, Severity};
 use crate::metrics::foot_cycle_metrics;
 
@@ -21,19 +24,22 @@ impl Check for LoopSeam {
         "loop-seam"
     }
 
-    fn readiness(&self, ctx: &CheckCtx) -> Readiness {
-        let any_loop = ctx
+    fn applicability(&self, ctx: &CheckCtx) -> Applicability {
+        if ctx
             .clip_expectations()
             .iter()
-            .any(|e| e.looping == Some(true));
-        if any_loop {
-            gait_readiness(ctx.roles)
+            .any(|expectations| expectations.looping == Some(true))
+        {
+            Applicability::Applicable
         } else {
-            Readiness::Idle
+            Applicability::NotApplicable
         }
     }
 
-    fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
+    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+        let mut findings = Vec::new();
+        let mut evaluated_scopes = Vec::new();
+        let mut gaps = Vec::new();
         let settings = ctx.config.check_settings(self.id());
         let max_ratio = settings.max_ratio.unwrap_or(DEFAULT_MAX_RATIO);
         let min_stride_step_m = ctx.config.loop_seam_min_stride_step_m();
@@ -42,19 +48,37 @@ impl Check for LoopSeam {
             if ctx.expectations(index).looping != Some(true) {
                 continue;
             }
+            let scope = EvaluationScope::new("loop_seam").subject(&clip.name);
+            if let Some(gap) = gait_gap(ctx.roles) {
+                gaps.push(gap.scope(scope));
+                continue;
+            }
             let Some(grid) = ctx.grid(index) else {
-                continue; // too short for a cycle; duration-sanity owns degenerate clips
-            };
-            // Roles resolve (readiness gate); a `None` here means a
-            // degenerate clip, which duration-sanity owns.
-            let Some(metrics) = foot_cycle_metrics(&grid, ctx.roles, min_stride_step_m) else {
+                gaps.push(
+                    CoverageGap::new(
+                        CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                        "clip is too short to sample a loop cycle",
+                    )
+                    .scope(scope),
+                );
                 continue;
             };
+            let Some(metrics) = foot_cycle_metrics(&grid, ctx.roles, min_stride_step_m) else {
+                gaps.push(
+                    CoverageGap::new(
+                        CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                        "foot-cycle metrics could not be produced",
+                    )
+                    .scope(scope),
+                );
+                continue;
+            };
+            evaluated_scopes.push(scope);
             let Some(ratio) = metrics.loop_seam_ratio else {
-                continue; // no real stride: idle-like loop, nothing to divide by
+                continue; // stationary loop: the completed judgment has no ratio
             };
             if ratio > max_ratio {
-                out.push(
+                findings.push(
                     Finding::new(
                         self.id(),
                         Severity::Error,
@@ -70,6 +94,11 @@ impl Check for LoopSeam {
                     .expected(max_ratio),
                 );
             }
+        }
+        match (evaluated_scopes.is_empty(), gaps.is_empty()) {
+            (_, true) => CheckOutput::complete_scoped(findings, evaluated_scopes),
+            (true, false) => CheckOutput::not_evaluated(gaps),
+            (false, false) => CheckOutput::partial(findings, evaluated_scopes, gaps),
         }
     }
 }

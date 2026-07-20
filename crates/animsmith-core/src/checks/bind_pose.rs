@@ -8,6 +8,9 @@
 //! space, which needs per-mesh space handling to compare fairly.)
 
 use crate::check::{Check, CheckCtx};
+use crate::evaluation::{
+    Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope,
+};
 use crate::finding::{Finding, Severity};
 use crate::model::Property;
 
@@ -22,7 +25,18 @@ impl Check for BindPose {
         "bind-pose"
     }
 
-    fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
+    fn applicability(&self, ctx: &CheckCtx) -> Applicability {
+        if ctx.doc.clips.is_empty() {
+            Applicability::NotApplicable
+        } else {
+            Applicability::Applicable
+        }
+    }
+
+    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+        let mut findings = Vec::new();
+        let mut evaluated_scopes = Vec::new();
+        let mut gaps = Vec::new();
         let cap = ctx
             .config
             .check_settings(self.id())
@@ -58,12 +72,23 @@ impl Check for BindPose {
                 }
             }
             if counted < 3 {
-                continue; // too few rotated bones to call a pose mismatch
+                gaps.push(
+                    CoverageGap::new(
+                        CoverageGapCode::custom("insufficient_rotation_evidence"),
+                        format!(
+                            "only {counted} usable first-frame rotation track(s); at least three are required"
+                        ),
+                    )
+                    .scope(EvaluationScope::new("first_frame_rest_delta").subject(&clip.name)),
+                );
+                continue;
             }
+            evaluated_scopes
+                .push(EvaluationScope::new("first_frame_rest_delta").subject(&clip.name));
             let mean = total_deg / counted as f64;
             if mean > cap {
                 let (worst_deg, worst_bone) = worst.expect("counted > 0");
-                out.push(
+                findings.push(
                     Finding::new(
                         self.id(),
                         Severity::Warning,
@@ -79,6 +104,11 @@ impl Check for BindPose {
                     .expected(cap),
                 );
             }
+        }
+        match (evaluated_scopes.is_empty(), gaps.is_empty()) {
+            (_, true) => CheckOutput::complete_scoped(findings, evaluated_scopes),
+            (true, false) => CheckOutput::not_evaluated(gaps),
+            (false, false) => CheckOutput::partial(findings, evaluated_scopes, gaps),
         }
     }
 }

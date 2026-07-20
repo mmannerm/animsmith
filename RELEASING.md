@@ -58,15 +58,13 @@ Configured in `release-plz.toml`:
   commits are skipped (`[changelog].commit_parsers`) — they still count
   toward whether a release is warranted.
 
-## Bumping schema `$id` on a release (if applicable)
+## Schema identities
 
-The machine-readable output schema's `$id`
-(`docs/schemas/output-v1.schema.json`) normally points at `/main/`, which
-is version-independent and needs no per-release change. `scripts/check-schema-id.sh`
-(run in CI) enforces that the CLI (`crates/animsmith/src/main.rs`) and
-`docs/output.md` reference the current `$id`, and that a version-pinned
-`$id` (`/vX.Y.Z/…`) matches the workspace version. If you ever pin the
-schema URL to a release tag, update it in the same release PR.
+Output and measurement schemas use immutable protocol URNs, independent of
+package releases. Do not rewrite `$id` during a release. A breaking contract
+gets a new URN and schema file. `scripts/check-schema-id.sh` checks that each
+schema, the CLI, and `docs/output.md` reference the same identities; repository
+links are only retrieval locations.
 
 ## Published README and docs links
 

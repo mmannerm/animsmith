@@ -4,6 +4,7 @@
 //! coverage. A check whose required roles don't resolve is skipped with
 //! a note — never a false failure.
 
+use crate::config::RigConfig;
 use crate::model::{BoneId, Skeleton};
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -222,4 +223,35 @@ pub fn resolve_named(skeleton: &Skeleton, profile: &str) -> Option<ResolvedRoles
         .iter()
         .find(|p| p.name == profile)
         .map(|p| p.resolve(skeleton))
+}
+
+/// Resolve a configured rig profile and apply inline role overrides.
+///
+/// Inline role bindings win over bindings from the named or auto-detected
+/// profile. Names absent from `skeleton` are ignored. The returned profile is
+/// `"unknown"` when neither a profile nor inline binding resolves, `"custom"`
+/// for inline-only resolution, or `<profile>+custom` when both contribute.
+pub fn resolve_configured_roles(skeleton: &Skeleton, rig: &RigConfig) -> ResolvedRoles {
+    let base = resolve_named(skeleton, &rig.profile).unwrap_or_default();
+    if rig.roles.is_empty() {
+        let mut roles = base;
+        if roles.profile.is_empty() {
+            roles.profile = "unknown".into();
+        }
+        return roles;
+    }
+
+    let mut pairs: Vec<_> = base
+        .iter()
+        .map(|(role, bone)| (role, skeleton.bones[bone].name.clone()))
+        .collect();
+    pairs.extend(rig.roles.iter().map(|(role, name)| (*role, name.clone())));
+
+    let mut resolved = ResolvedRoles::from_names(skeleton, pairs);
+    resolved.profile = if base.profile.is_empty() {
+        "custom".into()
+    } else {
+        format!("{}+custom", base.profile)
+    };
+    resolved
 }

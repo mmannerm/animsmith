@@ -49,3 +49,6 @@ gltf = { workspace = true }
 tempfile = { workspace = true }
 animsmith-testkit = { path = "../animsmith-testkit" }
 pulldown-cmark = { workspace = true }
+
+[build-dependencies]
+serde_json = { workspace = true }
