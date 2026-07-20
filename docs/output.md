@@ -1,52 +1,79 @@
 # Machine-Readable Output
 
-animsmith's native JSON is a versioned envelope. It is intended to be the
-stable source of truth for pipelines; other formats such as SARIF, GitLab
-Code Quality, JUnit XML, CSV, or HTML should be serializers over this
-contract.
+animsmith's native JSON is the stable source of truth for pipeline adapters.
+Text and Markdown lint output are presentation views over the same evaluation
+results. The HTML report remains a sampled-motion view with content findings;
+future machine serializers should project the JSON contract.
 
-## Common Envelope
+## Contract identities
+
+Every JSON command emits output contract v2 with the immutable protocol
+identity `urn:animsmith:schema:output:2`. The retrievable schema is
+[`output-v2.schema.json`](schemas/output-v2.schema.json); its repository URL
+is a retrieval location, not the protocol identity.
+
+Measurement evidence is nested and independently versioned as
+`urn:animsmith:schema:measurements:1`. Its retrievable schema is
+[`measurements-v1.schema.json`](schemas/measurements-v1.schema.json). A future
+measurement-definition change can therefore bump that contract without
+redesigning the outer result envelope.
+
+The project is alpha, so the final v2 cutover intentionally does not read or
+emit earlier v1 or preview reports. Regenerate old reports with the current
+`animsmith measure --format json` before passing them to `diff`.
+
+## Common envelope
 
 ```json
 {
-  "schema_version": 1,
-  "schema": "https://raw.githubusercontent.com/mmannerm/animsmith/main/docs/schemas/output-v1.schema.json",
-  "tool": { "name": "animsmith", "version": "0.1.0" },
-  "command": "lint",
-  "summary": { "files": 1, "findings": { "error": 0, "warning": 1, "note": 0 } },
+  "schema_version": 2,
+  "schema": "urn:animsmith:schema:output:2",
+  "tool": {
+    "name": "animsmith",
+    "version": "0.1.0",
+    "source": {
+      "revision": "0123456789abcdef0123456789abcdef01234567",
+      "dirty": false
+    }
+  },
+  "command": "measure",
+  "summary": { "files": 1 },
   "files": []
 }
 ```
 
-This JSON envelope is the only stable, machine-readable output. `lint`
-also offers `--format markdown`, but that rendering is presentation-only
-for CI comments and asset-review threads (see
-[cli.md](cli.md#ci-comments-lint---format-markdown)): it carries no
-schema and no stability guarantees, and its layout may change between
-releases. Parse JSON, not Markdown.
+`tool.version` is the package's plain semantic version. Source revision and
+dirty state are separate fields so automation never has to parse a decorated
+version string. Packaged source records its Cargo VCS revision and leaves
+`dirty` as `null`; builds without trustworthy VCS metadata may leave both
+fields `null`.
 
-`schema_version` changes only on breaking JSON changes after this first
-published envelope. Earlier development JSON shapes were not a published
-contract. Until the first manifest-versioned release that contains this
-schema file, the `schema` field points at `main`; release PRs may pin it
-to the matching `vX.Y.Z` tag once that tag will contain the schema.
-Additive fields may appear within the same version; consumers should
-ignore fields they do not understand.
+Operator failures do not emit a JSON envelope. They exit 2, write a diagnostic
+to stderr, and leave stdout empty. Content findings exit 1 at the configured
+threshold; coverage gaps are evidence and are nonblocking by default.
 
-## Provisional v2 coverage preview
+## `measure` and `lint`
 
-Issue #193 is incubating a result model that represents content findings and
-evaluation coverage separately. During that experiment, `lint --format
-json-v2-preview` emits `schema_version: 2` against
-[`output-v2-preview.schema.json`](schemas/output-v2-preview.schema.json).
-Its `schema` field is exactly
-`https://raw.githubusercontent.com/mmannerm/animsmith/main/docs/schemas/output-v2-preview.schema.json`;
-the preview schema's `$id`, the CLI constant, and this documented URL are
-checked together to prevent contract drift.
-The spelling and field names are intentionally preview-only; default
-`--format json` remains the published v1 contract.
+Both commands put evidence under `files[].measurements`:
 
-Each preview `files[].checks[]` record independently reports:
+```json
+{
+  "schema_version": 1,
+  "schema": "urn:animsmith:schema:measurements:1",
+  "clips": {},
+  "meshes": []
+}
+```
+
+`clips` maps clip names to duration, frame count, animated bones, rotation
+ranges, and optional role-dependent gait, seam, and speed metrics. `meshes`
+is omitted when empty; when present it carries vertex counts, finite AABBs,
+skin influence counts, and weight-sum ranges. Measurement contract v1 preserves
+the currently implemented fields. Issue #190 remains the authority for their
+geometry-domain semantics and can advance the nested contract independently.
+
+Lint adds exactly one `files[].checks[]` record for every built-in catalog
+check. Each record keeps these dimensions independent:
 
 - `selection`: `selected` or `unselected`;
 - `configuration`: `enabled` or `disabled`;
@@ -55,85 +82,47 @@ Each preview `files[].checks[]` record independently reports:
 - content `findings`;
 - completed `evaluated_scopes` and typed coverage `gaps`.
 
-Gap `code` and scope `code` are the machine fields; messages remain display
-text. Disabled and unselected checks are activation states, not artificial
-gaps. A not-applicable check is not reported as a clean evaluation. Partial
-`gait-group` evaluation is the proving case: member-existence validation can
-complete (and can emit a content error) while role-dependent phase coherence
-reports a `roles_unresolved`, `insufficient_measurable_members`, or
-`members_not_evaluated` gap. Legacy custom checks that emit diagnostic
-findings through `run` retain that incomplete evidence as a
-`legacy_diagnostic` gap rather than a v2 content finding.
+Gap and scope `code` fields are the machine contract; `message` is display
+text and must never be parsed. Disabled, unselected, and not-applicable checks
+are not artificial gaps. A partial check has at least one completed scope and
+at least one gap. Applicable work that completed nothing has a gap and no
+content findings. A scope can appear as completed and also be named by a gap
+when a group-level calculation covered some but not all members.
 
-Preview file records deliberately retain animation measurements and optional
-mesh measurements alongside check evaluations so the CLI experiment exposes
-the same measurement evidence available to an embedded adapter. Their
-inclusion is experiment evidence, not a decision that final v2 must use this
-exact envelope shape.
+`summary.checks` reports a `total` and four independent partitions. Each of
+`selection`, `configuration`, `applicability`, and `evaluation` sums to that
+same total. `summary.checks.gaps` counts typed gaps, while
+`summary.findings` counts content findings by severity.
 
-The preview deliberately rejects `--allow` instead of deleting findings from
-machine evidence. Content errors still exit 1, warnings exit 0 unless denied,
-and coverage gaps are visible but nonblocking by default. Operator failures
-remain exit 2 plus stderr during the experiment; whether final v2 adds a JSON
-operator-error envelope is still an open contract decision.
+`lint --format json` deliberately rejects `--allow` so machine evidence is
+never deleted. `--allow` remains available for text and Markdown presentation
+and their exit policy. Text and Markdown render coverage gaps separately from
+findings.
 
-## `measure` and `lint`
+## Findings and numeric values
 
-`measure --format json` emits `files[].measurements` and omits
-`files[].findings`. `lint --format json` emits both. Each file record has:
+Findings carry `check_id`, `severity`, optional `clip`, `bone`, `time_s`,
+`measured`, and `expected` fields, plus a human message. Treat `check_id` and
+the structured fields as automation data; treat `message` as display text.
 
-| Field | Meaning |
-|---|---|
-| `path` | Input path as passed to the CLI. |
-| `rig.profile` | Resolved built-in or custom profile name. |
-| `rig.resolved_roles` | Role-to-bone-name map used by role-dependent checks. |
-| `measurements` | Per-clip metric map. |
-| `meshes` | Per-mesh geometry measurements; present only when the input carried scene assets (see below). |
-| `findings` | Structured lint findings; omitted by `measure`. |
-
-Findings carry `check_id`, `severity`, optional `clip`, optional `bone`,
-optional `time_s`, optional measured/expected values, and a human message.
-Treat `check_id` as the stable key for automation; treat `message` as
-display text.
-
-The findings array also carries evaluation-coverage diagnostics: a
-check with declared work whose prerequisite is missing — typically an
-unresolved rig role — reports a `note` finding whose message begins
-with `skipped:`. The v1 envelope has no separate coverage field, so a
-skip note is not structurally distinguishable from a content note, and
-an absent finding does not distinguish a completed clean evaluation
-from a check that was idle for this document and config, disabled with
-`severity = "off"`, or outside `--select` —
-[reading a lint run](game-ready-clips.md#reading-a-lint-run) separates
-those states. Gate on findings and exit codes; do not infer evaluation
-coverage from silence.
-
-`measure` reports static (animation-independent) geometry when the input
-carries meshes (FBX always; glTF when the file has mesh data). Each entry
-in `files[].meshes` is:
-
-| Field | Meaning |
-|---|---|
-| `name` | Mesh name. |
-| `vertex_count` | Total position count across the mesh's primitives (indexed meshes count unique vertices, unindexed count corners). |
-| `aabb` | `{ "min": [x,y,z], "max": [x,y,z] }` bounding box in scene units; omitted for a mesh with no finite positions (a mesh with none, or whose positions are all non-finite). |
-| `max_joints_per_vertex` | Highest non-zero skin-influence count on any vertex; `0` for an unskinned mesh. |
-| `weight_sum_min` / `weight_sum_max` | Range of per-vertex skin-weight sums (≈1.0 for a well-formed skin); omitted for an unskinned mesh. |
-
-The `meshes` array is omitted entirely for asset-less inputs, so
-skeleton/animation-only reports are unchanged. This is an additive field
-under the same v1 schema.
+Numeric equality in the JSON contract means equality of decoded JSON numbers,
+not byte-for-byte lexical spelling. For example, `1`, `1.0`, and `1e0` denote
+the same numeric value to a conforming adapter.
 
 ## `diff`
 
-`diff --format json` emits a compact envelope with `inputs`, `summary`,
-and `deltas`:
+`diff --format json` uses the same output v2 header and emits `inputs`, a
+delta count, and structured metric deltas:
 
 ```json
 {
-  "schema_version": 1,
-  "schema": "https://raw.githubusercontent.com/mmannerm/animsmith/main/docs/schemas/output-v1.schema.json",
-  "tool": { "name": "animsmith", "version": "0.1.0" },
+  "schema_version": 2,
+  "schema": "urn:animsmith:schema:output:2",
+  "tool": {
+    "name": "animsmith",
+    "version": "0.1.0",
+    "source": { "revision": null, "dirty": null }
+  },
   "command": "diff",
   "inputs": { "before": "old.glb", "after": "new.glb" },
   "summary": { "deltas": 1 },
@@ -143,6 +132,6 @@ and `deltas`:
 }
 ```
 
-`diff` accepts asset files or a single-file `measure`/`lint` JSON report.
-Multi-file reports are rejected because there is no unambiguous pair to
-compare.
+`diff` accepts asset files or one-file v2 `measure`/`lint` reports carrying
+measurement contract v1. Multi-file reports and unsupported contract versions
+are rejected as operator errors.

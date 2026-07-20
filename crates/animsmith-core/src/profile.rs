@@ -1,9 +1,10 @@
 //! Rig profiles: checks never reference bone names, they reference
 //! *roles*. A profile maps roles to name matchers; built-ins cover the
 //! common rigs and auto-detection scores every built-in by resolved-role
-//! coverage. A check whose required roles don't resolve is skipped with
-//! a note — never a false failure.
+//! coverage. A check whose required roles do not resolve reports a typed
+//! coverage gap — never a false failure.
 
+use crate::config::RigConfig;
 use crate::model::{BoneId, Skeleton};
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -36,7 +37,7 @@ pub enum Role {
 }
 
 impl Role {
-    /// Stable snake-case role name used in config and diagnostics.
+    /// Stable snake-case role name used in config and result messages.
     pub fn as_str(self) -> &'static str {
         match self {
             Role::Root => "root",
@@ -78,7 +79,7 @@ impl NameMatcher {
 /// A named set of role-to-bone-name matchers.
 #[derive(Debug, Clone)]
 pub struct RigProfile {
-    /// Profile name used in configuration and diagnostics.
+    /// Profile name used in configuration and result messages.
     pub name: &'static str,
     /// Role matchers tried against a skeleton.
     pub bindings: Vec<(Role, NameMatcher)>,
@@ -222,4 +223,34 @@ pub fn resolve_named(skeleton: &Skeleton, profile: &str) -> Option<ResolvedRoles
         .iter()
         .find(|p| p.name == profile)
         .map(|p| p.resolve(skeleton))
+}
+
+/// Resolve a configured rig profile and apply inline role overrides.
+///
+/// Inline role bindings win over bindings from the named or auto-detected
+/// profile. Names absent from `skeleton` are ignored. The returned profile is
+/// `"unknown"` when neither a profile nor inline binding resolves, `"custom"`
+/// for inline-only resolution, or `<profile>+custom` when both contribute.
+pub fn resolve_configured_roles(skeleton: &Skeleton, rig: &RigConfig) -> ResolvedRoles {
+    let base = resolve_named(skeleton, &rig.profile).unwrap_or_default();
+    let base_contributed = !base.is_empty();
+    let inline_contributed = rig
+        .roles
+        .values()
+        .any(|name| skeleton.bones.iter().any(|bone| bone.name == *name));
+
+    let mut pairs: Vec<_> = base
+        .iter()
+        .map(|(role, bone)| (role, skeleton.bones[bone].name.clone()))
+        .collect();
+    pairs.extend(rig.roles.iter().map(|(role, name)| (*role, name.clone())));
+
+    let mut resolved = ResolvedRoles::from_names(skeleton, pairs);
+    resolved.profile = match (base_contributed, inline_contributed) {
+        (false, false) => "unknown".into(),
+        (false, true) => "custom".into(),
+        (true, false) => base.profile,
+        (true, true) => format!("{}+custom", base.profile),
+    };
+    resolved
 }

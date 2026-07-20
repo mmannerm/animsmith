@@ -8,6 +8,9 @@
 //! space, which needs per-mesh space handling to compare fairly.)
 
 use crate::check::{Check, CheckCtx};
+use crate::evaluation::{
+    Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope,
+};
 use crate::finding::{Finding, Severity};
 use crate::model::Property;
 
@@ -22,7 +25,18 @@ impl Check for BindPose {
         "bind-pose"
     }
 
-    fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
+    fn applicability(&self, ctx: &CheckCtx) -> Applicability {
+        if ctx.doc.clips.is_empty() {
+            Applicability::NotApplicable
+        } else {
+            Applicability::Applicable
+        }
+    }
+
+    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+        let mut findings = Vec::new();
+        let mut evaluated_scopes = Vec::new();
+        let mut gaps = Vec::new();
         let cap = ctx
             .config
             .check_settings(self.id())
@@ -42,7 +56,11 @@ impl Check for BindPose {
                 let Some(first) = track.key_quat(0) else {
                     continue;
                 };
-                if !first.is_finite() || first.length_squared() == 0.0 {
+                if !first.is_finite()
+                    || first.length_squared() == 0.0
+                    || !bone.rest.rotation.is_finite()
+                    || bone.rest.rotation.length_squared() == 0.0
+                {
                     continue;
                 }
                 let deg = bone
@@ -58,12 +76,23 @@ impl Check for BindPose {
                 }
             }
             if counted < 3 {
-                continue; // too few rotated bones to call a pose mismatch
+                gaps.push(
+                    CoverageGap::new(
+                        CoverageGapCode::INSUFFICIENT_ROTATION_EVIDENCE,
+                        format!(
+                            "only {counted} usable first-frame rotation track(s); at least three are required"
+                        ),
+                    )
+                    .scope(EvaluationScope::new("first_frame_rest_delta").subject(&clip.name)),
+                );
+                continue;
             }
+            evaluated_scopes
+                .push(EvaluationScope::new("first_frame_rest_delta").subject(&clip.name));
             let mean = total_deg / counted as f64;
             if mean > cap {
                 let (worst_deg, worst_bone) = worst.expect("counted > 0");
-                out.push(
+                findings.push(
                     Finding::new(
                         self.id(),
                         Severity::Warning,
@@ -80,5 +109,6 @@ impl Check for BindPose {
                 );
             }
         }
+        CheckOutput::from_coverage(findings, evaluated_scopes, gaps)
     }
 }

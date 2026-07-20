@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:animsmith:schema:measurements:1",
+  "title": "animsmith measurements v1",
+  "description": "Animation and scene measurements shared by measure and lint output.",
+  "type": "object",
+  "required": ["schema_version", "schema", "clips"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "schema": { "const": "urn:animsmith:schema:measurements:1" },
+    "clips": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/clip_measurements" }
+    },
+    "meshes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/mesh_measurements" }
+    }
+  },
+  "$defs": {
+    "clip_measurements": {
+      "type": "object",
+      "required": ["duration_s", "frame_count", "animated_bones", "bone_rotation_range_deg"],
+      "properties": {
+        "duration_s": { "type": "number" },
+        "frame_count": { "type": "integer", "minimum": 0 },
+        "animated_bones": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "bone_rotation_range_deg": {
+          "type": "object",
+          "additionalProperties": { "type": "number" }
+        },
+        "loop_seam_ratio": { "type": "number" },
+        "gait": {
+          "type": "object",
+          "required": ["lr_amplitude_m"],
+          "properties": {
+            "phase": { "type": "number" },
+            "lr_amplitude_m": { "type": "number" }
+          },
+          "additionalProperties": false
+        },
+        "speed_mps": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "mesh_measurements": {
+      "type": "object",
+      "required": ["name", "vertex_count", "max_joints_per_vertex"],
+      "properties": {
+        "name": { "type": "string" },
+        "vertex_count": { "type": "integer", "minimum": 0 },
+        "aabb": {
+          "type": "object",
+          "required": ["min", "max"],
+          "properties": {
+            "min": { "$ref": "#/$defs/vec3" },
+            "max": { "$ref": "#/$defs/vec3" }
+          },
+          "additionalProperties": false
+        },
+        "max_joints_per_vertex": { "type": "integer", "minimum": 0 },
+        "weight_sum_min": { "type": "number" },
+        "weight_sum_max": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "vec3": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 3,
+      "maxItems": 3
+    }
+  },
+  "additionalProperties": false
+}

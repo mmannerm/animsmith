@@ -110,14 +110,15 @@ fn run(args: &[&str]) -> (Option<i32>, String) {
 /// `(check_id, severity)` pairs from a `lint --format json` run.
 fn finding_ids(json: &str) -> Vec<(String, String)> {
     let doc: Value = serde_json::from_str(json).expect("lint emits valid JSON");
-    doc["files"][0]["findings"]
+    doc["files"][0]["checks"]
         .as_array()
-        .expect("findings array")
+        .expect("checks array")
         .iter()
-        .map(|f| {
+        .flat_map(|check| check["findings"].as_array().unwrap())
+        .map(|finding| {
             (
-                f["check_id"].as_str().unwrap_or_default().to_owned(),
-                f["severity"].as_str().unwrap_or_default().to_owned(),
+                finding["check_id"].as_str().unwrap_or_default().to_owned(),
+                finding["severity"].as_str().unwrap_or_default().to_owned(),
             )
         })
         .collect()
@@ -152,7 +153,7 @@ fn mixamo_profile_resolves_mixamorig_names() {
         roles.get("root").is_none(),
         "the mixamo profile has no Root role: {roles}"
     );
-    let m = &doc["files"][0]["measurements"][MIXAMO_TAKE];
+    let m = &doc["files"][0]["measurements"]["clips"][MIXAMO_TAKE];
     assert_eq!(
         m["duration_s"].as_f64(),
         Some(1.0),
@@ -197,7 +198,10 @@ fn tutorial_contract_gates_the_walk() {
     // the rig, and loop-seam / in-place both judge and pass.
     let (code, out) = run(&["lint", "--config", &config, &clean]);
     assert_eq!(code, Some(0), "clean walk passes the tutorial contract");
-    assert!(out.contains("clean"), "clean walk lints clean: {out}");
+    assert!(
+        out.contains("0 error(s)"),
+        "clean walk has no findings: {out}"
+    );
 
     // The same contract fails the popped loop, and loop-seam is the
     // *only* finding — the clean rig differs by exactly this (a stale
@@ -228,10 +232,13 @@ fn tutorial_mechanical_steps_are_noops_on_the_clean_walk() {
     let tmp = tempfile::tempdir().expect("temp dir");
     let clean = write_walk(tmp.path(), "walking.glb", 1.0);
 
-    // Step 4: a bare lint (mechanical checks only) reports clean.
+    // Step 4: a bare lint reports no content findings.
     let (code, out) = run(&["lint", &clean]);
     assert_eq!(code, Some(0), "bare lint exits 0");
-    assert!(out.contains("clean"), "mechanical checks are clean: {out}");
+    assert!(
+        out.contains("0 error(s)"),
+        "mechanical checks have no findings: {out}"
+    );
 
     // Step 5: `fix --dry-run` on a clean file is a no-op that exits 0 —
     // the tutorial's "safe to run unconditionally" claim, with exactly

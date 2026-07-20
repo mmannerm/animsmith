@@ -76,8 +76,8 @@ plainly what it did not evaluate — not to stamp the whole ladder.
    coverage where a check exists: `fps`, `loop-seam`, `in-place`,
    `root-motion-speed`, `foot-slide`, `missing-bones`, `frozen-bone`,
    and `bind-pose` judge exactly the expectations you declare — and
-   the checks that need rig roles skip with a note instead of
-   guessing when a role cannot be resolved. One member is heuristic:
+   the checks that need rig roles report a typed coverage gap instead
+   of guessing when a role cannot be resolved. One member is heuristic:
    `foot-slide` ships as a warning (see
    [feet slide within one clip](#feet-slide-within-one-clip)).
 
@@ -123,48 +123,36 @@ graph, or your art director.
 One `animsmith lint` run answers five independent questions. Keep
 them separate when you automate on the output:
 
-- **Was the check active?** The full catalog runs by default;
-  `--select` narrows the run set, and `[checks.<id>] severity =
-  "off"` removes a check entirely. An inactive check contributes
-  nothing to the output — silence, not a verdict.
+- **Was the check active?** The full catalog is selected by default;
+  `--select` narrows the selected set, and `[checks.<id>] severity = "off"`
+  disables a check. Final JSON still records inactive checks without
+  executing them.
 - **Did it apply here?** Contract-aware checks judge only declared
   expectations. With no `loop = true` clip in the config, `loop-seam`
-  has nothing to judge and stays silent. Silence from an idle check
-  is not evidence either.
-- **Was the work evaluated?** When declared work exists but a
-  prerequisite is missing — typically an unresolved rig role — the
-  check is skipped and reports a note whose message begins with
-  `skipped:`, exempt from severity overrides. A check can also
-  complete part of its work: `gait-group` still validates that
-  declared ring members exist in the file when unresolved roles keep
-  it from measuring phase, and the skipped measurement reports the
-  note.
+  has nothing to judge and is recorded as `not_applicable`.
+- **Was the work evaluated?** When declared work exists but a prerequisite
+  or measurement is missing, the check reports a typed coverage gap. A check
+  can also complete part of its work: `gait-group` still validates declared
+  ring members when unresolved roles keep it from measuring phase, then
+  reports member existence as completed and phase coherence as a gap.
 - **What did the evaluated work find?** Content findings at note,
   warning, or error severity, carrying clip, bone, time, and
   measured-vs-expected context.
 - **What blocks?** Gate policy is yours, not animsmith's verdict:
   exit `1` on error findings, `--deny-warnings` to promote warnings,
-  per-check severity overrides, `--allow` to suppress a check's
-  findings. Skip notes never fail a run — exit `0` means no failing
+  per-check severity overrides, and presentation-only `--allow` in text or
+  Markdown. Coverage gaps never fail a run — exit `0` means no failing
   findings among the work that was evaluated, not that everything
-  was evaluated. A gate that requires full coverage must review skip
-  notes too.
+  was evaluated. A gate that requires full coverage must inspect gaps too.
 
 There is deliberately no single "pass" state: a run can complete with
 warnings, and it can evaluate some declared work while skipping the
-rest. See [machine-readable output](output.md) for how findings — and
-their current limits as a coverage signal — appear in the versioned
-JSON envelope.
-
-The explicit `lint --format json-v2-preview` experiment represents the first
-four questions above as separate selection, configuration, applicability, and
-evaluation fields; it represents skipped work as typed gaps rather than
-findings. That statement applies only to work the preview model actually
-classifies. Most checks currently expose whole-check coverage, while
-`gait-group` is the proving partial-work case. Silent internal early exits in
-other semantic checks still need to be audited before final v2 can claim
-work-unit-complete coverage. The preview therefore improves evidence without
-turning it into runtime certification.
+rest. See [machine-readable output](output.md) for the final v2
+representation. It models selection, configuration, applicability, and
+evaluation independently, keeps content findings separate from typed gaps,
+and records completed work scopes. This is evidence about animsmith's checks,
+not runtime certification; stricter completeness policy belongs to the
+consuming pipeline.
 
 ---
 

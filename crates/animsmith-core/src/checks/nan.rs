@@ -4,6 +4,7 @@
 
 use super::tracks;
 use crate::check::{Check, CheckCtx};
+use crate::evaluation::CheckOutput;
 use crate::finding::{Finding, Severity};
 use crate::model::TrackValues;
 
@@ -14,11 +15,12 @@ impl Check for Nan {
         "nan"
     }
 
-    fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
+    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+        let mut findings = Vec::new();
         let doc = ctx.doc;
         for (clip, bone, track) in tracks(doc) {
             if let Some(k) = track.times.iter().position(|t| !t.is_finite()) {
-                out.push(
+                findings.push(
                     Finding::new(
                         self.id(),
                         Severity::Error,
@@ -36,7 +38,7 @@ impl Check for Nan {
                 TrackValues::Quats(v) => v.iter().position(|q| !q.is_finite()),
             };
             if let Some(i) = bad_value {
-                out.push(
+                findings.push(
                     Finding::new(
                         self.id(),
                         Severity::Error,
@@ -50,5 +52,6 @@ impl Check for Nan {
                 );
             }
         }
+        CheckOutput::complete(findings)
     }
 }

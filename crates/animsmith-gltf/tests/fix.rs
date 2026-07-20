@@ -3,7 +3,9 @@
 
 use animsmith_core::model::*;
 use animsmith_core::profile::ResolvedRoles;
-use animsmith_core::{CheckCtx, Config, MetricGrids, mechanical_checks, run_checks};
+use animsmith_core::{
+    CheckCtx, CheckSelection, Config, MetricGrids, evaluate_checks, mechanical_checks,
+};
 use animsmith_gltf::fix::{FixSession, Repair};
 use animsmith_testkit::{quats_from_angles, scaled_quat, two_bone_rotation_doc};
 use glam::{Quat, Vec3};
@@ -61,8 +63,10 @@ fn lint_count(doc: &Document, check_id: &str) -> usize {
     let roles = ResolvedRoles::default();
     let grids = MetricGrids::new(doc);
     let ctx = CheckCtx::new(&grids, &roles, &config);
-    run_checks(&ctx, &mechanical_checks())
+    evaluate_checks(&ctx, &mechanical_checks(), CheckSelection::All)
+        .expect("valid built-in catalog")
         .iter()
+        .flat_map(|check| &check.findings)
         .filter(|f| f.check_id == check_id)
         .count()
 }

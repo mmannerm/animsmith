@@ -1,0 +1,354 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:animsmith:schema:output:2",
+  "title": "animsmith output v2",
+  "description": "Final machine-readable result contract for measure, lint, and diff.",
+  "type": "object",
+  "required": ["schema_version", "schema", "tool", "command", "summary"],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "schema": { "const": "urn:animsmith:schema:output:2" },
+    "tool": { "$ref": "#/$defs/tool" },
+    "command": { "enum": ["measure", "lint", "diff"] },
+    "summary": { "type": "object" },
+    "files": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/file_report" }
+    },
+    "inputs": { "$ref": "#/$defs/diff_inputs" },
+    "deltas": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/metric_delta" }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "command": { "const": "measure" } }, "required": ["command"] },
+      "then": {
+        "required": ["files"],
+        "properties": {
+          "summary": { "$ref": "#/$defs/measure_summary" },
+          "files": {
+            "type": "array",
+            "items": {
+              "allOf": [
+                { "$ref": "#/$defs/file_report" },
+                { "properties": { "checks": false } }
+              ]
+            }
+          },
+          "inputs": false,
+          "deltas": false
+        }
+      }
+    },
+    {
+      "if": { "properties": { "command": { "const": "lint" } }, "required": ["command"] },
+      "then": {
+        "required": ["files"],
+        "properties": {
+          "summary": { "$ref": "#/$defs/lint_summary" },
+          "inputs": false,
+          "deltas": false,
+          "files": {
+            "type": "array",
+            "items": {
+              "allOf": [
+                { "$ref": "#/$defs/file_report" },
+                { "required": ["checks"] }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "command": { "const": "diff" } }, "required": ["command"] },
+      "then": {
+        "required": ["inputs", "deltas"],
+        "properties": {
+          "summary": { "$ref": "#/$defs/diff_summary" },
+          "files": false
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "tool": {
+      "type": "object",
+      "required": ["name", "version", "source"],
+      "properties": {
+        "name": { "const": "animsmith" },
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+        },
+        "source": {
+          "type": "object",
+          "required": ["revision", "dirty"],
+          "properties": {
+            "revision": {
+              "type": ["string", "null"],
+              "pattern": "^[0-9a-fA-F]{40}$"
+            },
+            "dirty": { "type": ["boolean", "null"] }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "rig": {
+      "type": "object",
+      "required": ["profile", "resolved_roles"],
+      "properties": {
+        "profile": { "type": "string" },
+        "resolved_roles": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "file_report": {
+      "type": "object",
+      "required": ["path", "rig", "measurements"],
+      "properties": {
+        "path": { "type": "string" },
+        "rig": { "$ref": "#/$defs/rig" },
+        "checks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/check_evaluation" }
+        },
+        "measurements": { "$ref": "urn:animsmith:schema:measurements:1" }
+      },
+      "additionalProperties": false
+    },
+    "check_evaluation": {
+      "type": "object",
+      "required": [
+        "check_id",
+        "selection",
+        "configuration",
+        "applicability",
+        "evaluation",
+        "findings"
+      ],
+      "properties": {
+        "check_id": { "type": "string", "minLength": 1 },
+        "selection": { "enum": ["selected", "unselected"] },
+        "configuration": { "enum": ["enabled", "disabled"] },
+        "applicability": { "enum": ["applicable", "not_applicable"] },
+        "evaluation": { "enum": ["complete", "partial", "not_evaluated"] },
+        "findings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/finding" }
+        },
+        "evaluated_scopes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/scope" }
+        },
+        "gaps": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/gap" }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "evaluation": { "const": "partial" } }, "required": ["evaluation"] },
+          "then": {
+            "required": ["evaluated_scopes", "gaps"],
+            "properties": {
+              "evaluated_scopes": { "minItems": 1 },
+              "gaps": { "minItems": 1 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "evaluation": { "const": "complete" } }, "required": ["evaluation"] },
+          "then": { "properties": { "gaps": { "maxItems": 0 } } }
+        },
+        {
+          "if": { "properties": { "evaluation": { "const": "not_evaluated" } }, "required": ["evaluation"] },
+          "then": {
+            "properties": {
+              "findings": { "maxItems": 0 },
+              "evaluated_scopes": { "maxItems": 0 }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "selection": { "const": "selected" },
+              "configuration": { "const": "enabled" },
+              "applicability": { "const": "applicable" },
+              "evaluation": { "const": "not_evaluated" }
+            },
+            "required": ["selection", "configuration", "applicability", "evaluation"]
+          },
+          "then": {
+            "required": ["gaps"],
+            "properties": { "gaps": { "minItems": 1 } }
+          }
+        },
+        {
+          "if": { "properties": { "selection": { "const": "unselected" } }, "required": ["selection"] },
+          "then": { "$ref": "#/$defs/inactive_evaluation" }
+        },
+        {
+          "if": { "properties": { "configuration": { "const": "disabled" } }, "required": ["configuration"] },
+          "then": { "$ref": "#/$defs/inactive_evaluation" }
+        },
+        {
+          "if": { "properties": { "applicability": { "const": "not_applicable" } }, "required": ["applicability"] },
+          "then": { "$ref": "#/$defs/inactive_evaluation" }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "inactive_evaluation": {
+      "properties": {
+        "evaluation": { "const": "not_evaluated" },
+        "findings": { "maxItems": 0 },
+        "evaluated_scopes": { "maxItems": 0 },
+        "gaps": { "maxItems": 0 }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "required": ["check_id", "severity", "message"],
+      "properties": {
+        "check_id": { "type": "string" },
+        "severity": { "enum": ["note", "warning", "error"] },
+        "clip": { "type": "string" },
+        "bone": { "type": "string" },
+        "time_s": { "type": "number" },
+        "measured": { "type": ["number", "string"] },
+        "expected": { "type": ["number", "string"] },
+        "message": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "scope": {
+      "type": "object",
+      "required": ["code"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "subject": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "gap": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string" },
+        "scope": { "$ref": "#/$defs/scope" }
+      },
+      "additionalProperties": false
+    },
+    "finding_summary": {
+      "type": "object",
+      "required": ["error", "warning", "note"],
+      "properties": {
+        "error": { "type": "integer", "minimum": 0 },
+        "warning": { "type": "integer", "minimum": 0 },
+        "note": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "binary_partition": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "minProperties": 2,
+      "maxProperties": 2
+    },
+    "evaluation_partition": {
+      "type": "object",
+      "required": ["complete", "partial", "not_evaluated"],
+      "properties": {
+        "complete": { "type": "integer", "minimum": 0 },
+        "partial": { "type": "integer", "minimum": 0 },
+        "not_evaluated": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "check_summary": {
+      "type": "object",
+      "required": ["total", "selection", "configuration", "applicability", "evaluation", "gaps"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "selection": {
+          "allOf": [
+            { "$ref": "#/$defs/binary_partition" },
+            { "required": ["selected", "unselected"] }
+          ]
+        },
+        "configuration": {
+          "allOf": [
+            { "$ref": "#/$defs/binary_partition" },
+            { "required": ["enabled", "disabled"] }
+          ]
+        },
+        "applicability": {
+          "allOf": [
+            { "$ref": "#/$defs/binary_partition" },
+            { "required": ["applicable", "not_applicable"] }
+          ]
+        },
+        "evaluation": { "$ref": "#/$defs/evaluation_partition" },
+        "gaps": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "measure_summary": {
+      "type": "object",
+      "required": ["files"],
+      "properties": { "files": { "type": "integer", "minimum": 0 } },
+      "additionalProperties": false
+    },
+    "lint_summary": {
+      "type": "object",
+      "required": ["files", "findings", "checks"],
+      "properties": {
+        "files": { "type": "integer", "minimum": 0 },
+        "findings": { "$ref": "#/$defs/finding_summary" },
+        "checks": { "$ref": "#/$defs/check_summary" }
+      },
+      "additionalProperties": false
+    },
+    "diff_inputs": {
+      "type": "object",
+      "required": ["before", "after"],
+      "properties": {
+        "before": { "type": "string" },
+        "after": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "diff_summary": {
+      "type": "object",
+      "required": ["deltas"],
+      "properties": { "deltas": { "type": "integer", "minimum": 0 } },
+      "additionalProperties": false
+    },
+    "metric_delta": {
+      "type": "object",
+      "required": ["clip", "metric", "note"],
+      "properties": {
+        "clip": { "type": "string" },
+        "metric": { "type": "string" },
+        "before": { "type": "number" },
+        "after": { "type": "number" },
+        "note": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

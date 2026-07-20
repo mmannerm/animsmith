@@ -4,6 +4,7 @@
 //! exports against the wrong rig.
 
 use crate::check::{Check, CheckCtx};
+use crate::evaluation::{Applicability, CheckOutput};
 use crate::finding::{Finding, Severity};
 
 pub struct MissingBones;
@@ -13,7 +14,20 @@ impl Check for MissingBones {
         "missing-bones"
     }
 
-    fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
+    fn applicability(&self, ctx: &CheckCtx) -> Applicability {
+        if ctx
+            .clip_expectations()
+            .iter()
+            .any(|expectations| expectations.animates_bones.is_some())
+        {
+            Applicability::Applicable
+        } else {
+            Applicability::NotApplicable
+        }
+    }
+
+    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+        let mut findings = Vec::new();
         for (index, clip) in ctx.doc.clips.iter().enumerate() {
             let Some(required) = ctx.expectations(index).animates_bones.as_deref() else {
                 continue;
@@ -26,7 +40,7 @@ impl Check for MissingBones {
                     .iter()
                     .position(|b| &b.name == bone_name)
                 else {
-                    out.push(
+                    findings.push(
                         Finding::new(
                             self.id(),
                             Severity::Error,
@@ -42,7 +56,7 @@ impl Check for MissingBones {
                     .iter()
                     .any(|t| t.bone == bone_id && t.key_count() > 0);
                 if !animated {
-                    out.push(
+                    findings.push(
                         Finding::new(
                             self.id(),
                             Severity::Error,
@@ -54,5 +68,6 @@ impl Check for MissingBones {
                 }
             }
         }
+        CheckOutput::complete(findings)
     }
 }

@@ -20,10 +20,11 @@
 #![warn(missing_docs)]
 
 use animsmith_core::model::Document;
-use animsmith_core::profile::{ResolvedRoles, resolve_named};
+use animsmith_core::profile::ResolvedRoles;
 use animsmith_core::{
     Applicability, CheckCtx, CheckEvaluation, CheckSelection, Config, ConfigurationState,
-    EvaluationState, Finding, MetricGrids, Severity, all_checks, evaluate_checks, run_checks,
+    EvaluationState, Finding, MetricGrids, SelectionState, Severity, all_checks, evaluate_checks,
+    resolve_configured_roles,
 };
 use animsmith_gltf::fix::Repair;
 use clap::builder::{PossibleValue, PossibleValuesParser, TypedValueParser};
@@ -41,12 +42,12 @@ mod render;
 const EXIT_FINDINGS: u8 = 1;
 const EXIT_OPERATOR: u8 = 2;
 
-/// Version of the first-published machine-readable output schema,
-/// bumped on breaking JSON changes after that contract is released.
-const SCHEMA_VERSION: u32 = 1;
-const SCHEMA_URL: &str =
-    "https://raw.githubusercontent.com/mmannerm/animsmith/main/docs/schemas/output-v1.schema.json";
-const V2_PREVIEW_SCHEMA_URL: &str = "https://raw.githubusercontent.com/mmannerm/animsmith/main/docs/schemas/output-v2-preview.schema.json";
+/// Final machine-readable result-contract version.
+const OUTPUT_SCHEMA_VERSION: u32 = 2;
+const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:2";
+/// Independently versioned measurement payload contract.
+const MEASUREMENTS_SCHEMA_VERSION: u32 = 1;
+const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:1";
 
 #[derive(Parser)]
 #[command(
@@ -178,12 +179,12 @@ enum Cmd {
     },
     /// Compare animation measurements.
     #[command(
-        long_about = "Compare the measurements of two inputs (asset files or prior `measure` JSON) and report movement beyond significance thresholds. Exits 1 on significant movement."
+        long_about = "Compare the measurements of two inputs (asset files or prior single-file `measure` or `lint` JSON) and report movement beyond significance thresholds. Exits 1 on significant movement."
     )]
     Diff {
-        /// Before input: asset file or single-file `measure --format json` report.
+        /// Before input: asset file or single-file v2 `measure`/`lint` JSON report.
         a: PathBuf,
-        /// After input: asset file or single-file `measure --format json` report.
+        /// After input: asset file or single-file v2 `measure`/`lint` JSON report.
         b: PathBuf,
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
@@ -204,9 +205,6 @@ enum Format {
 enum LintFormat {
     Text,
     Json,
-    /// Experimental schema-v2 coverage model. Field names may change before
-    /// the final v2 contract replaces v1 JSON.
-    JsonV2Preview,
     Markdown,
 }
 
@@ -250,13 +248,24 @@ fn dedup_preserving_order<T: Copy + Eq>(items: impl IntoIterator<Item = T>) -> V
 struct ToolInfo {
     name: &'static str,
     version: &'static str,
+    source: ToolSource,
+}
+
+#[derive(Serialize)]
+struct ToolSource {
+    revision: Option<&'static str>,
+    dirty: Option<bool>,
 }
 
 impl ToolInfo {
     fn current() -> Self {
         Self {
             name: "animsmith",
-            version: env!("ANIMSMITH_VERSION"),
+            version: env!("CARGO_PKG_VERSION"),
+            source: ToolSource {
+                revision: option_env!("ANIMSMITH_GIT_REVISION"),
+                dirty: option_env!("ANIMSMITH_GIT_DIRTY").and_then(|value| value.parse().ok()),
+            },
         }
     }
 }
@@ -272,12 +281,34 @@ struct FileReport {
     path: String,
     rig: RigInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
-    findings: Option<Vec<Finding>>,
-    measurements: BTreeMap<String, animsmith_core::measure::ClipMeasurements>,
-    /// Static per-mesh geometry measurements; empty (and omitted) unless
-    /// the input carried scene assets. Additive to the v1 schema.
+    checks: Option<Vec<CheckEvaluation>>,
+    measurements: MeasurementContract,
+    /// Presentation-only finding projection used by text and Markdown.
+    #[serde(skip)]
+    presentation_findings: Vec<Finding>,
+}
+
+#[derive(Serialize)]
+struct MeasurementContract {
+    schema_version: u32,
+    schema: &'static str,
+    clips: BTreeMap<String, animsmith_core::measure::ClipMeasurements>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     meshes: Vec<animsmith_core::measure::MeshMeasurements>,
+}
+
+impl MeasurementContract {
+    fn new(
+        clips: BTreeMap<String, animsmith_core::measure::ClipMeasurements>,
+        meshes: Vec<animsmith_core::measure::MeshMeasurements>,
+    ) -> Self {
+        Self {
+            schema_version: MEASUREMENTS_SCHEMA_VERSION,
+            schema: MEASUREMENTS_SCHEMA_ID,
+            clips,
+            meshes,
+        }
+    }
 }
 
 #[derive(Default, Serialize)]
@@ -298,9 +329,8 @@ impl FindingSummary {
 }
 
 #[derive(Serialize)]
-struct ReportSummary {
+struct MeasureSummary {
     files: usize,
-    findings: FindingSummary,
 }
 
 /// The common head of every JSON envelope — one definition for the
@@ -316,8 +346,8 @@ struct EnvelopeHeader {
 impl EnvelopeHeader {
     fn new(command: &'static str) -> Self {
         Self {
-            schema_version: SCHEMA_VERSION,
-            schema: SCHEMA_URL,
+            schema_version: OUTPUT_SCHEMA_VERSION,
+            schema: OUTPUT_SCHEMA_ID,
             tool: ToolInfo::current(),
             command,
         }
@@ -325,108 +355,102 @@ impl EnvelopeHeader {
 }
 
 #[derive(Serialize)]
-struct ReportEnvelope {
+struct ReportEnvelope<S> {
     #[serde(flatten)]
     header: EnvelopeHeader,
-    summary: ReportSummary,
+    summary: S,
     files: Vec<FileReport>,
 }
 
-#[derive(Serialize)]
-struct V2PreviewFileReport {
-    path: String,
-    rig: RigInfo,
-    checks: Vec<CheckEvaluation>,
-    measurements: BTreeMap<String, animsmith_core::measure::ClipMeasurements>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    meshes: Vec<animsmith_core::measure::MeshMeasurements>,
+#[derive(Default, Serialize)]
+struct SelectionSummary {
+    selected: usize,
+    unselected: usize,
 }
 
 #[derive(Default, Serialize)]
-struct EvaluationSummary {
+struct ConfigurationSummary {
+    enabled: usize,
+    disabled: usize,
+}
+
+#[derive(Default, Serialize)]
+struct ApplicabilitySummary {
+    applicable: usize,
+    not_applicable: usize,
+}
+
+#[derive(Default, Serialize)]
+struct EvaluationStateSummary {
     complete: usize,
     partial: usize,
     not_evaluated: usize,
-    not_applicable: usize,
-    disabled: usize,
-    unselected: usize,
+}
+
+#[derive(Default, Serialize)]
+struct CheckSummary {
+    total: usize,
+    selection: SelectionSummary,
+    configuration: ConfigurationSummary,
+    applicability: ApplicabilitySummary,
+    evaluation: EvaluationStateSummary,
     gaps: usize,
 }
 
 #[derive(Serialize)]
-struct V2PreviewSummary {
+struct LintSummary {
     files: usize,
     findings: FindingSummary,
-    evaluations: EvaluationSummary,
+    checks: CheckSummary,
 }
 
-#[derive(Serialize)]
-struct V2PreviewEnvelope {
-    schema_version: u32,
-    schema: &'static str,
-    tool: ToolInfo,
-    command: &'static str,
-    summary: V2PreviewSummary,
-    files: Vec<V2PreviewFileReport>,
-}
-
-impl V2PreviewEnvelope {
-    fn new(files: Vec<V2PreviewFileReport>) -> Self {
+impl ReportEnvelope<LintSummary> {
+    fn lint(files: Vec<FileReport>) -> Self {
         let mut findings = FindingSummary::default();
-        let mut evaluations = EvaluationSummary::default();
+        let mut checks = CheckSummary::default();
         for file in &files {
-            for check in &file.checks {
+            for check in file.checks.as_deref().unwrap_or_default() {
+                checks.total += 1;
                 for finding in &check.findings {
                     findings.add(finding.severity);
                 }
+                match check.selection {
+                    SelectionState::Selected => checks.selection.selected += 1,
+                    SelectionState::Unselected => checks.selection.unselected += 1,
+                }
+                match check.configuration {
+                    ConfigurationState::Enabled => checks.configuration.enabled += 1,
+                    ConfigurationState::Disabled => checks.configuration.disabled += 1,
+                }
+                match check.applicability {
+                    Applicability::Applicable => checks.applicability.applicable += 1,
+                    Applicability::NotApplicable => checks.applicability.not_applicable += 1,
+                }
                 match check.evaluation {
-                    EvaluationState::Complete => evaluations.complete += 1,
-                    EvaluationState::Partial => evaluations.partial += 1,
-                    EvaluationState::NotEvaluated => evaluations.not_evaluated += 1,
+                    EvaluationState::Complete => checks.evaluation.complete += 1,
+                    EvaluationState::Partial => checks.evaluation.partial += 1,
+                    EvaluationState::NotEvaluated => checks.evaluation.not_evaluated += 1,
                 }
-                if check.applicability == Applicability::NotApplicable {
-                    evaluations.not_applicable += 1;
-                }
-                if check.configuration == ConfigurationState::Disabled {
-                    evaluations.disabled += 1;
-                }
-                if check.selection == animsmith_core::SelectionState::Unselected {
-                    evaluations.unselected += 1;
-                }
-                evaluations.gaps += check.gaps.len();
+                checks.gaps += check.gaps.len();
             }
         }
         Self {
-            schema_version: 2,
-            schema: V2_PREVIEW_SCHEMA_URL,
-            tool: ToolInfo::current(),
-            command: "lint",
-            summary: V2PreviewSummary {
+            header: EnvelopeHeader::new("lint"),
+            summary: LintSummary {
                 files: files.len(),
                 findings,
-                evaluations,
+                checks,
             },
             files,
         }
     }
 }
 
-impl ReportEnvelope {
-    fn new(command: &'static str, files: Vec<FileReport>) -> Self {
-        let mut findings = FindingSummary::default();
-        for file in &files {
-            if let Some(file_findings) = &file.findings {
-                for finding in file_findings {
-                    findings.add(finding.severity);
-                }
-            }
-        }
+impl ReportEnvelope<MeasureSummary> {
+    fn measure(files: Vec<FileReport>) -> Self {
         Self {
-            header: EnvelopeHeader::new(command),
-            summary: ReportSummary {
-                files: files.len(),
-                findings,
-            },
+            header: EnvelopeHeader::new("measure"),
+            summary: MeasureSummary { files: files.len() },
             files,
         }
     }
@@ -477,37 +501,6 @@ fn load_config(explicit: Option<&Path>) -> Result<Config, String> {
     let text = std::fs::read_to_string(&path)
         .map_err(|e| format!("cannot read config {}: {e}", path.display()))?;
     toml::from_str(&text).map_err(|e| format!("bad config {}: {e}", path.display()))
-}
-
-/// Resolve rig roles per the config: inline role map entries override
-/// the (named or auto-detected) profile.
-fn resolve_roles(doc: &Document, config: &Config) -> ResolvedRoles {
-    let base = resolve_named(&doc.skeleton, &config.rig.profile).unwrap_or_default();
-    if config.rig.roles.is_empty() {
-        let mut roles = base;
-        if roles.profile.is_empty() {
-            roles.profile = "unknown".into();
-        }
-        return roles;
-    }
-    let mut pairs: Vec<_> = base
-        .iter()
-        .map(|(role, bone)| (role, doc.skeleton.bones[bone].name.clone()))
-        .collect();
-    pairs.extend(
-        config
-            .rig
-            .roles
-            .iter()
-            .map(|(role, name)| (*role, name.clone())),
-    );
-    let mut resolved = ResolvedRoles::from_names(&doc.skeleton, pairs);
-    resolved.profile = if base.profile.is_empty() {
-        "custom".into()
-    } else {
-        format!("{}+custom", base.profile)
-    };
-    resolved
 }
 
 fn rig_info(doc: &Document, roles: &ResolvedRoles) -> RigInfo {
@@ -576,57 +569,12 @@ fn validate_check_selection(
     Ok(())
 }
 
-fn run_lint_v2_preview(
-    files: &[PathBuf],
-    config: &Config,
-    checks: &[Box<dyn animsmith_core::Check>],
-    select: &[String],
-    deny_warnings: bool,
-) -> Result<ExitCode, String> {
-    let selected: BTreeSet<String> = select.iter().cloned().collect();
-    let selection = if selected.is_empty() {
-        CheckSelection::All
-    } else {
-        CheckSelection::Only(&selected)
-    };
-    let mut reports = Vec::new();
-    let mut worst = Severity::Note;
-    for file in files {
-        let doc = load(file)?;
-        let roles = resolve_roles(&doc, config);
-        let grids = MetricGrids::new(&doc);
-        let ctx = CheckCtx::new(&grids, &roles, config);
-        let evaluations = evaluate_checks(&ctx, checks, selection);
-        for finding in evaluations.iter().flat_map(|check| &check.findings) {
-            worst = worst.max(finding.severity);
-        }
-        reports.push(V2PreviewFileReport {
-            path: file.display().to_string(),
-            rig: rig_info(&doc, &roles),
-            checks: evaluations,
-            measurements: animsmith_core::measure::measure_document(&grids, &roles, config),
-            meshes: animsmith_core::measure::measure_meshes(&doc.assets),
-        });
-    }
-    render::print_json(&V2PreviewEnvelope::new(reports));
-    let fail_at = if deny_warnings {
-        Severity::Warning
-    } else {
-        Severity::Error
-    };
-    Ok(if worst >= fail_at {
-        ExitCode::from(EXIT_FINDINGS)
-    } else {
-        ExitCode::SUCCESS
-    })
-}
-
 fn run(cli: Cli) -> Result<ExitCode, String> {
     match cli.cmd {
         Cmd::Inspect { file } => {
             let config = load_config(cli.config.as_deref())?;
             let doc = load(&file)?;
-            let roles = resolve_roles(&doc, &config);
+            let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
             inspect(&doc, &roles);
             Ok(ExitCode::SUCCESS)
         }
@@ -636,24 +584,25 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let mut reports = Vec::new();
             for file in &files {
                 let doc = load(file)?;
-                let roles = resolve_roles(&doc, &config);
+                let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
                 let grids = MetricGrids::new(&doc);
                 reports.push(FileReport {
                     path: file.display().to_string(),
                     rig: rig_info(&doc, &roles),
-                    findings: None,
-                    measurements: animsmith_core::measure::measure_document(
-                        &grids, &roles, &config,
+                    checks: None,
+                    measurements: MeasurementContract::new(
+                        animsmith_core::measure::measure_document(&grids, &roles, &config),
+                        animsmith_core::measure::measure_meshes(&doc.assets),
                     ),
-                    meshes: animsmith_core::measure::measure_meshes(&doc.assets),
+                    presentation_findings: Vec::new(),
                 });
             }
             match format {
-                Format::Json => render::print_json(&ReportEnvelope::new("measure", reports)),
+                Format::Json => render::print_json(&ReportEnvelope::measure(reports)),
                 Format::Text => {
                     for report in &reports {
                         println!("{}:", report.path);
-                        for (clip, m) in &report.measurements {
+                        for (clip, m) in &report.measurements.clips {
                             let seam = m
                                 .loop_seam_ratio
                                 .map(|r| format!(" seam×{r:.2}"))
@@ -671,7 +620,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                                 m.animated_bones.len()
                             );
                         }
-                        for mesh in &report.meshes {
+                        for mesh in &report.measurements.meshes {
                             let bbox = mesh
                                 .aabb
                                 .as_ref()
@@ -710,51 +659,55 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
         } => {
             let config = load_config(cli.config.as_deref())?;
             require_files(&files)?;
-            let mut checks = all_checks();
+            let checks = all_checks();
             validate_check_selection(&checks, &select)?;
-            if format == LintFormat::JsonV2Preview {
-                if !allow.is_empty() {
-                    return Err(
-                        "--allow is not supported with --format json-v2-preview; preview results retain every content finding"
-                            .into(),
-                    );
-                }
-                return run_lint_v2_preview(&files, &config, &checks, &select, deny_warnings);
+            if format == LintFormat::Json && !allow.is_empty() {
+                return Err(
+                    "--allow is not supported with --format json; machine-readable results retain every content finding"
+                        .into(),
+                );
             }
-            if !select.is_empty() {
-                checks.retain(|c| select.iter().any(|id| id == c.id()));
-            }
+            let selected: BTreeSet<String> = select.iter().cloned().collect();
+            let selection = if selected.is_empty() {
+                CheckSelection::All
+            } else {
+                CheckSelection::Only(&selected)
+            };
             let mut reports = Vec::new();
             let mut worst = Severity::Note;
             for file in &files {
                 let doc = load(file)?;
-                let roles = resolve_roles(&doc, &config);
+                let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
                 let grids = MetricGrids::new(&doc);
                 let ctx = CheckCtx::new(&grids, &roles, &config);
-                let mut findings = run_checks(&ctx, &checks);
-                findings.retain(|f| !allow.iter().any(|id| id == f.check_id));
-                findings.sort_by(|a, b| {
+                let evaluations =
+                    evaluate_checks(&ctx, &checks, selection).map_err(|error| error.to_string())?;
+                let mut presentation_findings: Vec<_> = evaluations
+                    .iter()
+                    .flat_map(|check| check.findings.iter().cloned())
+                    .filter(|finding| !allow.iter().any(|id| id == finding.check_id))
+                    .collect();
+                presentation_findings.sort_by(|a, b| {
                     (a.clip.as_deref(), std::cmp::Reverse(a.severity))
                         .cmp(&(b.clip.as_deref(), std::cmp::Reverse(b.severity)))
                 });
-                for finding in &findings {
+                for finding in &presentation_findings {
                     worst = worst.max(finding.severity);
                 }
                 reports.push(FileReport {
                     path: file.display().to_string(),
                     rig: rig_info(&doc, &roles),
-                    findings: Some(findings),
-                    measurements: animsmith_core::measure::measure_document(
-                        &grids, &roles, &config,
+                    checks: Some(evaluations),
+                    measurements: MeasurementContract::new(
+                        animsmith_core::measure::measure_document(&grids, &roles, &config),
+                        animsmith_core::measure::measure_meshes(&doc.assets),
                     ),
-                    // `lint` judges animation, not geometry — no meshes.
-                    meshes: Vec::new(),
+                    presentation_findings,
                 });
             }
             match format {
-                LintFormat::Json => render::print_json(&ReportEnvelope::new("lint", reports)),
+                LintFormat::Json => render::print_json(&ReportEnvelope::lint(reports)),
                 LintFormat::Text => render::print_text(&reports),
-                LintFormat::JsonV2Preview => unreachable!("preview returned above"),
                 LintFormat::Markdown => render::print_markdown(&reports),
             }
             let fail_at = if deny_warnings {
@@ -772,10 +725,14 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
         Cmd::Report { file, output, clip } => {
             let config = load_config(cli.config.as_deref())?;
             let doc = load(&file)?;
-            let roles = resolve_roles(&doc, &config);
+            let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
             let grids = MetricGrids::new(&doc);
             let ctx = CheckCtx::new(&grids, &roles, &config);
-            let findings = run_checks(&ctx, &all_checks());
+            let findings: Vec<_> = evaluate_checks(&ctx, &all_checks(), CheckSelection::All)
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .flat_map(|check| check.findings)
+                .collect();
             let html = animsmith_report::render(&grids, &roles, &findings, clip.as_deref());
             std::fs::write(&output, &html)
                 .map_err(|e| format!("cannot write {}: {e}", output.display()))?;
@@ -799,7 +756,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
         } => {
             let config = load_config(cli.config.as_deref())?;
             let mut doc = load(&input)?;
-            let roles = resolve_roles(&doc, &config);
+            let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
             let window = match &slice {
                 None => None,
                 Some(spec) => {
@@ -1008,13 +965,14 @@ fn load_measurements(
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         let value: serde_json::Value = serde_json::from_str(&text)
             .map_err(|e| format!("bad JSON in {}: {e}", path.display()))?;
-        // Only the versioned v1 envelope is accepted — no pre-publish
-        // legacy shapes, and no silently misreading a future version.
+        // Only the final v2 envelope with measurement contract v1 is
+        // accepted. Pre-finalization report shapes are intentionally not
+        // retained while the project is alpha.
         match value.get("schema_version").and_then(|v| v.as_u64()) {
-            Some(v) if v == u64::from(SCHEMA_VERSION) => {}
+            Some(v) if v == u64::from(OUTPUT_SCHEMA_VERSION) => {}
             Some(v) => {
                 return Err(format!(
-                    "{} has schema_version {v}; this build reads schema_version {SCHEMA_VERSION}",
+                    "{} has schema_version {v}; this build reads schema_version {OUTPUT_SCHEMA_VERSION}",
                     path.display()
                 ));
             }
@@ -1022,6 +980,27 @@ fn load_measurements(
                 return Err(format!(
                     "{} is not an animsmith report envelope (no `schema_version`); \
                      regenerate it with `animsmith measure --format json`",
+                    path.display()
+                ));
+            }
+        }
+        if value.get("schema").and_then(|v| v.as_str()) != Some(OUTPUT_SCHEMA_ID) {
+            return Err(format!(
+                "{} does not identify output contract {OUTPUT_SCHEMA_ID}; regenerate it with `animsmith measure --format json`",
+                path.display()
+            ));
+        }
+        match value.get("command").and_then(|v| v.as_str()) {
+            Some("measure" | "lint") => {}
+            Some(command) => {
+                return Err(format!(
+                    "{} is a {command:?} report; diff reads only measure or lint reports",
+                    path.display()
+                ));
+            }
+            None => {
+                return Err(format!(
+                    "{} is not an animsmith measurement report (no `command`); regenerate it with `animsmith measure --format json`",
                     path.display()
                 ));
             }
@@ -1039,15 +1018,39 @@ fn load_measurements(
                 path.display()
             ));
         }
-        let map = files[0]
+        let measurements = files[0]
             .get("measurements")
-            .cloned()
             .ok_or_else(|| format!("{} report has no measurements", path.display()))?;
+        match measurements.get("schema_version").and_then(|v| v.as_u64()) {
+            Some(v) if v == u64::from(MEASUREMENTS_SCHEMA_VERSION) => {}
+            Some(v) => {
+                return Err(format!(
+                    "{} has measurement schema_version {v}; this build reads measurement schema_version {MEASUREMENTS_SCHEMA_VERSION}",
+                    path.display()
+                ));
+            }
+            None => {
+                return Err(format!(
+                    "{} has no versioned measurement contract; regenerate it with `animsmith measure --format json`",
+                    path.display()
+                ));
+            }
+        }
+        if measurements.get("schema").and_then(|v| v.as_str()) != Some(MEASUREMENTS_SCHEMA_ID) {
+            return Err(format!(
+                "{} does not identify measurement contract {MEASUREMENTS_SCHEMA_ID}; regenerate it with `animsmith measure --format json`",
+                path.display()
+            ));
+        }
+        let map = measurements
+            .get("clips")
+            .cloned()
+            .ok_or_else(|| format!("{} measurement contract has no `clips` map", path.display()))?;
         return serde_json::from_value(map)
             .map_err(|e| format!("{} is not a measurements report: {e}", path.display()));
     }
     let doc = load(path)?;
-    let roles = resolve_roles(&doc, config);
+    let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
     let grids = MetricGrids::new(&doc);
     Ok(animsmith_core::measure::measure_document(
         &grids, &roles, config,

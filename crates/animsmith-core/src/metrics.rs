@@ -84,7 +84,7 @@ pub struct FootCycleMetrics {
 
 /// Measure the foot cycle of a clip from its pose grid. Requires the
 /// Hips role and at least one foot role; returns `None` otherwise (the
-/// caller decides whether that's a skip-note or nothing).
+/// caller decides which typed coverage gap represents the missing metric).
 ///
 /// The grid must span `[0, duration]` — the wrap pair is
 /// `(last frame, frame 0)`. Grids under 3 frames carry no cycle.
@@ -123,6 +123,12 @@ pub fn foot_cycle_metrics(
     let rel = |frame: usize, bone: usize| -> Vec3 {
         grid.model_position(frame, bone) - grid.model_position(frame, hips)
     };
+    if (0..frames).any(|frame| {
+        !grid.model_position(frame, hips).is_finite()
+            || feet.iter().any(|&foot| !rel(frame, foot).is_finite())
+    }) {
+        return None;
+    }
 
     // Loop seam: the wrap chord vs its NEIGHBOURING in-clip steps (the
     // step into the last frame and the step out of the first) — local
@@ -139,7 +145,8 @@ pub fn foot_cycle_metrics(
     let step_last = max_foot_dist(frames - 1, frames - 2);
     let neighbour_step = step_first.max(step_last);
     let loop_seam_ratio = if neighbour_step > 0.0 && neighbour_step >= min_stride_step_m {
-        Some(seam / neighbour_step)
+        let ratio = seam / neighbour_step;
+        ratio.is_finite().then_some(ratio)
     } else {
         None
     };
@@ -176,7 +183,7 @@ pub fn foot_cycle_metrics(
 /// minimum of `A·cos(2π·t/N − φ)` sits at `t/N = (φ/2π + 0.5) mod 1`.
 pub fn fundamental_trough_phase(signal: &[f64]) -> Option<f64> {
     let n = signal.len();
-    if n < 2 {
+    if n < 2 || signal.iter().any(|value| !value.is_finite()) {
         return None;
     }
     let mut re = 0.0f64;
@@ -187,7 +194,8 @@ pub fn fundamental_trough_phase(signal: &[f64]) -> Option<f64> {
         im += y * angle.sin();
     }
     let phi = im.atan2(re);
-    Some((phi / std::f64::consts::TAU + 0.5).rem_euclid(1.0))
+    let phase = (phi / std::f64::consts::TAU + 0.5).rem_euclid(1.0);
+    phase.is_finite().then_some(phase)
 }
 
 /// Horizontal (XZ-plane) root displacement over the clip, divided by
@@ -211,7 +219,8 @@ pub fn root_motion_speed_mps(grid: &PoseGrid, roles: &ResolvedRoles) -> Option<f
     let b = grid.model_position(frames - 1, bone);
     let dx = (b.x - a.x) as f64;
     let dz = (b.z - a.z) as f64;
-    Some(dx.hypot(dz) / duration)
+    let speed = dx.hypot(dz) / duration;
+    speed.is_finite().then_some(speed)
 }
 
 /// Maximum angular deviation (degrees) of a rotation track from its
@@ -232,7 +241,9 @@ pub fn rotation_range_deg(track: &Track) -> Option<f64> {
             && q.length_squared() > 0.0
         {
             let deg = first.angle_between(q.normalize()).to_degrees() as f64;
-            max_deg = max_deg.max(deg);
+            if deg.is_finite() {
+                max_deg = max_deg.max(deg);
+            }
         }
     }
     Some(max_deg)
@@ -283,7 +294,7 @@ mod tests {
     use crate::model::{
         Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
     };
-    use crate::profile::ResolvedRoles;
+    use crate::profile::{ResolvedRoles, Role};
     use glam::{Quat, Vec3};
     use std::rc::Rc;
 
@@ -401,5 +412,43 @@ mod tests {
             .grid(0)
             .expect("later longest track supplies a metric grid");
         assert_eq!(grid.frame_count(), 3);
+    }
+
+    #[test]
+    fn foot_metrics_reject_finite_positions_whose_relative_subtraction_overflows() {
+        let mut doc = document_with_metric_clip();
+        doc.skeleton.bones = vec![
+            Bone {
+                name: "hips".into(),
+                parent: None,
+                rest: Transform {
+                    translation: Vec3::splat(-f32::MAX),
+                    ..Transform::IDENTITY
+                },
+                inverse_bind: None,
+            },
+            Bone {
+                name: "left".into(),
+                parent: None,
+                rest: Transform {
+                    translation: Vec3::splat(f32::MAX),
+                    ..Transform::IDENTITY
+                },
+                inverse_bind: None,
+            },
+        ];
+        doc.clips[0].tracks[0].bone = 0;
+        let roles = ResolvedRoles::from_names(
+            &doc.skeleton,
+            [
+                (Role::Hips, "hips".to_string()),
+                (Role::LeftFoot, "left".to_string()),
+            ],
+        );
+        let grid = MetricGrids::new(&doc).grid(0).expect("metric grid");
+
+        assert!(grid.model_position(0, 0).is_finite());
+        assert!(grid.model_position(0, 1).is_finite());
+        assert!(foot_cycle_metrics(&grid, &roles, MIN_STRIDE_STEP_M).is_none());
     }
 }

@@ -9,7 +9,7 @@
 //! GitLab Code Quality, JUnit, CSV) belong here alongside the JSON one.
 
 use crate::{FileReport, FindingSummary};
-use animsmith_core::Severity;
+use animsmith_core::{CoverageGap, Severity};
 use serde::Serialize;
 
 /// Serialize any envelope as pretty JSON — the machine-readable contract
@@ -24,9 +24,11 @@ pub(crate) fn print_text(reports: &[FileReport]) {
     let mut errors = 0usize;
     let mut warnings = 0usize;
     let mut notes = 0usize;
+    let mut gaps = 0usize;
     for report in reports {
-        let findings = report.findings.as_deref().unwrap_or_default();
-        if findings.is_empty() {
+        let findings = &report.presentation_findings;
+        let coverage_gaps: Vec<_> = coverage_gaps(report).collect();
+        if findings.is_empty() && coverage_gaps.is_empty() {
             println!("{}: clean", report.path);
             continue;
         }
@@ -58,8 +60,29 @@ pub(crate) fn print_text(reports: &[FileReport]) {
                 f.severity, f.check_id, location, f.message, detail
             );
         }
+        for (check_id, gap) in coverage_gaps {
+            gaps += 1;
+            let scope = gap.scope.as_ref().map_or_else(String::new, |scope| {
+                scope.subject.as_ref().map_or_else(
+                    || format!(" {}", scope.code),
+                    |subject| format!(" {} '{subject}'", scope.code),
+                )
+            });
+            println!(
+                "  coverage[{check_id}]{scope}: {}: {}",
+                gap.code, gap.message
+            );
+        }
     }
-    println!("{errors} error(s), {warnings} warning(s), {notes} note(s)");
+    println!("{errors} error(s), {warnings} warning(s), {notes} note(s), {gaps} coverage gap(s)");
+}
+
+fn coverage_gaps(report: &FileReport) -> impl Iterator<Item = (&str, &CoverageGap)> {
+    report
+        .checks
+        .iter()
+        .flat_map(|checks| checks.iter())
+        .flat_map(|check| check.gaps.iter().map(move |gap| (check.check_id, gap)))
 }
 
 /// The finding-count threshold at or below which a file's list stays
@@ -92,14 +115,16 @@ fn render_markdown(reports: &[FileReport]) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
     let mut total = FindingSummary::default();
+    let mut total_gaps = 0usize;
 
     let _ = writeln!(out, "## animsmith lint\n");
 
     for report in reports {
-        let findings = report.findings.as_deref().unwrap_or_default();
-        if findings.is_empty() {
+        let findings = &report.presentation_findings;
+        let gaps: Vec<_> = coverage_gaps(report).collect();
+        if findings.is_empty() && gaps.is_empty() {
             let _ = writeln!(out, "### `{}`\n", md_cell(&report.path));
-            let _ = writeln!(out, "✅ Clean — no findings.\n");
+            let _ = writeln!(out, "✅ Clean — no findings or coverage gaps.\n");
             continue;
         }
 
@@ -110,78 +135,106 @@ fn render_markdown(reports: &[FileReport]) -> String {
         total.error += file.error;
         total.warning += file.warning;
         total.note += file.note;
+        total_gaps += gaps.len();
 
         let _ = writeln!(out, "### `{}`\n", md_cell(&report.path));
         let _ = writeln!(out, "{}\n", severity_line(&file));
 
-        let open = if findings.len() <= MARKDOWN_COLLAPSE_AT {
-            " open"
-        } else {
-            ""
-        };
-        let count = findings.len();
-        let plural = if count == 1 { "finding" } else { "findings" };
-        let _ = writeln!(out, "<details{open}>");
-        let _ = writeln!(
-            out,
-            "<summary><strong>{count} {plural}</strong></summary>\n"
-        );
+        if !findings.is_empty() {
+            let open = if findings.len() <= MARKDOWN_COLLAPSE_AT {
+                " open"
+            } else {
+                ""
+            };
+            let count = findings.len();
+            let plural = if count == 1 { "finding" } else { "findings" };
+            let _ = writeln!(out, "<details{open}>");
+            let _ = writeln!(
+                out,
+                "<summary><strong>{count} {plural}</strong></summary>\n"
+            );
 
-        let mut current_clip: Option<Option<&str>> = None;
-        for f in findings {
-            let clip = f.clip.as_deref();
-            if current_clip != Some(clip) {
-                current_clip = Some(clip);
-                match clip {
-                    Some(name) => {
-                        let _ = writeln!(out, "\n#### clip `{}`\n", md_cell(name));
+            let mut current_clip: Option<Option<&str>> = None;
+            for f in findings {
+                let clip = f.clip.as_deref();
+                if current_clip != Some(clip) {
+                    current_clip = Some(clip);
+                    match clip {
+                        Some(name) => {
+                            let _ = writeln!(out, "\n#### clip `{}`\n", md_cell(name));
+                        }
+                        None => {
+                            let _ = writeln!(out, "\n#### file-level\n");
+                        }
                     }
-                    None => {
-                        let _ = writeln!(out, "\n#### file-level\n");
+                    let _ = writeln!(
+                        out,
+                        "| Severity | Check | Location | Measured | Expected | Message |"
+                    );
+                    let _ = writeln!(out, "| --- | --- | --- | --- | --- | --- |");
+                }
+                let mut location = String::new();
+                if let Some(bone) = &f.bone {
+                    let _ = write!(location, "bone `{}`", md_cell(bone));
+                }
+                if let Some(t) = f.time_s {
+                    if !location.is_empty() {
+                        location.push(' ');
                     }
+                    let _ = write!(location, "@{t:.3}s");
+                }
+                if location.is_empty() {
+                    location.push('—');
                 }
                 let _ = writeln!(
                     out,
-                    "| Severity | Check | Location | Measured | Expected | Message |"
+                    "| {} {} | `{}` | {} | {} | {} | `{}` |",
+                    severity_badge(f.severity),
+                    f.severity,
+                    f.check_id,
+                    location,
+                    md_value_cell(f.measured.as_ref()),
+                    md_value_cell(f.expected.as_ref()),
+                    md_cell(&f.message),
                 );
-                let _ = writeln!(out, "| --- | --- | --- | --- | --- | --- |");
             }
-            let mut location = String::new();
-            if let Some(bone) = &f.bone {
-                let _ = write!(location, "bone `{}`", md_cell(bone));
-            }
-            if let Some(t) = f.time_s {
-                if !location.is_empty() {
-                    location.push(' ');
-                }
-                let _ = write!(location, "@{t:.3}s");
-            }
-            if location.is_empty() {
-                location.push('—');
-            }
-            // Every asset-derived cell (check id excepted — it is
-            // `'static`) is code-wrapped and escaped so an untrusted clip,
-            // bone, value, or message cannot break the table or inject
-            // Markdown/HTML into a CI comment. See `md_cell`.
+            let _ = writeln!(out, "\n</details>\n");
+        }
+
+        if !gaps.is_empty() {
+            let _ = writeln!(out, "<details open>");
             let _ = writeln!(
                 out,
-                "| {} {} | `{}` | {} | {} | {} | `{}` |",
-                severity_badge(f.severity),
-                f.severity,
-                f.check_id,
-                location,
-                md_value_cell(f.measured.as_ref()),
-                md_value_cell(f.expected.as_ref()),
-                md_cell(&f.message),
+                "<summary><strong>{} coverage gap(s)</strong></summary>\n",
+                gaps.len()
             );
+            let _ = writeln!(out, "| Check | Code | Scope | Subject | Message |");
+            let _ = writeln!(out, "| --- | --- | --- | --- | --- |");
+            for (check_id, gap) in gaps {
+                let scope = gap.scope.as_ref();
+                let _ = writeln!(
+                    out,
+                    "| `{check_id}` | `{}` | `{}` | `{}` | `{}` |",
+                    gap.code,
+                    scope.map_or("—", |scope| scope.code),
+                    scope
+                        .and_then(|scope| scope.subject.as_deref())
+                        .map_or_else(|| "—".into(), md_cell),
+                    md_cell(&gap.message),
+                );
+            }
+            let _ = writeln!(out, "\n</details>\n");
         }
-        let _ = writeln!(out, "\n</details>\n");
     }
 
     let files = reports.len();
     let file_word = if files == 1 { "file" } else { "files" };
     let _ = writeln!(out, "---\n");
-    let _ = writeln!(out, "**{files} {file_word}** — {}", severity_line(&total));
+    let _ = writeln!(
+        out,
+        "**{files} {file_word}** — {} · {total_gaps} coverage gap(s)",
+        severity_line(&total)
+    );
     out
 }
 
@@ -251,7 +304,10 @@ fn md_cell(text: &str) -> String {
 mod tests {
     use super::*;
     use crate::RigInfo;
-    use animsmith_core::Finding;
+    use animsmith_core::{
+        Applicability, CheckEvaluation, ConfigurationState, CoverageGap, CoverageGapCode,
+        EvaluationScope, EvaluationState, Finding, SelectionState,
+    };
     use std::collections::BTreeMap;
 
     /// A minimal lint `FileReport`; only `path` and `findings` drive the
@@ -263,9 +319,9 @@ mod tests {
                 profile: "unknown".to_string(),
                 resolved_roles: BTreeMap::new(),
             },
-            findings: Some(findings),
-            measurements: BTreeMap::new(),
-            meshes: Vec::new(),
+            checks: None,
+            measurements: crate::MeasurementContract::new(BTreeMap::new(), Vec::new()),
+            presentation_findings: findings,
         }
     }
 
@@ -273,7 +329,10 @@ mod tests {
     fn markdown_clean_file_renders_summary_without_a_table() {
         let md = render_markdown(&[report("clean.glb", vec![])]);
         assert!(md.contains("### `clean.glb`"), "{md}");
-        assert!(md.contains("✅ Clean — no findings."), "{md}");
+        assert!(
+            md.contains("✅ Clean — no findings or coverage gaps."),
+            "{md}"
+        );
         assert!(!md.contains("<details"), "{md}");
         assert!(!md.contains("| Severity |"), "{md}");
         // Footer: singular "file" and a zeroed total.
@@ -395,6 +454,34 @@ mod tests {
         assert!(
             md.matches(esc.as_str()).count() >= 5,
             "escaped form missing from some cell:\n{md}"
+        );
+    }
+
+    #[test]
+    fn markdown_escapes_hostile_coverage_gap_subjects_and_messages() {
+        let hostile = "x|y`</details>\nq";
+        let escaped = md_cell(hostile);
+        let mut file = report("gap.glb", Vec::new());
+        file.checks = Some(vec![CheckEvaluation {
+            check_id: "foot-slide",
+            selection: SelectionState::Selected,
+            configuration: ConfigurationState::Enabled,
+            applicability: Applicability::Applicable,
+            evaluation: EvaluationState::NotEvaluated,
+            findings: Vec::new(),
+            evaluated_scopes: Vec::new(),
+            gaps: vec![
+                CoverageGap::new(CoverageGapCode::ROLES_UNRESOLVED, hostile)
+                    .scope(EvaluationScope::new("foot_stance").subject(hostile)),
+            ],
+        }]);
+
+        let md = render_markdown(&[file]);
+        assert!(!md.contains(hostile), "raw hostile gap text leaked:\n{md}");
+        assert_eq!(
+            md.matches(&escaped).count(),
+            2,
+            "subject and message:\n{md}"
         );
     }
 }

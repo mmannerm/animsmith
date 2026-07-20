@@ -11,8 +11,8 @@ use animsmith_core::metrics::MIN_STRIDE_STEP_M;
 use animsmith_core::model::*;
 use animsmith_core::profile::{ResolvedRoles, Role};
 use animsmith_core::{
-    CheckCtx, CheckSelection, Config, EvaluationState, MetricGrids, Severity, all_checks,
-    evaluate_checks, run_checks,
+    CheckCtx, CheckEvaluation, CheckSelection, Config, ConfigurationState, EvaluationState,
+    MetricGrids, Severity, all_checks, evaluate_checks,
 };
 use glam::Vec3;
 use std::f64::consts::TAU;
@@ -73,31 +73,34 @@ fn lint_with(doc: &Document, config: &Config) -> Vec<animsmith_core::Finding> {
     let roles = roles(&doc.skeleton);
     let grids = MetricGrids::new(doc);
     let ctx = CheckCtx::new(&grids, &roles, config);
-    run_checks(&ctx, &all_checks())
+    evaluate_checks(&ctx, &all_checks(), CheckSelection::All)
+        .expect("valid built-in catalog")
+        .into_iter()
+        .flat_map(|check| check.findings)
+        .collect()
 }
 
-/// Lint with an *empty* role map — the shape a rig whose profile did
-/// not resolve produces. Role-dependent checks must skip-with-note,
-/// never fail.
-fn lint_unresolved(doc: &Document, config: &Config) -> Vec<animsmith_core::Finding> {
+/// Evaluate with an empty role map, preserving typed coverage evidence.
+fn evaluate_unresolved(doc: &Document, config: &Config) -> Vec<CheckEvaluation> {
     let roles = ResolvedRoles::default();
     let grids = MetricGrids::new(doc);
     let ctx = CheckCtx::new(&grids, &roles, config);
-    run_checks(&ctx, &all_checks())
+    evaluate_checks(&ctx, &all_checks(), CheckSelection::All).expect("valid built-in catalog")
 }
 
-fn assert_loop_seam_is_skipped_for_unresolved_roles(findings: &[animsmith_core::Finding]) {
-    let loop_seam: Vec<_> = findings
+fn check<'a>(records: &'a [CheckEvaluation], id: &str) -> &'a CheckEvaluation {
+    records
         .iter()
-        .filter(|f| f.check_id == "loop-seam")
-        .collect();
-    assert_eq!(
-        loop_seam.len(),
-        1,
-        "expected unresolved-role note: {loop_seam:#?}"
-    );
-    assert_eq!(loop_seam[0].severity, Severity::Note);
-    assert!(loop_seam[0].message.contains("hips/foot"));
+        .find(|record| record.check_id == id)
+        .unwrap_or_else(|| panic!("missing {id} record"))
+}
+
+fn assert_loop_seam_has_unresolved_roles_gap(records: &[CheckEvaluation]) {
+    let loop_seam = check(records, "loop-seam");
+    assert_eq!(loop_seam.evaluation, EvaluationState::NotEvaluated);
+    assert!(loop_seam.findings.is_empty());
+    assert_eq!(loop_seam.gaps[0].code.as_str(), "roles_unresolved");
+    assert!(loop_seam.gaps[0].message.contains("hips/foot"));
 }
 
 fn json_config(json: serde_json::Value) -> Config {
@@ -167,7 +170,7 @@ fn check_ctx_does_not_resolve_declarative_rig_config() {
         },
         "clips": { "walk": { "loop": true } }
     }));
-    assert_loop_seam_is_skipped_for_unresolved_roles(&lint_unresolved(&doc, &inline_config));
+    assert_loop_seam_has_unresolved_roles_gap(&evaluate_unresolved(&doc, &inline_config));
 
     // `ue-mannequin` resolves this renamed walk rig when a frontend applies
     // `Config::rig`; `CheckCtx` must still preserve the supplied empty map.
@@ -178,10 +181,7 @@ fn check_ctx_does_not_resolve_declarative_rig_config() {
         "rig": { "profile": "ue-mannequin" },
         "clips": { "walk": { "loop": true } }
     }));
-    assert_loop_seam_is_skipped_for_unresolved_roles(&lint_unresolved(
-        &profile_doc,
-        &profile_config,
-    ));
+    assert_loop_seam_has_unresolved_roles_gap(&evaluate_unresolved(&profile_doc, &profile_config));
 }
 
 #[test]
@@ -215,10 +215,16 @@ fn min_stride_step_config_controls_tiny_stride_ratio() {
     let default_measurements =
         animsmith_core::measure::measure_document(&default_grids, &roles, &default_floor);
     assert_eq!(default_measurements["walk"].loop_seam_ratio, None);
-    let default_findings = lint_with(&doc, &default_floor);
-    assert!(
-        !default_findings.iter().any(|f| f.check_id == "loop-seam"),
-        "default floor should suppress tiny-stride seam ratio: {default_findings:#?}"
+    let default_ctx = CheckCtx::new(&default_grids, &roles, &default_floor);
+    let default_records = evaluate_checks(&default_ctx, &all_checks(), CheckSelection::All)
+        .expect("valid built-in catalog");
+    let seam = check(&default_records, "loop-seam");
+    assert_eq!(seam.evaluation, EvaluationState::NotEvaluated);
+    assert!(seam.findings.is_empty());
+    assert_eq!(seam.gaps[0].code.as_str(), "measurement_unavailable");
+    assert_eq!(
+        seam.gaps[0].scope.as_ref().unwrap().subject.as_deref(),
+        Some("walk")
     );
 
     let tuned_grids = MetricGrids::new(&doc);
@@ -251,11 +257,13 @@ fn zero_stride_floor_does_not_report_stationary_ratio() {
     let grids = MetricGrids::new(&doc);
     let measurements = animsmith_core::measure::measure_document(&grids, &roles, &config);
     assert_eq!(measurements["walk"].loop_seam_ratio, None);
-    let findings = lint_with(&doc, &config);
-    assert!(
-        !findings.iter().any(|f| f.check_id == "loop-seam"),
-        "zero stride should not produce loop-seam finding: {findings:#?}"
-    );
+    let ctx = CheckCtx::new(&grids, &roles, &config);
+    let records =
+        evaluate_checks(&ctx, &all_checks(), CheckSelection::All).expect("valid built-in catalog");
+    let seam = check(&records, "loop-seam");
+    assert_eq!(seam.evaluation, EvaluationState::NotEvaluated);
+    assert!(seam.findings.is_empty());
+    assert_eq!(seam.gaps[0].code.as_str(), "measurement_unavailable");
 }
 
 #[test]
@@ -392,7 +400,7 @@ fn unresolved_phase_coherence_is_a_typed_gap_not_completed_work() {
     let grids = MetricGrids::new(&doc);
     let ctx = CheckCtx::new(&grids, &roles, &config);
     let checks = all_checks();
-    let records = evaluate_checks(&ctx, &checks, CheckSelection::All);
+    let records = evaluate_checks(&ctx, &checks, CheckSelection::All).unwrap();
     let gait = records
         .iter()
         .find(|record| record.check_id == "gait-group")
@@ -410,7 +418,10 @@ fn unresolved_phase_coherence_is_a_typed_gap_not_completed_work() {
             .iter()
             .any(|scope| scope.code == "phase_coherence")
     );
-    assert_eq!(gait.gaps[0].code, "insufficient_measurable_members");
+    assert_eq!(
+        gait.gaps[0].code.as_str(),
+        "insufficient_measurable_members"
+    );
     assert_eq!(
         gait.gaps[0].scope.as_ref().unwrap().subject.as_deref(),
         Some("ring")
@@ -443,7 +454,7 @@ fn gait_phase_coverage_distinguishes_complete_and_partial_groups() {
         let grids = MetricGrids::new(&doc);
         let ctx = CheckCtx::new(&grids, &roles, &config);
         let checks = all_checks();
-        let records = evaluate_checks(&ctx, &checks, CheckSelection::All);
+        let records = evaluate_checks(&ctx, &checks, CheckSelection::All).unwrap();
         let gait = records
             .iter()
             .find(|record| record.check_id == "gait-group")
@@ -453,14 +464,14 @@ fn gait_phase_coverage_distinguishes_complete_and_partial_groups() {
         assert!(gait.evaluated_scopes.iter().any(|scope| {
             scope.code == "phase_coherence" && scope.subject.as_deref() == Some("ring")
         }));
-        assert_eq!(gait.gaps.first().map(|gap| gap.code), expected_gap);
+        assert_eq!(gait.gaps.first().map(|gap| gap.code.as_str()), expected_gap);
     }
 }
 
 /// #28 (Codex audit): a gait-group member-not-found is a config error
 /// detectable without a rig, so it must still surface when roles are
-/// unresolved — not be hidden behind the roles skip-note. The existing
-/// member gets one exempt skip-note; the missing member gets its Error.
+/// unresolved. The existing member gets a typed role gap; the missing member
+/// remains a content Error.
 #[test]
 fn missing_group_member_is_flagged_even_when_roles_unresolved() {
     let doc = walk_doc();
@@ -470,24 +481,22 @@ fn missing_group_member_is_flagged_even_when_roles_unresolved() {
             "max_gait_phase_spread": 0.1
         }}
     }));
-    let findings = lint_unresolved(&doc, &config);
+    let records = evaluate_unresolved(&doc, &config);
+    let gait = check(&records, "gait-group");
 
     assert!(
-        findings.iter().any(|f| f.check_id == "gait-group"
-            && f.clip.as_deref() == Some("no_such_clip")
-            && f.severity == Severity::Error),
-        "member-not-found Error hidden by unresolved roles: {findings:#?}"
+        gait.findings
+            .iter()
+            .any(|finding| finding.clip.as_deref() == Some("no_such_clip")
+                && finding.severity == Severity::Error),
+        "member-not-found Error hidden by unresolved roles: {gait:#?}"
     );
-    // The resolvable-but-unmeasurable member yields exactly one Note.
-    let notes: Vec<_> = findings
-        .iter()
-        .filter(|f| f.check_id == "gait-group" && f.severity == Severity::Note)
-        .collect();
-    assert_eq!(notes.len(), 1, "expected one skip-note: {notes:#?}");
+    assert_eq!(gait.evaluation, EvaluationState::Partial);
+    assert_eq!(gait.gaps[0].code.as_str(), "roles_unresolved");
 }
 
 #[test]
-fn all_missing_group_members_do_not_add_a_roles_skip_note() {
+fn all_missing_group_members_remain_content_errors_without_a_role_gap() {
     let doc = walk_doc();
     let config = json_config(serde_json::json!({
         "gait_groups": { "ring": {
@@ -495,25 +504,27 @@ fn all_missing_group_members_do_not_add_a_roles_skip_note() {
             "max_gait_phase_spread": 0.1
         }}
     }));
-    let findings = lint_unresolved(&doc, &config);
-    let group: Vec<_> = findings
-        .iter()
-        .filter(|finding| finding.check_id == "gait-group")
-        .collect();
+    let records = evaluate_unresolved(&doc, &config);
+    let gait = check(&records, "gait-group");
 
-    assert_eq!(group.len(), 2, "only missing-member errors: {group:#?}");
+    assert_eq!(gait.findings.len(), 2, "missing-member errors: {gait:#?}");
     assert!(
-        group
+        gait.findings
             .iter()
             .all(|finding| finding.severity == Severity::Error),
-        "role diagnostics require existing phase work: {group:#?}"
+        "missing members remain content errors: {gait:#?}"
+    );
+    assert!(
+        gait.gaps
+            .iter()
+            .all(|gap| gap.code.as_str() != "roles_unresolved")
     );
 }
 
-/// The member-not-found Error stays an Error even under a severity
-/// override — it is a config violation, not a diagnostic.
+/// A member-not-found result remains a content finding, so the ordinary
+/// per-check severity override can demote its default error to a warning.
 #[test]
-fn missing_group_member_error_survives_severity_override() {
+fn missing_group_member_content_error_honors_severity_override() {
     let doc = walk_doc();
     let config = json_config(serde_json::json!({
         "checks": { "gait-group": { "severity": "warn" } },
@@ -532,12 +543,10 @@ fn missing_group_member_error_survives_severity_override() {
     assert_eq!(member.severity, Severity::Warning);
 }
 
-/// #28 regression guard: with roles resolved, a declared ring member
-/// too short to carry a cycle is a real Error — the readiness refactor
-/// narrowed this branch (it used to also cover unresolved roles), so
-/// it must not silently become a skip.
+/// A declared ring member too short to carry a cycle is explicit missing
+/// coverage, not a content failure.
 #[test]
-fn too_short_group_member_is_an_error() {
+fn too_short_group_member_is_a_typed_gap() {
     let mut doc = walk_doc();
     // A 2-key clip: below the 3-frame floor `foot_cycle_metrics` needs.
     let short = Clip {
@@ -558,68 +567,60 @@ fn too_short_group_member_is_an_error() {
             "max_gait_phase_spread": 0.1
         }}
     }));
-    let findings = lint_with(&doc, &config); // roles resolve
-    let stub = findings
+    let roles = roles(&doc.skeleton);
+    let grids = MetricGrids::new(&doc);
+    let ctx = CheckCtx::new(&grids, &roles, &config);
+    let records = evaluate_checks(&ctx, &all_checks(), CheckSelection::All).unwrap();
+    let gait = check(&records, "gait-group");
+    assert!(
+        gait.findings.is_empty(),
+        "measurement gaps do not block: {gait:#?}"
+    );
+    let gap = gait
+        .gaps
         .iter()
-        .find(|f| f.check_id == "gait-group" && f.clip.as_deref() == Some("stub"))
-        .expect("too-short member flagged");
-    assert_eq!(stub.severity, Severity::Error);
-    assert!(stub.message.contains("too short"), "{}", stub.message);
+        .find(|gap| gap.code.as_str() == "insufficient_measurable_members")
+        .expect("too-short member leaves group coverage incomplete");
+    assert_eq!(gap.scope.as_ref().unwrap().subject.as_deref(), Some("ring"));
 }
 
-/// #28: foot-slide (previously silent on unresolved roles) now emits
-/// its own skip-note, driven by its `speed_mps` pending-work predicate
-/// and carrying the root/hips reason — not another check's.
+/// Foot-slide reports its own role gap from its `speed_mps` applicability.
 #[test]
-fn foot_slide_skip_note_is_isolated_and_reasoned() {
+fn foot_slide_role_gap_is_isolated_and_reasoned() {
     let doc = walk_doc();
     let config = json_config(serde_json::json!({
         "clips": { "walk": { "speed_mps": { "value": 1.0, "tolerance": 0.25 }, "in_place": true } }
     }));
-    let findings = lint_unresolved(&doc, &config);
-
-    let foot: Vec<_> = findings
-        .iter()
-        .filter(|f| f.check_id == "foot-slide")
-        .collect();
-    assert_eq!(foot.len(), 1, "one foot-slide note: {foot:#?}");
-    assert_eq!(foot[0].severity, Severity::Note);
-    assert!(foot[0].message.contains("root/hips"), "{}", foot[0].message);
+    let records = evaluate_unresolved(&doc, &config);
+    let foot = check(&records, "foot-slide");
+    assert_eq!(foot.evaluation, EvaluationState::NotEvaluated);
+    assert!(foot.findings.is_empty());
+    assert_eq!(foot.gaps[0].code.as_str(), "roles_unresolved");
+    assert!(foot.gaps[0].message.contains("root/hips"));
 
     // in_place=true means root-motion-speed has no pending work → Idle,
     // while foot-slide still judges the treadmill sweep. Pins the
     // asymmetric pending-work predicates.
     assert!(
-        !findings.iter().any(|f| f.check_id == "root-motion-speed"),
-        "root-motion-speed should be idle for an in-place pin: {findings:#?}"
+        check(&records, "root-motion-speed").applicability
+            == animsmith_core::Applicability::NotApplicable,
+        "root-motion-speed should be inapplicable for an in-place pin: {records:#?}"
     );
 }
 
-/// #28: gait-group (previously a false Error on unresolved roles) now
-/// emits a single skip-note carrying the hips/foot reason.
+/// Gait-group completes member existence and reports phase as a role gap.
 #[test]
-fn gait_group_skip_note_is_isolated_and_reasoned() {
+fn gait_group_role_gap_is_isolated_and_reasoned() {
     let doc = walk_doc();
     let config = json_config(serde_json::json!({
         "gait_groups": { "ring": { "clips": ["walk"], "max_gait_phase_spread": 0.1 } }
     }));
-    let findings = lint_unresolved(&doc, &config);
-    let group: Vec<_> = findings
-        .iter()
-        .filter(|f| f.check_id == "gait-group")
-        .collect();
-    assert_eq!(group.len(), 1, "one gait-group note: {group:#?}");
-    assert_eq!(group[0].severity, Severity::Note);
-    assert!(
-        group[0].message.starts_with("skipped:"),
-        "skip-notes carry the documented `skipped:` prefix: {}",
-        group[0].message
-    );
-    assert!(
-        group[0].message.contains("hips/foot"),
-        "{}",
-        group[0].message
-    );
+    let records = evaluate_unresolved(&doc, &config);
+    let gait = check(&records, "gait-group");
+    assert_eq!(gait.evaluation, EvaluationState::Partial);
+    assert!(gait.findings.is_empty());
+    assert_eq!(gait.gaps[0].code.as_str(), "roles_unresolved");
+    assert!(gait.gaps[0].message.contains("hips/foot"));
 }
 
 #[test]
@@ -673,60 +674,45 @@ fn severity_override_and_off() {
     assert!(!findings.iter().any(|f| f.check_id == "loop-seam"));
 }
 
-/// #28: a severity override applies to a check's *violations*, never
-/// to its requirement skip-notes. Declaring `loop-seam` an error on a
-/// rig whose roles don't resolve must still surface a Note — not a
-/// false Error that fails CI on every rig without foot roles.
+/// Severity overrides apply to content findings, never coverage gaps.
 #[test]
-fn skip_note_is_exempt_from_severity_override() {
+fn coverage_gap_is_exempt_from_severity_override() {
     let doc = popped_doc(); // would be a loop-seam Error with roles resolved
     let config = json_config(serde_json::json!({
         "clips": { "walk": { "loop": true } },
         "checks": { "loop-seam": { "severity": "error" } }
     }));
-    let findings = lint_unresolved(&doc, &config);
-    let seam: Vec<_> = findings
-        .iter()
-        .filter(|f| f.check_id == "loop-seam")
-        .collect();
-    assert_eq!(seam.len(), 1, "one skip-note, not silence: {seam:#?}");
-    assert_eq!(
-        seam[0].severity,
-        Severity::Note,
-        "skip-note must stay a Note despite severity = error"
-    );
-    assert!(
-        seam[0].message.starts_with("skipped:"),
-        "skip-notes carry the documented `skipped:` prefix: {}",
-        seam[0].message
-    );
+    let records = evaluate_unresolved(&doc, &config);
+    let seam = check(&records, "loop-seam");
+    assert_eq!(seam.evaluation, EvaluationState::NotEvaluated);
+    assert!(seam.findings.is_empty());
+    assert_eq!(seam.gaps[0].code.as_str(), "roles_unresolved");
 }
 
-/// #28: `severity = "off"` removes the check entirely — not even its
-/// skip-note is emitted.
+/// `severity = "off"` records a disabled check without evaluating it.
 #[test]
-fn off_removes_check_including_its_skip_note() {
+fn off_disables_check_without_emitting_a_gap() {
     let doc = popped_doc();
     let config = json_config(serde_json::json!({
         "clips": { "walk": { "loop": true } },
         "checks": { "loop-seam": { "severity": "off" } }
     }));
-    let findings = lint_unresolved(&doc, &config);
-    assert!(!findings.iter().any(|f| f.check_id == "loop-seam"));
+    let records = evaluate_unresolved(&doc, &config);
+    let seam = check(&records, "loop-seam");
+    assert_eq!(seam.configuration, ConfigurationState::Disabled);
+    assert_eq!(seam.evaluation, EvaluationState::NotEvaluated);
+    assert!(seam.gaps.is_empty());
 }
 
-/// #28: the skip-note plumbing is unified — every role-dependent check
-/// with pending work emits exactly one Note when roles don't resolve,
-/// including `foot-slide` (previously silent) and `gait-group`
-/// (previously a false Error).
+/// Every applicable role-dependent check reports typed missing coverage.
 #[test]
-fn unresolved_roles_yield_one_note_per_pending_check() {
+fn unresolved_roles_yield_gaps_for_every_applicable_check() {
     let doc = walk_doc();
     let config = json_config(serde_json::json!({
         "clips": { "walk": { "loop": true, "speed_mps": { "value": 1.0, "tolerance": 0.25 }, "in_place": false } },
         "gait_groups": { "ring": { "clips": ["walk"], "max_gait_phase_spread": 0.1 } }
     }));
-    let findings = lint_unresolved(&doc, &config);
+    let records = evaluate_unresolved(&doc, &config);
     for id in [
         "loop-seam",
         "root-motion-speed",
@@ -734,28 +720,19 @@ fn unresolved_roles_yield_one_note_per_pending_check() {
         "foot-slide",
         "gait-group",
     ] {
-        let notes: Vec<_> = findings.iter().filter(|f| f.check_id == id).collect();
-        assert_eq!(
-            notes.len(),
-            1,
-            "{id}: expected one skip-note, got {notes:#?}"
-        );
-        assert_eq!(notes[0].severity, Severity::Note, "{id} not a Note");
-        assert!(
-            notes[0].message.starts_with("skipped:"),
-            "{id}: skip-notes carry the documented `skipped:` prefix: {}",
-            notes[0].message
-        );
+        let record = check(&records, id);
+        assert!(record.findings.is_empty(), "{id}: gaps are not findings");
+        assert!(!record.gaps.is_empty(), "{id}: expected a coverage gap");
+        assert_eq!(record.gaps[0].code.as_str(), "roles_unresolved");
     }
 }
 
-/// #28: a check with no pending work stays silent even when roles are
-/// unresolved — no spurious skip-notes.
+/// A check with no declared work is explicitly not applicable.
 #[test]
-fn idle_checks_emit_no_skip_notes() {
+fn undeclared_checks_are_not_applicable_without_gaps() {
     let doc = walk_doc(); // no config expectations at all
     let config = Config::default();
-    let findings = lint_unresolved(&doc, &config);
+    let records = evaluate_unresolved(&doc, &config);
     for id in [
         "loop-seam",
         "root-motion-speed",
@@ -763,10 +740,13 @@ fn idle_checks_emit_no_skip_notes() {
         "foot-slide",
         "gait-group",
     ] {
-        assert!(
-            !findings.iter().any(|f| f.check_id == id),
-            "{id} emitted a note with nothing to do: {findings:#?}"
+        let record = check(&records, id);
+        assert_eq!(
+            record.applicability,
+            animsmith_core::Applicability::NotApplicable
         );
+        assert!(record.findings.is_empty());
+        assert!(record.gaps.is_empty());
     }
 }
 

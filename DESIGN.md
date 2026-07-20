@@ -85,16 +85,16 @@ animsmith report  <file> -o report.html [--clip name]
 animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor]
 animsmith fix     <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
 animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb> [--animation-only]
-animsmith diff    <A> <B> [--format text|json]     # A/B: asset files or prior `measure` JSON
+animsmith diff    <A> <B> [--format text|json]     # A/B: assets or single-file v2 measure/lint JSON
 ```
 
 - `lint` = measure + judge against config. `measure` is lint minus
-  judgment — it emits the raw measurement map (the substrate other
-  pipelines pin their own contracts to).
-- **Exit codes**: `0` no failing findings (warnings and notes,
-  including `skipped:` diagnostics, may remain), `1` at least one
-  error-severity finding (or pending repairs under `fix --dry-run`),
-  `2` operator/tool error (unreadable file, bad config).
+  judgment — both emit the independently versioned measurement contract
+  that other pipelines can pin.
+- **Exit codes**: `0` no failing findings (warnings, notes, and nonblocking
+  coverage gaps may remain), `1` at least one error-severity finding (or
+  pending repairs under `fix --dry-run`), `2` operator/tool error
+  (unreadable file, bad config).
   `--deny-warnings` promotes warnings to errors.
 - Inputs: `.glb`, `.gltf` (+ external buffers), `.fbx` (via the `fbx`
   feature, default-on in the released binary).
@@ -228,30 +228,25 @@ Built-in profiles ship for `mixamo` (`mixamorig:Hips`…), `ue-mannequin`
 (`pelvis`, `foot_l`…), and `humanoid` (`humanoid_ Pelvis`,
 `humanoid_ L Foot`…), plus **auto-detection** that scores every profile by
 resolved-role coverage and reports the winner in `inspect`. A check whose
-required roles don't resolve is *skipped with a note* — never a false
-failure. This is the single design rule that makes the tool useful outside
+required roles don't resolve records a typed coverage gap — never a false
+finding. This is the single design rule that makes the tool useful outside
 its birthplace: tolerance data and bone names are config; the math is not.
 
-The runner, not each check, owns that rule. A check declares its
-prerequisites through `readiness(ctx)`; the runner emits one standardized
-skip-note per unmet requirement. Crucially, a skip-note is a **diagnostic**
-— exempt from the per-check `severity` override: `[checks.loop-seam]
-severity = "error"` escalates loop-seam's *violations* but can never turn a
-"roles unresolved" note into a false Error. Exemption is a property of the
-finding (`Finding::diagnostic`), so a check with role-independent work can
-stay `Ready` and mark its own skip-note: `gait-group` always validates that
-its members exist (a config error needing no rig) and reports that Error
-even when the rig is unresolved, while marking the *measurement* skip-note
-a diagnostic. `severity = "off"` removes the check from the run set
-entirely — it never executes.
+The runner owns selection, activation, and severity policy. Each check exposes
+a cheap applicability predicate and one evaluation method. The evaluation
+returns content findings separately from completed scopes and typed coverage
+gaps. Severity overrides therefore cannot turn missing evidence into a false
+error. `gait-group`, for example, can complete member-existence validation
+while reporting phase coherence as a gap. `severity = "off"` disables the
+check without hiding its applicability record.
 
 **Checks** implement one trait and emit structured findings:
 
 ```rust
 pub trait Check {
     fn id(&self) -> &'static str;              // "loop-seam", "quat-flip", …
-    fn readiness(&self, ctx: &CheckCtx) -> Readiness;  // Ready | Skipped(reason) | Idle
-    fn run(&self, ctx: &CheckCtx, out: &mut Findings);
+    fn applicability(&self, ctx: &CheckCtx) -> Applicability;
+    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput;
 }
 pub struct Finding {
     pub check_id: &'static str, pub severity: Severity,   // Note | Warning | Error
@@ -350,26 +345,13 @@ learns an embedder's contract schema.
 
 - **Text** (default): findings grouped per clip, measured-vs-expected on
   one line, colored; `--quiet` for CI summaries.
-- **JSON** (`--format json`): versioned native envelope —
-  `{ schema_version, schema, tool: {name, version}, command, summary,
-  files: [{path, rig: {profile, resolved_roles}, findings?, measurements}] }`.
-  `measure` omits `findings`; `lint` emits both findings and
-  measurements. The top-level envelope leaves room for multi-file runs,
-  future metadata, and additional formats without changing per-file
-  records.
-- **Provisional coverage JSON** (`lint --format json-v2-preview`): an
-  experimental schema-v2 envelope emits one record per catalog check and
+- **JSON** (`--format json`): final output v2, identified by
+  `urn:animsmith:schema:output:2`. Lint emits one result per catalog check and
   represents selection, configuration, applicability, evaluation coverage,
-  content findings, completed scopes, and typed coverage gaps independently.
-  It is additive during the #193/Rauta adapter experiment: the published v1
-  JSON and the existing Rust `Readiness::Skipped(String)` / `run_checks` API
-  remain unchanged. The embedded `evaluate_checks` adapter maps retained v1
-  readiness text into typed v2 gaps and converts legacy diagnostic findings
-  into `legacy_diagnostic` gaps, so they never enter the v2 content-findings
-  channel or masquerade as completed-clean work. CLI exit status is derived only from
-  content severity (warnings block only with `--deny-warnings`); coverage
-  gaps are evidence and remain nonblocking by default. Field names and final
-  policy are not stable until the experiment feeds back into #193.
+  content findings, completed scopes, and typed gaps independently. Measure
+  and lint share a nested, independently versioned measurement contract.
+  CLI exit status derives only from content severity (warnings block only
+  with `--deny-warnings`); coverage gaps are nonblocking evidence.
 - **Future serializers**: no game-industry standard exists for skeletal
   animation lint results. Keep native JSON as the source of truth, then
   add serializers where downstream tools expect them: SARIF for code

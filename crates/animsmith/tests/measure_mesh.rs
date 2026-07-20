@@ -84,14 +84,12 @@ fn cli_measure_emits_mesh_measurements() {
     assert!(out.status.success(), "measure exited {}", out.status);
 
     let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid JSON");
-    assert_body_mesh(&report["files"][0]["meshes"][0]);
+    assert_body_mesh(&report["files"][0]["measurements"]["meshes"][0]);
 }
 
-/// The provisional v2 lint envelope intentionally matches the embedded
-/// evaluator's mesh-measurement evidence instead of v1 lint's animation-only
-/// projection.
+/// Final lint JSON carries the same nested measurement evidence as measure.
 #[test]
-fn cli_v2_preview_emits_mesh_measurements() {
+fn cli_lint_json_emits_mesh_measurements() {
     let dir = tempfile::tempdir().unwrap();
     let input = dir.path().join("skinned.glb");
     write_skinned_glb(&input);
@@ -100,19 +98,29 @@ fn cli_v2_preview_emits_mesh_measurements() {
         .arg("lint")
         .arg(&input)
         .arg("--format")
-        .arg("json-v2-preview")
+        .arg("json")
         .arg("--select")
         .arg("nan")
         .output()
         .expect("runs animsmith");
-    assert!(out.status.success(), "preview lint exited {}", out.status);
+    assert!(out.status.success(), "lint exited {}", out.status);
 
     let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid JSON");
-    assert_body_mesh(&report["files"][0]["meshes"][0]);
+    assert_body_mesh(&report["files"][0]["measurements"]["meshes"][0]);
+    let findings: usize = report["files"][0]["checks"]
+        .as_array()
+        .expect("lint check records")
+        .iter()
+        .map(|check| check["findings"].as_array().expect("findings").len())
+        .sum();
+    assert_eq!(
+        findings, 0,
+        "measurement-only mesh evidence must not create findings"
+    );
 }
 
 /// A skeleton-only glTF (no geometry) emits no `meshes` key — the field
-/// is omitted when empty, so asset-less inputs keep their v1 output.
+/// is omitted when empty.
 #[test]
 fn cli_measure_omits_meshes_when_no_geometry() {
     let dir = tempfile::tempdir().unwrap();
@@ -142,7 +150,7 @@ fn cli_measure_omits_meshes_when_no_geometry() {
     assert!(out.status.success());
     let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid JSON");
     assert!(
-        report["files"][0].get("meshes").is_none(),
+        report["files"][0]["measurements"].get("meshes").is_none(),
         "no meshes key without geometry"
     );
 }
@@ -196,7 +204,7 @@ fn cli_measure_omits_aabb_for_non_finite_geometry() {
         "no null must appear in measure JSON:\n{raw}"
     );
     let report: serde_json::Value = serde_json::from_str(&raw).expect("valid JSON");
-    let mesh = &report["files"][0]["meshes"][0];
+    let mesh = &report["files"][0]["measurements"]["meshes"][0];
     assert_eq!(mesh["vertex_count"], 3, "count still reported");
     assert!(
         mesh.get("aabb").is_none(),

@@ -87,7 +87,7 @@ $ animsmith lint clip.glb
 clip.glb:
   warning[quat-flip] clip 'walk' bone 'hips' @0.533s: 1 hemisphere flip(s) ...
   note[constant-track] clip 'walk' bone 'ik_target': scale track has 90 keys but never moves
-0 error(s), 1 warning(s), 1 note(s)
+0 error(s), 1 warning(s), 1 note(s), 0 coverage gap(s)
 
 $ animsmith lint export.fbx
 $ animsmith measure clip.glb
@@ -99,8 +99,8 @@ $ animsmith fix clip.glb -o fixed.glb
 $ animsmith fix clip.glb --dry-run
 ```
 
-Exit codes are `0` for runs with no failing findings (warnings and
-skip notes may remain), `1` for error findings, and `2` for operator
+Exit codes are `0` for runs with no failing findings (warnings, notes, and
+coverage gaps may remain), `1` for error findings, and `2` for operator
 errors. `--deny-warnings` promotes warnings to a failing run.
 
 The HTML report is a single self-contained file with no CDN dependency.
@@ -149,8 +149,8 @@ Contract-aware checks use declared expectations and, where needed, rig roles:
 | `frozen-bone` | error | required bones whose rotation never exceeds the configured floor |
 | `bind-pose` | warning | first frame deviating too far from the skeleton rest pose |
 
-Checks whose rig roles cannot be resolved are skipped with a note rather
-than guessed.
+Checks whose rig roles cannot be resolved report a typed, nonblocking
+coverage gap rather than guessing or manufacturing a content finding.
 
 ## Configuration
 

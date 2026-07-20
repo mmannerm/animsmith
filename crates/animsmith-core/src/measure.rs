@@ -201,11 +201,21 @@ pub fn measure_document(
                 .as_ref()
                 .and_then(|g| foot_cycle_metrics(g, roles, min_stride_step_m));
             let speed_mps = grid.as_ref().and_then(|g| root_motion_speed_mps(g, roles));
+            let duration_s = if clip.duration_s.is_finite() {
+                clip.duration_s
+            } else {
+                clip.tracks
+                    .iter()
+                    .flat_map(|track| track.times.iter().copied())
+                    .filter(|time| time.is_finite())
+                    .map(f64::from)
+                    .fold(0.0, f64::max)
+            };
 
             (
                 clip.name.clone(),
                 ClipMeasurements {
-                    duration_s: clip.duration_s,
+                    duration_s,
                     frame_count: frame_count as u32,
                     animated_bones: animated.into_iter().collect(),
                     bone_rotation_range_deg: rotation_range,

@@ -5,7 +5,10 @@
 
 use animsmith_core::model::*;
 use animsmith_core::profile::{ResolvedRoles, Role};
-use animsmith_core::{CheckCtx, Config, MetricGrids, Severity, all_checks, run_checks};
+use animsmith_core::{
+    CheckCtx, CheckSelection, Config, CoverageGapCode, EvaluationState, MetricGrids, Severity,
+    all_checks, evaluate_checks,
+};
 use glam::{Quat, Vec3};
 
 const KEYS: usize = 33; // 32 intervals over 1 s
@@ -109,7 +112,11 @@ fn lint_with(doc: &Document, config: &Config) -> Vec<animsmith_core::Finding> {
     let roles = roles(&doc.skeleton);
     let grids = MetricGrids::new(doc);
     let ctx = CheckCtx::new(&grids, &roles, config);
-    run_checks(&ctx, &all_checks())
+    evaluate_checks(&ctx, &all_checks(), CheckSelection::All)
+        .expect("valid built-in catalog")
+        .into_iter()
+        .flat_map(|check| check.findings)
+        .collect()
 }
 
 fn json_config(json: serde_json::Value) -> Config {
@@ -156,6 +163,57 @@ fn slippery_stance_is_flagged() {
     assert_eq!(slides[0].severity, Severity::Warning);
 }
 
+#[test]
+fn foot_slide_records_partial_evidence_when_one_side_is_unresolved() {
+    let doc = treadmill_doc(STANCE_SWEEP_M);
+    let roles = ResolvedRoles::from_names(
+        &doc.skeleton,
+        [
+            (Role::Hips, "pelvis".to_string()),
+            (Role::LeftFoot, "l_foot".to_string()),
+        ],
+    );
+    let config = json_config(serde_json::json!({
+        "clips": { "walk": {
+            "in_place": true,
+            "speed_mps": { "value": 1.0, "tolerance": 0.25 }
+        }}
+    }));
+    let grids = MetricGrids::new(&doc);
+    let ctx = CheckCtx::new(&grids, &roles, &config);
+    let records =
+        evaluate_checks(&ctx, &all_checks(), CheckSelection::All).expect("valid built-in catalog");
+    let foot_slide = records
+        .iter()
+        .find(|record| record.check_id == "foot-slide")
+        .expect("foot-slide record");
+
+    assert_eq!(foot_slide.evaluation, EvaluationState::Partial);
+    assert!(foot_slide.findings.is_empty());
+    assert!(
+        foot_slide
+            .evaluated_scopes
+            .iter()
+            .any(|scope| scope.code == "left_foot_stance")
+    );
+    assert!(
+        !foot_slide
+            .evaluated_scopes
+            .iter()
+            .any(|scope| scope.code == "right_foot_stance")
+    );
+    let right_gap = foot_slide
+        .gaps
+        .iter()
+        .find(|gap| {
+            gap.scope
+                .as_ref()
+                .is_some_and(|scope| scope.code == "right_foot_stance")
+        })
+        .expect("right-foot coverage gap");
+    assert_eq!(right_gap.code, CoverageGapCode::ROLES_UNRESOLVED);
+}
+
 /// #57: a rig whose feet resolve only as toe roles (no foot roles) must
 /// still be judged — the per-foot loop falls back to the toe, matching
 /// `foot_cycle_metrics`. Before the fix the loop skipped both feet and
@@ -179,7 +237,11 @@ fn toe_only_rig_is_evaluated_for_foot_slide() {
     }));
     let grids = MetricGrids::new(&doc);
     let ctx = CheckCtx::new(&grids, &roles, &config);
-    let findings = run_checks(&ctx, &all_checks());
+    let findings: Vec<_> = evaluate_checks(&ctx, &all_checks(), CheckSelection::All)
+        .expect("valid built-in catalog")
+        .into_iter()
+        .flat_map(|check| check.findings)
+        .collect();
     let slides = of(&findings, "foot-slide");
     assert!(
         !slides.is_empty(),
@@ -257,7 +319,11 @@ fn foot_slide_prefers_foot_over_toe_when_both_resolve() {
     }));
     let grids = MetricGrids::new(&doc);
     let ctx = CheckCtx::new(&grids, &roles, &config);
-    let findings = run_checks(&ctx, &all_checks());
+    let findings: Vec<_> = evaluate_checks(&ctx, &all_checks(), CheckSelection::All)
+        .expect("valid built-in catalog")
+        .into_iter()
+        .flat_map(|check| check.findings)
+        .collect();
     let slides = of(&findings, "foot-slide");
     // Assert the exact set of named bones is BOTH feet — not just "some
     // finding names a foot". A one-sided regression (only the right side
@@ -342,6 +408,30 @@ fn off_grid_key_and_fractional_duration_are_flagged() {
     assert_eq!(of(&findings, "fps").len(), 2, "got: {findings:#?}");
 }
 
+#[test]
+fn non_finite_declared_fps_is_a_typed_gap() {
+    let doc = treadmill_doc(STANCE_SWEEP_M);
+    let mut config = Config::default();
+    config.clips.insert(
+        "walk".into(),
+        animsmith_core::config::ClipExpectations {
+            fps: Some(f64::NAN),
+            ..Default::default()
+        },
+    );
+    let roles = roles(&doc.skeleton);
+    let grids = MetricGrids::new(&doc);
+    let ctx = CheckCtx::new(&grids, &roles, &config);
+    let records =
+        evaluate_checks(&ctx, &all_checks(), CheckSelection::All).expect("valid built-in catalog");
+    let fps = records
+        .iter()
+        .find(|record| record.check_id == "fps")
+        .expect("fps record");
+    assert_eq!(fps.evaluation, EvaluationState::NotEvaluated);
+    assert_eq!(fps.gaps[0].code, CoverageGapCode::INVALID_DECLARED_FPS);
+}
+
 // ---- bind-pose --------------------------------------------------------
 
 fn rotated_first_frame_doc(angle: f32) -> Document {
@@ -385,4 +475,25 @@ fn wrong_bind_is_flagged() {
 fn near_rest_start_is_clean() {
     let findings = lint_with(&rotated_first_frame_doc(0.15), &Config::default());
     assert!(of(&findings, "bind-pose").is_empty(), "got: {findings:#?}");
+}
+
+#[test]
+fn invalid_rest_rotation_is_insufficient_evidence_not_complete() {
+    let mut doc = rotated_first_frame_doc(0.15);
+    doc.skeleton.bones[0].rest.rotation = Quat::from_xyzw(0.0, 0.0, 0.0, 0.0);
+    let roles = roles(&doc.skeleton);
+    let grids = MetricGrids::new(&doc);
+    let config = Config::default();
+    let ctx = CheckCtx::new(&grids, &roles, &config);
+    let records =
+        evaluate_checks(&ctx, &all_checks(), CheckSelection::All).expect("valid built-in catalog");
+    let bind_pose = records
+        .iter()
+        .find(|record| record.check_id == "bind-pose")
+        .expect("bind-pose record");
+    assert_eq!(bind_pose.evaluation, EvaluationState::NotEvaluated);
+    assert_eq!(
+        bind_pose.gaps[0].code,
+        CoverageGapCode::INSUFFICIENT_ROTATION_EVIDENCE
+    );
 }

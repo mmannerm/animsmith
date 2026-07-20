@@ -25,7 +25,12 @@
 //!     let config = animsmith_core::Config::default();
 //!     let grids = animsmith_core::MetricGrids::new(&doc);
 //!     let ctx = animsmith_core::CheckCtx::new(&grids, &roles, &config);
-//!     Ok(animsmith_core::run_checks(&ctx, &animsmith_core::all_checks()))
+//!     let results = animsmith_core::evaluate_checks(
+//!         &ctx,
+//!         &animsmith_core::all_checks(),
+//!         animsmith_core::CheckSelection::All,
+//!     )?;
+//!     Ok(results.into_iter().flat_map(|check| check.findings).collect())
 //! }
 //! ```
 //!
@@ -491,7 +496,12 @@ fn build_document(
                 &times,
                 &values,
             )?;
-            duration = duration.max(times.last().copied().unwrap_or(0.0) as f64);
+            duration = times
+                .iter()
+                .copied()
+                .filter(|time| time.is_finite())
+                .map(f64::from)
+                .fold(duration, f64::max);
             tracks.push(Track {
                 bone,
                 property,

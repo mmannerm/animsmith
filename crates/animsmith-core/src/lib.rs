@@ -6,7 +6,7 @@
 //! typed configuration ([`Config`]), measurement generation
 //! ([`measure::measure_document`]), measurement diffs
 //! ([`diff::diff_measurements`]), structured findings ([`Finding`]), and
-//! check execution ([`CheckCtx`], [`all_checks`], [`run_checks`]).
+//! check execution ([`CheckCtx`], [`all_checks`], [`evaluate_checks`]).
 //! The [`animsmith-gltf`] and [`animsmith-fbx`] loader crates translate file
 //! formats into this model; their docs.rs pages continue the library path for
 //! format-specific loading and, for glTF, writing.
@@ -30,29 +30,31 @@
 //! generation:
 //!
 //! ```
-//! use animsmith_core::{Config, CheckCtx, Document, MetricGrids, all_checks, run_checks};
+//! use animsmith_core::{
+//!     CheckCtx, CheckSelection, Config, Document, MetricGrids, all_checks,
+//!     evaluate_checks, resolve_configured_roles,
+//! };
 //! use animsmith_core::measure::measure_document;
-//! use animsmith_core::ResolvedRoles;
 //!
 //! let doc = Document::default();
-//! let roles = ResolvedRoles::default();
 //! let config = Config::default();
+//! let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
 //! let grids = MetricGrids::new(&doc);
 //!
 //! let measurements = measure_document(&grids, &roles, &config);
 //! let ctx = CheckCtx::new(&grids, &roles, &config);
-//! let findings = run_checks(&ctx, &all_checks());
+//! let results = evaluate_checks(&ctx, &all_checks(), CheckSelection::All)?;
 //!
 //! assert!(measurements.is_empty());
-//! assert!(findings.is_empty());
+//! assert!(results.iter().all(|result| result.findings.is_empty()));
+//! # Ok::<(), animsmith_core::EvaluationError>(())
 //! ```
 //!
 //! [`CheckCtx::new`] consumes already-resolved roles; it does not interpret
 //! [`Config::rig`] automatically. Frontends may use [`detect_profile`],
-//! [`profile::resolve_named`], or [`ResolvedRoles::from_names`], then apply
-//! their own override policy before constructing the context. Checks whose
-//! required roles remain unresolved emit diagnostic skip notes rather than
-//! false failures.
+//! [`resolve_configured_roles`] for the same named-profile plus inline-override
+//! policy as the CLI. Missing prerequisites are represented as typed coverage
+//! gaps rather than false findings.
 //!
 //! # API status
 //!
@@ -96,11 +98,12 @@ pub mod profile;
 pub mod sample;
 pub mod transform;
 
-pub use check::{Check, CheckCtx, all_checks, mechanical_checks, run_checks};
+pub use check::{Check, CheckCtx, all_checks, mechanical_checks};
 pub use config::{ClipExpectations, Config, GaitGroup, Pinned, SeveritySetting};
 pub use evaluation::{
     Applicability, CheckEvaluation, CheckOutput, CheckSelection, ConfigurationState, CoverageGap,
-    EvaluationScope, EvaluationState, SelectionState, evaluate_checks,
+    CoverageGapCode, EvaluationError, EvaluationScope, EvaluationState, SelectionState,
+    evaluate_checks,
 };
 pub use finding::{Finding, Severity, Value};
 /// Re-export of the exact `glam` version used by animsmith's public math
@@ -112,5 +115,7 @@ pub use model::{
     Bone, BoneId, Clip, Document, Interpolation, Property, Skeleton, SourceInfo, Track,
     TrackValues, Transform,
 };
-pub use profile::{ResolvedRoles, RigProfile, Role, builtin_profiles, detect_profile};
+pub use profile::{
+    ResolvedRoles, RigProfile, Role, builtin_profiles, detect_profile, resolve_configured_roles,
+};
 pub use sample::{PoseGrid, TrackSample, default_frame_count, sample_clip, sample_track};

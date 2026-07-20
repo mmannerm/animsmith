@@ -4,8 +4,11 @@
 //! locked to world velocity; a stale pin plays the clip visibly too
 //! fast or too slow.
 
-use crate::check::{Check, CheckCtx, Readiness};
-use crate::checks::root_motion_readiness;
+use crate::check::{Check, CheckCtx};
+use crate::checks::root_motion_gap;
+use crate::evaluation::{
+    Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope,
+};
 use crate::finding::{Finding, Severity};
 use crate::metrics::root_motion_speed_mps;
 
@@ -30,15 +33,18 @@ impl Check for RootMotionSpeed {
         "root-motion-speed"
     }
 
-    fn readiness(&self, ctx: &CheckCtx) -> Readiness {
+    fn applicability(&self, ctx: &CheckCtx) -> Applicability {
         if Self::has_pending_work(ctx) {
-            root_motion_readiness(ctx.roles)
+            Applicability::Applicable
         } else {
-            Readiness::Idle
+            Applicability::NotApplicable
         }
     }
 
-    fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
+    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+        let mut findings = Vec::new();
+        let mut evaluated_scopes = Vec::new();
+        let mut gaps = Vec::new();
         for (index, clip) in ctx.doc.clips.iter().enumerate() {
             let expectations = ctx.expectations(index);
             let Some(pin) = expectations.speed_mps else {
@@ -50,14 +56,27 @@ impl Check for RootMotionSpeed {
                 // validates it there.
                 continue;
             }
+            let scope = EvaluationScope::new("root_motion_speed").subject(&clip.name);
+            if let Some(gap) = root_motion_gap(ctx.roles) {
+                gaps.push(gap.scope(scope));
+                continue;
+            }
             let measured = ctx
                 .grid(index)
                 .and_then(|grid| root_motion_speed_mps(&grid, ctx.roles));
             let Some(measured) = measured else {
-                continue; // roles resolve (readiness gate); degenerate clip
+                gaps.push(
+                    CoverageGap::new(
+                        CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                        "root-motion speed could not be measured",
+                    )
+                    .scope(scope),
+                );
+                continue;
             };
+            evaluated_scopes.push(scope);
             if measured < STRAY_PIN_FLOOR_MPS && pin.value >= STRAY_PIN_FLOOR_MPS {
-                out.push(
+                findings.push(
                     Finding::new(
                         self.id(),
                         Severity::Error,
@@ -75,7 +94,7 @@ impl Check for RootMotionSpeed {
                 continue;
             }
             if (measured - pin.value).abs() > pin.tolerance {
-                out.push(
+                findings.push(
                     Finding::new(
                         self.id(),
                         Severity::Error,
@@ -92,5 +111,6 @@ impl Check for RootMotionSpeed {
                 );
             }
         }
+        CheckOutput::from_coverage(findings, evaluated_scopes, gaps)
     }
 }

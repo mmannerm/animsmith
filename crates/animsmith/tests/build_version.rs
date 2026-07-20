@@ -21,6 +21,50 @@ fn display_version_suppresses_exact_tag_describe() {
 }
 
 #[test]
+fn display_version_preserves_dirty_non_exact_describe() {
+    assert_eq!(
+        build_script::display_version("0.1.0", "v0.1.0-dirty"),
+        "0.1.0 (v0.1.0-dirty)"
+    );
+}
+
+#[test]
+fn display_version_preserves_bare_commit_describe() {
+    assert_eq!(
+        build_script::display_version("0.1.0", "abc1234"),
+        "0.1.0 (abc1234)"
+    );
+}
+
+#[test]
+fn resolved_version_falls_back_to_the_bare_manifest_version() {
+    assert_eq!(build_script::resolved_version("0.1.0", None), "0.1.0");
+    assert_eq!(
+        build_script::resolved_version("0.1.0", Some("0.1.0 (abc1234)".into())),
+        "0.1.0 (abc1234)"
+    );
+}
+
+#[test]
+fn packaged_source_info_reads_full_revision_without_claiming_cleanliness() {
+    let temp = TempDir::new("cargo-vcs-source");
+    let path = temp.path().join(".cargo_vcs_info.json");
+    fs::write(
+        &path,
+        r#"{"git":{"sha1":"0123456789abcdef0123456789abcdef01234567"}}"#,
+    )
+    .expect("writes vcs info");
+
+    assert_eq!(
+        build_script::packaged_source_info(&path),
+        Some(build_script::SourceInfo {
+            revision: "0123456789abcdef0123456789abcdef01234567".into(),
+            dirty: None,
+        })
+    );
+}
+
+#[test]
 fn trusted_git_root_accepts_animsmith_workspace_layout() {
     let temp = TempDir::new("workspace-layout");
     let git_root = temp.path();

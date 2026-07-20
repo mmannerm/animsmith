@@ -9,8 +9,11 @@
 //! detection is heuristic, so it ships as a warning with generous
 //! defaults; judged only on clips that declare `speed_mps`.
 
-use crate::check::{Check, CheckCtx, Readiness};
-use crate::checks::root_motion_readiness;
+use crate::check::{Check, CheckCtx};
+use crate::checks::root_motion_gap;
+use crate::evaluation::{
+    Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope,
+};
 use crate::finding::{Finding, Severity};
 use crate::metrics::root_motion_speed_mps;
 use crate::profile::Role;
@@ -28,22 +31,25 @@ impl Check for FootSlide {
         "foot-slide"
     }
 
-    fn readiness(&self, ctx: &CheckCtx) -> Readiness {
+    fn applicability(&self, ctx: &CheckCtx) -> Applicability {
         // Foot-slide needs the travel mode (root/hips) to know whether
         // a planted or sweeping foot is correct; individual missing
-        // feet are handled per-foot in `run`.
-        let any = ctx
+        // feet are handled per-foot in `evaluate`.
+        if ctx
             .clip_expectations()
             .iter()
-            .any(|e| e.speed_mps.is_some());
-        if any {
-            root_motion_readiness(ctx.roles)
+            .any(|expectations| expectations.speed_mps.is_some())
+        {
+            Applicability::Applicable
         } else {
-            Readiness::Idle
+            Applicability::NotApplicable
         }
     }
 
-    fn run(&self, ctx: &CheckCtx, out: &mut Vec<Finding>) {
+    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+        let mut findings = Vec::new();
+        let mut evaluated_scopes = Vec::new();
+        let mut gaps = Vec::new();
         let settings = ctx.config.check_settings(self.id());
         let contact_height = settings
             .contact_height_m
@@ -54,11 +60,29 @@ impl Check for FootSlide {
             let Some(pin) = ctx.expectations(index).speed_mps else {
                 continue;
             };
+            if let Some(gap) = root_motion_gap(ctx.roles) {
+                gaps.push(gap.scope(EvaluationScope::new("foot_stance").subject(&clip.name)));
+                continue;
+            }
             let Some(grid) = ctx.grid(index) else {
+                gaps.push(
+                    CoverageGap::new(
+                        CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                        "clip is too short to sample foot stance",
+                    )
+                    .scope(EvaluationScope::new("foot_stance").subject(&clip.name)),
+                );
                 continue;
             };
             let Some(root_speed) = root_motion_speed_mps(&grid, ctx.roles) else {
-                continue; // roles resolve (readiness gate); degenerate clip
+                gaps.push(
+                    CoverageGap::new(
+                        CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                        "root-motion speed could not be measured",
+                    )
+                    .scope(EvaluationScope::new("foot_stance").subject(&clip.name)),
+                );
+                continue;
             };
             // Treadmill clip: the stance foot must sweep backward at the
             // declared speed. Root-motion clip: it must stay planted.
@@ -70,13 +94,34 @@ impl Check for FootSlide {
                 ([Role::LeftFoot, Role::LeftToe], "left"),
                 ([Role::RightFoot, Role::RightToe], "right"),
             ] {
+                let scope = EvaluationScope::new(if label == "left" {
+                    "left_foot_stance"
+                } else {
+                    "right_foot_stance"
+                })
+                .subject(&clip.name);
                 let Some(foot) = side_roles.iter().find_map(|&r| ctx.roles.get(r)) else {
+                    gaps.push(
+                        CoverageGap::new(
+                            CoverageGapCode::ROLES_UNRESOLVED,
+                            format!("{label} foot/toe role not resolved"),
+                        )
+                        .scope(scope),
+                    );
                     continue;
                 };
                 let frames = grid.frame_count();
                 if frames < 3 {
+                    gaps.push(
+                        CoverageGap::new(
+                            CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                            "fewer than three sampled frames are available",
+                        )
+                        .scope(scope),
+                    );
                     continue;
                 }
+                evaluated_scopes.push(scope);
                 let heights: Vec<f64> = (0..frames)
                     .map(|f| grid.model_position(f, foot).y as f64)
                     .collect();
@@ -103,7 +148,7 @@ impl Check for FootSlide {
                     }
                 }
                 if let Some((slide, frame)) = worst {
-                    out.push(
+                    findings.push(
                         Finding::new(
                             self.id(),
                             Severity::Warning,
@@ -122,5 +167,6 @@ impl Check for FootSlide {
                 }
             }
         }
+        CheckOutput::from_coverage(findings, evaluated_scopes, gaps)
     }
 }
