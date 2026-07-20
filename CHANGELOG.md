@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/mmannerm/animsmith/compare/v0.1.0...v0.2.0) - 2026-07-20
+
+### Added
+
+- [**breaking**] finalize result contract v2
+- add provisional v2 evaluation results
+
+### Fixed
+
+- harden final result contract
+- close result contract audit gaps
+- preserve v1 contracts in evaluation preview
+
 ## [0.1.0](https://github.com/mmannerm/animsmith/releases/tag/v0.1.0) - 2026-07-11
 
 ### Added
