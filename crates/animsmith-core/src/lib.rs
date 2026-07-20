@@ -4,7 +4,8 @@
 //! data model ([`Document`], [`Skeleton`], [`Clip`], [`Track`]), rig-role
 //! resolution ([`detect_profile`], [`ResolvedRoles::from_names`]),
 //! typed configuration ([`Config`]), measurement generation
-//! ([`measure::measure_document`]), measurement diffs
+//! ([`measure::measure_document`]), versioned result envelopes
+//! ([`contract::ReportEnvelope`]), measurement diffs
 //! ([`diff::diff_measurements`]), structured findings ([`Finding`]), and
 //! check execution ([`CheckCtx`], [`all_checks`], [`evaluate_checks`]).
 //! The [`animsmith-gltf`] and [`animsmith-fbx`] loader crates translate file
@@ -64,9 +65,9 @@
 //! [`Check`] trait for custom checks, and the check catalog functions
 //! re-exported from this crate root. Built-in check ids, CLI exit-code
 //! semantics, and the CLI's versioned JSON envelope/schema id are treated
-//! as the most stable automation contracts. The core [`Finding`] and
-//! [`measure::ClipMeasurements`] serde shapes feed that envelope, but the
-//! envelope version itself lives in the CLI crate. The scene-asset
+//! as the most stable automation contracts. The [`contract`] module owns the
+//! same envelope types and immutable identities for CLI and embedded
+//! producers. The scene-asset
 //! structs in [`model`] and the pipeline-mechanical helpers in
 //! [`transform`] are public so the loader, writer, and CLI crates can
 //! share the same model, but they are less settled than the
@@ -86,6 +87,7 @@
 pub mod check;
 mod checks;
 pub mod config;
+pub mod contract;
 pub mod diff;
 pub mod evaluation;
 pub mod finding;
@@ -100,6 +102,11 @@ pub mod transform;
 
 pub use check::{Check, CheckCtx, all_checks, mechanical_checks};
 pub use config::{ClipExpectations, Config, GaitGroup, Pinned, SeveritySetting};
+pub use contract::{
+    ContractError, DiffEnvelope, FileReport, LintSummary, MEASUREMENTS_SCHEMA_ID,
+    MEASUREMENTS_SCHEMA_VERSION, MeasureSummary, MeasurementContract, OUTPUT_SCHEMA_ID,
+    OUTPUT_SCHEMA_VERSION, ReportEnvelope, RigInfo, ToolInfo, ToolSource,
+};
 pub use evaluation::{
     Applicability, CheckEvaluation, CheckOutput, CheckSelection, ConfigurationState, CoverageGap,
     CoverageGapCode, EvaluationError, EvaluationScope, EvaluationState, SelectionState,

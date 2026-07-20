@@ -58,51 +58,6 @@ fn assert_output_schema_valid(instance: &Value) {
     );
 }
 
-fn assert_required_properties(schema: &Value, instance: &Value, path: &str) {
-    let object = instance
-        .as_object()
-        .unwrap_or_else(|| panic!("expected object at {path}, got {instance}"));
-    for key in schema["required"]
-        .as_array()
-        .expect("schema required array")
-    {
-        let key = key.as_str().expect("required property name");
-        assert!(object.contains_key(key), "missing required {path}.{key}");
-    }
-}
-
-/// Keep the emitted lint record shape easy to diagnose when schema validation
-/// reports a missing-field error.
-fn assert_v2_required_fields(instance: &Value) {
-    assert_output_schema_valid(instance);
-    let schema: Value = serde_json::from_str(OUTPUT_SCHEMA).expect("valid output schema");
-    assert_required_properties(&schema, instance, "$");
-    for (file_index, file) in instance["files"]
-        .as_array()
-        .expect("output files")
-        .iter()
-        .enumerate()
-    {
-        assert_required_properties(
-            &schema["$defs"]["file_report"],
-            file,
-            &format!("$.files[{file_index}]"),
-        );
-        for (check_index, check) in file["checks"]
-            .as_array()
-            .expect("output checks")
-            .iter()
-            .enumerate()
-        {
-            assert_required_properties(
-                &schema["$defs"]["check_evaluation"],
-                check,
-                &format!("$.files[{file_index}].checks[{check_index}]"),
-            );
-        }
-    }
-}
-
 fn assert_evaluation_summary_matches_checks(instance: &Value) {
     let checks: Vec<_> = instance["files"]
         .as_array()
@@ -217,6 +172,14 @@ fn write_distinct_repair_glb(path: &std::path::Path) {
 
 fn write_clean_glb(path: &std::path::Path) {
     animsmith_gltf::write::write(&sway_doc(false), path).expect("writes clean fixture");
+}
+
+fn write_two_clip_clean_glb(path: &std::path::Path) {
+    let mut doc = sway_doc(false);
+    let mut second = doc.clips[0].clone();
+    second.name = "sway_b".into();
+    doc.clips.push(second);
+    animsmith_gltf::write::write(&doc, path).expect("writes two-clip fixture");
 }
 
 fn write_json(path: &std::path::Path, value: &Value) {
@@ -892,6 +855,46 @@ fn measure_json_uses_versioned_envelope() {
 }
 
 #[test]
+fn embedded_contract_types_emit_the_published_v2_envelope() {
+    let doc = Document::default();
+    let config = animsmith_core::Config::default();
+    let roles = animsmith_core::ResolvedRoles::default();
+    let grids = animsmith_core::MetricGrids::new(&doc);
+    let ctx = animsmith_core::CheckCtx::new(&grids, &roles, &config);
+    let checks = animsmith_core::evaluate_checks(
+        &ctx,
+        &animsmith_core::all_checks(),
+        animsmith_core::CheckSelection::All,
+    )
+    .expect("built-in catalog evaluates");
+    let file = animsmith_core::FileReport::lint(
+        "embedded.glb",
+        animsmith_core::RigInfo::from_resolved(&doc, &roles),
+        checks,
+        animsmith_core::MeasurementContract::new(
+            animsmith_core::measure::measure_document(&grids, &roles, &config),
+            animsmith_core::measure::measure_meshes(&doc.assets),
+        ),
+    );
+    let envelope = animsmith_core::ReportEnvelope::lint(
+        animsmith_core::ToolInfo::animsmith(
+            env!("CARGO_PKG_VERSION"),
+            animsmith_core::ToolSource::new(None, None),
+        ),
+        vec![file],
+    )
+    .expect("lint file shape matches lint envelope");
+
+    let json = serde_json::to_value(envelope).expect("embedded envelope serializes");
+    assert_output_schema_valid(&json);
+    assert_eq!(json["schema"], animsmith_core::OUTPUT_SCHEMA_ID);
+    assert_eq!(
+        json["files"][0]["measurements"]["schema"],
+        animsmith_core::MEASUREMENTS_SCHEMA_ID
+    );
+}
+
+#[test]
 fn lint_json_uses_versioned_envelope() {
     let output = animsmith()
         .args([
@@ -926,7 +929,7 @@ fn lint_json_uses_versioned_envelope() {
         .collect();
     assert_eq!(actual_ids, EXPECTED_CHECK_IDS.into_iter().collect());
     assert_evaluation_summary_matches_checks(&json);
-    assert_v2_required_fields(&json);
+    assert_output_schema_valid(&json);
 }
 
 #[test]
@@ -975,13 +978,13 @@ fn removed_preview_format_is_rejected_as_an_operator_error() {
             "lint",
             fixture("rig.gltf").to_str().unwrap(),
             "--format",
-            "json-v2-preview",
+            &format!("json-v2-{}", "preview"),
         ])
         .output()
         .expect("runs animsmith");
     assert_eq!(output.status.code(), Some(2));
     assert!(stdout(&output).is_empty());
-    assert!(stderr(&output).contains("invalid value 'json-v2-preview'"));
+    assert!(stderr(&output).contains(&format!("invalid value 'json-v2-{}'", "preview")));
 }
 
 #[test]
@@ -1026,7 +1029,7 @@ fn lint_json_exposes_complete_clean_and_unselected_checks() {
     assert_eq!(gait_group["applicability"], "not_applicable");
     assert_eq!(gait_group["evaluation"], "not_evaluated");
     assert_evaluation_summary_matches_checks(&json);
-    assert_v2_required_fields(&json);
+    assert_output_schema_valid(&json);
 }
 
 #[test]
@@ -1115,7 +1118,7 @@ fn lint_json_gait_group_can_carry_finding_and_coverage_gap() {
     assert_eq!(json["summary"]["checks"]["gaps"], 1);
     assert_eq!(json["summary"]["findings"]["error"], 1);
     assert_evaluation_summary_matches_checks(&json);
-    assert_v2_required_fields(&json);
+    assert_output_schema_valid(&json);
 }
 
 #[test]
@@ -1576,6 +1579,57 @@ fn diff_text_format_renders_deltas_and_clean_summary() {
         "clean Text output states no movement:\n{}",
         stdout(&clean)
     );
+}
+
+#[test]
+fn diff_text_escapes_controls_from_report_clip_metric_and_note_fields() {
+    let dir = unique_temp_dir("diff-text-controls");
+    let before_path = dir.path().join("before.json");
+    let after_path = dir.path().join("after.json");
+    let hostile = "forged\nline\u{1b}[31m";
+    let mut before = measurement_report(1.0);
+    let mut after = measurement_report(1.1);
+    for report in [&mut before, &mut after] {
+        let clip = report["files"][0]["measurements"]["clips"]
+            .as_object_mut()
+            .expect("clip map")
+            .remove("walk")
+            .expect("walk fixture");
+        report["files"][0]["measurements"]["clips"]
+            .as_object_mut()
+            .expect("clip map")
+            .insert(hostile.into(), clip);
+    }
+    before["files"][0]["measurements"]["clips"][hostile]["bone_rotation_range_deg"] = json!({});
+    before["files"][0]["measurements"]["clips"][hostile]["bone_rotation_range_deg"]
+        .as_object_mut()
+        .expect("rotation map")
+        .insert(hostile.into(), json!(0.0));
+    after["files"][0]["measurements"]["clips"][hostile]["bone_rotation_range_deg"] = json!({});
+    after["files"][0]["measurements"]["clips"][hostile]["bone_rotation_range_deg"]
+        .as_object_mut()
+        .expect("rotation map")
+        .insert(hostile.into(), json!(10.0));
+    after["files"][0]["measurements"]["clips"][hostile]["animated_bones"] = json!([hostile]);
+    write_json(&before_path, &before);
+    write_json(&after_path, &after);
+
+    let output = animsmith()
+        .args(["diff"])
+        .arg(&before_path)
+        .arg(&after_path)
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    let text = stdout(&output);
+    assert!(!text.contains(hostile), "raw controls leaked:\n{text}");
+    assert!(text.contains("\\n"), "newline not escaped:\n{text}");
+    assert!(text.contains("\\u{1b}"), "escape not escaped:\n{text}");
 }
 
 #[test]
@@ -2090,6 +2144,34 @@ fn lint_unresolved_roles_serialize_as_a_gap_and_exit_zero() {
         assert_eq!(loop_seam["findings"], json!([]), "{json:#}");
         assert_eq!(loop_seam["gaps"][0]["code"], "roles_unresolved", "{json:#}");
     }
+}
+
+#[test]
+fn lint_text_groups_repeated_per_clip_coverage_gaps() {
+    let dir = unique_temp_dir("grouped-coverage-gap");
+    let input = dir.path().join("sways.glb");
+    write_two_clip_clean_glb(&input);
+    let config = dir.path().join("animsmith.toml");
+    std::fs::write(&config, "[clips.\"sway*\"]\nloop = true\n").expect("writes config");
+
+    let output = animsmith()
+        .args(["--config"])
+        .arg(&config)
+        .arg("lint")
+        .arg(&input)
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    let text = stdout(&output);
+    assert_eq!(text.matches("coverage[loop-seam]").count(), 1, "{text}");
+    assert!(text.contains("roles_unresolved ×2"), "{text}");
+    assert!(text.contains("sway, sway_b"), "{text}");
+    assert!(text.contains("4 coverage gap(s)"), "{text}");
 }
 
 #[test]

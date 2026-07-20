@@ -44,7 +44,7 @@ impl Check for Partial {
     }
 
     fn evaluate(&self, _ctx: &CheckCtx) -> CheckOutput {
-        CheckOutput::partial(
+        CheckOutput::from_coverage(
             vec![Finding::new(self.id(), Severity::Error, "member missing")],
             vec![EvaluationScope::new("member_existence")],
             vec![
@@ -63,10 +63,14 @@ impl Check for Unevaluated {
     }
 
     fn evaluate(&self, _ctx: &CheckCtx) -> CheckOutput {
-        CheckOutput::not_evaluated(vec![CoverageGap::new(
-            CoverageGapCode::custom("acme:input_unavailable"),
-            "nothing evaluated",
-        )])
+        CheckOutput::from_coverage(
+            Vec::new(),
+            Vec::new(),
+            vec![CoverageGap::new(
+                CoverageGapCode::custom("acme:input_unavailable"),
+                "nothing evaluated",
+            )],
+        )
     }
 }
 
@@ -254,32 +258,20 @@ fn catalog_and_output_invariants_return_typed_errors() {
 }
 
 #[test]
-#[should_panic(expected = "partial evaluation requires a completed scope")]
-fn partial_constructor_rejects_missing_completed_scope() {
-    let _ = CheckOutput::partial(
-        Vec::new(),
+#[should_panic(expected = "not-evaluated output cannot carry content findings")]
+fn coverage_classification_rejects_findings_without_completed_scope() {
+    let _ = CheckOutput::from_coverage(
+        vec![Finding::new(
+            "example",
+            Severity::Error,
+            "unsupported judgment",
+        )],
         Vec::new(),
         vec![CoverageGap::new(
             CoverageGapCode::MEASUREMENT_UNAVAILABLE,
             "missing",
         )],
     );
-}
-
-#[test]
-#[should_panic(expected = "partial evaluation requires a gap")]
-fn partial_constructor_rejects_missing_gap() {
-    let _ = CheckOutput::partial(
-        Vec::new(),
-        vec![EvaluationScope::new("completed")],
-        Vec::new(),
-    );
-}
-
-#[test]
-#[should_panic(expected = "not-evaluated output requires a coverage gap")]
-fn not_evaluated_constructor_rejects_missing_gap() {
-    let _ = CheckOutput::not_evaluated(Vec::new());
 }
 
 #[test]

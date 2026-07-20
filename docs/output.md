@@ -89,6 +89,38 @@ at least one gap. Applicable work that completed nothing has a gap and no
 content findings. A scope can appear as completed and also be named by a gap
 when a group-level calculation covered some but not all members.
 
+Built-in gap codes are:
+
+| Gap code | Meaning | Emitted by |
+|---|---|---|
+| `roles_unresolved` | Required semantic rig roles were not resolved. | `loop-seam`, `root-motion-speed`, `in-place`, `foot-slide`, `gait-group` |
+| `measurement_unavailable` | A required numeric measurement could not be produced or did not meet its evidence floor. | `loop-seam`, `root-motion-speed`, `in-place`, `foot-slide`, `gait-group` |
+| `insufficient_measurable_members` | Fewer than two gait-group members produced usable phases. | `gait-group` |
+| `members_not_evaluated` | Some configured gait-group members did not produce usable phases. | `gait-group` |
+| `invalid_declared_fps` | A declared frame rate was zero, negative, or non-finite. | `fps` |
+| `insufficient_rotation_evidence` | Too few usable rotation tracks existed for a bind-pose comparison. | `bind-pose` |
+
+Built-in completed/gap scope codes are:
+
+| Scope code | Work unit | Emitted by |
+|---|---|---|
+| `member_existence` | Configured gait-group members were checked for existence. | `gait-group` |
+| `phase_measurement` | One named clip's gait phase was measured or lacked usable evidence. | `gait-group` |
+| `phase_coherence` | One named gait group's measurable phases were compared. | `gait-group` |
+| `loop_seam` | One named clip's positional loop seam was measured. | `loop-seam` |
+| `root_motion_speed` | One named clip's root-motion speed was measured. | `root-motion-speed` |
+| `travel_mode` | One named clip's in-place/root-motion declaration was judged. | `in-place` |
+| `foot_stance` | Whole-clip prerequisites for stance analysis were evaluated. | `foot-slide` |
+| `left_foot_stance` | The named clip's left foot/toe stance was evaluated. | `foot-slide` |
+| `right_foot_stance` | The named clip's right foot/toe stance was evaluated. | `foot-slide` |
+| `frame_grid` | The named clip's declared frame grid was evaluated. | `fps` |
+| `first_frame_rest_delta` | The named clip's first-frame/rest-pose rotation evidence was evaluated. | `bind-pose` |
+
+The built-in gap constants live in `animsmith_core::CoverageGapCode`; scope
+codes are created beside their checks. `scripts/check-schema-id.sh` derives
+both source lists and fails if this reference table falls behind them. Custom
+checks may add namespaced gap codes and their own scope vocabulary.
+
 `summary.checks` reports a `total` and four independent partitions. Each of
 `selection`, `configuration`, `applicability`, and `evaluation` sums to that
 same total. `summary.checks.gaps` counts typed gaps, while
@@ -97,13 +129,17 @@ same total. `summary.checks.gaps` counts typed gaps, while
 `lint --format json` deliberately rejects `--allow` so machine evidence is
 never deleted. `--allow` remains available for text and Markdown presentation
 and their exit policy. Text and Markdown render coverage gaps separately from
-findings.
+findings and group repeated gaps by `(check_id, code)` for readability. Group
+counts still reflect every underlying per-scope JSON gap.
 
 ## Findings and numeric values
 
 Findings carry `check_id`, `severity`, optional `clip`, `bone`, `time_s`,
 `measured`, and `expected` fields, plus a human message. Treat `check_id` and
 the structured fields as automation data; treat `message` as display text.
+The nested `check_id` intentionally repeats its owning check record so a
+finding stays self-describing when extracted or consumed through the embedded
+API; the evaluator rejects mismatched parent/child ids.
 
 Numeric equality in the JSON contract means equality of decoded JSON numbers,
 not byte-for-byte lexical spelling. For example, `1`, `1.0`, and `1e0` denote

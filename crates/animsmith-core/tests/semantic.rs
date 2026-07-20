@@ -11,8 +11,8 @@ use animsmith_core::metrics::MIN_STRIDE_STEP_M;
 use animsmith_core::model::*;
 use animsmith_core::profile::{ResolvedRoles, Role};
 use animsmith_core::{
-    CheckCtx, CheckEvaluation, CheckSelection, Config, ConfigurationState, EvaluationState,
-    MetricGrids, Severity, all_checks, evaluate_checks,
+    CheckCtx, CheckEvaluation, CheckSelection, Config, ConfigurationState, CoverageGapCode,
+    EvaluationState, MetricGrids, Severity, all_checks, evaluate_checks,
 };
 use glam::Vec3;
 use std::f64::consts::TAU;
@@ -582,6 +582,17 @@ fn too_short_group_member_is_a_typed_gap() {
         .find(|gap| gap.code.as_str() == "insufficient_measurable_members")
         .expect("too-short member leaves group coverage incomplete");
     assert_eq!(gap.scope.as_ref().unwrap().subject.as_deref(), Some("ring"));
+    let member_gap = gait
+        .gaps
+        .iter()
+        .find(|gap| {
+            gap.code == CoverageGapCode::MEASUREMENT_UNAVAILABLE
+                && gap.scope.as_ref().is_some_and(|scope| {
+                    scope.code == "phase_measurement" && scope.subject.as_deref() == Some("stub")
+                })
+        })
+        .expect("unmeasurable member retains clip attribution");
+    assert!(member_gap.message.contains("could not be measured"));
 }
 
 /// Foot-slide reports its own role gap from its `speed_mps` applicability.

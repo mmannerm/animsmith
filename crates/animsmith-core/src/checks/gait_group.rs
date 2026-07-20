@@ -35,11 +35,7 @@ impl Check for GaitGroup {
         coverage
             .evaluated_scopes
             .insert(0, EvaluationScope::new("member_existence"));
-        if coverage.gaps.is_empty() {
-            CheckOutput::complete_scoped(findings, coverage.evaluated_scopes)
-        } else {
-            CheckOutput::partial(findings, coverage.evaluated_scopes, coverage.gaps)
-        }
+        CheckOutput::from_coverage(findings, coverage.evaluated_scopes, coverage.gaps)
     }
 }
 
@@ -78,13 +74,38 @@ fn run_content(ctx: &CheckCtx, out: &mut Vec<Finding>) -> GaitCoverage {
                 .grid(index)
                 .and_then(|grid| foot_cycle_metrics(&grid, ctx.roles, MIN_STRIDE_STEP_M));
             let Some(metrics) = gait else {
+                coverage.gaps.push(
+                    CoverageGap::new(
+                        CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                        "gait phase could not be measured",
+                    )
+                    .scope(EvaluationScope::new("phase_measurement").subject(clip_name)),
+                );
                 continue;
             };
             if metrics.lr_amplitude_m < group.min_lr_amplitude_m {
+                coverage.gaps.push(
+                    CoverageGap::new(
+                        CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                        format!(
+                            "left/right gait amplitude {:.3} m is below the {:.3} m evidence floor",
+                            metrics.lr_amplitude_m, group.min_lr_amplitude_m
+                        ),
+                    )
+                    .scope(EvaluationScope::new("phase_measurement").subject(clip_name)),
+                );
                 continue;
             }
             if let Some(phase) = metrics.gait_phase {
                 measured.push((clip_name, phase));
+            } else {
+                coverage.gaps.push(
+                    CoverageGap::new(
+                        CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                        "gait phase could not be fitted from the sampled cycle",
+                    )
+                    .scope(EvaluationScope::new("phase_measurement").subject(clip_name)),
+                );
             }
         }
 
