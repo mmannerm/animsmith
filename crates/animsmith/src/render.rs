@@ -552,9 +552,9 @@ mod tests {
         // Deliberately interleaved: the renderer must sort before grouping,
         // or the repeated walk clip would create a third table.
         let findings = vec![
-            Finding::new("a", Severity::Error, "m1").clip("walk"),
-            Finding::new("b", Severity::Warning, "m2").clip("run"),
             Finding::new("c", Severity::Note, "m3").clip("walk"),
+            Finding::new("b", Severity::Warning, "m2").clip("run"),
+            Finding::new("a", Severity::Error, "m1").clip("walk"),
         ];
         let md = render_markdown(&[report("a.glb", findings)], &[]);
         let run = md.find("#### clip `run`").expect("run heading");
@@ -572,9 +572,9 @@ mod tests {
             &[report(
                 "a.glb",
                 vec![
-                    Finding::new("a", Severity::Error, "m1").clip("walk"),
-                    Finding::new("b", Severity::Warning, "m2").clip("run"),
                     Finding::new("c", Severity::Note, "m3").clip("walk"),
+                    Finding::new("b", Severity::Warning, "m2").clip("run"),
+                    Finding::new("a", Severity::Error, "m1").clip("walk"),
                 ],
             )],
             &[],

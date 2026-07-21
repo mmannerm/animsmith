@@ -109,9 +109,11 @@ pub use contract::{
     ToolInfo, ToolSource,
 };
 pub use evaluation::{
-    Applicability, BUILTIN_COVERAGE_GAP_CODES, BUILTIN_EVALUATION_SCOPE_CODES, CheckEvaluation,
-    CheckOutput, CheckSelection, ConfigurationState, CoverageGap, CoverageGapCode, EvaluationError,
-    EvaluationScope, EvaluationScopeCode, EvaluationState, SelectionState, evaluate_checks,
+    Applicability, BUILTIN_COVERAGE_GAP_CODE_DOCS, BUILTIN_COVERAGE_GAP_CODES,
+    BUILTIN_EVALUATION_SCOPE_CODE_DOCS, BUILTIN_EVALUATION_SCOPE_CODES, BuiltinCodeDocumentation,
+    CheckEvaluation, CheckOutput, CheckSelection, ConfigurationState, CoverageGap, CoverageGapCode,
+    EvaluationError, EvaluationScope, EvaluationScopeCode, EvaluationState, SelectionState,
+    evaluate_checks,
 };
 pub use finding::{Finding, Severity, Value};
 /// Re-export of the exact `glam` version used by animsmith's public math
