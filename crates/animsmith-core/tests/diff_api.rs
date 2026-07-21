@@ -68,22 +68,81 @@ fn public_diff_treats_non_finite_measurements_as_absent() {
         "identical absent/non-finite values must not produce false deltas"
     );
 
-    let finite = measurements(1.0);
-    let disappeared = PUBLIC_DIFF_MEASUREMENTS(&finite, &invalid);
-    let bone = disappeared
-        .iter()
-        .find(|delta| delta.metric == "bone_rotation_range_deg[hips]")
-        .expect("finite-to-non-finite bone transition is reported");
-    assert_eq!(bone.before, Some(10.0));
-    assert_eq!(bone.after, None);
-    assert_eq!(bone.note, "bone no longer animated");
+    struct Case {
+        metric: &'static str,
+        finite: f64,
+        make_non_finite: fn(&mut ClipMeasurements),
+        appeared_note: &'static str,
+        disappeared_note: &'static str,
+    }
+    let cases = [
+        Case {
+            metric: "duration_s",
+            finite: 1.0,
+            make_non_finite: |clip| clip.duration_s = f64::NAN,
+            appeared_note: "appeared",
+            disappeared_note: "disappeared",
+        },
+        Case {
+            metric: "loop_seam_ratio",
+            finite: 0.2,
+            make_non_finite: |clip| clip.loop_seam_ratio = Some(f64::INFINITY),
+            appeared_note: "appeared",
+            disappeared_note: "disappeared",
+        },
+        Case {
+            metric: "gait.phase",
+            finite: 0.25,
+            make_non_finite: |clip| {
+                clip.gait.as_mut().expect("fixture gait").phase = Some(f64::NEG_INFINITY);
+            },
+            appeared_note: "appeared",
+            disappeared_note: "disappeared",
+        },
+        Case {
+            metric: "gait.lr_amplitude_m",
+            finite: 0.1,
+            make_non_finite: |clip| {
+                clip.gait.as_mut().expect("fixture gait").lr_amplitude_m = f64::NAN;
+            },
+            appeared_note: "appeared",
+            disappeared_note: "disappeared",
+        },
+        Case {
+            metric: "speed_mps",
+            finite: 1.0,
+            make_non_finite: |clip| clip.speed_mps = Some(f64::INFINITY),
+            appeared_note: "appeared",
+            disappeared_note: "disappeared",
+        },
+        Case {
+            metric: "bone_rotation_range_deg[hips]",
+            finite: 10.0,
+            make_non_finite: |clip| {
+                clip.bone_rotation_range_deg.insert("hips".into(), f64::NAN);
+            },
+            appeared_note: "bone now animated",
+            disappeared_note: "bone no longer animated",
+        },
+    ];
 
-    let appeared = PUBLIC_DIFF_MEASUREMENTS(&invalid, &finite);
-    let bone = appeared
-        .iter()
-        .find(|delta| delta.metric == "bone_rotation_range_deg[hips]")
-        .expect("non-finite-to-finite bone transition is reported");
-    assert_eq!(bone.before, None);
-    assert_eq!(bone.after, Some(10.0));
-    assert_eq!(bone.note, "bone now animated");
+    for case in cases {
+        let finite = measurements(1.0);
+        let mut non_finite = finite.clone();
+        (case.make_non_finite)(non_finite.get_mut("walk").expect("fixture clip"));
+
+        let disappeared = PUBLIC_DIFF_MEASUREMENTS(&finite, &non_finite);
+        assert_eq!(disappeared.len(), 1, "{}: {disappeared:?}", case.metric);
+        assert_eq!(disappeared[0].metric, case.metric);
+        assert_eq!(disappeared[0].before, Some(case.finite));
+        assert_eq!(disappeared[0].after, None);
+        assert_eq!(disappeared[0].note, case.disappeared_note);
+
+        let appeared = PUBLIC_DIFF_MEASUREMENTS(&non_finite, &finite);
+        assert_eq!(appeared.len(), 1, "{}: {appeared:?}", case.metric);
+        assert_eq!(appeared[0].metric, case.metric);
+        assert_eq!(appeared[0].before, None);
+        assert_eq!(appeared[0].after, Some(case.finite));
+        assert_eq!(appeared[0].note, case.appeared_note);
+    }
 }
