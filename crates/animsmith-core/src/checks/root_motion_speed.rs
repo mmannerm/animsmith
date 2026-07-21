@@ -7,7 +7,7 @@
 use crate::check::{Check, CheckCtx};
 use crate::checks::root_motion_gap;
 use crate::evaluation::{
-    Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope,
+    Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope, EvaluationScopeCode,
 };
 use crate::finding::{Finding, Severity};
 use crate::metrics::root_motion_speed_mps;
@@ -56,7 +56,8 @@ impl Check for RootMotionSpeed {
                 // validates it there.
                 continue;
             }
-            let scope = EvaluationScope::new("root_motion_speed").subject(&clip.name);
+            let scope =
+                EvaluationScope::new(EvaluationScopeCode::ROOT_MOTION_SPEED).subject(&clip.name);
             if let Some(gap) = root_motion_gap(ctx.roles) {
                 gaps.push(gap.scope(scope));
                 continue;

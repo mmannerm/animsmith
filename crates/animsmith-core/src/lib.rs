@@ -47,7 +47,7 @@
 //! let results = evaluate_checks(&ctx, &all_checks(), CheckSelection::All)?;
 //!
 //! assert!(measurements.is_empty());
-//! assert!(results.iter().all(|result| result.findings.is_empty()));
+//! assert!(results.iter().all(|result| result.findings().is_empty()));
 //! # Ok::<(), animsmith_core::EvaluationError>(())
 //! ```
 //!
@@ -103,14 +103,14 @@ pub mod transform;
 pub use check::{Check, CheckCtx, all_checks, mechanical_checks};
 pub use config::{ClipExpectations, Config, GaitGroup, Pinned, SeveritySetting};
 pub use contract::{
-    ContractError, DiffEnvelope, FileReport, LintSummary, MEASUREMENTS_SCHEMA_ID,
-    MEASUREMENTS_SCHEMA_VERSION, MeasureSummary, MeasurementContract, OUTPUT_SCHEMA_ID,
+    DiffEnvelope, LintFileReport, LintSummary, MEASUREMENTS_SCHEMA_ID, MEASUREMENTS_SCHEMA_VERSION,
+    MeasureFileReport, MeasureSummary, MeasurementContract, OUTPUT_SCHEMA_ID,
     OUTPUT_SCHEMA_VERSION, ReportEnvelope, RigInfo, ToolInfo, ToolSource,
 };
 pub use evaluation::{
-    Applicability, CheckEvaluation, CheckOutput, CheckSelection, ConfigurationState, CoverageGap,
-    CoverageGapCode, EvaluationError, EvaluationScope, EvaluationState, SelectionState,
-    evaluate_checks,
+    Applicability, BUILTIN_COVERAGE_GAP_CODES, BUILTIN_EVALUATION_SCOPE_CODES, CheckEvaluation,
+    CheckOutput, CheckSelection, ConfigurationState, CoverageGap, CoverageGapCode, EvaluationError,
+    EvaluationScope, EvaluationScopeCode, EvaluationState, SelectionState, evaluate_checks,
 };
 pub use finding::{Finding, Severity, Value};
 /// Re-export of the exact `glam` version used by animsmith's public math

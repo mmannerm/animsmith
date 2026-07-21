@@ -5,7 +5,7 @@
 
 use crate::check::{Check, CheckCtx};
 use crate::evaluation::{
-    Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope,
+    Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope, EvaluationScopeCode,
 };
 use crate::finding::{Finding, Severity};
 
@@ -45,11 +45,14 @@ impl Check for Fps {
                         CoverageGapCode::INVALID_DECLARED_FPS,
                         format!("clip declares a non-positive or non-finite frame rate ({fps})"),
                     )
-                    .scope(EvaluationScope::new("frame_grid").subject(&clip.name)),
+                    .scope(
+                        EvaluationScope::new(EvaluationScopeCode::FRAME_GRID).subject(&clip.name),
+                    ),
                 );
                 continue;
             }
-            evaluated_scopes.push(EvaluationScope::new("frame_grid").subject(&clip.name));
+            evaluated_scopes
+                .push(EvaluationScope::new(EvaluationScopeCode::FRAME_GRID).subject(&clip.name));
             let frames = clip.duration_s * fps;
             if (frames - frames.round()).abs() > GRID_TOLERANCE_FRAMES {
                 findings.push(

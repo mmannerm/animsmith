@@ -57,11 +57,77 @@ pub enum EvaluationState {
     NotEvaluated,
 }
 
+/// Stable machine code for a unit of evaluated or missing work.
+///
+/// Built-in codes are constants. Custom checks may construct namespaced codes
+/// without forcing animsmith's built-in registry to become a closed enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(transparent)]
+pub struct EvaluationScopeCode(&'static str);
+
+impl EvaluationScopeCode {
+    /// Bind-pose comparison against the first animation frame.
+    pub const FIRST_FRAME_REST_DELTA: Self = Self("first_frame_rest_delta");
+    /// Loop seam comparison.
+    pub const LOOP_SEAM: Self = Self("loop_seam");
+    /// Foot-stance evaluation when no side-specific scope is available.
+    pub const FOOT_STANCE: Self = Self("foot_stance");
+    /// Left-foot stance evaluation.
+    pub const LEFT_FOOT_STANCE: Self = Self("left_foot_stance");
+    /// Right-foot stance evaluation.
+    pub const RIGHT_FOOT_STANCE: Self = Self("right_foot_stance");
+    /// Root-motion speed measurement.
+    pub const ROOT_MOTION_SPEED: Self = Self("root_motion_speed");
+    /// Existence of the configured gait-group members.
+    pub const MEMBER_EXISTENCE: Self = Self("member_existence");
+    /// Per-member gait phase measurement.
+    pub const PHASE_MEASUREMENT: Self = Self("phase_measurement");
+    /// Coherence of the measurable gait phases in a group.
+    pub const PHASE_COHERENCE: Self = Self("phase_coherence");
+    /// In-place versus travelling classification.
+    pub const TRAVEL_MODE: Self = Self("travel_mode");
+    /// Declared frame-grid evaluation.
+    pub const FRAME_GRID: Self = Self("frame_grid");
+
+    /// Construct a stable custom scope code.
+    ///
+    /// Custom checks should use a namespaced value such as `acme:reference`.
+    pub const fn custom(code: &'static str) -> Self {
+        Self(code)
+    }
+
+    /// Return the serialized snake-case or namespaced code.
+    pub const fn as_str(self) -> &'static str {
+        self.0
+    }
+}
+
+impl fmt::Display for EvaluationScopeCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+/// Built-in evaluation-scope codes used by animsmith's catalog.
+pub const BUILTIN_EVALUATION_SCOPE_CODES: &[EvaluationScopeCode] = &[
+    EvaluationScopeCode::FIRST_FRAME_REST_DELTA,
+    EvaluationScopeCode::LOOP_SEAM,
+    EvaluationScopeCode::FOOT_STANCE,
+    EvaluationScopeCode::LEFT_FOOT_STANCE,
+    EvaluationScopeCode::RIGHT_FOOT_STANCE,
+    EvaluationScopeCode::ROOT_MOTION_SPEED,
+    EvaluationScopeCode::MEMBER_EXISTENCE,
+    EvaluationScopeCode::PHASE_MEASUREMENT,
+    EvaluationScopeCode::PHASE_COHERENCE,
+    EvaluationScopeCode::TRAVEL_MODE,
+    EvaluationScopeCode::FRAME_GRID,
+];
+
 /// A stable identifier for work that completed or could not be evaluated.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct EvaluationScope {
     /// Consumer-neutral work-unit code such as `member_existence`.
-    pub code: &'static str,
+    pub code: EvaluationScopeCode,
     /// Optional subject within the check, such as a group or clip name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
@@ -69,7 +135,7 @@ pub struct EvaluationScope {
 
 impl EvaluationScope {
     /// Construct a whole-check scope.
-    pub fn new(code: &'static str) -> Self {
+    pub fn new(code: EvaluationScopeCode) -> Self {
         Self {
             code,
             subject: None,
@@ -119,6 +185,16 @@ impl CoverageGapCode {
         self.0
     }
 }
+
+/// Built-in coverage-gap codes used by animsmith's catalog.
+pub const BUILTIN_COVERAGE_GAP_CODES: &[CoverageGapCode] = &[
+    CoverageGapCode::ROLES_UNRESOLVED,
+    CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+    CoverageGapCode::INSUFFICIENT_MEASURABLE_MEMBERS,
+    CoverageGapCode::MEMBERS_NOT_EVALUATED,
+    CoverageGapCode::INVALID_DECLARED_FPS,
+    CoverageGapCode::INSUFFICIENT_ROTATION_EVIDENCE,
+];
 
 impl fmt::Display for CoverageGapCode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -228,23 +304,61 @@ impl CheckOutput {
 /// Final v2 record for one catalog check.
 #[derive(Debug, Clone)]
 pub struct CheckEvaluation {
-    /// Stable check id.
-    pub check_id: &'static str,
-    /// Invocation selection state.
-    pub selection: SelectionState,
-    /// Configuration activation state.
-    pub configuration: ConfigurationState,
-    /// Applicability to this document/configuration.
-    pub applicability: Applicability,
-    /// Content findings emitted by evaluated work.
-    pub findings: Vec<Finding>,
-    /// Stable identifiers for work that completed.
-    pub evaluated_scopes: Vec<EvaluationScope>,
-    /// Typed reasons work was not evaluated.
-    pub gaps: Vec<CoverageGap>,
+    check_id: &'static str,
+    selection: SelectionState,
+    configuration: ConfigurationState,
+    applicability: Applicability,
+    findings: Vec<Finding>,
+    evaluated_scopes: Vec<EvaluationScope>,
+    gaps: Vec<CoverageGap>,
 }
 
 impl CheckEvaluation {
+    /// Construct a selected, enabled, applicable evaluation from validated
+    /// check output.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a nested finding names a different check.
+    pub fn evaluated(check_id: &'static str, output: CheckOutput) -> Result<Self, EvaluationError> {
+        let (findings, evaluated_scopes, gaps) = output.into_parts();
+        if let Some(finding) = findings.iter().find(|finding| finding.check_id != check_id) {
+            return Err(EvaluationError::FindingCheckIdMismatch {
+                check_id,
+                finding_check_id: finding.check_id,
+            });
+        }
+        Ok(Self {
+            check_id,
+            selection: SelectionState::Selected,
+            configuration: ConfigurationState::Enabled,
+            applicability: Applicability::Applicable,
+            findings,
+            evaluated_scopes,
+            gaps,
+        })
+    }
+
+    /// Stable check id.
+    pub fn check_id(&self) -> &'static str {
+        self.check_id
+    }
+
+    /// Invocation selection state.
+    pub fn selection(&self) -> SelectionState {
+        self.selection
+    }
+
+    /// Configuration activation state.
+    pub fn configuration(&self) -> ConfigurationState {
+        self.configuration
+    }
+
+    /// Applicability to this document/configuration.
+    pub fn applicability(&self) -> Applicability {
+        self.applicability
+    }
+
     /// Derive evaluation coverage from activation, completed scopes, and gaps.
     pub fn evaluation(&self) -> EvaluationState {
         if self.selection == SelectionState::Unselected
@@ -258,6 +372,51 @@ impl CheckEvaluation {
             EvaluationState::NotEvaluated
         } else {
             EvaluationState::Partial
+        }
+    }
+
+    /// Content findings emitted by evaluated work.
+    pub fn findings(&self) -> &[Finding] {
+        &self.findings
+    }
+
+    /// Stable identifiers for work that completed.
+    pub fn evaluated_scopes(&self) -> &[EvaluationScope] {
+        &self.evaluated_scopes
+    }
+
+    /// Typed reasons work was not evaluated.
+    pub fn gaps(&self) -> &[CoverageGap] {
+        &self.gaps
+    }
+
+    fn inactive(
+        check_id: &'static str,
+        selection: SelectionState,
+        configuration: ConfigurationState,
+        applicability: Applicability,
+    ) -> Self {
+        debug_assert!(
+            selection == SelectionState::Unselected
+                || configuration == ConfigurationState::Disabled
+                || applicability == Applicability::NotApplicable
+        );
+        Self {
+            check_id,
+            selection,
+            configuration,
+            applicability,
+            findings: Vec::new(),
+            evaluated_scopes: Vec::new(),
+            gaps: Vec::new(),
+        }
+    }
+
+    fn override_severity(&mut self, severity: SeveritySetting) {
+        if let Some(severity) = severity.as_severity() {
+            for finding in &mut self.findings {
+                finding.severity = severity;
+            }
         }
     }
 }
@@ -374,41 +533,20 @@ pub fn evaluate_checks(
             || configuration == ConfigurationState::Disabled
             || applicability == Applicability::NotApplicable
         {
-            records.push(CheckEvaluation {
-                check_id: check.id(),
-                selection: selection_state,
+            records.push(CheckEvaluation::inactive(
+                check.id(),
+                selection_state,
                 configuration,
                 applicability,
-                findings: Vec::new(),
-                evaluated_scopes: Vec::new(),
-                gaps: Vec::new(),
-            });
+            ));
             continue;
         }
 
-        let (mut findings, evaluated_scopes, gaps) = check.evaluate(ctx).into_parts();
-        for finding in &findings {
-            if finding.check_id != check.id() {
-                return Err(EvaluationError::FindingCheckIdMismatch {
-                    check_id: check.id(),
-                    finding_check_id: finding.check_id,
-                });
-            }
+        let mut evaluation = CheckEvaluation::evaluated(check.id(), check.evaluate(ctx))?;
+        if let Some(setting) = setting {
+            evaluation.override_severity(setting);
         }
-        if let Some(severity) = setting.and_then(SeveritySetting::as_severity) {
-            for finding in &mut findings {
-                finding.severity = severity;
-            }
-        }
-        records.push(CheckEvaluation {
-            check_id: check.id(),
-            selection: selection_state,
-            configuration,
-            applicability,
-            findings,
-            evaluated_scopes,
-            gaps,
-        });
+        records.push(evaluation);
     }
     Ok(records)
 }

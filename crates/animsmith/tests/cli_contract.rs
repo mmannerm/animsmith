@@ -898,6 +898,34 @@ fn measure_text_escapes_controls_in_clip_and_mesh_names() {
     assert_eq!(text.matches("\\u{1b}").count(), 2, "clip and mesh: {text}");
 }
 
+#[cfg(unix)]
+#[test]
+fn measure_text_escapes_controls_in_the_input_path() {
+    let dir = unique_temp_dir("measure-text-path-controls");
+    let hostile_name = "asset\nforged\u{1b}[31m.gltf";
+    let input = dir.path().join(hostile_name);
+    std::fs::copy(fixture("rig.gltf"), &input).expect("copies self-contained glTF fixture");
+
+    let output = animsmith()
+        .arg("measure")
+        .arg(&input)
+        .args(["--format", "text"])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    let text = stdout(&output);
+    assert!(
+        !text.contains(hostile_name),
+        "raw path controls leaked:\n{text}"
+    );
+    assert!(text.contains("asset\\nforged\\u{1b}[31m.gltf"), "{text}");
+}
+
 #[test]
 fn embedded_contract_types_emit_the_published_v2_envelope() {
     let doc = Document::default();
@@ -911,7 +939,7 @@ fn embedded_contract_types_emit_the_published_v2_envelope() {
         animsmith_core::CheckSelection::All,
     )
     .expect("built-in catalog evaluates");
-    let file = animsmith_core::FileReport::lint(
+    let file = animsmith_core::LintFileReport::new(
         "embedded.glb",
         animsmith_core::RigInfo::from_resolved(&doc, &roles),
         checks,
@@ -926,8 +954,7 @@ fn embedded_contract_types_emit_the_published_v2_envelope() {
             animsmith_core::ToolSource::new(None, None),
         ),
         vec![file],
-    )
-    .expect("lint file shape matches lint envelope");
+    );
 
     let json = serde_json::to_value(envelope).expect("embedded envelope serializes");
     assert_output_schema_valid(&json);

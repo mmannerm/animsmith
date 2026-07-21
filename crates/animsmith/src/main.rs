@@ -19,13 +19,12 @@
 
 #![warn(missing_docs)]
 
-use animsmith_core::model::Document;
-use animsmith_core::profile::ResolvedRoles;
+use animsmith_core::Document;
 use animsmith_core::{
-    CheckCtx, CheckSelection, Config, DiffEnvelope, FileReport, MEASUREMENTS_SCHEMA_ID,
-    MEASUREMENTS_SCHEMA_VERSION, MeasurementContract, MetricGrids, OUTPUT_SCHEMA_ID,
-    OUTPUT_SCHEMA_VERSION, ReportEnvelope, RigInfo, Severity, ToolInfo, ToolSource, all_checks,
-    evaluate_checks, resolve_configured_roles,
+    CheckCtx, CheckSelection, Config, DiffEnvelope, LintFileReport, MEASUREMENTS_SCHEMA_ID,
+    MEASUREMENTS_SCHEMA_VERSION, MeasureFileReport, MeasurementContract, MetricGrids,
+    OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, ReportEnvelope, ResolvedRoles, RigInfo, Severity,
+    ToolInfo, ToolSource, all_checks, evaluate_checks, resolve_configured_roles,
 };
 use animsmith_gltf::fix::Repair;
 use clap::builder::{PossibleValue, PossibleValuesParser, TypedValueParser};
@@ -275,10 +274,6 @@ fn load_config(explicit: Option<&Path>) -> Result<Config, String> {
     toml::from_str(&text).map_err(|e| format!("bad config {}: {e}", path.display()))
 }
 
-fn rig_info(doc: &Document, roles: &ResolvedRoles) -> RigInfo {
-    RigInfo::from_resolved(doc, roles)
-}
-
 /// Print one repair's report. `target` is the written path; `None`
 /// means dry run (nothing written).
 fn print_fix_report(
@@ -356,9 +351,9 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 let doc = load(file)?;
                 let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
                 let grids = MetricGrids::new(&doc);
-                reports.push(FileReport::measure(
+                reports.push(MeasureFileReport::new(
                     file.display().to_string(),
-                    rig_info(&doc, &roles),
+                    RigInfo::from_resolved(&doc, &roles),
                     MeasurementContract::new(
                         animsmith_core::measure::measure_document(&grids, &roles, &config),
                         animsmith_core::measure::measure_meshes(&doc.assets),
@@ -367,8 +362,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             }
             match format {
                 Format::Json => {
-                    let envelope = ReportEnvelope::measure(current_tool(), reports)
-                        .map_err(|error| error.to_string())?;
+                    let envelope = ReportEnvelope::measure(current_tool(), reports);
                     render::print_json(&envelope);
                 }
                 Format::Text => {
@@ -454,19 +448,18 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
                 let grids = MetricGrids::new(&doc);
                 let ctx = CheckCtx::new(&grids, &roles, &config);
-                let mut evaluations =
+                let evaluations =
                     evaluate_checks(&ctx, &checks, selection).map_err(|error| error.to_string())?;
-                for check in &mut evaluations {
-                    check
-                        .findings
-                        .retain(|finding| !allow.iter().any(|id| id == finding.check_id));
-                }
-                for finding in evaluations.iter().flat_map(|check| &check.findings) {
+                for finding in evaluations
+                    .iter()
+                    .flat_map(|check| check.findings())
+                    .filter(|finding| !allow.iter().any(|id| id == finding.check_id))
+                {
                     worst = worst.max(finding.severity);
                 }
-                reports.push(FileReport::lint(
+                reports.push(LintFileReport::new(
                     file.display().to_string(),
-                    rig_info(&doc, &roles),
+                    RigInfo::from_resolved(&doc, &roles),
                     evaluations,
                     MeasurementContract::new(
                         animsmith_core::measure::measure_document(&grids, &roles, &config),
@@ -476,12 +469,11 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             }
             match format {
                 LintFormat::Json => {
-                    let envelope = ReportEnvelope::lint(current_tool(), reports)
-                        .map_err(|error| error.to_string())?;
+                    let envelope = ReportEnvelope::lint(current_tool(), reports);
                     render::print_json(&envelope);
                 }
-                LintFormat::Text => render::print_text(&reports),
-                LintFormat::Markdown => render::print_markdown(&reports),
+                LintFormat::Text => render::print_text(&reports, &allow),
+                LintFormat::Markdown => render::print_markdown(&reports, &allow),
             }
             let fail_at = if deny_warnings {
                 Severity::Warning
@@ -504,7 +496,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let findings: Vec<_> = evaluate_checks(&ctx, &all_checks(), CheckSelection::All)
                 .map_err(|error| error.to_string())?
                 .into_iter()
-                .flat_map(|check| check.findings)
+                .flat_map(|check| check.findings().to_vec())
                 .collect();
             let html = animsmith_report::render(&grids, &roles, &findings, clip.as_deref());
             std::fs::write(&output, &html)
