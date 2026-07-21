@@ -18,63 +18,22 @@ use crate::finding::Finding;
 macro_rules! builtin_codes {
     (
         $kind:ident, $registry:ident, $docs:ident, $registry_doc:literal;
-        $($(#[$meta:meta])* $name:ident => $value:literal,
+        $($name:ident => $value:literal,
             meaning = $meaning:literal,
             emitted_by = [$($emitter:literal),+ $(,)?]),+ $(,)?
     ) => {
         impl $kind {
-            $($(#[$meta])* pub const $name: Self = Self($value);)+
+            $(#[doc = $meaning] pub const $name: Self = Self($value);)+
         }
 
         #[doc = $registry_doc]
         pub const $registry: &[$kind] = &[$($kind::$name),+];
 
-        #[doc = concat!($registry_doc, " Includes the reference-table text and emitters.")]
-        pub const $docs: &[BuiltinCodeDocumentation] = &[
-            $(BuiltinCodeDocumentation::new($value, $meaning, &[$($emitter),+])),+
+        #[cfg(test)]
+        const $docs: &[(&str, &str, &[&str])] = &[
+            $(($value, $meaning, &[$($emitter),+])),+
         ];
     };
-}
-
-/// Reference documentation for one built-in evaluation scope or coverage gap.
-///
-/// The constants, code registries, and this metadata are emitted from the same
-/// declaration so the code vocabulary cannot drift from its documentation
-/// inventory silently.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BuiltinCodeDocumentation {
-    code: &'static str,
-    meaning: &'static str,
-    emitted_by: &'static [&'static str],
-}
-
-impl BuiltinCodeDocumentation {
-    const fn new(
-        code: &'static str,
-        meaning: &'static str,
-        emitted_by: &'static [&'static str],
-    ) -> Self {
-        Self {
-            code,
-            meaning,
-            emitted_by,
-        }
-    }
-
-    /// Return the serialized snake-case code.
-    pub const fn code(self) -> &'static str {
-        self.code
-    }
-
-    /// Return the one-line meaning used by the output-contract reference.
-    pub const fn meaning(self) -> &'static str {
-        self.meaning
-    }
-
-    /// Return the built-in check identifiers that can emit this code.
-    pub const fn emitted_by(self) -> &'static [&'static str] {
-        self.emitted_by
-    }
 }
 
 /// Whether a check was selected for this invocation.
@@ -132,47 +91,36 @@ builtin_codes!(
     BUILTIN_EVALUATION_SCOPE_CODES,
     BUILTIN_EVALUATION_SCOPE_CODE_DOCS,
     "Built-in evaluation-scope codes used by animsmith's catalog.";
-    /// Bind-pose comparison against the first animation frame.
     FIRST_FRAME_REST_DELTA => "first_frame_rest_delta",
         meaning = "The named clip's first-frame/rest-pose rotation evidence was evaluated.",
         emitted_by = ["bind-pose"],
-    /// Loop seam comparison.
     LOOP_SEAM => "loop_seam",
         meaning = "One named clip's positional loop seam was measured.",
         emitted_by = ["loop-seam"],
-    /// Foot-stance evaluation when no side-specific scope is available.
     FOOT_STANCE => "foot_stance",
         meaning = "Whole-clip prerequisites for stance analysis were evaluated.",
         emitted_by = ["foot-slide"],
-    /// Left-foot stance evaluation.
     LEFT_FOOT_STANCE => "left_foot_stance",
         meaning = "The named clip's left foot/toe stance was evaluated.",
         emitted_by = ["foot-slide"],
-    /// Right-foot stance evaluation.
     RIGHT_FOOT_STANCE => "right_foot_stance",
         meaning = "The named clip's right foot/toe stance was evaluated.",
         emitted_by = ["foot-slide"],
-    /// Root-motion speed measurement.
     ROOT_MOTION_SPEED => "root_motion_speed",
         meaning = "One named clip's root-motion speed was measured.",
         emitted_by = ["root-motion-speed"],
-    /// Existence of the configured gait-group members.
     MEMBER_EXISTENCE => "member_existence",
         meaning = "Configured gait-group members were checked for existence.",
         emitted_by = ["gait-group"],
-    /// Per-member gait phase measurement.
     PHASE_MEASUREMENT => "phase_measurement",
         meaning = "One named clip's gait phase was measured or lacked usable evidence.",
         emitted_by = ["gait-group"],
-    /// Coherence of the measurable gait phases in a group.
     PHASE_COHERENCE => "phase_coherence",
         meaning = "One named gait group's measurable phases were compared.",
         emitted_by = ["gait-group"],
-    /// In-place versus travelling classification.
     TRAVEL_MODE => "travel_mode",
         meaning = "One named clip's in-place/root-motion declaration was judged.",
         emitted_by = ["in-place"],
-    /// Declared frame-grid evaluation.
     FRAME_GRID => "frame_grid",
         meaning = "The named clip's declared frame grid was evaluated.",
         emitted_by = ["fps"],
@@ -238,27 +186,21 @@ builtin_codes!(
     BUILTIN_COVERAGE_GAP_CODES,
     BUILTIN_COVERAGE_GAP_CODE_DOCS,
     "Built-in coverage-gap codes used by animsmith's catalog.";
-    /// Required rig roles could not be resolved.
     ROLES_UNRESOLVED => "roles_unresolved",
         meaning = "Required semantic rig roles were not resolved.",
         emitted_by = ["loop-seam", "root-motion-speed", "in-place", "foot-slide", "gait-group"],
-    /// A metric needed by declared work could not be produced.
     MEASUREMENT_UNAVAILABLE => "measurement_unavailable",
         meaning = "A required numeric measurement could not be produced or did not meet its evidence floor.",
         emitted_by = ["loop-seam", "root-motion-speed", "in-place", "foot-slide", "gait-group"],
-    /// Fewer than two gait-group members produced a phase measurement.
     INSUFFICIENT_MEASURABLE_MEMBERS => "insufficient_measurable_members",
         meaning = "Fewer than two gait-group members produced usable phases.",
         emitted_by = ["gait-group"],
-    /// Some configured gait-group members did not produce a phase measurement.
     MEMBERS_NOT_EVALUATED => "members_not_evaluated",
         meaning = "Some configured gait-group members did not produce usable phases.",
         emitted_by = ["gait-group"],
-    /// A declared frame rate was zero, negative, or non-finite.
     INVALID_DECLARED_FPS => "invalid_declared_fps",
         meaning = "A declared frame rate was zero, negative, or non-finite.",
         emitted_by = ["fps"],
-    /// Too few usable rotation tracks existed for bind-pose comparison.
     INSUFFICIENT_ROTATION_EVIDENCE => "insufficient_rotation_evidence",
         meaning = "Too few usable rotation tracks existed for a bind-pose comparison.",
         emitted_by = ["bind-pose"],
@@ -357,10 +299,6 @@ impl CheckOutput {
     pub fn gaps(&self) -> &[CoverageGap] {
         &self.gaps
     }
-
-    fn into_parts(self) -> (Vec<Finding>, Vec<EvaluationScope>, Vec<CoverageGap>) {
-        (self.findings, self.evaluated_scopes, self.gaps)
-    }
 }
 
 /// Final v2 record for one catalog check.
@@ -370,9 +308,7 @@ pub struct CheckEvaluation {
     selection: SelectionState,
     configuration: ConfigurationState,
     applicability: Applicability,
-    findings: Vec<Finding>,
-    evaluated_scopes: Vec<EvaluationScope>,
-    gaps: Vec<CoverageGap>,
+    output: CheckOutput,
 }
 
 impl CheckEvaluation {
@@ -383,14 +319,20 @@ impl CheckEvaluation {
     ///
     /// Returns an error when a nested finding names a different check.
     pub fn evaluated(check_id: &'static str, output: CheckOutput) -> Result<Self, EvaluationError> {
-        let (findings, evaluated_scopes, gaps) = output.into_parts();
-        if !gaps.is_empty() && evaluated_scopes.is_empty() && !findings.is_empty() {
+        if !output.gaps.is_empty()
+            && output.evaluated_scopes.is_empty()
+            && !output.findings.is_empty()
+        {
             return Err(EvaluationError::InvalidCheckOutput {
                 check_id,
                 reason: "not-evaluated output cannot carry content findings",
             });
         }
-        if let Some(finding) = findings.iter().find(|finding| finding.check_id != check_id) {
+        if let Some(finding) = output
+            .findings
+            .iter()
+            .find(|finding| finding.check_id != check_id)
+        {
             return Err(EvaluationError::FindingCheckIdMismatch {
                 check_id,
                 finding_check_id: finding.check_id,
@@ -401,9 +343,7 @@ impl CheckEvaluation {
             selection: SelectionState::Selected,
             configuration: ConfigurationState::Enabled,
             applicability: Applicability::Applicable,
-            findings,
-            evaluated_scopes,
-            gaps,
+            output,
         })
     }
 
@@ -434,9 +374,9 @@ impl CheckEvaluation {
             || self.applicability == Applicability::NotApplicable
         {
             EvaluationState::NotEvaluated
-        } else if self.gaps.is_empty() {
+        } else if self.output.gaps.is_empty() {
             EvaluationState::Complete
-        } else if self.evaluated_scopes.is_empty() {
+        } else if self.output.evaluated_scopes.is_empty() {
             EvaluationState::NotEvaluated
         } else {
             EvaluationState::Partial
@@ -445,17 +385,17 @@ impl CheckEvaluation {
 
     /// Content findings emitted by evaluated work.
     pub fn findings(&self) -> &[Finding] {
-        &self.findings
+        self.output.findings()
     }
 
     /// Stable identifiers for work that completed.
     pub fn evaluated_scopes(&self) -> &[EvaluationScope] {
-        &self.evaluated_scopes
+        self.output.evaluated_scopes()
     }
 
     /// Typed reasons work was not evaluated.
     pub fn gaps(&self) -> &[CoverageGap] {
-        &self.gaps
+        self.output.gaps()
     }
 
     fn inactive(
@@ -474,15 +414,13 @@ impl CheckEvaluation {
             selection,
             configuration,
             applicability,
-            findings: Vec::new(),
-            evaluated_scopes: Vec::new(),
-            gaps: Vec::new(),
+            output: CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new()),
         }
     }
 
     fn override_severity(&mut self, severity: SeveritySetting) {
         if let Some(severity) = severity.as_severity() {
-            for finding in &mut self.findings {
+            for finding in &mut self.output.findings {
                 finding.severity = severity;
             }
         }
@@ -495,20 +433,20 @@ impl Serialize for CheckEvaluation {
         S: Serializer,
     {
         let mut fields = 6;
-        fields += usize::from(!self.evaluated_scopes.is_empty());
-        fields += usize::from(!self.gaps.is_empty());
+        fields += usize::from(!self.output.evaluated_scopes.is_empty());
+        fields += usize::from(!self.output.gaps.is_empty());
         let mut state = serializer.serialize_struct("CheckEvaluation", fields)?;
         state.serialize_field("check_id", &self.check_id)?;
         state.serialize_field("selection", &self.selection)?;
         state.serialize_field("configuration", &self.configuration)?;
         state.serialize_field("applicability", &self.applicability)?;
         state.serialize_field("evaluation", &self.evaluation())?;
-        state.serialize_field("findings", &self.findings)?;
-        if !self.evaluated_scopes.is_empty() {
-            state.serialize_field("evaluated_scopes", &self.evaluated_scopes)?;
+        state.serialize_field("findings", &self.output.findings)?;
+        if !self.output.evaluated_scopes.is_empty() {
+            state.serialize_field("evaluated_scopes", &self.output.evaluated_scopes)?;
         }
-        if !self.gaps.is_empty() {
-            state.serialize_field("gaps", &self.gaps)?;
+        if !self.output.gaps.is_empty() {
+            state.serialize_field("gaps", &self.output.gaps)?;
         }
         state.end()
     }
@@ -626,4 +564,67 @@ pub fn evaluate_checks(
         records.push(evaluation);
     }
     Ok(records)
+}
+
+#[cfg(test)]
+mod docs_contract {
+    use std::collections::BTreeSet;
+
+    use super::{BUILTIN_COVERAGE_GAP_CODE_DOCS, BUILTIN_EVALUATION_SCOPE_CODE_DOCS};
+
+    fn assert_reference_table(docs: &str, heading: &str, entries: &[(&str, &str, &[&str])]) {
+        let section = docs
+            .split_once(heading)
+            .unwrap_or_else(|| panic!("missing reference heading {heading:?}"))
+            .1;
+        let documented = section
+            .lines()
+            .skip_while(|line| line.trim().is_empty())
+            .take_while(|line| !line.trim().is_empty())
+            .filter(|line| line.starts_with("| `"))
+            .collect::<Vec<_>>();
+        let expected = entries
+            .iter()
+            .map(|(code, meaning, emitted_by)| {
+                assert!(
+                    !meaning.trim().is_empty() && !meaning.contains(['\r', '\n']),
+                    "{code} must have a one-line meaning"
+                );
+                let emitters = emitted_by
+                    .iter()
+                    .map(|check_id| format!("`{check_id}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("| `{code}` | {meaning} | {emitters} |")
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(documented.len(), expected.len(), "row count for {heading}");
+        let documented = documented.into_iter().collect::<BTreeSet<_>>();
+        assert_eq!(
+            documented.len(),
+            expected.len(),
+            "duplicate rows for {heading}"
+        );
+        let expected = expected.iter().map(String::as_str).collect::<BTreeSet<_>>();
+        assert_eq!(documented, expected, "exact rows for {heading}");
+    }
+
+    #[test]
+    fn output_docs_match_registered_builtin_evidence_codes_exactly() {
+        let docs = include_str!("../../../docs/output.md");
+        let crlf = docs.replace('\n', "\r\n");
+        for line_endings in [docs, crlf.as_str()] {
+            assert_reference_table(
+                line_endings,
+                "Built-in gap codes are:",
+                BUILTIN_COVERAGE_GAP_CODE_DOCS,
+            );
+            assert_reference_table(
+                line_endings,
+                "Built-in completed/gap scope codes are:",
+                BUILTIN_EVALUATION_SCOPE_CODE_DOCS,
+            );
+        }
+    }
 }

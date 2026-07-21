@@ -237,6 +237,19 @@ fn write_manifest(manifest_dir: &Path) {
 
 fn git(dir: &Path, args: &[&str]) {
     let output = Command::new("git")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", dir.join(".empty-gitconfig"))
+        .env_remove("GIT_DEFAULT_HASH")
+        .env_remove("GIT_OBJECT_FORMAT")
+        .arg("-c")
+        .arg("init.defaultObjectFormat=sha1")
+        .arg("-c")
+        .arg("commit.gpgSign=false")
+        .arg("-c")
+        .arg(format!(
+            "core.hooksPath={}",
+            dir.join(".no-hooks").display()
+        ))
         .arg("-C")
         .arg(dir)
         .args(args)

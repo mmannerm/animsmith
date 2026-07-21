@@ -636,6 +636,41 @@ fn every_below_amplitude_group_member_retains_clip_attribution() {
     assert_eq!(member_subjects, ["walk", "walk_b"]);
 }
 
+#[test]
+fn one_sided_group_member_without_a_phase_retains_clip_attribution() {
+    let doc = walk_doc();
+    let config = json_config(serde_json::json!({
+        "gait_groups": { "ring": {
+            "clips": ["walk"],
+            "max_gait_phase_spread": 0.1
+        }}
+    }));
+    let one_sided_roles = ResolvedRoles::from_names(
+        &doc.skeleton,
+        [
+            (Role::Hips, BONES.hips.to_string()),
+            (Role::LeftFoot, BONES.left_foot.to_string()),
+        ],
+    );
+    let grids = MetricGrids::new(&doc);
+    let ctx = CheckCtx::new(&grids, &one_sided_roles, &config);
+    let records = evaluate_checks(&ctx, &all_checks(), CheckSelection::All).unwrap();
+    let gait = check(&records, "gait-group");
+
+    let gap = gait
+        .gaps()
+        .iter()
+        .find(|gap| {
+            gap.code == CoverageGapCode::MEASUREMENT_UNAVAILABLE
+                && gap.scope.as_ref().is_some_and(|scope| {
+                    scope.code.as_str() == "phase_measurement"
+                        && scope.subject.as_deref() == Some("walk")
+                })
+        })
+        .expect("unfittable per-member phase retains clip attribution");
+    assert!(gap.message.contains("could not be fitted"));
+}
+
 /// Foot-slide reports its own role gap from its `speed_mps` applicability.
 #[test]
 fn foot_slide_role_gap_is_isolated_and_reasoned() {

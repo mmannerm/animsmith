@@ -1,7 +1,6 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use animsmith_core::{
-    BUILTIN_COVERAGE_GAP_CODE_DOCS, BUILTIN_EVALUATION_SCOPE_CODE_DOCS, BuiltinCodeDocumentation,
     Document, LintFileReport, MEASUREMENTS_SCHEMA_ID, MEASUREMENTS_SCHEMA_VERSION,
     MeasureFileReport, MeasurementContract, MeasurementReportError, MeasurementReportInput,
     OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, ReportEnvelope, ResolvedRoles, RigInfo, ToolInfo,
@@ -205,56 +204,4 @@ fn tool_source_drops_revision_text_outside_the_v2_schema() {
         .expect("tool identity serializes");
     assert_eq!(json["source"]["revision"], revision);
     assert_eq!(json["source"]["dirty"], false);
-}
-
-fn assert_reference_table(docs: &str, heading: &str, entries: &[BuiltinCodeDocumentation]) {
-    let section = docs
-        .split_once(heading)
-        .unwrap_or_else(|| panic!("missing reference heading {heading:?}"))
-        .1;
-    let table = section
-        .trim_start()
-        .split_once("\n\n")
-        .map_or(section.trim(), |(table, _)| table);
-    let documented = table
-        .lines()
-        .filter_map(|line| line.strip_prefix("| `"))
-        .filter_map(|line| line.split_once('`').map(|(code, _)| code))
-        .collect::<BTreeSet<_>>();
-    let registered = entries.iter().map(|entry| entry.code()).collect();
-    assert_eq!(documented, registered, "code inventory for {heading}");
-
-    for entry in entries {
-        let emitters = entry
-            .emitted_by()
-            .iter()
-            .map(|check_id| format!("`{check_id}`"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let expected = format!(
-            "| `{}` | {} | {} |",
-            entry.code(),
-            entry.meaning(),
-            emitters
-        );
-        assert!(
-            table.lines().any(|line| line == expected),
-            "missing or stale reference row {expected:?}"
-        );
-    }
-}
-
-#[test]
-fn output_docs_match_registered_builtin_evidence_codes_exactly() {
-    let docs = include_str!("../../../docs/output.md");
-    assert_reference_table(
-        docs,
-        "Built-in gap codes are:",
-        BUILTIN_COVERAGE_GAP_CODE_DOCS,
-    );
-    assert_reference_table(
-        docs,
-        "Built-in completed/gap scope codes are:",
-        BUILTIN_EVALUATION_SCOPE_CODE_DOCS,
-    );
 }
