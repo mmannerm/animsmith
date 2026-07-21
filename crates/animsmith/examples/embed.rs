@@ -103,7 +103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // When the host interoperates with CLI consumers, it can emit the exact
     // same versioned envelope without copying wire structs or schema URNs.
     let report = LintEnvelope::new(
-        ToolInfo::animsmith(env!("CARGO_PKG_VERSION"), ToolSource::new(None, None)),
+        ToolInfo::animsmith(env!("CARGO_PKG_VERSION"), ToolSource::new(None, None))?,
         vec![LintFileReport::new(
             path.display().to_string(),
             RigInfo::from_resolved(&doc, &roles)?,
@@ -111,7 +111,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             MeasurementContract::new(
                 measurements,
                 animsmith_core::measure::measure_meshes(&doc.assets),
-            ),
+            )?,
         )],
     );
     println!("result contract: {}", serde_json::to_string(&report)?);

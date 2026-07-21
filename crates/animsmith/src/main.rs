@@ -243,6 +243,7 @@ fn current_tool() -> ToolInfo {
             option_env!("ANIMSMITH_GIT_DIRTY").and_then(|value| value.parse().ok()),
         ),
     )
+    .expect("Cargo package version satisfies output v2")
 }
 
 fn main() -> ExitCode {
@@ -355,7 +356,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     MeasurementContract::new(
                         animsmith_core::measure::measure_document(&grids, &roles, &config),
                         animsmith_core::measure::measure_meshes(&doc.assets),
-                    ),
+                    )
+                    .map_err(|error| error.to_string())?,
                 ));
             }
             match format {
@@ -462,7 +464,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     MeasurementContract::new(
                         animsmith_core::measure::measure_document(&grids, &roles, &config),
                         animsmith_core::measure::measure_meshes(&doc.assets),
-                    ),
+                    )
+                    .map_err(|error| error.to_string())?,
                 ));
             }
             match format {

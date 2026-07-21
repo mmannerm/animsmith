@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use animsmith_core::check::{Check, CheckCtx};
 use animsmith_core::config::{CheckSettings, SeveritySetting};
 use animsmith_core::{
-    Applicability, CheckOutput, CheckSelection, Config, ConfigurationState, CoverageGap,
-    CoverageGapCode, Document, EvaluationError, EvaluationScope, EvaluationScopeCode,
+    Applicability, CheckEvaluation, CheckOutput, CheckSelection, Config, ConfigurationState,
+    CoverageGap, CoverageGapCode, Document, EvaluationError, EvaluationScope, EvaluationScopeCode,
     EvaluationState, Finding, MetricGrids, ResolvedRoles, SelectionState, Severity, Value,
     evaluate_checks,
 };
@@ -303,6 +303,74 @@ fn malformed_check_output_returns_a_typed_evaluation_error() {
                 check_id: "bad-output",
                 reason: "not-evaluated output cannot carry content findings",
             }
+        );
+    });
+}
+
+#[test]
+fn empty_contract_identifiers_return_typed_errors() {
+    let empty = CheckEvaluation::evaluated(
+        "",
+        CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new()),
+    )
+    .expect_err("an empty parent id must be rejected");
+    assert_eq!(empty, EvaluationError::InvalidCheckId(""));
+
+    let cases = [
+        (
+            CheckOutput::from_coverage(
+                Vec::new(),
+                vec![EvaluationScope::new(EvaluationScopeCode::custom(""))],
+                Vec::new(),
+            ),
+            "evaluated scope code cannot be empty",
+        ),
+        (
+            CheckOutput::from_coverage(
+                Vec::new(),
+                Vec::new(),
+                vec![CoverageGap::new(CoverageGapCode::custom(""), "gap")],
+            ),
+            "coverage gap code cannot be empty",
+        ),
+        (
+            CheckOutput::from_coverage(
+                Vec::new(),
+                Vec::new(),
+                vec![
+                    CoverageGap::new(CoverageGapCode::custom("test:gap"), "gap")
+                        .scope(EvaluationScope::new(EvaluationScopeCode::custom(""))),
+                ],
+            ),
+            "coverage gap scope code cannot be empty",
+        ),
+    ];
+    for (output, reason) in cases {
+        assert_eq!(
+            CheckEvaluation::evaluated("custom", output)
+                .expect_err("empty evidence codes must be rejected"),
+            EvaluationError::InvalidCheckOutput {
+                check_id: "custom",
+                reason,
+            }
+        );
+    }
+
+    struct EmptyId;
+    impl Check for EmptyId {
+        fn id(&self) -> &'static str {
+            ""
+        }
+
+        fn evaluate(&self, _ctx: &CheckCtx<'_>) -> CheckOutput {
+            panic!("invalid catalog ids must fail before evaluation")
+        }
+    }
+    with_ctx(|ctx| {
+        assert_eq!(
+            evaluate_checks(ctx, &[Box::new(EmptyId)], CheckSelection::All)
+                .expect_err("empty catalog id must be rejected"),
+            EvaluationError::InvalidCheckId("")
         );
     });
 }
