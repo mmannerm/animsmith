@@ -2283,7 +2283,11 @@ fn lint_allow_suppresses_a_check() {
     let path = input.to_str().expect("utf-8 path");
 
     // Positive control: quat-flip fires on this fixture without --allow.
-    let baseline = animsmith().args(["lint", path]).output().expect("runs");
+    let baseline = animsmith()
+        .args(["lint", path, "--deny-warnings"])
+        .output()
+        .expect("runs");
+    assert_eq!(baseline.status.code(), Some(1), "warning gate baseline");
     assert!(
         stdout(&baseline).contains("quat-flip"),
         "fixture no longer produces quat-flip; suppression test would be vacuous:\n{}",
@@ -2292,7 +2296,7 @@ fn lint_allow_suppresses_a_check() {
 
     // With --allow, the same finding is gone.
     let output = animsmith()
-        .args(["lint", path, "--allow", "quat-flip"])
+        .args(["lint", path, "--allow", "quat-flip", "--deny-warnings"])
         .output()
         .expect("runs");
     assert_eq!(
@@ -2305,6 +2309,30 @@ fn lint_allow_suppresses_a_check() {
         !stdout(&output).contains("quat-flip"),
         "allowed check still reported:\n{}",
         stdout(&output)
+    );
+
+    let markdown = animsmith()
+        .args([
+            "lint",
+            path,
+            "--format",
+            "markdown",
+            "--allow",
+            "quat-flip",
+            "--deny-warnings",
+        ])
+        .output()
+        .expect("runs Markdown renderer");
+    assert_eq!(
+        markdown.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&markdown)
+    );
+    assert!(
+        !stdout(&markdown).contains("quat-flip"),
+        "allowed check still present in Markdown:\n{}",
+        stdout(&markdown)
     );
 }
 

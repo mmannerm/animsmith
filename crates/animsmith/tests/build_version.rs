@@ -118,20 +118,27 @@ fn git_source_info_observes_revision_and_tracked_dirty_state() {
 
 #[test]
 fn workspace_build_emits_source_identity_environment() {
-    let packaged = Path::new(env!("CARGO_MANIFEST_DIR")).join(".cargo_vcs_info.json");
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let packaged = manifest_dir.join(".cargo_vcs_info.json");
     if packaged.is_file() {
         return;
     }
+    let workspace = manifest_dir
+        .parent()
+        .and_then(Path::parent)
+        .expect("animsmith manifest belongs to the workspace");
+    let expected = build_script::git_source_info(workspace).expect("workspace Git identity");
 
     let Some(revision) = option_env!("ANIMSMITH_GIT_REVISION") else {
         panic!("Git-worktree build emits ANIMSMITH_GIT_REVISION");
     };
+    assert_eq!(revision, expected.revision);
     assert_eq!(revision.len(), 40);
     assert!(revision.bytes().all(|byte| byte.is_ascii_hexdigit()));
     let Some(dirty) = option_env!("ANIMSMITH_GIT_DIRTY") else {
         panic!("Git-worktree build emits ANIMSMITH_GIT_DIRTY");
     };
-    assert!(dirty.parse::<bool>().is_ok(), "dirty identity is a boolean");
+    assert_eq!(dirty.parse::<bool>().ok(), expected.dirty);
 }
 
 #[test]

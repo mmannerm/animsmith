@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use animsmith_core::{
     BUILTIN_COVERAGE_GAP_CODES, BUILTIN_EVALUATION_SCOPE_CODES, Document, LintFileReport,
-    MeasureFileReport, MeasurementContract, ReportEnvelope, ResolvedRoles, RigInfo, ToolInfo,
-    ToolSource,
+    MeasureFileReport, MeasurementContract, MeasurementReportInput, ReportEnvelope, ResolvedRoles,
+    RigInfo, ToolInfo, ToolSource,
 };
 
 fn tool() -> ToolInfo {
@@ -38,6 +38,15 @@ fn command_specific_file_types_serialize_only_their_valid_shape() {
     let lint = serde_json::to_value(lint).expect("lint envelope serializes");
     assert!(measure["files"][0].get("checks").is_none());
     assert_eq!(lint["files"][0]["checks"], serde_json::json!([]));
+
+    let input: MeasurementReportInput =
+        serde_json::from_value(measure).expect("current measure envelope deserializes");
+    assert!(
+        input
+            .into_clip_measurements()
+            .expect("current measure envelope is accepted")
+            .is_empty()
+    );
 }
 
 #[test]

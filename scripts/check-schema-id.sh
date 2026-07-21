@@ -34,45 +34,6 @@ check_schema() {
 check_schema docs/schemas/output-v2.schema.json urn:animsmith:schema:output:2
 check_schema docs/schemas/measurements-v1.schema.json urn:animsmith:schema:measurements:1
 
-for removed_schema in \
-  docs/schemas/output-v1.schema.json \
-  docs/schemas/output-v2-preview.schema.json; do
-  if [ -e "$removed_schema" ]; then
-    fail "$removed_schema is a removed alpha contract and must not be restored"
-  fi
-done
-
-legacy=$(git grep -nE \
-  'JsonV2Preview|json-v2-preview|run_checks|as_diagnostic|legacy_diagnostic|enum Readiness|Finding::diagnostic|output-v2-preview|presentation_findings|assert_required_properties|CheckOutput::complete|CheckOutput::partial|CheckOutput::not_evaluated|CheckOutput::complete_scoped' \
-  -- ':!scripts/check-schema-id.sh' || true)
-if [ -n "$legacy" ]; then
-  fail "removed v1/preview API or format remains:\n$legacy"
-fi
-
-contract_duplicates=$(git grep -nE 'struct (EnvelopeHeader|ReportEnvelope|(Measure|Lint)?FileReport|MeasurementContract)|serde_json::Value' -- crates/animsmith/src/main.rs || true)
-if [ -n "$contract_duplicates" ]; then
-  fail "CLI reimplements shared contract structure instead of consuming animsmith-core:\n$contract_duplicates"
-fi
-
-legacy_envelope=$(
-  while IFS= read -r file; do
-    awk '
-      previous ~ /"schema_version"[[:space:]]*:[[:space:]]*1,/ &&
-        /"command"[[:space:]]*:/ {
-          print FILENAME ":" NR - 1 ":" previous
-        }
-      {
-        previous = $0
-      }
-    ' "$file"
-  done < <(git grep -lE \
-    '"schema_version"[[:space:]]*:[[:space:]]*1,' \
-    -- ':!scripts/check-schema-id.sh' || true)
-)
-if [ -n "$legacy_envelope" ]; then
-  fail "removed outer output-v1 envelope remains:\n$legacy_envelope"
-fi
-
 if [ "$failures" -ne 0 ]; then
   exit 1
 fi

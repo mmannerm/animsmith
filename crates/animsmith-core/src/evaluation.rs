@@ -230,10 +230,10 @@ impl CoverageGap {
     }
 }
 
-/// Validated output from one selected, enabled, applicable check.
+/// Output evidence from one selected, enabled, applicable check.
 ///
-/// Coverage state is derived from completed scopes and gaps rather than cached,
-/// so the Rust value and serialized classification cannot drift apart.
+/// The shared evaluation boundary derives coverage from completed scopes and
+/// gaps and reports malformed evidence through [`EvaluationError`].
 #[derive(Debug, Clone)]
 pub struct CheckOutput {
     findings: Vec<Finding>,
@@ -242,41 +242,20 @@ pub struct CheckOutput {
 }
 
 impl CheckOutput {
-    /// Classify coverage from completed scopes and gaps.
+    /// Collect findings, completed scopes, and coverage gaps through the one
+    /// check-output construction path.
     ///
-    /// No gaps means complete work. Gaps plus completed scopes mean partial
-    /// work. Gaps without completed scopes mean no applicable work completed.
-    ///
-    /// # Panics
-    ///
-    /// Panics if findings are supplied without a completed scope while gaps
-    /// are present. Unevaluated work cannot produce content judgments.
+    /// Classification and validation happen when [`evaluate_checks`] projects
+    /// this evidence into a [`CheckEvaluation`].
     pub fn from_coverage(
         findings: Vec<Finding>,
         evaluated_scopes: Vec<EvaluationScope>,
         gaps: Vec<CoverageGap>,
     ) -> Self {
-        if !gaps.is_empty() && evaluated_scopes.is_empty() {
-            assert!(
-                findings.is_empty(),
-                "not-evaluated output cannot carry content findings"
-            );
-        }
         Self {
             findings,
             evaluated_scopes,
             gaps,
-        }
-    }
-
-    /// Evaluation coverage represented by this output.
-    pub fn evaluation(&self) -> EvaluationState {
-        if self.gaps.is_empty() {
-            EvaluationState::Complete
-        } else if self.evaluated_scopes.is_empty() {
-            EvaluationState::NotEvaluated
-        } else {
-            EvaluationState::Partial
         }
     }
 
@@ -321,6 +300,12 @@ impl CheckEvaluation {
     /// Returns an error when a nested finding names a different check.
     pub fn evaluated(check_id: &'static str, output: CheckOutput) -> Result<Self, EvaluationError> {
         let (findings, evaluated_scopes, gaps) = output.into_parts();
+        if !gaps.is_empty() && evaluated_scopes.is_empty() && !findings.is_empty() {
+            return Err(EvaluationError::InvalidCheckOutput {
+                check_id,
+                reason: "not-evaluated output cannot carry content findings",
+            });
+        }
         if let Some(finding) = findings.iter().find(|finding| finding.check_id != check_id) {
             return Err(EvaluationError::FindingCheckIdMismatch {
                 check_id,
@@ -473,6 +458,14 @@ pub enum EvaluationError {
     /// Explicit selection named an id absent from the supplied catalog.
     #[error("unknown selected check id {0:?}")]
     UnknownSelection(String),
+    /// Check evidence violates the derived coverage-state invariants.
+    #[error("check {check_id:?} emitted invalid output: {reason}")]
+    InvalidCheckOutput {
+        /// Stable id of the check that emitted malformed evidence.
+        check_id: &'static str,
+        /// Contract rule violated by the output.
+        reason: &'static str,
+    },
     /// A nested finding claimed a different check id than its parent record.
     #[error("check {check_id:?} emitted a finding for {finding_check_id:?}")]
     FindingCheckIdMismatch {
@@ -493,7 +486,8 @@ pub enum EvaluationError {
 /// # Errors
 ///
 /// Returns an error for duplicate catalog ids, unknown explicitly selected
-/// ids, or a nested finding whose id disagrees with its parent check.
+/// ids, malformed coverage evidence, or a nested finding whose id disagrees
+/// with its parent check.
 pub fn evaluate_checks(
     ctx: &CheckCtx<'_>,
     checks: &[Box<dyn Check>],

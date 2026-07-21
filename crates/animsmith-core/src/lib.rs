@@ -104,8 +104,9 @@ pub use check::{Check, CheckCtx, all_checks, mechanical_checks};
 pub use config::{ClipExpectations, Config, GaitGroup, Pinned, SeveritySetting};
 pub use contract::{
     DiffEnvelope, LintFileReport, LintSummary, MEASUREMENTS_SCHEMA_ID, MEASUREMENTS_SCHEMA_VERSION,
-    MeasureFileReport, MeasureSummary, MeasurementContract, OUTPUT_SCHEMA_ID,
-    OUTPUT_SCHEMA_VERSION, ReportEnvelope, RigInfo, ToolInfo, ToolSource,
+    MeasureFileReport, MeasureSummary, MeasurementContract, MeasurementReportError,
+    MeasurementReportInput, OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, ReportEnvelope, RigInfo,
+    ToolInfo, ToolSource,
 };
 pub use evaluation::{
     Applicability, BUILTIN_COVERAGE_GAP_CODES, BUILTIN_EVALUATION_SCOPE_CODES, CheckEvaluation,

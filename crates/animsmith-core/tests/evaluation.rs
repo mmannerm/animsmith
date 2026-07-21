@@ -270,28 +270,41 @@ fn catalog_and_output_invariants_return_typed_errors() {
 }
 
 #[test]
-#[should_panic(expected = "not-evaluated output cannot carry content findings")]
-fn coverage_classification_rejects_findings_without_completed_scope() {
-    let _ = CheckOutput::from_coverage(
-        vec![Finding::new(
-            "example",
-            Severity::Error,
-            "unsupported judgment",
-        )],
-        Vec::new(),
-        vec![CoverageGap::new(
-            CoverageGapCode::MEASUREMENT_UNAVAILABLE,
-            "missing",
-        )],
-    );
-}
+fn malformed_check_output_returns_a_typed_evaluation_error() {
+    struct InvalidOutput;
 
-#[test]
-fn complete_coverage_has_no_evidence() {
-    let output = CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new());
-    assert_eq!(output.evaluation(), EvaluationState::Complete);
-    assert!(output.evaluated_scopes().is_empty());
-    assert!(output.gaps().is_empty());
+    impl Check for InvalidOutput {
+        fn id(&self) -> &'static str {
+            "bad-output"
+        }
+
+        fn evaluate(&self, _ctx: &CheckCtx<'_>) -> CheckOutput {
+            CheckOutput::from_coverage(
+                vec![Finding::new(
+                    "bad-output",
+                    Severity::Error,
+                    "unsupported judgment",
+                )],
+                Vec::new(),
+                vec![CoverageGap::new(
+                    CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                    "no usable evidence",
+                )],
+            )
+        }
+    }
+
+    with_ctx(|ctx| {
+        let error = evaluate_checks(ctx, &[Box::new(InvalidOutput)], CheckSelection::All)
+            .expect_err("malformed output must not panic or serialize");
+        assert_eq!(
+            error,
+            EvaluationError::InvalidCheckOutput {
+                check_id: "bad-output",
+                reason: "not-evaluated output cannot carry content findings",
+            }
+        );
+    });
 }
 
 #[test]
