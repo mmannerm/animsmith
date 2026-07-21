@@ -165,12 +165,24 @@ pub(crate) fn trusted_git_root_for_manifest(
 }
 
 fn git<const N: usize>(dir: &Path, args: [&str; N]) -> Option<std::process::Output> {
-    Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .ok()
+    let mut command = Command::new("git");
+    clear_git_repository_env(&mut command);
+    command.arg("-C").arg(dir).args(args).output().ok()
+}
+
+pub(crate) fn clear_git_repository_env(command: &mut Command) {
+    for name in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_PARAMETERS",
+    ] {
+        command.env_remove(name);
+    }
 }
 
 pub(crate) fn display_version(package_version: &str, describe: &str) -> String {
