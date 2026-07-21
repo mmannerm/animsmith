@@ -4,8 +4,9 @@ use animsmith_core::check::{Check, CheckCtx};
 use animsmith_core::config::{CheckSettings, SeveritySetting};
 use animsmith_core::{
     Applicability, CheckOutput, CheckSelection, Config, ConfigurationState, CoverageGap,
-    CoverageGapCode, Document, EvaluationError, EvaluationScope, EvaluationState, Finding,
-    MetricGrids, ResolvedRoles, SelectionState, Severity, Value, evaluate_checks,
+    CoverageGapCode, Document, EvaluationError, EvaluationScope, EvaluationScopeCode,
+    EvaluationState, Finding, MetricGrids, ResolvedRoles, SelectionState, Severity, Value,
+    evaluate_checks,
 };
 
 struct Complete;
@@ -50,10 +51,10 @@ impl Check for Partial {
     fn evaluate(&self, _ctx: &CheckCtx) -> CheckOutput {
         CheckOutput::from_coverage(
             vec![Finding::new(self.id(), Severity::Error, "member missing")],
-            vec![EvaluationScope::new("member_existence")],
+            vec![EvaluationScope::new(EvaluationScopeCode::MEMBER_EXISTENCE)],
             vec![
                 CoverageGap::new(CoverageGapCode::ROLES_UNRESOLVED, "display text")
-                    .scope(EvaluationScope::new("phase_coherence")),
+                    .scope(EvaluationScope::new(EvaluationScopeCode::PHASE_COHERENCE)),
             ],
         )
     }
@@ -142,19 +143,22 @@ fn records_complete_findings_partial_and_not_evaluated() {
         assert_eq!(records.len(), 4);
 
         assert_eq!(records[0].evaluation(), EvaluationState::Complete);
-        assert!(records[0].findings.is_empty());
+        assert!(records[0].findings().is_empty());
 
         assert_eq!(records[1].evaluation(), EvaluationState::Complete);
-        assert_eq!(records[1].findings.len(), 1);
+        assert_eq!(records[1].findings().len(), 1);
 
         assert_eq!(records[2].evaluation(), EvaluationState::Partial);
-        assert_eq!(records[2].findings.len(), 1);
-        assert_eq!(records[2].gaps[0].code, CoverageGapCode::ROLES_UNRESOLVED);
-        assert_eq!(records[2].evaluated_scopes[0].code, "member_existence");
+        assert_eq!(records[2].findings().len(), 1);
+        assert_eq!(records[2].gaps()[0].code, CoverageGapCode::ROLES_UNRESOLVED);
+        assert_eq!(
+            records[2].evaluated_scopes()[0].code.as_str(),
+            "member_existence"
+        );
 
-        assert_eq!(records[3].applicability, Applicability::Applicable);
+        assert_eq!(records[3].applicability(), Applicability::Applicable);
         assert_eq!(records[3].evaluation(), EvaluationState::NotEvaluated);
-        assert_eq!(records[3].gaps[0].code.as_str(), "acme:input_unavailable");
+        assert_eq!(records[3].gaps()[0].code.as_str(), "acme:input_unavailable");
     });
 }
 
@@ -191,27 +195,27 @@ fn disabled_unselected_and_not_applicable_are_independent_and_never_execute() {
     ];
     let records = evaluate_checks(&ctx, &checks, CheckSelection::Only(&selected)).unwrap();
 
-    assert_eq!(records[0].selection, SelectionState::Unselected);
-    assert_eq!(records[0].configuration, ConfigurationState::Enabled);
-    assert_eq!(records[0].applicability, Applicability::Applicable);
+    assert_eq!(records[0].selection(), SelectionState::Unselected);
+    assert_eq!(records[0].configuration(), ConfigurationState::Enabled);
+    assert_eq!(records[0].applicability(), Applicability::Applicable);
     assert_eq!(records[0].evaluation(), EvaluationState::NotEvaluated);
-    assert_eq!(records[1].selection, SelectionState::Selected);
-    assert_eq!(records[1].configuration, ConfigurationState::Disabled);
-    assert_eq!(records[1].applicability, Applicability::Applicable);
-    assert_eq!(records[2].selection, SelectionState::Unselected);
-    assert_eq!(records[2].applicability, Applicability::NotApplicable);
+    assert_eq!(records[1].selection(), SelectionState::Selected);
+    assert_eq!(records[1].configuration(), ConfigurationState::Disabled);
+    assert_eq!(records[1].applicability(), Applicability::Applicable);
+    assert_eq!(records[2].selection(), SelectionState::Unselected);
+    assert_eq!(records[2].applicability(), Applicability::NotApplicable);
 
     for record in &records {
         assert!(
-            record.findings.is_empty(),
+            record.findings().is_empty(),
             "inactive check emitted findings"
         );
         assert!(
-            record.evaluated_scopes.is_empty(),
+            record.evaluated_scopes().is_empty(),
             "inactive check claimed evaluated scopes"
         );
         assert!(
-            record.gaps.is_empty(),
+            record.gaps().is_empty(),
             "inactive check emitted coverage gaps"
         );
     }
@@ -235,8 +239,8 @@ fn severity_override_changes_findings_but_not_gap_typing() {
     let ctx = CheckCtx::new(&grids, &roles, &config);
     let records = evaluate_checks(&ctx, &catalog(), CheckSelection::All).unwrap();
 
-    assert_eq!(records[2].findings[0].severity, Severity::Note);
-    assert_eq!(records[2].gaps[0].code, CoverageGapCode::ROLES_UNRESOLVED);
+    assert_eq!(records[2].findings()[0].severity, Severity::Note);
+    assert_eq!(records[2].gaps()[0].code, CoverageGapCode::ROLES_UNRESOLVED);
 }
 
 #[test]

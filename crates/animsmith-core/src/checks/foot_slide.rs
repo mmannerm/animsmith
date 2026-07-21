@@ -12,7 +12,7 @@
 use crate::check::{Check, CheckCtx};
 use crate::checks::root_motion_gap;
 use crate::evaluation::{
-    Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope,
+    Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope, EvaluationScopeCode,
 };
 use crate::finding::{Finding, Severity};
 use crate::metrics::root_motion_speed_mps;
@@ -61,7 +61,9 @@ impl Check for FootSlide {
                 continue;
             };
             if let Some(gap) = root_motion_gap(ctx.roles) {
-                gaps.push(gap.scope(EvaluationScope::new("foot_stance").subject(&clip.name)));
+                gaps.push(gap.scope(
+                    EvaluationScope::new(EvaluationScopeCode::FOOT_STANCE).subject(&clip.name),
+                ));
                 continue;
             }
             let Some(grid) = ctx.grid(index) else {
@@ -70,7 +72,9 @@ impl Check for FootSlide {
                         CoverageGapCode::MEASUREMENT_UNAVAILABLE,
                         "clip is too short to sample foot stance",
                     )
-                    .scope(EvaluationScope::new("foot_stance").subject(&clip.name)),
+                    .scope(
+                        EvaluationScope::new(EvaluationScopeCode::FOOT_STANCE).subject(&clip.name),
+                    ),
                 );
                 continue;
             };
@@ -80,7 +84,9 @@ impl Check for FootSlide {
                         CoverageGapCode::MEASUREMENT_UNAVAILABLE,
                         "root-motion speed could not be measured",
                     )
-                    .scope(EvaluationScope::new("foot_stance").subject(&clip.name)),
+                    .scope(
+                        EvaluationScope::new(EvaluationScopeCode::FOOT_STANCE).subject(&clip.name),
+                    ),
                 );
                 continue;
             };
@@ -95,9 +101,9 @@ impl Check for FootSlide {
                 ([Role::RightFoot, Role::RightToe], "right"),
             ] {
                 let scope = if label == "left" {
-                    EvaluationScope::new("left_foot_stance")
+                    EvaluationScope::new(EvaluationScopeCode::LEFT_FOOT_STANCE)
                 } else {
-                    EvaluationScope::new("right_foot_stance")
+                    EvaluationScope::new(EvaluationScopeCode::RIGHT_FOOT_STANCE)
                 }
                 .subject(&clip.name);
                 let Some(foot) = side_roles.iter().find_map(|&r| ctx.roles.get(r)) else {

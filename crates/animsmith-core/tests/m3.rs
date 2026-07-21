@@ -115,7 +115,7 @@ fn lint_with(doc: &Document, config: &Config) -> Vec<animsmith_core::Finding> {
     evaluate_checks(&ctx, &all_checks(), CheckSelection::All)
         .expect("valid built-in catalog")
         .into_iter()
-        .flat_map(|check| check.findings)
+        .flat_map(|check| check.findings().to_vec())
         .collect()
 }
 
@@ -185,30 +185,30 @@ fn foot_slide_records_partial_evidence_when_one_side_is_unresolved() {
         evaluate_checks(&ctx, &all_checks(), CheckSelection::All).expect("valid built-in catalog");
     let foot_slide = records
         .iter()
-        .find(|record| record.check_id == "foot-slide")
+        .find(|record| record.check_id() == "foot-slide")
         .expect("foot-slide record");
 
     assert_eq!(foot_slide.evaluation(), EvaluationState::Partial);
-    assert!(foot_slide.findings.is_empty());
+    assert!(foot_slide.findings().is_empty());
     assert!(
         foot_slide
-            .evaluated_scopes
+            .evaluated_scopes()
             .iter()
-            .any(|scope| scope.code == "left_foot_stance")
+            .any(|scope| scope.code.as_str() == "left_foot_stance")
     );
     assert!(
         !foot_slide
-            .evaluated_scopes
+            .evaluated_scopes()
             .iter()
-            .any(|scope| scope.code == "right_foot_stance")
+            .any(|scope| scope.code.as_str() == "right_foot_stance")
     );
     let right_gap = foot_slide
-        .gaps
+        .gaps()
         .iter()
         .find(|gap| {
             gap.scope
                 .as_ref()
-                .is_some_and(|scope| scope.code == "right_foot_stance")
+                .is_some_and(|scope| scope.code.as_str() == "right_foot_stance")
         })
         .expect("right-foot coverage gap");
     assert_eq!(right_gap.code, CoverageGapCode::ROLES_UNRESOLVED);
@@ -244,10 +244,10 @@ fn declared_motion_checks_report_unmeasurable_non_finite_root_motion() {
     for id in ["in-place", "root-motion-speed", "foot-slide"] {
         let record = records
             .iter()
-            .find(|record| record.check_id == id)
+            .find(|record| record.check_id() == id)
             .expect("declared-motion check record");
         let gap = record
-            .gaps
+            .gaps()
             .iter()
             .find(|gap| gap.code == CoverageGapCode::MEASUREMENT_UNAVAILABLE)
             .unwrap_or_else(|| panic!("{id} did not report missing measurement: {record:#?}"));
@@ -259,7 +259,7 @@ fn declared_motion_checks_report_unmeasurable_non_finite_root_motion() {
             _ => unreachable!(),
         };
         assert_eq!(
-            (gap.code, scope.code, scope.subject.as_deref()),
+            (gap.code, scope.code.as_str(), scope.subject.as_deref()),
             (
                 CoverageGapCode::MEASUREMENT_UNAVAILABLE,
                 expected_scope,
@@ -293,16 +293,16 @@ fn foot_slide_reports_whole_clip_gap_when_metric_grid_is_too_short() {
         evaluate_checks(&ctx, &all_checks(), CheckSelection::All).expect("built-in catalog");
     let foot_slide = records
         .iter()
-        .find(|record| record.check_id == "foot-slide")
+        .find(|record| record.check_id() == "foot-slide")
         .expect("foot-slide record");
     let gap = foot_slide
-        .gaps
+        .gaps()
         .iter()
         .find(|gap| gap.code == CoverageGapCode::MEASUREMENT_UNAVAILABLE)
         .expect("too-short clip gap");
     let scope = gap.scope.as_ref().unwrap();
     assert_eq!(
-        (gap.code, scope.code, scope.subject.as_deref()),
+        (gap.code, scope.code.as_str(), scope.subject.as_deref()),
         (
             CoverageGapCode::MEASUREMENT_UNAVAILABLE,
             "foot_stance",
@@ -338,7 +338,7 @@ fn toe_only_rig_is_evaluated_for_foot_slide() {
     let findings: Vec<_> = evaluate_checks(&ctx, &all_checks(), CheckSelection::All)
         .expect("valid built-in catalog")
         .into_iter()
-        .flat_map(|check| check.findings)
+        .flat_map(|check| check.findings().to_vec())
         .collect();
     let slides = of(&findings, "foot-slide");
     assert!(
@@ -420,7 +420,7 @@ fn foot_slide_prefers_foot_over_toe_when_both_resolve() {
     let findings: Vec<_> = evaluate_checks(&ctx, &all_checks(), CheckSelection::All)
         .expect("valid built-in catalog")
         .into_iter()
-        .flat_map(|check| check.findings)
+        .flat_map(|check| check.findings().to_vec())
         .collect();
     let slides = of(&findings, "foot-slide");
     // Assert the exact set of named bones is BOTH feet — not just "some
@@ -524,10 +524,10 @@ fn non_finite_declared_fps_is_a_typed_gap() {
         evaluate_checks(&ctx, &all_checks(), CheckSelection::All).expect("valid built-in catalog");
     let fps = records
         .iter()
-        .find(|record| record.check_id == "fps")
+        .find(|record| record.check_id() == "fps")
         .expect("fps record");
     assert_eq!(fps.evaluation(), EvaluationState::NotEvaluated);
-    assert_eq!(fps.gaps[0].code, CoverageGapCode::INVALID_DECLARED_FPS);
+    assert_eq!(fps.gaps()[0].code, CoverageGapCode::INVALID_DECLARED_FPS);
 }
 
 // ---- bind-pose --------------------------------------------------------
@@ -587,11 +587,11 @@ fn invalid_rest_rotation_is_insufficient_evidence_not_complete() {
         evaluate_checks(&ctx, &all_checks(), CheckSelection::All).expect("valid built-in catalog");
     let bind_pose = records
         .iter()
-        .find(|record| record.check_id == "bind-pose")
+        .find(|record| record.check_id() == "bind-pose")
         .expect("bind-pose record");
     assert_eq!(bind_pose.evaluation(), EvaluationState::NotEvaluated);
     assert_eq!(
-        bind_pose.gaps[0].code,
+        bind_pose.gaps()[0].code,
         CoverageGapCode::INSUFFICIENT_ROTATION_EVIDENCE
     );
 }

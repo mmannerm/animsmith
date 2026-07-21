@@ -9,8 +9,8 @@ use animsmith_core::config::{ClipExpectations, Pinned};
 use animsmith_core::measure::measure_document;
 use animsmith_core::profile::{ResolvedRoles, Role, detect_profile};
 use animsmith_core::{
-    CheckCtx, CheckSelection, Config, FileReport, MeasurementContract, MetricGrids, ReportEnvelope,
-    RigInfo, Severity, ToolInfo, ToolSource, all_checks, evaluate_checks,
+    CheckCtx, CheckSelection, Config, LintFileReport, MeasurementContract, MetricGrids,
+    ReportEnvelope, RigInfo, Severity, ToolInfo, ToolSource, all_checks, evaluate_checks,
 };
 use std::path::Path;
 
@@ -76,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let evaluations = evaluate_checks(&ctx, &all_checks(), CheckSelection::All)?;
     let findings: Vec<_> = evaluations
         .iter()
-        .flat_map(|check| &check.findings)
+        .flat_map(|check| check.findings())
         .collect();
     for f in &findings {
         println!(
@@ -104,7 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // same versioned envelope without copying wire structs or schema URNs.
     let report = ReportEnvelope::lint(
         ToolInfo::animsmith(env!("CARGO_PKG_VERSION"), ToolSource::new(None, None)),
-        vec![FileReport::lint(
+        vec![LintFileReport::new(
             path.display().to_string(),
             RigInfo::from_resolved(&doc, &roles),
             evaluations,
@@ -113,7 +113,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 animsmith_core::measure::measure_meshes(&doc.assets),
             ),
         )],
-    )?;
+    );
     println!("result contract: {}", serde_json::to_string(&report)?);
     std::process::exit(exit);
 }

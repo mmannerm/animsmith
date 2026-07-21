@@ -72,7 +72,7 @@ fn lint(doc: &Document) -> Vec<animsmith_core::Finding> {
     evaluate_checks(&ctx, &mechanical_checks(), CheckSelection::All)
         .expect("valid built-in catalog")
         .into_iter()
-        .flat_map(|check| check.findings)
+        .flat_map(|check| check.findings().to_vec())
         .collect()
 }
 

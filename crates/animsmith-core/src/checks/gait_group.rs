@@ -9,7 +9,7 @@
 use crate::check::{Check, CheckCtx};
 use crate::checks::gait_gap;
 use crate::evaluation::{
-    Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope,
+    Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope, EvaluationScopeCode,
 };
 use crate::finding::{Finding, Severity};
 use crate::metrics::{MIN_STRIDE_STEP_M, circular_phase_spread, foot_cycle_metrics};
@@ -32,9 +32,10 @@ impl Check for GaitGroup {
     fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
         let mut findings = Vec::new();
         let mut coverage = run_content(ctx, &mut findings);
-        coverage
-            .evaluated_scopes
-            .insert(0, EvaluationScope::new("member_existence"));
+        coverage.evaluated_scopes.insert(
+            0,
+            EvaluationScope::new(EvaluationScopeCode::MEMBER_EXISTENCE),
+        );
         CheckOutput::from_coverage(findings, coverage.evaluated_scopes, coverage.gaps)
     }
 }
@@ -79,7 +80,10 @@ fn run_content(ctx: &CheckCtx, out: &mut Vec<Finding>) -> GaitCoverage {
                         CoverageGapCode::MEASUREMENT_UNAVAILABLE,
                         "gait phase could not be measured",
                     )
-                    .scope(EvaluationScope::new("phase_measurement").subject(clip_name)),
+                    .scope(
+                        EvaluationScope::new(EvaluationScopeCode::PHASE_MEASUREMENT)
+                            .subject(clip_name),
+                    ),
                 );
                 continue;
             };
@@ -92,7 +96,10 @@ fn run_content(ctx: &CheckCtx, out: &mut Vec<Finding>) -> GaitCoverage {
                             metrics.lr_amplitude_m, group.min_lr_amplitude_m
                         ),
                     )
-                    .scope(EvaluationScope::new("phase_measurement").subject(clip_name)),
+                    .scope(
+                        EvaluationScope::new(EvaluationScopeCode::PHASE_MEASUREMENT)
+                            .subject(clip_name),
+                    ),
                 );
                 continue;
             }
@@ -104,12 +111,16 @@ fn run_content(ctx: &CheckCtx, out: &mut Vec<Finding>) -> GaitCoverage {
                         CoverageGapCode::MEASUREMENT_UNAVAILABLE,
                         "gait phase could not be fitted from the sampled cycle",
                     )
-                    .scope(EvaluationScope::new("phase_measurement").subject(clip_name)),
+                    .scope(
+                        EvaluationScope::new(EvaluationScopeCode::PHASE_MEASUREMENT)
+                            .subject(clip_name),
+                    ),
                 );
             }
         }
 
-        let phase_scope = EvaluationScope::new("phase_coherence").subject(group_name.clone());
+        let phase_scope =
+            EvaluationScope::new(EvaluationScopeCode::PHASE_COHERENCE).subject(group_name.clone());
         if existing_members > 0
             && let Some(gap) = &roles_gap
         {

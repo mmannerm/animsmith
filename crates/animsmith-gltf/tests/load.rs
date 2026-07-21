@@ -38,7 +38,7 @@ fn fixture_is_lint_clean() {
     let findings: Vec<_> = evaluate_checks(&ctx, &mechanical_checks(), CheckSelection::All)
         .expect("valid built-in catalog")
         .into_iter()
-        .flat_map(|check| check.findings)
+        .flat_map(|check| check.findings().to_vec())
         .collect();
     let serious: Vec<_> = findings
         .iter()
