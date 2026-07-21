@@ -8,7 +8,8 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
-use serde::Serialize;
+use serde::ser::SerializeStruct;
+use serde::{Serialize, Serializer};
 
 use crate::check::{Check, CheckCtx};
 use crate::config::SeveritySetting;
@@ -193,15 +194,6 @@ impl CheckOutput {
         }
     }
 
-    /// Construct a complete atomic output from content findings.
-    pub fn complete(findings: Vec<Finding>) -> Self {
-        Self {
-            findings,
-            evaluated_scopes: Vec::new(),
-            gaps: Vec::new(),
-        }
-    }
-
     /// Evaluation coverage represented by this output.
     pub fn evaluation(&self) -> EvaluationState {
         if self.gaps.is_empty() {
@@ -228,21 +220,13 @@ impl CheckOutput {
         &self.gaps
     }
 
-    fn into_parts(
-        self,
-    ) -> (
-        EvaluationState,
-        Vec<Finding>,
-        Vec<EvaluationScope>,
-        Vec<CoverageGap>,
-    ) {
-        let evaluation = self.evaluation();
-        (evaluation, self.findings, self.evaluated_scopes, self.gaps)
+    fn into_parts(self) -> (Vec<Finding>, Vec<EvaluationScope>, Vec<CoverageGap>) {
+        (self.findings, self.evaluated_scopes, self.gaps)
     }
 }
 
 /// Final v2 record for one catalog check.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct CheckEvaluation {
     /// Stable check id.
     pub check_id: &'static str,
@@ -252,16 +236,55 @@ pub struct CheckEvaluation {
     pub configuration: ConfigurationState,
     /// Applicability to this document/configuration.
     pub applicability: Applicability,
-    /// Evaluation coverage.
-    pub evaluation: EvaluationState,
     /// Content findings emitted by evaluated work.
     pub findings: Vec<Finding>,
     /// Stable identifiers for work that completed.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub evaluated_scopes: Vec<EvaluationScope>,
     /// Typed reasons work was not evaluated.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub gaps: Vec<CoverageGap>,
+}
+
+impl CheckEvaluation {
+    /// Derive evaluation coverage from activation, completed scopes, and gaps.
+    pub fn evaluation(&self) -> EvaluationState {
+        if self.selection == SelectionState::Unselected
+            || self.configuration == ConfigurationState::Disabled
+            || self.applicability == Applicability::NotApplicable
+        {
+            EvaluationState::NotEvaluated
+        } else if self.gaps.is_empty() {
+            EvaluationState::Complete
+        } else if self.evaluated_scopes.is_empty() {
+            EvaluationState::NotEvaluated
+        } else {
+            EvaluationState::Partial
+        }
+    }
+}
+
+impl Serialize for CheckEvaluation {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut fields = 6;
+        fields += usize::from(!self.evaluated_scopes.is_empty());
+        fields += usize::from(!self.gaps.is_empty());
+        let mut state = serializer.serialize_struct("CheckEvaluation", fields)?;
+        state.serialize_field("check_id", &self.check_id)?;
+        state.serialize_field("selection", &self.selection)?;
+        state.serialize_field("configuration", &self.configuration)?;
+        state.serialize_field("applicability", &self.applicability)?;
+        state.serialize_field("evaluation", &self.evaluation())?;
+        state.serialize_field("findings", &self.findings)?;
+        if !self.evaluated_scopes.is_empty() {
+            state.serialize_field("evaluated_scopes", &self.evaluated_scopes)?;
+        }
+        if !self.gaps.is_empty() {
+            state.serialize_field("gaps", &self.gaps)?;
+        }
+        state.end()
+    }
 }
 
 /// Catalog-selection policy for [`evaluate_checks`].
@@ -356,7 +379,6 @@ pub fn evaluate_checks(
                 selection: selection_state,
                 configuration,
                 applicability,
-                evaluation: EvaluationState::NotEvaluated,
                 findings: Vec::new(),
                 evaluated_scopes: Vec::new(),
                 gaps: Vec::new(),
@@ -364,7 +386,7 @@ pub fn evaluate_checks(
             continue;
         }
 
-        let (evaluation, mut findings, evaluated_scopes, gaps) = check.evaluate(ctx).into_parts();
+        let (mut findings, evaluated_scopes, gaps) = check.evaluate(ctx).into_parts();
         for finding in &findings {
             if finding.check_id != check.id() {
                 return Err(EvaluationError::FindingCheckIdMismatch {
@@ -383,7 +405,6 @@ pub fn evaluate_checks(
             selection: selection_state,
             configuration,
             applicability,
-            evaluation,
             findings,
             evaluated_scopes,
             gaps,

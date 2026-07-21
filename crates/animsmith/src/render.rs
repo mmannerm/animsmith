@@ -51,7 +51,7 @@ fn render_text(reports: &[FileReport]) -> String {
     let mut notes = 0usize;
     let mut gaps = 0usize;
     for report in reports {
-        let findings = presentation_findings(report);
+        let findings = sorted_findings(report);
         let coverage_groups = coverage_gap_groups(report);
         let file_gap_count: usize = coverage_groups.iter().map(|group| group.gaps.len()).sum();
         if findings.is_empty() && coverage_groups.is_empty() {
@@ -140,7 +140,7 @@ fn render_text(reports: &[FileReport]) -> String {
     out
 }
 
-fn presentation_findings(report: &FileReport) -> Vec<&Finding> {
+fn sorted_findings(report: &FileReport) -> Vec<&Finding> {
     let mut findings: Vec<_> = report
         .checks()
         .into_iter()
@@ -249,7 +249,7 @@ fn render_markdown(reports: &[FileReport]) -> String {
     let _ = writeln!(out, "## animsmith lint\n");
 
     for report in reports {
-        let findings = presentation_findings(report);
+        let findings = sorted_findings(report);
         let gap_groups = coverage_gap_groups(report);
         let gap_count: usize = gap_groups.iter().map(|group| group.gaps.len()).sum();
         if findings.is_empty() && gap_groups.is_empty() {
@@ -458,8 +458,7 @@ mod tests {
     use super::*;
     use animsmith_core::{
         Applicability, CheckEvaluation, ConfigurationState, CoverageGap, CoverageGapCode, Document,
-        EvaluationScope, EvaluationState, Finding, MeasurementContract, ResolvedRoles, RigInfo,
-        SelectionState,
+        EvaluationScope, Finding, MeasurementContract, ResolvedRoles, RigInfo, SelectionState,
     };
     use std::collections::BTreeMap;
 
@@ -471,7 +470,6 @@ mod tests {
                 selection: SelectionState::Selected,
                 configuration: ConfigurationState::Enabled,
                 applicability: Applicability::Applicable,
-                evaluation: EvaluationState::Complete,
                 findings,
                 evaluated_scopes: Vec::new(),
                 gaps: Vec::new(),
@@ -632,7 +630,6 @@ mod tests {
                 selection: SelectionState::Selected,
                 configuration: ConfigurationState::Enabled,
                 applicability: Applicability::Applicable,
-                evaluation: EvaluationState::NotEvaluated,
                 findings: Vec::new(),
                 evaluated_scopes: Vec::new(),
                 gaps: vec![
@@ -661,7 +658,6 @@ mod tests {
                 selection: SelectionState::Selected,
                 configuration: ConfigurationState::Enabled,
                 applicability: Applicability::Applicable,
-                evaluation: EvaluationState::Partial,
                 findings: vec![
                     Finding::new("foot-slide", Severity::Warning, hostile)
                         .clip(hostile)
@@ -683,6 +679,19 @@ mod tests {
     }
 
     #[test]
+    fn text_atom_escapes_every_ascii_control_character() {
+        let raw: String = (0_u8..=31)
+            .chain(std::iter::once(127))
+            .map(char::from)
+            .collect();
+        let escaped = text_atom(&raw);
+        assert!(
+            !escaped.chars().any(char::is_control),
+            "control survived sanitizer: {escaped:?}"
+        );
+    }
+
+    #[test]
     fn repeated_coverage_gaps_are_grouped_without_losing_the_count() {
         let gaps = ["walk_a", "walk_b"]
             .into_iter()
@@ -698,7 +707,6 @@ mod tests {
                 selection: SelectionState::Selected,
                 configuration: ConfigurationState::Enabled,
                 applicability: Applicability::Applicable,
-                evaluation: EvaluationState::NotEvaluated,
                 findings: Vec::new(),
                 evaluated_scopes: Vec::new(),
                 gaps,
@@ -722,5 +730,52 @@ mod tests {
             "{markdown}"
         );
         assert!(markdown.contains("2 coverage gap(s)"), "{markdown}");
+    }
+
+    #[test]
+    fn coverage_gap_groups_keep_check_id_and_code_as_the_full_key() {
+        let record = |check_id, gaps| CheckEvaluation {
+            check_id,
+            selection: SelectionState::Selected,
+            configuration: ConfigurationState::Enabled,
+            applicability: Applicability::Applicable,
+            findings: Vec::new(),
+            evaluated_scopes: Vec::new(),
+            gaps,
+        };
+        let file = report_with_checks(
+            "mixed.glb",
+            vec![
+                record(
+                    "check-a",
+                    vec![
+                        CoverageGap::new(CoverageGapCode::ROLES_UNRESOLVED, "roles"),
+                        CoverageGap::new(CoverageGapCode::MEASUREMENT_UNAVAILABLE, "measurement"),
+                    ],
+                ),
+                record(
+                    "check-b",
+                    vec![CoverageGap::new(CoverageGapCode::ROLES_UNRESOLVED, "roles")],
+                ),
+            ],
+        );
+
+        let text = render_text(std::slice::from_ref(&file));
+        for row in [
+            "coverage[check-a] roles_unresolved ×1",
+            "coverage[check-a] measurement_unavailable ×1",
+            "coverage[check-b] roles_unresolved ×1",
+        ] {
+            assert_eq!(text.matches(row).count(), 1, "{text}");
+        }
+
+        let markdown = render_markdown(&[file]);
+        for row in [
+            "| `check-a` | `roles_unresolved` | 1 |",
+            "| `check-a` | `measurement_unavailable` | 1 |",
+            "| `check-b` | `roles_unresolved` | 1 |",
+        ] {
+            assert_eq!(markdown.matches(row).count(), 1, "{markdown}");
+        }
     }
 }

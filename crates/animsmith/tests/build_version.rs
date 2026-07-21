@@ -3,9 +3,8 @@
 mod build_script;
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
 fn display_version_appends_git_describe_to_manifest_version() {
@@ -48,7 +47,7 @@ fn resolved_version_falls_back_to_the_bare_manifest_version() {
 
 #[test]
 fn packaged_source_info_reads_full_revision_without_claiming_cleanliness() {
-    let temp = TempDir::new("cargo-vcs-source");
+    let temp = temp_dir("cargo-vcs-source");
     let path = temp.path().join(".cargo_vcs_info.json");
     fs::write(
         &path,
@@ -67,10 +66,11 @@ fn packaged_source_info_reads_full_revision_without_claiming_cleanliness() {
 
 #[test]
 fn packaged_source_info_rejects_revision_that_cannot_satisfy_the_schema() {
-    let temp = TempDir::new("invalid-cargo-vcs-source");
+    let temp = temp_dir("invalid-cargo-vcs-source");
     let path = temp.path().join(".cargo_vcs_info.json");
     for revision in [
         "short",
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         "0123456789abcdef0123456789abcdef0123456z",
         "0123456789abcdef0123456789abcdef01234567\nforge",
     ] {
@@ -85,7 +85,7 @@ fn packaged_source_info_rejects_revision_that_cannot_satisfy_the_schema() {
 
 #[test]
 fn git_source_info_observes_revision_and_tracked_dirty_state() {
-    let temp = TempDir::new("git-source");
+    let temp = temp_dir("git-source");
     git(temp.path(), &["init", "--quiet"]);
     fs::write(temp.path().join("tracked.txt"), "clean\n").expect("writes tracked file");
     git(temp.path(), &["add", "tracked.txt"]);
@@ -117,8 +117,28 @@ fn git_source_info_observes_revision_and_tracked_dirty_state() {
 }
 
 #[test]
+fn workspace_build_emits_source_identity_environment() {
+    let packaged = Path::new(env!("CARGO_MANIFEST_DIR")).join(".cargo_vcs_info.json");
+    if packaged.is_file() {
+        return;
+    }
+
+    let revision = option_env!("ANIMSMITH_GIT_REVISION")
+        .expect("Git-worktree build emits ANIMSMITH_GIT_REVISION");
+    assert_eq!(revision.len(), 40);
+    assert!(revision.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    assert!(
+        option_env!("ANIMSMITH_GIT_DIRTY")
+            .expect("Git-worktree build emits ANIMSMITH_GIT_DIRTY")
+            .parse::<bool>()
+            .is_ok(),
+        "dirty identity is a boolean"
+    );
+}
+
+#[test]
 fn trusted_git_root_accepts_animsmith_workspace_layout() {
-    let temp = TempDir::new("workspace-layout");
+    let temp = temp_dir("workspace-layout");
     let git_root = temp.path();
     let manifest_dir = git_root.join("crates").join("animsmith");
     write_manifest(&manifest_dir);
@@ -131,7 +151,7 @@ fn trusted_git_root_accepts_animsmith_workspace_layout() {
 
 #[test]
 fn trusted_git_root_rejects_vendored_source_in_foreign_layout() {
-    let temp = TempDir::new("foreign-layout");
+    let temp = temp_dir("foreign-layout");
     let git_root = temp.path();
     let trusted_manifest_dir = git_root.join("crates").join("animsmith");
     write_manifest(&trusted_manifest_dir);
@@ -164,7 +184,7 @@ fn trusted_git_root_rejects_vendored_source_in_foreign_layout() {
 
 #[test]
 fn trusted_git_root_rejects_packaged_source_with_cargo_vcs_info() {
-    let temp = TempDir::new("cargo-package");
+    let temp = temp_dir("cargo-package");
     let git_root = temp.path();
     let manifest_dir = git_root.join("crates").join("animsmith");
     write_manifest(&manifest_dir);
@@ -213,31 +233,9 @@ fn git_output(dir: &Path, args: &[&str]) -> String {
         .to_owned()
 }
 
-struct TempDir {
-    path: PathBuf,
-}
-
-impl TempDir {
-    fn new(name: &str) -> Self {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time after epoch")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "animsmith-build-version-{name}-{}-{nonce}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&path).expect("creates temp dir");
-        Self { path }
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
-    }
+fn temp_dir(name: &str) -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix(&format!("animsmith-build-version-{name}-"))
+        .tempdir()
+        .expect("creates temp dir")
 }

@@ -68,6 +68,6 @@ impl Check for MissingBones {
                 }
             }
         }
-        CheckOutput::complete(findings)
+        CheckOutput::from_coverage(findings, Vec::new(), Vec::new())
     }
 }

@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
 use animsmith_core::{
-    ContractError, Document, FileReport, MeasurementContract, ReportEnvelope, ResolvedRoles,
-    RigInfo, ToolInfo, ToolSource,
+    Applicability, CheckEvaluation, ConfigurationState, ContractError, CoverageGap,
+    CoverageGapCode, Document, FileReport, Finding, MeasurementContract, ReportEnvelope,
+    ResolvedRoles, RigInfo, SelectionState, Severity, ToolInfo, ToolSource,
 };
 
 fn tool() -> ToolInfo {
@@ -20,19 +21,48 @@ fn measurements() -> MeasurementContract {
 
 #[test]
 fn command_envelopes_reject_the_opposite_file_record_shape() {
-    let lint_file = FileReport::lint("lint.glb", rig(), Vec::new(), measurements());
+    let measure_file = || FileReport::measure("measure.glb", rig(), measurements());
+    let lint_file = || FileReport::lint("lint.glb", rig(), Vec::new(), measurements());
     assert_eq!(
-        ReportEnvelope::measure(tool(), vec![lint_file]).unwrap_err(),
+        ReportEnvelope::measure(tool(), vec![measure_file(), lint_file()]).unwrap_err(),
         ContractError::MeasureFileCarriesChecks {
             path: "lint.glb".into()
         }
     );
 
-    let measure_file = FileReport::measure("measure.glb", rig(), measurements());
     assert_eq!(
-        ReportEnvelope::lint(tool(), vec![measure_file]).unwrap_err(),
+        ReportEnvelope::lint(tool(), vec![lint_file(), measure_file()]).unwrap_err(),
         ContractError::LintFileMissingChecks {
             path: "measure.glb".into()
+        }
+    );
+}
+
+#[test]
+fn lint_envelope_rejects_evidence_that_derives_not_evaluated() {
+    let invalid = CheckEvaluation {
+        check_id: "example",
+        selection: SelectionState::Selected,
+        configuration: ConfigurationState::Enabled,
+        applicability: Applicability::Applicable,
+        findings: vec![Finding::new(
+            "example",
+            Severity::Error,
+            "unsupported judgment",
+        )],
+        evaluated_scopes: Vec::new(),
+        gaps: vec![CoverageGap::new(
+            CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+            "missing evidence",
+        )],
+    };
+    let file = FileReport::lint("invalid.glb", rig(), vec![invalid], measurements());
+    assert_eq!(
+        ReportEnvelope::lint(tool(), vec![file]).unwrap_err(),
+        ContractError::InvalidCheckEvidence {
+            path: "invalid.glb".into(),
+            check_id: "example",
+            reason: "not-evaluated checks cannot carry findings",
         }
     );
 }

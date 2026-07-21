@@ -188,7 +188,7 @@ fn foot_slide_records_partial_evidence_when_one_side_is_unresolved() {
         .find(|record| record.check_id == "foot-slide")
         .expect("foot-slide record");
 
-    assert_eq!(foot_slide.evaluation, EvaluationState::Partial);
+    assert_eq!(foot_slide.evaluation(), EvaluationState::Partial);
     assert!(foot_slide.findings.is_empty());
     assert!(
         foot_slide
@@ -251,7 +251,21 @@ fn declared_motion_checks_report_unmeasurable_non_finite_root_motion() {
             .iter()
             .find(|gap| gap.code == CoverageGapCode::MEASUREMENT_UNAVAILABLE)
             .unwrap_or_else(|| panic!("{id} did not report missing measurement: {record:#?}"));
-        assert_eq!(gap.scope.as_ref().unwrap().subject.as_deref(), Some("walk"));
+        let scope = gap.scope.as_ref().unwrap();
+        let expected_scope = match id {
+            "in-place" => "travel_mode",
+            "root-motion-speed" => "root_motion_speed",
+            "foot-slide" => "foot_stance",
+            _ => unreachable!(),
+        };
+        assert_eq!(
+            (gap.code, scope.code, scope.subject.as_deref()),
+            (
+                CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                expected_scope,
+                Some("walk")
+            )
+        );
         assert!(gap.message.contains("root-motion speed"));
     }
 }
@@ -286,8 +300,15 @@ fn foot_slide_reports_whole_clip_gap_when_metric_grid_is_too_short() {
         .iter()
         .find(|gap| gap.code == CoverageGapCode::MEASUREMENT_UNAVAILABLE)
         .expect("too-short clip gap");
-    assert_eq!(gap.scope.as_ref().unwrap().code, "foot_stance");
-    assert_eq!(gap.scope.as_ref().unwrap().subject.as_deref(), Some("walk"));
+    let scope = gap.scope.as_ref().unwrap();
+    assert_eq!(
+        (gap.code, scope.code, scope.subject.as_deref()),
+        (
+            CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+            "foot_stance",
+            Some("walk")
+        )
+    );
     assert!(gap.message.contains("too short"));
 }
 
@@ -505,7 +526,7 @@ fn non_finite_declared_fps_is_a_typed_gap() {
         .iter()
         .find(|record| record.check_id == "fps")
         .expect("fps record");
-    assert_eq!(fps.evaluation, EvaluationState::NotEvaluated);
+    assert_eq!(fps.evaluation(), EvaluationState::NotEvaluated);
     assert_eq!(fps.gaps[0].code, CoverageGapCode::INVALID_DECLARED_FPS);
 }
 
@@ -568,7 +589,7 @@ fn invalid_rest_rotation_is_insufficient_evidence_not_complete() {
         .iter()
         .find(|record| record.check_id == "bind-pose")
         .expect("bind-pose record");
-    assert_eq!(bind_pose.evaluation, EvaluationState::NotEvaluated);
+    assert_eq!(bind_pose.evaluation(), EvaluationState::NotEvaluated);
     assert_eq!(
         bind_pose.gaps[0].code,
         CoverageGapCode::INSUFFICIENT_ROTATION_EVIDENCE
