@@ -8,11 +8,33 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
-use serde::Serialize;
+use serde::ser::SerializeStruct;
+use serde::{Serialize, Serializer};
 
 use crate::check::{Check, CheckCtx};
 use crate::config::SeveritySetting;
 use crate::finding::Finding;
+
+macro_rules! builtin_codes {
+    (
+        $kind:ident, $registry:ident, $docs:ident, $registry_doc:literal;
+        $($name:ident => $value:literal,
+            meaning = $meaning:literal,
+            emitted_by = [$($emitter:literal),+ $(,)?]),+ $(,)?
+    ) => {
+        impl $kind {
+            $(#[doc = $meaning] pub const $name: Self = Self($value);)+
+        }
+
+        #[doc = $registry_doc]
+        pub const $registry: &[$kind] = &[$($kind::$name),+];
+
+        #[cfg(test)]
+        const $docs: &[(&str, &str, &[&str])] = &[
+            $(($value, $meaning, &[$($emitter),+])),+
+        ];
+    };
+}
 
 /// Whether a check was selected for this invocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -56,11 +78,79 @@ pub enum EvaluationState {
     NotEvaluated,
 }
 
+/// Stable machine code for a unit of evaluated or missing work.
+///
+/// Built-in codes are constants. Custom checks may construct namespaced codes
+/// without forcing animsmith's built-in registry to become a closed enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(transparent)]
+pub struct EvaluationScopeCode(&'static str);
+
+builtin_codes!(
+    EvaluationScopeCode,
+    BUILTIN_EVALUATION_SCOPE_CODES,
+    BUILTIN_EVALUATION_SCOPE_CODE_DOCS,
+    "Built-in evaluation-scope codes used by animsmith's catalog.";
+    FIRST_FRAME_REST_DELTA => "first_frame_rest_delta",
+        meaning = "The named clip's first-frame/rest-pose rotation evidence was evaluated.",
+        emitted_by = ["bind-pose"],
+    LOOP_SEAM => "loop_seam",
+        meaning = "One named clip's positional loop seam was measured.",
+        emitted_by = ["loop-seam"],
+    FOOT_STANCE => "foot_stance",
+        meaning = "Whole-clip prerequisites for stance analysis were evaluated.",
+        emitted_by = ["foot-slide"],
+    LEFT_FOOT_STANCE => "left_foot_stance",
+        meaning = "The named clip's left foot/toe stance was evaluated.",
+        emitted_by = ["foot-slide"],
+    RIGHT_FOOT_STANCE => "right_foot_stance",
+        meaning = "The named clip's right foot/toe stance was evaluated.",
+        emitted_by = ["foot-slide"],
+    ROOT_MOTION_SPEED => "root_motion_speed",
+        meaning = "One named clip's root-motion speed was measured.",
+        emitted_by = ["root-motion-speed"],
+    MEMBER_EXISTENCE => "member_existence",
+        meaning = "Configured gait-group members were checked for existence.",
+        emitted_by = ["gait-group"],
+    PHASE_MEASUREMENT => "phase_measurement",
+        meaning = "One named clip's gait phase was measured or lacked usable evidence.",
+        emitted_by = ["gait-group"],
+    PHASE_COHERENCE => "phase_coherence",
+        meaning = "One named gait group's measurable phases were compared.",
+        emitted_by = ["gait-group"],
+    TRAVEL_MODE => "travel_mode",
+        meaning = "One named clip's in-place/root-motion declaration was judged.",
+        emitted_by = ["in-place"],
+    FRAME_GRID => "frame_grid",
+        meaning = "The named clip's declared frame grid was evaluated.",
+        emitted_by = ["fps"],
+);
+
+impl EvaluationScopeCode {
+    /// Construct a stable custom scope code.
+    ///
+    /// Custom checks should use a namespaced value such as `acme:reference`.
+    pub const fn custom(code: &'static str) -> Self {
+        Self(code)
+    }
+
+    /// Return the serialized snake-case or namespaced code.
+    pub const fn as_str(self) -> &'static str {
+        self.0
+    }
+}
+
+impl fmt::Display for EvaluationScopeCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
 /// A stable identifier for work that completed or could not be evaluated.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct EvaluationScope {
     /// Consumer-neutral work-unit code such as `member_existence`.
-    pub code: &'static str,
+    pub code: EvaluationScopeCode,
     /// Optional subject within the check, such as a group or clip name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
@@ -68,7 +158,7 @@ pub struct EvaluationScope {
 
 impl EvaluationScope {
     /// Construct a whole-check scope.
-    pub fn new(code: &'static str) -> Self {
+    pub fn new(code: EvaluationScopeCode) -> Self {
         Self {
             code,
             subject: None,
@@ -91,20 +181,32 @@ impl EvaluationScope {
 #[serde(transparent)]
 pub struct CoverageGapCode(&'static str);
 
-impl CoverageGapCode {
-    /// Required rig roles could not be resolved.
-    pub const ROLES_UNRESOLVED: Self = Self("roles_unresolved");
-    /// A metric needed by declared work could not be produced.
-    pub const MEASUREMENT_UNAVAILABLE: Self = Self("measurement_unavailable");
-    /// Fewer than two gait-group members produced a phase measurement.
-    pub const INSUFFICIENT_MEASURABLE_MEMBERS: Self = Self("insufficient_measurable_members");
-    /// Some configured gait-group members did not produce a phase measurement.
-    pub const MEMBERS_NOT_EVALUATED: Self = Self("members_not_evaluated");
-    /// A declared frame rate was zero, negative, or non-finite.
-    pub const INVALID_DECLARED_FPS: Self = Self("invalid_declared_fps");
-    /// Too few usable rotation tracks existed for bind-pose comparison.
-    pub const INSUFFICIENT_ROTATION_EVIDENCE: Self = Self("insufficient_rotation_evidence");
+builtin_codes!(
+    CoverageGapCode,
+    BUILTIN_COVERAGE_GAP_CODES,
+    BUILTIN_COVERAGE_GAP_CODE_DOCS,
+    "Built-in coverage-gap codes used by animsmith's catalog.";
+    ROLES_UNRESOLVED => "roles_unresolved",
+        meaning = "Required semantic rig roles were not resolved.",
+        emitted_by = ["loop-seam", "root-motion-speed", "in-place", "foot-slide", "gait-group"],
+    MEASUREMENT_UNAVAILABLE => "measurement_unavailable",
+        meaning = "A required numeric measurement could not be produced or did not meet its evidence floor.",
+        emitted_by = ["loop-seam", "root-motion-speed", "in-place", "foot-slide", "gait-group"],
+    INSUFFICIENT_MEASURABLE_MEMBERS => "insufficient_measurable_members",
+        meaning = "Fewer than two gait-group members produced usable phases.",
+        emitted_by = ["gait-group"],
+    MEMBERS_NOT_EVALUATED => "members_not_evaluated",
+        meaning = "Some configured gait-group members did not produce usable phases.",
+        emitted_by = ["gait-group"],
+    INVALID_DECLARED_FPS => "invalid_declared_fps",
+        meaning = "A declared frame rate was zero, negative, or non-finite.",
+        emitted_by = ["fps"],
+    INSUFFICIENT_ROTATION_EVIDENCE => "insufficient_rotation_evidence",
+        meaning = "Too few usable rotation tracks existed for a bind-pose comparison.",
+        emitted_by = ["bind-pose"],
+);
 
+impl CoverageGapCode {
     /// Construct a stable custom code.
     ///
     /// Custom checks should use a namespaced value such as
@@ -154,109 +256,33 @@ impl CoverageGap {
     }
 }
 
-/// Validated output from one selected, enabled, applicable check.
+/// Output evidence from one selected, enabled, applicable check.
 ///
-/// Private fields and the constructors keep coverage states internally
-/// consistent: partial work has both completed scopes and gaps, while wholly
-/// unevaluated work has gaps and cannot carry content findings.
+/// The shared evaluation boundary derives coverage from completed scopes and
+/// gaps and reports malformed evidence through [`EvaluationError`].
 #[derive(Debug, Clone)]
 pub struct CheckOutput {
-    evaluation: EvaluationState,
     findings: Vec<Finding>,
     evaluated_scopes: Vec<EvaluationScope>,
     gaps: Vec<CoverageGap>,
 }
 
 impl CheckOutput {
-    /// Classify coverage from completed scopes and gaps.
+    /// Collect findings, completed scopes, and coverage gaps through the one
+    /// check-output construction path.
     ///
-    /// No gaps means complete work. Gaps plus completed scopes mean partial
-    /// work. Gaps without completed scopes mean no applicable work completed.
-    ///
-    /// # Panics
-    ///
-    /// Panics if findings are supplied without a completed scope while gaps
-    /// are present. Unevaluated work cannot produce content judgments.
+    /// Classification and validation happen when [`evaluate_checks`] projects
+    /// this evidence into a [`CheckEvaluation`].
     pub fn from_coverage(
         findings: Vec<Finding>,
         evaluated_scopes: Vec<EvaluationScope>,
         gaps: Vec<CoverageGap>,
     ) -> Self {
-        if gaps.is_empty() {
-            Self::complete_scoped(findings, evaluated_scopes)
-        } else if evaluated_scopes.is_empty() {
-            assert!(
-                findings.is_empty(),
-                "not-evaluated output cannot carry content findings"
-            );
-            Self::not_evaluated(gaps)
-        } else {
-            Self::partial(findings, evaluated_scopes, gaps)
-        }
-    }
-
-    /// Construct a complete atomic output from content findings.
-    pub fn complete(findings: Vec<Finding>) -> Self {
-        Self::complete_scoped(findings, Vec::new())
-    }
-
-    /// Construct a complete output with explicit completed scopes.
-    pub fn complete_scoped(findings: Vec<Finding>, evaluated_scopes: Vec<EvaluationScope>) -> Self {
         Self {
-            evaluation: EvaluationState::Complete,
-            findings,
-            evaluated_scopes,
-            gaps: Vec::new(),
-        }
-    }
-
-    /// Construct a partial output.
-    ///
-    /// # Panics
-    ///
-    /// Panics if either `evaluated_scopes` or `gaps` is empty. That would
-    /// contradict the meaning of partial coverage and is an implementor bug,
-    /// not an input-dependent runtime condition.
-    pub fn partial(
-        findings: Vec<Finding>,
-        evaluated_scopes: Vec<EvaluationScope>,
-        gaps: Vec<CoverageGap>,
-    ) -> Self {
-        assert!(
-            !evaluated_scopes.is_empty(),
-            "partial evaluation requires a completed scope"
-        );
-        assert!(!gaps.is_empty(), "partial evaluation requires a gap");
-        Self {
-            evaluation: EvaluationState::Partial,
             findings,
             evaluated_scopes,
             gaps,
         }
-    }
-
-    /// Construct an output where no applicable work completed.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `gaps` is empty. Applicable work cannot be described as not
-    /// evaluated without explaining the missing coverage.
-    pub fn not_evaluated(gaps: Vec<CoverageGap>) -> Self {
-        assert!(
-            !gaps.is_empty(),
-            "not-evaluated output requires a coverage gap"
-        );
-        Self {
-            evaluation: EvaluationState::NotEvaluated,
-            findings: Vec::new(),
-            evaluated_scopes: Vec::new(),
-            gaps,
-        }
-    }
-
-    /// Evaluation coverage represented by this output.
-    pub const fn evaluation(&self) -> EvaluationState {
-        self.evaluation
     }
 
     /// Content findings emitted by evaluated work.
@@ -273,45 +299,187 @@ impl CheckOutput {
     pub fn gaps(&self) -> &[CoverageGap] {
         &self.gaps
     }
-
-    fn into_parts(
-        self,
-    ) -> (
-        EvaluationState,
-        Vec<Finding>,
-        Vec<EvaluationScope>,
-        Vec<CoverageGap>,
-    ) {
-        (
-            self.evaluation,
-            self.findings,
-            self.evaluated_scopes,
-            self.gaps,
-        )
-    }
 }
 
 /// Final v2 record for one catalog check.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct CheckEvaluation {
+    check_id: &'static str,
+    selection: SelectionState,
+    configuration: ConfigurationState,
+    applicability: Applicability,
+    output: CheckOutput,
+}
+
+impl CheckEvaluation {
+    /// Construct a selected, enabled, applicable evaluation from validated
+    /// check output.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an empty check id, malformed coverage codes, or
+    /// when a nested finding names a different check.
+    pub fn evaluated(check_id: &'static str, output: CheckOutput) -> Result<Self, EvaluationError> {
+        if check_id.is_empty() {
+            return Err(EvaluationError::InvalidCheckId(check_id));
+        }
+        if !output.gaps.is_empty()
+            && output.evaluated_scopes.is_empty()
+            && !output.findings.is_empty()
+        {
+            return Err(EvaluationError::InvalidCheckOutput {
+                check_id,
+                reason: "not-evaluated output cannot carry content findings",
+            });
+        }
+        if let Some(finding) = output
+            .findings
+            .iter()
+            .find(|finding| finding.check_id != check_id)
+        {
+            return Err(EvaluationError::FindingCheckIdMismatch {
+                check_id,
+                finding_check_id: finding.check_id,
+            });
+        }
+        if output
+            .evaluated_scopes
+            .iter()
+            .any(|scope| scope.code.as_str().is_empty())
+        {
+            return Err(EvaluationError::InvalidCheckOutput {
+                check_id,
+                reason: "evaluated scope code cannot be empty",
+            });
+        }
+        if output.gaps.iter().any(|gap| gap.code.as_str().is_empty()) {
+            return Err(EvaluationError::InvalidCheckOutput {
+                check_id,
+                reason: "coverage gap code cannot be empty",
+            });
+        }
+        if output.gaps.iter().any(|gap| {
+            gap.scope
+                .as_ref()
+                .is_some_and(|scope| scope.code.as_str().is_empty())
+        }) {
+            return Err(EvaluationError::InvalidCheckOutput {
+                check_id,
+                reason: "coverage gap scope code cannot be empty",
+            });
+        }
+        Ok(Self {
+            check_id,
+            selection: SelectionState::Selected,
+            configuration: ConfigurationState::Enabled,
+            applicability: Applicability::Applicable,
+            output,
+        })
+    }
+
     /// Stable check id.
-    pub check_id: &'static str,
+    pub fn check_id(&self) -> &'static str {
+        self.check_id
+    }
+
     /// Invocation selection state.
-    pub selection: SelectionState,
+    pub fn selection(&self) -> SelectionState {
+        self.selection
+    }
+
     /// Configuration activation state.
-    pub configuration: ConfigurationState,
+    pub fn configuration(&self) -> ConfigurationState {
+        self.configuration
+    }
+
     /// Applicability to this document/configuration.
-    pub applicability: Applicability,
-    /// Evaluation coverage.
-    pub evaluation: EvaluationState,
+    pub fn applicability(&self) -> Applicability {
+        self.applicability
+    }
+
+    /// Derive evaluation coverage from activation, completed scopes, and gaps.
+    pub fn evaluation(&self) -> EvaluationState {
+        if self.selection == SelectionState::Unselected
+            || self.configuration == ConfigurationState::Disabled
+            || self.applicability == Applicability::NotApplicable
+        {
+            EvaluationState::NotEvaluated
+        } else if self.output.gaps.is_empty() {
+            EvaluationState::Complete
+        } else if self.output.evaluated_scopes.is_empty() {
+            EvaluationState::NotEvaluated
+        } else {
+            EvaluationState::Partial
+        }
+    }
+
     /// Content findings emitted by evaluated work.
-    pub findings: Vec<Finding>,
+    pub fn findings(&self) -> &[Finding] {
+        self.output.findings()
+    }
+
     /// Stable identifiers for work that completed.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub evaluated_scopes: Vec<EvaluationScope>,
+    pub fn evaluated_scopes(&self) -> &[EvaluationScope] {
+        self.output.evaluated_scopes()
+    }
+
     /// Typed reasons work was not evaluated.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub gaps: Vec<CoverageGap>,
+    pub fn gaps(&self) -> &[CoverageGap] {
+        self.output.gaps()
+    }
+
+    fn inactive(
+        check_id: &'static str,
+        selection: SelectionState,
+        configuration: ConfigurationState,
+        applicability: Applicability,
+    ) -> Self {
+        debug_assert!(
+            selection == SelectionState::Unselected
+                || configuration == ConfigurationState::Disabled
+                || applicability == Applicability::NotApplicable
+        );
+        Self {
+            check_id,
+            selection,
+            configuration,
+            applicability,
+            output: CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new()),
+        }
+    }
+
+    fn override_severity(&mut self, severity: SeveritySetting) {
+        if let Some(severity) = severity.as_severity() {
+            for finding in &mut self.output.findings {
+                finding.severity = severity;
+            }
+        }
+    }
+}
+
+impl Serialize for CheckEvaluation {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut fields = 6;
+        fields += usize::from(!self.output.evaluated_scopes.is_empty());
+        fields += usize::from(!self.output.gaps.is_empty());
+        let mut state = serializer.serialize_struct("CheckEvaluation", fields)?;
+        state.serialize_field("check_id", &self.check_id)?;
+        state.serialize_field("selection", &self.selection)?;
+        state.serialize_field("configuration", &self.configuration)?;
+        state.serialize_field("applicability", &self.applicability)?;
+        state.serialize_field("evaluation", &self.evaluation())?;
+        state.serialize_field("findings", &self.output.findings)?;
+        if !self.output.evaluated_scopes.is_empty() {
+            state.serialize_field("evaluated_scopes", &self.output.evaluated_scopes)?;
+        }
+        if !self.output.gaps.is_empty() {
+            state.serialize_field("gaps", &self.output.gaps)?;
+        }
+        state.end()
+    }
 }
 
 /// Catalog-selection policy for [`evaluate_checks`].
@@ -336,12 +504,23 @@ impl CheckSelection<'_> {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum EvaluationError {
+    /// A catalog or directly constructed check record used an empty id.
+    #[error("check id cannot be empty")]
+    InvalidCheckId(&'static str),
     /// Two catalog entries used the same stable check id.
     #[error("duplicate check id {0:?}")]
     DuplicateCheckId(&'static str),
     /// Explicit selection named an id absent from the supplied catalog.
     #[error("unknown selected check id {0:?}")]
     UnknownSelection(String),
+    /// Check evidence violates the derived coverage-state invariants.
+    #[error("check {check_id:?} emitted invalid output: {reason}")]
+    InvalidCheckOutput {
+        /// Stable id of the check that emitted malformed evidence.
+        check_id: &'static str,
+        /// Contract rule violated by the output.
+        reason: &'static str,
+    },
     /// A nested finding claimed a different check id than its parent record.
     #[error("check {check_id:?} emitted a finding for {finding_check_id:?}")]
     FindingCheckIdMismatch {
@@ -361,8 +540,9 @@ pub enum EvaluationError {
 ///
 /// # Errors
 ///
-/// Returns an error for duplicate catalog ids, unknown explicitly selected
-/// ids, or a nested finding whose id disagrees with its parent check.
+/// Returns an error for empty or duplicate catalog ids, unknown explicitly
+/// selected ids, malformed coverage evidence, or a nested finding whose id
+/// disagrees with its parent check.
 pub fn evaluate_checks(
     ctx: &CheckCtx<'_>,
     checks: &[Box<dyn Check>],
@@ -370,6 +550,9 @@ pub fn evaluate_checks(
 ) -> Result<Vec<CheckEvaluation>, EvaluationError> {
     let mut catalog_ids = BTreeSet::new();
     for check in checks {
+        if check.id().is_empty() {
+            return Err(EvaluationError::InvalidCheckId(check.id()));
+        }
         if !catalog_ids.insert(check.id()) {
             return Err(EvaluationError::DuplicateCheckId(check.id()));
         }
@@ -401,43 +584,83 @@ pub fn evaluate_checks(
             || configuration == ConfigurationState::Disabled
             || applicability == Applicability::NotApplicable
         {
-            records.push(CheckEvaluation {
-                check_id: check.id(),
-                selection: selection_state,
+            records.push(CheckEvaluation::inactive(
+                check.id(),
+                selection_state,
                 configuration,
                 applicability,
-                evaluation: EvaluationState::NotEvaluated,
-                findings: Vec::new(),
-                evaluated_scopes: Vec::new(),
-                gaps: Vec::new(),
-            });
+            ));
             continue;
         }
 
-        let (evaluation, mut findings, evaluated_scopes, gaps) = check.evaluate(ctx).into_parts();
-        for finding in &findings {
-            if finding.check_id != check.id() {
-                return Err(EvaluationError::FindingCheckIdMismatch {
-                    check_id: check.id(),
-                    finding_check_id: finding.check_id,
-                });
-            }
+        let mut evaluation = CheckEvaluation::evaluated(check.id(), check.evaluate(ctx))?;
+        if let Some(setting) = setting {
+            evaluation.override_severity(setting);
         }
-        if let Some(severity) = setting.and_then(SeveritySetting::as_severity) {
-            for finding in &mut findings {
-                finding.severity = severity;
-            }
-        }
-        records.push(CheckEvaluation {
-            check_id: check.id(),
-            selection: selection_state,
-            configuration,
-            applicability,
-            evaluation,
-            findings,
-            evaluated_scopes,
-            gaps,
-        });
+        records.push(evaluation);
     }
     Ok(records)
+}
+
+#[cfg(test)]
+mod docs_contract {
+    use std::collections::BTreeSet;
+
+    use super::{BUILTIN_COVERAGE_GAP_CODE_DOCS, BUILTIN_EVALUATION_SCOPE_CODE_DOCS};
+
+    fn assert_reference_table(docs: &str, heading: &str, entries: &[(&str, &str, &[&str])]) {
+        let section = docs
+            .split_once(heading)
+            .unwrap_or_else(|| panic!("missing reference heading {heading:?}"))
+            .1;
+        let documented = section
+            .lines()
+            .skip_while(|line| line.trim().is_empty())
+            .take_while(|line| !line.trim().is_empty())
+            .filter(|line| line.starts_with("| `"))
+            .collect::<Vec<_>>();
+        let expected = entries
+            .iter()
+            .map(|(code, meaning, emitted_by)| {
+                assert!(
+                    !meaning.trim().is_empty() && !meaning.contains(['\r', '\n']),
+                    "{code} must have a one-line meaning"
+                );
+                let emitters = emitted_by
+                    .iter()
+                    .map(|check_id| format!("`{check_id}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("| `{code}` | {meaning} | {emitters} |")
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(documented.len(), expected.len(), "row count for {heading}");
+        let documented = documented.into_iter().collect::<BTreeSet<_>>();
+        assert_eq!(
+            documented.len(),
+            expected.len(),
+            "duplicate rows for {heading}"
+        );
+        let expected = expected.iter().map(String::as_str).collect::<BTreeSet<_>>();
+        assert_eq!(documented, expected, "exact rows for {heading}");
+    }
+
+    #[test]
+    fn output_docs_match_registered_builtin_evidence_codes_exactly() {
+        let docs = include_str!("../../../docs/output.md");
+        let crlf = docs.lines().collect::<Vec<_>>().join("\r\n");
+        for line_endings in [docs, crlf.as_str()] {
+            assert_reference_table(
+                line_endings,
+                "Built-in gap codes are:",
+                BUILTIN_COVERAGE_GAP_CODE_DOCS,
+            );
+            assert_reference_table(
+                line_endings,
+                "Built-in completed/gap scope codes are:",
+                BUILTIN_EVALUATION_SCOPE_CODE_DOCS,
+            );
+        }
+    }
 }

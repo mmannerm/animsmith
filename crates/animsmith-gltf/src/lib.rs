@@ -30,7 +30,10 @@
 //!         &animsmith_core::all_checks(),
 //!         animsmith_core::CheckSelection::All,
 //!     )?;
-//!     Ok(results.into_iter().flat_map(|check| check.findings).collect())
+//!     Ok(results
+//!         .into_iter()
+//!         .flat_map(|check| check.findings().to_vec())
+//!         .collect())
 //! }
 //! ```
 //!

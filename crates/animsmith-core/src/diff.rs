@@ -32,15 +32,19 @@ pub struct MetricDelta {
     pub metric: String,
     /// Value in the before map, absent when a metric appeared or a clip
     /// was added/removed.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "non_finite_or_none")]
     pub before: Option<f64>,
     /// Value in the after map, absent when a metric disappeared or a
     /// clip was added/removed.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "non_finite_or_none")]
     pub after: Option<f64>,
     /// Short cause such as `"moved"`, `"appeared"`, or
     /// `"bone no longer animated"`.
     pub note: String,
+}
+
+fn non_finite_or_none(value: &Option<f64>) -> bool {
+    value.is_none_or(|number| !number.is_finite())
 }
 
 /// Compare two measurement maps and return only significant deltas.
@@ -154,6 +158,7 @@ pub fn diff_measurements(
             let vb = finite(mb.bone_rotation_range_deg.get(bone).copied());
             let moved = match (va, vb) {
                 (Some(x), Some(y)) => (x - y).abs() > ROTATION_RANGE_THRESHOLD_DEG,
+                (None, None) => false,
                 _ => true,
             };
             if moved {
@@ -525,5 +530,19 @@ mod tests {
         assert_eq!(delta.before, Some(1.0));
         assert_eq!(delta.after, Some(2.0));
         assert_eq!(delta.note, "gained [spine, tail], lost [hips]");
+    }
+
+    #[test]
+    fn metric_delta_omits_non_finite_public_values() {
+        let delta = MetricDelta {
+            clip: "walk".into(),
+            metric: "duration_s".into(),
+            before: Some(f64::NAN),
+            after: Some(f64::INFINITY),
+            note: "moved".into(),
+        };
+        let json = serde_json::to_value(delta).expect("delta serializes");
+        assert!(json.get("before").is_none());
+        assert!(json.get("after").is_none());
     }
 }

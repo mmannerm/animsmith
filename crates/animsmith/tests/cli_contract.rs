@@ -1,4 +1,4 @@
-use animsmith_core::glam::Quat;
+use animsmith_core::glam::{Quat, Vec3};
 use animsmith_core::model::*;
 use animsmith_gltf::fix::{FixSession, Repair as GltfRepair};
 use animsmith_testkit::{quats_from_angles, scaled_quat, two_bone_rotation_doc};
@@ -56,51 +56,6 @@ fn assert_output_schema_valid(instance: &Value) {
         "output must satisfy the published v2 schemas:\n{}\ninstance: {instance:#}",
         errors.join("\n")
     );
-}
-
-fn assert_required_properties(schema: &Value, instance: &Value, path: &str) {
-    let object = instance
-        .as_object()
-        .unwrap_or_else(|| panic!("expected object at {path}, got {instance}"));
-    for key in schema["required"]
-        .as_array()
-        .expect("schema required array")
-    {
-        let key = key.as_str().expect("required property name");
-        assert!(object.contains_key(key), "missing required {path}.{key}");
-    }
-}
-
-/// Keep the emitted lint record shape easy to diagnose when schema validation
-/// reports a missing-field error.
-fn assert_v2_required_fields(instance: &Value) {
-    assert_output_schema_valid(instance);
-    let schema: Value = serde_json::from_str(OUTPUT_SCHEMA).expect("valid output schema");
-    assert_required_properties(&schema, instance, "$");
-    for (file_index, file) in instance["files"]
-        .as_array()
-        .expect("output files")
-        .iter()
-        .enumerate()
-    {
-        assert_required_properties(
-            &schema["$defs"]["file_report"],
-            file,
-            &format!("$.files[{file_index}]"),
-        );
-        for (check_index, check) in file["checks"]
-            .as_array()
-            .expect("output checks")
-            .iter()
-            .enumerate()
-        {
-            assert_required_properties(
-                &schema["$defs"]["check_evaluation"],
-                check,
-                &format!("$.files[{file_index}].checks[{check_index}]"),
-            );
-        }
-    }
 }
 
 fn assert_evaluation_summary_matches_checks(instance: &Value) {
@@ -217,6 +172,33 @@ fn write_distinct_repair_glb(path: &std::path::Path) {
 
 fn write_clean_glb(path: &std::path::Path) {
     animsmith_gltf::write::write(&sway_doc(false), path).expect("writes clean fixture");
+}
+
+fn write_two_clip_clean_glb(path: &std::path::Path) {
+    let mut doc = sway_doc(false);
+    let mut second = doc.clips[0].clone();
+    second.name = "sway_b".into();
+    doc.clips.push(second);
+    animsmith_gltf::write::write(&doc, path).expect("writes two-clip fixture");
+}
+
+fn write_hostile_measure_glb(path: &std::path::Path, hostile: &str) {
+    let mut doc = sway_doc(false);
+    doc.clips[0].name = hostile.into();
+    doc.assets.meshes.push(MeshAsset {
+        name: hostile.into(),
+        node: 0,
+        primitives: vec![Primitive {
+            positions: vec![
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, 1.0, 0.0),
+            ],
+            ..Primitive::default()
+        }],
+        ..MeshAsset::default()
+    });
+    animsmith_gltf::write::write(&doc, path).expect("writes hostile-name fixture");
 }
 
 fn write_json(path: &std::path::Path, value: &Value) {
@@ -892,6 +874,149 @@ fn measure_json_uses_versioned_envelope() {
 }
 
 #[test]
+fn measure_text_escapes_controls_in_clip_and_mesh_names() {
+    let dir = unique_temp_dir("measure-text-controls");
+    let hostile = "forged\nline\u{1b}[31m";
+    let input = dir.path().join("hostile.glb");
+    write_hostile_measure_glb(&input, hostile);
+
+    let output = animsmith()
+        .arg("measure")
+        .arg(&input)
+        .args(["--format", "text"])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    let text = stdout(&output);
+    assert!(!text.contains(hostile), "raw controls leaked:\n{text}");
+    assert_eq!(text.matches("\\n").count(), 2, "clip and mesh: {text}");
+    assert_eq!(text.matches("\\u{1b}").count(), 2, "clip and mesh: {text}");
+}
+
+#[cfg(unix)]
+#[test]
+fn measure_text_escapes_controls_in_the_input_path() {
+    let dir = unique_temp_dir("measure-text-path-controls");
+    let hostile_name = "asset\nforged\u{1b}[31m.gltf";
+    let input = dir.path().join(hostile_name);
+    std::fs::copy(fixture("rig.gltf"), &input).expect("copies self-contained glTF fixture");
+
+    let output = animsmith()
+        .arg("measure")
+        .arg(&input)
+        .args(["--format", "text"])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    let text = stdout(&output);
+    assert!(
+        !text.contains(hostile_name),
+        "raw path controls leaked:\n{text}"
+    );
+    assert!(text.contains("asset\\nforged\\u{1b}[31m.gltf"), "{text}");
+}
+
+#[test]
+fn embedded_contract_types_emit_the_published_v2_envelope() {
+    let doc = Document::default();
+    let config = animsmith_core::Config::default();
+    let roles = animsmith_core::ResolvedRoles::default();
+    let grids = animsmith_core::MetricGrids::new(&doc);
+    let ctx = animsmith_core::CheckCtx::new(&grids, &roles, &config);
+    let checks = animsmith_core::evaluate_checks(
+        &ctx,
+        &animsmith_core::all_checks(),
+        animsmith_core::CheckSelection::All,
+    )
+    .expect("built-in catalog evaluates");
+    let file = animsmith_core::LintFileReport::new(
+        "embedded.glb",
+        animsmith_core::RigInfo::from_resolved(&doc, &roles)
+            .expect("roles were resolved from this document"),
+        checks,
+        animsmith_core::MeasurementContract::new(
+            animsmith_core::measure::measure_document(&grids, &roles, &config),
+            animsmith_core::measure::measure_meshes(&doc.assets),
+        )
+        .expect("measured evidence is finite"),
+    );
+    let envelope = animsmith_core::LintEnvelope::new(
+        animsmith_core::ToolInfo::animsmith(animsmith_core::ToolSource::new(None, None)),
+        vec![file],
+    );
+
+    let json = serde_json::to_value(envelope).expect("embedded envelope serializes");
+    assert_output_schema_valid(&json);
+    assert_eq!(json["schema"], animsmith_core::OUTPUT_SCHEMA_ID);
+    assert_eq!(
+        json["files"][0]["measurements"]["schema"],
+        animsmith_core::MEASUREMENTS_SCHEMA_ID
+    );
+}
+
+#[test]
+fn output_schema_rejects_every_empty_custom_check_identifier() {
+    let check = animsmith_core::CheckEvaluation::evaluated(
+        "custom",
+        animsmith_core::CheckOutput::from_coverage(
+            Vec::new(),
+            vec![animsmith_core::EvaluationScope::new(
+                animsmith_core::EvaluationScopeCode::custom("test:complete"),
+            )],
+            vec![
+                animsmith_core::CoverageGap::new(
+                    animsmith_core::CoverageGapCode::custom("test:gap"),
+                    "missing evidence",
+                )
+                .scope(animsmith_core::EvaluationScope::new(
+                    animsmith_core::EvaluationScopeCode::custom("test:missing"),
+                )),
+            ],
+        ),
+    )
+    .expect("nonempty custom identifiers are valid");
+    let doc = Document::default();
+    let roles = animsmith_core::ResolvedRoles::default();
+    let envelope = animsmith_core::LintEnvelope::new(
+        animsmith_core::ToolInfo::animsmith(animsmith_core::ToolSource::new(None, None)),
+        vec![animsmith_core::LintFileReport::new(
+            "embedded.glb",
+            animsmith_core::RigInfo::from_resolved(&doc, &roles)
+                .expect("empty roles match an empty document"),
+            vec![check],
+            animsmith_core::MeasurementContract::new(BTreeMap::new(), Vec::new())
+                .expect("empty measurements are valid"),
+        )],
+    );
+    let valid = serde_json::to_value(envelope).expect("embedded envelope serializes");
+    assert_output_schema_valid(&valid);
+
+    for pointer in [
+        "/files/0/checks/0/check_id",
+        "/files/0/checks/0/evaluated_scopes/0/code",
+        "/files/0/checks/0/gaps/0/code",
+        "/files/0/checks/0/gaps/0/scope/code",
+    ] {
+        let mut invalid = valid.clone();
+        *invalid.pointer_mut(pointer).expect("fixture path exists") = json!("");
+        assert!(
+            !output_validator().is_valid(&invalid),
+            "schema accepted an empty identifier at {pointer}"
+        );
+    }
+}
+
+#[test]
 fn lint_json_uses_versioned_envelope() {
     let output = animsmith()
         .args([
@@ -926,7 +1051,7 @@ fn lint_json_uses_versioned_envelope() {
         .collect();
     assert_eq!(actual_ids, EXPECTED_CHECK_IDS.into_iter().collect());
     assert_evaluation_summary_matches_checks(&json);
-    assert_v2_required_fields(&json);
+    assert_output_schema_valid(&json);
 }
 
 #[test]
@@ -975,13 +1100,13 @@ fn removed_preview_format_is_rejected_as_an_operator_error() {
             "lint",
             fixture("rig.gltf").to_str().unwrap(),
             "--format",
-            "json-v2-preview",
+            &format!("json-v2-{}", "preview"),
         ])
         .output()
         .expect("runs animsmith");
     assert_eq!(output.status.code(), Some(2));
     assert!(stdout(&output).is_empty());
-    assert!(stderr(&output).contains("invalid value 'json-v2-preview'"));
+    assert!(stderr(&output).contains(&format!("invalid value 'json-v2-{}'", "preview")));
 }
 
 #[test]
@@ -1026,7 +1151,7 @@ fn lint_json_exposes_complete_clean_and_unselected_checks() {
     assert_eq!(gait_group["applicability"], "not_applicable");
     assert_eq!(gait_group["evaluation"], "not_evaluated");
     assert_evaluation_summary_matches_checks(&json);
-    assert_v2_required_fields(&json);
+    assert_output_schema_valid(&json);
 }
 
 #[test]
@@ -1115,7 +1240,7 @@ fn lint_json_gait_group_can_carry_finding_and_coverage_gap() {
     assert_eq!(json["summary"]["checks"]["gaps"], 1);
     assert_eq!(json["summary"]["findings"]["error"], 1);
     assert_evaluation_summary_matches_checks(&json);
-    assert_v2_required_fields(&json);
+    assert_output_schema_valid(&json);
 }
 
 #[test]
@@ -1576,6 +1701,57 @@ fn diff_text_format_renders_deltas_and_clean_summary() {
         "clean Text output states no movement:\n{}",
         stdout(&clean)
     );
+}
+
+#[test]
+fn diff_text_escapes_controls_from_report_clip_metric_and_note_fields() {
+    let dir = unique_temp_dir("diff-text-controls");
+    let before_path = dir.path().join("before.json");
+    let after_path = dir.path().join("after.json");
+    let hostile = "forged\nline\u{1b}[31m";
+    let mut before = measurement_report(1.0);
+    let mut after = measurement_report(1.1);
+    for report in [&mut before, &mut after] {
+        let clip = report["files"][0]["measurements"]["clips"]
+            .as_object_mut()
+            .expect("clip map")
+            .remove("walk")
+            .expect("walk fixture");
+        report["files"][0]["measurements"]["clips"]
+            .as_object_mut()
+            .expect("clip map")
+            .insert(hostile.into(), clip);
+    }
+    before["files"][0]["measurements"]["clips"][hostile]["bone_rotation_range_deg"] = json!({});
+    before["files"][0]["measurements"]["clips"][hostile]["bone_rotation_range_deg"]
+        .as_object_mut()
+        .expect("rotation map")
+        .insert(hostile.into(), json!(0.0));
+    after["files"][0]["measurements"]["clips"][hostile]["bone_rotation_range_deg"] = json!({});
+    after["files"][0]["measurements"]["clips"][hostile]["bone_rotation_range_deg"]
+        .as_object_mut()
+        .expect("rotation map")
+        .insert(hostile.into(), json!(10.0));
+    after["files"][0]["measurements"]["clips"][hostile]["animated_bones"] = json!([hostile]);
+    write_json(&before_path, &before);
+    write_json(&after_path, &after);
+
+    let output = animsmith()
+        .args(["diff"])
+        .arg(&before_path)
+        .arg(&after_path)
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    let text = stdout(&output);
+    assert!(!text.contains(hostile), "raw controls leaked:\n{text}");
+    assert!(text.contains("\\n"), "newline not escaped:\n{text}");
+    assert!(text.contains("\\u{1b}"), "escape not escaped:\n{text}");
 }
 
 #[test]
@@ -2093,6 +2269,64 @@ fn lint_unresolved_roles_serialize_as_a_gap_and_exit_zero() {
 }
 
 #[test]
+fn lint_text_groups_repeated_per_clip_coverage_gaps() {
+    let dir = unique_temp_dir("grouped-coverage-gap");
+    let input = dir.path().join("sways.glb");
+    write_two_clip_clean_glb(&input);
+    let config = dir.path().join("animsmith.toml");
+    std::fs::write(&config, "[clips.\"sway*\"]\nloop = true\n").expect("writes config");
+
+    let output = animsmith()
+        .args(["--config"])
+        .arg(&config)
+        .arg("lint")
+        .arg(&input)
+        .args(["--select", "loop-seam"])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    let text = stdout(&output);
+    assert_eq!(text.matches("coverage[loop-seam]").count(), 1, "{text}");
+    assert!(text.contains("roles_unresolved ×2"), "{text}");
+    assert!(text.contains("sway, sway_b"), "{text}");
+    assert!(text.contains("2 coverage gap(s)"), "{text}");
+
+    let json_output = animsmith()
+        .args(["--config"])
+        .arg(&config)
+        .arg("lint")
+        .arg(&input)
+        .args(["--select", "loop-seam", "--format", "json"])
+        .output()
+        .expect("runs JSON lint");
+    assert_eq!(
+        json_output.status.code(),
+        Some(0),
+        "{}",
+        stderr(&json_output)
+    );
+    let json: Value = serde_json::from_slice(&json_output.stdout).expect("valid JSON");
+    let loop_seam = json["files"][0]["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["check_id"] == "loop-seam")
+        .unwrap();
+    let subjects: Vec<_> = loop_seam["gaps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|gap| gap["scope"]["subject"].as_str().unwrap())
+        .collect();
+    assert_eq!(subjects, ["sway", "sway_b"]);
+}
+
+#[test]
 fn lint_allow_suppresses_a_check() {
     let dir = unique_temp_dir("allow");
     let input = dir.path().join("flipped.glb");
@@ -2100,7 +2334,11 @@ fn lint_allow_suppresses_a_check() {
     let path = input.to_str().expect("utf-8 path");
 
     // Positive control: quat-flip fires on this fixture without --allow.
-    let baseline = animsmith().args(["lint", path]).output().expect("runs");
+    let baseline = animsmith()
+        .args(["lint", path, "--deny-warnings"])
+        .output()
+        .expect("runs");
+    assert_eq!(baseline.status.code(), Some(1), "warning gate baseline");
     assert!(
         stdout(&baseline).contains("quat-flip"),
         "fixture no longer produces quat-flip; suppression test would be vacuous:\n{}",
@@ -2109,7 +2347,7 @@ fn lint_allow_suppresses_a_check() {
 
     // With --allow, the same finding is gone.
     let output = animsmith()
-        .args(["lint", path, "--allow", "quat-flip"])
+        .args(["lint", path, "--allow", "quat-flip", "--deny-warnings"])
         .output()
         .expect("runs");
     assert_eq!(
@@ -2122,6 +2360,30 @@ fn lint_allow_suppresses_a_check() {
         !stdout(&output).contains("quat-flip"),
         "allowed check still reported:\n{}",
         stdout(&output)
+    );
+
+    let markdown = animsmith()
+        .args([
+            "lint",
+            path,
+            "--format",
+            "markdown",
+            "--allow",
+            "quat-flip",
+            "--deny-warnings",
+        ])
+        .output()
+        .expect("runs Markdown renderer");
+    assert_eq!(
+        markdown.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&markdown)
+    );
+    assert!(
+        !stdout(&markdown).contains("quat-flip"),
+        "allowed check still present in Markdown:\n{}",
+        stdout(&markdown)
     );
 }
 

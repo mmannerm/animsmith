@@ -9,7 +9,8 @@ use animsmith_core::config::{ClipExpectations, Pinned};
 use animsmith_core::measure::measure_document;
 use animsmith_core::profile::{ResolvedRoles, Role, detect_profile};
 use animsmith_core::{
-    CheckCtx, CheckSelection, Config, MetricGrids, Severity, all_checks, evaluate_checks,
+    CheckCtx, CheckSelection, Config, LintEnvelope, LintFileReport, MeasurementContract,
+    MetricGrids, RigInfo, Severity, ToolInfo, ToolSource, all_checks, evaluate_checks,
 };
 use std::path::Path;
 
@@ -75,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let evaluations = evaluate_checks(&ctx, &all_checks(), CheckSelection::All)?;
     let findings: Vec<_> = evaluations
         .iter()
-        .flat_map(|check| &check.findings)
+        .flat_map(|check| check.findings())
         .collect();
     for f in &findings {
         println!(
@@ -98,6 +99,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
          deliberately wrong in_place declaration above)",
         findings.len()
     );
+
+    // When the host interoperates with CLI consumers, it can emit the exact
+    // same versioned envelope without copying wire structs or schema URNs.
+    let report = LintEnvelope::new(
+        ToolInfo::animsmith(ToolSource::new(None, None)),
+        vec![LintFileReport::new(
+            path.display().to_string(),
+            RigInfo::from_resolved(&doc, &roles)?,
+            evaluations,
+            MeasurementContract::new(
+                measurements,
+                animsmith_core::measure::measure_meshes(&doc.assets),
+            )?,
+        )],
+    );
+    println!("result contract: {}", serde_json::to_string(&report)?);
     std::process::exit(exit);
 }
 

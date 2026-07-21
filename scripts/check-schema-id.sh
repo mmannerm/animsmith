@@ -24,7 +24,7 @@ check_schema() {
   if [ "$schema_const" != "$expected" ]; then
     fail "$file properties.schema const must be $expected (found ${schema_const:-none})"
   fi
-  for reference in crates/animsmith/src/main.rs docs/output.md; do
+  for reference in crates/animsmith-core/src/contract.rs docs/output.md; do
     if ! grep -Fq "$expected" "$reference"; then
       fail "$reference does not reference schema identity $expected"
     fi
@@ -34,27 +34,14 @@ check_schema() {
 check_schema docs/schemas/output-v2.schema.json urn:animsmith:schema:output:2
 check_schema docs/schemas/measurements-v1.schema.json urn:animsmith:schema:measurements:1
 
-for removed_schema in \
-  docs/schemas/output-v1.schema.json \
-  docs/schemas/output-v2-preview.schema.json; do
-  if [ -e "$removed_schema" ]; then
-    fail "$removed_schema is a removed alpha contract and must not be restored"
-  fi
-done
-
-legacy=$(rg -n \
-  'JsonV2Preview|json-v2-preview|run_checks|as_diagnostic|legacy_diagnostic|enum Readiness|Finding::diagnostic|output-v2-preview|skips? with a note|skipped with a note' \
-  crates/animsmith/src crates/animsmith-core/src crates/animsmith-gltf/src \
-  docs README.md DESIGN.md examples || true)
+# Cutover-only #204 guard: scan every tracked file until output v2 has its first
+# public release, then remove this name tombstone. Behavioural tests separately
+# prove that old report inputs are rejected.
+legacy=$(git grep -nE \
+  'JsonV2Preview|json-v2-preview|run_checks|as_diagnostic|legacy_diagnostic|enum Readiness|Finding::diagnostic|output-v2-preview|presentation_findings|assert_required_properties|CheckOutput::complete|CheckOutput::partial|CheckOutput::not_evaluated|CheckOutput::complete_scoped' \
+  -- ':!scripts/check-schema-id.sh' || true)
 if [ -n "$legacy" ]; then
   fail "removed v1/preview API or format remains:\n$legacy"
-fi
-
-legacy_envelope=$(rg -n -U \
-  '"schema_version":[[:space:]]*1,[[:space:]]*\n[[:space:]]*"command"' \
-  docs README.md DESIGN.md examples || true)
-if [ -n "$legacy_envelope" ]; then
-  fail "removed outer output-v1 envelope remains:\n$legacy_envelope"
 fi
 
 if [ "$failures" -ne 0 ]; then

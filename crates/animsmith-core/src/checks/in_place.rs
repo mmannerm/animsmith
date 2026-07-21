@@ -6,7 +6,7 @@
 use crate::check::{Check, CheckCtx};
 use crate::checks::root_motion_gap;
 use crate::evaluation::{
-    Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope,
+    Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope, EvaluationScopeCode,
 };
 use crate::finding::{Finding, Severity};
 use crate::metrics::root_motion_speed_mps;
@@ -41,7 +41,7 @@ impl Check for InPlace {
             let Some(expected) = ctx.expectations(index).in_place else {
                 continue;
             };
-            let scope = EvaluationScope::new("travel_mode").subject(&clip.name);
+            let scope = EvaluationScope::new(EvaluationScopeCode::TRAVEL_MODE).subject(&clip.name);
             if let Some(gap) = root_motion_gap(ctx.roles) {
                 gaps.push(gap.scope(scope));
                 continue;

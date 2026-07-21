@@ -8,7 +8,7 @@
 use crate::check::{Check, CheckCtx};
 use crate::checks::gait_gap;
 use crate::evaluation::{
-    Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope,
+    Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope, EvaluationScopeCode,
 };
 use crate::finding::{Finding, Severity};
 use crate::metrics::foot_cycle_metrics;
@@ -48,7 +48,7 @@ impl Check for LoopSeam {
             if ctx.expectations(index).looping != Some(true) {
                 continue;
             }
-            let scope = EvaluationScope::new("loop_seam").subject(&clip.name);
+            let scope = EvaluationScope::new(EvaluationScopeCode::LOOP_SEAM).subject(&clip.name);
             if let Some(gap) = gait_gap(ctx.roles) {
                 gaps.push(gap.scope(scope));
                 continue;

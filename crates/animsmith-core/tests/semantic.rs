@@ -11,8 +11,8 @@ use animsmith_core::metrics::MIN_STRIDE_STEP_M;
 use animsmith_core::model::*;
 use animsmith_core::profile::{ResolvedRoles, Role};
 use animsmith_core::{
-    CheckCtx, CheckEvaluation, CheckSelection, Config, ConfigurationState, EvaluationState,
-    MetricGrids, Severity, all_checks, evaluate_checks,
+    CheckCtx, CheckEvaluation, CheckSelection, Config, ConfigurationState, CoverageGapCode,
+    EvaluationState, MetricGrids, Severity, all_checks, evaluate_checks,
 };
 use glam::Vec3;
 use std::f64::consts::TAU;
@@ -76,7 +76,7 @@ fn lint_with(doc: &Document, config: &Config) -> Vec<animsmith_core::Finding> {
     evaluate_checks(&ctx, &all_checks(), CheckSelection::All)
         .expect("valid built-in catalog")
         .into_iter()
-        .flat_map(|check| check.findings)
+        .flat_map(|check| check.findings().to_vec())
         .collect()
 }
 
@@ -91,16 +91,16 @@ fn evaluate_unresolved(doc: &Document, config: &Config) -> Vec<CheckEvaluation> 
 fn check<'a>(records: &'a [CheckEvaluation], id: &str) -> &'a CheckEvaluation {
     records
         .iter()
-        .find(|record| record.check_id == id)
+        .find(|record| record.check_id() == id)
         .unwrap_or_else(|| panic!("missing {id} record"))
 }
 
 fn assert_loop_seam_has_unresolved_roles_gap(records: &[CheckEvaluation]) {
     let loop_seam = check(records, "loop-seam");
-    assert_eq!(loop_seam.evaluation, EvaluationState::NotEvaluated);
-    assert!(loop_seam.findings.is_empty());
-    assert_eq!(loop_seam.gaps[0].code.as_str(), "roles_unresolved");
-    assert!(loop_seam.gaps[0].message.contains("hips/foot"));
+    assert_eq!(loop_seam.evaluation(), EvaluationState::NotEvaluated);
+    assert!(loop_seam.findings().is_empty());
+    assert_eq!(loop_seam.gaps()[0].code.as_str(), "roles_unresolved");
+    assert!(loop_seam.gaps()[0].message.contains("hips/foot"));
 }
 
 fn json_config(json: serde_json::Value) -> Config {
@@ -219,11 +219,11 @@ fn min_stride_step_config_controls_tiny_stride_ratio() {
     let default_records = evaluate_checks(&default_ctx, &all_checks(), CheckSelection::All)
         .expect("valid built-in catalog");
     let seam = check(&default_records, "loop-seam");
-    assert_eq!(seam.evaluation, EvaluationState::NotEvaluated);
-    assert!(seam.findings.is_empty());
-    assert_eq!(seam.gaps[0].code.as_str(), "measurement_unavailable");
+    assert_eq!(seam.evaluation(), EvaluationState::NotEvaluated);
+    assert!(seam.findings().is_empty());
+    assert_eq!(seam.gaps()[0].code.as_str(), "measurement_unavailable");
     assert_eq!(
-        seam.gaps[0].scope.as_ref().unwrap().subject.as_deref(),
+        seam.gaps()[0].scope.as_ref().unwrap().subject.as_deref(),
         Some("walk")
     );
 
@@ -261,9 +261,9 @@ fn zero_stride_floor_does_not_report_stationary_ratio() {
     let records =
         evaluate_checks(&ctx, &all_checks(), CheckSelection::All).expect("valid built-in catalog");
     let seam = check(&records, "loop-seam");
-    assert_eq!(seam.evaluation, EvaluationState::NotEvaluated);
-    assert!(seam.findings.is_empty());
-    assert_eq!(seam.gaps[0].code.as_str(), "measurement_unavailable");
+    assert_eq!(seam.evaluation(), EvaluationState::NotEvaluated);
+    assert!(seam.findings().is_empty());
+    assert_eq!(seam.gaps()[0].code.as_str(), "measurement_unavailable");
 }
 
 #[test]
@@ -403,27 +403,27 @@ fn unresolved_phase_coherence_is_a_typed_gap_not_completed_work() {
     let records = evaluate_checks(&ctx, &checks, CheckSelection::All).unwrap();
     let gait = records
         .iter()
-        .find(|record| record.check_id == "gait-group")
+        .find(|record| record.check_id() == "gait-group")
         .expect("gait-group record");
 
-    assert_eq!(gait.evaluation, EvaluationState::Partial);
+    assert_eq!(gait.evaluation(), EvaluationState::Partial);
     assert!(
-        gait.evaluated_scopes
+        gait.evaluated_scopes()
             .iter()
-            .any(|scope| scope.code == "member_existence")
+            .any(|scope| scope.code.as_str() == "member_existence")
     );
     assert!(
         !gait
-            .evaluated_scopes
+            .evaluated_scopes()
             .iter()
-            .any(|scope| scope.code == "phase_coherence")
+            .any(|scope| scope.code.as_str() == "phase_coherence")
     );
     assert_eq!(
-        gait.gaps[0].code.as_str(),
+        gait.gaps()[0].code.as_str(),
         "insufficient_measurable_members"
     );
     assert_eq!(
-        gait.gaps[0].scope.as_ref().unwrap().subject.as_deref(),
+        gait.gaps()[0].scope.as_ref().unwrap().subject.as_deref(),
         Some("ring")
     );
 }
@@ -457,14 +457,17 @@ fn gait_phase_coverage_distinguishes_complete_and_partial_groups() {
         let records = evaluate_checks(&ctx, &checks, CheckSelection::All).unwrap();
         let gait = records
             .iter()
-            .find(|record| record.check_id == "gait-group")
+            .find(|record| record.check_id() == "gait-group")
             .expect("gait-group record");
 
-        assert_eq!(gait.evaluation, expected_evaluation);
-        assert!(gait.evaluated_scopes.iter().any(|scope| {
-            scope.code == "phase_coherence" && scope.subject.as_deref() == Some("ring")
+        assert_eq!(gait.evaluation(), expected_evaluation);
+        assert!(gait.evaluated_scopes().iter().any(|scope| {
+            scope.code.as_str() == "phase_coherence" && scope.subject.as_deref() == Some("ring")
         }));
-        assert_eq!(gait.gaps.first().map(|gap| gap.code.as_str()), expected_gap);
+        assert_eq!(
+            gait.gaps().first().map(|gap| gap.code.as_str()),
+            expected_gap
+        );
     }
 }
 
@@ -485,14 +488,14 @@ fn missing_group_member_is_flagged_even_when_roles_unresolved() {
     let gait = check(&records, "gait-group");
 
     assert!(
-        gait.findings
+        gait.findings()
             .iter()
             .any(|finding| finding.clip.as_deref() == Some("no_such_clip")
                 && finding.severity == Severity::Error),
         "member-not-found Error hidden by unresolved roles: {gait:#?}"
     );
-    assert_eq!(gait.evaluation, EvaluationState::Partial);
-    assert_eq!(gait.gaps[0].code.as_str(), "roles_unresolved");
+    assert_eq!(gait.evaluation(), EvaluationState::Partial);
+    assert_eq!(gait.gaps()[0].code.as_str(), "roles_unresolved");
 }
 
 #[test]
@@ -507,15 +510,15 @@ fn all_missing_group_members_remain_content_errors_without_a_role_gap() {
     let records = evaluate_unresolved(&doc, &config);
     let gait = check(&records, "gait-group");
 
-    assert_eq!(gait.findings.len(), 2, "missing-member errors: {gait:#?}");
+    assert_eq!(gait.findings().len(), 2, "missing-member errors: {gait:#?}");
     assert!(
-        gait.findings
+        gait.findings()
             .iter()
             .all(|finding| finding.severity == Severity::Error),
         "missing members remain content errors: {gait:#?}"
     );
     assert!(
-        gait.gaps
+        gait.gaps()
             .iter()
             .all(|gap| gap.code.as_str() != "roles_unresolved")
     );
@@ -573,15 +576,99 @@ fn too_short_group_member_is_a_typed_gap() {
     let records = evaluate_checks(&ctx, &all_checks(), CheckSelection::All).unwrap();
     let gait = check(&records, "gait-group");
     assert!(
-        gait.findings.is_empty(),
+        gait.findings().is_empty(),
         "measurement gaps do not block: {gait:#?}"
     );
     let gap = gait
-        .gaps
+        .gaps()
         .iter()
         .find(|gap| gap.code.as_str() == "insufficient_measurable_members")
         .expect("too-short member leaves group coverage incomplete");
     assert_eq!(gap.scope.as_ref().unwrap().subject.as_deref(), Some("ring"));
+    let member_gap = gait
+        .gaps()
+        .iter()
+        .find(|gap| {
+            gap.code == CoverageGapCode::MEASUREMENT_UNAVAILABLE
+                && gap.scope.as_ref().is_some_and(|scope| {
+                    scope.code.as_str() == "phase_measurement"
+                        && scope.subject.as_deref() == Some("stub")
+                })
+        })
+        .expect("unmeasurable member retains clip attribution");
+    assert!(member_gap.message.contains("could not be measured"));
+}
+
+#[test]
+fn every_below_amplitude_group_member_retains_clip_attribution() {
+    let mut doc = walk_doc();
+    let mut second = doc.clips[0].clone();
+    second.name = "walk_b".into();
+    doc.clips.push(second);
+    let config = json_config(serde_json::json!({
+        "gait_groups": { "ring": {
+            "clips": ["walk", "walk_b"],
+            "max_gait_phase_spread": 0.1,
+            "min_lr_amplitude_m": 1.0
+        }}
+    }));
+    let roles = roles(&doc.skeleton);
+    let grids = MetricGrids::new(&doc);
+    let ctx = CheckCtx::new(&grids, &roles, &config);
+    let records = evaluate_checks(&ctx, &all_checks(), CheckSelection::All).unwrap();
+    let gait = check(&records, "gait-group");
+
+    let member_subjects: Vec<_> = gait
+        .gaps()
+        .iter()
+        .filter(|gap| {
+            gap.code == CoverageGapCode::MEASUREMENT_UNAVAILABLE
+                && gap
+                    .scope
+                    .as_ref()
+                    .is_some_and(|scope| scope.code.as_str() == "phase_measurement")
+        })
+        .map(|gap| {
+            assert!(gap.message.contains("below the 1.000 m evidence floor"));
+            gap.scope.as_ref().unwrap().subject.as_deref().unwrap()
+        })
+        .collect();
+    assert_eq!(member_subjects, ["walk", "walk_b"]);
+}
+
+#[test]
+fn one_sided_group_member_without_a_phase_retains_clip_attribution() {
+    let doc = walk_doc();
+    let config = json_config(serde_json::json!({
+        "gait_groups": { "ring": {
+            "clips": ["walk"],
+            "max_gait_phase_spread": 0.1
+        }}
+    }));
+    let one_sided_roles = ResolvedRoles::from_names(
+        &doc.skeleton,
+        [
+            (Role::Hips, BONES.hips.to_string()),
+            (Role::LeftFoot, BONES.left_foot.to_string()),
+        ],
+    );
+    let grids = MetricGrids::new(&doc);
+    let ctx = CheckCtx::new(&grids, &one_sided_roles, &config);
+    let records = evaluate_checks(&ctx, &all_checks(), CheckSelection::All).unwrap();
+    let gait = check(&records, "gait-group");
+
+    let gap = gait
+        .gaps()
+        .iter()
+        .find(|gap| {
+            gap.code == CoverageGapCode::MEASUREMENT_UNAVAILABLE
+                && gap.scope.as_ref().is_some_and(|scope| {
+                    scope.code.as_str() == "phase_measurement"
+                        && scope.subject.as_deref() == Some("walk")
+                })
+        })
+        .expect("unfittable per-member phase retains clip attribution");
+    assert!(gap.message.contains("could not be fitted"));
 }
 
 /// Foot-slide reports its own role gap from its `speed_mps` applicability.
@@ -593,16 +680,16 @@ fn foot_slide_role_gap_is_isolated_and_reasoned() {
     }));
     let records = evaluate_unresolved(&doc, &config);
     let foot = check(&records, "foot-slide");
-    assert_eq!(foot.evaluation, EvaluationState::NotEvaluated);
-    assert!(foot.findings.is_empty());
-    assert_eq!(foot.gaps[0].code.as_str(), "roles_unresolved");
-    assert!(foot.gaps[0].message.contains("root/hips"));
+    assert_eq!(foot.evaluation(), EvaluationState::NotEvaluated);
+    assert!(foot.findings().is_empty());
+    assert_eq!(foot.gaps()[0].code.as_str(), "roles_unresolved");
+    assert!(foot.gaps()[0].message.contains("root/hips"));
 
     // in_place=true means root-motion-speed has no pending work → Idle,
     // while foot-slide still judges the treadmill sweep. Pins the
     // asymmetric pending-work predicates.
     assert!(
-        check(&records, "root-motion-speed").applicability
+        check(&records, "root-motion-speed").applicability()
             == animsmith_core::Applicability::NotApplicable,
         "root-motion-speed should be inapplicable for an in-place pin: {records:#?}"
     );
@@ -617,10 +704,10 @@ fn gait_group_role_gap_is_isolated_and_reasoned() {
     }));
     let records = evaluate_unresolved(&doc, &config);
     let gait = check(&records, "gait-group");
-    assert_eq!(gait.evaluation, EvaluationState::Partial);
-    assert!(gait.findings.is_empty());
-    assert_eq!(gait.gaps[0].code.as_str(), "roles_unresolved");
-    assert!(gait.gaps[0].message.contains("hips/foot"));
+    assert_eq!(gait.evaluation(), EvaluationState::Partial);
+    assert!(gait.findings().is_empty());
+    assert_eq!(gait.gaps()[0].code.as_str(), "roles_unresolved");
+    assert!(gait.gaps()[0].message.contains("hips/foot"));
 }
 
 #[test]
@@ -684,9 +771,9 @@ fn coverage_gap_is_exempt_from_severity_override() {
     }));
     let records = evaluate_unresolved(&doc, &config);
     let seam = check(&records, "loop-seam");
-    assert_eq!(seam.evaluation, EvaluationState::NotEvaluated);
-    assert!(seam.findings.is_empty());
-    assert_eq!(seam.gaps[0].code.as_str(), "roles_unresolved");
+    assert_eq!(seam.evaluation(), EvaluationState::NotEvaluated);
+    assert!(seam.findings().is_empty());
+    assert_eq!(seam.gaps()[0].code.as_str(), "roles_unresolved");
 }
 
 /// `severity = "off"` records a disabled check without evaluating it.
@@ -699,9 +786,9 @@ fn off_disables_check_without_emitting_a_gap() {
     }));
     let records = evaluate_unresolved(&doc, &config);
     let seam = check(&records, "loop-seam");
-    assert_eq!(seam.configuration, ConfigurationState::Disabled);
-    assert_eq!(seam.evaluation, EvaluationState::NotEvaluated);
-    assert!(seam.gaps.is_empty());
+    assert_eq!(seam.configuration(), ConfigurationState::Disabled);
+    assert_eq!(seam.evaluation(), EvaluationState::NotEvaluated);
+    assert!(seam.gaps().is_empty());
 }
 
 /// Every applicable role-dependent check reports typed missing coverage.
@@ -721,9 +808,9 @@ fn unresolved_roles_yield_gaps_for_every_applicable_check() {
         "gait-group",
     ] {
         let record = check(&records, id);
-        assert!(record.findings.is_empty(), "{id}: gaps are not findings");
-        assert!(!record.gaps.is_empty(), "{id}: expected a coverage gap");
-        assert_eq!(record.gaps[0].code.as_str(), "roles_unresolved");
+        assert!(record.findings().is_empty(), "{id}: gaps are not findings");
+        assert!(!record.gaps().is_empty(), "{id}: expected a coverage gap");
+        assert_eq!(record.gaps()[0].code.as_str(), "roles_unresolved");
     }
 }
 
@@ -742,11 +829,11 @@ fn undeclared_checks_are_not_applicable_without_gaps() {
     ] {
         let record = check(&records, id);
         assert_eq!(
-            record.applicability,
+            record.applicability(),
             animsmith_core::Applicability::NotApplicable
         );
-        assert!(record.findings.is_empty());
-        assert!(record.gaps.is_empty());
+        assert!(record.findings().is_empty());
+        assert!(record.gaps().is_empty());
     }
 }
 

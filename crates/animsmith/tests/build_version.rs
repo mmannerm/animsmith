@@ -3,8 +3,8 @@
 mod build_script;
 
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::Path;
+use std::process::Command;
 
 #[test]
 fn display_version_appends_git_describe_to_manifest_version() {
@@ -47,7 +47,7 @@ fn resolved_version_falls_back_to_the_bare_manifest_version() {
 
 #[test]
 fn packaged_source_info_reads_full_revision_without_claiming_cleanliness() {
-    let temp = TempDir::new("cargo-vcs-source");
+    let temp = temp_dir("cargo-vcs-source");
     let path = temp.path().join(".cargo_vcs_info.json");
     fs::write(
         &path,
@@ -65,8 +65,139 @@ fn packaged_source_info_reads_full_revision_without_claiming_cleanliness() {
 }
 
 #[test]
+fn packaged_source_info_rejects_revision_that_cannot_satisfy_the_schema() {
+    let temp = temp_dir("invalid-cargo-vcs-source");
+    let path = temp.path().join(".cargo_vcs_info.json");
+    for revision in [
+        "short",
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "0123456789abcdef0123456789abcdef0123456z",
+        "0123456789abcdef0123456789abcdef01234567\nforge",
+    ] {
+        fs::write(
+            &path,
+            serde_json::json!({ "git": { "sha1": revision } }).to_string(),
+        )
+        .expect("writes vcs info");
+        assert_eq!(build_script::packaged_source_info(&path), None);
+    }
+}
+
+#[test]
+fn git_source_info_observes_revision_and_tracked_dirty_state() {
+    let temp = temp_dir("git-source");
+    git(temp.path(), &["init", "--quiet"]);
+    fs::write(temp.path().join("tracked.txt"), "clean\n").expect("writes tracked file");
+    git(temp.path(), &["add", "tracked.txt"]);
+    git(
+        temp.path(),
+        &[
+            "-c",
+            "user.name=animsmith-test",
+            "-c",
+            "user.email=animsmith@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "fixture",
+        ],
+    );
+
+    let revision = git_output(temp.path(), &["rev-parse", "HEAD"]);
+    let clean = build_script::git_source_info(temp.path()).expect("clean source identity");
+    assert_eq!(clean.revision, revision);
+    assert_eq!(clean.revision.len(), 40);
+    assert!(clean.revision.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    assert_eq!(clean.dirty, Some(false));
+
+    fs::write(temp.path().join("tracked.txt"), "dirty\n").expect("edits tracked file");
+    let dirty = build_script::git_source_info(temp.path()).expect("dirty source identity");
+    assert_eq!(dirty.revision, revision);
+    assert_eq!(dirty.dirty, Some(true));
+}
+
+#[test]
+fn git_source_info_rejects_revision_that_cannot_satisfy_the_schema() {
+    for revision in [
+        "short",
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "0123456789abcdef0123456789abcdef0123456z",
+        "0123456789abcdef0123456789abcdef01234567\nforge",
+    ] {
+        assert_eq!(
+            build_script::source_info_from_git_values(revision, true, b""),
+            None,
+            "Git revision {revision:?} must be withheld"
+        );
+    }
+}
+
+#[test]
+fn git_source_info_rejects_sha256_repository_revision() {
+    let temp = temp_dir("git-source-sha256");
+    git(temp.path(), &["init", "--quiet", "--object-format=sha256"]);
+    fs::write(temp.path().join("tracked.txt"), "content\n").expect("writes tracked file");
+    git(temp.path(), &["add", "tracked.txt"]);
+    git(
+        temp.path(),
+        &[
+            "-c",
+            "user.name=animsmith-test",
+            "-c",
+            "user.email=animsmith@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "fixture",
+        ],
+    );
+
+    let revision = git_output(temp.path(), &["rev-parse", "HEAD"]);
+    assert_eq!(revision.len(), 64, "fixture must use SHA-256 objects");
+    assert_eq!(
+        build_script::git_source_info(temp.path()),
+        None,
+        "output v2 accepts only a full SHA-1 revision"
+    );
+}
+
+#[test]
+fn git_source_info_requires_a_successful_status_query() {
+    let revision = "0123456789abcdef0123456789abcdef01234567";
+    assert_eq!(
+        build_script::source_info_from_git_values(revision, false, b""),
+        None
+    );
+}
+
+#[test]
+fn workspace_build_emits_source_identity_environment() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let packaged = manifest_dir.join(".cargo_vcs_info.json");
+    if packaged.is_file() {
+        return;
+    }
+    let workspace = manifest_dir
+        .parent()
+        .and_then(Path::parent)
+        .expect("animsmith manifest belongs to the workspace");
+    let expected = build_script::git_source_info(workspace).expect("workspace Git identity");
+
+    let Some(revision) = option_env!("ANIMSMITH_GIT_REVISION") else {
+        panic!("Git-worktree build emits ANIMSMITH_GIT_REVISION");
+    };
+    assert_eq!(revision, expected.revision);
+    assert_eq!(revision.len(), 40);
+    assert!(revision.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    let Some(dirty) = option_env!("ANIMSMITH_GIT_DIRTY") else {
+        panic!("Git-worktree build emits ANIMSMITH_GIT_DIRTY");
+    };
+    assert_eq!(dirty.parse::<bool>().ok(), expected.dirty);
+}
+
+#[test]
 fn trusted_git_root_accepts_animsmith_workspace_layout() {
-    let temp = TempDir::new("workspace-layout");
+    let temp = temp_dir("workspace-layout");
     let git_root = temp.path();
     let manifest_dir = git_root.join("crates").join("animsmith");
     write_manifest(&manifest_dir);
@@ -79,7 +210,7 @@ fn trusted_git_root_accepts_animsmith_workspace_layout() {
 
 #[test]
 fn trusted_git_root_rejects_vendored_source_in_foreign_layout() {
-    let temp = TempDir::new("foreign-layout");
+    let temp = temp_dir("foreign-layout");
     let git_root = temp.path();
     let trusted_manifest_dir = git_root.join("crates").join("animsmith");
     write_manifest(&trusted_manifest_dir);
@@ -112,7 +243,7 @@ fn trusted_git_root_rejects_vendored_source_in_foreign_layout() {
 
 #[test]
 fn trusted_git_root_rejects_packaged_source_with_cargo_vcs_info() {
-    let temp = TempDir::new("cargo-package");
+    let temp = temp_dir("cargo-package");
     let git_root = temp.path();
     let manifest_dir = git_root.join("crates").join("animsmith");
     write_manifest(&manifest_dir);
@@ -133,31 +264,55 @@ fn write_manifest(manifest_dir: &Path) {
     .expect("writes manifest");
 }
 
-struct TempDir {
-    path: PathBuf,
+fn git(dir: &Path, args: &[&str]) {
+    let output = isolated_git_command(dir)
+        .args(args)
+        .output()
+        .expect("runs git");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
-impl TempDir {
-    fn new(name: &str) -> Self {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time after epoch")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "animsmith-build-version-{name}-{}-{nonce}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&path).expect("creates temp dir");
-        Self { path }
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
+fn isolated_git_command(dir: &Path) -> Command {
+    let mut command = Command::new("git");
+    build_script::clear_git_repository_env(&mut command);
+    command
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", dir.join(".empty-gitconfig"))
+        .env_remove("GIT_DEFAULT_HASH")
+        .env_remove("GIT_OBJECT_FORMAT")
+        .arg("-c")
+        .arg("init.defaultObjectFormat=sha1")
+        .arg("-c")
+        .arg("commit.gpgSign=false")
+        .arg("-c")
+        .arg(format!(
+            "core.hooksPath={}",
+            dir.join(".no-hooks").display()
+        ))
+        .arg("-C")
+        .arg(dir);
+    command
 }
 
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
-    }
+fn git_output(dir: &Path, args: &[&str]) -> String {
+    let output = isolated_git_command(dir)
+        .args(args)
+        .output()
+        .expect("runs git");
+    assert!(output.status.success(), "git {args:?} failed");
+    String::from_utf8(output.stdout)
+        .expect("git output is utf-8")
+        .trim()
+        .to_owned()
+}
+
+fn temp_dir(name: &str) -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix(&format!("animsmith-build-version-{name}-"))
+        .tempdir()
+        .expect("creates temp dir")
 }
