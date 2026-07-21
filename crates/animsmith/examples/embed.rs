@@ -103,7 +103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // When the host interoperates with CLI consumers, it can emit the exact
     // same versioned envelope without copying wire structs or schema URNs.
     let report = LintEnvelope::new(
-        ToolInfo::animsmith(env!("CARGO_PKG_VERSION"), ToolSource::new(None, None))?,
+        ToolInfo::animsmith(ToolSource::new(None, None)),
         vec![LintFileReport::new(
             path.display().to_string(),
             RigInfo::from_resolved(&doc, &roles)?,

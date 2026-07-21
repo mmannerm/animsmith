@@ -51,63 +51,20 @@ impl ToolSource {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ToolInfo {
     name: &'static str,
-    version: String,
+    version: &'static str,
     source: ToolSource,
 }
 
-/// Producer identity could not satisfy output v2.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[non_exhaustive]
-pub enum ToolInfoError {
-    /// The version was not a stable SemVer package version.
-    #[error("tool version {0:?} does not satisfy output v2 SemVer syntax")]
-    InvalidVersion(String),
-}
-
 impl ToolInfo {
-    /// Construct animsmith producer identity from a stable package version and
+    /// Construct animsmith producer identity from this package's version and
     /// optional source-checkout metadata.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ToolInfoError`] when `version` does not match output v2's
-    /// SemVer syntax.
-    pub fn animsmith(
-        version: impl Into<String>,
-        source: ToolSource,
-    ) -> Result<Self, ToolInfoError> {
-        let version = version.into();
-        if !is_output_semver(&version) {
-            return Err(ToolInfoError::InvalidVersion(version));
-        }
-        Ok(Self {
+    pub fn animsmith(source: ToolSource) -> Self {
+        Self {
             name: "animsmith",
-            version,
+            version: env!("CARGO_PKG_VERSION"),
             source,
-        })
+        }
     }
-}
-
-fn is_output_semver(version: &str) -> bool {
-    let (core_and_pre, build) = version
-        .split_once('+')
-        .map_or((version, None), |(left, right)| (left, Some(right)));
-    let (core, prerelease) = core_and_pre
-        .split_once('-')
-        .map_or((core_and_pre, None), |(left, right)| (left, Some(right)));
-    let mut components = core.split('.');
-    let core_is_valid = (0..3).all(|_| {
-        components
-            .next()
-            .is_some_and(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
-    }) && components.next().is_none();
-    let suffix_is_valid = |suffix: &str| {
-        !suffix.is_empty()
-            && suffix
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
-    };
-    core_is_valid && prerelease.is_none_or(suffix_is_valid) && build.is_none_or(suffix_is_valid)
 }
 
 /// Rig profile and resolved semantic-role bindings for one input file.
