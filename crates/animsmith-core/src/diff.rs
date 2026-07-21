@@ -158,6 +158,7 @@ pub fn diff_measurements(
             let vb = finite(mb.bone_rotation_range_deg.get(bone).copied());
             let moved = match (va, vb) {
                 (Some(x), Some(y)) => (x - y).abs() > ROTATION_RANGE_THRESHOLD_DEG,
+                (None, None) => false,
                 _ => true,
             };
             if moved {

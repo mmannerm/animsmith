@@ -9,11 +9,11 @@ use animsmith_core::{
     MEASUREMENTS_SCHEMA_ID, MEASUREMENTS_SCHEMA_VERSION, MeasureEnvelope, MeasureFileReport,
     MeasurementContract, MeasurementContractError, MeasurementReportError, MeasurementReportInput,
     MetricGrids, OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, ResolvedRoles, RigInfo, RigInfoError,
-    Role, Severity, ToolInfo, ToolInfoError, ToolSource, Transform, evaluate_checks,
+    Role, Severity, ToolInfo, ToolSource, Transform, evaluate_checks,
 };
 
 fn tool() -> ToolInfo {
-    ToolInfo::animsmith("0.1.0", ToolSource::new(None, None)).expect("test version is valid")
+    ToolInfo::animsmith(ToolSource::new(None, None))
 }
 
 fn rig() -> RigInfo {
@@ -293,42 +293,25 @@ fn measurement_report_input_rejects_every_invalid_contract_branch() {
 fn tool_source_drops_revision_text_outside_the_v2_schema() {
     for invalid in ["f".repeat(39), "z".repeat(40), "f".repeat(41)] {
         let source = ToolSource::new(Some(invalid), Some(true));
-        let json = serde_json::to_value(
-            ToolInfo::animsmith("0.1.0", source).expect("test version is valid"),
-        )
-        .expect("tool identity serializes");
+        let json =
+            serde_json::to_value(ToolInfo::animsmith(source)).expect("tool identity serializes");
         assert!(json["source"]["revision"].is_null());
         assert_eq!(json["source"]["dirty"], true);
     }
 
     let revision = "0123456789abcdef0123456789abcdef01234567";
     let source = ToolSource::new(Some(revision.into()), Some(false));
-    let json =
-        serde_json::to_value(ToolInfo::animsmith("0.1.0", source).expect("test version is valid"))
-            .expect("tool identity serializes");
+    let json = serde_json::to_value(ToolInfo::animsmith(source)).expect("tool identity serializes");
     assert_eq!(json["source"]["revision"], revision);
     assert_eq!(json["source"]["dirty"], false);
 }
 
 #[test]
-fn tool_info_rejects_versions_outside_output_v2() {
-    for version in [
-        "",
-        "0.1",
-        "v0.1.0",
-        "0.1.0-",
-        "0.1.0+bad+build",
-        "0.1.0 dirty",
-    ] {
-        assert_eq!(
-            ToolInfo::animsmith(version, ToolSource::new(None, None)),
-            Err(ToolInfoError::InvalidVersion(version.into()))
-        );
-    }
-    for version in ["0.1.0", "12.34.56-alpha.1+build-2"] {
-        ToolInfo::animsmith(version, ToolSource::new(None, None))
-            .expect("schema-valid SemVer is accepted");
-    }
+fn tool_info_uses_the_animsmith_core_package_version() {
+    let json = serde_json::to_value(ToolInfo::animsmith(ToolSource::new(None, None)))
+        .expect("tool identity serializes");
+    assert_eq!(json["name"], "animsmith");
+    assert_eq!(json["version"], env!("CARGO_PKG_VERSION"));
 }
 
 fn valid_clip_measurements() -> ClipMeasurements {

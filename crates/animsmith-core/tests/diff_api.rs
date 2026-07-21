@@ -51,3 +51,39 @@ fn threshold_constants_are_public_and_unchanged() {
     assert_eq!(AMPLITUDE_THRESHOLD_M, 0.005);
     assert_eq!(SPEED_THRESHOLD_MPS, 0.1);
 }
+
+#[test]
+fn public_diff_treats_non_finite_measurements_as_absent() {
+    let mut invalid = measurements(1.0);
+    let clip = invalid.get_mut("walk").expect("fixture clip");
+    clip.duration_s = f64::NAN;
+    clip.loop_seam_ratio = Some(f64::INFINITY);
+    clip.gait.as_mut().expect("fixture gait").phase = Some(f64::NEG_INFINITY);
+    clip.gait.as_mut().expect("fixture gait").lr_amplitude_m = f64::NAN;
+    clip.speed_mps = Some(f64::INFINITY);
+    clip.bone_rotation_range_deg.insert("hips".into(), f64::NAN);
+
+    assert!(
+        PUBLIC_DIFF_MEASUREMENTS(&invalid, &invalid).is_empty(),
+        "identical absent/non-finite values must not produce false deltas"
+    );
+
+    let finite = measurements(1.0);
+    let disappeared = PUBLIC_DIFF_MEASUREMENTS(&finite, &invalid);
+    let bone = disappeared
+        .iter()
+        .find(|delta| delta.metric == "bone_rotation_range_deg[hips]")
+        .expect("finite-to-non-finite bone transition is reported");
+    assert_eq!(bone.before, Some(10.0));
+    assert_eq!(bone.after, None);
+    assert_eq!(bone.note, "bone no longer animated");
+
+    let appeared = PUBLIC_DIFF_MEASUREMENTS(&invalid, &finite);
+    let bone = appeared
+        .iter()
+        .find(|delta| delta.metric == "bone_rotation_range_deg[hips]")
+        .expect("non-finite-to-finite bone transition is reported");
+    assert_eq!(bone.before, None);
+    assert_eq!(bone.after, Some(10.0));
+    assert_eq!(bone.note, "bone now animated");
+}

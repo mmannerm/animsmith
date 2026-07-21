@@ -236,14 +236,10 @@ fn dedup_preserving_order<T: Copy + Eq>(items: impl IntoIterator<Item = T>) -> V
 }
 
 fn current_tool() -> ToolInfo {
-    ToolInfo::animsmith(
-        env!("CARGO_PKG_VERSION"),
-        ToolSource::new(
-            option_env!("ANIMSMITH_GIT_REVISION").map(str::to_owned),
-            option_env!("ANIMSMITH_GIT_DIRTY").and_then(|value| value.parse().ok()),
-        ),
-    )
-    .expect("Cargo package version satisfies output v2")
+    ToolInfo::animsmith(ToolSource::new(
+        option_env!("ANIMSMITH_GIT_REVISION").map(str::to_owned),
+        option_env!("ANIMSMITH_GIT_DIRTY").and_then(|value| value.parse().ok()),
+    ))
 }
 
 fn main() -> ExitCode {

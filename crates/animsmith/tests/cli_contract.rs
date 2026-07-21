@@ -951,11 +951,7 @@ fn embedded_contract_types_emit_the_published_v2_envelope() {
         .expect("measured evidence is finite"),
     );
     let envelope = animsmith_core::LintEnvelope::new(
-        animsmith_core::ToolInfo::animsmith(
-            env!("CARGO_PKG_VERSION"),
-            animsmith_core::ToolSource::new(None, None),
-        )
-        .expect("Cargo package version satisfies output v2"),
+        animsmith_core::ToolInfo::animsmith(animsmith_core::ToolSource::new(None, None)),
         vec![file],
     );
 
@@ -992,11 +988,7 @@ fn output_schema_rejects_every_empty_custom_check_identifier() {
     let doc = Document::default();
     let roles = animsmith_core::ResolvedRoles::default();
     let envelope = animsmith_core::LintEnvelope::new(
-        animsmith_core::ToolInfo::animsmith(
-            env!("CARGO_PKG_VERSION"),
-            animsmith_core::ToolSource::new(None, None),
-        )
-        .expect("Cargo package version satisfies output v2"),
+        animsmith_core::ToolInfo::animsmith(animsmith_core::ToolSource::new(None, None)),
         vec![animsmith_core::LintFileReport::new(
             "embedded.glb",
             animsmith_core::RigInfo::from_resolved(&doc, &roles)
