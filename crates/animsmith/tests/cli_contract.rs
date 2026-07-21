@@ -947,13 +947,15 @@ fn embedded_contract_types_emit_the_published_v2_envelope() {
         animsmith_core::MeasurementContract::new(
             animsmith_core::measure::measure_document(&grids, &roles, &config),
             animsmith_core::measure::measure_meshes(&doc.assets),
-        ),
+        )
+        .expect("measured evidence is finite"),
     );
     let envelope = animsmith_core::LintEnvelope::new(
         animsmith_core::ToolInfo::animsmith(
             env!("CARGO_PKG_VERSION"),
             animsmith_core::ToolSource::new(None, None),
-        ),
+        )
+        .expect("Cargo package version satisfies output v2"),
         vec![file],
     );
 
@@ -964,6 +966,62 @@ fn embedded_contract_types_emit_the_published_v2_envelope() {
         json["files"][0]["measurements"]["schema"],
         animsmith_core::MEASUREMENTS_SCHEMA_ID
     );
+}
+
+#[test]
+fn output_schema_rejects_every_empty_custom_check_identifier() {
+    let check = animsmith_core::CheckEvaluation::evaluated(
+        "custom",
+        animsmith_core::CheckOutput::from_coverage(
+            Vec::new(),
+            vec![animsmith_core::EvaluationScope::new(
+                animsmith_core::EvaluationScopeCode::custom("test:complete"),
+            )],
+            vec![
+                animsmith_core::CoverageGap::new(
+                    animsmith_core::CoverageGapCode::custom("test:gap"),
+                    "missing evidence",
+                )
+                .scope(animsmith_core::EvaluationScope::new(
+                    animsmith_core::EvaluationScopeCode::custom("test:missing"),
+                )),
+            ],
+        ),
+    )
+    .expect("nonempty custom identifiers are valid");
+    let doc = Document::default();
+    let roles = animsmith_core::ResolvedRoles::default();
+    let envelope = animsmith_core::LintEnvelope::new(
+        animsmith_core::ToolInfo::animsmith(
+            env!("CARGO_PKG_VERSION"),
+            animsmith_core::ToolSource::new(None, None),
+        )
+        .expect("Cargo package version satisfies output v2"),
+        vec![animsmith_core::LintFileReport::new(
+            "embedded.glb",
+            animsmith_core::RigInfo::from_resolved(&doc, &roles)
+                .expect("empty roles match an empty document"),
+            vec![check],
+            animsmith_core::MeasurementContract::new(BTreeMap::new(), Vec::new())
+                .expect("empty measurements are valid"),
+        )],
+    );
+    let valid = serde_json::to_value(envelope).expect("embedded envelope serializes");
+    assert_output_schema_valid(&valid);
+
+    for pointer in [
+        "/files/0/checks/0/check_id",
+        "/files/0/checks/0/evaluated_scopes/0/code",
+        "/files/0/checks/0/gaps/0/code",
+        "/files/0/checks/0/gaps/0/scope/code",
+    ] {
+        let mut invalid = valid.clone();
+        *invalid.pointer_mut(pointer).expect("fixture path exists") = json!("");
+        assert!(
+            !output_validator().is_valid(&invalid),
+            "schema accepted an empty identifier at {pointer}"
+        );
+    }
 }
 
 #[test]

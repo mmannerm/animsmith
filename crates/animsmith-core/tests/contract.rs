@@ -2,17 +2,18 @@ use std::collections::BTreeMap;
 
 use animsmith_core::check::{Check, CheckCtx};
 use animsmith_core::config::{CheckSettings, SeveritySetting};
+use animsmith_core::measure::{ClipMeasurements, MeshMeasurements};
 use animsmith_core::{
     Bone, CheckEvaluation, CheckOutput, CheckSelection, Config, CoverageGap, CoverageGapCode,
     Document, EvaluationScope, EvaluationScopeCode, Finding, LintEnvelope, LintFileReport,
     MEASUREMENTS_SCHEMA_ID, MEASUREMENTS_SCHEMA_VERSION, MeasureEnvelope, MeasureFileReport,
-    MeasurementContract, MeasurementReportError, MeasurementReportInput, MetricGrids,
-    OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, ResolvedRoles, RigInfo, RigInfoError, Role, Severity,
-    ToolInfo, ToolSource, Transform, evaluate_checks,
+    MeasurementContract, MeasurementContractError, MeasurementReportError, MeasurementReportInput,
+    MetricGrids, OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, ResolvedRoles, RigInfo, RigInfoError,
+    Role, Severity, ToolInfo, ToolInfoError, ToolSource, Transform, evaluate_checks,
 };
 
 fn tool() -> ToolInfo {
-    ToolInfo::animsmith("0.1.0", ToolSource::new(None, None))
+    ToolInfo::animsmith("0.1.0", ToolSource::new(None, None)).expect("test version is valid")
 }
 
 fn rig() -> RigInfo {
@@ -22,7 +23,7 @@ fn rig() -> RigInfo {
 }
 
 fn measurements() -> MeasurementContract {
-    MeasurementContract::new(BTreeMap::new(), Vec::new())
+    MeasurementContract::new(BTreeMap::new(), Vec::new()).expect("empty measurements are valid")
 }
 
 #[test]
@@ -292,18 +293,138 @@ fn measurement_report_input_rejects_every_invalid_contract_branch() {
 fn tool_source_drops_revision_text_outside_the_v2_schema() {
     for invalid in ["f".repeat(39), "z".repeat(40), "f".repeat(41)] {
         let source = ToolSource::new(Some(invalid), Some(true));
-        let json = serde_json::to_value(ToolInfo::animsmith("0.1.0", source))
-            .expect("tool identity serializes");
+        let json = serde_json::to_value(
+            ToolInfo::animsmith("0.1.0", source).expect("test version is valid"),
+        )
+        .expect("tool identity serializes");
         assert!(json["source"]["revision"].is_null());
         assert_eq!(json["source"]["dirty"], true);
     }
 
     let revision = "0123456789abcdef0123456789abcdef01234567";
     let source = ToolSource::new(Some(revision.into()), Some(false));
-    let json = serde_json::to_value(ToolInfo::animsmith("0.1.0", source))
-        .expect("tool identity serializes");
+    let json =
+        serde_json::to_value(ToolInfo::animsmith("0.1.0", source).expect("test version is valid"))
+            .expect("tool identity serializes");
     assert_eq!(json["source"]["revision"], revision);
     assert_eq!(json["source"]["dirty"], false);
+}
+
+#[test]
+fn tool_info_rejects_versions_outside_output_v2() {
+    for version in [
+        "",
+        "0.1",
+        "v0.1.0",
+        "0.1.0-",
+        "0.1.0+bad+build",
+        "0.1.0 dirty",
+    ] {
+        assert_eq!(
+            ToolInfo::animsmith(version, ToolSource::new(None, None)),
+            Err(ToolInfoError::InvalidVersion(version.into()))
+        );
+    }
+    for version in ["0.1.0", "12.34.56-alpha.1+build-2"] {
+        ToolInfo::animsmith(version, ToolSource::new(None, None))
+            .expect("schema-valid SemVer is accepted");
+    }
+}
+
+fn valid_clip_measurements() -> ClipMeasurements {
+    serde_json::from_value(serde_json::json!({
+        "duration_s": 1.0,
+        "frame_count": 2,
+        "animated_bones": ["hips"],
+        "bone_rotation_range_deg": { "hips": 10.0 },
+        "loop_seam_ratio": 0.1,
+        "gait": { "phase": 0.25, "lr_amplitude_m": 0.2 },
+        "speed_mps": 1.0,
+    }))
+    .expect("valid clip measurement fixture")
+}
+
+fn valid_mesh_measurements() -> MeshMeasurements {
+    serde_json::from_value(serde_json::json!({
+        "name": "mesh",
+        "vertex_count": 3,
+        "aabb": { "min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 1.0] },
+        "max_joints_per_vertex": 4,
+        "weight_sum_min": 0.9,
+        "weight_sum_max": 1.1,
+    }))
+    .expect("valid mesh measurement fixture")
+}
+
+fn assert_invalid_clip(mutate: impl FnOnce(&mut ClipMeasurements), expected_path: &str) {
+    let mut clip = valid_clip_measurements();
+    mutate(&mut clip);
+    assert_eq!(
+        MeasurementContract::new(BTreeMap::from([("walk".into(), clip)]), Vec::new())
+            .expect_err("non-finite clip evidence must be rejected"),
+        MeasurementContractError::NonFiniteValue {
+            path: expected_path.into(),
+        }
+    );
+}
+
+fn assert_invalid_mesh(mutate: impl FnOnce(&mut MeshMeasurements), expected_path: &str) {
+    let mut mesh = valid_mesh_measurements();
+    mutate(&mut mesh);
+    assert_eq!(
+        MeasurementContract::new(BTreeMap::new(), vec![mesh])
+            .expect_err("non-finite mesh evidence must be rejected"),
+        MeasurementContractError::NonFiniteValue {
+            path: expected_path.into(),
+        }
+    );
+}
+
+#[test]
+fn measurement_contract_rejects_every_non_finite_numeric_branch() {
+    assert_invalid_clip(
+        |clip| clip.duration_s = f64::NAN,
+        "clips[\"walk\"].duration_s",
+    );
+    assert_invalid_clip(
+        |clip| {
+            clip.bone_rotation_range_deg
+                .insert("hips".into(), f64::INFINITY);
+        },
+        "clips[\"walk\"].bone_rotation_range_deg[\"hips\"]",
+    );
+    assert_invalid_clip(
+        |clip| clip.loop_seam_ratio = Some(f64::NEG_INFINITY),
+        "clips[\"walk\"].loop_seam_ratio",
+    );
+    assert_invalid_clip(
+        |clip| clip.gait.as_mut().expect("fixture gait").phase = Some(f64::NAN),
+        "clips[\"walk\"].gait.phase",
+    );
+    assert_invalid_clip(
+        |clip| clip.gait.as_mut().expect("fixture gait").lr_amplitude_m = f64::INFINITY,
+        "clips[\"walk\"].gait.lr_amplitude_m",
+    );
+    assert_invalid_clip(
+        |clip| clip.speed_mps = Some(f64::NAN),
+        "clips[\"walk\"].speed_mps",
+    );
+    assert_invalid_mesh(
+        |mesh| mesh.aabb.as_mut().expect("fixture aabb").min[1] = f32::NAN,
+        "meshes[0].aabb.min[1]",
+    );
+    assert_invalid_mesh(
+        |mesh| mesh.aabb.as_mut().expect("fixture aabb").max[2] = f32::INFINITY,
+        "meshes[0].aabb.max[2]",
+    );
+    assert_invalid_mesh(
+        |mesh| mesh.weight_sum_min = Some(f64::NEG_INFINITY),
+        "meshes[0].weight_sum_min",
+    );
+    assert_invalid_mesh(
+        |mesh| mesh.weight_sum_max = Some(f64::NAN),
+        "meshes[0].weight_sum_max",
+    );
 }
 
 #[test]

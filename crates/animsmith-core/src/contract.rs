@@ -55,16 +55,59 @@ pub struct ToolInfo {
     source: ToolSource,
 }
 
+/// Producer identity could not satisfy output v2.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum ToolInfoError {
+    /// The version was not a stable SemVer package version.
+    #[error("tool version {0:?} does not satisfy output v2 SemVer syntax")]
+    InvalidVersion(String),
+}
+
 impl ToolInfo {
     /// Construct animsmith producer identity from a stable package version and
     /// optional source-checkout metadata.
-    pub fn animsmith(version: impl Into<String>, source: ToolSource) -> Self {
-        Self {
-            name: "animsmith",
-            version: version.into(),
-            source,
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ToolInfoError`] when `version` does not match output v2's
+    /// SemVer syntax.
+    pub fn animsmith(
+        version: impl Into<String>,
+        source: ToolSource,
+    ) -> Result<Self, ToolInfoError> {
+        let version = version.into();
+        if !is_output_semver(&version) {
+            return Err(ToolInfoError::InvalidVersion(version));
         }
+        Ok(Self {
+            name: "animsmith",
+            version,
+            source,
+        })
     }
+}
+
+fn is_output_semver(version: &str) -> bool {
+    let (core_and_pre, build) = version
+        .split_once('+')
+        .map_or((version, None), |(left, right)| (left, Some(right)));
+    let (core, prerelease) = core_and_pre
+        .split_once('-')
+        .map_or((core_and_pre, None), |(left, right)| (left, Some(right)));
+    let mut components = core.split('.');
+    let core_is_valid = (0..3).all(|_| {
+        components
+            .next()
+            .is_some_and(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+    }) && components.next().is_none();
+    let suffix_is_valid = |suffix: &str| {
+        !suffix.is_empty()
+            && suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
+    };
+    core_is_valid && prerelease.is_none_or(suffix_is_valid) && build.is_none_or(suffix_is_valid)
 }
 
 /// Rig profile and resolved semantic-role bindings for one input file.
@@ -157,15 +200,36 @@ pub struct MeasurementContract {
     meshes: Vec<MeshMeasurements>,
 }
 
+/// Measurement evidence could not satisfy measurements v1.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum MeasurementContractError {
+    /// A required or present numeric value was non-finite.
+    #[error("measurement value {path} must be finite")]
+    NonFiniteValue {
+        /// Human-readable location within the measurement contract.
+        path: String,
+    },
+}
+
 impl MeasurementContract {
     /// Construct the current measurement contract.
-    pub fn new(clips: BTreeMap<String, ClipMeasurements>, meshes: Vec<MeshMeasurements>) -> Self {
-        Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MeasurementContractError`] when required or present numeric
+    /// evidence is non-finite and therefore cannot satisfy measurements v1.
+    pub fn new(
+        clips: BTreeMap<String, ClipMeasurements>,
+        meshes: Vec<MeshMeasurements>,
+    ) -> Result<Self, MeasurementContractError> {
+        validate_measurements(&clips, &meshes)?;
+        Ok(Self {
             schema_version: MEASUREMENTS_SCHEMA_VERSION,
             schema: MEASUREMENTS_SCHEMA_ID,
             clips,
             meshes,
-        }
+        })
     }
 
     /// Per-clip measurements keyed by clip name.
@@ -177,6 +241,61 @@ impl MeasurementContract {
     pub fn meshes(&self) -> &[MeshMeasurements] {
         &self.meshes
     }
+}
+
+fn validate_measurements(
+    clips: &BTreeMap<String, ClipMeasurements>,
+    meshes: &[MeshMeasurements],
+) -> Result<(), MeasurementContractError> {
+    let finite = |value: f64, path: String| {
+        value
+            .is_finite()
+            .then_some(())
+            .ok_or(MeasurementContractError::NonFiniteValue { path })
+    };
+    for (clip_name, clip) in clips {
+        finite(clip.duration_s, format!("clips[{clip_name:?}].duration_s"))?;
+        for (bone, value) in &clip.bone_rotation_range_deg {
+            finite(
+                *value,
+                format!("clips[{clip_name:?}].bone_rotation_range_deg[{bone:?}]"),
+            )?;
+        }
+        if let Some(value) = clip.loop_seam_ratio {
+            finite(value, format!("clips[{clip_name:?}].loop_seam_ratio"))?;
+        }
+        if let Some(gait) = &clip.gait {
+            if let Some(value) = gait.phase {
+                finite(value, format!("clips[{clip_name:?}].gait.phase"))?;
+            }
+            finite(
+                gait.lr_amplitude_m,
+                format!("clips[{clip_name:?}].gait.lr_amplitude_m"),
+            )?;
+        }
+        if let Some(value) = clip.speed_mps {
+            finite(value, format!("clips[{clip_name:?}].speed_mps"))?;
+        }
+    }
+    for (index, mesh) in meshes.iter().enumerate() {
+        if let Some(aabb) = &mesh.aabb {
+            for (corner, values) in [("min", aabb.min), ("max", aabb.max)] {
+                for (axis, value) in values.into_iter().enumerate() {
+                    finite(
+                        value as f64,
+                        format!("meshes[{index}].aabb.{corner}[{axis}]"),
+                    )?;
+                }
+            }
+        }
+        if let Some(value) = mesh.weight_sum_min {
+            finite(value, format!("meshes[{index}].weight_sum_min"))?;
+        }
+        if let Some(value) = mesh.weight_sum_max {
+            finite(value, format!("meshes[{index}].weight_sum_max"))?;
+        }
+    }
+    Ok(())
 }
 
 /// Typed read-side subset accepted when a consumer needs measurements from a

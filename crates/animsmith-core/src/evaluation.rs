@@ -317,8 +317,12 @@ impl CheckEvaluation {
     ///
     /// # Errors
     ///
-    /// Returns an error when a nested finding names a different check.
+    /// Returns an error for an empty check id, malformed coverage codes, or
+    /// when a nested finding names a different check.
     pub fn evaluated(check_id: &'static str, output: CheckOutput) -> Result<Self, EvaluationError> {
+        if check_id.is_empty() {
+            return Err(EvaluationError::InvalidCheckId(check_id));
+        }
         if !output.gaps.is_empty()
             && output.evaluated_scopes.is_empty()
             && !output.findings.is_empty()
@@ -336,6 +340,32 @@ impl CheckEvaluation {
             return Err(EvaluationError::FindingCheckIdMismatch {
                 check_id,
                 finding_check_id: finding.check_id,
+            });
+        }
+        if output
+            .evaluated_scopes
+            .iter()
+            .any(|scope| scope.code.as_str().is_empty())
+        {
+            return Err(EvaluationError::InvalidCheckOutput {
+                check_id,
+                reason: "evaluated scope code cannot be empty",
+            });
+        }
+        if output.gaps.iter().any(|gap| gap.code.as_str().is_empty()) {
+            return Err(EvaluationError::InvalidCheckOutput {
+                check_id,
+                reason: "coverage gap code cannot be empty",
+            });
+        }
+        if output.gaps.iter().any(|gap| {
+            gap.scope
+                .as_ref()
+                .is_some_and(|scope| scope.code.as_str().is_empty())
+        }) {
+            return Err(EvaluationError::InvalidCheckOutput {
+                check_id,
+                reason: "coverage gap scope code cannot be empty",
             });
         }
         Ok(Self {
@@ -474,6 +504,9 @@ impl CheckSelection<'_> {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum EvaluationError {
+    /// A catalog or directly constructed check record used an empty id.
+    #[error("check id cannot be empty")]
+    InvalidCheckId(&'static str),
     /// Two catalog entries used the same stable check id.
     #[error("duplicate check id {0:?}")]
     DuplicateCheckId(&'static str),
@@ -507,9 +540,9 @@ pub enum EvaluationError {
 ///
 /// # Errors
 ///
-/// Returns an error for duplicate catalog ids, unknown explicitly selected
-/// ids, malformed coverage evidence, or a nested finding whose id disagrees
-/// with its parent check.
+/// Returns an error for empty or duplicate catalog ids, unknown explicitly
+/// selected ids, malformed coverage evidence, or a nested finding whose id
+/// disagrees with its parent check.
 pub fn evaluate_checks(
     ctx: &CheckCtx<'_>,
     checks: &[Box<dyn Check>],
@@ -517,6 +550,9 @@ pub fn evaluate_checks(
 ) -> Result<Vec<CheckEvaluation>, EvaluationError> {
     let mut catalog_ids = BTreeSet::new();
     for check in checks {
+        if check.id().is_empty() {
+            return Err(EvaluationError::InvalidCheckId(check.id()));
+        }
         if !catalog_ids.insert(check.id()) {
             return Err(EvaluationError::DuplicateCheckId(check.id()));
         }

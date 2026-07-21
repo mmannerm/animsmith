@@ -498,7 +498,8 @@ mod tests {
             RigInfo::from_resolved(&doc, &ResolvedRoles::default())
                 .expect("empty roles match an empty document"),
             checks,
-            MeasurementContract::new(BTreeMap::new(), Vec::new()),
+            MeasurementContract::new(BTreeMap::new(), Vec::new())
+                .expect("empty measurements are valid"),
         )
     }
 
