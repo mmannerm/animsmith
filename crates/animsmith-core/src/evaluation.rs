@@ -15,6 +15,20 @@ use crate::check::{Check, CheckCtx};
 use crate::config::SeveritySetting;
 use crate::finding::Finding;
 
+macro_rules! builtin_codes {
+    (
+        $kind:ident, $registry:ident, $registry_doc:literal;
+        $($(#[$meta:meta])* $name:ident => $value:literal),+ $(,)?
+    ) => {
+        impl $kind {
+            $($(#[$meta])* pub const $name: Self = Self($value);)+
+        }
+
+        #[doc = $registry_doc]
+        pub const $registry: &[$kind] = &[$($kind::$name),+];
+    };
+}
+
 /// Whether a check was selected for this invocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -65,30 +79,35 @@ pub enum EvaluationState {
 #[serde(transparent)]
 pub struct EvaluationScopeCode(&'static str);
 
-impl EvaluationScopeCode {
+builtin_codes!(
+    EvaluationScopeCode,
+    BUILTIN_EVALUATION_SCOPE_CODES,
+    "Built-in evaluation-scope codes used by animsmith's catalog.";
     /// Bind-pose comparison against the first animation frame.
-    pub const FIRST_FRAME_REST_DELTA: Self = Self("first_frame_rest_delta");
+    FIRST_FRAME_REST_DELTA => "first_frame_rest_delta",
     /// Loop seam comparison.
-    pub const LOOP_SEAM: Self = Self("loop_seam");
+    LOOP_SEAM => "loop_seam",
     /// Foot-stance evaluation when no side-specific scope is available.
-    pub const FOOT_STANCE: Self = Self("foot_stance");
+    FOOT_STANCE => "foot_stance",
     /// Left-foot stance evaluation.
-    pub const LEFT_FOOT_STANCE: Self = Self("left_foot_stance");
+    LEFT_FOOT_STANCE => "left_foot_stance",
     /// Right-foot stance evaluation.
-    pub const RIGHT_FOOT_STANCE: Self = Self("right_foot_stance");
+    RIGHT_FOOT_STANCE => "right_foot_stance",
     /// Root-motion speed measurement.
-    pub const ROOT_MOTION_SPEED: Self = Self("root_motion_speed");
+    ROOT_MOTION_SPEED => "root_motion_speed",
     /// Existence of the configured gait-group members.
-    pub const MEMBER_EXISTENCE: Self = Self("member_existence");
+    MEMBER_EXISTENCE => "member_existence",
     /// Per-member gait phase measurement.
-    pub const PHASE_MEASUREMENT: Self = Self("phase_measurement");
+    PHASE_MEASUREMENT => "phase_measurement",
     /// Coherence of the measurable gait phases in a group.
-    pub const PHASE_COHERENCE: Self = Self("phase_coherence");
+    PHASE_COHERENCE => "phase_coherence",
     /// In-place versus travelling classification.
-    pub const TRAVEL_MODE: Self = Self("travel_mode");
+    TRAVEL_MODE => "travel_mode",
     /// Declared frame-grid evaluation.
-    pub const FRAME_GRID: Self = Self("frame_grid");
+    FRAME_GRID => "frame_grid",
+);
 
+impl EvaluationScopeCode {
     /// Construct a stable custom scope code.
     ///
     /// Custom checks should use a namespaced value such as `acme:reference`.
@@ -107,21 +126,6 @@ impl fmt::Display for EvaluationScopeCode {
         f.write_str(self.0)
     }
 }
-
-/// Built-in evaluation-scope codes used by animsmith's catalog.
-pub const BUILTIN_EVALUATION_SCOPE_CODES: &[EvaluationScopeCode] = &[
-    EvaluationScopeCode::FIRST_FRAME_REST_DELTA,
-    EvaluationScopeCode::LOOP_SEAM,
-    EvaluationScopeCode::FOOT_STANCE,
-    EvaluationScopeCode::LEFT_FOOT_STANCE,
-    EvaluationScopeCode::RIGHT_FOOT_STANCE,
-    EvaluationScopeCode::ROOT_MOTION_SPEED,
-    EvaluationScopeCode::MEMBER_EXISTENCE,
-    EvaluationScopeCode::PHASE_MEASUREMENT,
-    EvaluationScopeCode::PHASE_COHERENCE,
-    EvaluationScopeCode::TRAVEL_MODE,
-    EvaluationScopeCode::FRAME_GRID,
-];
 
 /// A stable identifier for work that completed or could not be evaluated.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -158,20 +162,25 @@ impl EvaluationScope {
 #[serde(transparent)]
 pub struct CoverageGapCode(&'static str);
 
-impl CoverageGapCode {
+builtin_codes!(
+    CoverageGapCode,
+    BUILTIN_COVERAGE_GAP_CODES,
+    "Built-in coverage-gap codes used by animsmith's catalog.";
     /// Required rig roles could not be resolved.
-    pub const ROLES_UNRESOLVED: Self = Self("roles_unresolved");
+    ROLES_UNRESOLVED => "roles_unresolved",
     /// A metric needed by declared work could not be produced.
-    pub const MEASUREMENT_UNAVAILABLE: Self = Self("measurement_unavailable");
+    MEASUREMENT_UNAVAILABLE => "measurement_unavailable",
     /// Fewer than two gait-group members produced a phase measurement.
-    pub const INSUFFICIENT_MEASURABLE_MEMBERS: Self = Self("insufficient_measurable_members");
+    INSUFFICIENT_MEASURABLE_MEMBERS => "insufficient_measurable_members",
     /// Some configured gait-group members did not produce a phase measurement.
-    pub const MEMBERS_NOT_EVALUATED: Self = Self("members_not_evaluated");
+    MEMBERS_NOT_EVALUATED => "members_not_evaluated",
     /// A declared frame rate was zero, negative, or non-finite.
-    pub const INVALID_DECLARED_FPS: Self = Self("invalid_declared_fps");
+    INVALID_DECLARED_FPS => "invalid_declared_fps",
     /// Too few usable rotation tracks existed for bind-pose comparison.
-    pub const INSUFFICIENT_ROTATION_EVIDENCE: Self = Self("insufficient_rotation_evidence");
+    INSUFFICIENT_ROTATION_EVIDENCE => "insufficient_rotation_evidence",
+);
 
+impl CoverageGapCode {
     /// Construct a stable custom code.
     ///
     /// Custom checks should use a namespaced value such as
@@ -185,16 +194,6 @@ impl CoverageGapCode {
         self.0
     }
 }
-
-/// Built-in coverage-gap codes used by animsmith's catalog.
-pub const BUILTIN_COVERAGE_GAP_CODES: &[CoverageGapCode] = &[
-    CoverageGapCode::ROLES_UNRESOLVED,
-    CoverageGapCode::MEASUREMENT_UNAVAILABLE,
-    CoverageGapCode::INSUFFICIENT_MEASURABLE_MEMBERS,
-    CoverageGapCode::MEMBERS_NOT_EVALUATED,
-    CoverageGapCode::INVALID_DECLARED_FPS,
-    CoverageGapCode::INSUFFICIENT_ROTATION_EVIDENCE,
-];
 
 impl fmt::Display for CoverageGapCode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
