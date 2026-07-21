@@ -106,7 +106,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ToolInfo::animsmith(env!("CARGO_PKG_VERSION"), ToolSource::new(None, None)),
         vec![LintFileReport::new(
             path.display().to_string(),
-            RigInfo::from_resolved(&doc, &roles),
+            RigInfo::from_resolved(&doc, &roles)?,
             evaluations,
             MeasurementContract::new(
                 measurements,

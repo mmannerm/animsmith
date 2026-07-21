@@ -106,7 +106,7 @@ pub use contract::{
     DiffEnvelope, LintEnvelope, LintFileReport, MEASUREMENTS_SCHEMA_ID,
     MEASUREMENTS_SCHEMA_VERSION, MeasureEnvelope, MeasureFileReport, MeasurementContract,
     MeasurementReportError, MeasurementReportInput, OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION,
-    RigInfo, ToolInfo, ToolSource,
+    RigInfo, RigInfoError, ToolInfo, ToolSource,
 };
 pub use evaluation::{
     Applicability, BUILTIN_COVERAGE_GAP_CODES, BUILTIN_EVALUATION_SCOPE_CODES, CheckEvaluation,

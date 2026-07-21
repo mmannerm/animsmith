@@ -495,7 +495,8 @@ mod tests {
         let doc = Document::default();
         LintFileReport::new(
             path,
-            RigInfo::from_resolved(&doc, &ResolvedRoles::default()),
+            RigInfo::from_resolved(&doc, &ResolvedRoles::default())
+                .expect("empty roles match an empty document"),
             checks,
             MeasurementContract::new(BTreeMap::new(), Vec::new()),
         )

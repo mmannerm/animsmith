@@ -133,6 +133,35 @@ fn git_source_info_rejects_revision_that_cannot_satisfy_the_schema() {
 }
 
 #[test]
+fn git_source_info_rejects_sha256_repository_revision() {
+    let temp = temp_dir("git-source-sha256");
+    git(temp.path(), &["init", "--quiet", "--object-format=sha256"]);
+    fs::write(temp.path().join("tracked.txt"), "content\n").expect("writes tracked file");
+    git(temp.path(), &["add", "tracked.txt"]);
+    git(
+        temp.path(),
+        &[
+            "-c",
+            "user.name=animsmith-test",
+            "-c",
+            "user.email=animsmith@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "fixture",
+        ],
+    );
+
+    let revision = git_output(temp.path(), &["rev-parse", "HEAD"]);
+    assert_eq!(revision.len(), 64, "fixture must use SHA-256 objects");
+    assert_eq!(
+        build_script::git_source_info(temp.path()),
+        None,
+        "output v2 accepts only a full SHA-1 revision"
+    );
+}
+
+#[test]
 fn git_source_info_requires_a_successful_status_query() {
     let revision = "0123456789abcdef0123456789abcdef01234567";
     assert_eq!(

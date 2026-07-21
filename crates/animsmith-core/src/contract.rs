@@ -74,17 +74,53 @@ pub struct RigInfo {
     resolved_roles: BTreeMap<&'static str, String>,
 }
 
+/// Resolved-role evidence did not belong to the supplied document.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum RigInfoError {
+    /// A resolved role referenced a bone outside the document's skeleton.
+    #[error(
+        "resolved role {role:?} references bone {bone}, but the document has {bone_count} bones"
+    )]
+    InvalidBoneId {
+        /// Stable semantic role name.
+        role: &'static str,
+        /// Invalid bone index carried by the resolution.
+        bone: usize,
+        /// Number of bones available in the supplied document.
+        bone_count: usize,
+    },
+}
+
 impl RigInfo {
     /// Project resolved roles into their stable role names and source bone
     /// names for the result contract.
-    pub fn from_resolved(doc: &Document, roles: &ResolvedRoles) -> Self {
-        Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RigInfoError`] when `roles` references a bone outside the
+    /// supplied document, such as a resolution produced from another
+    /// skeleton.
+    pub fn from_resolved(doc: &Document, roles: &ResolvedRoles) -> Result<Self, RigInfoError> {
+        let resolved_roles = roles
+            .iter()
+            .map(|(role, bone)| {
+                let name = doc
+                    .skeleton
+                    .bones
+                    .get(bone)
+                    .ok_or(RigInfoError::InvalidBoneId {
+                        role: role.as_str(),
+                        bone,
+                        bone_count: doc.skeleton.bones.len(),
+                    })?;
+                Ok((role.as_str(), name.name.clone()))
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Self {
             profile: roles.profile.clone(),
-            resolved_roles: roles
-                .iter()
-                .map(|(role, bone)| (role.as_str(), doc.skeleton.bones[bone].name.clone()))
-                .collect(),
-        }
+            resolved_roles,
+        })
     }
 }
 
