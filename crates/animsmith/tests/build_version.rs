@@ -123,17 +123,15 @@ fn workspace_build_emits_source_identity_environment() {
         return;
     }
 
-    let revision = option_env!("ANIMSMITH_GIT_REVISION")
-        .expect("Git-worktree build emits ANIMSMITH_GIT_REVISION");
+    let Some(revision) = option_env!("ANIMSMITH_GIT_REVISION") else {
+        panic!("Git-worktree build emits ANIMSMITH_GIT_REVISION");
+    };
     assert_eq!(revision.len(), 40);
     assert!(revision.bytes().all(|byte| byte.is_ascii_hexdigit()));
-    assert!(
-        option_env!("ANIMSMITH_GIT_DIRTY")
-            .expect("Git-worktree build emits ANIMSMITH_GIT_DIRTY")
-            .parse::<bool>()
-            .is_ok(),
-        "dirty identity is a boolean"
-    );
+    let Some(dirty) = option_env!("ANIMSMITH_GIT_DIRTY") else {
+        panic!("Git-worktree build emits ANIMSMITH_GIT_DIRTY");
+    };
+    assert!(dirty.parse::<bool>().is_ok(), "dirty identity is a boolean");
 }
 
 #[test]
