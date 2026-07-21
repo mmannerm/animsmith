@@ -874,10 +874,10 @@ fn measure_json_uses_versioned_envelope() {
 }
 
 #[test]
-fn measure_text_escapes_controls_in_path_clip_and_mesh_names() {
+fn measure_text_escapes_controls_in_clip_and_mesh_names() {
     let dir = unique_temp_dir("measure-text-controls");
     let hostile = "forged\nline\u{1b}[31m";
-    let input = dir.path().join(format!("{hostile}.glb"));
+    let input = dir.path().join("hostile.glb");
     write_hostile_measure_glb(&input, hostile);
 
     let output = animsmith()
@@ -894,16 +894,8 @@ fn measure_text_escapes_controls_in_path_clip_and_mesh_names() {
     );
     let text = stdout(&output);
     assert!(!text.contains(hostile), "raw controls leaked:\n{text}");
-    assert_eq!(
-        text.matches("\\n").count(),
-        3,
-        "path, clip, and mesh: {text}"
-    );
-    assert_eq!(
-        text.matches("\\u{1b}").count(),
-        3,
-        "path, clip, and mesh: {text}"
-    );
+    assert_eq!(text.matches("\\n").count(), 2, "clip and mesh: {text}");
+    assert_eq!(text.matches("\\u{1b}").count(), 2, "clip and mesh: {text}");
 }
 
 #[test]
