@@ -54,20 +54,6 @@ fn threshold_constants_are_public_and_unchanged() {
 
 #[test]
 fn public_diff_treats_non_finite_measurements_as_absent() {
-    let mut invalid = measurements(1.0);
-    let clip = invalid.get_mut("walk").expect("fixture clip");
-    clip.duration_s = f64::NAN;
-    clip.loop_seam_ratio = Some(f64::INFINITY);
-    clip.gait.as_mut().expect("fixture gait").phase = Some(f64::NEG_INFINITY);
-    clip.gait.as_mut().expect("fixture gait").lr_amplitude_m = f64::NAN;
-    clip.speed_mps = Some(f64::INFINITY);
-    clip.bone_rotation_range_deg.insert("hips".into(), f64::NAN);
-
-    assert!(
-        PUBLIC_DIFF_MEASUREMENTS(&invalid, &invalid).is_empty(),
-        "identical absent/non-finite values must not produce false deltas"
-    );
-
     struct Case {
         metric: &'static str,
         finite: f64,
@@ -130,6 +116,12 @@ fn public_diff_treats_non_finite_measurements_as_absent() {
         let finite = measurements(1.0);
         let mut non_finite = finite.clone();
         (case.make_non_finite)(non_finite.get_mut("walk").expect("fixture clip"));
+
+        assert!(
+            PUBLIC_DIFF_MEASUREMENTS(&non_finite, &non_finite).is_empty(),
+            "identical non-finite {} must not produce a false delta",
+            case.metric
+        );
 
         let disappeared = PUBLIC_DIFF_MEASUREMENTS(&finite, &non_finite);
         assert_eq!(disappeared.len(), 1, "{}: {disappeared:?}", case.metric);
