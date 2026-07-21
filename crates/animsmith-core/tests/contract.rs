@@ -3,12 +3,12 @@ use std::collections::BTreeMap;
 use animsmith_core::check::{Check, CheckCtx};
 use animsmith_core::config::{CheckSettings, SeveritySetting};
 use animsmith_core::{
-    CheckEvaluation, CheckOutput, CheckSelection, Config, CoverageGap, CoverageGapCode, Document,
-    EvaluationScope, EvaluationScopeCode, Finding, LintEnvelope, LintFileReport,
+    Bone, CheckEvaluation, CheckOutput, CheckSelection, Config, CoverageGap, CoverageGapCode,
+    Document, EvaluationScope, EvaluationScopeCode, Finding, LintEnvelope, LintFileReport,
     MEASUREMENTS_SCHEMA_ID, MEASUREMENTS_SCHEMA_VERSION, MeasureEnvelope, MeasureFileReport,
     MeasurementContract, MeasurementReportError, MeasurementReportInput, MetricGrids,
-    OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, ResolvedRoles, RigInfo, Severity, ToolInfo,
-    ToolSource, evaluate_checks,
+    OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, ResolvedRoles, RigInfo, RigInfoError, Role, Severity,
+    ToolInfo, ToolSource, Transform, evaluate_checks,
 };
 
 fn tool() -> ToolInfo {
@@ -18,6 +18,7 @@ fn tool() -> ToolInfo {
 fn rig() -> RigInfo {
     let doc = Document::default();
     RigInfo::from_resolved(&doc, &ResolvedRoles::default())
+        .expect("empty roles match an empty document")
 }
 
 fn measurements() -> MeasurementContract {
@@ -303,4 +304,34 @@ fn tool_source_drops_revision_text_outside_the_v2_schema() {
         .expect("tool identity serializes");
     assert_eq!(json["source"]["revision"], revision);
     assert_eq!(json["source"]["dirty"], false);
+}
+
+#[test]
+fn rig_info_rejects_roles_resolved_from_another_skeleton() {
+    let mut source = Document::default();
+    source.skeleton.bones = vec![
+        Bone {
+            name: "root".into(),
+            parent: None,
+            rest: Transform::IDENTITY,
+            inverse_bind: None,
+        },
+        Bone {
+            name: "foot".into(),
+            parent: Some(0),
+            rest: Transform::IDENTITY,
+            inverse_bind: None,
+        },
+    ];
+    let roles = ResolvedRoles::from_names(&source.skeleton, [(Role::LeftFoot, "foot".to_owned())]);
+    let other = Document::default();
+
+    assert_eq!(
+        RigInfo::from_resolved(&other, &roles),
+        Err(RigInfoError::InvalidBoneId {
+            role: "left_foot",
+            bone: 1,
+            bone_count: 0,
+        })
+    );
 }

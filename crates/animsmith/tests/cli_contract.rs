@@ -941,7 +941,8 @@ fn embedded_contract_types_emit_the_published_v2_envelope() {
     .expect("built-in catalog evaluates");
     let file = animsmith_core::LintFileReport::new(
         "embedded.glb",
-        animsmith_core::RigInfo::from_resolved(&doc, &roles),
+        animsmith_core::RigInfo::from_resolved(&doc, &roles)
+            .expect("roles were resolved from this document"),
         checks,
         animsmith_core::MeasurementContract::new(
             animsmith_core::measure::measure_document(&grids, &roles, &config),

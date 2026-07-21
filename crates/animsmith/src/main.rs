@@ -351,7 +351,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 let grids = MetricGrids::new(&doc);
                 reports.push(MeasureFileReport::new(
                     file.display().to_string(),
-                    RigInfo::from_resolved(&doc, &roles),
+                    RigInfo::from_resolved(&doc, &roles).map_err(|error| error.to_string())?,
                     MeasurementContract::new(
                         animsmith_core::measure::measure_document(&grids, &roles, &config),
                         animsmith_core::measure::measure_meshes(&doc.assets),
@@ -457,7 +457,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 }
                 reports.push(LintFileReport::new(
                     file.display().to_string(),
-                    RigInfo::from_resolved(&doc, &roles),
+                    RigInfo::from_resolved(&doc, &roles).map_err(|error| error.to_string())?,
                     evaluations,
                     MeasurementContract::new(
                         animsmith_core::measure::measure_document(&grids, &roles, &config),
