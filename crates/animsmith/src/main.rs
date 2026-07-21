@@ -21,15 +21,13 @@
 
 use animsmith_core::Document;
 use animsmith_core::{
-    CheckCtx, CheckSelection, Config, DiffEnvelope, LintFileReport, MEASUREMENTS_SCHEMA_ID,
-    MEASUREMENTS_SCHEMA_VERSION, MeasureFileReport, MeasurementContract, MetricGrids,
-    OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, ReportEnvelope, ResolvedRoles, RigInfo, Severity,
-    ToolInfo, ToolSource, all_checks, evaluate_checks, resolve_configured_roles,
+    CheckCtx, CheckSelection, Config, DiffEnvelope, LintFileReport, MeasureFileReport,
+    MeasurementContract, MeasurementReportInput, MetricGrids, ReportEnvelope, ResolvedRoles,
+    RigInfo, Severity, ToolInfo, ToolSource, all_checks, evaluate_checks, resolve_configured_roles,
 };
 use animsmith_gltf::fix::Repair;
 use clap::builder::{PossibleValue, PossibleValuesParser, TypedValueParser};
 use clap::{Parser, Subcommand, ValueEnum};
-use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -714,26 +712,6 @@ fn format_write_summary(output: &Path, summary: &animsmith_gltf::write::WriteSum
     text
 }
 
-#[derive(Deserialize)]
-struct MeasurementReportInput {
-    schema_version: Option<u32>,
-    schema: Option<String>,
-    command: Option<String>,
-    files: Option<Vec<MeasurementFileInput>>,
-}
-
-#[derive(Deserialize)]
-struct MeasurementFileInput {
-    measurements: Option<MeasurementPayloadInput>,
-}
-
-#[derive(Deserialize)]
-struct MeasurementPayloadInput {
-    schema_version: Option<u32>,
-    schema: Option<String>,
-    clips: Option<BTreeMap<String, animsmith_core::measure::ClipMeasurements>>,
-}
-
 /// Measurements for `diff`: an asset file (measured now) or a prior
 /// single-file `measure`/`lint` JSON report.
 fn load_measurements(
@@ -753,86 +731,9 @@ fn load_measurements(
         // Only the final v2 envelope with measurement contract v1 is
         // accepted. Pre-finalization report shapes are intentionally not
         // retained while the project is alpha.
-        match report.schema_version {
-            Some(v) if v == OUTPUT_SCHEMA_VERSION => {}
-            Some(v) => {
-                return Err(format!(
-                    "{} has schema_version {v}; this build reads schema_version {OUTPUT_SCHEMA_VERSION}",
-                    path.display()
-                ));
-            }
-            None => {
-                return Err(format!(
-                    "{} is not an animsmith report envelope (no `schema_version`); \
-                     regenerate it with `animsmith measure --format json`",
-                    path.display()
-                ));
-            }
-        }
-        if report.schema.as_deref() != Some(OUTPUT_SCHEMA_ID) {
-            return Err(format!(
-                "{} does not identify output contract {OUTPUT_SCHEMA_ID}; regenerate it with `animsmith measure --format json`",
-                path.display()
-            ));
-        }
-        match report.command.as_deref() {
-            Some("measure" | "lint") => {}
-            Some(command) => {
-                return Err(format!(
-                    "{} is a {command:?} report; diff reads only measure or lint reports",
-                    path.display()
-                ));
-            }
-            None => {
-                return Err(format!(
-                    "{} is not an animsmith measurement report (no `command`); regenerate it with `animsmith measure --format json`",
-                    path.display()
-                ));
-            }
-        }
-        let Some(files) = report.files else {
-            return Err(format!(
-                "{} is not an animsmith report envelope (no `files` array); \
-                 regenerate it with `animsmith measure --format json`",
-                path.display()
-            ));
-        };
-        if files.len() != 1 {
-            return Err(format!(
-                "{} is a multi-file report; diff expects a single-file measurement report",
-                path.display()
-            ));
-        }
-        let measurements = files
-            .into_iter()
-            .next()
-            .expect("one file established")
-            .measurements
-            .ok_or_else(|| format!("{} report has no measurements", path.display()))?;
-        match measurements.schema_version {
-            Some(v) if v == MEASUREMENTS_SCHEMA_VERSION => {}
-            Some(v) => {
-                return Err(format!(
-                    "{} has measurement schema_version {v}; this build reads measurement schema_version {MEASUREMENTS_SCHEMA_VERSION}",
-                    path.display()
-                ));
-            }
-            None => {
-                return Err(format!(
-                    "{} has no versioned measurement contract; regenerate it with `animsmith measure --format json`",
-                    path.display()
-                ));
-            }
-        }
-        if measurements.schema.as_deref() != Some(MEASUREMENTS_SCHEMA_ID) {
-            return Err(format!(
-                "{} does not identify measurement contract {MEASUREMENTS_SCHEMA_ID}; regenerate it with `animsmith measure --format json`",
-                path.display()
-            ));
-        }
-        return measurements
-            .clips
-            .ok_or_else(|| format!("{} measurement contract has no `clips` map", path.display()));
+        return report
+            .into_clip_measurements()
+            .map_err(|error| format!("{} {error}", path.display()));
     }
     let doc = load(path)?;
     let roles = resolve_configured_roles(&doc.skeleton, &config.rig);

@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::diff::MetricDelta;
 use crate::evaluation::{
@@ -118,6 +118,156 @@ impl MeasurementContract {
     /// Per-mesh measurements in source order.
     pub fn meshes(&self) -> &[MeshMeasurements] {
         &self.meshes
+    }
+}
+
+/// Typed read-side subset accepted when a consumer needs measurements from a
+/// current single-file `measure` or `lint` report.
+///
+/// This intentionally models only the fields needed to recover the nested
+/// measurement contract. Unknown fields remain forward-compatible, while all
+/// protocol identities and command constraints are validated by
+/// [`MeasurementReportInput::into_clip_measurements`].
+#[derive(Debug, Deserialize)]
+pub struct MeasurementReportInput {
+    schema_version: Option<u32>,
+    schema: Option<String>,
+    command: Option<String>,
+    files: Option<Vec<MeasurementFileInput>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MeasurementFileInput {
+    measurements: Option<MeasurementPayloadInput>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MeasurementPayloadInput {
+    schema_version: Option<u32>,
+    schema: Option<String>,
+    clips: Option<BTreeMap<String, ClipMeasurements>>,
+}
+
+/// A typed measurement-report subset failed current-contract validation.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum MeasurementReportError {
+    /// The outer envelope omitted its version.
+    #[error(
+        "is not an animsmith report envelope (no `schema_version`); regenerate it with `animsmith measure --format json`"
+    )]
+    MissingOutputVersion,
+    /// The outer envelope uses an unsupported version.
+    #[error("has schema_version {found}; this build reads schema_version {OUTPUT_SCHEMA_VERSION}")]
+    UnsupportedOutputVersion {
+        /// Version found in the input.
+        found: u32,
+    },
+    /// The outer envelope does not carry the immutable v2 identity.
+    #[error(
+        "does not identify output contract {OUTPUT_SCHEMA_ID}; regenerate it with `animsmith measure --format json`"
+    )]
+    WrongOutputIdentity,
+    /// The outer envelope omitted its command.
+    #[error(
+        "is not an animsmith measurement report (no `command`); regenerate it with `animsmith measure --format json`"
+    )]
+    MissingCommand,
+    /// The outer envelope belongs to a command without file measurements.
+    #[error("is a {command:?} report; diff reads only measure or lint reports")]
+    UnsupportedCommand {
+        /// Command found in the input.
+        command: String,
+    },
+    /// The outer envelope omitted its file array.
+    #[error(
+        "is not an animsmith report envelope (no `files` array); regenerate it with `animsmith measure --format json`"
+    )]
+    MissingFiles,
+    /// Diff requires exactly one file record.
+    #[error("contains {found} file records; diff expects a single-file measurement report")]
+    FileCount {
+        /// Number of file records found in the input.
+        found: usize,
+    },
+    /// The file record omitted its nested measurement contract.
+    #[error("report has no measurements")]
+    MissingMeasurements,
+    /// The nested measurement contract omitted its version.
+    #[error(
+        "has no versioned measurement contract; regenerate it with `animsmith measure --format json`"
+    )]
+    MissingMeasurementVersion,
+    /// The nested measurement contract uses an unsupported version.
+    #[error(
+        "has measurement schema_version {found}; this build reads measurement schema_version {MEASUREMENTS_SCHEMA_VERSION}"
+    )]
+    UnsupportedMeasurementVersion {
+        /// Version found in the nested contract.
+        found: u32,
+    },
+    /// The nested contract does not carry the immutable measurement identity.
+    #[error(
+        "does not identify measurement contract {MEASUREMENTS_SCHEMA_ID}; regenerate it with `animsmith measure --format json`"
+    )]
+    WrongMeasurementIdentity,
+    /// The nested contract omitted its clip-measurement map.
+    #[error("measurement contract has no `clips` map")]
+    MissingClips,
+}
+
+impl MeasurementReportInput {
+    /// Validate current output/measurement identities and recover the clip map
+    /// from exactly one `measure` or `lint` file record.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error for a missing or unsupported identity, command,
+    /// file shape, nested measurement contract, or clip map.
+    pub fn into_clip_measurements(
+        self,
+    ) -> Result<BTreeMap<String, ClipMeasurements>, MeasurementReportError> {
+        match self.schema_version {
+            Some(OUTPUT_SCHEMA_VERSION) => {}
+            Some(found) => {
+                return Err(MeasurementReportError::UnsupportedOutputVersion { found });
+            }
+            None => return Err(MeasurementReportError::MissingOutputVersion),
+        }
+        if self.schema.as_deref() != Some(OUTPUT_SCHEMA_ID) {
+            return Err(MeasurementReportError::WrongOutputIdentity);
+        }
+        match self.command.as_deref() {
+            Some("measure" | "lint") => {}
+            Some(command) => {
+                return Err(MeasurementReportError::UnsupportedCommand {
+                    command: command.to_owned(),
+                });
+            }
+            None => return Err(MeasurementReportError::MissingCommand),
+        }
+        let files = self.files.ok_or(MeasurementReportError::MissingFiles)?;
+        if files.len() != 1 {
+            return Err(MeasurementReportError::FileCount { found: files.len() });
+        }
+        let measurements = files
+            .into_iter()
+            .next()
+            .and_then(|file| file.measurements)
+            .ok_or(MeasurementReportError::MissingMeasurements)?;
+        match measurements.schema_version {
+            Some(MEASUREMENTS_SCHEMA_VERSION) => {}
+            Some(found) => {
+                return Err(MeasurementReportError::UnsupportedMeasurementVersion { found });
+            }
+            None => return Err(MeasurementReportError::MissingMeasurementVersion),
+        }
+        if measurements.schema.as_deref() != Some(MEASUREMENTS_SCHEMA_ID) {
+            return Err(MeasurementReportError::WrongMeasurementIdentity);
+        }
+        measurements
+            .clips
+            .ok_or(MeasurementReportError::MissingClips)
     }
 }
 

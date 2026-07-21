@@ -557,9 +557,35 @@ mod tests {
             Finding::new("c", Severity::Note, "m3").clip("walk"),
         ];
         let md = render_markdown(&[report("a.glb", findings)], &[]);
-        assert!(md.contains("#### clip `walk`"), "{md}");
-        assert!(md.contains("#### clip `run`"), "{md}");
+        let run = md.find("#### clip `run`").expect("run heading");
+        let walk = md.find("#### clip `walk`").expect("walk heading");
+        let walk_error = md.find("| ❌ error | `a`").expect("walk error");
+        let walk_note = md.find("| ℹ️ note | `c`").expect("walk note");
+        assert!(run < walk, "clips sort ascending:\n{md}");
+        assert!(
+            walk < walk_error && walk_error < walk_note,
+            "severity sort:\n{md}"
+        );
         assert_eq!(md.matches("| Severity | Check |").count(), 2, "{md}");
+
+        let text = render_text(
+            &[report(
+                "a.glb",
+                vec![
+                    Finding::new("a", Severity::Error, "m1").clip("walk"),
+                    Finding::new("b", Severity::Warning, "m2").clip("run"),
+                    Finding::new("c", Severity::Note, "m3").clip("walk"),
+                ],
+            )],
+            &[],
+        );
+        let run = text.find("warning[b] clip 'run'").expect("run finding");
+        let walk_error = text.find("error[a] clip 'walk'").expect("walk error");
+        let walk_note = text.find("note[c] clip 'walk'").expect("walk note");
+        assert!(
+            run < walk_error && walk_error < walk_note,
+            "text sort:\n{text}"
+        );
     }
 
     #[test]
