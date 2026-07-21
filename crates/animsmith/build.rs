@@ -40,14 +40,22 @@ fn source_info() -> Option<SourceInfo> {
 }
 
 pub(crate) fn git_source_info(git_root: &Path) -> Option<SourceInfo> {
-    let revision = valid_revision(&successful_git_text(git_root, ["rev-parse", "HEAD"])?)?;
+    let revision = successful_git_text(git_root, ["rev-parse", "HEAD"])?;
     let status = git(git_root, ["status", "--porcelain", "--untracked-files=no"])?;
-    if !status.status.success() {
+    source_info_from_git_values(&revision, status.status.success(), &status.stdout)
+}
+
+pub(crate) fn source_info_from_git_values(
+    revision: &str,
+    status_succeeded: bool,
+    status_stdout: &[u8],
+) -> Option<SourceInfo> {
+    if !status_succeeded {
         return None;
     }
     Some(SourceInfo {
-        revision,
-        dirty: Some(!status.stdout.is_empty()),
+        revision: valid_revision(revision)?,
+        dirty: Some(!status_stdout.is_empty()),
     })
 }
 

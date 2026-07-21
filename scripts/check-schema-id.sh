@@ -34,6 +34,16 @@ check_schema() {
 check_schema docs/schemas/output-v2.schema.json urn:animsmith:schema:output:2
 check_schema docs/schemas/measurements-v1.schema.json urn:animsmith:schema:measurements:1
 
+# Scan every tracked repository file, including all crate tests and top-level
+# documentation. Keep the guard focused on removed execution/format symbols;
+# behavioural tests separately prove that old report inputs are rejected.
+legacy=$(git grep -nE \
+  'JsonV2Preview|json-v2-preview|run_checks|as_diagnostic|legacy_diagnostic|enum Readiness|Finding::diagnostic|output-v2-preview|presentation_findings|assert_required_properties|CheckOutput::complete|CheckOutput::partial|CheckOutput::not_evaluated|CheckOutput::complete_scoped' \
+  -- ':!scripts/check-schema-id.sh' || true)
+if [ -n "$legacy" ]; then
+  fail "removed v1/preview API or format remains:\n$legacy"
+fi
+
 if [ "$failures" -ne 0 ]; then
   exit 1
 fi

@@ -17,8 +17,10 @@ use crate::finding::Finding;
 
 macro_rules! builtin_codes {
     (
-        $kind:ident, $registry:ident, $registry_doc:literal;
-        $($(#[$meta:meta])* $name:ident => $value:literal),+ $(,)?
+        $kind:ident, $registry:ident, $docs:ident, $registry_doc:literal;
+        $($(#[$meta:meta])* $name:ident => $value:literal,
+            meaning = $meaning:literal,
+            emitted_by = [$($emitter:literal),+ $(,)?]),+ $(,)?
     ) => {
         impl $kind {
             $($(#[$meta])* pub const $name: Self = Self($value);)+
@@ -26,7 +28,53 @@ macro_rules! builtin_codes {
 
         #[doc = $registry_doc]
         pub const $registry: &[$kind] = &[$($kind::$name),+];
+
+        #[doc = concat!($registry_doc, " Includes the reference-table text and emitters.")]
+        pub const $docs: &[BuiltinCodeDocumentation] = &[
+            $(BuiltinCodeDocumentation::new($value, $meaning, &[$($emitter),+])),+
+        ];
     };
+}
+
+/// Reference documentation for one built-in evaluation scope or coverage gap.
+///
+/// The constants, code registries, and this metadata are emitted from the same
+/// declaration so the code vocabulary cannot drift from its documentation
+/// inventory silently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BuiltinCodeDocumentation {
+    code: &'static str,
+    meaning: &'static str,
+    emitted_by: &'static [&'static str],
+}
+
+impl BuiltinCodeDocumentation {
+    const fn new(
+        code: &'static str,
+        meaning: &'static str,
+        emitted_by: &'static [&'static str],
+    ) -> Self {
+        Self {
+            code,
+            meaning,
+            emitted_by,
+        }
+    }
+
+    /// Return the serialized snake-case code.
+    pub const fn code(self) -> &'static str {
+        self.code
+    }
+
+    /// Return the one-line meaning used by the output-contract reference.
+    pub const fn meaning(self) -> &'static str {
+        self.meaning
+    }
+
+    /// Return the built-in check identifiers that can emit this code.
+    pub const fn emitted_by(self) -> &'static [&'static str] {
+        self.emitted_by
+    }
 }
 
 /// Whether a check was selected for this invocation.
@@ -82,29 +130,52 @@ pub struct EvaluationScopeCode(&'static str);
 builtin_codes!(
     EvaluationScopeCode,
     BUILTIN_EVALUATION_SCOPE_CODES,
+    BUILTIN_EVALUATION_SCOPE_CODE_DOCS,
     "Built-in evaluation-scope codes used by animsmith's catalog.";
     /// Bind-pose comparison against the first animation frame.
     FIRST_FRAME_REST_DELTA => "first_frame_rest_delta",
+        meaning = "The named clip's first-frame/rest-pose rotation evidence was evaluated.",
+        emitted_by = ["bind-pose"],
     /// Loop seam comparison.
     LOOP_SEAM => "loop_seam",
+        meaning = "One named clip's positional loop seam was measured.",
+        emitted_by = ["loop-seam"],
     /// Foot-stance evaluation when no side-specific scope is available.
     FOOT_STANCE => "foot_stance",
+        meaning = "Whole-clip prerequisites for stance analysis were evaluated.",
+        emitted_by = ["foot-slide"],
     /// Left-foot stance evaluation.
     LEFT_FOOT_STANCE => "left_foot_stance",
+        meaning = "The named clip's left foot/toe stance was evaluated.",
+        emitted_by = ["foot-slide"],
     /// Right-foot stance evaluation.
     RIGHT_FOOT_STANCE => "right_foot_stance",
+        meaning = "The named clip's right foot/toe stance was evaluated.",
+        emitted_by = ["foot-slide"],
     /// Root-motion speed measurement.
     ROOT_MOTION_SPEED => "root_motion_speed",
+        meaning = "One named clip's root-motion speed was measured.",
+        emitted_by = ["root-motion-speed"],
     /// Existence of the configured gait-group members.
     MEMBER_EXISTENCE => "member_existence",
+        meaning = "Configured gait-group members were checked for existence.",
+        emitted_by = ["gait-group"],
     /// Per-member gait phase measurement.
     PHASE_MEASUREMENT => "phase_measurement",
+        meaning = "One named clip's gait phase was measured or lacked usable evidence.",
+        emitted_by = ["gait-group"],
     /// Coherence of the measurable gait phases in a group.
     PHASE_COHERENCE => "phase_coherence",
+        meaning = "One named gait group's measurable phases were compared.",
+        emitted_by = ["gait-group"],
     /// In-place versus travelling classification.
     TRAVEL_MODE => "travel_mode",
+        meaning = "One named clip's in-place/root-motion declaration was judged.",
+        emitted_by = ["in-place"],
     /// Declared frame-grid evaluation.
     FRAME_GRID => "frame_grid",
+        meaning = "The named clip's declared frame grid was evaluated.",
+        emitted_by = ["fps"],
 );
 
 impl EvaluationScopeCode {
@@ -165,19 +236,32 @@ pub struct CoverageGapCode(&'static str);
 builtin_codes!(
     CoverageGapCode,
     BUILTIN_COVERAGE_GAP_CODES,
+    BUILTIN_COVERAGE_GAP_CODE_DOCS,
     "Built-in coverage-gap codes used by animsmith's catalog.";
     /// Required rig roles could not be resolved.
     ROLES_UNRESOLVED => "roles_unresolved",
+        meaning = "Required semantic rig roles were not resolved.",
+        emitted_by = ["loop-seam", "root-motion-speed", "in-place", "foot-slide", "gait-group"],
     /// A metric needed by declared work could not be produced.
     MEASUREMENT_UNAVAILABLE => "measurement_unavailable",
+        meaning = "A required numeric measurement could not be produced or did not meet its evidence floor.",
+        emitted_by = ["loop-seam", "root-motion-speed", "in-place", "foot-slide", "gait-group"],
     /// Fewer than two gait-group members produced a phase measurement.
     INSUFFICIENT_MEASURABLE_MEMBERS => "insufficient_measurable_members",
+        meaning = "Fewer than two gait-group members produced usable phases.",
+        emitted_by = ["gait-group"],
     /// Some configured gait-group members did not produce a phase measurement.
     MEMBERS_NOT_EVALUATED => "members_not_evaluated",
+        meaning = "Some configured gait-group members did not produce usable phases.",
+        emitted_by = ["gait-group"],
     /// A declared frame rate was zero, negative, or non-finite.
     INVALID_DECLARED_FPS => "invalid_declared_fps",
+        meaning = "A declared frame rate was zero, negative, or non-finite.",
+        emitted_by = ["fps"],
     /// Too few usable rotation tracks existed for bind-pose comparison.
     INSUFFICIENT_ROTATION_EVIDENCE => "insufficient_rotation_evidence",
+        meaning = "Too few usable rotation tracks existed for a bind-pose comparison.",
+        emitted_by = ["bind-pose"],
 );
 
 impl CoverageGapCode {

@@ -117,6 +117,31 @@ fn git_source_info_observes_revision_and_tracked_dirty_state() {
 }
 
 #[test]
+fn git_source_info_rejects_revision_that_cannot_satisfy_the_schema() {
+    for revision in [
+        "short",
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "0123456789abcdef0123456789abcdef0123456z",
+        "0123456789abcdef0123456789abcdef01234567\nforge",
+    ] {
+        assert_eq!(
+            build_script::source_info_from_git_values(revision, true, b""),
+            None,
+            "Git revision {revision:?} must be withheld"
+        );
+    }
+}
+
+#[test]
+fn git_source_info_requires_a_successful_status_query() {
+    let revision = "0123456789abcdef0123456789abcdef01234567";
+    assert_eq!(
+        build_script::source_info_from_git_values(revision, false, b""),
+        None
+    );
+}
+
+#[test]
 fn workspace_build_emits_source_identity_environment() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let packaged = manifest_dir.join(".cargo_vcs_info.json");
