@@ -90,6 +90,20 @@ pub enum RigInfoError {
         /// Number of bones available in the supplied document.
         bone_count: usize,
     },
+    /// A valid bone index now names a different bone than the resolution did.
+    #[error(
+        "resolved role {role:?} expected bone {bone} to be {expected:?}, but the document names it {found:?}"
+    )]
+    BoneNameMismatch {
+        /// Stable semantic role name.
+        role: &'static str,
+        /// Bone index carried by the resolution.
+        bone: usize,
+        /// Bone name captured when the role was resolved.
+        expected: String,
+        /// Bone name at that index in the supplied document.
+        found: String,
+    },
 }
 
 impl RigInfo {
@@ -103,8 +117,8 @@ impl RigInfo {
     /// skeleton.
     pub fn from_resolved(doc: &Document, roles: &ResolvedRoles) -> Result<Self, RigInfoError> {
         let resolved_roles = roles
-            .iter()
-            .map(|(role, bone)| {
+            .iter_with_names()
+            .map(|(role, bone, expected_name)| {
                 let name = doc
                     .skeleton
                     .bones
@@ -114,6 +128,14 @@ impl RigInfo {
                         bone,
                         bone_count: doc.skeleton.bones.len(),
                     })?;
+                if name.name != expected_name {
+                    return Err(RigInfoError::BoneNameMismatch {
+                        role: role.as_str(),
+                        bone,
+                        expected: expected_name.to_owned(),
+                        found: name.name.clone(),
+                    });
+                }
                 Ok((role.as_str(), name.name.clone()))
             })
             .collect::<Result<_, _>>()?;
