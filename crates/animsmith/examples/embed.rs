@@ -9,8 +9,8 @@ use animsmith_core::config::{ClipExpectations, Pinned};
 use animsmith_core::measure::measure_document;
 use animsmith_core::profile::{ResolvedRoles, Role, detect_profile};
 use animsmith_core::{
-    CheckCtx, CheckSelection, Config, LintFileReport, MeasurementContract, MetricGrids,
-    ReportEnvelope, RigInfo, Severity, ToolInfo, ToolSource, all_checks, evaluate_checks,
+    CheckCtx, CheckSelection, Config, LintEnvelope, LintFileReport, MeasurementContract,
+    MetricGrids, RigInfo, Severity, ToolInfo, ToolSource, all_checks, evaluate_checks,
 };
 use std::path::Path;
 
@@ -102,7 +102,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // When the host interoperates with CLI consumers, it can emit the exact
     // same versioned envelope without copying wire structs or schema URNs.
-    let report = ReportEnvelope::lint(
+    let report = LintEnvelope::new(
         ToolInfo::animsmith(env!("CARGO_PKG_VERSION"), ToolSource::new(None, None)),
         vec![LintFileReport::new(
             path.display().to_string(),

@@ -948,7 +948,7 @@ fn embedded_contract_types_emit_the_published_v2_envelope() {
             animsmith_core::measure::measure_meshes(&doc.assets),
         ),
     );
-    let envelope = animsmith_core::ReportEnvelope::lint(
+    let envelope = animsmith_core::LintEnvelope::new(
         animsmith_core::ToolInfo::animsmith(
             env!("CARGO_PKG_VERSION"),
             animsmith_core::ToolSource::new(None, None),

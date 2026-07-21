@@ -95,8 +95,9 @@ thread-safety, sampling, measurement scope, and map-key details.
 
 When the host needs to exchange the same JSON as the CLI, construct
 `MeasurementContract`, `MeasureFileReport`/`LintFileReport`, and
-`ReportEnvelope` from `animsmith-core::contract`. That module owns both
-immutable URNs and derives the lint/measure summary from the supplied records.
+`MeasureEnvelope`/`LintEnvelope` from `animsmith-core::contract`. That module
+owns both immutable URNs and derives the lint/measure summary from the supplied
+records.
 It also exposes the typed `MeasurementReportInput` subset for consumers that
 need to recover measurements from a current single-file measure or lint report.
 The compiling example emits a full schema-valid lint envelope; embedded

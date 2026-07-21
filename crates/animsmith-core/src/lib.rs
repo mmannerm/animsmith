@@ -5,7 +5,7 @@
 //! resolution ([`detect_profile`], [`ResolvedRoles::from_names`]),
 //! typed configuration ([`Config`]), measurement generation
 //! ([`measure::measure_document`]), versioned result envelopes
-//! ([`contract::ReportEnvelope`]), measurement diffs
+//! ([`contract::MeasureEnvelope`], [`contract::LintEnvelope`]), measurement diffs
 //! ([`diff::diff_measurements`]), structured findings ([`Finding`]), and
 //! check execution ([`CheckCtx`], [`all_checks`], [`evaluate_checks`]).
 //! The [`animsmith-gltf`] and [`animsmith-fbx`] loader crates translate file
@@ -103,10 +103,10 @@ pub mod transform;
 pub use check::{Check, CheckCtx, all_checks, mechanical_checks};
 pub use config::{ClipExpectations, Config, GaitGroup, Pinned, SeveritySetting};
 pub use contract::{
-    DiffEnvelope, LintFileReport, LintSummary, MEASUREMENTS_SCHEMA_ID, MEASUREMENTS_SCHEMA_VERSION,
-    MeasureFileReport, MeasureSummary, MeasurementContract, MeasurementReportError,
-    MeasurementReportInput, OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, ReportEnvelope, RigInfo,
-    ToolInfo, ToolSource,
+    DiffEnvelope, LintEnvelope, LintFileReport, MEASUREMENTS_SCHEMA_ID,
+    MEASUREMENTS_SCHEMA_VERSION, MeasureEnvelope, MeasureFileReport, MeasurementContract,
+    MeasurementReportError, MeasurementReportInput, OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION,
+    RigInfo, ToolInfo, ToolSource,
 };
 pub use evaluation::{
     Applicability, BUILTIN_COVERAGE_GAP_CODES, BUILTIN_EVALUATION_SCOPE_CODES, CheckEvaluation,
