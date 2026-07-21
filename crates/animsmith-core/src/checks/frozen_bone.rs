@@ -85,6 +85,6 @@ impl Check for FrozenBone {
                 }
             }
         }
-        CheckOutput::complete(findings)
+        CheckOutput::from_coverage(findings, Vec::new(), Vec::new())
     }
 }

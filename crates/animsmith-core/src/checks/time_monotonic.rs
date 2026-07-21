@@ -81,6 +81,6 @@ impl Check for TimeMonotonic {
                 );
             }
         }
-        CheckOutput::complete(findings)
+        CheckOutput::from_coverage(findings, Vec::new(), Vec::new())
     }
 }

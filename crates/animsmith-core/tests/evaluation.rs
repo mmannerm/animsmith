@@ -16,7 +16,7 @@ impl Check for Complete {
     }
 
     fn evaluate(&self, _ctx: &CheckCtx) -> CheckOutput {
-        CheckOutput::complete(Vec::new())
+        CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new())
     }
 }
 
@@ -28,11 +28,15 @@ impl Check for FindingCheck {
     }
 
     fn evaluate(&self, _ctx: &CheckCtx) -> CheckOutput {
-        CheckOutput::complete(vec![Finding::new(
-            self.id(),
-            Severity::Warning,
-            "content warning",
-        )])
+        CheckOutput::from_coverage(
+            vec![Finding::new(
+                self.id(),
+                Severity::Warning,
+                "content warning",
+            )],
+            Vec::new(),
+            Vec::new(),
+        )
     }
 }
 
@@ -105,7 +109,11 @@ impl Check for MismatchedFinding {
     }
 
     fn evaluate(&self, _ctx: &CheckCtx) -> CheckOutput {
-        CheckOutput::complete(vec![Finding::new("other", Severity::Error, "wrong owner")])
+        CheckOutput::from_coverage(
+            vec![Finding::new("other", Severity::Error, "wrong owner")],
+            Vec::new(),
+            Vec::new(),
+        )
     }
 }
 
@@ -133,19 +141,19 @@ fn records_complete_findings_partial_and_not_evaluated() {
         let records = evaluate_checks(ctx, &catalog(), CheckSelection::All).unwrap();
         assert_eq!(records.len(), 4);
 
-        assert_eq!(records[0].evaluation, EvaluationState::Complete);
+        assert_eq!(records[0].evaluation(), EvaluationState::Complete);
         assert!(records[0].findings.is_empty());
 
-        assert_eq!(records[1].evaluation, EvaluationState::Complete);
+        assert_eq!(records[1].evaluation(), EvaluationState::Complete);
         assert_eq!(records[1].findings.len(), 1);
 
-        assert_eq!(records[2].evaluation, EvaluationState::Partial);
+        assert_eq!(records[2].evaluation(), EvaluationState::Partial);
         assert_eq!(records[2].findings.len(), 1);
         assert_eq!(records[2].gaps[0].code, CoverageGapCode::ROLES_UNRESOLVED);
         assert_eq!(records[2].evaluated_scopes[0].code, "member_existence");
 
         assert_eq!(records[3].applicability, Applicability::Applicable);
-        assert_eq!(records[3].evaluation, EvaluationState::NotEvaluated);
+        assert_eq!(records[3].evaluation(), EvaluationState::NotEvaluated);
         assert_eq!(records[3].gaps[0].code.as_str(), "acme:input_unavailable");
     });
 }
@@ -186,7 +194,7 @@ fn disabled_unselected_and_not_applicable_are_independent_and_never_execute() {
     assert_eq!(records[0].selection, SelectionState::Unselected);
     assert_eq!(records[0].configuration, ConfigurationState::Enabled);
     assert_eq!(records[0].applicability, Applicability::Applicable);
-    assert_eq!(records[0].evaluation, EvaluationState::NotEvaluated);
+    assert_eq!(records[0].evaluation(), EvaluationState::NotEvaluated);
     assert_eq!(records[1].selection, SelectionState::Selected);
     assert_eq!(records[1].configuration, ConfigurationState::Disabled);
     assert_eq!(records[1].applicability, Applicability::Applicable);
@@ -275,8 +283,8 @@ fn coverage_classification_rejects_findings_without_completed_scope() {
 }
 
 #[test]
-fn complete_constructor_has_no_coverage_evidence() {
-    let output = CheckOutput::complete(Vec::new());
+fn complete_coverage_has_no_evidence() {
+    let output = CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new());
     assert_eq!(output.evaluation(), EvaluationState::Complete);
     assert!(output.evaluated_scopes().is_empty());
     assert!(output.gaps().is_empty());

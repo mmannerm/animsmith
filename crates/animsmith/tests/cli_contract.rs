@@ -1,4 +1,4 @@
-use animsmith_core::glam::Quat;
+use animsmith_core::glam::{Quat, Vec3};
 use animsmith_core::model::*;
 use animsmith_gltf::fix::{FixSession, Repair as GltfRepair};
 use animsmith_testkit::{quats_from_angles, scaled_quat, two_bone_rotation_doc};
@@ -180,6 +180,25 @@ fn write_two_clip_clean_glb(path: &std::path::Path) {
     second.name = "sway_b".into();
     doc.clips.push(second);
     animsmith_gltf::write::write(&doc, path).expect("writes two-clip fixture");
+}
+
+fn write_hostile_measure_glb(path: &std::path::Path, hostile: &str) {
+    let mut doc = sway_doc(false);
+    doc.clips[0].name = hostile.into();
+    doc.assets.meshes.push(MeshAsset {
+        name: hostile.into(),
+        node: 0,
+        primitives: vec![Primitive {
+            positions: vec![
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, 1.0, 0.0),
+            ],
+            ..Primitive::default()
+        }],
+        ..MeshAsset::default()
+    });
+    animsmith_gltf::write::write(&doc, path).expect("writes hostile-name fixture");
 }
 
 fn write_json(path: &std::path::Path, value: &Value) {
@@ -852,6 +871,39 @@ fn measure_json_uses_versioned_envelope() {
     assert_eq!(files[0]["measurements"]["schema_version"], 1);
     assert_eq!(files[0]["measurements"]["schema"], MEASUREMENTS_SCHEMA_ID);
     assert!(files[0]["measurements"]["clips"]["walk"]["duration_s"].is_number());
+}
+
+#[test]
+fn measure_text_escapes_controls_in_path_clip_and_mesh_names() {
+    let dir = unique_temp_dir("measure-text-controls");
+    let hostile = "forged\nline\u{1b}[31m";
+    let input = dir.path().join(format!("{hostile}.glb"));
+    write_hostile_measure_glb(&input, hostile);
+
+    let output = animsmith()
+        .arg("measure")
+        .arg(&input)
+        .args(["--format", "text"])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    let text = stdout(&output);
+    assert!(!text.contains(hostile), "raw controls leaked:\n{text}");
+    assert_eq!(
+        text.matches("\\n").count(),
+        3,
+        "path, clip, and mesh: {text}"
+    );
+    assert_eq!(
+        text.matches("\\u{1b}").count(),
+        3,
+        "path, clip, and mesh: {text}"
+    );
 }
 
 #[test]
@@ -2159,6 +2211,7 @@ fn lint_text_groups_repeated_per_clip_coverage_gaps() {
         .arg(&config)
         .arg("lint")
         .arg(&input)
+        .args(["--select", "loop-seam"])
         .output()
         .expect("runs animsmith");
     assert_eq!(
@@ -2171,7 +2224,36 @@ fn lint_text_groups_repeated_per_clip_coverage_gaps() {
     assert_eq!(text.matches("coverage[loop-seam]").count(), 1, "{text}");
     assert!(text.contains("roles_unresolved ×2"), "{text}");
     assert!(text.contains("sway, sway_b"), "{text}");
-    assert!(text.contains("4 coverage gap(s)"), "{text}");
+    assert!(text.contains("2 coverage gap(s)"), "{text}");
+
+    let json_output = animsmith()
+        .args(["--config"])
+        .arg(&config)
+        .arg("lint")
+        .arg(&input)
+        .args(["--select", "loop-seam", "--format", "json"])
+        .output()
+        .expect("runs JSON lint");
+    assert_eq!(
+        json_output.status.code(),
+        Some(0),
+        "{}",
+        stderr(&json_output)
+    );
+    let json: Value = serde_json::from_slice(&json_output.stdout).expect("valid JSON");
+    let loop_seam = json["files"][0]["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["check_id"] == "loop-seam")
+        .unwrap();
+    let subjects: Vec<_> = loop_seam["gaps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|gap| gap["scope"]["subject"].as_str().unwrap())
+        .collect();
+    assert_eq!(subjects, ["sway", "sway_b"]);
 }
 
 #[test]

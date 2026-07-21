@@ -147,6 +147,16 @@ pub enum ContractError {
         /// Producer-supplied path of the invalid file record.
         path: String,
     },
+    /// A lint check record carries evidence forbidden by its derived state.
+    #[error("lint envelope file {path:?} check {check_id:?} has invalid evidence: {reason}")]
+    InvalidCheckEvidence {
+        /// Producer-supplied path of the invalid file record.
+        path: String,
+        /// Stable id of the invalid check record.
+        check_id: &'static str,
+        /// Contract rule violated by the record.
+        reason: &'static str,
+    },
 }
 
 impl FileReport {
@@ -317,7 +327,8 @@ impl ReportEnvelope<LintSummary> {
     /// # Errors
     ///
     /// Returns an error when any supplied file was constructed as a
-    /// measurement-only record and therefore lacks `checks`.
+    /// measurement-only record and therefore lacks `checks`, or when a check
+    /// carries evidence forbidden by its derived activation/evaluation state.
     pub fn lint(tool: ToolInfo, files: Vec<FileReport>) -> Result<Self, ContractError> {
         if let Some(file) = files.iter().find(|file| file.checks.is_none()) {
             return Err(ContractError::LintFileMissingChecks {
@@ -328,6 +339,28 @@ impl ReportEnvelope<LintSummary> {
         let mut checks = CheckSummary::default();
         for file in &files {
             for check in file.checks().unwrap_or_default() {
+                let inactive = check.selection == SelectionState::Unselected
+                    || check.configuration == ConfigurationState::Disabled
+                    || check.applicability == Applicability::NotApplicable;
+                if inactive
+                    && (!check.findings.is_empty()
+                        || !check.evaluated_scopes.is_empty()
+                        || !check.gaps.is_empty())
+                {
+                    return Err(ContractError::InvalidCheckEvidence {
+                        path: file.path.clone(),
+                        check_id: check.check_id,
+                        reason: "inactive checks cannot carry findings, scopes, or gaps",
+                    });
+                }
+                if check.evaluation() == EvaluationState::NotEvaluated && !check.findings.is_empty()
+                {
+                    return Err(ContractError::InvalidCheckEvidence {
+                        path: file.path.clone(),
+                        check_id: check.check_id,
+                        reason: "not-evaluated checks cannot carry findings",
+                    });
+                }
                 checks.total += 1;
                 for finding in &check.findings {
                     findings.add(finding.severity);
@@ -344,7 +377,7 @@ impl ReportEnvelope<LintSummary> {
                     Applicability::Applicable => checks.applicability.applicable += 1,
                     Applicability::NotApplicable => checks.applicability.not_applicable += 1,
                 }
-                match check.evaluation {
+                match check.evaluation() {
                     EvaluationState::Complete => checks.evaluation.complete += 1,
                     EvaluationState::Partial => checks.evaluation.partial += 1,
                     EvaluationState::NotEvaluated => checks.evaluation.not_evaluated += 1,

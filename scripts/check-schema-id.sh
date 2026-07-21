@@ -38,6 +38,11 @@ gap_codes=$(sed -nE 's/.*Self\("([^"]+)"\);/\1/p' crates/animsmith-core/src/eval
 scope_codes=$(grep -RhoE 'EvaluationScope::new\("[^"]+"' crates/animsmith-core/src/checks \
   | sed -E 's/.*EvaluationScope::new\("([^"]+)"/\1/' \
   | sort -u)
+scope_calls=$(git grep -n 'EvaluationScope::new(' -- crates/animsmith-core/src/checks || true)
+nonliteral_scope_calls=$(printf "%s\n" "$scope_calls" | grep -vE 'EvaluationScope::new\("[^"]+"' || true)
+if [ -n "$nonliteral_scope_calls" ]; then
+  fail "built-in evaluation scopes must use literal codes so documentation drift stays detectable:\n$nonliteral_scope_calls"
+fi
 for code in $gap_codes $scope_codes; do
   if ! grep -Fq "\`$code\`" docs/output.md; then
     fail "docs/output.md does not document built-in gap/scope code $code"
@@ -53,10 +58,15 @@ for removed_schema in \
 done
 
 legacy=$(git grep -nE \
-  'JsonV2Preview|json-v2-preview|run_checks|as_diagnostic|legacy_diagnostic|enum Readiness|Finding::diagnostic|output-v2-preview' \
+  'JsonV2Preview|json-v2-preview|run_checks|as_diagnostic|legacy_diagnostic|enum Readiness|Finding::diagnostic|output-v2-preview|presentation_findings|assert_required_properties|CheckOutput::complete|CheckOutput::partial|CheckOutput::not_evaluated|CheckOutput::complete_scoped' \
   -- ':!scripts/check-schema-id.sh' || true)
 if [ -n "$legacy" ]; then
   fail "removed v1/preview API or format remains:\n$legacy"
+fi
+
+contract_duplicates=$(git grep -nE 'struct (EnvelopeHeader|ReportEnvelope|FileReport|MeasurementContract)|serde_json::Value' -- crates/animsmith/src/main.rs || true)
+if [ -n "$contract_duplicates" ]; then
+  fail "CLI reimplements shared contract structure instead of consuming animsmith-core:\n$contract_duplicates"
 fi
 
 legacy_envelope=$(

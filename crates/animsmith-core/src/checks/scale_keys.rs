@@ -74,6 +74,6 @@ impl Check for ScaleKeys {
                 );
             }
         }
-        CheckOutput::complete(findings)
+        CheckOutput::from_coverage(findings, Vec::new(), Vec::new())
     }
 }
