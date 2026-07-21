@@ -613,7 +613,7 @@ mod docs_contract {
     #[test]
     fn output_docs_match_registered_builtin_evidence_codes_exactly() {
         let docs = include_str!("../../../docs/output.md");
-        let crlf = docs.replace('\n', "\r\n");
+        let crlf = docs.lines().collect::<Vec<_>>().join("\r\n");
         for line_endings in [docs, crlf.as_str()] {
             assert_reference_table(
                 line_endings,

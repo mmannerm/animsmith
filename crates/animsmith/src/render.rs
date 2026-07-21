@@ -730,13 +730,13 @@ mod tests {
 
     #[test]
     fn repeated_coverage_gaps_are_grouped_without_losing_the_count() {
-        let gaps = ["walk_a", "walk_b"]
-            .into_iter()
-            .map(|clip| {
-                CoverageGap::new(CoverageGapCode::ROLES_UNRESOLVED, "feet unresolved")
-                    .scope(EvaluationScope::new(EvaluationScopeCode::FOOT_STANCE).subject(clip))
-            })
-            .collect();
+        let gaps = vec![
+            CoverageGap::new(CoverageGapCode::ROLES_UNRESOLVED, "feet unresolved")
+                .scope(EvaluationScope::new(EvaluationScopeCode::FOOT_STANCE).subject("walk_a")),
+            CoverageGap::new(CoverageGapCode::ROLES_UNRESOLVED, "toes unresolved").scope(
+                EvaluationScope::new(EvaluationScopeCode::LEFT_FOOT_STANCE).subject("walk_b"),
+            ),
+        ];
         let file = report_with_checks(
             "many.glb",
             vec![evaluation("foot-slide", Vec::new(), Vec::new(), gaps)],
@@ -746,6 +746,16 @@ mod tests {
         assert_eq!(text.matches("coverage[foot-slide]").count(), 1, "{text}");
         assert!(text.contains("roles_unresolved ×2"), "{text}");
         assert!(text.contains("2 coverage gap(s)"), "{text}");
+        for value in [
+            "foot_stance",
+            "left_foot_stance",
+            "walk_a",
+            "walk_b",
+            "feet unresolved",
+            "toes unresolved",
+        ] {
+            assert!(text.contains(value), "missing {value:?}:\n{text}");
+        }
 
         let markdown = render_markdown(&[file], &[]);
         assert_eq!(
@@ -759,6 +769,29 @@ mod tests {
             "{markdown}"
         );
         assert!(markdown.contains("2 coverage gap(s)"), "{markdown}");
+        for value in [
+            "foot_stance",
+            "left_foot_stance",
+            "walk_a",
+            "walk_b",
+            "feet unresolved",
+            "toes unresolved",
+        ] {
+            assert!(markdown.contains(value), "missing {value:?}:\n{markdown}");
+        }
+    }
+
+    #[test]
+    fn grouped_value_summary_is_unique_sorted_and_truncated_after_five() {
+        assert_eq!(
+            summarized_group_values(["b", "a", "b"]),
+            "a, b",
+            "duplicate values collapse in stable order"
+        );
+        assert_eq!(
+            summarized_group_values(["g", "f", "e", "d", "c", "b", "a"]),
+            "a, b, c, d, e, … +2 more"
+        );
     }
 
     #[test]

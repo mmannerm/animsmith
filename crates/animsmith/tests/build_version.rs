@@ -236,7 +236,21 @@ fn write_manifest(manifest_dir: &Path) {
 }
 
 fn git(dir: &Path, args: &[&str]) {
-    let output = Command::new("git")
+    let output = isolated_git_command(dir)
+        .args(args)
+        .output()
+        .expect("runs git");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn isolated_git_command(dir: &Path) -> Command {
+    let mut command = Command::new("git");
+    build_script::clear_git_repository_env(&mut command);
+    command
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", dir.join(".empty-gitconfig"))
         .env_remove("GIT_DEFAULT_HASH")
@@ -251,21 +265,12 @@ fn git(dir: &Path, args: &[&str]) {
             dir.join(".no-hooks").display()
         ))
         .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .expect("runs git");
-    assert!(
-        output.status.success(),
-        "git {args:?} failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+        .arg(dir);
+    command
 }
 
 fn git_output(dir: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(dir)
+    let output = isolated_git_command(dir)
         .args(args)
         .output()
         .expect("runs git");
