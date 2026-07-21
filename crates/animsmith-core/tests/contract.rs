@@ -334,4 +334,29 @@ fn rig_info_rejects_roles_resolved_from_another_skeleton() {
             bone_count: 0,
         })
     );
+
+    let mut same_size = Document::default();
+    same_size.skeleton.bones = vec![
+        Bone {
+            name: "root".into(),
+            parent: None,
+            rest: Transform::IDENTITY,
+            inverse_bind: None,
+        },
+        Bone {
+            name: "hand".into(),
+            parent: Some(0),
+            rest: Transform::IDENTITY,
+            inverse_bind: None,
+        },
+    ];
+    assert_eq!(
+        RigInfo::from_resolved(&same_size, &roles),
+        Err(RigInfoError::BoneNameMismatch {
+            role: "left_foot",
+            bone: 1,
+            expected: "foot".into(),
+            found: "hand".into(),
+        })
+    );
 }
