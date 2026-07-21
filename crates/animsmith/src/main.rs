@@ -21,8 +21,8 @@
 
 use animsmith_core::Document;
 use animsmith_core::{
-    CheckCtx, CheckSelection, Config, DiffEnvelope, LintFileReport, MeasureFileReport,
-    MeasurementContract, MeasurementReportInput, MetricGrids, ReportEnvelope, ResolvedRoles,
+    CheckCtx, CheckSelection, Config, DiffEnvelope, LintEnvelope, LintFileReport, MeasureEnvelope,
+    MeasureFileReport, MeasurementContract, MeasurementReportInput, MetricGrids, ResolvedRoles,
     RigInfo, Severity, ToolInfo, ToolSource, all_checks, evaluate_checks, resolve_configured_roles,
 };
 use animsmith_gltf::fix::Repair;
@@ -360,7 +360,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             }
             match format {
                 Format::Json => {
-                    let envelope = ReportEnvelope::measure(current_tool(), reports);
+                    let envelope = MeasureEnvelope::new(current_tool(), reports);
                     render::print_json(&envelope);
                 }
                 Format::Text => {
@@ -467,7 +467,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             }
             match format {
                 LintFormat::Json => {
-                    let envelope = ReportEnvelope::lint(current_tool(), reports);
+                    let envelope = LintEnvelope::new(current_tool(), reports);
                     render::print_json(&envelope);
                 }
                 LintFormat::Text => render::print_text(&reports, &allow),

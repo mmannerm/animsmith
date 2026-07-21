@@ -530,10 +530,10 @@ of output v2:
 1. **The versioned envelope belongs to `animsmith-core`, not the CLI binary.**
    The CLI still supplies its build identity and frontend policy, but
    `MeasurementContract`, the command-specific `MeasureFileReport` and
-   `LintFileReport` records, `ReportEnvelope`, summaries, and URNs are shared
-   library types. This lets embedded producers emit the exact schema without
-   copying private structs or protocol strings while making an invalid
-   measure/lint record shape unrepresentable.
+   `LintFileReport` records, command-specific envelopes, summaries, and URNs
+   are shared library types. This lets embedded producers emit the exact
+   schema without copying private structs or protocol strings while making an
+   invalid measure/lint record shape unrepresentable.
 
 2. **Nested findings keep their `check_id`.** A `Finding` is also a standalone
    embedded result and the record consumed by text, Markdown, and HTML

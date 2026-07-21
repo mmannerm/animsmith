@@ -1,10 +1,14 @@
 use std::collections::BTreeMap;
 
+use animsmith_core::check::{Check, CheckCtx};
+use animsmith_core::config::{CheckSettings, SeveritySetting};
 use animsmith_core::{
-    Document, LintFileReport, MEASUREMENTS_SCHEMA_ID, MEASUREMENTS_SCHEMA_VERSION,
-    MeasureFileReport, MeasurementContract, MeasurementReportError, MeasurementReportInput,
-    OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, ReportEnvelope, ResolvedRoles, RigInfo, ToolInfo,
-    ToolSource,
+    CheckEvaluation, CheckOutput, CheckSelection, Config, CoverageGap, CoverageGapCode, Document,
+    EvaluationScope, EvaluationScopeCode, Finding, LintEnvelope, LintFileReport,
+    MEASUREMENTS_SCHEMA_ID, MEASUREMENTS_SCHEMA_VERSION, MeasureEnvelope, MeasureFileReport,
+    MeasurementContract, MeasurementReportError, MeasurementReportInput, MetricGrids,
+    OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, ResolvedRoles, RigInfo, Severity, ToolInfo,
+    ToolSource, evaluate_checks,
 };
 
 fn tool() -> ToolInfo {
@@ -22,11 +26,11 @@ fn measurements() -> MeasurementContract {
 
 #[test]
 fn command_specific_file_types_serialize_only_their_valid_shape() {
-    let measure = ReportEnvelope::measure(
+    let measure = MeasureEnvelope::new(
         tool(),
         vec![MeasureFileReport::new("measure.glb", rig(), measurements())],
     );
-    let lint = ReportEnvelope::lint(
+    let lint = LintEnvelope::new(
         tool(),
         vec![LintFileReport::new(
             "lint.glb",
@@ -47,6 +51,101 @@ fn command_specific_file_types_serialize_only_their_valid_shape() {
             .into_clip_measurements()
             .expect("current measure envelope is accepted")
             .is_empty()
+    );
+}
+
+struct DisabledCheck;
+
+impl Check for DisabledCheck {
+    fn id(&self) -> &'static str {
+        "disabled"
+    }
+
+    fn evaluate(&self, _ctx: &CheckCtx<'_>) -> CheckOutput {
+        panic!("disabled checks must not evaluate")
+    }
+}
+
+fn disabled_evaluation() -> CheckEvaluation {
+    let doc = Document::default();
+    let roles = ResolvedRoles::default();
+    let config = Config {
+        checks: BTreeMap::from([(
+            "disabled".to_owned(),
+            CheckSettings {
+                severity: Some(SeveritySetting::Off),
+                ..CheckSettings::default()
+            },
+        )]),
+        ..Config::default()
+    };
+    let grids = MetricGrids::new(&doc);
+    let ctx = CheckCtx::new(&grids, &roles, &config);
+    evaluate_checks(&ctx, &[Box::new(DisabledCheck)], CheckSelection::All)
+        .expect("disabled check record is valid")
+        .remove(0)
+}
+
+#[test]
+fn lint_summary_aggregates_every_axis_and_finding_bucket_across_files() {
+    let partial = CheckEvaluation::evaluated(
+        "partial",
+        CheckOutput::from_coverage(
+            vec![
+                Finding::new("partial", Severity::Error, "error"),
+                Finding::new("partial", Severity::Note, "note one"),
+            ],
+            vec![EvaluationScope::new(EvaluationScopeCode::custom(
+                "test:completed",
+            ))],
+            vec![CoverageGap::new(
+                CoverageGapCode::custom("test:missing"),
+                "missing evidence",
+            )],
+        ),
+    )
+    .expect("partial record is valid");
+    let complete = CheckEvaluation::evaluated(
+        "complete",
+        CheckOutput::from_coverage(
+            vec![
+                Finding::new("complete", Severity::Warning, "warning"),
+                Finding::new("complete", Severity::Note, "note two"),
+            ],
+            Vec::new(),
+            Vec::new(),
+        ),
+    )
+    .expect("complete record is valid");
+
+    let report = LintEnvelope::new(
+        tool(),
+        vec![
+            LintFileReport::new(
+                "first.glb",
+                rig(),
+                vec![partial, disabled_evaluation()],
+                measurements(),
+            ),
+            LintFileReport::new("second.glb", rig(), vec![complete], measurements()),
+        ],
+    );
+    let report = serde_json::to_value(report).expect("lint envelope serializes");
+
+    assert_eq!(
+        report["summary"],
+        serde_json::json!({
+            "files": 2,
+            "findings": { "error": 1, "warning": 1, "note": 2 },
+            "checks": {
+                "total": 3,
+                "selection": { "selected": 3, "unselected": 0 },
+                "configuration": { "enabled": 2, "disabled": 1 },
+                "applicability": { "applicable": 3, "not_applicable": 0 },
+                "evaluation": { "complete": 1, "partial": 1, "not_evaluated": 1 },
+                "gaps": 1,
+            },
+        })
     );
 }
 

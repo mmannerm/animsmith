@@ -371,9 +371,8 @@ impl EnvelopeHeader {
     }
 }
 
-/// Measure-command summary.
 #[derive(Debug, Clone, Serialize)]
-pub struct MeasureSummary {
+struct MeasureSummary {
     files: usize,
 }
 
@@ -429,26 +428,25 @@ struct CheckSummary {
     gaps: usize,
 }
 
-/// Lint-command summary over all file and check records.
 #[derive(Debug, Clone, Serialize)]
-pub struct LintSummary {
+struct LintSummary {
     files: usize,
     findings: FindingSummary,
     checks: CheckSummary,
 }
 
-/// Current measure or lint result envelope.
+/// Current measure-command result envelope.
 #[derive(Debug, Clone, Serialize)]
-pub struct ReportEnvelope<S, F> {
+pub struct MeasureEnvelope {
     #[serde(flatten)]
     header: EnvelopeHeader,
-    summary: S,
-    files: Vec<F>,
+    summary: MeasureSummary,
+    files: Vec<MeasureFileReport>,
 }
 
-impl ReportEnvelope<MeasureSummary, MeasureFileReport> {
+impl MeasureEnvelope {
     /// Construct a schema-valid measurement envelope.
-    pub fn measure(tool: ToolInfo, files: Vec<MeasureFileReport>) -> Self {
+    pub fn new(tool: ToolInfo, files: Vec<MeasureFileReport>) -> Self {
         Self {
             header: EnvelopeHeader::new(tool, "measure"),
             summary: MeasureSummary { files: files.len() },
@@ -457,10 +455,19 @@ impl ReportEnvelope<MeasureSummary, MeasureFileReport> {
     }
 }
 
-impl ReportEnvelope<LintSummary, LintFileReport> {
+/// Current lint-command result envelope.
+#[derive(Debug, Clone, Serialize)]
+pub struct LintEnvelope {
+    #[serde(flatten)]
+    header: EnvelopeHeader,
+    summary: LintSummary,
+    files: Vec<LintFileReport>,
+}
+
+impl LintEnvelope {
     /// Construct a schema-valid lint envelope and derive its summary from the
     /// supplied check records.
-    pub fn lint(tool: ToolInfo, files: Vec<LintFileReport>) -> Self {
+    pub fn new(tool: ToolInfo, files: Vec<LintFileReport>) -> Self {
         let mut findings = FindingSummary::default();
         let mut checks = CheckSummary::default();
         for file in &files {
