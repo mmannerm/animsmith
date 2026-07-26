@@ -672,6 +672,25 @@ mod docs_contract {
         }
     }
 
+    #[test]
+    fn source_workspace_detection_has_a_positive_checkout_control() {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let detected = source_workspace_root(manifest_dir);
+        if manifest_dir.join(".cargo_vcs_info.json").is_file() {
+            assert!(detected.is_none(), "published packages must skip repo docs");
+            return;
+        }
+
+        let expected = manifest_dir.join("../..");
+        if expected.join("docs/output.md").is_file() {
+            assert_eq!(
+                detected.as_deref(),
+                Some(expected.as_path()),
+                "the exact source checkout must enforce its output docs"
+            );
+        }
+    }
+
     fn source_workspace_root(manifest_dir: &Path) -> Option<PathBuf> {
         if manifest_dir.join(".cargo_vcs_info.json").is_file() {
             return None;

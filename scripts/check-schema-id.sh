@@ -60,34 +60,61 @@ if [ -n "$contract_duplicates" ]; then
 fi
 
 legacy_envelope_awk='
-  function brace_delta(text, copy, opens, closes) {
-    copy = text
-    opens = gsub(/\{/, "", copy)
-    copy = text
-    closes = gsub(/\}/, "", copy)
-    return opens - closes
+  function brace_delta(text, i, ch, escaped, in_string, delta) {
+    escaped = 0
+    in_string = 0
+    delta = 0
+    for (i = 1; i <= length(text); i++) {
+      ch = substr(text, i, 1)
+      if (in_string) {
+        if (escaped) {
+          escaped = 0
+        } else if (ch == "\\") {
+          escaped = 1
+        } else if (ch == "\"") {
+          in_string = 0
+        }
+      } else if (ch == "\"") {
+        in_string = 1
+      } else if (ch == "{") {
+        delta++
+      } else if (ch == "}") {
+        delta--
+      }
+    }
+    return delta
   }
   BEGIN {
     depth = 0
-    candidate_depth = -1
   }
   {
-    if (candidate_depth < 0 &&
-        match($0, /"schema_version"[[:space:]]*:[[:space:]]*1[[:space:]]*,/)) {
-      candidate_depth = depth + brace_delta(substr($0, 1, RSTART - 1))
-      candidate_line = NR
-      candidate_text = $0
+    if (match($0, /"schema_version"[[:space:]]*:[[:space:]]*1([[:space:]]*[,}]|[[:space:]]*$)/)) {
+      field_depth = depth + brace_delta(substr($0, 1, RSTART - 1))
+      version_line[field_depth] = NR
+      version_text[field_depth] = $0
     }
-    if (candidate_depth >= 0 && match($0, /"command"[[:space:]]*:/)) {
-      command_depth = depth + brace_delta(substr($0, 1, RSTART - 1))
-      if (command_depth == candidate_depth) {
-        print FILENAME ":" candidate_line ":" candidate_text
-        candidate_depth = -1
+    if (match($0, /"command"[[:space:]]*:/)) {
+      field_depth = depth + brace_delta(substr($0, 1, RSTART - 1))
+      command_line[field_depth] = NR
+    }
+    for (candidate_depth in version_line) {
+      if ((candidate_depth in command_line) && !(candidate_depth in reported)) {
+        print FILENAME ":" version_line[candidate_depth] ":" version_text[candidate_depth]
+        reported[candidate_depth] = 1
       }
     }
     depth += brace_delta($0)
-    if (candidate_depth >= 0 && depth < candidate_depth) {
-      candidate_depth = -1
+    for (candidate_depth in version_line) {
+      if (candidate_depth > depth) {
+        delete version_line[candidate_depth]
+        delete version_text[candidate_depth]
+        delete reported[candidate_depth]
+      }
+    }
+    for (candidate_depth in command_line) {
+      if (candidate_depth > depth) {
+        delete command_line[candidate_depth]
+      }
     }
   }
 '
@@ -107,6 +134,20 @@ legacy_scanner_regression=$(
 )
 if [ -z "$legacy_scanner_regression" ]; then
   fail "legacy-envelope scanner missed its non-adjacent command regression fixture"
+fi
+
+legacy_reverse_order_regression=$(
+  printf '%s\n' \
+    '{' \
+    '  "command": "lint",' \
+    '  "schema": "urn:animsmith:schema:output:1",' \
+    '  "files": [],' \
+    '  "schema_version": 1' \
+    '}' \
+    | awk "$legacy_envelope_awk"
+)
+if [ -z "$legacy_reverse_order_regression" ]; then
+  fail "legacy-envelope scanner missed its command-first, version-last regression fixture"
 fi
 
 modern_scanner_regression=$(
@@ -129,7 +170,7 @@ legacy_envelope=$(
   while IFS= read -r file; do
     awk "$legacy_envelope_awk" "$file"
   done < <(git grep -lE \
-    '"schema_version"[[:space:]]*:[[:space:]]*1,' \
+    '"schema_version"[[:space:]]*:[[:space:]]*1([[:space:]]*[,}]|[[:space:]]*$)' \
     -- ':!scripts/check-schema-id.sh' || true)
 )
 if [ -n "$legacy_envelope" ]; then

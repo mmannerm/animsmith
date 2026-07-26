@@ -2307,6 +2307,40 @@ fn lint_markdown_renders_findings_for_failing_asset() {
 }
 
 #[test]
+fn lint_markdown_escapes_unicode_paragraph_separator_at_the_cli_boundary() {
+    let dir = unique_temp_dir("markdown-presentation-controls");
+    let input = dir.path().join("hostile.glb");
+    write_hostile_glb(&input, HOSTILE_PRESENTATION_TEXT, true);
+
+    let output = animsmith()
+        .arg("lint")
+        .arg(&input)
+        .args(["--format", "markdown"])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    let markdown = stdout(&output);
+    assert!(
+        !markdown.contains('\u{2028}') && !markdown.contains('\u{2029}'),
+        "raw Unicode separators leaked into Markdown:\n{markdown}"
+    );
+    assert!(
+        !markdown.contains('\u{202e}') && markdown.contains("\\u{202e}"),
+        "bidi override was not rendered visibly:\n{markdown}"
+    );
+    assert!(
+        markdown.contains("forged line"),
+        "the sanitized hostile value did not reach Markdown:\n{markdown}"
+    );
+}
+
+#[test]
 fn lint_markdown_surfaces_nonblocking_coverage_gaps() {
     let dir = unique_temp_dir("markdown-clean");
     let input = dir.path().join("clean.glb");

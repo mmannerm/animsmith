@@ -658,13 +658,13 @@ mod tests {
         // One string exercising delimiter, authored-backslash, code-span,
         // HTML, line-separator, bidi, and terminal-control handling. It is
         // routed through every asset-derived surface, not just the bone.
-        let hostile = "x|y\\|z`</details>\nq\u{2028}r\u{202e}s\u{1b}[31m";
+        let hostile = "x|y\\|z`</details>\nq\u{2028}r\u{2029}t\u{202e}s\u{1b}[31m";
         let esc = md_cell(hostile);
         assert!(
             !esc.chars().any(is_presentation_control) && !esc.contains('`'),
             "{esc}"
         );
-        assert!(esc.contains("q r\\u{202e}s\\u{1b}[31m"), "{esc}");
+        assert!(esc.contains("q r t\\u{202e}s\\u{1b}[31m"), "{esc}");
         // The authored `\|` is pinned: backslash pre-doubled and the pipe
         // escaped, so `y\|z` becomes `y\\\|z` — never a bare delimiter.
         assert!(esc.contains("y\\\\\\|z"), "{esc}");
