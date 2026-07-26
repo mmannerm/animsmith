@@ -2310,7 +2310,8 @@ fn lint_markdown_renders_findings_for_failing_asset() {
 fn lint_markdown_escapes_unicode_paragraph_separator_at_the_cli_boundary() {
     let dir = unique_temp_dir("markdown-presentation-controls");
     let input = dir.path().join("hostile.glb");
-    write_hostile_glb(&input, HOSTILE_PRESENTATION_TEXT, true);
+    let hostile = "forged\nline\u{1b}[31m\u{2028}left\u{2029}right\u{202e}";
+    write_hostile_glb(&input, hostile, true);
 
     let output = animsmith()
         .arg("lint")
@@ -2335,8 +2336,8 @@ fn lint_markdown_escapes_unicode_paragraph_separator_at_the_cli_boundary() {
         "bidi override was not rendered visibly:\n{markdown}"
     );
     assert!(
-        markdown.contains("forged line"),
-        "the sanitized hostile value did not reach Markdown:\n{markdown}"
+        markdown.contains("left right"),
+        "the paragraph separator was deleted instead of flattened:\n{markdown}"
     );
 }
 

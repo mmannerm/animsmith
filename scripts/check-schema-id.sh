@@ -60,60 +60,101 @@ if [ -n "$contract_duplicates" ]; then
 fi
 
 legacy_envelope_awk='
-  function brace_delta(text, i, ch, escaped, in_string, delta) {
-    escaped = 0
-    in_string = 0
-    delta = 0
-    for (i = 1; i <= length(text); i++) {
-      ch = substr(text, i, 1)
-      if (in_string) {
-        if (escaped) {
-          escaped = 0
-        } else if (ch == "\\") {
-          escaped = 1
-        } else if (ch == "\"") {
-          in_string = 0
-        }
-      } else if (ch == "\"") {
-        in_string = 1
-      } else if (ch == "{") {
-        delta++
-      } else if (ch == "}") {
-        delta--
-      }
+  function clear_object(object_depth) {
+    delete version_seen[object_depth]
+    delete version_line[object_depth]
+    delete version_text[object_depth]
+    delete command_seen[object_depth]
+    delete reported[object_depth]
+  }
+  function maybe_report(object_depth) {
+    if (version_seen[object_depth] && command_seen[object_depth] &&
+        !reported[object_depth]) {
+      print FILENAME ":" version_line[object_depth] ":" version_text[object_depth]
+      reported[object_depth] = 1
     }
-    return delta
+  }
+  function mark_version(object_depth) {
+    if (object_depth <= 0) {
+      return
+    }
+    version_seen[object_depth] = 1
+    version_line[object_depth] = NR
+    version_text[object_depth] = $0
+    maybe_report(object_depth)
+  }
+  function mark_command(object_depth) {
+    if (object_depth <= 0) {
+      return
+    }
+    command_seen[object_depth] = 1
+    maybe_report(object_depth)
   }
   BEGIN {
     depth = 0
+    in_string = 0
+    escaped = 0
+    closed_string = 0
+    awaiting_version_depth = 0
   }
   {
-    if (match($0, /"schema_version"[[:space:]]*:[[:space:]]*1([[:space:]]*[,}]|[[:space:]]*$)/)) {
-      field_depth = depth + brace_delta(substr($0, 1, RSTART - 1))
-      version_line[field_depth] = NR
-      version_text[field_depth] = $0
-    }
-    if (match($0, /"command"[[:space:]]*:/)) {
-      field_depth = depth + brace_delta(substr($0, 1, RSTART - 1))
-      command_line[field_depth] = NR
-    }
-    for (candidate_depth in version_line) {
-      if ((candidate_depth in command_line) && !(candidate_depth in reported)) {
-        print FILENAME ":" version_line[candidate_depth] ":" version_text[candidate_depth]
-        reported[candidate_depth] = 1
+    for (i = 1; i <= length($0); i++) {
+      ch = substr($0, i, 1)
+
+      if (in_string) {
+        if (escaped) {
+          token = token ch
+          escaped = 0
+        } else if (ch == "\\") {
+          token = token ch
+          escaped = 1
+        } else if (ch == "\"") {
+          in_string = 0
+          closed_string = 1
+        } else {
+          token = token ch
+        }
+        continue
       }
-    }
-    depth += brace_delta($0)
-    for (candidate_depth in version_line) {
-      if (candidate_depth > depth) {
-        delete version_line[candidate_depth]
-        delete version_text[candidate_depth]
-        delete reported[candidate_depth]
+
+      if (closed_string) {
+        if (ch ~ /[[:space:]]/) {
+          continue
+        }
+        if (ch == ":") {
+          if (token == "schema_version") {
+            awaiting_version_depth = depth
+          } else if (token == "command") {
+            mark_command(depth)
+          }
+          closed_string = 0
+          continue
+        }
+        closed_string = 0
       }
-    }
-    for (candidate_depth in command_line) {
-      if (candidate_depth > depth) {
-        delete command_line[candidate_depth]
+
+      if (awaiting_version_depth > 0) {
+        if (ch ~ /[[:space:]]/) {
+          continue
+        }
+        if (ch == "1" && substr($0, i + 1) ~ /^[[:space:]]*([,}]|$)/) {
+          mark_version(awaiting_version_depth)
+        }
+        awaiting_version_depth = 0
+      }
+
+      if (ch == "\"") {
+        in_string = 1
+        escaped = 0
+        token = ""
+      } else if (ch == "{") {
+        depth++
+        clear_object(depth)
+      } else if (ch == "}") {
+        clear_object(depth)
+        if (depth > 0) {
+          depth--
+        }
       }
     }
   }
@@ -148,6 +189,24 @@ legacy_reverse_order_regression=$(
 )
 if [ -z "$legacy_reverse_order_regression" ]; then
   fail "legacy-envelope scanner missed its command-first, version-last regression fixture"
+fi
+
+legacy_minified_regression=$(
+  printf '%s\n' \
+    '{"files":[{"measurements":{"schema_version":1}}],"note":"} {","schema_version":1,"command":"lint"}' \
+    | awk "$legacy_envelope_awk"
+)
+if [ -z "$legacy_minified_regression" ]; then
+  fail "legacy-envelope scanner missed its minified nested-version regression fixture"
+fi
+
+sibling_scanner_regression=$(
+  printf '%s\n' \
+    '[{"schema_version":1},{"command":"lint"}]' \
+    | awk "$legacy_envelope_awk"
+)
+if [ -n "$sibling_scanner_regression" ]; then
+  fail "legacy-envelope scanner combined fields from sibling objects"
 fi
 
 modern_scanner_regression=$(
