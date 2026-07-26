@@ -175,17 +175,17 @@ test -n "$workspace_version" || fail "Cargo.toml must define workspace.package.v
 # source layout rather than treating that unrelated consumer root as ours.
 relocated_root="$(mktemp -d "${TMPDIR:-/tmp}/animsmith-package-relocated.XXXXXX")"
 trap 'rm -rf "$relocated_root"' EXIT
-mkdir -p "$relocated_root/vendor"
+mkdir -p "$relocated_root/crates"
 cp -R \
   "target/package/animsmith-core-$workspace_version" \
-  "$relocated_root/vendor/animsmith-core"
+  "$relocated_root/crates/animsmith-core"
 printf '%s\n' \
   '[workspace]' \
   'members = []' \
-  'exclude = ["vendor/animsmith-core"]' \
+  'exclude = ["crates/animsmith-core"]' \
   'resolver = "3"' \
   > "$relocated_root/Cargo.toml"
 cargo test --locked --all-features --manifest-path \
   "target/package/animsmith-core-$workspace_version/Cargo.toml"
 cargo test --locked --all-features --manifest-path \
-  "$relocated_root/vendor/animsmith-core/Cargo.toml"
+  "$relocated_root/crates/animsmith-core/Cargo.toml"

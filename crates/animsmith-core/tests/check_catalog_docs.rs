@@ -68,6 +68,9 @@ fn docs_check_ids_match_the_registered_catalog() {
 }
 
 fn source_workspace_root(manifest_dir: &Path) -> Option<PathBuf> {
+    if manifest_dir.join(".cargo_vcs_info.json").is_file() {
+        return None;
+    }
     let workspace_root = manifest_dir.join("../..");
     let current_manifest = manifest_dir.join("Cargo.toml").canonicalize().ok()?;
     let workspace_manifest = workspace_root
