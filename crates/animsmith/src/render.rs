@@ -754,7 +754,20 @@ mod tests {
             !escaped.chars().any(is_presentation_control),
             "presentation control survived sanitizer: {escaped:?}"
         );
-        for visible in ["\\u{61c}", "\\u{2028}", "\\u{202e}", "\\u{2066}"] {
+        for visible in [
+            "\\u{61c}",
+            "\\u{200e}",
+            "\\u{200f}",
+            "\\u{2028}",
+            "\\u{2029}",
+            "\\u{202a}",
+            "\\u{202e}",
+            "\\u{2066}",
+            "\\u{2067}",
+            "\\u{2068}",
+            "\\u{2069}",
+            "\\u{206f}",
+        ] {
             assert!(escaped.contains(visible), "missing {visible}: {escaped:?}");
         }
     }

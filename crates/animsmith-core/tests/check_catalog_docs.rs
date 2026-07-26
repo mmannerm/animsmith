@@ -1,6 +1,6 @@
 use animsmith_core::all_checks;
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const NON_CHECK_ID_LIKE_TOKENS: &[&str] = &[
     "animsmith",
@@ -19,12 +19,12 @@ const NON_CHECK_ID_LIKE_TOKENS: &[&str] = &[
 #[test]
 fn docs_check_ids_match_the_registered_catalog() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = manifest_dir.join("../..");
-    let Some(readme) = read_workspace_doc(&workspace_root, "README.md") else {
+    let Some(workspace_root) = source_workspace_root(manifest_dir) else {
+        // Published crates intentionally exclude repository-level docs.
         return;
     };
-    let game_ready_clips = read_workspace_doc(&workspace_root, "docs/game-ready-clips.md")
-        .expect("source workspaces must contain docs/game-ready-clips.md");
+    let readme = read_workspace_doc(&workspace_root, "README.md");
+    let game_ready_clips = read_workspace_doc(&workspace_root, "docs/game-ready-clips.md");
     let catalog = registered_check_ids();
 
     assert_catalog_ids(
@@ -67,17 +67,20 @@ fn docs_check_ids_match_the_registered_catalog() {
     }
 }
 
-fn read_workspace_doc(workspace_root: &Path, relative_path: &str) -> Option<String> {
+fn source_workspace_root(manifest_dir: &Path) -> Option<PathBuf> {
+    let workspace_root = manifest_dir.join("../..");
+    let current_manifest = manifest_dir.join("Cargo.toml").canonicalize().ok()?;
+    let workspace_manifest = workspace_root
+        .join("crates/animsmith-core/Cargo.toml")
+        .canonicalize()
+        .ok()?;
+    (current_manifest == workspace_manifest).then_some(workspace_root)
+}
+
+fn read_workspace_doc(workspace_root: &Path, relative_path: &str) -> String {
     let path = workspace_root.join(relative_path);
-    match std::fs::read_to_string(&path) {
-        Ok(contents) => Some(contents),
-        Err(_) if !workspace_root.join("Cargo.toml").is_file() => {
-            // Published crates intentionally exclude repository-level docs.
-            // Source-checkout tests still fail when their workspace docs drift.
-            None
-        }
-        Err(error) => panic!("cannot read {}: {error}", path.display()),
-    }
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()))
 }
 
 fn assert_catalog_ids(surface: &str, documented: &BTreeSet<&str>, catalog: &BTreeSet<&str>) {

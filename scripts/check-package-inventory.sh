@@ -169,5 +169,23 @@ workspace_version="$({
   sed -nE '/^\[workspace\.package\]$/,/^\[/ s/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' Cargo.toml
 } | head -1)"
 test -n "$workspace_version" || fail "Cargo.toml must define workspace.package.version"
-cargo test --all-features --manifest-path \
+
+# A published crate may be vendored beneath another workspace whose root also
+# has a Cargo.toml. Prove repository-doc tests recognize the exact animsmith
+# source layout rather than treating that unrelated consumer root as ours.
+relocated_root="$(mktemp -d "${TMPDIR:-/tmp}/animsmith-package-relocated.XXXXXX")"
+trap 'rm -rf "$relocated_root"' EXIT
+mkdir -p "$relocated_root/vendor"
+cp -R \
+  "target/package/animsmith-core-$workspace_version" \
+  "$relocated_root/vendor/animsmith-core"
+printf '%s\n' \
+  '[workspace]' \
+  'members = []' \
+  'exclude = ["vendor/animsmith-core"]' \
+  'resolver = "3"' \
+  > "$relocated_root/Cargo.toml"
+cargo test --locked --all-features --manifest-path \
   "target/package/animsmith-core-$workspace_version/Cargo.toml"
+cargo test --locked --all-features --manifest-path \
+  "$relocated_root/vendor/animsmith-core/Cargo.toml"

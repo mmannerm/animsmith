@@ -9,7 +9,7 @@ use std::process::{Command, Output};
 
 const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:2";
 const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:1";
-const HOSTILE_PRESENTATION_TEXT: &str = "forged\nline\u{1b}[31m\u{2028}\u{202e}";
+const HOSTILE_PRESENTATION_TEXT: &str = "forged\nline\u{1b}[31m\u{2028}\u{2029}\u{202e}";
 const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v2.schema.json");
 const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v1.schema.json");
 const EXPECTED_CHECK_IDS: [&str; 16] = [
@@ -219,11 +219,15 @@ fn assert_hostile_text_is_escaped(text: &str) {
         "raw line separator leaked:\n{text}"
     );
     assert!(
+        !text.contains('\u{2029}'),
+        "raw paragraph separator leaked:\n{text}"
+    );
+    assert!(
         !text.contains('\u{202e}'),
         "raw bidi override leaked:\n{text}"
     );
     assert!(
-        text.contains("forged\\nline\\u{1b}[31m\\u{2028}\\u{202e}"),
+        text.contains("forged\\nline\\u{1b}[31m\\u{2028}\\u{2029}\\u{202e}"),
         "escaped form missing:\n{text}"
     );
 }
@@ -1042,6 +1046,26 @@ fn command_text_escapes_output_and_operator_error_paths() {
         .expect("runs inspect");
     assert_eq!(inspect.status.code(), Some(2));
     assert_hostile_text_is_escaped(&stderr(&inspect));
+}
+
+#[cfg(all(feature = "report", unix))]
+#[test]
+fn report_text_escapes_its_output_path() {
+    let dir = unique_temp_dir("report-path-controls");
+    let output_path = dir
+        .path()
+        .join(format!("report-{HOSTILE_PRESENTATION_TEXT}.html"));
+    let output = animsmith()
+        .arg("report")
+        .arg(fixture("rig.gltf"))
+        .arg("--output")
+        .arg(&output_path)
+        .output()
+        .expect("runs report");
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert_hostile_text_is_escaped(&stdout(&output));
+    assert!(output_path.is_file(), "report output was not written");
 }
 
 #[test]

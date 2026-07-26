@@ -605,7 +605,7 @@ pub fn evaluate_checks(
 #[cfg(test)]
 mod docs_contract {
     use std::collections::BTreeSet;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use super::{BUILTIN_COVERAGE_GAP_CODE_DOCS, BUILTIN_EVALUATION_SCOPE_CODE_DOCS};
 
@@ -650,18 +650,13 @@ mod docs_contract {
     #[test]
     fn output_docs_match_registered_builtin_evidence_codes_exactly() {
         let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let workspace_root = manifest_dir.join("../..");
-        let docs_path = workspace_root.join("docs/output.md");
-        let docs = match std::fs::read_to_string(&docs_path) {
-            Ok(docs) => docs,
-            Err(_) if !workspace_root.join("Cargo.toml").is_file() => {
-                // Published crates intentionally exclude repository-level
-                // documentation. The source-checkout gate below still fails
-                // when the workspace exists but its contract docs do not.
-                return;
-            }
-            Err(error) => panic!("cannot read {}: {error}", docs_path.display()),
+        let Some(workspace_root) = source_workspace_root(manifest_dir) else {
+            // Published crates intentionally exclude repository-level docs.
+            return;
         };
+        let docs_path = workspace_root.join("docs/output.md");
+        let docs = std::fs::read_to_string(&docs_path)
+            .unwrap_or_else(|error| panic!("cannot read {}: {error}", docs_path.display()));
         let crlf = docs.lines().collect::<Vec<_>>().join("\r\n");
         for line_endings in [docs.as_str(), crlf.as_str()] {
             assert_reference_table(
@@ -675,5 +670,15 @@ mod docs_contract {
                 BUILTIN_EVALUATION_SCOPE_CODE_DOCS,
             );
         }
+    }
+
+    fn source_workspace_root(manifest_dir: &Path) -> Option<PathBuf> {
+        let workspace_root = manifest_dir.join("../..");
+        let current_manifest = manifest_dir.join("Cargo.toml").canonicalize().ok()?;
+        let workspace_manifest = workspace_root
+            .join("crates/animsmith-core/Cargo.toml")
+            .canonicalize()
+            .ok()?;
+        (current_manifest == workspace_manifest).then_some(workspace_root)
     }
 }

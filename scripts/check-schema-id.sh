@@ -59,17 +59,75 @@ if [ -n "$contract_duplicates" ]; then
   fail "CLI reimplements shared contract structure instead of consuming animsmith-core:\n$contract_duplicates"
 fi
 
+legacy_envelope_awk='
+  function brace_delta(text, copy, opens, closes) {
+    copy = text
+    opens = gsub(/\{/, "", copy)
+    copy = text
+    closes = gsub(/\}/, "", copy)
+    return opens - closes
+  }
+  BEGIN {
+    depth = 0
+    candidate_depth = -1
+  }
+  {
+    if (candidate_depth < 0 &&
+        match($0, /"schema_version"[[:space:]]*:[[:space:]]*1[[:space:]]*,/)) {
+      candidate_depth = depth + brace_delta(substr($0, 1, RSTART - 1))
+      candidate_line = NR
+      candidate_text = $0
+    }
+    if (candidate_depth >= 0 && match($0, /"command"[[:space:]]*:/)) {
+      command_depth = depth + brace_delta(substr($0, 1, RSTART - 1))
+      if (command_depth == candidate_depth) {
+        print FILENAME ":" candidate_line ":" candidate_text
+        candidate_depth = -1
+      }
+    }
+    depth += brace_delta($0)
+    if (candidate_depth >= 0 && depth < candidate_depth) {
+      candidate_depth = -1
+    }
+  }
+'
+
+# Pin the scanner against a normal outer envelope whose schema/tool fields sit
+# between its version and command. Also prove that nested measurements v1 in a
+# current output-v2 envelope are not mistaken for an outer legacy contract.
+legacy_scanner_regression=$(
+  printf '%s\n' \
+    '{' \
+    '  "schema_version": 1,' \
+    '  "schema": "urn:animsmith:schema:output:1",' \
+    '  "tool": { "name": "animsmith" },' \
+    '  "command": "lint"' \
+    '}' \
+    | awk "$legacy_envelope_awk"
+)
+if [ -z "$legacy_scanner_regression" ]; then
+  fail "legacy-envelope scanner missed its non-adjacent command regression fixture"
+fi
+
+modern_scanner_regression=$(
+  printf '%s\n' \
+    '{' \
+    '  "schema_version": 2,' \
+    '  "command": "measure",' \
+    '  "files": [{ "measurements": {' \
+    '    "schema_version": 1,' \
+    '    "schema": "urn:animsmith:schema:measurements:1"' \
+    '  }}]' \
+    '}' \
+    | awk "$legacy_envelope_awk"
+)
+if [ -n "$modern_scanner_regression" ]; then
+  fail "legacy-envelope scanner misclassified nested measurements v1"
+fi
+
 legacy_envelope=$(
   while IFS= read -r file; do
-    awk '
-      previous ~ /"schema_version"[[:space:]]*:[[:space:]]*1,/ &&
-        /"command"[[:space:]]*:/ {
-          print FILENAME ":" NR - 1 ":" previous
-        }
-      {
-        previous = $0
-      }
-    ' "$file"
+    awk "$legacy_envelope_awk" "$file"
   done < <(git grep -lE \
     '"schema_version"[[:space:]]*:[[:space:]]*1,' \
     -- ':!scripts/check-schema-id.sh' || true)
