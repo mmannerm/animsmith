@@ -12,7 +12,7 @@ use animsmith_core::model::*;
 use animsmith_core::profile::{ResolvedRoles, Role};
 use animsmith_core::{
     CheckCtx, CheckEvaluation, CheckSelection, Config, ConfigurationState, CoverageGapCode,
-    EvaluationState, MetricGrids, Severity, all_checks, evaluate_checks,
+    EvaluationScopeCode, EvaluationState, MetricGrids, Severity, all_checks, evaluate_checks,
 };
 use glam::Vec3;
 use std::f64::consts::TAU;
@@ -69,12 +69,15 @@ fn popped_doc() -> Document {
     doc_with_periods(0.75)
 }
 
-fn lint_with(doc: &Document, config: &Config) -> Vec<animsmith_core::Finding> {
+fn evaluate_with(doc: &Document, config: &Config) -> Vec<CheckEvaluation> {
     let roles = roles(&doc.skeleton);
     let grids = MetricGrids::new(doc);
     let ctx = CheckCtx::new(&grids, &roles, config);
-    evaluate_checks(&ctx, &all_checks(), CheckSelection::All)
-        .expect("valid built-in catalog")
+    evaluate_checks(&ctx, &all_checks(), CheckSelection::All).expect("valid built-in catalog")
+}
+
+fn lint_with(doc: &Document, config: &Config) -> Vec<animsmith_core::Finding> {
+    evaluate_with(doc, config)
         .into_iter()
         .flat_map(|check| check.findings().to_vec())
         .collect()
@@ -101,6 +104,12 @@ fn assert_loop_seam_has_unresolved_roles_gap(records: &[CheckEvaluation]) {
     assert!(loop_seam.findings().is_empty());
     assert_eq!(loop_seam.gaps()[0].code.as_str(), "roles_unresolved");
     assert!(loop_seam.gaps()[0].message.contains("hips/foot"));
+    let scope = loop_seam.gaps()[0]
+        .scope
+        .as_ref()
+        .expect("typed loop-seam scope");
+    assert_eq!(scope.code, EvaluationScopeCode::LOOP_SEAM);
+    assert_eq!(scope.subject.as_deref(), Some("walk"));
 }
 
 fn json_config(json: serde_json::Value) -> Config {
@@ -149,10 +158,20 @@ fn clean_loop_passes_loop_seam() {
     let config = json_config(serde_json::json!({
         "clips": { "walk": { "loop": true } }
     }));
-    let findings = lint_with(&doc, &config);
+    let records = evaluate_with(&doc, &config);
+    let loop_seam = check(&records, "loop-seam");
     assert!(
-        !findings.iter().any(|f| f.check_id == "loop-seam"),
-        "clean loop flagged: {findings:#?}"
+        loop_seam.findings().is_empty(),
+        "clean loop flagged: {loop_seam:#?}"
+    );
+    assert_eq!(loop_seam.evaluated_scopes().len(), 1);
+    assert_eq!(
+        loop_seam.evaluated_scopes()[0].code,
+        EvaluationScopeCode::LOOP_SEAM
+    );
+    assert_eq!(
+        loop_seam.evaluated_scopes()[0].subject.as_deref(),
+        Some("walk")
     );
 }
 

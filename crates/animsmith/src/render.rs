@@ -208,16 +208,31 @@ fn summarized_group_values<'a>(values: impl IntoIterator<Item = &'a str>) -> Str
     }
 }
 
-/// Escape terminal control characters while leaving ordinary Unicode text
-/// readable. Each untrusted value therefore remains on one physical line and
+/// Return whether a character can alter terminal or visual text presentation
+/// without occupying an ordinary printable cell.
+fn is_presentation_control(ch: char) -> bool {
+    ch.is_control()
+        || matches!(
+            ch,
+            '\u{061c}'
+                | '\u{200e}'
+                | '\u{200f}'
+                | '\u{2028}'..='\u{202e}'
+                | '\u{2066}'..='\u{206f}'
+        )
+}
+
+/// Escape terminal controls, Unicode line separators, and bidirectional
+/// formatting characters while leaving ordinary Unicode text readable. Each
+/// untrusted value therefore remains one visibly ordered physical line and
 /// cannot inject ANSI terminal commands.
 pub(crate) fn text_atom(text: &str) -> Cow<'_, str> {
-    if !text.chars().any(char::is_control) {
+    if !text.chars().any(is_presentation_control) {
         return Cow::Borrowed(text);
     }
     let mut escaped = String::with_capacity(text.len());
     for ch in text.chars() {
-        if ch.is_control() {
+        if is_presentation_control(ch) {
             escaped.extend(ch.escape_default());
         } else {
             escaped.push(ch);
@@ -249,9 +264,8 @@ pub(crate) fn print_markdown(reports: &[LintFileReport], suppressed: &[String]) 
 /// grouping, cell escaping, collapse threshold, and summary tallies be
 /// unit-tested directly without spawning the CLI.
 ///
-/// Findings are expected grouped by clip — the `lint` command sorts them
-/// by clip before calling — and a new table is started each time the clip
-/// changes; an unsorted slice would emit repeated per-clip headers.
+/// Findings are sorted here before grouping so callers cannot accidentally
+/// emit repeated per-clip headers from an interleaved input slice.
 fn render_markdown(reports: &[LintFileReport], suppressed: &[String]) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
@@ -434,9 +448,10 @@ fn md_value_cell(value: Option<&animsmith_core::finding::Value>) -> String {
 /// trusted GitHub/GitLab CI comment — so a hostile name must not be able
 /// to break out and forge content. Two escapes cover that:
 ///
-/// - Backslash-escape the pipe (and pre-double backslashes so an authored
-///   `\|` cannot re-form an unescaped delimiter) and flatten newlines, so
-///   the value stays inside its table cell.
+/// - Backslash-escape the pipe (and pre-double authored backslashes so an
+///   authored `\|` cannot re-form an unescaped delimiter), flatten physical
+///   and Unicode line separators, and visibly escape remaining presentation
+///   controls so the value stays inside one ordered table cell.
 /// - Replace the backtick, the only character that can close the
 ///   surrounding code span. Inside a code span every other Markdown/HTML
 ///   metacharacter (`<`, `>`, `[`, `*`, `!`, …) already renders literally,
@@ -447,10 +462,18 @@ fn md_value_cell(value: Option<&animsmith_core::finding::Value>) -> String {
 /// is a cosmetic loss on pathological names, acceptable for a
 /// presentation-only format with no stability guarantee.
 fn md_cell(text: &str) -> String {
-    text.replace('\\', "\\\\")
-        .replace('`', "'")
-        .replace('|', "\\|")
-        .replace(['\r', '\n'], " ")
+    let mut escaped = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '\r' | '\n' | '\u{2028}' | '\u{2029}' => escaped.push(' '),
+            ch if is_presentation_control(ch) => escaped.extend(ch.escape_default()),
+            '\\' => escaped.push_str("\\\\"),
+            '`' => escaped.push('\''),
+            '|' => escaped.push_str("\\|"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 #[cfg(test)]
@@ -632,17 +655,16 @@ mod tests {
 
     #[test]
     fn markdown_escapes_hostile_text_in_every_asset_derived_cell() {
-        // One string exercising all four `md_cell` transforms at once: a
-        // bare delimiter, an authored `\|` that must not collapse back
-        // into a delimiter, a code-span closer, an HTML tag, and a
-        // newline. Routed through every asset-derived surface — path
-        // heading, clip heading, bone location, message, and a textual
-        // value — not just the bone.
-        let hostile = "x|y\\|z`</details>\nq";
+        // One string exercising delimiter, authored-backslash, code-span,
+        // HTML, line-separator, bidi, and terminal-control handling. It is
+        // routed through every asset-derived surface, not just the bone.
+        let hostile = "x|y\\|z`</details>\nq\u{2028}r\u{202e}s\u{1b}[31m";
         let esc = md_cell(hostile);
-        // The escaped form carries no live hazard: newline flattened and
-        // the only code-span closer neutralized.
-        assert!(!esc.contains('\n') && !esc.contains('`'), "{esc}");
+        assert!(
+            !esc.chars().any(is_presentation_control) && !esc.contains('`'),
+            "{esc}"
+        );
+        assert!(esc.contains("q r\\u{202e}s\\u{1b}[31m"), "{esc}");
         // The authored `\|` is pinned: backslash pre-doubled and the pipe
         // escaped, so `y\|z` becomes `y\\\|z` — never a bare delimiter.
         assert!(esc.contains("y\\\\\\|z"), "{esc}");
@@ -718,16 +740,23 @@ mod tests {
     }
 
     #[test]
-    fn text_atom_escapes_every_ascii_control_character() {
-        let raw: String = (0_u8..=31)
+    fn text_atom_escapes_control_and_formatting_characters() {
+        let mut raw: String = (0_u8..=31)
             .chain(std::iter::once(127))
             .map(char::from)
             .collect();
+        raw.extend([
+            '\u{061c}', '\u{200e}', '\u{200f}', '\u{2028}', '\u{2029}', '\u{202a}', '\u{202e}',
+            '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}', '\u{206f}',
+        ]);
         let escaped = text_atom(&raw);
         assert!(
-            !escaped.chars().any(char::is_control),
-            "control survived sanitizer: {escaped:?}"
+            !escaped.chars().any(is_presentation_control),
+            "presentation control survived sanitizer: {escaped:?}"
         );
+        for visible in ["\\u{61c}", "\\u{2028}", "\\u{202e}", "\\u{2066}"] {
+            assert!(escaped.contains(visible), "missing {visible}: {escaped:?}");
+        }
     }
 
     #[test]

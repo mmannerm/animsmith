@@ -6,8 +6,8 @@
 use animsmith_core::model::*;
 use animsmith_core::profile::{ResolvedRoles, Role};
 use animsmith_core::{
-    CheckCtx, CheckSelection, Config, CoverageGapCode, EvaluationState, MetricGrids, Severity,
-    all_checks, evaluate_checks,
+    CheckCtx, CheckEvaluation, CheckSelection, Config, CoverageGapCode, EvaluationScopeCode,
+    EvaluationState, MetricGrids, Severity, all_checks, evaluate_checks,
 };
 use glam::{Quat, Vec3};
 
@@ -108,12 +108,15 @@ fn treadmill_doc(sweep: f32) -> Document {
     }
 }
 
-fn lint_with(doc: &Document, config: &Config) -> Vec<animsmith_core::Finding> {
+fn evaluate_with(doc: &Document, config: &Config) -> Vec<CheckEvaluation> {
     let roles = roles(&doc.skeleton);
     let grids = MetricGrids::new(doc);
     let ctx = CheckCtx::new(&grids, &roles, config);
-    evaluate_checks(&ctx, &all_checks(), CheckSelection::All)
-        .expect("valid built-in catalog")
+    evaluate_checks(&ctx, &all_checks(), CheckSelection::All).expect("valid built-in catalog")
+}
+
+fn lint_with(doc: &Document, config: &Config) -> Vec<animsmith_core::Finding> {
+    evaluate_with(doc, config)
         .into_iter()
         .flat_map(|check| check.findings().to_vec())
         .collect()
@@ -490,8 +493,18 @@ fn on_grid_keys_pass_fps() {
     let config = json_config(serde_json::json!({
         "clips": { "walk": { "fps": 32.0 } }
     }));
-    let findings = lint_with(&doc, &config);
-    assert!(of(&findings, "fps").is_empty(), "got: {findings:#?}");
+    let records = evaluate_with(&doc, &config);
+    let fps = records
+        .iter()
+        .find(|record| record.check_id() == "fps")
+        .expect("fps record");
+    assert!(fps.findings().is_empty(), "got: {:#?}", fps.findings());
+    assert_eq!(fps.evaluated_scopes().len(), 1);
+    assert_eq!(
+        fps.evaluated_scopes()[0].code,
+        EvaluationScopeCode::FRAME_GRID
+    );
+    assert_eq!(fps.evaluated_scopes()[0].subject.as_deref(), Some("walk"));
 }
 
 #[test]
@@ -528,6 +541,12 @@ fn non_finite_declared_fps_is_a_typed_gap() {
         .expect("fps record");
     assert_eq!(fps.evaluation(), EvaluationState::NotEvaluated);
     assert_eq!(fps.gaps()[0].code, CoverageGapCode::INVALID_DECLARED_FPS);
+    let scope = fps.gaps()[0]
+        .scope
+        .as_ref()
+        .expect("typed frame-grid scope");
+    assert_eq!(scope.code, EvaluationScopeCode::FRAME_GRID);
+    assert_eq!(scope.subject.as_deref(), Some("walk"));
 }
 
 // ---- bind-pose --------------------------------------------------------
@@ -561,12 +580,22 @@ fn rotated_first_frame_doc(angle: f32) -> Document {
 #[test]
 fn wrong_bind_is_flagged() {
     // Every bone starts 90° from rest: not a plausible start pose.
-    let findings = lint_with(
-        &rotated_first_frame_doc(std::f32::consts::FRAC_PI_2),
-        &Config::default(),
+    let doc = rotated_first_frame_doc(std::f32::consts::FRAC_PI_2);
+    let records = evaluate_with(&doc, &Config::default());
+    let bind_pose = records
+        .iter()
+        .find(|record| record.check_id() == "bind-pose")
+        .expect("bind-pose record");
+    assert_eq!(bind_pose.findings().len(), 1, "got: {bind_pose:#?}");
+    assert_eq!(bind_pose.evaluated_scopes().len(), 1);
+    assert_eq!(
+        bind_pose.evaluated_scopes()[0].code,
+        EvaluationScopeCode::FIRST_FRAME_REST_DELTA
     );
-    let hits = of(&findings, "bind-pose");
-    assert_eq!(hits.len(), 1, "got: {findings:#?}");
+    assert_eq!(
+        bind_pose.evaluated_scopes()[0].subject.as_deref(),
+        Some("pose")
+    );
 }
 
 #[test]
@@ -594,4 +623,10 @@ fn invalid_rest_rotation_is_insufficient_evidence_not_complete() {
         bind_pose.gaps()[0].code,
         CoverageGapCode::INSUFFICIENT_ROTATION_EVIDENCE
     );
+    let scope = bind_pose.gaps()[0]
+        .scope
+        .as_ref()
+        .expect("typed first-frame/rest-delta scope");
+    assert_eq!(scope.code, EvaluationScopeCode::FIRST_FRAME_REST_DELTA);
+    assert_eq!(scope.subject.as_deref(), Some("pose"));
 }

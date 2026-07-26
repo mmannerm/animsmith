@@ -9,6 +9,7 @@ use std::process::{Command, Output};
 
 const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:2";
 const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:1";
+const HOSTILE_PRESENTATION_TEXT: &str = "forged\nline\u{1b}[31m\u{2028}\u{202e}";
 const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v2.schema.json");
 const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v1.schema.json");
 const EXPECTED_CHECK_IDS: [&str; 16] = [
@@ -182,9 +183,12 @@ fn write_two_clip_clean_glb(path: &std::path::Path) {
     animsmith_gltf::write::write(&doc, path).expect("writes two-clip fixture");
 }
 
-fn write_hostile_measure_glb(path: &std::path::Path, hostile: &str) {
-    let mut doc = sway_doc(false);
+fn write_hostile_glb(path: &std::path::Path, hostile: &str, flipped: bool) {
+    let mut doc = sway_doc(flipped);
     doc.clips[0].name = hostile.into();
+    for bone in &mut doc.skeleton.bones {
+        bone.name = hostile.into();
+    }
     doc.assets.meshes.push(MeshAsset {
         name: hostile.into(),
         node: 0,
@@ -199,6 +203,29 @@ fn write_hostile_measure_glb(path: &std::path::Path, hostile: &str) {
         ..MeshAsset::default()
     });
     animsmith_gltf::write::write(&doc, path).expect("writes hostile-name fixture");
+}
+
+fn assert_hostile_text_is_escaped(text: &str) {
+    assert!(
+        !text.contains(HOSTILE_PRESENTATION_TEXT),
+        "raw hostile text leaked:\n{text}"
+    );
+    assert!(
+        !text.contains('\u{1b}'),
+        "raw terminal escape leaked:\n{text}"
+    );
+    assert!(
+        !text.contains('\u{2028}'),
+        "raw line separator leaked:\n{text}"
+    );
+    assert!(
+        !text.contains('\u{202e}'),
+        "raw bidi override leaked:\n{text}"
+    );
+    assert!(
+        text.contains("forged\\nline\\u{1b}[31m\\u{2028}\\u{202e}"),
+        "escaped form missing:\n{text}"
+    );
 }
 
 fn write_json(path: &std::path::Path, value: &Value) {
@@ -876,9 +903,8 @@ fn measure_json_uses_versioned_envelope() {
 #[test]
 fn measure_text_escapes_controls_in_clip_and_mesh_names() {
     let dir = unique_temp_dir("measure-text-controls");
-    let hostile = "forged\nline\u{1b}[31m";
     let input = dir.path().join("hostile.glb");
-    write_hostile_measure_glb(&input, hostile);
+    write_hostile_glb(&input, HOSTILE_PRESENTATION_TEXT, false);
 
     let output = animsmith()
         .arg("measure")
@@ -893,9 +919,56 @@ fn measure_text_escapes_controls_in_clip_and_mesh_names() {
         stderr(&output)
     );
     let text = stdout(&output);
-    assert!(!text.contains(hostile), "raw controls leaked:\n{text}");
+    assert_hostile_text_is_escaped(&text);
     assert_eq!(text.matches("\\n").count(), 2, "clip and mesh: {text}");
     assert_eq!(text.matches("\\u{1b}").count(), 2, "clip and mesh: {text}");
+    assert_eq!(
+        text.matches("\\u{2028}").count(),
+        2,
+        "clip and mesh: {text}"
+    );
+    assert_eq!(
+        text.matches("\\u{202e}").count(),
+        2,
+        "clip and mesh: {text}"
+    );
+}
+
+#[test]
+fn inspect_fix_and_transform_escape_asset_derived_text() {
+    let dir = unique_temp_dir("command-text-controls");
+    let clean = dir.path().join("hostile-clean.glb");
+    let flipped = dir.path().join("hostile-flipped.glb");
+    let transformed = dir.path().join("transformed.glb");
+    write_hostile_glb(&clean, HOSTILE_PRESENTATION_TEXT, false);
+    write_hostile_glb(&flipped, HOSTILE_PRESENTATION_TEXT, true);
+
+    let inspect = animsmith()
+        .arg("inspect")
+        .arg(&clean)
+        .output()
+        .expect("runs inspect");
+    assert_eq!(inspect.status.code(), Some(0), "{}", stderr(&inspect));
+    assert_hostile_text_is_escaped(&stdout(&inspect));
+
+    let transform = animsmith()
+        .arg("transform")
+        .arg(&clean)
+        .args(["--hold-extend", "0.25", "--output"])
+        .arg(&transformed)
+        .output()
+        .expect("runs transform");
+    assert_eq!(transform.status.code(), Some(0), "{}", stderr(&transform));
+    assert_hostile_text_is_escaped(&stdout(&transform));
+
+    let fix = animsmith()
+        .arg("fix")
+        .arg(&flipped)
+        .args(["--dry-run", "--repair", "quat-flip"])
+        .output()
+        .expect("runs fix");
+    assert_eq!(fix.status.code(), Some(1), "{}", stderr(&fix));
+    assert_hostile_text_is_escaped(&stdout(&fix));
 }
 
 #[cfg(unix)]
@@ -924,6 +997,51 @@ fn measure_text_escapes_controls_in_the_input_path() {
         "raw path controls leaked:\n{text}"
     );
     assert!(text.contains("asset\\nforged\\u{1b}[31m.gltf"), "{text}");
+}
+
+#[cfg(unix)]
+#[test]
+fn command_text_escapes_output_and_operator_error_paths() {
+    let dir = unique_temp_dir("command-path-controls");
+    let input = dir.path().join("clean.glb");
+    let flipped = dir.path().join("flipped.glb");
+    write_clean_glb(&input);
+    write_flipped_glb(&flipped);
+    let hostile_output = dir.path().join(format!("{HOSTILE_PRESENTATION_TEXT}.glb"));
+
+    let transform = animsmith()
+        .arg("transform")
+        .arg(&input)
+        .args(["--hold-extend", "0.25", "--output"])
+        .arg(&hostile_output)
+        .output()
+        .expect("runs transform");
+    assert_eq!(transform.status.code(), Some(0), "{}", stderr(&transform));
+    assert_hostile_text_is_escaped(&stdout(&transform));
+
+    let hostile_fix_output = dir
+        .path()
+        .join(format!("fixed-{HOSTILE_PRESENTATION_TEXT}.glb"));
+    let fix = animsmith()
+        .arg("fix")
+        .arg(&flipped)
+        .args(["--repair", "quat-flip", "--output"])
+        .arg(&hostile_fix_output)
+        .output()
+        .expect("runs fix");
+    assert_eq!(fix.status.code(), Some(0), "{}", stderr(&fix));
+    assert_hostile_text_is_escaped(&stdout(&fix));
+
+    let missing = dir
+        .path()
+        .join(format!("missing-{HOSTILE_PRESENTATION_TEXT}.glb"));
+    let inspect = animsmith()
+        .arg("inspect")
+        .arg(&missing)
+        .output()
+        .expect("runs inspect");
+    assert_eq!(inspect.status.code(), Some(2));
+    assert_hostile_text_is_escaped(&stderr(&inspect));
 }
 
 #[test]

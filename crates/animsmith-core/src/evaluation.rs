@@ -605,6 +605,7 @@ pub fn evaluate_checks(
 #[cfg(test)]
 mod docs_contract {
     use std::collections::BTreeSet;
+    use std::path::Path;
 
     use super::{BUILTIN_COVERAGE_GAP_CODE_DOCS, BUILTIN_EVALUATION_SCOPE_CODE_DOCS};
 
@@ -648,9 +649,21 @@ mod docs_contract {
 
     #[test]
     fn output_docs_match_registered_builtin_evidence_codes_exactly() {
-        let docs = include_str!("../../../docs/output.md");
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let workspace_root = manifest_dir.join("../..");
+        let docs_path = workspace_root.join("docs/output.md");
+        let docs = match std::fs::read_to_string(&docs_path) {
+            Ok(docs) => docs,
+            Err(_) if !workspace_root.join("Cargo.toml").is_file() => {
+                // Published crates intentionally exclude repository-level
+                // documentation. The source-checkout gate below still fails
+                // when the workspace exists but its contract docs do not.
+                return;
+            }
+            Err(error) => panic!("cannot read {}: {error}", docs_path.display()),
+        };
         let crlf = docs.lines().collect::<Vec<_>>().join("\r\n");
-        for line_endings in [docs, crlf.as_str()] {
+        for line_endings in [docs.as_str(), crlf.as_str()] {
             assert_reference_table(
                 line_endings,
                 "Built-in gap codes are:",

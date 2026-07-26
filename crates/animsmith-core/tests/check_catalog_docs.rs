@@ -1,8 +1,6 @@
 use animsmith_core::all_checks;
 use std::collections::BTreeSet;
-
-const README: &str = include_str!("../../../README.md");
-const GAME_READY_CLIPS: &str = include_str!("../../../docs/game-ready-clips.md");
+use std::path::Path;
 
 const NON_CHECK_ID_LIKE_TOKENS: &[&str] = &[
     "animsmith",
@@ -20,22 +18,29 @@ const NON_CHECK_ID_LIKE_TOKENS: &[&str] = &[
 
 #[test]
 fn docs_check_ids_match_the_registered_catalog() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.join("../..");
+    let Some(readme) = read_workspace_doc(&workspace_root, "README.md") else {
+        return;
+    };
+    let game_ready_clips = read_workspace_doc(&workspace_root, "docs/game-ready-clips.md")
+        .expect("source workspaces must contain docs/game-ready-clips.md");
     let catalog = registered_check_ids();
 
     assert_catalog_ids(
         "README.md check tables",
-        &readme_check_table_ids(),
+        &readme_check_table_ids(&readme),
         &catalog,
     );
     assert_catalog_ids(
         "docs/game-ready-clips.md symptom table",
-        &guide_symptom_table_ids(),
+        &guide_symptom_table_ids(&game_ready_clips),
         &catalog,
     );
 
     for (path, markdown) in [
-        ("README.md", README),
-        ("docs/game-ready-clips.md", GAME_READY_CLIPS),
+        ("README.md", readme.as_str()),
+        ("docs/game-ready-clips.md", game_ready_clips.as_str()),
     ] {
         let tokens = inline_code_tokens(markdown);
         let documented: BTreeSet<_> = tokens
@@ -59,6 +64,19 @@ fn docs_check_ids_match_the_registered_catalog() {
             unknown_check_ids.is_empty(),
             "{path} names check-like ids that are not registered: {unknown_check_ids:?}"
         );
+    }
+}
+
+fn read_workspace_doc(workspace_root: &Path, relative_path: &str) -> Option<String> {
+    let path = workspace_root.join(relative_path);
+    match std::fs::read_to_string(&path) {
+        Ok(contents) => Some(contents),
+        Err(_) if !workspace_root.join("Cargo.toml").is_file() => {
+            // Published crates intentionally exclude repository-level docs.
+            // Source-checkout tests still fail when their workspace docs drift.
+            None
+        }
+        Err(error) => panic!("cannot read {}: {error}", path.display()),
     }
 }
 
@@ -92,10 +110,10 @@ fn registered_check_ids() -> BTreeSet<&'static str> {
     unique
 }
 
-fn readme_check_table_ids() -> BTreeSet<&'static str> {
+fn readme_check_table_ids(readme: &str) -> BTreeSet<&str> {
     let tables = [
-        markdown_table_after(README, "Mechanical checks"),
-        markdown_table_after(README, "Contract-aware checks"),
+        markdown_table_after(readme, "Mechanical checks"),
+        markdown_table_after(readme, "Contract-aware checks"),
     ];
     tables
         .into_iter()
@@ -105,8 +123,8 @@ fn readme_check_table_ids() -> BTreeSet<&'static str> {
         .collect()
 }
 
-fn guide_symptom_table_ids() -> BTreeSet<&'static str> {
-    markdown_table_after(GAME_READY_CLIPS, "From symptom to command")
+fn guide_symptom_table_ids(guide: &str) -> BTreeSet<&str> {
+    markdown_table_after(guide, "From symptom to command")
         .into_iter()
         .skip(2)
         .filter_map(|row| table_cell(row, 1))
@@ -114,7 +132,7 @@ fn guide_symptom_table_ids() -> BTreeSet<&'static str> {
         .collect()
 }
 
-fn markdown_table_after(markdown: &'static str, marker: &str) -> Vec<&'static str> {
+fn markdown_table_after<'a>(markdown: &'a str, marker: &str) -> Vec<&'a str> {
     let mut lines = markdown.lines().skip_while(|line| !line.contains(marker));
     let Some(_) = lines.next() else {
         panic!("missing marker: {marker}");

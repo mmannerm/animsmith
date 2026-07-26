@@ -30,12 +30,14 @@ pub struct MetricDelta {
     /// Metric path, for example `"duration_s"` or
     /// `"bone_rotation_range_deg[hips]"`.
     pub metric: String,
-    /// Value in the before map, absent when a metric appeared or a clip
-    /// was added/removed.
+    /// Value in the before map, absent when a metric appeared, a clip was
+    /// added/removed, or a publicly constructed delta carries a non-finite
+    /// value that cannot be represented by the JSON contract.
     #[serde(skip_serializing_if = "non_finite_or_none")]
     pub before: Option<f64>,
-    /// Value in the after map, absent when a metric disappeared or a
-    /// clip was added/removed.
+    /// Value in the after map, absent when a metric disappeared, a clip was
+    /// added/removed, or a publicly constructed delta carries a non-finite
+    /// value that cannot be represented by the JSON contract.
     #[serde(skip_serializing_if = "non_finite_or_none")]
     pub after: Option<f64>,
     /// Short cause such as `"moved"`, `"appeared"`, or

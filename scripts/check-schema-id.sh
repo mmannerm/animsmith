@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Verify that each published contract uses its immutable protocol identity and
-# that the emitting CLI and contract documentation reference the same ids.
+# that the shared core contract and its documentation reference the same ids.
 set -euo pipefail
 
 failures=0
@@ -34,6 +34,14 @@ check_schema() {
 check_schema docs/schemas/output-v2.schema.json urn:animsmith:schema:output:2
 check_schema docs/schemas/measurements-v1.schema.json urn:animsmith:schema:measurements:1
 
+for removed_schema in \
+  docs/schemas/output-v1.schema.json \
+  docs/schemas/output-v2-preview.schema.json; do
+  if [ -e "$removed_schema" ]; then
+    fail "$removed_schema is a removed alpha contract and must not be restored"
+  fi
+done
+
 # Cutover-only #204 guard: scan every tracked file until output v2 has its first
 # public release, then remove this name tombstone. Behavioural tests separately
 # prove that old report inputs are rejected.
@@ -42,6 +50,32 @@ legacy=$(git grep -nE \
   -- ':!scripts/check-schema-id.sh' || true)
 if [ -n "$legacy" ]; then
   fail "removed v1/preview API or format remains:\n$legacy"
+fi
+
+contract_duplicates=$(git grep -nE \
+  'struct (EnvelopeHeader|ReportEnvelope|(Measure|Lint)?FileReport|MeasurementContract)|serde_json::Value' \
+  -- crates/animsmith/src/main.rs || true)
+if [ -n "$contract_duplicates" ]; then
+  fail "CLI reimplements shared contract structure instead of consuming animsmith-core:\n$contract_duplicates"
+fi
+
+legacy_envelope=$(
+  while IFS= read -r file; do
+    awk '
+      previous ~ /"schema_version"[[:space:]]*:[[:space:]]*1,/ &&
+        /"command"[[:space:]]*:/ {
+          print FILENAME ":" NR - 1 ":" previous
+        }
+      {
+        previous = $0
+      }
+    ' "$file"
+  done < <(git grep -lE \
+    '"schema_version"[[:space:]]*:[[:space:]]*1,' \
+    -- ':!scripts/check-schema-id.sh' || true)
+)
+if [ -n "$legacy_envelope" ]; then
+  fail "removed outer output-v1 envelope remains:\n$legacy_envelope"
 fi
 
 if [ "$failures" -ne 0 ]; then

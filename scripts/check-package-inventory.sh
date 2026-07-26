@@ -164,3 +164,10 @@ done
 # matching internal animsmith-* dependency versions are in the crates.io index.
 # The dependency root can and should fully verify.
 cargo package -p animsmith-core --allow-dirty
+
+workspace_version="$({
+  sed -nE '/^\[workspace\.package\]$/,/^\[/ s/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' Cargo.toml
+} | head -1)"
+test -n "$workspace_version" || fail "Cargo.toml must define workspace.package.version"
+cargo test --all-features --manifest-path \
+  "target/package/animsmith-core-$workspace_version/Cargo.toml"

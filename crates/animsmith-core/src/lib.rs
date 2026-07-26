@@ -64,7 +64,7 @@
 //! configuration types, measurement and diff APIs, rig-profile APIs, the
 //! [`Check`] trait for custom checks, and the check catalog functions
 //! re-exported from this crate root. Built-in check ids, CLI exit-code
-//! semantics, and the CLI's versioned JSON envelope/schema id are treated
+//! semantics, and the shared versioned JSON envelope/schema ids are treated
 //! as the most stable automation contracts. The [`contract`] module owns the
 //! same envelope types and immutable identities for CLI and embedded
 //! producers. The scene-asset
