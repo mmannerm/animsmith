@@ -160,6 +160,10 @@ legacy_envelope_awk='
   }
 '
 
+# Candidate selection deliberately knows only the field name. The object-aware
+# scanner above owns value, whitespace, field-order, and nesting semantics.
+legacy_candidate_pattern='"schema_version"'
+
 # Pin the scanner against a normal outer envelope whose schema/tool fields sit
 # between its version and command. Also prove that nested measurements v1 in a
 # current output-v2 envelope are not mistaken for an outer legacy contract.
@@ -189,6 +193,25 @@ legacy_reverse_order_regression=$(
 )
 if [ -z "$legacy_reverse_order_regression" ]; then
   fail "legacy-envelope scanner missed its command-first, version-last regression fixture"
+fi
+
+legacy_multiline_fixture=$(
+  printf '%s\n' \
+    '{' \
+    '  "schema_version"' \
+    '    :' \
+    '    1,' \
+    '  "command": "lint"' \
+    '}'
+)
+legacy_multiline_regression=""
+if printf '%s\n' "$legacy_multiline_fixture" | grep -Fq "$legacy_candidate_pattern"; then
+  legacy_multiline_regression=$(
+    printf '%s\n' "$legacy_multiline_fixture" | awk "$legacy_envelope_awk"
+  )
+fi
+if [ -z "$legacy_multiline_regression" ]; then
+  fail "legacy-envelope candidate/scanner pipeline missed its multiline value fixture"
 fi
 
 legacy_minified_regression=$(
@@ -228,8 +251,8 @@ fi
 legacy_envelope=$(
   while IFS= read -r file; do
     awk "$legacy_envelope_awk" "$file"
-  done < <(git grep -lE \
-    '"schema_version"[[:space:]]*:[[:space:]]*1([[:space:]]*[,}]|[[:space:]]*$)' \
+  done < <(git grep -lF \
+    "$legacy_candidate_pattern" \
     -- ':!scripts/check-schema-id.sh' || true)
 )
 if [ -n "$legacy_envelope" ]; then
