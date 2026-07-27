@@ -66,7 +66,7 @@ fn lint_count(doc: &Document, check_id: &str) -> usize {
     evaluate_checks(&ctx, &mechanical_checks(), CheckSelection::All)
         .expect("valid built-in catalog")
         .iter()
-        .flat_map(|check| &check.findings)
+        .flat_map(|check| check.findings())
         .filter(|f| f.check_id == check_id)
         .count()
 }

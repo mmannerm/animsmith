@@ -138,6 +138,13 @@ without redesigning the checks: SARIF for code scanning, GitLab Code
 Quality/CodeClimate for MR widgets, JUnit XML for CI dashboards, and CSV
 for ad-hoc analysis.
 
+Human-readable command output keeps asset-derived names, messages, and paths
+on visibly ordered lines: terminal controls, Unicode line separators, and
+bidirectional formatting characters are rendered as visible escapes. Markdown
+also flattens line separators and neutralizes table/code-span delimiters before
+the text is pasted into a trusted review comment. JSON retains the original
+strings as machine data.
+
 ## CI Comments (`lint --format markdown`)
 
 `lint --format markdown` renders findings as GitHub/GitLab-flavored
@@ -155,7 +162,9 @@ short lists, collapsed once a file carries more than ten findings so one
 noisy asset does not bury the rest of the comment). A file with neither
 findings nor gaps collapses to a one-line `✅ Clean` summary. A footer tallies
 errors, warnings, notes, and gaps across every input. The exit code is
-unchanged from text and JSON — see [Exit Codes](#exit-codes).
+unchanged from text and JSON — see [Exit Codes](#exit-codes). Repeated gaps
+with the same check id and code share one presentation row with a count and
+bounded subject list; JSON retains every original scope.
 
 Markdown is presentation-only and carries **no stability guarantees** —
 gate automation on `--format json` (see [output.md](output.md)), and

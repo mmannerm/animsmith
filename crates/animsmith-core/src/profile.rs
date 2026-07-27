@@ -91,13 +91,19 @@ pub struct ResolvedRoles {
     /// Name of the profile that produced this resolution ("custom" for
     /// inline role maps).
     pub profile: String,
-    map: BTreeMap<Role, BoneId>,
+    map: BTreeMap<Role, ResolvedBone>,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedBone {
+    id: BoneId,
+    name: String,
 }
 
 impl ResolvedRoles {
     /// Bone id for a role, when resolved.
     pub fn get(&self, role: Role) -> Option<BoneId> {
-        self.map.get(&role).copied()
+        self.map.get(&role).map(|bone| bone.id)
     }
 
     /// Number of resolved roles.
@@ -112,7 +118,13 @@ impl ResolvedRoles {
 
     /// Iterate resolved `(role, bone_id)` pairs in role order.
     pub fn iter(&self) -> impl Iterator<Item = (Role, BoneId)> + '_ {
-        self.map.iter().map(|(&r, &b)| (r, b))
+        self.map.iter().map(|(&role, bone)| (role, bone.id))
+    }
+
+    pub(crate) fn iter_with_names(&self) -> impl Iterator<Item = (Role, BoneId, &str)> + '_ {
+        self.map
+            .iter()
+            .map(|(&role, bone)| (role, bone.id, bone.name.as_str()))
     }
 
     /// Build from explicit role → bone-name pairs (for example a config
@@ -125,7 +137,13 @@ impl ResolvedRoles {
         let mut map = BTreeMap::new();
         for (role, name) in names {
             if let Some(id) = skeleton.bones.iter().position(|b| b.name == name) {
-                map.insert(role, id);
+                map.insert(
+                    role,
+                    ResolvedBone {
+                        id,
+                        name: skeleton.bones[id].name.clone(),
+                    },
+                );
             }
         }
         Self {
@@ -141,7 +159,13 @@ impl RigProfile {
         let mut map = BTreeMap::new();
         for (role, matcher) in &self.bindings {
             if let Some(id) = skeleton.bones.iter().position(|b| matcher.matches(&b.name)) {
-                map.insert(*role, id);
+                map.insert(
+                    *role,
+                    ResolvedBone {
+                        id,
+                        name: skeleton.bones[id].name.clone(),
+                    },
+                );
             }
         }
         ResolvedRoles {
@@ -240,8 +264,8 @@ pub fn resolve_configured_roles(skeleton: &Skeleton, rig: &RigConfig) -> Resolve
         .any(|name| skeleton.bones.iter().any(|bone| bone.name == *name));
 
     let mut pairs: Vec<_> = base
-        .iter()
-        .map(|(role, bone)| (role, skeleton.bones[bone].name.clone()))
+        .iter_with_names()
+        .map(|(role, _, name)| (role, name.to_owned()))
         .collect();
     pairs.extend(rig.roles.iter().map(|(role, name)| (*role, name.clone())));
 

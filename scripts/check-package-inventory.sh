@@ -164,3 +164,28 @@ done
 # matching internal animsmith-* dependency versions are in the crates.io index.
 # The dependency root can and should fully verify.
 cargo package -p animsmith-core --allow-dirty
+
+workspace_version="$({
+  sed -nE '/^\[workspace\.package\]$/,/^\[/ s/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' Cargo.toml
+} | head -1)"
+test -n "$workspace_version" || fail "Cargo.toml must define workspace.package.version"
+
+# A published crate may be vendored beneath another workspace whose root also
+# has a Cargo.toml. Prove repository-doc tests recognize the exact animsmith
+# source layout rather than treating that unrelated consumer root as ours.
+relocated_root="$(mktemp -d "${TMPDIR:-/tmp}/animsmith-package-relocated.XXXXXX")"
+trap 'rm -rf "$relocated_root"' EXIT
+mkdir -p "$relocated_root/crates"
+cp -R \
+  "target/package/animsmith-core-$workspace_version" \
+  "$relocated_root/crates/animsmith-core"
+printf '%s\n' \
+  '[workspace]' \
+  'members = []' \
+  'exclude = ["crates/animsmith-core"]' \
+  'resolver = "3"' \
+  > "$relocated_root/Cargo.toml"
+cargo test --locked --all-features --manifest-path \
+  "target/package/animsmith-core-$workspace_version/Cargo.toml"
+cargo test --locked --all-features --manifest-path \
+  "$relocated_root/crates/animsmith-core/Cargo.toml"

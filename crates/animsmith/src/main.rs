@@ -19,17 +19,15 @@
 
 #![warn(missing_docs)]
 
-use animsmith_core::model::Document;
-use animsmith_core::profile::ResolvedRoles;
+use animsmith_core::Document;
 use animsmith_core::{
-    Applicability, CheckCtx, CheckEvaluation, CheckSelection, Config, ConfigurationState,
-    EvaluationState, Finding, MetricGrids, SelectionState, Severity, all_checks, evaluate_checks,
-    resolve_configured_roles,
+    CheckCtx, CheckSelection, Config, DiffEnvelope, LintEnvelope, LintFileReport, MeasureEnvelope,
+    MeasureFileReport, MeasurementContract, MeasurementReportInput, MetricGrids, ResolvedRoles,
+    RigInfo, Severity, ToolInfo, ToolSource, all_checks, evaluate_checks, resolve_configured_roles,
 };
 use animsmith_gltf::fix::Repair;
 use clap::builder::{PossibleValue, PossibleValuesParser, TypedValueParser};
 use clap::{Parser, Subcommand, ValueEnum};
-use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -41,13 +39,6 @@ mod render;
 /// findings, 2 = operator error.
 const EXIT_FINDINGS: u8 = 1;
 const EXIT_OPERATOR: u8 = 2;
-
-/// Final machine-readable result-contract version.
-const OUTPUT_SCHEMA_VERSION: u32 = 2;
-const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:2";
-/// Independently versioned measurement payload contract.
-const MEASUREMENTS_SCHEMA_VERSION: u32 = 1;
-const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:1";
 
 #[derive(Parser)]
 #[command(
@@ -244,236 +235,11 @@ fn dedup_preserving_order<T: Copy + Eq>(items: impl IntoIterator<Item = T>) -> V
     selected
 }
 
-#[derive(Serialize)]
-struct ToolInfo {
-    name: &'static str,
-    version: &'static str,
-    source: ToolSource,
-}
-
-#[derive(Serialize)]
-struct ToolSource {
-    revision: Option<&'static str>,
-    dirty: Option<bool>,
-}
-
-impl ToolInfo {
-    fn current() -> Self {
-        Self {
-            name: "animsmith",
-            version: env!("CARGO_PKG_VERSION"),
-            source: ToolSource {
-                revision: option_env!("ANIMSMITH_GIT_REVISION"),
-                dirty: option_env!("ANIMSMITH_GIT_DIRTY").and_then(|value| value.parse().ok()),
-            },
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct RigInfo {
-    profile: String,
-    resolved_roles: BTreeMap<&'static str, String>,
-}
-
-#[derive(Serialize)]
-struct FileReport {
-    path: String,
-    rig: RigInfo,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    checks: Option<Vec<CheckEvaluation>>,
-    measurements: MeasurementContract,
-    /// Presentation-only finding projection used by text and Markdown.
-    #[serde(skip)]
-    presentation_findings: Vec<Finding>,
-}
-
-#[derive(Serialize)]
-struct MeasurementContract {
-    schema_version: u32,
-    schema: &'static str,
-    clips: BTreeMap<String, animsmith_core::measure::ClipMeasurements>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    meshes: Vec<animsmith_core::measure::MeshMeasurements>,
-}
-
-impl MeasurementContract {
-    fn new(
-        clips: BTreeMap<String, animsmith_core::measure::ClipMeasurements>,
-        meshes: Vec<animsmith_core::measure::MeshMeasurements>,
-    ) -> Self {
-        Self {
-            schema_version: MEASUREMENTS_SCHEMA_VERSION,
-            schema: MEASUREMENTS_SCHEMA_ID,
-            clips,
-            meshes,
-        }
-    }
-}
-
-#[derive(Default, Serialize)]
-struct FindingSummary {
-    error: usize,
-    warning: usize,
-    note: usize,
-}
-
-impl FindingSummary {
-    fn add(&mut self, severity: Severity) {
-        match severity {
-            Severity::Error => self.error += 1,
-            Severity::Warning => self.warning += 1,
-            Severity::Note => self.note += 1,
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct MeasureSummary {
-    files: usize,
-}
-
-/// The common head of every JSON envelope — one definition for the
-/// contract fields the schema requires of all commands.
-#[derive(Serialize)]
-struct EnvelopeHeader {
-    schema_version: u32,
-    schema: &'static str,
-    tool: ToolInfo,
-    command: &'static str,
-}
-
-impl EnvelopeHeader {
-    fn new(command: &'static str) -> Self {
-        Self {
-            schema_version: OUTPUT_SCHEMA_VERSION,
-            schema: OUTPUT_SCHEMA_ID,
-            tool: ToolInfo::current(),
-            command,
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct ReportEnvelope<S> {
-    #[serde(flatten)]
-    header: EnvelopeHeader,
-    summary: S,
-    files: Vec<FileReport>,
-}
-
-#[derive(Default, Serialize)]
-struct SelectionSummary {
-    selected: usize,
-    unselected: usize,
-}
-
-#[derive(Default, Serialize)]
-struct ConfigurationSummary {
-    enabled: usize,
-    disabled: usize,
-}
-
-#[derive(Default, Serialize)]
-struct ApplicabilitySummary {
-    applicable: usize,
-    not_applicable: usize,
-}
-
-#[derive(Default, Serialize)]
-struct EvaluationStateSummary {
-    complete: usize,
-    partial: usize,
-    not_evaluated: usize,
-}
-
-#[derive(Default, Serialize)]
-struct CheckSummary {
-    total: usize,
-    selection: SelectionSummary,
-    configuration: ConfigurationSummary,
-    applicability: ApplicabilitySummary,
-    evaluation: EvaluationStateSummary,
-    gaps: usize,
-}
-
-#[derive(Serialize)]
-struct LintSummary {
-    files: usize,
-    findings: FindingSummary,
-    checks: CheckSummary,
-}
-
-impl ReportEnvelope<LintSummary> {
-    fn lint(files: Vec<FileReport>) -> Self {
-        let mut findings = FindingSummary::default();
-        let mut checks = CheckSummary::default();
-        for file in &files {
-            for check in file.checks.as_deref().unwrap_or_default() {
-                checks.total += 1;
-                for finding in &check.findings {
-                    findings.add(finding.severity);
-                }
-                match check.selection {
-                    SelectionState::Selected => checks.selection.selected += 1,
-                    SelectionState::Unselected => checks.selection.unselected += 1,
-                }
-                match check.configuration {
-                    ConfigurationState::Enabled => checks.configuration.enabled += 1,
-                    ConfigurationState::Disabled => checks.configuration.disabled += 1,
-                }
-                match check.applicability {
-                    Applicability::Applicable => checks.applicability.applicable += 1,
-                    Applicability::NotApplicable => checks.applicability.not_applicable += 1,
-                }
-                match check.evaluation {
-                    EvaluationState::Complete => checks.evaluation.complete += 1,
-                    EvaluationState::Partial => checks.evaluation.partial += 1,
-                    EvaluationState::NotEvaluated => checks.evaluation.not_evaluated += 1,
-                }
-                checks.gaps += check.gaps.len();
-            }
-        }
-        Self {
-            header: EnvelopeHeader::new("lint"),
-            summary: LintSummary {
-                files: files.len(),
-                findings,
-                checks,
-            },
-            files,
-        }
-    }
-}
-
-impl ReportEnvelope<MeasureSummary> {
-    fn measure(files: Vec<FileReport>) -> Self {
-        Self {
-            header: EnvelopeHeader::new("measure"),
-            summary: MeasureSummary { files: files.len() },
-            files,
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct DiffInputs {
-    before: String,
-    after: String,
-}
-
-#[derive(Serialize)]
-struct DiffSummary {
-    deltas: usize,
-}
-
-#[derive(Serialize)]
-struct DiffEnvelope {
-    #[serde(flatten)]
-    header: EnvelopeHeader,
-    inputs: DiffInputs,
-    summary: DiffSummary,
-    deltas: Vec<animsmith_core::diff::MetricDelta>,
+fn current_tool() -> ToolInfo {
+    ToolInfo::animsmith(ToolSource::new(
+        option_env!("ANIMSMITH_GIT_REVISION").map(str::to_owned),
+        option_env!("ANIMSMITH_GIT_DIRTY").and_then(|value| value.parse().ok()),
+    ))
 }
 
 fn main() -> ExitCode {
@@ -481,7 +247,7 @@ fn main() -> ExitCode {
     match run(cli) {
         Ok(code) => code,
         Err(message) => {
-            eprintln!("animsmith: {message}");
+            eprintln!("animsmith: {}", render::text_atom(&message));
             ExitCode::from(EXIT_OPERATOR)
         }
     }
@@ -503,16 +269,6 @@ fn load_config(explicit: Option<&Path>) -> Result<Config, String> {
     toml::from_str(&text).map_err(|e| format!("bad config {}: {e}", path.display()))
 }
 
-fn rig_info(doc: &Document, roles: &ResolvedRoles) -> RigInfo {
-    RigInfo {
-        profile: roles.profile.clone(),
-        resolved_roles: roles
-            .iter()
-            .map(|(role, bone)| (role.as_str(), doc.skeleton.bones[bone].name.clone()))
-            .collect(),
-    }
-}
-
 /// Print one repair's report. `target` is the written path; `None`
 /// means dry run (nothing written).
 fn print_fix_report(
@@ -526,7 +282,7 @@ fn print_fix_report(
         "fixed"
     };
     for t in &report.tracks {
-        println!(
+        let line = format!(
             "  {verb}[{}] clip '{}' bone '{}': {} key(s) {}",
             repair.id(),
             t.clip,
@@ -534,14 +290,16 @@ fn print_fix_report(
             t.fixed_keys,
             repair_action(repair)
         );
+        println!("{}", render::text_atom(&line));
     }
     for s in &report.skipped {
-        println!("  skipped[{}]: {s}", repair.id());
+        let line = format!("  skipped[{}]: {s}", repair.id());
+        println!("{}", render::text_atom(&line));
     }
     let destination = target
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "no output written".into());
-    println!(
+    let line = format!(
         "{} key(s) {} across {} track(s) -> {destination}",
         report.total_fixed(),
         if target.is_none() {
@@ -551,12 +309,17 @@ fn print_fix_report(
         },
         report.tracks.len(),
     );
+    println!("{}", render::text_atom(&line));
 }
 
 fn validate_check_selection(
     checks: &[Box<dyn animsmith_core::Check>],
     select: &[String],
 ) -> Result<(), String> {
+    // Frontend validation intentionally runs before loading any input file, so
+    // a bad CLI selection has one deterministic operator error. Core repeats
+    // the invariant for embedded callers that invoke `evaluate_checks`
+    // directly; the two boundaries serve different consumers.
     let known: Vec<&str> = checks.iter().map(|check| check.id()).collect();
     for id in select {
         if !known.contains(&id.as_str()) {
@@ -586,23 +349,25 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 let doc = load(file)?;
                 let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
                 let grids = MetricGrids::new(&doc);
-                reports.push(FileReport {
-                    path: file.display().to_string(),
-                    rig: rig_info(&doc, &roles),
-                    checks: None,
-                    measurements: MeasurementContract::new(
+                reports.push(MeasureFileReport::new(
+                    file.display().to_string(),
+                    RigInfo::from_resolved(&doc, &roles).map_err(|error| error.to_string())?,
+                    MeasurementContract::new(
                         animsmith_core::measure::measure_document(&grids, &roles, &config),
                         animsmith_core::measure::measure_meshes(&doc.assets),
-                    ),
-                    presentation_findings: Vec::new(),
-                });
+                    )
+                    .map_err(|error| error.to_string())?,
+                ));
             }
             match format {
-                Format::Json => render::print_json(&ReportEnvelope::measure(reports)),
+                Format::Json => {
+                    let envelope = MeasureEnvelope::new(current_tool(), reports);
+                    render::print_json(&envelope);
+                }
                 Format::Text => {
                     for report in &reports {
-                        println!("{}:", report.path);
-                        for (clip, m) in &report.measurements.clips {
+                        println!("{}:", render::text_atom(report.path()));
+                        for (clip, m) in report.measurements().clips() {
                             let seam = m
                                 .loop_seam_ratio
                                 .map(|r| format!(" seam×{r:.2}"))
@@ -614,13 +379,14 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                                 .map(|(p, a)| format!(" gait φ={p:.2} ({:.1}cm)", a * 100.0))
                                 .unwrap_or_default();
                             println!(
-                                "  {clip}: {:.3}s, {} frames, {} animated bones{seam}{gait}",
+                                "  {}: {:.3}s, {} frames, {} animated bones{seam}{gait}",
+                                render::text_atom(clip),
                                 m.duration_s,
                                 m.frame_count,
                                 m.animated_bones.len()
                             );
                         }
-                        for mesh in &report.measurements.meshes {
+                        for mesh in report.measurements().meshes() {
                             let bbox = mesh
                                 .aabb
                                 .as_ref()
@@ -642,7 +408,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                             };
                             println!(
                                 "  mesh {}: {} verts{bbox}{skin}",
-                                mesh.name, mesh.vertex_count
+                                render::text_atom(&mesh.name),
+                                mesh.vertex_count
                             );
                         }
                     }
@@ -682,33 +449,31 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 let ctx = CheckCtx::new(&grids, &roles, &config);
                 let evaluations =
                     evaluate_checks(&ctx, &checks, selection).map_err(|error| error.to_string())?;
-                let mut presentation_findings: Vec<_> = evaluations
+                for finding in evaluations
                     .iter()
-                    .flat_map(|check| check.findings.iter().cloned())
+                    .flat_map(|check| check.findings())
                     .filter(|finding| !allow.iter().any(|id| id == finding.check_id))
-                    .collect();
-                presentation_findings.sort_by(|a, b| {
-                    (a.clip.as_deref(), std::cmp::Reverse(a.severity))
-                        .cmp(&(b.clip.as_deref(), std::cmp::Reverse(b.severity)))
-                });
-                for finding in &presentation_findings {
+                {
                     worst = worst.max(finding.severity);
                 }
-                reports.push(FileReport {
-                    path: file.display().to_string(),
-                    rig: rig_info(&doc, &roles),
-                    checks: Some(evaluations),
-                    measurements: MeasurementContract::new(
+                reports.push(LintFileReport::new(
+                    file.display().to_string(),
+                    RigInfo::from_resolved(&doc, &roles).map_err(|error| error.to_string())?,
+                    evaluations,
+                    MeasurementContract::new(
                         animsmith_core::measure::measure_document(&grids, &roles, &config),
                         animsmith_core::measure::measure_meshes(&doc.assets),
-                    ),
-                    presentation_findings,
-                });
+                    )
+                    .map_err(|error| error.to_string())?,
+                ));
             }
             match format {
-                LintFormat::Json => render::print_json(&ReportEnvelope::lint(reports)),
-                LintFormat::Text => render::print_text(&reports),
-                LintFormat::Markdown => render::print_markdown(&reports),
+                LintFormat::Json => {
+                    let envelope = LintEnvelope::new(current_tool(), reports);
+                    render::print_json(&envelope);
+                }
+                LintFormat::Text => render::print_text(&reports, &allow),
+                LintFormat::Markdown => render::print_markdown(&reports, &allow),
             }
             let fail_at = if deny_warnings {
                 Severity::Warning
@@ -731,18 +496,19 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let findings: Vec<_> = evaluate_checks(&ctx, &all_checks(), CheckSelection::All)
                 .map_err(|error| error.to_string())?
                 .into_iter()
-                .flat_map(|check| check.findings)
+                .flat_map(|check| check.findings().to_vec())
                 .collect();
             let html = animsmith_report::render(&grids, &roles, &findings, clip.as_deref());
             std::fs::write(&output, &html)
                 .map_err(|e| format!("cannot write {}: {e}", output.display()))?;
-            println!(
+            let line = format!(
                 "wrote {} ({} clip(s), {} finding(s), {:.1} MB)",
                 output.display(),
                 doc.clips.len(),
                 findings.len(),
                 html.len() as f64 / 1e6
             );
+            println!("{}", render::text_atom(&line));
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Transform {
@@ -780,29 +546,37 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 touched += 1;
                 if let Some((a, b)) = window {
                     animsmith_core::transform::slice(c, a, b, fps);
-                    println!(
+                    let line = format!(
                         "  sliced '{}' to [{a}:{b}]s ({} keys max)",
                         c.name,
                         c.tracks.iter().map(|t| t.key_count()).max().unwrap_or(0)
                     );
+                    println!("{}", render::text_atom(&line));
                 }
                 if let Some(hold) = hold_extend {
                     animsmith_core::transform::hold_extend(c, hold);
-                    println!("  hold-extended '{}' by {hold}s", c.name);
+                    let line = format!("  hold-extended '{}' by {hold}s", c.name);
+                    println!("{}", render::text_atom(&line));
                 }
                 if gait_anchor {
                     match animsmith_core::transform::align_gait_anchor(&skeleton, c, &roles, fps) {
-                        Ok(o) => println!(
-                            "  gait-anchored '{}': phase {:.3} -> {:.3} (offset {}, seam {})",
-                            c.name,
-                            o.phase_before,
-                            o.phase_after,
-                            o.frame_offset,
-                            o.seam_after
-                                .map(|s| format!("{s:.2}"))
-                                .unwrap_or_else(|| "n/a".into()),
-                        ),
-                        Err(reason) => println!("  gait-anchor skipped '{}': {reason}", c.name),
+                        Ok(o) => {
+                            let line = format!(
+                                "  gait-anchored '{}': phase {:.3} -> {:.3} (offset {}, seam {})",
+                                c.name,
+                                o.phase_before,
+                                o.phase_after,
+                                o.frame_offset,
+                                o.seam_after
+                                    .map(|s| format!("{s:.2}"))
+                                    .unwrap_or_else(|| "n/a".into()),
+                            );
+                            println!("{}", render::text_atom(&line));
+                        }
+                        Err(reason) => {
+                            let line = format!("  gait-anchor skipped '{}': {reason}", c.name);
+                            println!("{}", render::text_atom(&line));
+                        }
                     }
                 }
             }
@@ -894,17 +668,12 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let deltas = animsmith_core::diff::diff_measurements(&ma, &mb);
             let has_deltas = !deltas.is_empty();
             match format {
-                Format::Json => render::print_json(&DiffEnvelope {
-                    header: EnvelopeHeader::new("diff"),
-                    inputs: DiffInputs {
-                        before: a.display().to_string(),
-                        after: b.display().to_string(),
-                    },
-                    summary: DiffSummary {
-                        deltas: deltas.len(),
-                    },
+                Format::Json => render::print_json(&DiffEnvelope::new(
+                    current_tool(),
+                    a.display().to_string(),
+                    b.display().to_string(),
                     deltas,
-                }),
+                )),
                 Format::Text => {
                     if deltas.is_empty() {
                         println!("no significant movement");
@@ -916,7 +685,12 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                             (None, Some(y)) => format!(" (none) -> {y:.4}"),
                             (None, None) => String::new(),
                         };
-                        println!("  {} {}: {}{values}", d.clip, d.metric, d.note);
+                        println!(
+                            "  {} {}: {}{values}",
+                            render::text_atom(&d.clip),
+                            render::text_atom(&d.metric),
+                            render::text_atom(&d.note)
+                        );
                     }
                     println!("{} significant change(s)", deltas.len());
                 }
@@ -946,7 +720,7 @@ fn format_write_summary(output: &Path, summary: &animsmith_gltf::write::WriteSum
             summary.clips_without_writable_tracks
         ));
     }
-    text
+    render::text_atom(&text).into_owned()
 }
 
 /// Measurements for `diff`: an asset file (measured now) or a prior
@@ -963,91 +737,14 @@ fn load_measurements(
     if ext == "json" {
         let text = std::fs::read_to_string(path)
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        let value: serde_json::Value = serde_json::from_str(&text)
+        let report: MeasurementReportInput = serde_json::from_str(&text)
             .map_err(|e| format!("bad JSON in {}: {e}", path.display()))?;
         // Only the final v2 envelope with measurement contract v1 is
         // accepted. Pre-finalization report shapes are intentionally not
         // retained while the project is alpha.
-        match value.get("schema_version").and_then(|v| v.as_u64()) {
-            Some(v) if v == u64::from(OUTPUT_SCHEMA_VERSION) => {}
-            Some(v) => {
-                return Err(format!(
-                    "{} has schema_version {v}; this build reads schema_version {OUTPUT_SCHEMA_VERSION}",
-                    path.display()
-                ));
-            }
-            None => {
-                return Err(format!(
-                    "{} is not an animsmith report envelope (no `schema_version`); \
-                     regenerate it with `animsmith measure --format json`",
-                    path.display()
-                ));
-            }
-        }
-        if value.get("schema").and_then(|v| v.as_str()) != Some(OUTPUT_SCHEMA_ID) {
-            return Err(format!(
-                "{} does not identify output contract {OUTPUT_SCHEMA_ID}; regenerate it with `animsmith measure --format json`",
-                path.display()
-            ));
-        }
-        match value.get("command").and_then(|v| v.as_str()) {
-            Some("measure" | "lint") => {}
-            Some(command) => {
-                return Err(format!(
-                    "{} is a {command:?} report; diff reads only measure or lint reports",
-                    path.display()
-                ));
-            }
-            None => {
-                return Err(format!(
-                    "{} is not an animsmith measurement report (no `command`); regenerate it with `animsmith measure --format json`",
-                    path.display()
-                ));
-            }
-        }
-        let Some(files) = value.get("files").and_then(|v| v.as_array()) else {
-            return Err(format!(
-                "{} is not an animsmith report envelope (no `files` array); \
-                 regenerate it with `animsmith measure --format json`",
-                path.display()
-            ));
-        };
-        if files.len() != 1 {
-            return Err(format!(
-                "{} is a multi-file report; diff expects a single-file measurement report",
-                path.display()
-            ));
-        }
-        let measurements = files[0]
-            .get("measurements")
-            .ok_or_else(|| format!("{} report has no measurements", path.display()))?;
-        match measurements.get("schema_version").and_then(|v| v.as_u64()) {
-            Some(v) if v == u64::from(MEASUREMENTS_SCHEMA_VERSION) => {}
-            Some(v) => {
-                return Err(format!(
-                    "{} has measurement schema_version {v}; this build reads measurement schema_version {MEASUREMENTS_SCHEMA_VERSION}",
-                    path.display()
-                ));
-            }
-            None => {
-                return Err(format!(
-                    "{} has no versioned measurement contract; regenerate it with `animsmith measure --format json`",
-                    path.display()
-                ));
-            }
-        }
-        if measurements.get("schema").and_then(|v| v.as_str()) != Some(MEASUREMENTS_SCHEMA_ID) {
-            return Err(format!(
-                "{} does not identify measurement contract {MEASUREMENTS_SCHEMA_ID}; regenerate it with `animsmith measure --format json`",
-                path.display()
-            ));
-        }
-        let map = measurements
-            .get("clips")
-            .cloned()
-            .ok_or_else(|| format!("{} measurement contract has no `clips` map", path.display()))?;
-        return serde_json::from_value(map)
-            .map_err(|e| format!("{} is not a measurements report: {e}", path.display()));
+        return report
+            .into_clip_measurements()
+            .map_err(|error| format!("{} {error}", path.display()));
     }
     let doc = load(path)?;
     let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
@@ -1089,18 +786,20 @@ fn load(path: &Path) -> Result<Document, String> {
 
 fn inspect(doc: &Document, roles: &ResolvedRoles) {
     if let Some(path) = &doc.source.path {
-        println!("{path}");
+        println!("{}", render::text_atom(path));
     }
     if roles.is_empty() {
         println!("rig profile: none detected");
     } else {
-        println!("rig profile: {} ({} roles)", roles.profile, roles.len());
+        let line = format!("rig profile: {} ({} roles)", roles.profile, roles.len());
+        println!("{}", render::text_atom(&line));
         for (role, bone) in roles.iter() {
-            println!(
+            let line = format!(
                 "  {:<12} -> {}",
                 role.as_str(),
                 doc.skeleton.bones[bone].name
             );
+            println!("{}", render::text_atom(&line));
         }
     }
     println!("skeleton: {} bones", doc.skeleton.bones.len());
@@ -1116,7 +815,8 @@ fn inspect(doc: &Document, roles: &ResolvedRoles) {
         } else {
             ""
         };
-        println!("  {}{}{}", "  ".repeat(depth), bone.name, skinned);
+        let line = format!("  {}{}{}", "  ".repeat(depth), bone.name, skinned);
+        println!("{}", render::text_atom(&line));
     }
     println!("clips: {}", doc.clips.len());
     for clip in &doc.clips {
@@ -1126,12 +826,13 @@ fn inspect(doc: &Document, roles: &ResolvedRoles) {
             .map(animsmith_core::model::Track::key_count)
             .max()
             .unwrap_or(0);
-        println!(
+        let line = format!(
             "  {}: {:.3}s, {} tracks, {} keys max",
             clip.name,
             clip.duration_s,
             clip.tracks.len(),
             keys
         );
+        println!("{}", render::text_atom(&line));
     }
 }

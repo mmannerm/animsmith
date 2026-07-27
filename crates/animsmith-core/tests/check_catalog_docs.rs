@@ -1,8 +1,6 @@
 use animsmith_core::all_checks;
 use std::collections::BTreeSet;
-
-const README: &str = include_str!("../../../README.md");
-const GAME_READY_CLIPS: &str = include_str!("../../../docs/game-ready-clips.md");
+use std::path::{Path, PathBuf};
 
 const NON_CHECK_ID_LIKE_TOKENS: &[&str] = &[
     "animsmith",
@@ -20,22 +18,29 @@ const NON_CHECK_ID_LIKE_TOKENS: &[&str] = &[
 
 #[test]
 fn docs_check_ids_match_the_registered_catalog() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let Some(workspace_root) = source_workspace_root(manifest_dir) else {
+        // Published crates intentionally exclude repository-level docs.
+        return;
+    };
+    let readme = read_workspace_doc(&workspace_root, "README.md");
+    let game_ready_clips = read_workspace_doc(&workspace_root, "docs/game-ready-clips.md");
     let catalog = registered_check_ids();
 
     assert_catalog_ids(
         "README.md check tables",
-        &readme_check_table_ids(),
+        &readme_check_table_ids(&readme),
         &catalog,
     );
     assert_catalog_ids(
         "docs/game-ready-clips.md symptom table",
-        &guide_symptom_table_ids(),
+        &guide_symptom_table_ids(&game_ready_clips),
         &catalog,
     );
 
     for (path, markdown) in [
-        ("README.md", README),
-        ("docs/game-ready-clips.md", GAME_READY_CLIPS),
+        ("README.md", readme.as_str()),
+        ("docs/game-ready-clips.md", game_ready_clips.as_str()),
     ] {
         let tokens = inline_code_tokens(markdown);
         let documented: BTreeSet<_> = tokens
@@ -60,6 +65,44 @@ fn docs_check_ids_match_the_registered_catalog() {
             "{path} names check-like ids that are not registered: {unknown_check_ids:?}"
         );
     }
+}
+
+#[test]
+fn source_workspace_detection_has_a_positive_checkout_control() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let detected = source_workspace_root(manifest_dir);
+    if manifest_dir.join(".cargo_vcs_info.json").is_file() {
+        assert!(detected.is_none(), "published packages must skip repo docs");
+        return;
+    }
+
+    let expected = manifest_dir.join("../..");
+    if expected.join("docs/output.md").is_file() {
+        assert_eq!(
+            detected.as_deref(),
+            Some(expected.as_path()),
+            "the exact source checkout must enforce its catalog docs"
+        );
+    }
+}
+
+fn source_workspace_root(manifest_dir: &Path) -> Option<PathBuf> {
+    if manifest_dir.join(".cargo_vcs_info.json").is_file() {
+        return None;
+    }
+    let workspace_root = manifest_dir.join("../..");
+    let current_manifest = manifest_dir.join("Cargo.toml").canonicalize().ok()?;
+    let workspace_manifest = workspace_root
+        .join("crates/animsmith-core/Cargo.toml")
+        .canonicalize()
+        .ok()?;
+    (current_manifest == workspace_manifest).then_some(workspace_root)
+}
+
+fn read_workspace_doc(workspace_root: &Path, relative_path: &str) -> String {
+    let path = workspace_root.join(relative_path);
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()))
 }
 
 fn assert_catalog_ids(surface: &str, documented: &BTreeSet<&str>, catalog: &BTreeSet<&str>) {
@@ -92,10 +135,10 @@ fn registered_check_ids() -> BTreeSet<&'static str> {
     unique
 }
 
-fn readme_check_table_ids() -> BTreeSet<&'static str> {
+fn readme_check_table_ids(readme: &str) -> BTreeSet<&str> {
     let tables = [
-        markdown_table_after(README, "Mechanical checks"),
-        markdown_table_after(README, "Contract-aware checks"),
+        markdown_table_after(readme, "Mechanical checks"),
+        markdown_table_after(readme, "Contract-aware checks"),
     ];
     tables
         .into_iter()
@@ -105,8 +148,8 @@ fn readme_check_table_ids() -> BTreeSet<&'static str> {
         .collect()
 }
 
-fn guide_symptom_table_ids() -> BTreeSet<&'static str> {
-    markdown_table_after(GAME_READY_CLIPS, "From symptom to command")
+fn guide_symptom_table_ids(guide: &str) -> BTreeSet<&str> {
+    markdown_table_after(guide, "From symptom to command")
         .into_iter()
         .skip(2)
         .filter_map(|row| table_cell(row, 1))
@@ -114,7 +157,7 @@ fn guide_symptom_table_ids() -> BTreeSet<&'static str> {
         .collect()
 }
 
-fn markdown_table_after(markdown: &'static str, marker: &str) -> Vec<&'static str> {
+fn markdown_table_after<'a>(markdown: &'a str, marker: &str) -> Vec<&'a str> {
     let mut lines = markdown.lines().skip_while(|line| !line.contains(marker));
     let Some(_) = lines.next() else {
         panic!("missing marker: {marker}");

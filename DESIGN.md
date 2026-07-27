@@ -352,6 +352,8 @@ learns an embedder's contract schema.
   and lint share a nested, independently versioned measurement contract.
   CLI exit status derives only from content severity (warnings block only
   with `--deny-warnings`); coverage gaps are nonblocking evidence.
+  The envelope types and immutable identities live in `animsmith-core` so CLI
+  and embedded producers serialize the same contract.
 - **Future serializers**: no game-industry standard exists for skeletal
   animation lint results. Keep native JSON as the source of truth, then
   add serializers where downstream tools expect them: SARIF for code
@@ -519,3 +521,24 @@ are all faithful ports, golden-tested against that pipeline's shipped
 numbers. Its measurement scripts are deleted as the project migrates
 onto the animsmith library — the standing proof that the public API is
 sufficient for a real bake pipeline.
+
+## Appendix C — result-contract ownership decisions
+
+Two decisions recorded 2026-07-20 while closing the post-finalization review
+of output v2:
+
+1. **The versioned envelope belongs to `animsmith-core`, not the CLI binary.**
+   The CLI still supplies its build identity and frontend policy, but
+   `MeasurementContract`, the command-specific `MeasureFileReport` and
+   `LintFileReport` records, command-specific envelopes, summaries, and URNs
+   are shared library types. This lets embedded producers emit the exact
+   schema without copying private structs or protocol strings while making an
+   invalid measure/lint record shape unrepresentable.
+
+2. **Nested findings keep their `check_id`.** A `Finding` is also a standalone
+   embedded result and the record consumed by text, Markdown, and HTML
+   presentations. Keeping it self-describing avoids a second wire-only finding
+   projection and supports extracting findings without retaining their parent
+   check record. Output v2 therefore accepts the small nested redundancy, and
+   `evaluate_checks` rejects a child id that disagrees with its parent rather
+   than serializing ambiguous ownership.

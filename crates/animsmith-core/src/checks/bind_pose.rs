@@ -9,7 +9,7 @@
 
 use crate::check::{Check, CheckCtx};
 use crate::evaluation::{
-    Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope,
+    Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope, EvaluationScopeCode,
 };
 use crate::finding::{Finding, Severity};
 use crate::model::Property;
@@ -83,12 +83,14 @@ impl Check for BindPose {
                             "only {counted} usable first-frame rotation track(s); at least three are required"
                         ),
                     )
-                    .scope(EvaluationScope::new("first_frame_rest_delta").subject(&clip.name)),
+                    .scope(EvaluationScope::new(EvaluationScopeCode::FIRST_FRAME_REST_DELTA).subject(&clip.name)),
                 );
                 continue;
             }
-            evaluated_scopes
-                .push(EvaluationScope::new("first_frame_rest_delta").subject(&clip.name));
+            evaluated_scopes.push(
+                EvaluationScope::new(EvaluationScopeCode::FIRST_FRAME_REST_DELTA)
+                    .subject(&clip.name),
+            );
             let mean = total_deg / counted as f64;
             if mean > cap {
                 let (worst_deg, worst_bone) = worst.expect("counted > 0");

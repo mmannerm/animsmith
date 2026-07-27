@@ -36,24 +36,41 @@ fn source_info() -> Option<SourceInfo> {
         return packaged_source_info(&packaged);
     }
     let git_root = trusted_git_root()?;
-    let revision = successful_git_text(&git_root, ["rev-parse", "HEAD"])?;
-    let status = git(&git_root, ["status", "--porcelain", "--untracked-files=no"])?;
-    if !status.status.success() {
+    git_source_info(&git_root)
+}
+
+pub(crate) fn git_source_info(git_root: &Path) -> Option<SourceInfo> {
+    let revision = successful_git_text(git_root, ["rev-parse", "HEAD"])?;
+    let status = git(git_root, ["status", "--porcelain", "--untracked-files=no"])?;
+    source_info_from_git_values(&revision, status.status.success(), &status.stdout)
+}
+
+pub(crate) fn source_info_from_git_values(
+    revision: &str,
+    status_succeeded: bool,
+    status_stdout: &[u8],
+) -> Option<SourceInfo> {
+    if !status_succeeded {
         return None;
     }
     Some(SourceInfo {
-        revision,
-        dirty: Some(!status.stdout.is_empty()),
+        revision: valid_revision(revision)?,
+        dirty: Some(!status_stdout.is_empty()),
     })
 }
 
 pub(crate) fn packaged_source_info(path: &Path) -> Option<SourceInfo> {
     let value: serde_json::Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
-    let revision = value.get("git")?.get("sha1")?.as_str()?.to_owned();
+    let revision = valid_revision(value.get("git")?.get("sha1")?.as_str()?)?;
     Some(SourceInfo {
         revision,
         dirty: None,
     })
+}
+
+fn valid_revision(revision: &str) -> Option<String> {
+    (revision.len() == 40 && revision.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| revision.to_owned())
 }
 
 fn git_version(package_version: &str) -> Option<String> {
@@ -148,12 +165,24 @@ pub(crate) fn trusted_git_root_for_manifest(
 }
 
 fn git<const N: usize>(dir: &Path, args: [&str; N]) -> Option<std::process::Output> {
-    Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .ok()
+    let mut command = Command::new("git");
+    clear_git_repository_env(&mut command);
+    command.arg("-C").arg(dir).args(args).output().ok()
+}
+
+pub(crate) fn clear_git_repository_env(command: &mut Command) {
+    for name in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_PARAMETERS",
+    ] {
+        command.env_remove(name);
+    }
 }
 
 pub(crate) fn display_version(package_version: &str, describe: &str) -> String {

@@ -479,7 +479,7 @@ fn nan_key_time_measures_without_panicking_and_lints_as_error() {
     let findings: Vec<_> = evaluate_checks(&ctx, &mechanical_checks(), CheckSelection::All)
         .expect("valid built-in catalog")
         .into_iter()
-        .flat_map(|check| check.findings)
+        .flat_map(|check| check.findings().to_vec())
         .collect();
     assert!(
         findings.iter().any(|f| f.check_id == "nan"
