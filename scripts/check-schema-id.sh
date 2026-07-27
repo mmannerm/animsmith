@@ -52,11 +52,23 @@ if [ -n "$legacy" ]; then
   fail "removed v1/preview API or format remains:\n$legacy"
 fi
 
+contract_duplicate_pattern='struct[[:space:]]+(EnvelopeHeader|ReportEnvelope|(Measure|Lint)?FileReport|MeasurementContract)([^[:alnum:]_]|$)|serde_json[[:space:]]*::[[:space:]]*(Value|\{[^}]*Value)([^[:alnum:]_]|$)'
 contract_duplicates=$(git grep -nE \
-  'struct (EnvelopeHeader|ReportEnvelope|(Measure|Lint)?FileReport|MeasurementContract)|serde_json::Value' \
-  -- crates/animsmith/src/main.rs || true)
+  "$contract_duplicate_pattern" \
+  -- crates/animsmith/src || true)
 if [ -n "$contract_duplicates" ]; then
   fail "CLI reimplements shared contract structure instead of consuming animsmith-core:\n$contract_duplicates"
+fi
+
+if ! printf '%s\n' 'struct  EnvelopeHeader {' | grep -Eq "$contract_duplicate_pattern"; then
+  fail "CLI contract-duplication guard missed flexible struct whitespace"
+fi
+if ! printf '%s\n' 'use serde_json::{json, Value};' | grep -Eq "$contract_duplicate_pattern"; then
+  fail "CLI contract-duplication guard missed a grouped serde_json::Value import"
+fi
+if printf '%s\n' 'struct EnvelopeHeaderExtra {' 'serde_json::ValueError' \
+  | grep -Eq "$contract_duplicate_pattern"; then
+  fail "CLI contract-duplication guard matched a longer, unrelated identifier"
 fi
 
 legacy_envelope_awk='
@@ -98,6 +110,15 @@ legacy_envelope_awk='
     awaiting_version_depth = 0
   }
   {
+    # JSON strings cannot contain a raw newline. Candidate files are prose, so
+    # an unmatched quote on an earlier line must not poison every later JSON
+    # example in the file. Preserve completed keys and pending values, which
+    # may legally be separated from their colon/value by whitespace lines.
+    if (in_string) {
+      in_string = 0
+      escaped = 0
+      token = ""
+    }
     for (i = 1; i <= length($0); i++) {
       ch = substr($0, i, 1)
 
@@ -212,6 +233,19 @@ if printf '%s\n' "$legacy_multiline_fixture" | grep -Fq "$legacy_candidate_patte
 fi
 if [ -z "$legacy_multiline_regression" ]; then
   fail "legacy-envelope candidate/scanner pipeline missed its multiline value fixture"
+fi
+
+legacy_quote_poison_regression=$(
+  printf '%s\n' \
+    'prose with an unmatched "' \
+    '{' \
+    '  "schema_version": 1,' \
+    '  "command": "lint"' \
+    '}' \
+    | awk "$legacy_envelope_awk"
+)
+if [ -z "$legacy_quote_poison_regression" ]; then
+  fail "legacy-envelope scanner let an earlier unmatched quote poison later examples"
 fi
 
 legacy_minified_regression=$(
