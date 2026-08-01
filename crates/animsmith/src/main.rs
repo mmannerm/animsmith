@@ -743,9 +743,14 @@ fn load_measurements(
         // Only the final v2 envelope with measurement contract v1 is
         // accepted. Pre-finalization report shapes are intentionally not
         // retained while the project is alpha.
-        let files = report
-            .into_files()
-            .map_err(|error| format!("{} {}", path.display(), diff_report_error(&error)))?;
+        let file_count = report.file_count();
+        let files = report.into_files().map_err(|error| {
+            format!(
+                "{} {}",
+                path.display(),
+                diff_report_error(&error, file_count)
+            )
+        })?;
         let [file]: [animsmith_core::MeasurementReportFile; 1] =
             files.try_into().map_err(|files: Vec<_>| {
                 format!(
@@ -765,8 +770,15 @@ fn load_measurements(
 }
 
 /// Add `diff` consumer policy and operator remediation to neutral core errors.
-fn diff_report_error(error: &MeasurementReportError) -> String {
+fn diff_report_error(error: &MeasurementReportError, file_count: Option<usize>) -> String {
     const REMEDIATION: &str = "regenerate it with `animsmith measure --format json`";
+    if let Some(found) = file_count.filter(|found| *found != 1)
+        && error.file_index().is_some()
+    {
+        return format!(
+            "contains {found} file records; diff expects a single-file measurement report"
+        );
+    }
     match error {
         MeasurementReportError::MissingOutputVersion => {
             format!("is not an animsmith report envelope (no `schema_version`); {REMEDIATION}")

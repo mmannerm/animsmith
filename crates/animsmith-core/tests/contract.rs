@@ -345,6 +345,7 @@ fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
 
     let input: MeasurementReportInput =
         serde_json::from_value(report).expect("multi-file report deserializes");
+    assert_eq!(input.file_count(), Some(3));
     let files: Vec<MeasurementReportFile> = input
         .into_files()
         .expect("multi-file report is consumer-neutral");
@@ -389,6 +390,7 @@ fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
     empty_report["files"] = serde_json::json!([]);
     let input: MeasurementReportInput =
         serde_json::from_value(empty_report).expect("empty report deserializes");
+    assert_eq!(input.file_count(), Some(0));
     assert!(
         input
             .into_files()
@@ -462,6 +464,7 @@ fn measurement_report_input_identifies_invalid_file_without_cli_remediation() {
     for (report, expected, expected_display) in cases {
         let error = measurement_report_error(report);
         assert_eq!(error, expected);
+        assert_eq!(error.file_index(), Some(1));
         assert_eq!(error.to_string(), expected_display);
     }
 }

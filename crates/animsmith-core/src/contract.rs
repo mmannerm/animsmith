@@ -397,7 +397,34 @@ pub enum MeasurementReportError {
     },
 }
 
+impl MeasurementReportError {
+    /// Zero-based file index for an error in one report record.
+    ///
+    /// Envelope-level errors return `None`.
+    pub fn file_index(&self) -> Option<usize> {
+        match self {
+            Self::MissingPath { file_index }
+            | Self::MissingMeasurements { file_index }
+            | Self::MissingMeasurementVersion { file_index }
+            | Self::UnsupportedMeasurementVersion { file_index, .. }
+            | Self::WrongMeasurementIdentity { file_index }
+            | Self::MissingClips { file_index }
+            | Self::InvalidMeasurements { file_index, .. } => Some(*file_index),
+            _ => None,
+        }
+    }
+}
+
 impl MeasurementReportInput {
+    /// Number of file records present before nested record validation.
+    ///
+    /// Returns `None` when the report omitted its file array. Consumers can
+    /// retain this count while [`MeasurementReportInput::into_files`] performs
+    /// full validation, then apply their own cardinality and error policy.
+    pub fn file_count(&self) -> Option<usize> {
+        self.files.as_ref().map(Vec::len)
+    }
+
     /// Validate current output/measurement identities and recover every file's
     /// complete measurement record from a `measure` or `lint` report.
     ///

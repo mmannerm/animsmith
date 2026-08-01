@@ -103,7 +103,10 @@ It also exposes the typed `MeasurementReportInput` subset and
 every file's exact display path and full measurement contract from a current
 measure or lint report. The core boundary preserves file order and accepts
 empty or multi-file reports; each consumer owns any cardinality rule for its
-workflow.
+workflow. `MeasurementReportInput::file_count` lets an adapter retain the raw
+record count before `into_files` consumes and validates the report, while
+`MeasurementReportError::file_index` identifies record-level failures without
+adding consumer-specific prose.
 The compiling example emits a full schema-valid lint envelope; embedded
 producers do not need to copy private CLI structs or hard-code protocol
 identities. Host-specific sidecars remain appropriate when CLI interoperability

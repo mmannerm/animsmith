@@ -1701,6 +1701,59 @@ fn diff_rejects_zero_or_multiple_measurement_file_records() {
 }
 
 #[test]
+fn diff_reports_cardinality_before_malformed_multi_file_records() {
+    let dir = unique_temp_dir("diff-malformed-multi-report");
+    let report_path = dir.path().join("report.json");
+    let base = measurement_report(1.0);
+    let file = base["files"][0].clone();
+
+    let mut invalid_first = base.clone();
+    invalid_first["files"] = json!([file.clone(), file.clone()]);
+    invalid_first["files"][0]
+        .as_object_mut()
+        .expect("file record")
+        .remove("measurements");
+
+    let mut invalid_second = base.clone();
+    invalid_second["files"] = json!([file.clone(), file.clone()]);
+    invalid_second["files"][1]
+        .as_object_mut()
+        .expect("file record")
+        .remove("measurements");
+
+    let mut invalid_third = base;
+    invalid_third["files"] = json!([file.clone(), file.clone(), file]);
+    invalid_third["files"][2]["measurements"]["schema"] = json!("urn:other:measurements");
+
+    for (name, report, file_count) in [
+        ("invalid first record", invalid_first, 2),
+        ("invalid second record", invalid_second, 2),
+        ("invalid third record", invalid_third, 3),
+    ] {
+        write_json(&report_path, &report);
+        let output = animsmith()
+            .args([
+                "diff",
+                report_path.to_str().expect("utf-8 report path"),
+                fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
+            ])
+            .output()
+            .expect("runs animsmith");
+
+        assert_eq!(output.status.code(), Some(2), "{name}");
+        assert!(stdout(&output).is_empty(), "{name}");
+        assert_eq!(
+            stderr(&output),
+            format!(
+                "animsmith: {} contains {file_count} file records; diff expects a single-file measurement report\n",
+                report_path.display()
+            ),
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn diff_preserves_tailored_report_errors_and_remediation() {
     let dir = unique_temp_dir("diff-report-errors");
     let report_path = dir.path().join("report.json");
