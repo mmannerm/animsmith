@@ -499,16 +499,60 @@ mod measurement_report_input_tests {
             }]),
         };
 
+        let clip_error = input
+            .into_files()
+            .expect_err("recovered clip evidence must be validated");
         assert_eq!(
-            input
-                .into_files()
-                .expect_err("recovered evidence must be validated"),
+            clip_error,
             MeasurementReportError::InvalidMeasurements {
                 file_index: 0,
                 source: MeasurementContractError::NonFiniteValue {
                     path: "clips[\"walk\"].duration_s".into(),
                 },
             }
+        );
+        assert_eq!(
+            clip_error.to_string(),
+            "files[0] has invalid measurements: measurement value clips[\"walk\"].duration_s must be finite"
+        );
+
+        let invalid_mesh = MeshMeasurements {
+            name: "mesh".into(),
+            vertex_count: 1,
+            aabb: None,
+            max_joints_per_vertex: 1,
+            weight_sum_min: Some(f64::NAN),
+            weight_sum_max: Some(1.0),
+        };
+        let input = MeasurementReportInput {
+            schema_version: Some(OUTPUT_SCHEMA_VERSION),
+            schema: Some(OUTPUT_SCHEMA_ID.into()),
+            command: Some("lint".into()),
+            files: Some(vec![MeasurementFileInput {
+                path: Some("invalid-mesh.glb".into()),
+                measurements: Some(MeasurementPayloadInput {
+                    schema_version: Some(MEASUREMENTS_SCHEMA_VERSION),
+                    schema: Some(MEASUREMENTS_SCHEMA_ID.into()),
+                    clips: Some(BTreeMap::new()),
+                    meshes: vec![invalid_mesh],
+                }),
+            }]),
+        };
+        let mesh_error = input
+            .into_files()
+            .expect_err("recovered mesh evidence must be validated");
+        assert_eq!(
+            mesh_error,
+            MeasurementReportError::InvalidMeasurements {
+                file_index: 0,
+                source: MeasurementContractError::NonFiniteValue {
+                    path: "meshes[0].weight_sum_min".into(),
+                },
+            }
+        );
+        assert_eq!(
+            mesh_error.to_string(),
+            "files[0] has invalid measurements: measurement value meshes[0].weight_sum_min must be finite"
         );
     }
 }

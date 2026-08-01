@@ -7,9 +7,9 @@ use animsmith_core::{
     Bone, CheckEvaluation, CheckOutput, CheckSelection, Config, CoverageGap, CoverageGapCode,
     Document, EvaluationScope, EvaluationScopeCode, Finding, LintEnvelope, LintFileReport,
     MEASUREMENTS_SCHEMA_ID, MEASUREMENTS_SCHEMA_VERSION, MeasureEnvelope, MeasureFileReport,
-    MeasurementContract, MeasurementContractError, MeasurementReportError, MeasurementReportInput,
-    MetricGrids, OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, ResolvedRoles, RigInfo, RigInfoError,
-    Role, Severity, ToolInfo, ToolSource, Transform, evaluate_checks,
+    MeasurementContract, MeasurementContractError, MeasurementReportError, MeasurementReportFile,
+    MeasurementReportInput, MetricGrids, OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, ResolvedRoles,
+    RigInfo, RigInfoError, Role, Severity, ToolInfo, ToolSource, Transform, evaluate_checks,
 };
 
 fn tool() -> ToolInfo {
@@ -211,11 +211,12 @@ fn measurement_report_input_rejects_every_invalid_contract_branch() {
     wrong_measurement_identity["files"][0]["measurements"]["schema"] =
         serde_json::json!("urn:other:measurements");
 
-    let cases = [
+    let cases = vec![
         (
             "missing output version",
             without("/schema_version"),
             MeasurementReportError::MissingOutputVersion,
+            "report envelope has no `schema_version`".to_owned(),
         ),
         (
             "unsupported output version",
@@ -223,16 +224,22 @@ fn measurement_report_input_rejects_every_invalid_contract_branch() {
             MeasurementReportError::UnsupportedOutputVersion {
                 found: OUTPUT_SCHEMA_VERSION + 1,
             },
+            format!(
+                "has schema_version {}; this build reads schema_version {OUTPUT_SCHEMA_VERSION}",
+                OUTPUT_SCHEMA_VERSION + 1
+            ),
         ),
         (
             "wrong output identity",
             wrong_output_identity,
             MeasurementReportError::WrongOutputIdentity,
+            format!("report envelope does not identify output contract {OUTPUT_SCHEMA_ID}"),
         ),
         (
             "missing command",
             without("/command"),
             MeasurementReportError::MissingCommand,
+            "report envelope has no `command`".to_owned(),
         ),
         (
             "unsupported command",
@@ -240,26 +247,31 @@ fn measurement_report_input_rejects_every_invalid_contract_branch() {
             MeasurementReportError::UnsupportedCommand {
                 command: "inspect".into(),
             },
+            "report command \"inspect\" does not carry measurement file records".to_owned(),
         ),
         (
             "missing files",
             without("/files"),
             MeasurementReportError::MissingFiles,
+            "report envelope has no `files` array".to_owned(),
         ),
         (
             "missing path",
             without("/files/0/path"),
             MeasurementReportError::MissingPath { file_index: 0 },
+            "files[0] has no `path`".to_owned(),
         ),
         (
             "missing measurements",
             without("/files/0/measurements"),
             MeasurementReportError::MissingMeasurements { file_index: 0 },
+            "files[0] has no measurements".to_owned(),
         ),
         (
             "missing measurement version",
             without("/files/0/measurements/schema_version"),
             MeasurementReportError::MissingMeasurementVersion { file_index: 0 },
+            "files[0] has no versioned measurement contract".to_owned(),
         ),
         (
             "unsupported measurement version",
@@ -268,26 +280,29 @@ fn measurement_report_input_rejects_every_invalid_contract_branch() {
                 file_index: 0,
                 found: MEASUREMENTS_SCHEMA_VERSION + 1,
             },
+            format!(
+                "files[0] has measurement schema_version {}; this build reads measurement schema_version {MEASUREMENTS_SCHEMA_VERSION}",
+                MEASUREMENTS_SCHEMA_VERSION + 1
+            ),
         ),
         (
             "wrong measurement identity",
             wrong_measurement_identity,
             MeasurementReportError::WrongMeasurementIdentity { file_index: 0 },
+            format!("files[0] does not identify measurement contract {MEASUREMENTS_SCHEMA_ID}"),
         ),
         (
             "missing clips",
             without("/files/0/measurements/clips"),
             MeasurementReportError::MissingClips { file_index: 0 },
+            "files[0] measurement contract has no `clips` map".to_owned(),
         ),
     ];
 
-    for (name, value, expected) in cases {
+    for (name, value, expected, expected_display) in cases {
         let error = measurement_report_error(value);
         assert_eq!(error, expected, "{name}");
-        let display = error.to_string();
-        assert!(!display.contains("diff"), "{name}: {display}");
-        assert!(!display.contains("animsmith measure"), "{name}: {display}");
-        assert!(!display.contains("regenerate"), "{name}: {display}");
+        assert_eq!(error.to_string(), expected_display, "{name}");
     }
 }
 
@@ -296,7 +311,7 @@ fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
     let mut report = current_measure_report();
     report["files"] = serde_json::json!([
         {
-            "path": "walk.glb",
+            "path": "./Walk Assets/../WALK.GLB",
             "measurements": {
                 "schema_version": MEASUREMENTS_SCHEMA_VERSION,
                 "schema": MEASUREMENTS_SCHEMA_ID,
@@ -312,36 +327,36 @@ fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
                 "meshes": [valid_mesh_measurements()],
             },
         },
+        {
+            "path": "middle.glb",
+            "measurements": {
+                "schema_version": MEASUREMENTS_SCHEMA_VERSION,
+                "schema": MEASUREMENTS_SCHEMA_ID,
+                "clips": { "idle": valid_clip_measurements() },
+            },
+        },
     ]);
+    let expected_run_measurements = report["files"][1]["measurements"].clone();
 
     let input: MeasurementReportInput =
         serde_json::from_value(report).expect("multi-file report deserializes");
-    let files = input
+    let files: Vec<MeasurementReportFile> = input
         .into_files()
         .expect("multi-file report is consumer-neutral");
 
-    assert_eq!(files.len(), 2);
-    assert_eq!(files[0].path(), "walk.glb");
+    assert_eq!(files.len(), 3);
     assert_eq!(
-        files[0]
-            .measurements()
-            .clips()
-            .keys()
-            .map(String::as_str)
+        files
+            .iter()
+            .map(MeasurementReportFile::path)
             .collect::<Vec<_>>(),
-        ["walk"]
+        ["./Walk Assets/../WALK.GLB", "run.glb", "middle.glb"]
     );
-    assert_eq!(files[1].path(), "run.glb");
     assert_eq!(
-        files[1]
-            .measurements()
-            .clips()
-            .keys()
-            .map(String::as_str)
-            .collect::<Vec<_>>(),
-        ["run"]
+        serde_json::to_value(files[1].measurements())
+            .expect("recovered measurement contract serializes"),
+        expected_run_measurements
     );
-    assert_eq!(files[1].measurements().meshes().len(), 1);
     let (run_clips, run_meshes) = files
         .into_iter()
         .nth(1)
@@ -349,10 +364,13 @@ fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
         .into_measurements()
         .into_parts();
     assert_eq!(
-        run_clips.keys().map(String::as_str).collect::<Vec<_>>(),
-        ["run"]
+        serde_json::to_value(run_clips).expect("recovered clips serialize"),
+        expected_run_measurements["clips"]
     );
-    assert_eq!(run_meshes.len(), 1);
+    assert_eq!(
+        serde_json::to_value(run_meshes).expect("recovered meshes serialize"),
+        expected_run_measurements["meshes"]
+    );
 
     let mut empty_report = current_measure_report();
     empty_report["files"] = serde_json::json!([]);
@@ -369,25 +387,61 @@ fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
 #[test]
 fn measurement_report_input_identifies_invalid_file_without_cli_remediation() {
     let base = current_measure_report();
-    let mut report = base.clone();
-    report["files"] = serde_json::json!([
-        base["files"][0].clone(),
-        {
-            "path": "invalid.glb",
-            "measurements": { "schema_version": MEASUREMENTS_SCHEMA_VERSION },
-        },
-    ]);
+    let mut two_files = base.clone();
+    two_files["files"] = serde_json::json!([base["files"][0].clone(), base["files"][0].clone(),]);
+    let without = |pointer: &str| {
+        let mut report = two_files.clone();
+        let (parent, key) = pointer.rsplit_once('/').expect("JSON pointer has a key");
+        report
+            .pointer_mut(parent)
+            .expect("fixture path exists")
+            .as_object_mut()
+            .expect("path ends at an object")
+            .remove(key);
+        report
+    };
+    let mut future_measurements = two_files.clone();
+    future_measurements["files"][1]["measurements"]["schema_version"] =
+        serde_json::json!(MEASUREMENTS_SCHEMA_VERSION + 1);
+    let mut wrong_measurement_identity = two_files.clone();
+    wrong_measurement_identity["files"][1]["measurements"]["schema"] =
+        serde_json::json!("urn:other:measurements");
 
-    let error = measurement_report_error(report);
-    assert_eq!(
-        error,
-        MeasurementReportError::WrongMeasurementIdentity { file_index: 1 }
-    );
-    let display = error.to_string();
-    assert!(display.contains("files[1]"));
-    assert!(!display.contains("diff"));
-    assert!(!display.contains("animsmith measure"));
-    assert!(!display.contains("regenerate"));
+    let cases = [
+        (
+            without("/files/1/path"),
+            MeasurementReportError::MissingPath { file_index: 1 },
+        ),
+        (
+            without("/files/1/measurements"),
+            MeasurementReportError::MissingMeasurements { file_index: 1 },
+        ),
+        (
+            without("/files/1/measurements/schema_version"),
+            MeasurementReportError::MissingMeasurementVersion { file_index: 1 },
+        ),
+        (
+            future_measurements,
+            MeasurementReportError::UnsupportedMeasurementVersion {
+                file_index: 1,
+                found: MEASUREMENTS_SCHEMA_VERSION + 1,
+            },
+        ),
+        (
+            wrong_measurement_identity,
+            MeasurementReportError::WrongMeasurementIdentity { file_index: 1 },
+        ),
+        (
+            without("/files/1/measurements/clips"),
+            MeasurementReportError::MissingClips { file_index: 1 },
+        ),
+    ];
+
+    for (report, expected) in cases {
+        let error = measurement_report_error(report);
+        assert_eq!(error, expected);
+        assert!(error.to_string().starts_with("files[1]"));
+    }
 }
 
 #[test]
