@@ -475,6 +475,10 @@ mod measurement_report_input_tests {
 
     #[test]
     fn recovered_payloads_run_measurement_contract_validation() {
+        // JSON itself cannot encode NaN/Inf, so exercise this last-resort
+        // contract guard with private inputs that serde_json cannot construct.
+        // Keeping the case here proves other serde data formats and future
+        // deserializers cannot bypass MeasurementContract::new.
         let file = |path: &str,
                     clips: BTreeMap<String, ClipMeasurements>,
                     meshes: Vec<MeshMeasurements>| MeasurementFileInput {
