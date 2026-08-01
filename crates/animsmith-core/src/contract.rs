@@ -346,51 +346,47 @@ pub enum MeasurementReportError {
     /// The outer envelope omitted its file array.
     #[error("report envelope has no `files` array")]
     MissingFiles,
+    /// One file record failed validation.
+    #[error("files[{file_index}] {source}")]
+    File {
+        /// Zero-based index of the invalid file record.
+        file_index: usize,
+        /// Typed record-validation failure.
+        #[source]
+        source: MeasurementFileError,
+    },
+}
+
+/// One measurement-report file record failed validation.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum MeasurementFileError {
     /// The file record omitted its source path.
-    #[error("files[{file_index}] has no `path`")]
-    MissingPath {
-        /// Zero-based index of the invalid file record.
-        file_index: usize,
-    },
+    #[error("has no `path`")]
+    MissingPath,
     /// The file record omitted its nested measurement contract.
-    #[error("files[{file_index}] has no measurements")]
-    MissingMeasurements {
-        /// Zero-based index of the invalid file record.
-        file_index: usize,
-    },
+    #[error("has no measurements")]
+    MissingMeasurements,
     /// The nested measurement contract omitted its version.
-    #[error("files[{file_index}] has no versioned measurement contract")]
-    MissingMeasurementVersion {
-        /// Zero-based index of the invalid file record.
-        file_index: usize,
-    },
+    #[error("has no versioned measurement contract")]
+    MissingMeasurementVersion,
     /// The nested measurement contract uses an unsupported version.
     #[error(
-        "files[{file_index}] has measurement schema_version {found}; this build reads measurement schema_version {MEASUREMENTS_SCHEMA_VERSION}"
+        "has measurement schema_version {found}; this build reads measurement schema_version {MEASUREMENTS_SCHEMA_VERSION}"
     )]
     UnsupportedMeasurementVersion {
-        /// Zero-based index of the invalid file record.
-        file_index: usize,
         /// Version found in the nested contract.
         found: u32,
     },
     /// The nested contract does not carry the immutable measurement identity.
-    #[error("files[{file_index}] does not identify measurement contract {MEASUREMENTS_SCHEMA_ID}")]
-    WrongMeasurementIdentity {
-        /// Zero-based index of the invalid file record.
-        file_index: usize,
-    },
+    #[error("does not identify measurement contract {MEASUREMENTS_SCHEMA_ID}")]
+    WrongMeasurementIdentity,
     /// The nested contract omitted its clip-measurement map.
-    #[error("files[{file_index}] measurement contract has no `clips` map")]
-    MissingClips {
-        /// Zero-based index of the invalid file record.
-        file_index: usize,
-    },
+    #[error("measurement contract has no `clips` map")]
+    MissingClips,
     /// The nested measurement values do not satisfy the current contract.
-    #[error("files[{file_index}] has invalid measurements: {source}")]
+    #[error("has invalid measurements: {source}")]
     InvalidMeasurements {
-        /// Zero-based index of the invalid file record.
-        file_index: usize,
         /// Measurement validation failure.
         #[source]
         source: MeasurementContractError,
@@ -403,15 +399,13 @@ impl MeasurementReportError {
     /// Envelope-level errors return `None`.
     pub fn file_index(&self) -> Option<usize> {
         match self {
-            Self::MissingPath { file_index }
-            | Self::MissingMeasurements { file_index }
-            | Self::MissingMeasurementVersion { file_index }
-            | Self::UnsupportedMeasurementVersion { file_index, .. }
-            | Self::WrongMeasurementIdentity { file_index }
-            | Self::MissingClips { file_index }
-            | Self::InvalidMeasurements { file_index, .. } => Some(*file_index),
+            Self::File { file_index, .. } => Some(*file_index),
             _ => None,
         }
+    }
+
+    fn file(file_index: usize, source: MeasurementFileError) -> Self {
+        Self::File { file_index, source }
     }
 }
 
@@ -460,35 +454,45 @@ impl MeasurementReportInput {
             .into_iter()
             .enumerate()
             .map(|(file_index, file)| {
-                let path = file
-                    .path
-                    .ok_or(MeasurementReportError::MissingPath { file_index })?;
-                let measurements = file
-                    .measurements
-                    .ok_or(MeasurementReportError::MissingMeasurements { file_index })?;
+                let path = file.path.ok_or_else(|| {
+                    MeasurementReportError::file(file_index, MeasurementFileError::MissingPath)
+                })?;
+                let measurements = file.measurements.ok_or_else(|| {
+                    MeasurementReportError::file(
+                        file_index,
+                        MeasurementFileError::MissingMeasurements,
+                    )
+                })?;
                 match measurements.schema_version {
                     Some(MEASUREMENTS_SCHEMA_VERSION) => {}
                     Some(found) => {
-                        return Err(MeasurementReportError::UnsupportedMeasurementVersion {
+                        return Err(MeasurementReportError::file(
                             file_index,
-                            found,
-                        });
+                            MeasurementFileError::UnsupportedMeasurementVersion { found },
+                        ));
                     }
                     None => {
-                        return Err(MeasurementReportError::MissingMeasurementVersion {
+                        return Err(MeasurementReportError::file(
                             file_index,
-                        });
+                            MeasurementFileError::MissingMeasurementVersion,
+                        ));
                     }
                 }
                 if measurements.schema.as_deref() != Some(MEASUREMENTS_SCHEMA_ID) {
-                    return Err(MeasurementReportError::WrongMeasurementIdentity { file_index });
+                    return Err(MeasurementReportError::file(
+                        file_index,
+                        MeasurementFileError::WrongMeasurementIdentity,
+                    ));
                 }
-                let clips = measurements
-                    .clips
-                    .ok_or(MeasurementReportError::MissingClips { file_index })?;
+                let clips = measurements.clips.ok_or_else(|| {
+                    MeasurementReportError::file(file_index, MeasurementFileError::MissingClips)
+                })?;
                 let measurements =
                     MeasurementContract::new(clips, measurements.meshes).map_err(|source| {
-                        MeasurementReportError::InvalidMeasurements { file_index, source }
+                        MeasurementReportError::file(
+                            file_index,
+                            MeasurementFileError::InvalidMeasurements { source },
+                        )
                     })?;
                 Ok(MeasurementReportFile { path, measurements })
             })
@@ -502,10 +506,11 @@ mod measurement_report_input_tests {
 
     #[test]
     fn recovered_payloads_run_measurement_contract_validation() {
-        // JSON itself cannot encode NaN/Inf, so exercise this last-resort
-        // contract guard with private inputs that serde_json cannot construct.
-        // Keeping the case here proves other serde data formats and future
-        // deserializers cannot bypass MeasurementContract::new.
+        // Exercise the last-resort contract guard with private NaN inputs that
+        // JSON cannot encode. Public-boundary tests separately cover finite
+        // deserializer values that overflow while narrowing into f32 mesh
+        // bounds. Together they prove no input route can bypass
+        // MeasurementContract::new.
         let file = |path: &str,
                     clips: BTreeMap<String, ClipMeasurements>,
                     meshes: Vec<MeshMeasurements>| MeasurementFileInput {
@@ -548,13 +553,16 @@ mod measurement_report_input_tests {
                     BTreeMap::from([("walk".into(), invalid_clip())]),
                     Vec::new(),
                 )]),
-                MeasurementReportError::InvalidMeasurements {
+                MeasurementReportError::File {
                     file_index: 0,
-                    source: MeasurementContractError::NonFiniteValue {
-                        path: "clips[\"walk\"].duration_s".into(),
+                    source: MeasurementFileError::InvalidMeasurements {
+                        source: MeasurementContractError::NonFiniteValue {
+                            path: "clips[\"walk\"].duration_s".into(),
+                        },
                     },
                 },
                 "files[0] has invalid measurements: measurement value clips[\"walk\"].duration_s must be finite",
+                0,
             ),
             (
                 report(vec![file(
@@ -562,13 +570,16 @@ mod measurement_report_input_tests {
                     BTreeMap::new(),
                     vec![invalid_mesh()],
                 )]),
-                MeasurementReportError::InvalidMeasurements {
+                MeasurementReportError::File {
                     file_index: 0,
-                    source: MeasurementContractError::NonFiniteValue {
-                        path: "meshes[0].weight_sum_min".into(),
+                    source: MeasurementFileError::InvalidMeasurements {
+                        source: MeasurementContractError::NonFiniteValue {
+                            path: "meshes[0].weight_sum_min".into(),
+                        },
                     },
                 },
                 "files[0] has invalid measurements: measurement value meshes[0].weight_sum_min must be finite",
+                0,
             ),
             (
                 report(vec![
@@ -579,34 +590,41 @@ mod measurement_report_input_tests {
                         Vec::new(),
                     ),
                 ]),
-                MeasurementReportError::InvalidMeasurements {
+                MeasurementReportError::File {
                     file_index: 1,
-                    source: MeasurementContractError::NonFiniteValue {
-                        path: "clips[\"walk\"].duration_s".into(),
+                    source: MeasurementFileError::InvalidMeasurements {
+                        source: MeasurementContractError::NonFiniteValue {
+                            path: "clips[\"walk\"].duration_s".into(),
+                        },
                     },
                 },
                 "files[1] has invalid measurements: measurement value clips[\"walk\"].duration_s must be finite",
+                1,
             ),
             (
                 report(vec![
                     valid(),
                     file("invalid-mesh.glb", BTreeMap::new(), vec![invalid_mesh()]),
                 ]),
-                MeasurementReportError::InvalidMeasurements {
+                MeasurementReportError::File {
                     file_index: 1,
-                    source: MeasurementContractError::NonFiniteValue {
-                        path: "meshes[0].weight_sum_min".into(),
+                    source: MeasurementFileError::InvalidMeasurements {
+                        source: MeasurementContractError::NonFiniteValue {
+                            path: "meshes[0].weight_sum_min".into(),
+                        },
                     },
                 },
                 "files[1] has invalid measurements: measurement value meshes[0].weight_sum_min must be finite",
+                1,
             ),
         ];
 
-        for (input, expected, expected_display) in cases {
+        for (input, expected, expected_display, expected_file_index) in cases {
             let error = input
                 .into_files()
                 .expect_err("recovered evidence must be validated");
             assert_eq!(error, expected);
+            assert_eq!(error.file_index(), Some(expected_file_index));
             assert_eq!(error.to_string(), expected_display);
         }
     }

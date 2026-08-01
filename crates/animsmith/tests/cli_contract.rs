@@ -1701,7 +1701,7 @@ fn diff_rejects_zero_or_multiple_measurement_file_records() {
 }
 
 #[test]
-fn diff_reports_cardinality_before_malformed_multi_file_records() {
+fn diff_preserves_error_precedence_for_malformed_multi_file_reports() {
     let dir = unique_temp_dir("diff-malformed-multi-report");
     let report_path = dir.path().join("report.json");
     let base = measurement_report(1.0);
@@ -1721,14 +1721,48 @@ fn diff_reports_cardinality_before_malformed_multi_file_records() {
         .expect("file record")
         .remove("measurements");
 
+    let mut missing_command = base.clone();
+    missing_command["files"] = json!([file.clone(), file.clone()]);
+    missing_command
+        .as_object_mut()
+        .expect("report envelope")
+        .remove("command");
+
+    let mut wrong_output_identity = base.clone();
+    wrong_output_identity["files"] = json!([file.clone(), file.clone()]);
+    wrong_output_identity["schema"] = json!("urn:other:output");
+
     let mut invalid_third = base;
     invalid_third["files"] = json!([file.clone(), file.clone(), file]);
     invalid_third["files"][2]["measurements"]["schema"] = json!("urn:other:measurements");
 
-    for (name, report, file_count) in [
-        ("invalid first record", invalid_first, 2),
-        ("invalid second record", invalid_second, 2),
-        ("invalid third record", invalid_third, 3),
+    let remediation = "regenerate it with `animsmith measure --format json`";
+    for (name, report, expected) in [
+        (
+            "invalid first record",
+            invalid_first,
+            "contains 2 file records; diff expects a single-file measurement report".to_owned(),
+        ),
+        (
+            "invalid second record",
+            invalid_second,
+            "contains 2 file records; diff expects a single-file measurement report".to_owned(),
+        ),
+        (
+            "invalid third record",
+            invalid_third,
+            "contains 3 file records; diff expects a single-file measurement report".to_owned(),
+        ),
+        (
+            "missing envelope command",
+            missing_command,
+            format!("is not an animsmith measurement report (no `command`); {remediation}"),
+        ),
+        (
+            "wrong output identity",
+            wrong_output_identity,
+            format!("does not identify output contract {OUTPUT_SCHEMA_ID}; {remediation}"),
+        ),
     ] {
         write_json(&report_path, &report);
         let output = animsmith()
@@ -1744,10 +1778,7 @@ fn diff_reports_cardinality_before_malformed_multi_file_records() {
         assert!(stdout(&output).is_empty(), "{name}");
         assert_eq!(
             stderr(&output),
-            format!(
-                "animsmith: {} contains {file_count} file records; diff expects a single-file measurement report\n",
-                report_path.display()
-            ),
+            format!("animsmith: {} {expected}\n", report_path.display()),
             "{name}"
         );
     }

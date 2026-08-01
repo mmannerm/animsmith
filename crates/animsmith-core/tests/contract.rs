@@ -7,9 +7,10 @@ use animsmith_core::{
     Bone, CheckEvaluation, CheckOutput, CheckSelection, Config, CoverageGap, CoverageGapCode,
     Document, EvaluationScope, EvaluationScopeCode, Finding, LintEnvelope, LintFileReport,
     MEASUREMENTS_SCHEMA_ID, MEASUREMENTS_SCHEMA_VERSION, MeasureEnvelope, MeasureFileReport,
-    MeasurementContract, MeasurementContractError, MeasurementReportError, MeasurementReportFile,
-    MeasurementReportInput, MetricGrids, OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, ResolvedRoles,
-    RigInfo, RigInfoError, Role, Severity, ToolInfo, ToolSource, Transform, evaluate_checks,
+    MeasurementContract, MeasurementContractError, MeasurementFileError, MeasurementReportError,
+    MeasurementReportFile, MeasurementReportInput, MetricGrids, OUTPUT_SCHEMA_ID,
+    OUTPUT_SCHEMA_VERSION, ResolvedRoles, RigInfo, RigInfoError, Role, Severity, ToolInfo,
+    ToolSource, Transform, evaluate_checks,
 };
 
 fn tool() -> ToolInfo {
@@ -210,6 +211,9 @@ fn measurement_report_input_rejects_every_invalid_contract_branch() {
     let mut wrong_measurement_identity = base.clone();
     wrong_measurement_identity["files"][0]["measurements"]["schema"] =
         serde_json::json!("urn:other:measurements");
+    let input_without_files: MeasurementReportInput = serde_json::from_value(without("/files"))
+        .expect("report without files remains structurally deserializable");
+    assert_eq!(input_without_files.file_count(), None);
 
     let cases = vec![
         (
@@ -258,27 +262,38 @@ fn measurement_report_input_rejects_every_invalid_contract_branch() {
         (
             "missing path",
             without("/files/0/path"),
-            MeasurementReportError::MissingPath { file_index: 0 },
+            MeasurementReportError::File {
+                file_index: 0,
+                source: MeasurementFileError::MissingPath,
+            },
             "files[0] has no `path`".to_owned(),
         ),
         (
             "missing measurements",
             without("/files/0/measurements"),
-            MeasurementReportError::MissingMeasurements { file_index: 0 },
+            MeasurementReportError::File {
+                file_index: 0,
+                source: MeasurementFileError::MissingMeasurements,
+            },
             "files[0] has no measurements".to_owned(),
         ),
         (
             "missing measurement version",
             without("/files/0/measurements/schema_version"),
-            MeasurementReportError::MissingMeasurementVersion { file_index: 0 },
+            MeasurementReportError::File {
+                file_index: 0,
+                source: MeasurementFileError::MissingMeasurementVersion,
+            },
             "files[0] has no versioned measurement contract".to_owned(),
         ),
         (
             "unsupported measurement version",
             future_measurements,
-            MeasurementReportError::UnsupportedMeasurementVersion {
+            MeasurementReportError::File {
                 file_index: 0,
-                found: MEASUREMENTS_SCHEMA_VERSION + 1,
+                source: MeasurementFileError::UnsupportedMeasurementVersion {
+                    found: MEASUREMENTS_SCHEMA_VERSION + 1,
+                },
             },
             format!(
                 "files[0] has measurement schema_version {}; this build reads measurement schema_version {MEASUREMENTS_SCHEMA_VERSION}",
@@ -288,13 +303,19 @@ fn measurement_report_input_rejects_every_invalid_contract_branch() {
         (
             "wrong measurement identity",
             wrong_measurement_identity,
-            MeasurementReportError::WrongMeasurementIdentity { file_index: 0 },
+            MeasurementReportError::File {
+                file_index: 0,
+                source: MeasurementFileError::WrongMeasurementIdentity,
+            },
             format!("files[0] does not identify measurement contract {MEASUREMENTS_SCHEMA_ID}"),
         ),
         (
             "missing clips",
             without("/files/0/measurements/clips"),
-            MeasurementReportError::MissingClips { file_index: 0 },
+            MeasurementReportError::File {
+                file_index: 0,
+                source: MeasurementFileError::MissingClips,
+            },
             "files[0] measurement contract has no `clips` map".to_owned(),
         ),
     ];
@@ -302,8 +323,45 @@ fn measurement_report_input_rejects_every_invalid_contract_branch() {
     for (name, value, expected, expected_display) in cases {
         let error = measurement_report_error(value);
         assert_eq!(error, expected, "{name}");
+        let expected_file_index = match &expected {
+            MeasurementReportError::File { .. } => Some(0),
+            _ => None,
+        };
+        assert_eq!(error.file_index(), expected_file_index, "{name}");
         assert_eq!(error.to_string(), expected_display, "{name}");
     }
+}
+
+#[test]
+fn measurement_report_input_rejects_finite_value_that_overflows_mesh_f32() {
+    let mut report = current_measure_report();
+    report["files"][0]["measurements"]["meshes"] = serde_json::json!([{
+        "name": "overflow",
+        "vertex_count": 1,
+        "aabb": {
+            "min": [1e39, 0.0, 0.0],
+            "max": [1e39, 0.0, 0.0],
+        },
+        "max_joints_per_vertex": 0,
+    }]);
+
+    let error = measurement_report_error(report);
+    assert_eq!(
+        error,
+        MeasurementReportError::File {
+            file_index: 0,
+            source: MeasurementFileError::InvalidMeasurements {
+                source: MeasurementContractError::NonFiniteValue {
+                    path: "meshes[0].aabb.min[0]".into(),
+                },
+            },
+        }
+    );
+    assert_eq!(error.file_index(), Some(0));
+    assert_eq!(
+        error.to_string(),
+        "files[0] has invalid measurements: measurement value meshes[0].aabb.min[0] must be finite"
+    );
 }
 
 #[test]
@@ -425,24 +483,35 @@ fn measurement_report_input_identifies_invalid_file_without_cli_remediation() {
     let cases = vec![
         (
             without("/files/1/path"),
-            MeasurementReportError::MissingPath { file_index: 1 },
+            MeasurementReportError::File {
+                file_index: 1,
+                source: MeasurementFileError::MissingPath,
+            },
             "files[1] has no `path`".to_owned(),
         ),
         (
             without("/files/1/measurements"),
-            MeasurementReportError::MissingMeasurements { file_index: 1 },
+            MeasurementReportError::File {
+                file_index: 1,
+                source: MeasurementFileError::MissingMeasurements,
+            },
             "files[1] has no measurements".to_owned(),
         ),
         (
             without("/files/1/measurements/schema_version"),
-            MeasurementReportError::MissingMeasurementVersion { file_index: 1 },
+            MeasurementReportError::File {
+                file_index: 1,
+                source: MeasurementFileError::MissingMeasurementVersion,
+            },
             "files[1] has no versioned measurement contract".to_owned(),
         ),
         (
             future_measurements,
-            MeasurementReportError::UnsupportedMeasurementVersion {
+            MeasurementReportError::File {
                 file_index: 1,
-                found: MEASUREMENTS_SCHEMA_VERSION + 1,
+                source: MeasurementFileError::UnsupportedMeasurementVersion {
+                    found: MEASUREMENTS_SCHEMA_VERSION + 1,
+                },
             },
             format!(
                 "files[1] has measurement schema_version {}; this build reads measurement schema_version {MEASUREMENTS_SCHEMA_VERSION}",
@@ -451,12 +520,18 @@ fn measurement_report_input_identifies_invalid_file_without_cli_remediation() {
         ),
         (
             wrong_measurement_identity,
-            MeasurementReportError::WrongMeasurementIdentity { file_index: 1 },
+            MeasurementReportError::File {
+                file_index: 1,
+                source: MeasurementFileError::WrongMeasurementIdentity,
+            },
             format!("files[1] does not identify measurement contract {MEASUREMENTS_SCHEMA_ID}"),
         ),
         (
             without("/files/1/measurements/clips"),
-            MeasurementReportError::MissingClips { file_index: 1 },
+            MeasurementReportError::File {
+                file_index: 1,
+                source: MeasurementFileError::MissingClips,
+            },
             "files[1] measurement contract has no `clips` map".to_owned(),
         ),
     ];

@@ -105,7 +105,7 @@ pub use config::{ClipExpectations, Config, GaitGroup, Pinned, SeveritySetting};
 pub use contract::{
     DiffEnvelope, LintEnvelope, LintFileReport, MEASUREMENTS_SCHEMA_ID,
     MEASUREMENTS_SCHEMA_VERSION, MeasureEnvelope, MeasureFileReport, MeasurementContract,
-    MeasurementContractError, MeasurementReportError, MeasurementReportFile,
+    MeasurementContractError, MeasurementFileError, MeasurementReportError, MeasurementReportFile,
     MeasurementReportInput, OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, RigInfo, RigInfoError,
     ToolInfo, ToolSource,
 };

@@ -22,9 +22,9 @@
 use animsmith_core::Document;
 use animsmith_core::{
     CheckCtx, CheckSelection, Config, DiffEnvelope, LintEnvelope, LintFileReport, MeasureEnvelope,
-    MeasureFileReport, MeasurementContract, MeasurementReportError, MeasurementReportInput,
-    MetricGrids, ResolvedRoles, RigInfo, Severity, ToolInfo, ToolSource, all_checks,
-    evaluate_checks, resolve_configured_roles,
+    MeasureFileReport, MeasurementContract, MeasurementFileError, MeasurementReportError,
+    MeasurementReportInput, MetricGrids, ResolvedRoles, RigInfo, Severity, ToolInfo, ToolSource,
+    all_checks, evaluate_checks, resolve_configured_roles,
 };
 use animsmith_gltf::fix::Repair;
 use clap::builder::{PossibleValue, PossibleValuesParser, TypedValueParser};
@@ -796,29 +796,44 @@ fn diff_report_error(error: &MeasurementReportError, file_count: Option<usize>) 
         MeasurementReportError::MissingFiles => {
             format!("is not an animsmith report envelope (no `files` array); {REMEDIATION}")
         }
-        MeasurementReportError::MissingPath { file_index: 0 } => {
+        MeasurementReportError::File {
+            file_index: 0,
+            source: MeasurementFileError::MissingPath,
+        } => {
             format!("report file record has no `path`; {REMEDIATION}")
         }
-        MeasurementReportError::MissingMeasurements { file_index: 0 } => {
-            "report has no measurements".into()
-        }
-        MeasurementReportError::MissingMeasurementVersion { file_index: 0 } => {
+        MeasurementReportError::File {
+            file_index: 0,
+            source: MeasurementFileError::MissingMeasurements,
+        } => "report has no measurements".into(),
+        MeasurementReportError::File {
+            file_index: 0,
+            source: MeasurementFileError::MissingMeasurementVersion,
+        } => {
             format!("has no versioned measurement contract; {REMEDIATION}")
         }
-        MeasurementReportError::UnsupportedMeasurementVersion {
+        MeasurementReportError::File {
             file_index: 0,
-            found,
+            source: MeasurementFileError::UnsupportedMeasurementVersion { found },
         } => format!(
             "has measurement schema_version {found}; this build reads measurement schema_version {}",
             animsmith_core::MEASUREMENTS_SCHEMA_VERSION
         ),
-        MeasurementReportError::WrongMeasurementIdentity { file_index: 0 } => format!(
+        MeasurementReportError::File {
+            file_index: 0,
+            source: MeasurementFileError::WrongMeasurementIdentity,
+        } => format!(
             "does not identify measurement contract {}; {REMEDIATION}",
             animsmith_core::MEASUREMENTS_SCHEMA_ID
         ),
-        MeasurementReportError::MissingClips { file_index: 0 } => {
-            "measurement contract has no `clips` map".into()
-        }
+        MeasurementReportError::File {
+            file_index: 0,
+            source: MeasurementFileError::MissingClips,
+        } => "measurement contract has no `clips` map".into(),
+        MeasurementReportError::File {
+            file_index: 0,
+            source: MeasurementFileError::InvalidMeasurements { source },
+        } => format!("has invalid measurements: {source}; {REMEDIATION}"),
         _ => error.to_string(),
     }
 }
@@ -903,5 +918,27 @@ fn inspect(doc: &Document, roles: &ResolvedRoles) {
             keys
         );
         println!("{}", render::text_atom(&line));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diff_owns_remediation_for_invalid_measurements() {
+        let error = MeasurementReportError::File {
+            file_index: 0,
+            source: MeasurementFileError::InvalidMeasurements {
+                source: animsmith_core::MeasurementContractError::NonFiniteValue {
+                    path: "meshes[0].aabb.min[0]".into(),
+                },
+            },
+        };
+
+        assert_eq!(
+            diff_report_error(&error, Some(1)),
+            "has invalid measurements: measurement value meshes[0].aabb.min[0] must be finite; regenerate it with `animsmith measure --format json`"
+        );
     }
 }
