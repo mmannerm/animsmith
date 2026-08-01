@@ -367,10 +367,8 @@ fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
             .collect::<Vec<_>>(),
         expected_measurements
     );
-    let into_parts: fn(
-        MeasurementContract,
-    ) -> (BTreeMap<String, ClipMeasurements>, Vec<MeshMeasurements>) =
-        MeasurementContract::into_parts;
+    type MeasurementParts = (BTreeMap<String, ClipMeasurements>, Vec<MeshMeasurements>);
+    let into_parts: fn(MeasurementContract) -> MeasurementParts = MeasurementContract::into_parts;
     let (run_clips, run_meshes) = into_parts(
         files
             .into_iter()
