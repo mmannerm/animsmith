@@ -1663,6 +1663,247 @@ fn diff_accepts_measurement_json_and_exits_zero_without_deltas() {
 }
 
 #[test]
+fn diff_rejects_zero_or_multiple_measurement_file_records() {
+    let dir = unique_temp_dir("diff-report-file-count");
+    let report_path = dir.path().join("report.json");
+
+    for file_count in [0, 2, 3, 10] {
+        let mut report = measurement_report(1.0);
+        let file = report["files"][0].clone();
+        report["files"] = Value::Array(vec![file; file_count]);
+        write_json(&report_path, &report);
+
+        let output = animsmith()
+            .args([
+                "diff",
+                report_path.to_str().expect("utf-8 report path"),
+                fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
+            ])
+            .output()
+            .expect("runs animsmith");
+
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "stdout:\n{}\nstderr:\n{}",
+            stdout(&output),
+            stderr(&output)
+        );
+        assert!(stdout(&output).is_empty());
+        assert_eq!(
+            stderr(&output),
+            format!(
+                "animsmith: {} contains {file_count} file records; diff expects a single-file measurement report\n",
+                report_path.display()
+            )
+        );
+    }
+}
+
+#[test]
+fn diff_preserves_error_precedence_for_malformed_multi_file_reports() {
+    let dir = unique_temp_dir("diff-malformed-multi-report");
+    let report_path = dir.path().join("report.json");
+    let base = measurement_report(1.0);
+    let file = base["files"][0].clone();
+
+    let mut invalid_first = base.clone();
+    invalid_first["files"] = json!([file.clone(), file.clone()]);
+    invalid_first["files"][0]
+        .as_object_mut()
+        .expect("file record")
+        .remove("measurements");
+
+    let mut invalid_second = base.clone();
+    invalid_second["files"] = json!([file.clone(), file.clone()]);
+    invalid_second["files"][1]
+        .as_object_mut()
+        .expect("file record")
+        .remove("measurements");
+
+    let mut missing_command = base.clone();
+    missing_command["files"] = json!([file.clone(), file.clone()]);
+    missing_command
+        .as_object_mut()
+        .expect("report envelope")
+        .remove("command");
+
+    let mut wrong_output_identity = base.clone();
+    wrong_output_identity["files"] = json!([file.clone(), file.clone()]);
+    wrong_output_identity["schema"] = json!("urn:other:output");
+
+    let mut invalid_third = base;
+    invalid_third["files"] = json!([file.clone(), file.clone(), file]);
+    invalid_third["files"][2]["measurements"]["schema"] = json!("urn:other:measurements");
+
+    let remediation = "regenerate it with `animsmith measure --format json`";
+    for (name, report, expected) in [
+        (
+            "invalid first record",
+            invalid_first,
+            "contains 2 file records; diff expects a single-file measurement report".to_owned(),
+        ),
+        (
+            "invalid second record",
+            invalid_second,
+            "contains 2 file records; diff expects a single-file measurement report".to_owned(),
+        ),
+        (
+            "invalid third record",
+            invalid_third,
+            "contains 3 file records; diff expects a single-file measurement report".to_owned(),
+        ),
+        (
+            "missing envelope command",
+            missing_command,
+            format!("is not an animsmith measurement report (no `command`); {remediation}"),
+        ),
+        (
+            "wrong output identity",
+            wrong_output_identity,
+            format!("does not identify output contract {OUTPUT_SCHEMA_ID}; {remediation}"),
+        ),
+    ] {
+        write_json(&report_path, &report);
+        let output = animsmith()
+            .args([
+                "diff",
+                report_path.to_str().expect("utf-8 report path"),
+                fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
+            ])
+            .output()
+            .expect("runs animsmith");
+
+        assert_eq!(output.status.code(), Some(2), "{name}");
+        assert!(stdout(&output).is_empty(), "{name}");
+        assert_eq!(
+            stderr(&output),
+            format!("animsmith: {} {expected}\n", report_path.display()),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn diff_preserves_tailored_report_errors_and_remediation() {
+    let dir = unique_temp_dir("diff-report-errors");
+    let report_path = dir.path().join("report.json");
+    let base = measurement_report(1.0);
+    let without = |pointer: &str| {
+        let mut report = base.clone();
+        let (parent, key) = pointer.rsplit_once('/').expect("JSON pointer has a key");
+        let object = if parent.is_empty() {
+            &mut report
+        } else {
+            report.pointer_mut(parent).expect("fixture path exists")
+        };
+        object
+            .as_object_mut()
+            .expect("path ends at an object")
+            .remove(key);
+        report
+    };
+    let mut unsupported_output_version = base.clone();
+    unsupported_output_version["schema_version"] = json!(3);
+    let mut wrong_output_identity = base.clone();
+    wrong_output_identity["schema"] = json!("urn:other:output");
+    let mut unsupported_command = base.clone();
+    unsupported_command["command"] = json!("diff");
+    let mut unsupported_measurement_version = base.clone();
+    unsupported_measurement_version["files"][0]["measurements"]["schema_version"] = json!(2);
+    let mut wrong_measurement_identity = base.clone();
+    wrong_measurement_identity["files"][0]["measurements"]["schema"] =
+        json!("urn:other:measurements");
+
+    let remediation = "regenerate it with `animsmith measure --format json`";
+    let cases = vec![
+        (
+            "missing output version",
+            without("/schema_version"),
+            format!("is not an animsmith report envelope (no `schema_version`); {remediation}"),
+        ),
+        (
+            "wrong output identity",
+            wrong_output_identity,
+            format!("does not identify output contract {OUTPUT_SCHEMA_ID}; {remediation}"),
+        ),
+        (
+            "unsupported output version",
+            unsupported_output_version,
+            "has schema_version 3; this build reads schema_version 2".to_owned(),
+        ),
+        (
+            "missing command",
+            without("/command"),
+            format!("is not an animsmith measurement report (no `command`); {remediation}"),
+        ),
+        (
+            "unsupported command",
+            unsupported_command,
+            "is a \"diff\" report; diff reads only measure or lint reports".to_owned(),
+        ),
+        (
+            "missing files",
+            without("/files"),
+            format!("is not an animsmith report envelope (no `files` array); {remediation}"),
+        ),
+        (
+            "missing path",
+            without("/files/0/path"),
+            format!("report file record has no `path`; {remediation}"),
+        ),
+        (
+            "missing measurements",
+            without("/files/0/measurements"),
+            "report has no measurements".to_owned(),
+        ),
+        (
+            "missing measurement version",
+            without("/files/0/measurements/schema_version"),
+            format!("has no versioned measurement contract; {remediation}"),
+        ),
+        (
+            "unsupported measurement version",
+            unsupported_measurement_version,
+            "has measurement schema_version 2; this build reads measurement schema_version 1"
+                .to_owned(),
+        ),
+        (
+            "wrong measurement identity",
+            wrong_measurement_identity,
+            format!(
+                "does not identify measurement contract {MEASUREMENTS_SCHEMA_ID}; {remediation}"
+            ),
+        ),
+        (
+            "missing clips",
+            without("/files/0/measurements/clips"),
+            "measurement contract has no `clips` map".to_owned(),
+        ),
+    ];
+
+    for (name, report, expected) in cases {
+        write_json(&report_path, &report);
+        let output = animsmith()
+            .args([
+                "diff",
+                report_path.to_str().expect("utf-8 report path"),
+                fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
+            ])
+            .output()
+            .expect("runs animsmith");
+
+        assert_eq!(output.status.code(), Some(2), "{name}");
+        assert!(stdout(&output).is_empty(), "{name}");
+        assert_eq!(
+            stderr(&output),
+            format!("animsmith: {} {expected}\n", report_path.display()),
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn diff_compares_decoded_numbers_not_json_lexical_spelling() {
     let dir = unique_temp_dir("diff-json-number-spelling");
     let before = dir.path().join("before.json");
@@ -1897,7 +2138,7 @@ fn diff_text_escapes_controls_from_report_clip_metric_and_note_fields() {
 }
 
 #[test]
-fn diff_rejects_json_without_schema_version() {
+fn diff_rejects_json_without_schema_version_with_measure_remediation() {
     let dir = unique_temp_dir("diff-bare-map");
     let bare = dir.path().join("bare.json");
     // A bare measurement map (a pre-publish development shape) has no
@@ -1925,7 +2166,7 @@ fn diff_rejects_json_without_schema_version() {
         stderr(&output)
     );
     assert!(
-        stderr(&output).contains("regenerate it with"),
+        stderr(&output).contains("regenerate it with `animsmith measure --format json`"),
         "stderr:\n{}",
         stderr(&output)
     );

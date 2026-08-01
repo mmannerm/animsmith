@@ -7,9 +7,10 @@ use animsmith_core::{
     Bone, CheckEvaluation, CheckOutput, CheckSelection, Config, CoverageGap, CoverageGapCode,
     Document, EvaluationScope, EvaluationScopeCode, Finding, LintEnvelope, LintFileReport,
     MEASUREMENTS_SCHEMA_ID, MEASUREMENTS_SCHEMA_VERSION, MeasureEnvelope, MeasureFileReport,
-    MeasurementContract, MeasurementContractError, MeasurementReportError, MeasurementReportInput,
-    MetricGrids, OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, ResolvedRoles, RigInfo, RigInfoError,
-    Role, Severity, ToolInfo, ToolSource, Transform, evaluate_checks,
+    MeasurementContract, MeasurementContractError, MeasurementFileError, MeasurementReportError,
+    MeasurementReportFile, MeasurementReportInput, MetricGrids, OUTPUT_SCHEMA_ID,
+    OUTPUT_SCHEMA_VERSION, ResolvedRoles, RigInfo, RigInfoError, Role, Severity, ToolInfo,
+    ToolSource, Transform, evaluate_checks,
 };
 
 fn tool() -> ToolInfo {
@@ -50,8 +51,12 @@ fn command_specific_file_types_serialize_only_their_valid_shape() {
         serde_json::from_value(measure).expect("current measure envelope deserializes");
     assert!(
         input
-            .into_clip_measurements()
+            .into_files()
             .expect("current measure envelope is accepted")
+            .first()
+            .expect("measure envelope has one file")
+            .measurements()
+            .clips()
             .is_empty()
     );
 }
@@ -157,6 +162,7 @@ fn current_measure_report() -> serde_json::Value {
         "schema": OUTPUT_SCHEMA_ID,
         "command": "measure",
         "files": [{
+            "path": "clip.glb",
             "measurements": {
                 "schema_version": MEASUREMENTS_SCHEMA_VERSION,
                 "schema": MEASUREMENTS_SCHEMA_ID,
@@ -170,7 +176,7 @@ fn measurement_report_error(value: serde_json::Value) -> MeasurementReportError 
     let input: MeasurementReportInput =
         serde_json::from_value(value).expect("test case remains structurally deserializable");
     input
-        .into_clip_measurements()
+        .into_files()
         .expect_err("malformed report must be rejected")
 }
 
@@ -199,22 +205,22 @@ fn measurement_report_input_rejects_every_invalid_contract_branch() {
     wrong_output_identity["schema"] = serde_json::json!("urn:other:output");
     let mut unsupported_command = base.clone();
     unsupported_command["command"] = serde_json::json!("inspect");
-    let mut no_files = base.clone();
-    no_files["files"] = serde_json::json!([]);
-    let mut two_files = base.clone();
-    two_files["files"] = serde_json::json!([base["files"][0].clone(), base["files"][0].clone(),]);
     let mut future_measurements = base.clone();
     future_measurements["files"][0]["measurements"]["schema_version"] =
         serde_json::json!(MEASUREMENTS_SCHEMA_VERSION + 1);
     let mut wrong_measurement_identity = base.clone();
     wrong_measurement_identity["files"][0]["measurements"]["schema"] =
         serde_json::json!("urn:other:measurements");
+    let input_without_files: MeasurementReportInput = serde_json::from_value(without("/files"))
+        .expect("report without files remains structurally deserializable");
+    assert_eq!(input_without_files.file_count(), None);
 
-    let cases = [
+    let cases = vec![
         (
             "missing output version",
             without("/schema_version"),
             MeasurementReportError::MissingOutputVersion,
+            "report envelope has no `schema_version`".to_owned(),
         ),
         (
             "unsupported output version",
@@ -222,16 +228,22 @@ fn measurement_report_input_rejects_every_invalid_contract_branch() {
             MeasurementReportError::UnsupportedOutputVersion {
                 found: OUTPUT_SCHEMA_VERSION + 1,
             },
+            format!(
+                "has schema_version {}; this build reads schema_version {OUTPUT_SCHEMA_VERSION}",
+                OUTPUT_SCHEMA_VERSION + 1
+            ),
         ),
         (
             "wrong output identity",
             wrong_output_identity,
             MeasurementReportError::WrongOutputIdentity,
+            format!("report envelope does not identify output contract {OUTPUT_SCHEMA_ID}"),
         ),
         (
             "missing command",
             without("/command"),
             MeasurementReportError::MissingCommand,
+            "report envelope has no `command`".to_owned(),
         ),
         (
             "unsupported command",
@@ -239,53 +251,296 @@ fn measurement_report_input_rejects_every_invalid_contract_branch() {
             MeasurementReportError::UnsupportedCommand {
                 command: "inspect".into(),
             },
+            "report command \"inspect\" does not carry measurement file records".to_owned(),
         ),
         (
             "missing files",
             without("/files"),
             MeasurementReportError::MissingFiles,
+            "report envelope has no `files` array".to_owned(),
         ),
         (
-            "no file records",
-            no_files,
-            MeasurementReportError::FileCount { found: 0 },
-        ),
-        (
-            "multiple file records",
-            two_files,
-            MeasurementReportError::FileCount { found: 2 },
+            "missing path",
+            without("/files/0/path"),
+            MeasurementReportError::File {
+                file_index: 0,
+                source: MeasurementFileError::MissingPath,
+            },
+            "files[0] has no `path`".to_owned(),
         ),
         (
             "missing measurements",
             without("/files/0/measurements"),
-            MeasurementReportError::MissingMeasurements,
+            MeasurementReportError::File {
+                file_index: 0,
+                source: MeasurementFileError::MissingMeasurements,
+            },
+            "files[0] has no measurements".to_owned(),
         ),
         (
             "missing measurement version",
             without("/files/0/measurements/schema_version"),
-            MeasurementReportError::MissingMeasurementVersion,
+            MeasurementReportError::File {
+                file_index: 0,
+                source: MeasurementFileError::MissingMeasurementVersion,
+            },
+            "files[0] has no versioned measurement contract".to_owned(),
         ),
         (
             "unsupported measurement version",
             future_measurements,
-            MeasurementReportError::UnsupportedMeasurementVersion {
-                found: MEASUREMENTS_SCHEMA_VERSION + 1,
+            MeasurementReportError::File {
+                file_index: 0,
+                source: MeasurementFileError::UnsupportedMeasurementVersion {
+                    found: MEASUREMENTS_SCHEMA_VERSION + 1,
+                },
             },
+            format!(
+                "files[0] has measurement schema_version {}; this build reads measurement schema_version {MEASUREMENTS_SCHEMA_VERSION}",
+                MEASUREMENTS_SCHEMA_VERSION + 1
+            ),
         ),
         (
             "wrong measurement identity",
             wrong_measurement_identity,
-            MeasurementReportError::WrongMeasurementIdentity,
+            MeasurementReportError::File {
+                file_index: 0,
+                source: MeasurementFileError::WrongMeasurementIdentity,
+            },
+            format!("files[0] does not identify measurement contract {MEASUREMENTS_SCHEMA_ID}"),
         ),
         (
             "missing clips",
             without("/files/0/measurements/clips"),
-            MeasurementReportError::MissingClips,
+            MeasurementReportError::File {
+                file_index: 0,
+                source: MeasurementFileError::MissingClips,
+            },
+            "files[0] measurement contract has no `clips` map".to_owned(),
         ),
     ];
 
-    for (name, value, expected) in cases {
-        assert_eq!(measurement_report_error(value), expected, "{name}");
+    for (name, value, expected, expected_display) in cases {
+        let error = measurement_report_error(value);
+        assert_eq!(error, expected, "{name}");
+        let expected_file_index = match &expected {
+            MeasurementReportError::File { .. } => Some(0),
+            _ => None,
+        };
+        assert_eq!(error.file_index(), expected_file_index, "{name}");
+        assert_eq!(error.to_string(), expected_display, "{name}");
+    }
+}
+
+#[test]
+fn measurement_report_input_rejects_finite_value_that_overflows_mesh_f32() {
+    let mut report = current_measure_report();
+    report["files"][0]["measurements"]["meshes"] = serde_json::json!([{
+        "name": "overflow",
+        "vertex_count": 1,
+        "aabb": {
+            "min": [1e39, 0.0, 0.0],
+            "max": [1e39, 0.0, 0.0],
+        },
+        "max_joints_per_vertex": 0,
+    }]);
+
+    let error = measurement_report_error(report);
+    assert_eq!(
+        error,
+        MeasurementReportError::File {
+            file_index: 0,
+            source: MeasurementFileError::InvalidMeasurements {
+                source: MeasurementContractError::NonFiniteValue {
+                    path: "meshes[0].aabb.min[0]".into(),
+                },
+            },
+        }
+    );
+    assert_eq!(error.file_index(), Some(0));
+    assert_eq!(
+        error.to_string(),
+        "files[0] has invalid measurements: measurement value meshes[0].aabb.min[0] must be finite"
+    );
+}
+
+#[test]
+fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
+    let mut report = current_measure_report();
+    report["files"] = serde_json::json!([
+        {
+            "path": ".\\Walk Assets\\..\\WALK.GLB",
+            "measurements": {
+                "schema_version": MEASUREMENTS_SCHEMA_VERSION,
+                "schema": MEASUREMENTS_SCHEMA_ID,
+                "clips": { "walk": valid_clip_measurements() },
+            },
+        },
+        {
+            "path": "run.glb",
+            "measurements": {
+                "schema_version": MEASUREMENTS_SCHEMA_VERSION,
+                "schema": MEASUREMENTS_SCHEMA_ID,
+                "clips": { "run": valid_clip_measurements() },
+                "meshes": [valid_mesh_measurements()],
+            },
+        },
+        {
+            "path": "middle.glb",
+            "measurements": {
+                "schema_version": MEASUREMENTS_SCHEMA_VERSION,
+                "schema": MEASUREMENTS_SCHEMA_ID,
+                "clips": { "idle": valid_clip_measurements() },
+            },
+        },
+    ]);
+    let expected_measurements = report["files"]
+        .as_array()
+        .expect("file records")
+        .iter()
+        .map(|file| file["measurements"].clone())
+        .collect::<Vec<_>>();
+
+    let input: MeasurementReportInput =
+        serde_json::from_value(report).expect("multi-file report deserializes");
+    assert_eq!(input.file_count(), Some(3));
+    let files: Vec<MeasurementReportFile> = input
+        .into_files()
+        .expect("multi-file report is consumer-neutral");
+
+    assert_eq!(files.len(), 3);
+    assert_eq!(
+        files
+            .iter()
+            .map(MeasurementReportFile::path)
+            .collect::<Vec<_>>(),
+        [".\\Walk Assets\\..\\WALK.GLB", "run.glb", "middle.glb"]
+    );
+    assert_eq!(
+        files
+            .iter()
+            .map(|file| {
+                serde_json::to_value(file.measurements())
+                    .expect("recovered measurement contract serializes")
+            })
+            .collect::<Vec<_>>(),
+        expected_measurements
+    );
+    type MeasurementParts = (BTreeMap<String, ClipMeasurements>, Vec<MeshMeasurements>);
+    let into_parts: fn(MeasurementContract) -> MeasurementParts = MeasurementContract::into_parts;
+    let (run_clips, run_meshes) = into_parts(
+        files
+            .into_iter()
+            .nth(1)
+            .expect("second recovered record")
+            .into_measurements(),
+    );
+    assert_eq!(
+        serde_json::to_value(run_clips).expect("recovered clips serialize"),
+        expected_measurements[1]["clips"]
+    );
+    assert_eq!(
+        serde_json::to_value(run_meshes).expect("recovered meshes serialize"),
+        expected_measurements[1]["meshes"]
+    );
+
+    let mut empty_report = current_measure_report();
+    empty_report["files"] = serde_json::json!([]);
+    let input: MeasurementReportInput =
+        serde_json::from_value(empty_report).expect("empty report deserializes");
+    assert_eq!(input.file_count(), Some(0));
+    assert!(
+        input
+            .into_files()
+            .expect("empty report has no core cardinality error")
+            .is_empty()
+    );
+}
+
+#[test]
+fn measurement_report_input_identifies_invalid_file_without_cli_remediation() {
+    let base = current_measure_report();
+    let mut two_files = base.clone();
+    two_files["files"] = serde_json::json!([base["files"][0].clone(), base["files"][0].clone(),]);
+    let without = |pointer: &str| {
+        let mut report = two_files.clone();
+        let (parent, key) = pointer.rsplit_once('/').expect("JSON pointer has a key");
+        report
+            .pointer_mut(parent)
+            .expect("fixture path exists")
+            .as_object_mut()
+            .expect("path ends at an object")
+            .remove(key);
+        report
+    };
+    let mut future_measurements = two_files.clone();
+    future_measurements["files"][1]["measurements"]["schema_version"] =
+        serde_json::json!(MEASUREMENTS_SCHEMA_VERSION + 1);
+    let mut wrong_measurement_identity = two_files.clone();
+    wrong_measurement_identity["files"][1]["measurements"]["schema"] =
+        serde_json::json!("urn:other:measurements");
+
+    let cases = vec![
+        (
+            without("/files/1/path"),
+            MeasurementReportError::File {
+                file_index: 1,
+                source: MeasurementFileError::MissingPath,
+            },
+            "files[1] has no `path`".to_owned(),
+        ),
+        (
+            without("/files/1/measurements"),
+            MeasurementReportError::File {
+                file_index: 1,
+                source: MeasurementFileError::MissingMeasurements,
+            },
+            "files[1] has no measurements".to_owned(),
+        ),
+        (
+            without("/files/1/measurements/schema_version"),
+            MeasurementReportError::File {
+                file_index: 1,
+                source: MeasurementFileError::MissingMeasurementVersion,
+            },
+            "files[1] has no versioned measurement contract".to_owned(),
+        ),
+        (
+            future_measurements,
+            MeasurementReportError::File {
+                file_index: 1,
+                source: MeasurementFileError::UnsupportedMeasurementVersion {
+                    found: MEASUREMENTS_SCHEMA_VERSION + 1,
+                },
+            },
+            format!(
+                "files[1] has measurement schema_version {}; this build reads measurement schema_version {MEASUREMENTS_SCHEMA_VERSION}",
+                MEASUREMENTS_SCHEMA_VERSION + 1
+            ),
+        ),
+        (
+            wrong_measurement_identity,
+            MeasurementReportError::File {
+                file_index: 1,
+                source: MeasurementFileError::WrongMeasurementIdentity,
+            },
+            format!("files[1] does not identify measurement contract {MEASUREMENTS_SCHEMA_ID}"),
+        ),
+        (
+            without("/files/1/measurements/clips"),
+            MeasurementReportError::File {
+                file_index: 1,
+                source: MeasurementFileError::MissingClips,
+            },
+            "files[1] measurement contract has no `clips` map".to_owned(),
+        ),
+    ];
+
+    for (report, expected, expected_display) in cases {
+        let error = measurement_report_error(report);
+        assert_eq!(error, expected);
+        assert_eq!(error.file_index(), Some(1));
+        assert_eq!(error.to_string(), expected_display);
     }
 }
 

@@ -524,8 +524,7 @@ sufficient for a real bake pipeline.
 
 ## Appendix C — result-contract ownership decisions
 
-Two decisions recorded 2026-07-20 while closing the post-finalization review
-of output v2:
+These decisions record result-contract ownership after output v2 finalization:
 
 1. **The versioned envelope belongs to `animsmith-core`, not the CLI binary.**
    The CLI still supplies its build identity and frontend policy, but
@@ -542,3 +541,10 @@ of output v2:
    check record. Output v2 therefore accepts the small nested redundancy, and
    `evaluate_checks` rejects a child id that disagrees with its parent rather
    than serializing ambiguous ownership.
+
+3. **Read-side validation is consumer-neutral.** `animsmith-core` validates
+   output and nested measurement identities and recovers every file's display
+   path plus complete clip and mesh measurements in source order. It does not
+   impose a file-count rule or prescribe CLI remediation. The `diff` frontend
+   owns its single-file policy and operator guidance; embedded consumers may
+   accept empty or multi-file reports according to their own workflows.

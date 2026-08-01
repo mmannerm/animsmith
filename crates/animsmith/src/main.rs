@@ -22,8 +22,9 @@
 use animsmith_core::Document;
 use animsmith_core::{
     CheckCtx, CheckSelection, Config, DiffEnvelope, LintEnvelope, LintFileReport, MeasureEnvelope,
-    MeasureFileReport, MeasurementContract, MeasurementReportInput, MetricGrids, ResolvedRoles,
-    RigInfo, Severity, ToolInfo, ToolSource, all_checks, evaluate_checks, resolve_configured_roles,
+    MeasureFileReport, MeasurementContract, MeasurementFileError, MeasurementReportError,
+    MeasurementReportInput, MetricGrids, ResolvedRoles, RigInfo, Severity, ToolInfo, ToolSource,
+    all_checks, evaluate_checks, resolve_configured_roles,
 };
 use animsmith_gltf::fix::Repair;
 use clap::builder::{PossibleValue, PossibleValuesParser, TypedValueParser};
@@ -742,9 +743,19 @@ fn load_measurements(
         // Only the final v2 envelope with measurement contract v1 is
         // accepted. Pre-finalization report shapes are intentionally not
         // retained while the project is alpha.
-        return report
-            .into_clip_measurements()
-            .map_err(|error| format!("{} {error}", path.display()));
+        let file_count = report.file_count();
+        let files = report.into_files().map_err(|error| {
+            format!(
+                "{} {}",
+                path.display(),
+                diff_report_error(&error, file_count)
+            )
+        })?;
+        let [file]: [animsmith_core::MeasurementReportFile; 1] =
+            files.try_into().map_err(|files: Vec<_>| {
+                format!("{} {}", path.display(), diff_file_count_error(files.len()))
+            })?;
+        return Ok(file.into_measurements().into_parts().0);
     }
     let doc = load(path)?;
     let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
@@ -752,6 +763,64 @@ fn load_measurements(
     Ok(animsmith_core::measure::measure_document(
         &grids, &roles, config,
     ))
+}
+
+/// Add `diff` consumer policy and operator remediation to neutral core errors.
+fn diff_report_error(error: &MeasurementReportError, file_count: Option<usize>) -> String {
+    const REMEDIATION: &str = "regenerate it with `animsmith measure --format json`";
+    if let Some(found) = file_count.filter(|found| *found != 1)
+        && error.file_index().is_some()
+    {
+        return diff_file_count_error(found);
+    }
+    match error {
+        MeasurementReportError::MissingOutputVersion => {
+            format!("is not an animsmith report envelope (no `schema_version`); {REMEDIATION}")
+        }
+        MeasurementReportError::WrongOutputIdentity => format!(
+            "does not identify output contract {}; {REMEDIATION}",
+            animsmith_core::OUTPUT_SCHEMA_ID
+        ),
+        MeasurementReportError::MissingCommand => {
+            format!("is not an animsmith measurement report (no `command`); {REMEDIATION}")
+        }
+        MeasurementReportError::UnsupportedCommand { command } => {
+            format!("is a {command:?} report; diff reads only measure or lint reports")
+        }
+        MeasurementReportError::MissingFiles => {
+            format!("is not an animsmith report envelope (no `files` array); {REMEDIATION}")
+        }
+        MeasurementReportError::File {
+            file_index: 0,
+            source,
+        } => match source {
+            MeasurementFileError::MissingPath => {
+                format!("report file record has no `path`; {REMEDIATION}")
+            }
+            MeasurementFileError::MissingMeasurements => "report has no measurements".into(),
+            MeasurementFileError::MissingMeasurementVersion => {
+                format!("has no versioned measurement contract; {REMEDIATION}")
+            }
+            MeasurementFileError::UnsupportedMeasurementVersion { found } => format!(
+                "has measurement schema_version {found}; this build reads measurement schema_version {}",
+                animsmith_core::MEASUREMENTS_SCHEMA_VERSION
+            ),
+            MeasurementFileError::WrongMeasurementIdentity => format!(
+                "does not identify measurement contract {}; {REMEDIATION}",
+                animsmith_core::MEASUREMENTS_SCHEMA_ID
+            ),
+            MeasurementFileError::MissingClips => "measurement contract has no `clips` map".into(),
+            MeasurementFileError::InvalidMeasurements { source } => {
+                format!("has invalid measurements: {source}; {REMEDIATION}")
+            }
+            _ => source.to_string(),
+        },
+        _ => error.to_string(),
+    }
+}
+
+fn diff_file_count_error(found: usize) -> String {
+    format!("contains {found} file records; diff expects a single-file measurement report")
 }
 
 fn require_files(files: &[PathBuf]) -> Result<(), String> {
@@ -834,5 +903,31 @@ fn inspect(doc: &Document, roles: &ResolvedRoles) {
             keys
         );
         println!("{}", render::text_atom(&line));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diff_owns_remediation_for_invalid_measurements() {
+        // Workspace test builds enable serde_json's `float_roundtrip` through
+        // a dev dependency and reject f32 overflow while parsing. Shipped
+        // binaries can instead reach this branch, so construct the public
+        // typed error to pin CLI policy independently of feature unification.
+        let error = MeasurementReportError::File {
+            file_index: 0,
+            source: MeasurementFileError::InvalidMeasurements {
+                source: animsmith_core::MeasurementContractError::NonFiniteValue {
+                    path: "meshes[0].aabb.min[0]".into(),
+                },
+            },
+        };
+
+        assert_eq!(
+            diff_report_error(&error, Some(1)),
+            "has invalid measurements: measurement value meshes[0].aabb.min[0] must be finite; regenerate it with `animsmith measure --format json`"
+        );
     }
 }
