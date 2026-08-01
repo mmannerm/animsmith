@@ -240,6 +240,13 @@ error. `gait-group`, for example, can complete member-existence validation
 while reporting phase coherence as a gap. `severity = "off"` disables the
 check without hiding its applicability record.
 
+The built-in evidence-code declarations are the single authority for each
+scope or gap code's machine identity, meaning, and allowed emitting check ids.
+The evaluation boundary rejects a built-in code emitted by an undeclared
+check, and the output-reference gate derives its exact inventory, meanings,
+and emitters from those same declarations. Embedded checks remain open-ended:
+they use namespaced custom codes rather than extending a closed enum.
+
 **Checks** implement one trait and emit structured findings:
 
 ```rust

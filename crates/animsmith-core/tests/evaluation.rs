@@ -3,10 +3,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use animsmith_core::check::{Check, CheckCtx};
 use animsmith_core::config::{CheckSettings, SeveritySetting};
 use animsmith_core::{
-    Applicability, CheckEvaluation, CheckOutput, CheckSelection, Config, ConfigurationState,
-    CoverageGap, CoverageGapCode, Document, EvaluationError, EvaluationScope, EvaluationScopeCode,
-    EvaluationState, Finding, MetricGrids, ResolvedRoles, SelectionState, Severity, Value,
-    evaluate_checks,
+    Applicability, BUILTIN_COVERAGE_GAP_CODES, BUILTIN_EVALUATION_SCOPE_CODES, CheckEvaluation,
+    CheckOutput, CheckSelection, Config, ConfigurationState, CoverageGap, CoverageGapCode,
+    Document, EvaluationError, EvaluationScope, EvaluationScopeCode, EvaluationState, Finding,
+    MetricGrids, ResolvedRoles, SelectionState, Severity, Value, evaluate_checks,
 };
 
 struct Complete;
@@ -51,10 +51,17 @@ impl Check for Partial {
     fn evaluate(&self, _ctx: &CheckCtx) -> CheckOutput {
         CheckOutput::from_coverage(
             vec![Finding::new(self.id(), Severity::Error, "member missing")],
-            vec![EvaluationScope::new(EvaluationScopeCode::MEMBER_EXISTENCE)],
+            vec![EvaluationScope::new(EvaluationScopeCode::custom(
+                "test:member_existence",
+            ))],
             vec![
-                CoverageGap::new(CoverageGapCode::ROLES_UNRESOLVED, "display text")
-                    .scope(EvaluationScope::new(EvaluationScopeCode::PHASE_COHERENCE)),
+                CoverageGap::new(
+                    CoverageGapCode::custom("test:roles_unresolved"),
+                    "display text",
+                )
+                .scope(EvaluationScope::new(EvaluationScopeCode::custom(
+                    "test:phase_coherence",
+                ))),
             ],
         )
     }
@@ -150,10 +157,13 @@ fn records_complete_findings_partial_and_not_evaluated() {
 
         assert_eq!(records[2].evaluation(), EvaluationState::Partial);
         assert_eq!(records[2].findings().len(), 1);
-        assert_eq!(records[2].gaps()[0].code, CoverageGapCode::ROLES_UNRESOLVED);
+        assert_eq!(
+            records[2].gaps()[0].code,
+            CoverageGapCode::custom("test:roles_unresolved")
+        );
         assert_eq!(
             records[2].evaluated_scopes()[0].code.as_str(),
-            "member_existence"
+            "test:member_existence"
         );
 
         assert_eq!(records[3].applicability(), Applicability::Applicable);
@@ -240,7 +250,171 @@ fn severity_override_changes_findings_but_not_gap_typing() {
     let records = evaluate_checks(&ctx, &catalog(), CheckSelection::All).unwrap();
 
     assert_eq!(records[2].findings()[0].severity, Severity::Note);
-    assert_eq!(records[2].gaps()[0].code, CoverageGapCode::ROLES_UNRESOLVED);
+    assert_eq!(
+        records[2].gaps()[0].code,
+        CoverageGapCode::custom("test:roles_unresolved")
+    );
+}
+
+#[test]
+fn builtin_evidence_codes_reject_undeclared_emitters() {
+    let completed_scope = CheckEvaluation::evaluated(
+        "fps",
+        CheckOutput::from_coverage(
+            Vec::new(),
+            vec![EvaluationScope::new(EvaluationScopeCode::LOOP_SEAM)],
+            Vec::new(),
+        ),
+    )
+    .expect_err("fps must not claim loop-seam's built-in scope");
+    assert_eq!(
+        completed_scope,
+        EvaluationError::BuiltinEvaluationScopeEmitterMismatch {
+            check_id: "fps",
+            code: EvaluationScopeCode::LOOP_SEAM,
+        }
+    );
+
+    let builtin_spelled_through_custom = CheckEvaluation::evaluated(
+        "fps",
+        CheckOutput::from_coverage(
+            Vec::new(),
+            vec![EvaluationScope::new(EvaluationScopeCode::custom(
+                "loop_seam",
+            ))],
+            Vec::new(),
+        ),
+    )
+    .expect_err("a built-in identity cannot bypass ownership through custom()");
+    assert_eq!(
+        builtin_spelled_through_custom,
+        EvaluationError::BuiltinEvaluationScopeEmitterMismatch {
+            check_id: "fps",
+            code: EvaluationScopeCode::LOOP_SEAM,
+        }
+    );
+
+    let gap_spelled_through_custom = CheckEvaluation::evaluated(
+        "fps",
+        CheckOutput::from_coverage(
+            Vec::new(),
+            Vec::new(),
+            vec![CoverageGap::new(
+                CoverageGapCode::custom("roles_unresolved"),
+                "wrong owner",
+            )],
+        ),
+    )
+    .expect_err("a built-in gap identity cannot bypass ownership through custom()");
+    assert_eq!(
+        gap_spelled_through_custom,
+        EvaluationError::BuiltinCoverageGapEmitterMismatch {
+            check_id: "fps",
+            code: CoverageGapCode::ROLES_UNRESOLVED,
+        }
+    );
+
+    let gap = CheckEvaluation::evaluated(
+        "fps",
+        CheckOutput::from_coverage(
+            Vec::new(),
+            Vec::new(),
+            vec![CoverageGap::new(
+                CoverageGapCode::ROLES_UNRESOLVED,
+                "wrong owner",
+            )],
+        ),
+    )
+    .expect_err("fps must not emit another check's built-in gap");
+    assert_eq!(
+        gap,
+        EvaluationError::BuiltinCoverageGapEmitterMismatch {
+            check_id: "fps",
+            code: CoverageGapCode::ROLES_UNRESOLVED,
+        }
+    );
+
+    let missing_scope = CheckEvaluation::evaluated(
+        "fps",
+        CheckOutput::from_coverage(
+            Vec::new(),
+            Vec::new(),
+            vec![
+                CoverageGap::new(CoverageGapCode::INVALID_DECLARED_FPS, "valid gap owner")
+                    .scope(EvaluationScope::new(EvaluationScopeCode::LOOP_SEAM)),
+            ],
+        ),
+    )
+    .expect_err("gap scopes must obey the same built-in ownership rule");
+    assert_eq!(
+        missing_scope,
+        EvaluationError::BuiltinEvaluationScopeEmitterMismatch {
+            check_id: "fps",
+            code: EvaluationScopeCode::LOOP_SEAM,
+        }
+    );
+}
+
+#[test]
+fn declared_builtin_emitters_and_namespaced_custom_codes_are_accepted() {
+    CheckEvaluation::evaluated(
+        "gait-group",
+        CheckOutput::from_coverage(
+            Vec::new(),
+            vec![EvaluationScope::new(EvaluationScopeCode::MEMBER_EXISTENCE)],
+            vec![
+                CoverageGap::new(CoverageGapCode::ROLES_UNRESOLVED, "missing role")
+                    .scope(EvaluationScope::new(EvaluationScopeCode::PHASE_MEASUREMENT)),
+            ],
+        ),
+    )
+    .expect("the authority declares gait-group for all emitted built-ins");
+
+    let custom = CheckEvaluation::evaluated(
+        "acme-check",
+        CheckOutput::from_coverage(
+            Vec::new(),
+            vec![EvaluationScope::new(EvaluationScopeCode::custom(
+                "acme:completed",
+            ))],
+            vec![
+                CoverageGap::new(
+                    CoverageGapCode::custom("acme:unavailable"),
+                    "custom evidence",
+                )
+                .scope(EvaluationScope::new(EvaluationScopeCode::custom(
+                    "acme:missing",
+                ))),
+            ],
+        ),
+    )
+    .expect("namespaced custom evidence remains open to embedded checks");
+
+    let json = serde_json::to_value(custom).expect("custom evidence serializes");
+    assert_eq!(json["evaluated_scopes"][0]["code"], "acme:completed");
+    assert_eq!(json["gaps"][0]["code"], "acme:unavailable");
+    assert_eq!(json["gaps"][0]["scope"]["code"], "acme:missing");
+}
+
+#[test]
+fn public_builtin_code_slices_enumerate_only_builtin_vocabulary() {
+    let gap_codes = BUILTIN_COVERAGE_GAP_CODES
+        .iter()
+        .map(|code| code.as_str())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(gap_codes.len(), BUILTIN_COVERAGE_GAP_CODES.len());
+    assert!(gap_codes.contains(CoverageGapCode::ROLES_UNRESOLVED.as_str()));
+    assert!(!gap_codes.contains(CoverageGapCode::custom("acme:gap").as_str()));
+    assert!(gap_codes.iter().all(|code| !code.is_empty()));
+
+    let scope_codes = BUILTIN_EVALUATION_SCOPE_CODES
+        .iter()
+        .map(|code| code.as_str())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(scope_codes.len(), BUILTIN_EVALUATION_SCOPE_CODES.len());
+    assert!(scope_codes.contains(EvaluationScopeCode::FRAME_GRID.as_str()));
+    assert!(!scope_codes.contains(EvaluationScopeCode::custom("acme:scope").as_str()));
+    assert!(scope_codes.iter().all(|code| !code.is_empty()));
 }
 
 #[test]

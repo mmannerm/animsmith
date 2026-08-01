@@ -116,9 +116,14 @@ Built-in completed/gap scope codes are:
 | `frame_grid` | The named clip's declared frame grid was evaluated. | `fps` |
 | `first_frame_rest_delta` | The named clip's first-frame/rest-pose rotation evidence was evaluated. | `bind-pose` |
 
-The built-in gap and scope registries live in `animsmith_core`. A contract test
-iterates both registries and fails if this reference table falls behind them.
-Custom checks may add namespaced gap codes and their own scope vocabulary.
+The built-in gap and scope declarations in `animsmith_core` are authoritative
+for each code's identity, meaning, and allowed emitting check ids. Runtime
+evaluation rejects a built-in code from an undeclared emitter, and the output
+contract test derives this reference inventory from those same declarations.
+The public code slices let consumers enumerate or allow-list animsmith's
+built-in vocabulary; the meaning/emitter registry remains an implementation
+detail. Custom checks may add namespaced gap codes and their own namespaced
+scope vocabulary.
 
 `summary.checks` reports a `total` and four independent partitions. Each of
 `selection`, `configuration`, `applicability`, and `evaluation` sums to that

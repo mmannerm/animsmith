@@ -82,7 +82,10 @@ impl<'a> CheckCtx<'a> {
 /// Implementors should keep both methods panic-free for loader-valid
 /// documents. Applicability describes whether declared work exists;
 /// unavailable prerequisites or measurements belong in typed coverage gaps
-/// returned from [`Check::evaluate`].
+/// returned from [`Check::evaluate`]. Custom checks should use namespaced
+/// scope and gap codes. Built-in code values are reserved to the checks named
+/// by animsmith's evidence-code authority, and the evaluation boundary rejects
+/// a built-in value emitted by any other check id.
 pub trait Check {
     /// Stable identifier, e.g. `"loop-seam"`. Used in config, JSON
     /// output, and `--select`.
