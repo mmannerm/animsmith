@@ -753,11 +753,7 @@ fn load_measurements(
         })?;
         let [file]: [animsmith_core::MeasurementReportFile; 1] =
             files.try_into().map_err(|files: Vec<_>| {
-                format!(
-                    "{} contains {} file records; diff expects a single-file measurement report",
-                    path.display(),
-                    files.len()
-                )
+                format!("{} {}", path.display(), diff_file_count_error(files.len()))
             })?;
         return Ok(file.into_measurements().into_parts().0);
     }
@@ -775,9 +771,7 @@ fn diff_report_error(error: &MeasurementReportError, file_count: Option<usize>) 
     if let Some(found) = file_count.filter(|found| *found != 1)
         && error.file_index().is_some()
     {
-        return format!(
-            "contains {found} file records; diff expects a single-file measurement report"
-        );
+        return diff_file_count_error(found);
     }
     match error {
         MeasurementReportError::MissingOutputVersion => {
@@ -798,44 +792,35 @@ fn diff_report_error(error: &MeasurementReportError, file_count: Option<usize>) 
         }
         MeasurementReportError::File {
             file_index: 0,
-            source: MeasurementFileError::MissingPath,
-        } => {
-            format!("report file record has no `path`; {REMEDIATION}")
-        }
-        MeasurementReportError::File {
-            file_index: 0,
-            source: MeasurementFileError::MissingMeasurements,
-        } => "report has no measurements".into(),
-        MeasurementReportError::File {
-            file_index: 0,
-            source: MeasurementFileError::MissingMeasurementVersion,
-        } => {
-            format!("has no versioned measurement contract; {REMEDIATION}")
-        }
-        MeasurementReportError::File {
-            file_index: 0,
-            source: MeasurementFileError::UnsupportedMeasurementVersion { found },
-        } => format!(
-            "has measurement schema_version {found}; this build reads measurement schema_version {}",
-            animsmith_core::MEASUREMENTS_SCHEMA_VERSION
-        ),
-        MeasurementReportError::File {
-            file_index: 0,
-            source: MeasurementFileError::WrongMeasurementIdentity,
-        } => format!(
-            "does not identify measurement contract {}; {REMEDIATION}",
-            animsmith_core::MEASUREMENTS_SCHEMA_ID
-        ),
-        MeasurementReportError::File {
-            file_index: 0,
-            source: MeasurementFileError::MissingClips,
-        } => "measurement contract has no `clips` map".into(),
-        MeasurementReportError::File {
-            file_index: 0,
-            source: MeasurementFileError::InvalidMeasurements { source },
-        } => format!("has invalid measurements: {source}; {REMEDIATION}"),
+            source,
+        } => match source {
+            MeasurementFileError::MissingPath => {
+                format!("report file record has no `path`; {REMEDIATION}")
+            }
+            MeasurementFileError::MissingMeasurements => "report has no measurements".into(),
+            MeasurementFileError::MissingMeasurementVersion => {
+                format!("has no versioned measurement contract; {REMEDIATION}")
+            }
+            MeasurementFileError::UnsupportedMeasurementVersion { found } => format!(
+                "has measurement schema_version {found}; this build reads measurement schema_version {}",
+                animsmith_core::MEASUREMENTS_SCHEMA_VERSION
+            ),
+            MeasurementFileError::WrongMeasurementIdentity => format!(
+                "does not identify measurement contract {}; {REMEDIATION}",
+                animsmith_core::MEASUREMENTS_SCHEMA_ID
+            ),
+            MeasurementFileError::MissingClips => "measurement contract has no `clips` map".into(),
+            MeasurementFileError::InvalidMeasurements { source } => {
+                format!("has invalid measurements: {source}; {REMEDIATION}")
+            }
+            _ => source.to_string(),
+        },
         _ => error.to_string(),
     }
+}
+
+fn diff_file_count_error(found: usize) -> String {
+    format!("contains {found} file records; diff expects a single-file measurement report")
 }
 
 fn require_files(files: &[PathBuf]) -> Result<(), String> {
@@ -927,6 +912,9 @@ mod tests {
 
     #[test]
     fn diff_owns_remediation_for_invalid_measurements() {
+        // serde_json's text parser rejects numeric f32 overflow before typed
+        // report validation, so spawned tests cannot reach this defensive
+        // adapter branch. Construct the public typed error to pin CLI policy.
         let error = MeasurementReportError::File {
             file_index: 0,
             source: MeasurementFileError::InvalidMeasurements {

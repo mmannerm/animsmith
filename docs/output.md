@@ -169,4 +169,6 @@ delta count, and structured metric deltas:
 
 `diff` accepts asset files or one-file v2 `measure`/`lint` reports carrying
 measurement contract v1. Multi-file reports and unsupported contract versions
-are rejected as operator errors.
+are rejected as operator errors. Before extracting the clip metrics it uses,
+`diff` validates the complete measurement record, including mesh evidence, and
+rejects malformed or non-finite payload values.
