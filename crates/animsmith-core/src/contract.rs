@@ -198,6 +198,11 @@ impl MeasurementContract {
     pub fn meshes(&self) -> &[MeshMeasurements] {
         &self.meshes
     }
+
+    /// Consume the contract and return its clip and mesh measurements.
+    pub fn into_parts(self) -> (BTreeMap<String, ClipMeasurements>, Vec<MeshMeasurements>) {
+        (self.clips, self.meshes)
+    }
 }
 
 fn validate_measurements(
@@ -256,12 +261,12 @@ fn validate_measurements(
 }
 
 /// Typed read-side subset accepted when a consumer needs measurements from a
-/// current single-file `measure` or `lint` report.
+/// current `measure` or `lint` report.
 ///
 /// This intentionally models only the fields needed to recover the nested
 /// measurement contract. Unknown fields remain forward-compatible, while all
 /// protocol identities and command constraints are validated by
-/// [`MeasurementReportInput::into_clip_measurements`].
+/// [`MeasurementReportInput::into_files`].
 #[derive(Debug, Deserialize)]
 pub struct MeasurementReportInput {
     schema_version: Option<u32>,
@@ -272,6 +277,7 @@ pub struct MeasurementReportInput {
 
 #[derive(Debug, Deserialize)]
 struct MeasurementFileInput {
+    path: Option<String>,
     measurements: Option<MeasurementPayloadInput>,
 }
 
@@ -280,6 +286,36 @@ struct MeasurementPayloadInput {
     schema_version: Option<u32>,
     schema: Option<String>,
     clips: Option<BTreeMap<String, ClipMeasurements>>,
+    #[serde(default)]
+    meshes: Vec<MeshMeasurements>,
+}
+
+/// One validated file record recovered from a measurement report.
+///
+/// The record retains its source path and full nested measurement contract so
+/// consumers can choose the clip, mesh, and cardinality policies appropriate
+/// to their workflow.
+#[derive(Debug, Clone)]
+pub struct MeasurementReportFile {
+    path: String,
+    measurements: MeasurementContract,
+}
+
+impl MeasurementReportFile {
+    /// Source path recorded by the producing report.
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    /// Validated nested measurement contract.
+    pub fn measurements(&self) -> &MeasurementContract {
+        &self.measurements
+    }
+
+    /// Consume this record and return its validated measurement contract.
+    pub fn into_measurements(self) -> MeasurementContract {
+        self.measurements
+    }
 }
 
 /// A typed measurement-report subset failed current-contract validation.
@@ -287,9 +323,7 @@ struct MeasurementPayloadInput {
 #[non_exhaustive]
 pub enum MeasurementReportError {
     /// The outer envelope omitted its version.
-    #[error(
-        "is not an animsmith report envelope (no `schema_version`); regenerate it with `animsmith measure --format json`"
-    )]
+    #[error("report envelope has no `schema_version`")]
     MissingOutputVersion,
     /// The outer envelope uses an unsupported version.
     #[error("has schema_version {found}; this build reads schema_version {OUTPUT_SCHEMA_VERSION}")]
@@ -298,69 +332,83 @@ pub enum MeasurementReportError {
         found: u32,
     },
     /// The outer envelope does not carry the immutable v2 identity.
-    #[error(
-        "does not identify output contract {OUTPUT_SCHEMA_ID}; regenerate it with `animsmith measure --format json`"
-    )]
+    #[error("report envelope does not identify output contract {OUTPUT_SCHEMA_ID}")]
     WrongOutputIdentity,
     /// The outer envelope omitted its command.
-    #[error(
-        "is not an animsmith measurement report (no `command`); regenerate it with `animsmith measure --format json`"
-    )]
+    #[error("report envelope has no `command`")]
     MissingCommand,
     /// The outer envelope belongs to a command without file measurements.
-    #[error("is a {command:?} report; diff reads only measure or lint reports")]
+    #[error("report command {command:?} does not carry measurement file records")]
     UnsupportedCommand {
         /// Command found in the input.
         command: String,
     },
     /// The outer envelope omitted its file array.
-    #[error(
-        "is not an animsmith report envelope (no `files` array); regenerate it with `animsmith measure --format json`"
-    )]
+    #[error("report envelope has no `files` array")]
     MissingFiles,
-    /// Diff requires exactly one file record.
-    #[error("contains {found} file records; diff expects a single-file measurement report")]
-    FileCount {
-        /// Number of file records found in the input.
-        found: usize,
+    /// The file record omitted its source path.
+    #[error("files[{file_index}] has no `path`")]
+    MissingPath {
+        /// Zero-based index of the invalid file record.
+        file_index: usize,
     },
     /// The file record omitted its nested measurement contract.
-    #[error("report has no measurements")]
-    MissingMeasurements,
+    #[error("files[{file_index}] has no measurements")]
+    MissingMeasurements {
+        /// Zero-based index of the invalid file record.
+        file_index: usize,
+    },
     /// The nested measurement contract omitted its version.
-    #[error(
-        "has no versioned measurement contract; regenerate it with `animsmith measure --format json`"
-    )]
-    MissingMeasurementVersion,
+    #[error("files[{file_index}] has no versioned measurement contract")]
+    MissingMeasurementVersion {
+        /// Zero-based index of the invalid file record.
+        file_index: usize,
+    },
     /// The nested measurement contract uses an unsupported version.
     #[error(
-        "has measurement schema_version {found}; this build reads measurement schema_version {MEASUREMENTS_SCHEMA_VERSION}"
+        "files[{file_index}] has measurement schema_version {found}; this build reads measurement schema_version {MEASUREMENTS_SCHEMA_VERSION}"
     )]
     UnsupportedMeasurementVersion {
+        /// Zero-based index of the invalid file record.
+        file_index: usize,
         /// Version found in the nested contract.
         found: u32,
     },
     /// The nested contract does not carry the immutable measurement identity.
-    #[error(
-        "does not identify measurement contract {MEASUREMENTS_SCHEMA_ID}; regenerate it with `animsmith measure --format json`"
-    )]
-    WrongMeasurementIdentity,
+    #[error("files[{file_index}] does not identify measurement contract {MEASUREMENTS_SCHEMA_ID}")]
+    WrongMeasurementIdentity {
+        /// Zero-based index of the invalid file record.
+        file_index: usize,
+    },
     /// The nested contract omitted its clip-measurement map.
-    #[error("measurement contract has no `clips` map")]
-    MissingClips,
+    #[error("files[{file_index}] measurement contract has no `clips` map")]
+    MissingClips {
+        /// Zero-based index of the invalid file record.
+        file_index: usize,
+    },
+    /// The nested measurement values do not satisfy the current contract.
+    #[error("files[{file_index}] has invalid measurements: {source}")]
+    InvalidMeasurements {
+        /// Zero-based index of the invalid file record.
+        file_index: usize,
+        /// Measurement validation failure.
+        #[source]
+        source: MeasurementContractError,
+    },
 }
 
 impl MeasurementReportInput {
-    /// Validate current output/measurement identities and recover the clip map
-    /// from exactly one `measure` or `lint` file record.
+    /// Validate current output/measurement identities and recover every file's
+    /// complete measurement record from a `measure` or `lint` report.
+    ///
+    /// File order is preserved. Empty and multi-file reports are accepted so
+    /// callers can apply their own cardinality policy.
     ///
     /// # Errors
     ///
     /// Returns a typed error for a missing or unsupported identity, command,
-    /// file shape, nested measurement contract, or clip map.
-    pub fn into_clip_measurements(
-        self,
-    ) -> Result<BTreeMap<String, ClipMeasurements>, MeasurementReportError> {
+    /// file shape, nested measurement contract, or measurement payload.
+    pub fn into_files(self) -> Result<Vec<MeasurementReportFile>, MeasurementReportError> {
         match self.schema_version {
             Some(OUTPUT_SCHEMA_VERSION) => {}
             Some(found) => {
@@ -381,27 +429,87 @@ impl MeasurementReportInput {
             None => return Err(MeasurementReportError::MissingCommand),
         }
         let files = self.files.ok_or(MeasurementReportError::MissingFiles)?;
-        if files.len() != 1 {
-            return Err(MeasurementReportError::FileCount { found: files.len() });
-        }
-        let measurements = files
+        files
             .into_iter()
-            .next()
-            .and_then(|file| file.measurements)
-            .ok_or(MeasurementReportError::MissingMeasurements)?;
-        match measurements.schema_version {
-            Some(MEASUREMENTS_SCHEMA_VERSION) => {}
-            Some(found) => {
-                return Err(MeasurementReportError::UnsupportedMeasurementVersion { found });
+            .enumerate()
+            .map(|(file_index, file)| {
+                let path = file
+                    .path
+                    .ok_or(MeasurementReportError::MissingPath { file_index })?;
+                let measurements = file
+                    .measurements
+                    .ok_or(MeasurementReportError::MissingMeasurements { file_index })?;
+                match measurements.schema_version {
+                    Some(MEASUREMENTS_SCHEMA_VERSION) => {}
+                    Some(found) => {
+                        return Err(MeasurementReportError::UnsupportedMeasurementVersion {
+                            file_index,
+                            found,
+                        });
+                    }
+                    None => {
+                        return Err(MeasurementReportError::MissingMeasurementVersion {
+                            file_index,
+                        });
+                    }
+                }
+                if measurements.schema.as_deref() != Some(MEASUREMENTS_SCHEMA_ID) {
+                    return Err(MeasurementReportError::WrongMeasurementIdentity { file_index });
+                }
+                let clips = measurements
+                    .clips
+                    .ok_or(MeasurementReportError::MissingClips { file_index })?;
+                let measurements =
+                    MeasurementContract::new(clips, measurements.meshes).map_err(|source| {
+                        MeasurementReportError::InvalidMeasurements { file_index, source }
+                    })?;
+                Ok(MeasurementReportFile { path, measurements })
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod measurement_report_input_tests {
+    use super::*;
+
+    #[test]
+    fn recovered_payloads_run_measurement_contract_validation() {
+        let invalid_clip = ClipMeasurements {
+            duration_s: f64::NAN,
+            frame_count: 1,
+            animated_bones: Vec::new(),
+            bone_rotation_range_deg: BTreeMap::new(),
+            loop_seam_ratio: None,
+            gait: None,
+            speed_mps: None,
+        };
+        let input = MeasurementReportInput {
+            schema_version: Some(OUTPUT_SCHEMA_VERSION),
+            schema: Some(OUTPUT_SCHEMA_ID.into()),
+            command: Some("measure".into()),
+            files: Some(vec![MeasurementFileInput {
+                path: Some("invalid.glb".into()),
+                measurements: Some(MeasurementPayloadInput {
+                    schema_version: Some(MEASUREMENTS_SCHEMA_VERSION),
+                    schema: Some(MEASUREMENTS_SCHEMA_ID.into()),
+                    clips: Some(BTreeMap::from([("walk".into(), invalid_clip)])),
+                    meshes: Vec::new(),
+                }),
+            }]),
+        };
+
+        assert_eq!(
+            input
+                .into_files()
+                .expect_err("recovered evidence must be validated"),
+            MeasurementReportError::InvalidMeasurements {
+                file_index: 0,
+                source: MeasurementContractError::NonFiniteValue {
+                    path: "clips[\"walk\"].duration_s".into(),
+                },
             }
-            None => return Err(MeasurementReportError::MissingMeasurementVersion),
-        }
-        if measurements.schema.as_deref() != Some(MEASUREMENTS_SCHEMA_ID) {
-            return Err(MeasurementReportError::WrongMeasurementIdentity);
-        }
-        measurements
-            .clips
-            .ok_or(MeasurementReportError::MissingClips)
+        );
     }
 }
 

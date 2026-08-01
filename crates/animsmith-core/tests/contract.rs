@@ -50,8 +50,12 @@ fn command_specific_file_types_serialize_only_their_valid_shape() {
         serde_json::from_value(measure).expect("current measure envelope deserializes");
     assert!(
         input
-            .into_clip_measurements()
+            .into_files()
             .expect("current measure envelope is accepted")
+            .first()
+            .expect("measure envelope has one file")
+            .measurements()
+            .clips()
             .is_empty()
     );
 }
@@ -157,6 +161,7 @@ fn current_measure_report() -> serde_json::Value {
         "schema": OUTPUT_SCHEMA_ID,
         "command": "measure",
         "files": [{
+            "path": "clip.glb",
             "measurements": {
                 "schema_version": MEASUREMENTS_SCHEMA_VERSION,
                 "schema": MEASUREMENTS_SCHEMA_ID,
@@ -170,7 +175,7 @@ fn measurement_report_error(value: serde_json::Value) -> MeasurementReportError 
     let input: MeasurementReportInput =
         serde_json::from_value(value).expect("test case remains structurally deserializable");
     input
-        .into_clip_measurements()
+        .into_files()
         .expect_err("malformed report must be rejected")
 }
 
@@ -199,10 +204,6 @@ fn measurement_report_input_rejects_every_invalid_contract_branch() {
     wrong_output_identity["schema"] = serde_json::json!("urn:other:output");
     let mut unsupported_command = base.clone();
     unsupported_command["command"] = serde_json::json!("inspect");
-    let mut no_files = base.clone();
-    no_files["files"] = serde_json::json!([]);
-    let mut two_files = base.clone();
-    two_files["files"] = serde_json::json!([base["files"][0].clone(), base["files"][0].clone(),]);
     let mut future_measurements = base.clone();
     future_measurements["files"][0]["measurements"]["schema_version"] =
         serde_json::json!(MEASUREMENTS_SCHEMA_VERSION + 1);
@@ -246,47 +247,147 @@ fn measurement_report_input_rejects_every_invalid_contract_branch() {
             MeasurementReportError::MissingFiles,
         ),
         (
-            "no file records",
-            no_files,
-            MeasurementReportError::FileCount { found: 0 },
-        ),
-        (
-            "multiple file records",
-            two_files,
-            MeasurementReportError::FileCount { found: 2 },
+            "missing path",
+            without("/files/0/path"),
+            MeasurementReportError::MissingPath { file_index: 0 },
         ),
         (
             "missing measurements",
             without("/files/0/measurements"),
-            MeasurementReportError::MissingMeasurements,
+            MeasurementReportError::MissingMeasurements { file_index: 0 },
         ),
         (
             "missing measurement version",
             without("/files/0/measurements/schema_version"),
-            MeasurementReportError::MissingMeasurementVersion,
+            MeasurementReportError::MissingMeasurementVersion { file_index: 0 },
         ),
         (
             "unsupported measurement version",
             future_measurements,
             MeasurementReportError::UnsupportedMeasurementVersion {
+                file_index: 0,
                 found: MEASUREMENTS_SCHEMA_VERSION + 1,
             },
         ),
         (
             "wrong measurement identity",
             wrong_measurement_identity,
-            MeasurementReportError::WrongMeasurementIdentity,
+            MeasurementReportError::WrongMeasurementIdentity { file_index: 0 },
         ),
         (
             "missing clips",
             without("/files/0/measurements/clips"),
-            MeasurementReportError::MissingClips,
+            MeasurementReportError::MissingClips { file_index: 0 },
         ),
     ];
 
     for (name, value, expected) in cases {
-        assert_eq!(measurement_report_error(value), expected, "{name}");
+        let error = measurement_report_error(value);
+        assert_eq!(error, expected, "{name}");
+        let display = error.to_string();
+        assert!(!display.contains("diff"), "{name}: {display}");
+        assert!(!display.contains("animsmith measure"), "{name}: {display}");
+        assert!(!display.contains("regenerate"), "{name}: {display}");
     }
+}
+
+#[test]
+fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
+    let mut report = current_measure_report();
+    report["files"] = serde_json::json!([
+        {
+            "path": "walk.glb",
+            "measurements": {
+                "schema_version": MEASUREMENTS_SCHEMA_VERSION,
+                "schema": MEASUREMENTS_SCHEMA_ID,
+                "clips": { "walk": valid_clip_measurements() },
+            },
+        },
+        {
+            "path": "run.glb",
+            "measurements": {
+                "schema_version": MEASUREMENTS_SCHEMA_VERSION,
+                "schema": MEASUREMENTS_SCHEMA_ID,
+                "clips": { "run": valid_clip_measurements() },
+                "meshes": [valid_mesh_measurements()],
+            },
+        },
+    ]);
+
+    let input: MeasurementReportInput =
+        serde_json::from_value(report).expect("multi-file report deserializes");
+    let files = input
+        .into_files()
+        .expect("multi-file report is consumer-neutral");
+
+    assert_eq!(files.len(), 2);
+    assert_eq!(files[0].path(), "walk.glb");
+    assert_eq!(
+        files[0]
+            .measurements()
+            .clips()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["walk"]
+    );
+    assert_eq!(files[1].path(), "run.glb");
+    assert_eq!(
+        files[1]
+            .measurements()
+            .clips()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["run"]
+    );
+    assert_eq!(files[1].measurements().meshes().len(), 1);
+    let (run_clips, run_meshes) = files
+        .into_iter()
+        .nth(1)
+        .expect("second recovered record")
+        .into_measurements()
+        .into_parts();
+    assert_eq!(
+        run_clips.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["run"]
+    );
+    assert_eq!(run_meshes.len(), 1);
+
+    let mut empty_report = current_measure_report();
+    empty_report["files"] = serde_json::json!([]);
+    let input: MeasurementReportInput =
+        serde_json::from_value(empty_report).expect("empty report deserializes");
+    assert!(
+        input
+            .into_files()
+            .expect("empty report has no core cardinality error")
+            .is_empty()
+    );
+}
+
+#[test]
+fn measurement_report_input_identifies_invalid_file_without_cli_remediation() {
+    let base = current_measure_report();
+    let mut report = base.clone();
+    report["files"] = serde_json::json!([
+        base["files"][0].clone(),
+        {
+            "path": "invalid.glb",
+            "measurements": { "schema_version": MEASUREMENTS_SCHEMA_VERSION },
+        },
+    ]);
+
+    let error = measurement_report_error(report);
+    assert_eq!(
+        error,
+        MeasurementReportError::WrongMeasurementIdentity { file_index: 1 }
+    );
+    let display = error.to_string();
+    assert!(display.contains("files[1]"));
+    assert!(!display.contains("diff"));
+    assert!(!display.contains("animsmith measure"));
+    assert!(!display.contains("regenerate"));
 }
 
 #[test]

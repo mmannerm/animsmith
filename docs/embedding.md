@@ -98,8 +98,12 @@ When the host needs to exchange the same JSON as the CLI, construct
 `MeasureEnvelope`/`LintEnvelope` from `animsmith-core::contract`. That module
 owns both immutable URNs and derives the lint/measure summary from the supplied
 records.
-It also exposes the typed `MeasurementReportInput` subset for consumers that
-need to recover measurements from a current single-file measure or lint report.
+It also exposes the typed `MeasurementReportInput` subset and
+`MeasurementReportFile` records for consumers that need to validate and recover
+every file's exact display path and full measurement contract from a current
+measure or lint report. The core boundary preserves file order and accepts
+empty or multi-file reports; each consumer owns any cardinality rule for its
+workflow.
 The compiling example emits a full schema-valid lint envelope; embedded
 producers do not need to copy private CLI structs or hard-code protocol
 identities. Host-specific sidecars remain appropriate when CLI interoperability

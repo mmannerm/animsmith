@@ -1663,6 +1663,75 @@ fn diff_accepts_measurement_json_and_exits_zero_without_deltas() {
 }
 
 #[test]
+fn diff_rejects_zero_or_multiple_measurement_file_records() {
+    let dir = unique_temp_dir("diff-report-file-count");
+    let report_path = dir.path().join("report.json");
+
+    for file_count in [0, 2] {
+        let mut report = measurement_report(1.0);
+        let file = report["files"][0].clone();
+        report["files"] = Value::Array(vec![file; file_count]);
+        write_json(&report_path, &report);
+
+        let output = animsmith()
+            .args([
+                "diff",
+                report_path.to_str().expect("utf-8 report path"),
+                fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
+            ])
+            .output()
+            .expect("runs animsmith");
+
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "stdout:\n{}\nstderr:\n{}",
+            stdout(&output),
+            stderr(&output)
+        );
+        assert!(stdout(&output).is_empty());
+        assert!(
+            stderr(&output).contains(&format!(
+                "contains {file_count} file records; diff expects a single-file measurement report"
+            )),
+            "stderr:\n{}",
+            stderr(&output)
+        );
+    }
+}
+
+#[test]
+fn diff_rejects_missing_report_path_with_measure_remediation() {
+    let dir = unique_temp_dir("diff-report-missing-path");
+    let report_path = dir.path().join("report.json");
+    let mut report = measurement_report(1.0);
+    report["files"][0]
+        .as_object_mut()
+        .expect("file record")
+        .remove("path");
+    write_json(&report_path, &report);
+
+    let output = animsmith()
+        .args([
+            "diff",
+            report_path.to_str().expect("utf-8 report path"),
+            fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stdout(&output).is_empty());
+    assert!(
+        stderr(&output).contains(
+            "report file record has no `path`; regenerate it with `animsmith measure --format json`"
+        ),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+}
+
+#[test]
 fn diff_compares_decoded_numbers_not_json_lexical_spelling() {
     let dir = unique_temp_dir("diff-json-number-spelling");
     let before = dir.path().join("before.json");
@@ -1897,7 +1966,7 @@ fn diff_text_escapes_controls_from_report_clip_metric_and_note_fields() {
 }
 
 #[test]
-fn diff_rejects_json_without_schema_version() {
+fn diff_rejects_json_without_schema_version_with_measure_remediation() {
     let dir = unique_temp_dir("diff-bare-map");
     let bare = dir.path().join("bare.json");
     // A bare measurement map (a pre-publish development shape) has no
@@ -1925,7 +1994,7 @@ fn diff_rejects_json_without_schema_version() {
         stderr(&output)
     );
     assert!(
-        stderr(&output).contains("regenerate it with"),
+        stderr(&output).contains("regenerate it with `animsmith measure --format json`"),
         "stderr:\n{}",
         stderr(&output)
     );
