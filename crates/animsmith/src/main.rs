@@ -912,9 +912,10 @@ mod tests {
 
     #[test]
     fn diff_owns_remediation_for_invalid_measurements() {
-        // serde_json's text parser rejects numeric f32 overflow before typed
-        // report validation, so spawned tests cannot reach this defensive
-        // adapter branch. Construct the public typed error to pin CLI policy.
+        // Workspace test builds enable serde_json's `float_roundtrip` through
+        // a dev dependency and reject f32 overflow while parsing. Shipped
+        // binaries can instead reach this branch, so construct the public
+        // typed error to pin CLI policy independently of feature unification.
         let error = MeasurementReportError::File {
             file_index: 0,
             source: MeasurementFileError::InvalidMeasurements {
