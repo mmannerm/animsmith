@@ -746,18 +746,15 @@ fn load_measurements(
         let files = report
             .into_files()
             .map_err(|error| format!("{} {}", path.display(), diff_report_error(&error)))?;
-        if files.len() == 1 {
-            let file = files
-                .into_iter()
-                .next()
-                .ok_or_else(|| "validated single-file report lost its file record".to_owned())?;
-            return Ok(file.into_measurements().into_parts().0);
-        }
-        return Err(format!(
-            "{} contains {} file records; diff expects a single-file measurement report",
-            path.display(),
-            files.len()
-        ));
+        let [file]: [animsmith_core::MeasurementReportFile; 1] =
+            files.try_into().map_err(|files: Vec<_>| {
+                format!(
+                    "{} contains {} file records; diff expects a single-file measurement report",
+                    path.display(),
+                    files.len()
+                )
+            })?;
+        return Ok(file.into_measurements().into_parts().0);
     }
     let doc = load(path)?;
     let roles = resolve_configured_roles(&doc.skeleton, &config.rig);

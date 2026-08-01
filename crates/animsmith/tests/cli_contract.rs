@@ -1719,6 +1719,8 @@ fn diff_preserves_tailored_report_errors_and_remediation() {
             .remove(key);
         report
     };
+    let mut unsupported_output_version = base.clone();
+    unsupported_output_version["schema_version"] = json!(3);
     let mut wrong_output_identity = base.clone();
     wrong_output_identity["schema"] = json!("urn:other:output");
     let mut unsupported_command = base.clone();
@@ -1740,6 +1742,11 @@ fn diff_preserves_tailored_report_errors_and_remediation() {
             "wrong output identity",
             wrong_output_identity,
             format!("does not identify output contract {OUTPUT_SCHEMA_ID}; {remediation}"),
+        ),
+        (
+            "unsupported output version",
+            unsupported_output_version,
+            "has schema_version 3; this build reads schema_version 2".to_owned(),
         ),
         (
             "missing command",

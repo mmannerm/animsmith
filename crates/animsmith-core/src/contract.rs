@@ -475,7 +475,24 @@ mod measurement_report_input_tests {
 
     #[test]
     fn recovered_payloads_run_measurement_contract_validation() {
-        let invalid_clip = ClipMeasurements {
+        let file = |path: &str,
+                    clips: BTreeMap<String, ClipMeasurements>,
+                    meshes: Vec<MeshMeasurements>| MeasurementFileInput {
+            path: Some(path.into()),
+            measurements: Some(MeasurementPayloadInput {
+                schema_version: Some(MEASUREMENTS_SCHEMA_VERSION),
+                schema: Some(MEASUREMENTS_SCHEMA_ID.into()),
+                clips: Some(clips),
+                meshes,
+            }),
+        };
+        let report = |files| MeasurementReportInput {
+            schema_version: Some(OUTPUT_SCHEMA_VERSION),
+            schema: Some(OUTPUT_SCHEMA_ID.into()),
+            command: Some("measure".into()),
+            files: Some(files),
+        };
+        let invalid_clip = || ClipMeasurements {
             duration_s: f64::NAN,
             frame_count: 1,
             animated_bones: Vec::new(),
@@ -484,39 +501,7 @@ mod measurement_report_input_tests {
             gait: None,
             speed_mps: None,
         };
-        let input = MeasurementReportInput {
-            schema_version: Some(OUTPUT_SCHEMA_VERSION),
-            schema: Some(OUTPUT_SCHEMA_ID.into()),
-            command: Some("measure".into()),
-            files: Some(vec![MeasurementFileInput {
-                path: Some("invalid.glb".into()),
-                measurements: Some(MeasurementPayloadInput {
-                    schema_version: Some(MEASUREMENTS_SCHEMA_VERSION),
-                    schema: Some(MEASUREMENTS_SCHEMA_ID.into()),
-                    clips: Some(BTreeMap::from([("walk".into(), invalid_clip)])),
-                    meshes: Vec::new(),
-                }),
-            }]),
-        };
-
-        let clip_error = input
-            .into_files()
-            .expect_err("recovered clip evidence must be validated");
-        assert_eq!(
-            clip_error,
-            MeasurementReportError::InvalidMeasurements {
-                file_index: 0,
-                source: MeasurementContractError::NonFiniteValue {
-                    path: "clips[\"walk\"].duration_s".into(),
-                },
-            }
-        );
-        assert_eq!(
-            clip_error.to_string(),
-            "files[0] has invalid measurements: measurement value clips[\"walk\"].duration_s must be finite"
-        );
-
-        let invalid_mesh = MeshMeasurements {
+        let invalid_mesh = || MeshMeasurements {
             name: "mesh".into(),
             vertex_count: 1,
             aabb: None,
@@ -524,36 +509,75 @@ mod measurement_report_input_tests {
             weight_sum_min: Some(f64::NAN),
             weight_sum_max: Some(1.0),
         };
-        let input = MeasurementReportInput {
-            schema_version: Some(OUTPUT_SCHEMA_VERSION),
-            schema: Some(OUTPUT_SCHEMA_ID.into()),
-            command: Some("lint".into()),
-            files: Some(vec![MeasurementFileInput {
-                path: Some("invalid-mesh.glb".into()),
-                measurements: Some(MeasurementPayloadInput {
-                    schema_version: Some(MEASUREMENTS_SCHEMA_VERSION),
-                    schema: Some(MEASUREMENTS_SCHEMA_ID.into()),
-                    clips: Some(BTreeMap::new()),
-                    meshes: vec![invalid_mesh],
-                }),
-            }]),
-        };
-        let mesh_error = input
-            .into_files()
-            .expect_err("recovered mesh evidence must be validated");
-        assert_eq!(
-            mesh_error,
-            MeasurementReportError::InvalidMeasurements {
-                file_index: 0,
-                source: MeasurementContractError::NonFiniteValue {
-                    path: "meshes[0].weight_sum_min".into(),
+        let valid = || file("valid.glb", BTreeMap::new(), Vec::new());
+        let cases = [
+            (
+                report(vec![file(
+                    "invalid-clip.glb",
+                    BTreeMap::from([("walk".into(), invalid_clip())]),
+                    Vec::new(),
+                )]),
+                MeasurementReportError::InvalidMeasurements {
+                    file_index: 0,
+                    source: MeasurementContractError::NonFiniteValue {
+                        path: "clips[\"walk\"].duration_s".into(),
+                    },
                 },
-            }
-        );
-        assert_eq!(
-            mesh_error.to_string(),
-            "files[0] has invalid measurements: measurement value meshes[0].weight_sum_min must be finite"
-        );
+                "files[0] has invalid measurements: measurement value clips[\"walk\"].duration_s must be finite",
+            ),
+            (
+                report(vec![file(
+                    "invalid-mesh.glb",
+                    BTreeMap::new(),
+                    vec![invalid_mesh()],
+                )]),
+                MeasurementReportError::InvalidMeasurements {
+                    file_index: 0,
+                    source: MeasurementContractError::NonFiniteValue {
+                        path: "meshes[0].weight_sum_min".into(),
+                    },
+                },
+                "files[0] has invalid measurements: measurement value meshes[0].weight_sum_min must be finite",
+            ),
+            (
+                report(vec![
+                    valid(),
+                    file(
+                        "invalid-clip.glb",
+                        BTreeMap::from([("walk".into(), invalid_clip())]),
+                        Vec::new(),
+                    ),
+                ]),
+                MeasurementReportError::InvalidMeasurements {
+                    file_index: 1,
+                    source: MeasurementContractError::NonFiniteValue {
+                        path: "clips[\"walk\"].duration_s".into(),
+                    },
+                },
+                "files[1] has invalid measurements: measurement value clips[\"walk\"].duration_s must be finite",
+            ),
+            (
+                report(vec![
+                    valid(),
+                    file("invalid-mesh.glb", BTreeMap::new(), vec![invalid_mesh()]),
+                ]),
+                MeasurementReportError::InvalidMeasurements {
+                    file_index: 1,
+                    source: MeasurementContractError::NonFiniteValue {
+                        path: "meshes[0].weight_sum_min".into(),
+                    },
+                },
+                "files[1] has invalid measurements: measurement value meshes[0].weight_sum_min must be finite",
+            ),
+        ];
+
+        for (input, expected, expected_display) in cases {
+            let error = input
+                .into_files()
+                .expect_err("recovered evidence must be validated");
+            assert_eq!(error, expected);
+            assert_eq!(error.to_string(), expected_display);
+        }
     }
 }
 
