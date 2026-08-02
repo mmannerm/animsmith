@@ -32,7 +32,7 @@ pub struct StaticMeshBake {
 #[derive(Debug, Clone, Serialize)]
 #[non_exhaustive]
 pub struct StaticMeshBakeEvidence {
-    /// Baked instances in input instance order.
+    /// Baked instances in ascending source-node order.
     pub entries: Vec<StaticMeshBakeInstanceEvidence>,
 }
 
@@ -452,6 +452,7 @@ fn validate(doc: &Document) -> Result<Vec<BakePlan>, StaticMeshBakeError> {
             determinant,
         });
     }
+    plans.sort_unstable_by_key(|plan| doc.assets.instances[plan.instance].source_node_index);
     Ok(plans)
 }
 

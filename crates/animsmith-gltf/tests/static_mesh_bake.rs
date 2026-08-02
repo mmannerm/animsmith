@@ -360,6 +360,53 @@ fn static_mesh_bake_matches_literal_rotation_scale_translation_oracles() {
 }
 
 #[test]
+fn static_mesh_bake_orders_output_and_evidence_by_source_node() {
+    let mut source = supported_document();
+    source.assets.instances.reverse();
+    assert_eq!(
+        source
+            .assets
+            .instances
+            .iter()
+            .map(|instance| instance.source_node_index)
+            .collect::<Vec<_>>(),
+        vec![8, 7],
+        "fixture starts in deliberately noncanonical input order"
+    );
+
+    let baked = bake_static_mesh_transforms(&source).expect("reordered instances bake");
+    assert_eq!(
+        baked
+            .evidence
+            .entries
+            .iter()
+            .map(|entry| entry.source_node_index)
+            .collect::<Vec<_>>(),
+        vec![7, 8]
+    );
+    assert_eq!(
+        baked
+            .document
+            .assets
+            .instances
+            .iter()
+            .map(|instance| instance.source_node_index)
+            .collect::<Vec<_>>(),
+        vec![7, 8]
+    );
+    assert_eq!(
+        baked
+            .document
+            .assets
+            .meshes
+            .iter()
+            .map(|mesh| mesh.source_mesh_index)
+            .collect::<Vec<_>>(),
+        vec![11, 12]
+    );
+}
+
+#[test]
 fn static_mesh_bake_flattens_geometry_without_losing_scene_asset_semantics() {
     let source = supported_document();
     let expected: Vec<_> = source
