@@ -575,6 +575,90 @@ fn load_preserves_mesh_definition_instance_and_scene_identity() {
     assert_eq!(doc.assets.scenes[1].roots, vec![1]);
 }
 
+/// Unskinned mesh definitions can be attached to more than one node. Writing
+/// must emit one definition with both node attachments, and loading must keep
+/// each instance's skeleton node (and therefore its authored transform).
+#[test]
+fn write_load_preserves_unskinned_mesh_instances_and_node_transforms() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("instanced-unskinned.glb");
+    let left_rest = Transform {
+        translation: Vec3::new(-2.0, 1.0, 0.5),
+        rotation: Quat::from_rotation_z(0.25),
+        scale: Vec3::new(1.0, 2.0, 1.0),
+    };
+    let right_rest = Transform {
+        translation: Vec3::new(3.0, -1.0, 2.0),
+        rotation: Quat::from_rotation_y(-0.5),
+        scale: Vec3::new(0.5, 1.0, 1.5),
+    };
+    let doc = Document {
+        skeleton: Skeleton {
+            bones: vec![
+                Bone {
+                    name: "left".into(),
+                    parent: None,
+                    rest: left_rest,
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "right".into(),
+                    parent: None,
+                    rest: right_rest,
+                    inverse_bind: None,
+                },
+            ],
+        },
+        clips: vec![],
+        assets: SceneAssets {
+            meshes: vec![MeshAsset {
+                name: "shared-triangle".into(),
+                source_mesh_index: 0,
+                primitives: vec![Primitive {
+                    positions: vec![Vec3::ZERO, Vec3::X, Vec3::Y],
+                    ..Primitive::default()
+                }],
+            }],
+            instances: vec![
+                MeshInstance {
+                    source_node_index: 0,
+                    node: 0,
+                    mesh: 0,
+                    ..MeshInstance::default()
+                },
+                MeshInstance {
+                    source_node_index: 1,
+                    node: 1,
+                    mesh: 0,
+                    ..MeshInstance::default()
+                },
+            ],
+            ..SceneAssets::default()
+        },
+        source: SourceInfo::default(),
+    };
+
+    animsmith_gltf::write::write(&doc, &path).expect("writes");
+    let loaded = animsmith_gltf::load(&path).expect("loads");
+
+    assert_eq!(loaded.assets.meshes.len(), 1, "one shared definition");
+    assert_eq!(loaded.assets.instances.len(), 2, "both attachments survive");
+    assert_eq!(
+        loaded
+            .assets
+            .instances
+            .iter()
+            .map(|instance| (instance.source_node_index, instance.node, instance.mesh))
+            .collect::<Vec<_>>(),
+        vec![(0, 0, 0), (1, 1, 0)],
+    );
+    assert_eq!(loaded.skeleton.bones.len(), 2);
+    assert_eq!(loaded.skeleton.bones[0].name, "left");
+    assert_eq!(loaded.skeleton.bones[0].rest, left_rest);
+    assert_eq!(loaded.skeleton.bones[1].name, "right");
+    assert_eq!(loaded.skeleton.bones[1].rest, right_rest);
+}
+
 /// `load` carries scene geometry in `Document::assets` — the same
 /// one-call contract as `animsmith_fbx::load`, so consumers reach
 /// meshes/materials without a second entry point.

@@ -11,27 +11,77 @@ fn write_nested_instanced_gltf(path: &std::path::Path) {
         [1.0_f32, 0.0, 0.0],
         [0.0_f32, 1.0, 0.0],
     ];
-    let bytes = positions
-        .into_iter()
-        .flatten()
-        .flat_map(f32::to_le_bytes)
-        .collect::<Vec<_>>();
+    let morph_deltas = [[50.0_f32, 0.0, 0.0]; 3];
+    let animation_times = [0.0_f32, 1.0];
+    let animated_translations = [[1000.0_f32, 0.0, 0.0]; 2];
+    let mut bytes = Vec::new();
+    for value in positions.into_iter().flatten() {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    let morph_offset = bytes.len();
+    for value in morph_deltas.into_iter().flatten() {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    let animation_times_offset = bytes.len();
+    for value in animation_times {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    let animation_values_offset = bytes.len();
+    for value in animated_translations.into_iter().flatten() {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
     let buffer = path.with_file_name("nested-scene.bin");
     std::fs::write(&buffer, &bytes).expect("writes position buffer");
     let document = serde_json::json!({
         "asset": { "version": "2.0" },
         "buffers": [{ "uri": "nested-scene.bin", "byteLength": bytes.len() }],
-        "bufferViews": [{ "buffer": 0, "byteLength": bytes.len() }],
-        "accessors": [{
-            "bufferView": 0,
-            "componentType": 5126,
-            "count": 3,
-            "type": "VEC3",
-            "min": [0.0, 0.0, 0.0],
-            "max": [1.0, 1.0, 0.0]
-        }],
+        "bufferViews": [
+            { "buffer": 0, "byteLength": morph_offset },
+            { "buffer": 0, "byteOffset": morph_offset, "byteLength": animation_times_offset - morph_offset },
+            { "buffer": 0, "byteOffset": animation_times_offset, "byteLength": animation_values_offset - animation_times_offset },
+            { "buffer": 0, "byteOffset": animation_values_offset, "byteLength": bytes.len() - animation_values_offset }
+        ],
+        "accessors": [
+            {
+                "bufferView": 0,
+                "componentType": 5126,
+                "count": 3,
+                "type": "VEC3",
+                "min": [0.0, 0.0, 0.0],
+                "max": [1.0, 1.0, 0.0]
+            },
+            {
+                "bufferView": 1,
+                "componentType": 5126,
+                "count": 3,
+                "type": "VEC3",
+                "min": [50.0, 0.0, 0.0],
+                "max": [50.0, 0.0, 0.0]
+            },
+            {
+                "bufferView": 2,
+                "componentType": 5126,
+                "count": 2,
+                "type": "SCALAR",
+                "min": [0.0],
+                "max": [1.0]
+            },
+            {
+                "bufferView": 3,
+                "componentType": 5126,
+                "count": 2,
+                "type": "VEC3"
+            }
+        ],
         "meshes": [
-            { "name": "shared", "primitives": [{ "attributes": { "POSITION": 0 } }] },
+            {
+                "name": "shared",
+                "weights": [1.0],
+                "primitives": [{
+                    "attributes": { "POSITION": 0 },
+                    "targets": [{ "POSITION": 1 }]
+                }]
+            },
             { "name": "uninstanced", "primitives": [{ "attributes": { "POSITION": 0 } }] }
         ],
         "nodes": [
@@ -45,7 +95,12 @@ fn write_nested_instanced_gltf(path: &std::path::Path) {
             { "name": "wide", "nodes": [0, 3] },
             { "name": "solo", "nodes": [3] }
         ],
-        "scene": 1
+        "scene": 1,
+        "animations": [{
+            "name": "move",
+            "samplers": [{ "input": 2, "output": 3, "interpolation": "LINEAR" }],
+            "channels": [{ "sampler": 0, "target": { "node": 0, "path": "translation" } }]
+        }]
     });
     std::fs::write(
         path,
@@ -213,6 +268,22 @@ fn cli_measure_distinguishes_definition_instance_and_scene_domains() {
     let input = dir.path().join("nested-scene.gltf");
     write_nested_instanced_gltf(&input);
 
+    let source = gltf::Gltf::open(&input).expect("fixture is valid glTF");
+    assert_eq!(source.animations().count(), 1, "fixture carries animation");
+    assert_eq!(
+        source
+            .meshes()
+            .next()
+            .expect("shared mesh")
+            .primitives()
+            .next()
+            .expect("shared primitive")
+            .morph_targets()
+            .count(),
+        1,
+        "fixture carries a morph target"
+    );
+
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_animsmith"))
         .arg("measure")
         .arg(&input)
@@ -227,6 +298,10 @@ fn cli_measure_distinguishes_definition_instance_and_scene_domains() {
     );
     let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid JSON");
     let measurements = &report["files"][0]["measurements"];
+    assert!(
+        measurements["clips"]["move"].is_object(),
+        "the animated transform was loaded but must not affect static bounds"
+    );
 
     let definitions = measurements["mesh_definitions"]
         .as_array()

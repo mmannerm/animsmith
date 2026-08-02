@@ -397,6 +397,114 @@ fn measurement_report_input_rejects_finite_value_that_overflows_mesh_f32() {
 }
 
 #[test]
+fn measurement_report_input_rejects_inconsistent_static_node_and_scene_evidence() {
+    let mut base = current_measure_report();
+    base["files"][0]["measurements"] = serde_json::json!({
+        "schema_version": MEASUREMENTS_SCHEMA_VERSION,
+        "schema": MEASUREMENTS_SCHEMA_ID,
+        "clips": {},
+        "mesh_definitions": [{
+            "mesh_index": 0,
+            "name": "mesh",
+            "vertex_count": 3,
+            "geometry_aabb": {
+                "min": [0.0, 0.0, 0.0],
+                "max": [1.0, 1.0, 1.0]
+            },
+            "max_joints_per_vertex": 0
+        }],
+        "node_instances": [{
+            "node_index": 2,
+            "node_name": "node",
+            "mesh_index": 0,
+            "static_node_world_aabb": {
+                "min": [0.0, 0.0, 0.0],
+                "max": [1.0, 1.0, 1.0]
+            }
+        }],
+        "scenes": [{
+            "scene_index": 4,
+            "instance_count": 1,
+            "static_scene_world_aabb": {
+                "min": [0.0, 0.0, 0.0],
+                "max": [1.0, 1.0, 1.0]
+            },
+            "excluded_instance_count": 0
+        }],
+        "default_scene_index": 4
+    });
+
+    let mut duplicate_node = base.clone();
+    duplicate_node["files"][0]["measurements"]["node_instances"] = serde_json::json!([
+        base["files"][0]["measurements"]["node_instances"][0].clone(),
+        base["files"][0]["measurements"]["node_instances"][0].clone(),
+    ]);
+    let mut dangling_mesh = base.clone();
+    dangling_mesh["files"][0]["measurements"]["node_instances"][0]["mesh_index"] =
+        serde_json::json!(99);
+    let mut unavailable_node_with_aabb = base.clone();
+    unavailable_node_with_aabb["files"][0]["measurements"]["node_instances"][0]["static_node_world_aabb_unavailable_reason"] =
+        serde_json::json!("non_finite_transform");
+    let mut inconsistent_scene_count = base.clone();
+    inconsistent_scene_count["files"][0]["measurements"]["scenes"][0]["excluded_instance_count"] =
+        serde_json::json!(2);
+    let mut dangling_default_scene = base;
+    dangling_default_scene["files"][0]["measurements"]["default_scene_index"] =
+        serde_json::json!(99);
+
+    let cases = [
+        (
+            "duplicate node identity",
+            duplicate_node,
+            "node_instances[1].node_index",
+            "node_index must be unique",
+        ),
+        (
+            "dangling node mesh reference",
+            dangling_mesh,
+            "node_instances[0].mesh_index",
+            "mesh_index must reference a mesh definition",
+        ),
+        (
+            "unavailable node with an AABB",
+            unavailable_node_with_aabb,
+            "node_instances[0]",
+            "an available static node AABB cannot have an unavailable reason",
+        ),
+        (
+            "scene excludes more instances than it contains",
+            inconsistent_scene_count,
+            "scenes[0].excluded_instance_count",
+            "excluded_instance_count cannot exceed instance_count",
+        ),
+        (
+            "dangling default scene reference",
+            dangling_default_scene,
+            "default_scene_index",
+            "default_scene_index must reference a declared scene",
+        ),
+    ];
+
+    for (name, report, path, reason) in cases {
+        let error = measurement_report_error(report);
+        assert_eq!(error.file_index(), Some(0), "{name}");
+        assert_eq!(
+            error,
+            MeasurementReportError::File {
+                file_index: 0,
+                source: MeasurementFileError::InvalidMeasurements {
+                    source: MeasurementContractError::InvalidStructure {
+                        path: path.into(),
+                        reason: reason.into(),
+                    },
+                },
+            },
+            "{name}",
+        );
+    }
+}
+
+#[test]
 fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
     let mut report = current_measure_report();
     report["files"] = serde_json::json!([
