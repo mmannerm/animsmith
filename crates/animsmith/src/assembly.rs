@@ -280,21 +280,21 @@ fn validate_recipe(recipe: &AssemblyRecipe) -> Result<(), String> {
                 clip.name
             ));
         }
-        if let Some([start, end]) = clip.frame_window {
-            if start == 0 || end < start {
-                return Err(format!(
-                    "clip {:?} frame_window must be one-based and increasing",
-                    clip.name
-                ));
-            }
+        if let Some([start, end]) = clip.frame_window
+            && (start == 0 || end < start)
+        {
+            return Err(format!(
+                "clip {:?} frame_window must be one-based and increasing",
+                clip.name
+            ));
         }
-        if let Some([start, end]) = clip.time_window {
-            if !start.is_finite() || !end.is_finite() || start < 0.0 || end <= start {
-                return Err(format!(
-                    "clip {:?} time_window must be finite, non-negative, and increasing",
-                    clip.name
-                ));
-            }
+        if let Some([start, end]) = clip.time_window
+            && (!start.is_finite() || !end.is_finite() || start < 0.0 || end <= start)
+        {
+            return Err(format!(
+                "clip {:?} time_window must be finite, non-negative, and increasing",
+                clip.name
+            ));
         }
     }
     if recipe.ground_and_center && !recipe.canonicalize_skin {
@@ -1046,8 +1046,7 @@ mod tests {
         clip = animsmith_core::assembly::remap_clip_to_base(&clip, &source, &base).unwrap();
         assert_eq!(clip.tracks[0].bone, 1);
         assert_eq!(
-            animsmith_core::assembly::strip_named_bone_tracks(&mut clip, &base, &["root"],)
-                .unwrap(),
+            animsmith_core::assembly::strip_named_bone_tracks(&mut clip, &base, ["root"]).unwrap(),
             0
         );
         assert_eq!(
