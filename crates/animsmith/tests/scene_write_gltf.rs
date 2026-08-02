@@ -22,10 +22,11 @@ const TINY_JPEG: &[u8] = &[
 
 fn skin_binding_snapshot(glb: &std::path::Path) -> (Vec<BoneId>, Vec<[u32; 16]>) {
     let doc = animsmith_gltf::load(glb).expect("loads skinned scene");
-    let mesh = doc.assets.meshes.first().expect("mesh");
+    let instance = doc.assets.instances.first().expect("mesh instance");
     (
-        mesh.skin_joints.clone(),
-        mesh.skin_ibms
+        instance.skin_joints.clone(),
+        instance
+            .skin_ibms
             .iter()
             .map(|matrix| matrix.to_cols_array().map(f32::to_bits))
             .collect(),
@@ -194,7 +195,7 @@ fn write_textured_scene_glb(path: &std::path::Path) {
         assets: SceneAssets {
             meshes: vec![MeshAsset {
                 name: "tri".into(),
-                node: 0,
+                source_mesh_index: 0,
                 primitives: vec![Primitive {
                     positions: vec![
                         Vec3::new(0.0, 0.0, 0.0),
@@ -207,6 +208,11 @@ fn write_textured_scene_glb(path: &std::path::Path) {
                     material: Some(1),
                     ..Primitive::default()
                 }],
+            }],
+            instances: vec![MeshInstance {
+                source_node_index: 0,
+                node: 0,
+                mesh: 0,
                 skin_joints: vec![0],
                 skin_ibms: vec![Mat4::IDENTITY],
             }],
@@ -232,6 +238,7 @@ fn write_textured_scene_glb(path: &std::path::Path) {
                     }),
                 },
             ],
+            ..SceneAssets::default()
         },
         source: SourceInfo::default(),
     };

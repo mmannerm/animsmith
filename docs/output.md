@@ -13,8 +13,8 @@ identity `urn:animsmith:schema:output:2`. The retrievable schema is
 is a retrieval location, not the protocol identity.
 
 Measurement evidence is nested and independently versioned as
-`urn:animsmith:schema:measurements:1`. Its retrievable schema is
-[`measurements-v1.schema.json`](schemas/measurements-v1.schema.json). A future
+`urn:animsmith:schema:measurements:2`. Its retrievable schema is
+[`measurements-v2.schema.json`](schemas/measurements-v2.schema.json). A future
 measurement-definition change can therefore bump that contract without
 redesigning the outer result envelope.
 
@@ -58,19 +58,41 @@ Both commands put evidence under `files[].measurements`:
 
 ```json
 {
-  "schema_version": 1,
-  "schema": "urn:animsmith:schema:measurements:1",
+  "schema_version": 2,
+  "schema": "urn:animsmith:schema:measurements:2",
   "clips": {},
-  "meshes": []
+  "mesh_definitions": [],
+  "node_instances": [],
+  "scenes": []
 }
 ```
 
 `clips` maps clip names to duration, frame count, animated bones, rotation
-ranges, and optional role-dependent gait, seam, and speed metrics. `meshes`
-is omitted when empty; when present it carries vertex counts, finite AABBs,
-skin influence counts, and weight-sum ranges. Measurement contract v1 preserves
-the currently implemented fields. Issue #190 remains the authority for their
-geometry-domain semantics and can advance the nested contract independently.
+ranges, and optional role-dependent gait, seam, and speed metrics.
+
+`mesh_definitions` contains one record per source mesh definition. Its
+`geometry_aabb` reduces finite primitive `POSITION` values in the mesh's own
+coordinates; it is independent of every node and scene. Vertex and skin
+influence statistics are properties of that same definition.
+
+`node_instances` contains one record per mesh-bearing node. `node_index` and
+`mesh_index` are stable source indices, so names need not be unique. Its
+`static_node_world_aabb` transforms the definition's finite positions by that
+node's default/rest world transform before reducing. It includes rotation and
+negative or non-uniform scale, but explicitly excludes animation, skin
+deformation, morph deformation, and runtime world placement. A missing box is
+explained by `static_node_world_aabb_unavailable_reason`: no finite positions,
+excluded skinned deformation, or a non-finite effective transform. The
+producer must emit that reason exactly when the corresponding static box is
+unavailable.
+
+`scenes` contains every declared source scene. Each record counts its reachable
+mesh-bearing nodes in `instance_count` and unions their available static
+node-instance boxes in `static_scene_world_aabb`; `excluded_instance_count`
+makes partial coverage explicit. A node can contribute to more than one scene.
+Mesh-bearing nodes not reachable from a declared scene remain node instances
+but contribute to no scene aggregate. `default_scene_index` is present only
+when the source names a default scene; its absence does not select scene zero.
 
 Lint adds exactly one `files[].checks[]` record for every built-in catalog
 check. Each record keeps these dimensions independent:
@@ -173,7 +195,7 @@ delta count, and structured metric deltas:
 ```
 
 `diff` accepts asset files or one-file v2 `measure`/`lint` reports carrying
-measurement contract v1. Multi-file reports and unsupported contract versions
+measurement contract v2. Multi-file reports and unsupported contract versions
 are rejected as operator errors. Before extracting the clip metrics it uses,
 `diff` validates the complete measurement record, including mesh evidence, and
 rejects malformed or non-finite payload values.

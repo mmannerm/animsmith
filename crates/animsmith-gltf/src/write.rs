@@ -365,15 +365,19 @@ pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
             }
             prims.push(value);
         }
-        let mesh_index = meshes_json.len();
         meshes_json.push(json!({ "name": mesh.name, "primitives": prims }));
+    }
 
-        let skin_index = if mesh.skin_joints.is_empty() {
+    for instance in &assets.instances {
+        if instance.mesh >= assets.meshes.len() {
+            continue;
+        }
+        let skin_index = if instance.skin_joints.is_empty() {
             None
         } else {
-            let mut ibms: Vec<f32> = Vec::with_capacity(mesh.skin_joints.len() * 16);
-            for (slot, &joint) in mesh.skin_joints.iter().enumerate() {
-                let m = mesh
+            let mut ibms: Vec<f32> = Vec::with_capacity(instance.skin_joints.len() * 16);
+            for (slot, &joint) in instance.skin_joints.iter().enumerate() {
+                let m = instance
                     .skin_ibms
                     .get(slot)
                     .copied()
@@ -384,7 +388,7 @@ pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
             let accessor = buffers.push(&ibms, "MAT4", false);
             let index = skins_json.len();
             skins_json.push(json!({
-                "joints": mesh.skin_joints,
+                "joints": instance.skin_joints,
                 "inverseBindMatrices": accessor,
             }));
             Some(index)
@@ -395,7 +399,7 @@ pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
         // transform-carrying node yields inconsistent rendering. The
         // joints + IBMs fully place the vertices. Unskinned meshes keep
         // their original node, whose transform is meaningful.
-        node_attach.push((mesh.node, mesh_index, skin_index));
+        node_attach.push((instance.node, instance.mesh, skin_index));
     }
 
     // Embedded base-color textures: raw encoded bytes as buffer views

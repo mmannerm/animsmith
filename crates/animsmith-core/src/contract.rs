@@ -4,7 +4,7 @@
 //! same constructors and immutable protocol identities without duplicating the
 //! wire shape or hard-coding URNs.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -12,7 +12,7 @@ use crate::diff::MetricDelta;
 use crate::evaluation::{
     Applicability, CheckEvaluation, ConfigurationState, EvaluationState, SelectionState,
 };
-use crate::measure::{ClipMeasurements, MeshMeasurements};
+use crate::measure::{Aabb, AssetMeasurements, ClipMeasurements};
 use crate::profile::ResolvedRoles;
 use crate::{Document, Severity};
 
@@ -21,9 +21,9 @@ pub const OUTPUT_SCHEMA_VERSION: u32 = 2;
 /// Immutable identity of the current outer result envelope.
 pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:2";
 /// Current nested measurement-contract version.
-pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 1;
+pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 2;
 /// Immutable identity of the current nested measurement contract.
-pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:1";
+pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:2";
 
 /// Source checkout identity for the producing animsmith build.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -153,11 +153,11 @@ pub struct MeasurementContract {
     schema_version: u32,
     schema: &'static str,
     clips: BTreeMap<String, ClipMeasurements>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    meshes: Vec<MeshMeasurements>,
+    #[serde(flatten)]
+    assets: AssetMeasurements,
 }
 
-/// Measurement evidence could not satisfy measurements v1.
+/// Measurement evidence could not satisfy the current measurement contract.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum MeasurementContractError {
@@ -167,6 +167,14 @@ pub enum MeasurementContractError {
         /// Human-readable location within the measurement contract.
         path: String,
     },
+    /// Related measurement fields were structurally inconsistent.
+    #[error("measurement structure {path} is invalid: {reason}")]
+    InvalidStructure {
+        /// Human-readable location within the measurement contract.
+        path: String,
+        /// Stable explanation of the violated relationship.
+        reason: String,
+    },
 }
 
 impl MeasurementContract {
@@ -175,17 +183,17 @@ impl MeasurementContract {
     /// # Errors
     ///
     /// Returns [`MeasurementContractError`] when required or present numeric
-    /// evidence is non-finite and therefore cannot satisfy measurements v1.
+    /// evidence is non-finite or structurally inconsistent.
     pub fn new(
         clips: BTreeMap<String, ClipMeasurements>,
-        meshes: Vec<MeshMeasurements>,
+        assets: AssetMeasurements,
     ) -> Result<Self, MeasurementContractError> {
-        validate_measurements(&clips, &meshes)?;
+        validate_measurements(&clips, &assets)?;
         Ok(Self {
             schema_version: MEASUREMENTS_SCHEMA_VERSION,
             schema: MEASUREMENTS_SCHEMA_ID,
             clips,
-            meshes,
+            assets,
         })
     }
 
@@ -194,20 +202,20 @@ impl MeasurementContract {
         &self.clips
     }
 
-    /// Per-mesh measurements in source order.
-    pub fn meshes(&self) -> &[MeshMeasurements] {
-        &self.meshes
+    /// Static source-geometry, node-instance, and declared-scene evidence.
+    pub fn assets(&self) -> &AssetMeasurements {
+        &self.assets
     }
 
-    /// Consume the contract and return its clip and mesh measurements.
-    pub fn into_parts(self) -> (BTreeMap<String, ClipMeasurements>, Vec<MeshMeasurements>) {
-        (self.clips, self.meshes)
+    /// Consume the contract and return its clip and static asset measurements.
+    pub fn into_parts(self) -> (BTreeMap<String, ClipMeasurements>, AssetMeasurements) {
+        (self.clips, self.assets)
     }
 }
 
 fn validate_measurements(
     clips: &BTreeMap<String, ClipMeasurements>,
-    meshes: &[MeshMeasurements],
+    assets: &AssetMeasurements,
 ) -> Result<(), MeasurementContractError> {
     let finite = |value: f64, path: String| {
         value
@@ -239,23 +247,125 @@ fn validate_measurements(
             finite(value, format!("clips[{clip_name:?}].speed_mps"))?;
         }
     }
-    for (index, mesh) in meshes.iter().enumerate() {
-        if let Some(aabb) = &mesh.aabb {
-            for (corner, values) in [("min", aabb.min), ("max", aabb.max)] {
-                for (axis, value) in values.into_iter().enumerate() {
-                    finite(
-                        value as f64,
-                        format!("meshes[{index}].aabb.{corner}[{axis}]"),
-                    )?;
-                }
+    let invalid = |path: String, reason: &str| MeasurementContractError::InvalidStructure {
+        path,
+        reason: reason.to_owned(),
+    };
+    let finite_aabb = |aabb: &Aabb, path: &str| {
+        for (corner, values) in [("min", aabb.min), ("max", aabb.max)] {
+            for (axis, value) in values.into_iter().enumerate() {
+                finite(f64::from(value), format!("{path}.{corner}[{axis}]"))?;
             }
         }
+        for (axis, (min, max)) in aabb.min.into_iter().zip(aabb.max).enumerate() {
+            if min > max {
+                return Err(invalid(
+                    format!("{path}.min[{axis}]"),
+                    "AABB minimum cannot exceed maximum",
+                ));
+            }
+        }
+        Ok(())
+    };
+
+    let mut mesh_indices = BTreeSet::new();
+    for (index, mesh) in assets.mesh_definitions.iter().enumerate() {
+        if !mesh_indices.insert(mesh.mesh_index) {
+            return Err(invalid(
+                format!("mesh_definitions[{index}].mesh_index"),
+                "mesh_index must be unique",
+            ));
+        }
+        if let Some(aabb) = &mesh.geometry_aabb {
+            finite_aabb(aabb, &format!("mesh_definitions[{index}].geometry_aabb"))?;
+        }
         if let Some(value) = mesh.weight_sum_min {
-            finite(value, format!("meshes[{index}].weight_sum_min"))?;
+            finite(value, format!("mesh_definitions[{index}].weight_sum_min"))?;
         }
         if let Some(value) = mesh.weight_sum_max {
-            finite(value, format!("meshes[{index}].weight_sum_max"))?;
+            finite(value, format!("mesh_definitions[{index}].weight_sum_max"))?;
         }
+    }
+
+    let mut node_indices = BTreeSet::new();
+    for (index, instance) in assets.node_instances.iter().enumerate() {
+        if !node_indices.insert(instance.node_index) {
+            return Err(invalid(
+                format!("node_instances[{index}].node_index"),
+                "node_index must be unique",
+            ));
+        }
+        if !mesh_indices.contains(&instance.mesh_index) {
+            return Err(invalid(
+                format!("node_instances[{index}].mesh_index"),
+                "mesh_index must reference a mesh definition",
+            ));
+        }
+        match (
+            instance.static_node_world_aabb.as_ref(),
+            instance.static_node_world_aabb_unavailable_reason,
+        ) {
+            (Some(aabb), None) => finite_aabb(
+                aabb,
+                &format!("node_instances[{index}].static_node_world_aabb"),
+            )?,
+            (None, Some(_)) => {}
+            (Some(_), Some(_)) => {
+                return Err(invalid(
+                    format!("node_instances[{index}]"),
+                    "an available static node AABB cannot have an unavailable reason",
+                ));
+            }
+            (None, None) => {
+                return Err(invalid(
+                    format!("node_instances[{index}]"),
+                    "a missing static node AABB requires an unavailable reason",
+                ));
+            }
+        }
+    }
+
+    let mut scene_indices = BTreeSet::new();
+    for (index, scene) in assets.scenes.iter().enumerate() {
+        if !scene_indices.insert(scene.scene_index) {
+            return Err(invalid(
+                format!("scenes[{index}].scene_index"),
+                "scene_index must be unique",
+            ));
+        }
+        if scene.excluded_instance_count > scene.instance_count {
+            return Err(invalid(
+                format!("scenes[{index}].excluded_instance_count"),
+                "excluded_instance_count cannot exceed instance_count",
+            ));
+        }
+        let available = scene.instance_count - scene.excluded_instance_count;
+        match (&scene.static_scene_world_aabb, available) {
+            (Some(aabb), 1..) => {
+                finite_aabb(aabb, &format!("scenes[{index}].static_scene_world_aabb"))?
+            }
+            (None, 0) => {}
+            (Some(_), 0) => {
+                return Err(invalid(
+                    format!("scenes[{index}].static_scene_world_aabb"),
+                    "a scene with no available instances cannot have an AABB",
+                ));
+            }
+            (None, _) => {
+                return Err(invalid(
+                    format!("scenes[{index}].static_scene_world_aabb"),
+                    "a scene with available instances requires an AABB",
+                ));
+            }
+        }
+    }
+    if let Some(default_scene_index) = assets.default_scene_index
+        && !scene_indices.contains(&default_scene_index)
+    {
+        return Err(invalid(
+            "default_scene_index".into(),
+            "default_scene_index must reference a declared scene",
+        ));
     }
     Ok(())
 }
@@ -286,8 +396,10 @@ struct MeasurementPayloadInput {
     schema_version: Option<u32>,
     schema: Option<String>,
     clips: Option<BTreeMap<String, ClipMeasurements>>,
-    #[serde(default)]
-    meshes: Vec<MeshMeasurements>,
+    mesh_definitions: Option<Vec<crate::measure::MeshDefinitionMeasurements>>,
+    node_instances: Option<Vec<crate::measure::NodeInstanceMeasurements>>,
+    scenes: Option<Vec<crate::measure::SceneMeasurements>>,
+    default_scene_index: Option<usize>,
 }
 
 /// One validated file record recovered from a measurement report.
@@ -384,6 +496,15 @@ pub enum MeasurementFileError {
     /// The nested contract omitted its clip-measurement map.
     #[error("measurement contract has no `clips` map")]
     MissingClips,
+    /// The nested contract omitted its mesh-definition array.
+    #[error("measurement contract has no `mesh_definitions` array")]
+    MissingMeshDefinitions,
+    /// The nested contract omitted its node-instance array.
+    #[error("measurement contract has no `node_instances` array")]
+    MissingNodeInstances,
+    /// The nested contract omitted its scene array.
+    #[error("measurement contract has no `scenes` array")]
+    MissingScenes,
     /// The nested measurement values do not satisfy the current contract.
     #[error("has invalid measurements: {source}")]
     InvalidMeasurements {
@@ -487,13 +608,33 @@ impl MeasurementReportInput {
                 let clips = measurements.clips.ok_or_else(|| {
                     MeasurementReportError::file(file_index, MeasurementFileError::MissingClips)
                 })?;
-                let measurements =
-                    MeasurementContract::new(clips, measurements.meshes).map_err(|source| {
-                        MeasurementReportError::file(
-                            file_index,
-                            MeasurementFileError::InvalidMeasurements { source },
-                        )
-                    })?;
+                let mesh_definitions = measurements.mesh_definitions.ok_or_else(|| {
+                    MeasurementReportError::file(
+                        file_index,
+                        MeasurementFileError::MissingMeshDefinitions,
+                    )
+                })?;
+                let node_instances = measurements.node_instances.ok_or_else(|| {
+                    MeasurementReportError::file(
+                        file_index,
+                        MeasurementFileError::MissingNodeInstances,
+                    )
+                })?;
+                let scenes = measurements.scenes.ok_or_else(|| {
+                    MeasurementReportError::file(file_index, MeasurementFileError::MissingScenes)
+                })?;
+                let assets = AssetMeasurements {
+                    mesh_definitions,
+                    node_instances,
+                    scenes,
+                    default_scene_index: measurements.default_scene_index,
+                };
+                let measurements = MeasurementContract::new(clips, assets).map_err(|source| {
+                    MeasurementReportError::file(
+                        file_index,
+                        MeasurementFileError::InvalidMeasurements { source },
+                    )
+                })?;
                 Ok(MeasurementReportFile { path, measurements })
             })
             .collect()
@@ -511,17 +652,23 @@ mod measurement_report_input_tests {
         // deserializer values that overflow while narrowing into f32 mesh
         // bounds. Together they prove no input route can bypass
         // MeasurementContract::new.
-        let file = |path: &str,
-                    clips: BTreeMap<String, ClipMeasurements>,
-                    meshes: Vec<MeshMeasurements>| MeasurementFileInput {
-            path: Some(path.into()),
-            measurements: Some(MeasurementPayloadInput {
-                schema_version: Some(MEASUREMENTS_SCHEMA_VERSION),
-                schema: Some(MEASUREMENTS_SCHEMA_ID.into()),
-                clips: Some(clips),
-                meshes,
-            }),
-        };
+        let file =
+            |path: &str,
+             clips: BTreeMap<String, ClipMeasurements>,
+             mesh_definitions: Vec<crate::measure::MeshDefinitionMeasurements>| {
+                MeasurementFileInput {
+                    path: Some(path.into()),
+                    measurements: Some(MeasurementPayloadInput {
+                        schema_version: Some(MEASUREMENTS_SCHEMA_VERSION),
+                        schema: Some(MEASUREMENTS_SCHEMA_ID.into()),
+                        clips: Some(clips),
+                        mesh_definitions: Some(mesh_definitions),
+                        node_instances: Some(Vec::new()),
+                        scenes: Some(Vec::new()),
+                        default_scene_index: None,
+                    }),
+                }
+            };
         let report = |files| MeasurementReportInput {
             schema_version: Some(OUTPUT_SCHEMA_VERSION),
             schema: Some(OUTPUT_SCHEMA_ID.into()),
@@ -537,10 +684,11 @@ mod measurement_report_input_tests {
             gait: None,
             speed_mps: None,
         };
-        let invalid_mesh = || MeshMeasurements {
+        let invalid_mesh = || crate::measure::MeshDefinitionMeasurements {
+            mesh_index: 0,
             name: "mesh".into(),
             vertex_count: 1,
-            aabb: None,
+            geometry_aabb: None,
             max_joints_per_vertex: 1,
             weight_sum_min: Some(f64::NAN),
             weight_sum_max: Some(1.0),
@@ -574,11 +722,11 @@ mod measurement_report_input_tests {
                     file_index: 0,
                     source: MeasurementFileError::InvalidMeasurements {
                         source: MeasurementContractError::NonFiniteValue {
-                            path: "meshes[0].weight_sum_min".into(),
+                            path: "mesh_definitions[0].weight_sum_min".into(),
                         },
                     },
                 },
-                "files[0] has invalid measurements: measurement value meshes[0].weight_sum_min must be finite",
+                "files[0] has invalid measurements: measurement value mesh_definitions[0].weight_sum_min must be finite",
                 0,
             ),
             (
@@ -610,11 +758,11 @@ mod measurement_report_input_tests {
                     file_index: 1,
                     source: MeasurementFileError::InvalidMeasurements {
                         source: MeasurementContractError::NonFiniteValue {
-                            path: "meshes[0].weight_sum_min".into(),
+                            path: "mesh_definitions[0].weight_sum_min".into(),
                         },
                     },
                 },
-                "files[1] has invalid measurements: measurement value meshes[0].weight_sum_min must be finite",
+                "files[1] has invalid measurements: measurement value mesh_definitions[0].weight_sum_min must be finite",
                 1,
             ),
         ];

@@ -203,8 +203,21 @@ loaders share one shape); it is empty when the input carries no scene
 assets. The check catalog ignores it — checks judge animation — but it
 rides the one `load`/`write` round-trip, so `transform` and `convert`
 preserve geometry rather than silently dropping it, and `measure`
-reports mesh-level measurements (vertex count, AABB, joints-per-vertex,
-weight sums) from it (#16).
+reports versioned static scene measurements from it (#16): geometry-definition
+boxes in primitive coordinates, node-instance boxes in default/rest node-world
+coordinates, and per-scene unions. These are not runtime-visible bounds:
+animation, skin deformation, morph deformation, and runtime placement are
+excluded. The output contract records unavailable static node bounds and scene
+partial coverage rather than serializing non-finite values.
+
+The scene-asset model keeps source mesh definitions separate from their
+mesh-bearing node instances and retains declared scene roots plus the optional
+default-scene index. That identity is measurement evidence: duplicate names do
+not collapse, shared definitions are reported once, and nodes outside every
+declared scene remain observable. The current glTF writer still normalizes an
+emitted document to its existing single generated scene; preserving authored
+multi-scene membership across `transform`/`convert` is not part of the static
+measurement contract.
 
 Ingestion is **triangle-list only** — the target inputs are skinned game
 rigs, and the model and writer carry no primitive-topology field. A

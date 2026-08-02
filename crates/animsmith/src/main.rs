@@ -306,7 +306,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     RigInfo::from_resolved(&doc, &roles).map_err(|error| error.to_string())?,
                     MeasurementContract::new(
                         animsmith_core::measure::measure_document(&grids, &roles, &config),
-                        animsmith_core::measure::measure_meshes(&doc.assets),
+                        animsmith_core::measure::measure_assets(&doc),
                     )
                     .map_err(|error| error.to_string())?,
                 ));
@@ -369,7 +369,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     evaluations,
                     MeasurementContract::new(
                         animsmith_core::measure::measure_document(&grids, &roles, &config),
-                        animsmith_core::measure::measure_meshes(&doc.assets),
+                        animsmith_core::measure::measure_assets(&doc),
                     )
                     .map_err(|error| error.to_string())?,
                 ));
@@ -601,7 +601,7 @@ fn load_measurements(
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         let report: MeasurementReportInput = serde_json::from_str(&text)
             .map_err(|e| format!("bad JSON in {}: {e}", path.display()))?;
-        // Only the final v2 envelope with measurement contract v1 is
+        // Only the final v2 envelope with measurement contract v2 is
         // accepted. Pre-finalization report shapes are intentionally not
         // retained while the project is alpha.
         let file_count = report.file_count();

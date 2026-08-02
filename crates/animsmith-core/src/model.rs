@@ -256,21 +256,35 @@ pub struct Primitive {
     pub normals: Vec<Vec3>,
     /// Same length as `positions`, or empty.
     pub uvs: Vec<[f32; 2]>,
-    /// Indices into the owning mesh's `skin_joints`; empty if unskinned.
+    /// Indices into an owning instance's skin-joint list; empty if unskinned.
     pub joints: Vec<[u16; 4]>,
     /// Skinning weights parallel to [`Primitive::joints`].
     pub weights: Vec<[f32; 4]>,
 }
 
-/// Mesh data attached to a scene node.
+/// One source mesh definition, independent of any node that instances it.
 #[derive(Debug, Clone, Default)]
 pub struct MeshAsset {
     /// Mesh name.
     pub name: String,
-    /// The node this mesh hangs off.
-    pub node: BoneId,
+    /// Stable index of this definition in the source format.
+    ///
+    /// glTF permits several nodes to instance one mesh definition. Loaders
+    /// preserve that distinction through [`SceneAssets::instances`].
+    pub source_mesh_index: usize,
     /// Triangle-list primitives belonging to this mesh.
     pub primitives: Vec<Primitive>,
+}
+
+/// One node instance of a source [`MeshAsset`] definition.
+#[derive(Debug, Clone, Default)]
+pub struct MeshInstance {
+    /// Index of the source-format node that owns this mesh instance.
+    pub source_node_index: usize,
+    /// The node this mesh hangs off in the core skeleton.
+    pub node: BoneId,
+    /// Index into [`SceneAssets::meshes`] of the instanced definition.
+    pub mesh: usize,
     /// Skin joints in cluster order. Empty = unskinned.
     pub skin_joints: Vec<BoneId>,
     /// Per-joint inverse bind matrices, parallel to `skin_joints`
@@ -278,6 +292,17 @@ pub struct MeshAsset {
     /// in the converted scene space). Falls back to the bones'
     /// `inverse_bind` when empty.
     pub skin_ibms: Vec<Mat4>,
+}
+
+/// One declared source scene and its root nodes.
+#[derive(Debug, Clone, Default)]
+pub struct SceneAsset {
+    /// Index of this scene in the source-format scene array.
+    pub source_scene_index: usize,
+    /// Authored scene name, when the source format provides one.
+    pub name: Option<String>,
+    /// Root nodes belonging to this scene, represented as core bone ids.
+    pub roots: Vec<BoneId>,
 }
 
 /// An embedded texture: raw encoded image bytes (glTF embeds the file
@@ -373,13 +398,21 @@ impl Primitive {
     }
 }
 
-/// Mesh and material assets carried alongside animation data.
+/// Mesh definitions, their node instances, scenes, and materials carried
+/// alongside animation data.
 #[derive(Debug, Clone, Default)]
 pub struct SceneAssets {
-    /// Meshes in document order.
+    /// Mesh definitions in source order, including definitions without a node
+    /// instance.
     pub meshes: Vec<MeshAsset>,
+    /// Node instances of the mesh definitions, in source node order.
+    pub instances: Vec<MeshInstance>,
     /// Materials referenced by mesh primitives.
     pub materials: Vec<MaterialAsset>,
+    /// Declared source scenes in source order.
+    pub scenes: Vec<SceneAsset>,
+    /// Source scene index selected by default, when one was declared.
+    pub default_scene: Option<usize>,
 }
 
 #[cfg(test)]

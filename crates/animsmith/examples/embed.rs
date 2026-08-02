@@ -108,10 +108,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             path.display().to_string(),
             RigInfo::from_resolved(&doc, &roles)?,
             evaluations,
-            MeasurementContract::new(
-                measurements,
-                animsmith_core::measure::measure_meshes(&doc.assets),
-            )?,
+            MeasurementContract::new(measurements, animsmith_core::measure::measure_assets(&doc))?,
         )],
     );
     println!("result contract: {}", serde_json::to_string(&report)?);

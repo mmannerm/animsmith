@@ -50,10 +50,20 @@ fn loads_self_authored_rigged_triangle_fixture() {
     );
 
     let mesh = doc.assets.meshes.first().expect("mesh loaded");
+    let instance = doc.assets.instances.first().expect("mesh instance loaded");
     assert_eq!(mesh.name, "tri");
-    assert_eq!(mesh.node, 2);
-    assert_eq!(mesh.skin_joints, vec![1]);
-    assert_eq!(mesh.skin_ibms.len(), 1);
+    assert_eq!(instance.node, 2);
+    assert_eq!(mesh.source_mesh_index, 0);
+    assert_eq!(instance.mesh, 0);
+    assert_eq!(instance.skin_joints, vec![1]);
+    assert_eq!(instance.skin_ibms.len(), 1);
+    assert_eq!(doc.assets.default_scene, Some(0));
+    assert_eq!(doc.assets.scenes.len(), 1);
+    assert_eq!(doc.assets.scenes[0].source_scene_index, 0);
+    assert!(
+        !doc.assets.scenes[0].roots.is_empty(),
+        "FBX scene has roots"
+    );
 
     let prim = mesh.primitives.first().expect("primitive loaded");
     assert_eq!(prim.positions.len(), 3);
@@ -118,7 +128,8 @@ fn normalizes_centimetre_z_up_scene_to_metre_y_up() {
 
     let mesh = doc.assets.meshes.first().expect("mesh loaded");
     let primitive = mesh.primitives.first().expect("primitive loaded");
-    let model = rest_models(&doc)[mesh.node];
+    let instance = doc.assets.instances.first().expect("mesh instance loaded");
+    let model = rest_models(&doc)[instance.node];
     let source_x = model.transform_point3(primitive.positions[1]);
     let source_yz = model.transform_point3(primitive.positions[2]);
 

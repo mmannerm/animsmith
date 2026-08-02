@@ -37,7 +37,7 @@ fn skinned_triangle() -> Document {
     let assets = SceneAssets {
         meshes: vec![MeshAsset {
             name: "tri".into(),
-            node: 0,
+            source_mesh_index: 0,
             primitives: vec![{
                 // Two triangles sharing an edge: 6 corners, 4 unique.
                 let mut prim = Primitive {
@@ -66,6 +66,11 @@ fn skinned_triangle() -> Document {
                 prim.weld();
                 prim
             }],
+        }],
+        instances: vec![MeshInstance {
+            source_node_index: 0,
+            node: 0,
+            mesh: 0,
             skin_joints: vec![0, 1],
             skin_ibms: vec![],
         }],
@@ -79,6 +84,7 @@ fn skinned_triangle() -> Document {
                 mime: "image/png".into(),
             }),
         }],
+        ..SceneAssets::default()
     };
     Document {
         skeleton,
@@ -284,6 +290,7 @@ fn load_round_trips_meshes_skins_materials() {
 
     assert_eq!(assets.meshes.len(), 1, "one mesh");
     let mesh = &assets.meshes[0];
+    let instance = &assets.instances[0];
     assert_eq!(mesh.primitives.len(), 1, "one primitive");
     let prim = &mesh.primitives[0];
 
@@ -312,9 +319,9 @@ fn load_round_trips_meshes_skins_materials() {
     // Skin: joints in cluster order, and both inverse bind matrices whole
     // (the writer falls back to the bones' `inverse_bind` when the mesh
     // carries none, so `tip` keeps its −1 y translation).
-    assert_eq!(mesh.skin_joints, vec![0, 1]);
+    assert_eq!(instance.skin_joints, vec![0, 1]);
     assert_eq!(
-        mesh.skin_ibms,
+        instance.skin_ibms,
         vec![
             Mat4::IDENTITY,
             Mat4::from_translation(Vec3::new(0.0, -1.0, 0.0)),
@@ -323,9 +330,9 @@ fn load_round_trips_meshes_skins_materials() {
 
     // The skinned mesh hangs off the writer's dedicated holder node —
     // a synthesized 3rd bone — not the original bone-0 node it was
-    // authored on. This pins the `MeshAsset::node` round-trip claim.
+    // authored on. This pins the `MeshInstance::node` round-trip claim.
     assert_eq!(doc.skeleton.bones.len(), 3, "2 skeleton bones + holder");
-    assert_eq!(mesh.node, 2, "mesh maps to the holder bone, not bone 0");
+    assert_eq!(instance.node, 2, "mesh maps to the holder bone, not bone 0");
 
     // Material: PBR factors and the embedded base-color texture, whole.
     assert_eq!(assets.materials.len(), 1);
@@ -406,7 +413,7 @@ fn load_preserves_unindexed_primitives() {
         assets: SceneAssets {
             meshes: vec![MeshAsset {
                 name: "tri".into(),
-                node: 0,
+                source_mesh_index: 0,
                 primitives: vec![Primitive {
                     material: None,
                     indices: vec![],
@@ -416,10 +423,15 @@ fn load_preserves_unindexed_primitives() {
                     joints: joints.clone(),
                     weights: weights.clone(),
                 }],
-                skin_joints: vec![],
-                skin_ibms: vec![],
+            }],
+            instances: vec![MeshInstance {
+                source_node_index: 0,
+                node: 0,
+                mesh: 0,
+                ..MeshInstance::default()
             }],
             materials: vec![],
+            ..SceneAssets::default()
         },
         source: SourceInfo::default(),
     };
@@ -483,16 +495,192 @@ fn load_remaps_skin_joints_through_topological_bone_order() {
     // Skin joints [node0=child, node1=root] remap to bone ids [1, 0] —
     // and match the skeleton the other code path built.
     assert_eq!(
-        doc.assets.meshes[0].skin_joints,
+        doc.assets.instances[0].skin_joints,
         vec![1, 0],
         "joints remapped to bone ids, both loader paths agreeing"
     );
-    // The mesh hangs off node 1 (root), which is bone 0 — `MeshAsset::node`
+    // The mesh hangs off node 1 (root), which is bone 0 — `MeshInstance::node`
     // is likewise a bone id, not the raw node index.
     assert_eq!(
-        doc.assets.meshes[0].node, 0,
-        "MeshAsset::node is the remapped bone id"
+        doc.assets.instances[0].node, 0,
+        "MeshInstance::node is the remapped bone id"
     );
+}
+
+/// Mesh definitions remain distinct from node instances: two nodes can
+/// reference one definition, while a different valid definition can have no
+/// node reference at all. Declared scene roots are preserved independently of
+/// the all-node skeleton topology.
+#[test]
+fn load_preserves_mesh_definition_instance_and_scene_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("instanced-scenes.gltf");
+    std::fs::write(
+        &path,
+        r#"{
+            "asset": { "version": "2.0" },
+            "buffers": [{ "byteLength": 36, "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAA" }],
+            "bufferViews": [{ "buffer": 0, "byteOffset": 0, "byteLength": 36 }],
+            "accessors": [{
+                "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+                "min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0]
+            }],
+            "meshes": [
+                { "name": "shared", "primitives": [{ "attributes": { "POSITION": 0 } }] },
+                { "name": "uninstanced", "primitives": [{ "attributes": { "POSITION": 0 } }] }
+            ],
+            "nodes": [
+                { "name": "left", "mesh": 0 },
+                { "name": "right", "mesh": 0 }
+            ],
+            "scenes": [
+                { "name": "left-scene", "nodes": [0] },
+                { "name": "right-scene", "nodes": [1] }
+            ],
+            "scene": 1
+        }"#,
+    )
+    .unwrap();
+
+    let doc = animsmith_gltf::load(&path).expect("loads");
+    assert_eq!(
+        doc.assets.meshes.len(),
+        2,
+        "uninstanced definition retained"
+    );
+    assert_eq!(
+        doc.assets
+            .meshes
+            .iter()
+            .map(|mesh| (mesh.name.as_str(), mesh.source_mesh_index))
+            .collect::<Vec<_>>(),
+        vec![("shared", 0), ("uninstanced", 1)]
+    );
+    assert_eq!(doc.assets.instances.len(), 2);
+    assert_eq!(
+        doc.assets
+            .instances
+            .iter()
+            .map(|instance| (instance.source_node_index, instance.node, instance.mesh))
+            .collect::<Vec<_>>(),
+        vec![(0, 0, 0), (1, 1, 0)]
+    );
+    assert_eq!(doc.assets.default_scene, Some(1));
+    assert_eq!(doc.assets.scenes.len(), 2);
+    assert_eq!(doc.assets.scenes[0].source_scene_index, 0);
+    assert_eq!(doc.assets.scenes[0].name.as_deref(), Some("left-scene"));
+    assert_eq!(doc.assets.scenes[0].roots, vec![0]);
+    assert_eq!(doc.assets.scenes[1].source_scene_index, 1);
+    assert_eq!(doc.assets.scenes[1].name.as_deref(), Some("right-scene"));
+    assert_eq!(doc.assets.scenes[1].roots, vec![1]);
+}
+
+/// Absence of glTF's optional top-level `scene` property is distinct from
+/// explicitly selecting scene zero.
+#[test]
+fn load_preserves_absent_default_scene() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("no-default-scene.gltf");
+    std::fs::write(
+        &path,
+        r#"{
+            "asset": { "version": "2.0" },
+            "nodes": [{ "name": "root" }],
+            "scenes": [{ "name": "declared-not-default", "nodes": [0] }]
+        }"#,
+    )
+    .unwrap();
+
+    let doc = animsmith_gltf::load(&path).expect("loads");
+    assert_eq!(doc.assets.scenes.len(), 1, "declared scene is retained");
+    assert_eq!(
+        doc.assets.default_scene, None,
+        "missing `scene` must not imply scene zero"
+    );
+}
+
+/// Unskinned mesh definitions can be attached to more than one node. Writing
+/// must emit one definition with both node attachments, and loading must keep
+/// each instance's skeleton node (and therefore its authored transform).
+#[test]
+fn write_load_preserves_unskinned_mesh_instances_and_node_transforms() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("instanced-unskinned.glb");
+    let left_rest = Transform {
+        translation: Vec3::new(-2.0, 1.0, 0.5),
+        rotation: Quat::from_rotation_z(0.25),
+        scale: Vec3::new(1.0, 2.0, 1.0),
+    };
+    let right_rest = Transform {
+        translation: Vec3::new(3.0, -1.0, 2.0),
+        rotation: Quat::from_rotation_y(-0.5),
+        scale: Vec3::new(0.5, 1.0, 1.5),
+    };
+    let doc = Document {
+        skeleton: Skeleton {
+            bones: vec![
+                Bone {
+                    name: "left".into(),
+                    parent: None,
+                    rest: left_rest,
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "right".into(),
+                    parent: None,
+                    rest: right_rest,
+                    inverse_bind: None,
+                },
+            ],
+        },
+        clips: vec![],
+        assets: SceneAssets {
+            meshes: vec![MeshAsset {
+                name: "shared-triangle".into(),
+                source_mesh_index: 0,
+                primitives: vec![Primitive {
+                    positions: vec![Vec3::ZERO, Vec3::X, Vec3::Y],
+                    ..Primitive::default()
+                }],
+            }],
+            instances: vec![
+                MeshInstance {
+                    source_node_index: 0,
+                    node: 0,
+                    mesh: 0,
+                    ..MeshInstance::default()
+                },
+                MeshInstance {
+                    source_node_index: 1,
+                    node: 1,
+                    mesh: 0,
+                    ..MeshInstance::default()
+                },
+            ],
+            ..SceneAssets::default()
+        },
+        source: SourceInfo::default(),
+    };
+
+    animsmith_gltf::write::write(&doc, &path).expect("writes");
+    let loaded = animsmith_gltf::load(&path).expect("loads");
+
+    assert_eq!(loaded.assets.meshes.len(), 1, "one shared definition");
+    assert_eq!(loaded.assets.instances.len(), 2, "both attachments survive");
+    assert_eq!(
+        loaded
+            .assets
+            .instances
+            .iter()
+            .map(|instance| (instance.source_node_index, instance.node, instance.mesh))
+            .collect::<Vec<_>>(),
+        vec![(0, 0, 0), (1, 1, 0)],
+    );
+    assert_eq!(loaded.skeleton.bones.len(), 2);
+    assert_eq!(loaded.skeleton.bones[0].name, "left");
+    assert_eq!(loaded.skeleton.bones[0].rest, left_rest);
+    assert_eq!(loaded.skeleton.bones[1].name, "right");
+    assert_eq!(loaded.skeleton.bones[1].rest, right_rest);
 }
 
 /// `load` carries scene geometry in `Document::assets` — the same
@@ -750,7 +938,7 @@ fn load_survives_zero_count_inverse_bind_matrices() {
         "mesh still loads"
     );
     assert!(
-        doc.assets.meshes[0].skin_ibms.is_empty(),
+        doc.assets.instances[0].skin_ibms.is_empty(),
         "empty IBM accessor dropped in asset extraction"
     );
     assert!(
