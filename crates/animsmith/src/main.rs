@@ -1,15 +1,15 @@
 //! The animsmith CLI binary.
 //!
 //! This crate publishes the `animsmith` command: inspect, measure, lint,
-//! report, transform, fix, convert, and diff skeletal animation clips. It
+//! report, transform, fix, convert, assemble, and diff skeletal animation clips. It
 //! is not the Rust library API; use `animsmith-core` plus the loader
 //! crates (`animsmith-gltf`, `animsmith-fbx`) and `animsmith-report` from
 //! library code.
 //!
 //! Feature gates mirror the installed binary surface. The default build
 //! includes FBX input and HTML reports; `--no-default-features` leaves a
-//! pure-Rust glTF-only binary with report generation and FBX conversion
-//! omitted.
+//! pure-Rust glTF-only binary with report generation, FBX conversion, and
+//! multi-source assembly omitted.
 //!
 //! The GitHub [pipeline scenario guide] maps these commands to marketplace
 //! intake, mocap cleanup, outsourced acceptance, CI, and artifact-storage

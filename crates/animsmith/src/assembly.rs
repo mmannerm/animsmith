@@ -5,7 +5,6 @@
 //! project policy, acceptance contracts, or publication.
 
 use crate::material_recipe::{MaterialTextureRecipeEvidence, apply_material_texture_recipe};
-use animsmith_core::glam::Quat;
 use animsmith_core::model::{
     Clip, Document, Interpolation, MaterialAsset, MeshAsset, Property, Skeleton, TrackValues,
 };
@@ -95,6 +94,7 @@ struct AssemblyClipEvidence {
     remapped_tracks: usize,
     completed_tracks: usize,
     stripped_tracks: usize,
+    stripped_bone_motion: Vec<StrippedBoneMotionEvidence>,
     duration_s: f64,
     frame_window: Option<[u32; 2]>,
     time_window: Option<[f64; 2]>,
@@ -104,11 +104,23 @@ struct AssemblyClipEvidence {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct StrippedBoneMotionEvidence {
+    bone: String,
+    translation_start: Option<[f32; 3]>,
+    translation_end: Option<[f32; 3]>,
+    translation_delta: Option<[f32; 3]>,
+    duration_s: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct AssemblyTransformEvidence {
     retained_mesh_instances: Vec<String>,
     removed_mesh_instances: usize,
     canonicalized_skin: bool,
     ground_and_center: bool,
+    source_world_to_canonical: Option<[f32; 16]>,
+    converted_bounds_min: Option<[f32; 3]>,
+    converted_bounds_max: Option<[f32; 3]>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -152,7 +164,7 @@ struct InputResolver {
 
 impl InputResolver {
     fn new(recipe_path: &Path, declared_root: Option<&Path>) -> Result<Self, String> {
-        let recipe_parent = recipe_path.parent().unwrap_or_else(|| Path::new("."));
+        let recipe_parent = parent_or_current(recipe_path);
         let recipe_parent = fs::canonicalize(recipe_parent).map_err(|error| {
             format!(
                 "cannot resolve recipe directory {}: {error}",
@@ -195,6 +207,12 @@ impl InputResolver {
         }
         Ok(resolved)
     }
+}
+
+fn parent_or_current(path: &Path) -> &Path {
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
 }
 
 fn validate_relative_path(path: &Path, label: &str) -> Result<(), String> {
@@ -367,12 +385,62 @@ pub(crate) fn assemble(
                 declared,
                 &resolved,
             )?);
-            apply_material_texture_recipe(&resolved, &base).map_err(|error| error.to_string())
+            let mut application = apply_material_texture_recipe(&resolved, &base)
+                .map_err(|error| error.to_string())?;
+            let recipe_base = parent_or_current(&resolved);
+            let texture_base = application
+                .evidence
+                .texture_root
+                .as_deref()
+                .map_or_else(|| recipe_base.to_path_buf(), |root| recipe_base.join(root));
+            for consumed in &application.evidence.consumed_inputs {
+                let texture_path = fs::canonicalize(texture_base.join(&consumed.declared_path))
+                    .map_err(|error| {
+                        format!(
+                            "cannot resolve consumed texture {}: {error}",
+                            consumed.declared_path
+                        )
+                    })?;
+                inputs.push(input_evidence(
+                    "texture",
+                    Path::new(&consumed.declared_path),
+                    &texture_path,
+                )?);
+            }
+            // The material helper saw the canonical path needed for its read;
+            // assembly evidence retains only the recipe-declared path.
+            application.evidence.path = declared.display().to_string();
+            Ok::<_, String>(application)
         })
         .transpose()?;
     if let Some(application) = &material_application {
         base = application.document.clone();
     }
+
+    // A base file may contain a take, but only recipe-selected clips belong in
+    // the product. Canonicalization intentionally accepts a base scene only,
+    // then clip remapping targets the canonical skeleton it returns.
+    base.clips.clear();
+    let canonicalization = if recipe.canonicalize_skin {
+        let options = animsmith_core::SkinnedBindPoseCanonicalizationOptions {
+            // Both maintained loaders expose their Document world in
+            // right-handed Y-up metres. Raw skinned vertex coordinates can
+            // still be source-local; the core operation derives and bakes
+            // their geometry-bind transform from the validated scene/IBMs.
+            source_to_meters_y_up: animsmith_core::glam::Mat4::IDENTITY,
+            placement: if recipe.ground_and_center {
+                animsmith_core::SkinnedBindPosePlacement::GroundAndCenter
+            } else {
+                animsmith_core::SkinnedBindPosePlacement::Preserve
+            },
+        };
+        let canonical = animsmith_core::canonicalize_skinned_bind_pose(&base, options)
+            .map_err(|error| error.to_string())?;
+        base = canonical.document.clone();
+        Some(canonical)
+    } else {
+        None
+    };
 
     let mut loaded = BTreeMap::<PathBuf, Document>::new();
     let mut clip_evidence = Vec::with_capacity(recipe.clips.len());
@@ -414,23 +482,14 @@ pub(crate) fn assemble(
                 .map_err(|error| format!("clip {:?}: {error}", clip.name))?;
         validate_unique_channels(&clip, &base.skeleton)?;
         require_named_bones(&base.skeleton, &clip_recipe.strip_bones, "strip_bones")?;
-        let completed_tracks = if recipe.complete_tracks {
-            animsmith_core::assembly::complete_rest_pose_tracks(
-                &mut clip,
-                &base.skeleton,
-                animsmith_core::assembly::RestPoseTrackOptions::ALL,
-            )
-        } else {
-            0
-        };
+        let stripped_bone_motion =
+            stripped_bone_motion(&clip, &base.skeleton, &clip_recipe.strip_bones)?;
         let stripped_tracks = animsmith_core::assembly::strip_named_bone_tracks(
             &mut clip,
             &base.skeleton,
             &clip_recipe.strip_bones,
         )
         .map_err(|error| format!("clip {:?}: {error}", clip.name))?;
-        normalize_quaternion_magnitudes(&mut clip)?;
-        animsmith_core::assembly::normalize_quaternion_hemispheres(&mut clip);
         let gait_anchor_frame_offset = if clip_recipe.gait_anchor {
             let roles = resolve_configured_roles(&base.skeleton, &config.rig);
             Some(
@@ -451,10 +510,11 @@ pub(crate) fn assemble(
             declared_input: clip_recipe.input.display().to_string(),
             source_take: clip_recipe.take.clone(),
             source_tracks,
-            emitted_tracks: clip.tracks.len(),
+            emitted_tracks: 0,
             remapped_tracks,
-            completed_tracks,
+            completed_tracks: 0,
             stripped_tracks,
+            stripped_bone_motion,
             duration_s: clip.duration_s,
             frame_window: clip_recipe.frame_window,
             time_window: clip_recipe.time_window,
@@ -464,18 +524,56 @@ pub(crate) fn assemble(
         });
         output_clips.push(clip);
     }
+    let mut completion_targets = base
+        .assets
+        .instances
+        .iter()
+        .flat_map(|instance| instance.skin_joints.iter().copied())
+        .collect::<BTreeSet<_>>();
+    completion_targets.extend(
+        output_clips
+            .iter()
+            .flat_map(|clip| clip.tracks.iter().map(|track| track.bone)),
+    );
+    let base_bones_by_name = base
+        .skeleton
+        .bones
+        .iter()
+        .enumerate()
+        .map(|(index, bone)| (bone.name.as_str(), index))
+        .collect::<BTreeMap<_, _>>();
+    for ((clip, evidence), clip_recipe) in output_clips
+        .iter_mut()
+        .zip(&mut clip_evidence)
+        .zip(&recipe.clips)
+    {
+        if recipe.complete_tracks {
+            let excluded = clip_recipe
+                .strip_bones
+                .iter()
+                .map(|name| base_bones_by_name[name.as_str()])
+                .collect::<BTreeSet<_>>();
+            evidence.completed_tracks =
+                animsmith_core::assembly::complete_rest_pose_tracks_for_bones(
+                    clip,
+                    &base.skeleton,
+                    completion_targets
+                        .iter()
+                        .copied()
+                        .filter(|bone| !excluded.contains(bone)),
+                    animsmith_core::assembly::RestPoseTrackOptions::ALL,
+                )
+                .map_err(|error| format!("clip {:?}: {error}", clip.name))?;
+        }
+        validate_unique_channels(clip, &base.skeleton)?;
+        normalize_quaternion_magnitudes(clip)?;
+        animsmith_core::assembly::normalize_quaternion_hemispheres(clip);
+        evidence.emitted_tracks = clip.tracks.len();
+    }
     base.clips = output_clips;
 
-    if recipe.canonicalize_skin {
-        // The verified core operation is intentionally the only place that
-        // may rewrite bind-pose geometry. Its evidence is represented by the
-        // recipe flags until the pre-1.0 core evidence type stabilizes.
-        animsmith_core::canonicalize_skinned_geometry(&mut base, recipe.ground_and_center)
-            .map_err(|error| error.to_string())?;
-    }
-
-    let output_parent = output.parent().unwrap_or_else(|| Path::new("."));
-    let evidence_parent = evidence_output.parent().unwrap_or_else(|| Path::new("."));
+    let output_parent = parent_or_current(output);
+    let evidence_parent = parent_or_current(evidence_output);
     require_output_parent(output_parent, output)?;
     require_output_parent(evidence_parent, evidence_output)?;
     let artifact_temp = tempfile::Builder::new()
@@ -510,6 +608,15 @@ pub(crate) fn assemble(
             removed_mesh_instances,
             canonicalized_skin: recipe.canonicalize_skin,
             ground_and_center: recipe.ground_and_center,
+            source_world_to_canonical: canonicalization
+                .as_ref()
+                .map(|result| result.source_world_to_canonical.to_cols_array()),
+            converted_bounds_min: canonicalization
+                .as_ref()
+                .map(|result| result.converted_bounds_min.to_array()),
+            converted_bounds_max: canonicalization
+                .as_ref()
+                .map(|result| result.converted_bounds_max.to_array()),
         },
         material_texture_recipe: material_application.map(|application| application.evidence),
         artifact: artifact_evidence(output, artifact_sha256, artifact_bytes, summary),
@@ -644,6 +751,53 @@ fn validate_unique_channels(clip: &Clip, skeleton: &Skeleton) -> Result<(), Stri
         }
     }
     Ok(())
+}
+
+fn stripped_bone_motion(
+    clip: &Clip,
+    skeleton: &Skeleton,
+    names: &[String],
+) -> Result<Vec<StrippedBoneMotionEvidence>, String> {
+    let by_name = skeleton
+        .bones
+        .iter()
+        .enumerate()
+        .map(|(index, bone)| (bone.name.as_str(), index))
+        .collect::<BTreeMap<_, _>>();
+    names
+        .iter()
+        .map(|name| {
+            let bone = by_name[name.as_str()];
+            let translation = clip
+                .tracks
+                .iter()
+                .find(|track| track.bone == bone && track.property == Property::Translation);
+            let (translation_start, translation_end, translation_delta, duration_s) =
+                if let Some(track) = translation {
+                    let start = track.key_vec3(0);
+                    let end = track
+                        .key_count()
+                        .checked_sub(1)
+                        .and_then(|key| track.key_vec3(key));
+                    let delta = start.zip(end).map(|(start, end)| (end - start).to_array());
+                    (
+                        start.map(|value| value.to_array()),
+                        end.map(|value| value.to_array()),
+                        delta,
+                        Some(f64::from(track.end_time() - track.start_time())),
+                    )
+                } else {
+                    (None, None, None, None)
+                };
+            Ok(StrippedBoneMotionEvidence {
+                bone: name.clone(),
+                translation_start,
+                translation_end,
+                translation_delta,
+                duration_s,
+            })
+        })
+        .collect()
 }
 
 fn normalize_quaternion_magnitudes(clip: &mut Clip) -> Result<(), String> {
@@ -783,7 +937,7 @@ fn backup_destination(path: &Path) -> Result<Option<tempfile::TempPath>, String>
     if !path.exists() {
         return Ok(None);
     }
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let parent = parent_or_current(path);
     let backup = tempfile::Builder::new()
         .prefix(".animsmith-assemble-backup-")
         .tempfile_in(parent)
@@ -856,7 +1010,7 @@ fn publish_pair(
 mod tests {
     use super::*;
     use animsmith_core::glam::Quat;
-    use animsmith_core::model::{Bone, Transform};
+    use animsmith_core::model::{Bone, Property, Track, Transform};
 
     fn skeleton(names: &[&str]) -> Skeleton {
         Skeleton {
@@ -935,6 +1089,82 @@ mod tests {
         assert!(error.contains("injected evidence publication failure"));
         assert_eq!(fs::read(&artifact).unwrap(), b"old artifact");
         assert_eq!(fs::read(&evidence).unwrap(), b"old evidence");
+    }
+
+    #[test]
+    fn explicit_mesh_selection_removes_prop_definitions_and_materials() {
+        use animsmith_core::model::{MaterialAsset, MeshAsset, MeshInstance, SceneAssets};
+
+        let mut document = Document {
+            skeleton: skeleton(&["body", "prop"]),
+            assets: SceneAssets {
+                meshes: vec![
+                    MeshAsset {
+                        name: "body-mesh".into(),
+                        primitives: vec![animsmith_core::model::Primitive {
+                            material: Some(0),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    },
+                    MeshAsset {
+                        name: "prop-mesh".into(),
+                        primitives: vec![animsmith_core::model::Primitive {
+                            material: Some(1),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    },
+                ],
+                instances: vec![
+                    MeshInstance {
+                        node: 0,
+                        mesh: 0,
+                        ..Default::default()
+                    },
+                    MeshInstance {
+                        node: 1,
+                        mesh: 1,
+                        ..Default::default()
+                    },
+                ],
+                materials: vec![
+                    MaterialAsset {
+                        name: "body-material".into(),
+                        base_color: [1.0; 4],
+                        metallic: 0.0,
+                        roughness: 1.0,
+                        base_color_texture: None,
+                        normal_texture: None,
+                        metallic_roughness_texture: None,
+                        occlusion_texture: None,
+                    },
+                    MaterialAsset {
+                        name: "prop-material".into(),
+                        base_color: [1.0; 4],
+                        metallic: 0.0,
+                        roughness: 1.0,
+                        base_color_texture: None,
+                        normal_texture: None,
+                        metallic_roughness_texture: None,
+                        occlusion_texture: None,
+                    },
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let (retained, removed) = select_mesh_instances(&mut document, &["body".into()]).unwrap();
+        assert_eq!(retained, ["body"]);
+        assert_eq!(removed, 1);
+        assert_eq!(document.assets.instances.len(), 1);
+        assert_eq!(document.assets.meshes.len(), 1);
+        assert_eq!(document.assets.meshes[0].name, "body-mesh");
+        assert_eq!(document.assets.materials.len(), 1);
+        assert_eq!(document.assets.materials[0].name, "body-material");
+        assert_eq!(document.assets.instances[0].mesh, 0);
+        assert_eq!(document.assets.meshes[0].primitives[0].material, Some(0));
     }
 
     #[test]
