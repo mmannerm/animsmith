@@ -99,7 +99,10 @@ carrying its geometry) but is compiled only with the `fbx` feature.
 Full-scene conversion carries factor-only materials plus linked or embedded
 PNG/JPEG base-color and normal textures. Normal textures retain their glTF
 scale; FBX normal maps use glTF's default scale because ordinary FBX materials
-do not expose the same scalar.
+do not expose the same scalar. See the
+[static asset workflow guide](static-asset-workflows.md#preserve-normal-maps-as-data-not-color)
+for why the normal slot matters, common bad handoffs, and the engine-side checks
+that conversion cannot perform.
 
 `--material-texture-recipe <PATH>` applies explicit BaseColor and normal image
 mappings during conversion. It conflicts with `--animation-only`, which removes
@@ -126,7 +129,10 @@ single instance (including shared definitions), malformed or non-finite scene
 data, a singular or near-singular transform, or a reflection. Skin baking,
 animated-node baking, and reflection handling are outside this operation's
 contract. Same-platform runs over the same input and options produce a
-byte-identical artifact.
+byte-identical artifact. The
+[static asset workflow guide](static-asset-workflows.md#bake-static-placement-into-geometry)
+shows the before/after model, when baking is appropriate, and why this is not a
+general scene flattener.
 
 ## Repairs
 

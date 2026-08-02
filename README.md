@@ -192,10 +192,13 @@ for a contract-style example.
 ## More Documentation
 
 The [documentation index](https://github.com/mmannerm/animsmith/tree/main/docs)
-lists every guide and reference by task. Two useful next stops:
+lists every guide and reference by task. Three useful next stops:
 
 - [Game-ready clips guide](https://github.com/mmannerm/animsmith/blob/main/docs/game-ready-clips.md)
   — why each check exists, failure mode by failure mode.
+- [Static asset workflow guide](https://github.com/mmannerm/animsmith/blob/main/docs/static-asset-workflows.md)
+  — bounds and transform domains, normal maps, static baking, texture recipes,
+  and what still needs target-engine validation.
 - [Examples cookbook](https://github.com/mmannerm/animsmith/tree/main/examples)
   — runnable, copy-into-your-project workflows.
 
