@@ -313,23 +313,29 @@ fn opt_in_check_is_disabled_until_an_explicit_severity_enables_it() {
     assert_eq!(records[0].evaluation(), EvaluationState::NotEvaluated);
     assert!(records[0].findings().is_empty());
 
-    let enabled_config = Config {
-        checks: BTreeMap::from([(
-            "opt-in-finding".to_string(),
-            CheckSettings {
-                severity: Some(SeveritySetting::Warn),
-                ..CheckSettings::default()
-            },
-        )]),
-        ..Config::default()
-    };
-    let enabled_grids = MetricGrids::new(&doc);
-    let enabled_ctx = CheckCtx::new(&enabled_grids, &roles, &enabled_config);
-    let records = evaluate_checks(&enabled_ctx, &checks, CheckSelection::All).unwrap();
-    assert_eq!(records[0].configuration(), ConfigurationState::Enabled);
-    assert_eq!(records[0].evaluation(), EvaluationState::Complete);
-    assert_eq!(records[0].findings().len(), 1);
-    assert_eq!(records[0].findings()[0].severity, Severity::Warning);
+    for (setting, expected) in [
+        (SeveritySetting::Note, Severity::Note),
+        (SeveritySetting::Warn, Severity::Warning),
+        (SeveritySetting::Error, Severity::Error),
+    ] {
+        let enabled_config = Config {
+            checks: BTreeMap::from([(
+                "opt-in-finding".to_string(),
+                CheckSettings {
+                    severity: Some(setting),
+                    ..CheckSettings::default()
+                },
+            )]),
+            ..Config::default()
+        };
+        let enabled_grids = MetricGrids::new(&doc);
+        let enabled_ctx = CheckCtx::new(&enabled_grids, &roles, &enabled_config);
+        let records = evaluate_checks(&enabled_ctx, &checks, CheckSelection::All).unwrap();
+        assert_eq!(records[0].configuration(), ConfigurationState::Enabled);
+        assert_eq!(records[0].evaluation(), EvaluationState::Complete);
+        assert_eq!(records[0].findings().len(), 1);
+        assert_eq!(records[0].findings()[0].severity, expected);
+    }
 }
 
 #[test]

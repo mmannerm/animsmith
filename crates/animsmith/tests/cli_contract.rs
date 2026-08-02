@@ -1318,6 +1318,24 @@ fn lint_json_uses_versioned_envelope() {
     assert_eq!(constant_nonunit["selection"], "selected");
     assert_eq!(constant_nonunit["configuration"], "disabled");
     assert_eq!(constant_nonunit["evaluation"], "not_evaluated");
+    assert_eq!(
+        constant_nonunit
+            .as_object()
+            .expect("check object")
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        [
+            "check_id",
+            "selection",
+            "configuration",
+            "applicability",
+            "evaluation",
+            "findings",
+        ]
+        .into_iter()
+        .collect()
+    );
     assert_evaluation_summary_matches_checks(&json);
     assert_output_schema_valid(&json);
 }
@@ -1460,6 +1478,13 @@ fn lint_json_keeps_disabled_distinct_from_unselected() {
         .expect("duration record");
     assert_eq!(duration["selection"], "unselected");
     assert_eq!(duration["configuration"], "enabled");
+    let constant_nonunit = checks
+        .iter()
+        .find(|check| check["check_id"] == "constant-nonunit-scale")
+        .expect("opt-in scale-channel record");
+    assert_eq!(constant_nonunit["selection"], "unselected");
+    assert_eq!(constant_nonunit["configuration"], "disabled");
+    assert_eq!(constant_nonunit["evaluation"], "not_evaluated");
 }
 
 #[test]

@@ -67,12 +67,7 @@ pub(crate) fn analyze(track: &Track) -> Option<Vec3Trajectory> {
     let mut accumulator = Accumulator::new(first, track.times[0]);
 
     match track.interpolation {
-        Interpolation::Step => {
-            for index in 1..key_count {
-                accumulator.add(key(index)?, track.times[index])?;
-            }
-        }
-        Interpolation::Linear => {
+        Interpolation::Step | Interpolation::Linear => {
             for index in 1..key_count {
                 let time = track.times[index];
                 accumulator.add(key(index)?, time)?;

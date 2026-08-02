@@ -71,14 +71,21 @@ fn lint(doc: &Document) -> Vec<animsmith_core::Finding> {
 }
 
 fn lint_with_config(doc: &Document, config: &Config) -> Vec<animsmith_core::Finding> {
+    evaluations_with_config(doc, config)
+        .into_iter()
+        .flat_map(|check| check.findings().to_vec())
+        .collect()
+}
+
+fn evaluations_with_config(
+    doc: &Document,
+    config: &Config,
+) -> Vec<animsmith_core::CheckEvaluation> {
     let roles = ResolvedRoles::default();
     let grids = MetricGrids::new(doc);
     let ctx = CheckCtx::new(&grids, &roles, config);
     evaluate_checks(&ctx, &mechanical_checks(), CheckSelection::All)
         .expect("valid built-in catalog")
-        .into_iter()
-        .flat_map(|check| check.findings().to_vec())
-        .collect()
 }
 
 fn assert_single(doc: &Document, check_id: &str, severity: Severity) {
@@ -355,9 +362,16 @@ fn step_and_linear_scale_changes_are_temporal_variation() {
             &mut doc,
             interpolation,
             vec![0.0, 1.0],
-            vec![Vec3::ONE, Vec3::splat(1.2)],
+            vec![Vec3::splat(2.0), Vec3::splat(3.0)],
         );
         assert_eq!(scale_finding_ids(&doc), vec!["scale-keys"]);
+        assert_eq!(
+            lint(&doc)
+                .iter()
+                .filter(|finding| finding.check_id == "scale-keys")
+                .count(),
+            1
+        );
     }
 }
 
@@ -383,27 +397,51 @@ fn cubic_interior_temporal_excursion_is_not_constant() {
 }
 
 #[test]
-fn cubic_duration_scales_tangent_excursion() {
+fn cubic_opposite_tangents_create_a_one_component_excursion() {
     let mut doc = clean_doc();
-    // The first 0.25 s segment stays under tolerance; the same tangent on
-    // the 2 s segment must exceed it after glTF's tangent-times-dt scaling.
     add_scale_track(
         &mut doc,
         Interpolation::CubicSpline,
-        vec![0.0, 0.25, 2.25],
+        vec![0.0, 1.0],
         vec![
             Vec3::ZERO,
             Vec3::ONE,
-            Vec3::splat(0.001),
-            Vec3::splat(0.001),
-            Vec3::ONE,
-            Vec3::splat(0.001),
-            Vec3::splat(0.001),
+            Vec3::new(0.004, 0.0, 0.0),
+            Vec3::new(-0.004, 0.0, 0.0),
             Vec3::ONE,
             Vec3::ZERO,
         ],
     );
-    assert_eq!(scale_finding_ids(&doc), vec!["scale-keys"]);
+    assert_eq!(
+        scale_finding_ids(&doc),
+        vec!["non-uniform-scale", "scale-keys"]
+    );
+}
+
+#[test]
+fn cubic_duration_scales_tangent_excursion() {
+    // Put the decisive long segment on each side in turn. Both must exceed
+    // tolerance after glTF's tangent-times-dt scaling.
+    for times in [vec![0.0, 0.25, 2.25], vec![0.0, 2.0, 2.25]] {
+        let mut doc = clean_doc();
+        add_scale_track(
+            &mut doc,
+            Interpolation::CubicSpline,
+            times,
+            vec![
+                Vec3::ZERO,
+                Vec3::ONE,
+                Vec3::splat(0.0003),
+                Vec3::splat(0.0003),
+                Vec3::ONE,
+                Vec3::splat(0.0003),
+                Vec3::splat(0.0003),
+                Vec3::ONE,
+                Vec3::ZERO,
+            ],
+        );
+        assert_eq!(scale_finding_ids(&doc), vec!["scale-keys"]);
+    }
 }
 
 #[test]
@@ -449,6 +487,34 @@ fn constant_nonunit_scale_is_opt_in_and_distinct_from_nonuniformity() {
             "non-uniform-scale"
         ]
     );
+    let evaluations = evaluations_with_config(&doc, &presence_enabled_config());
+    let presence = evaluations
+        .iter()
+        .find(|evaluation| evaluation.check_id() == "constant-nonunit-scale")
+        .expect("registered presence evaluation");
+    assert_eq!(
+        presence.evaluation(),
+        animsmith_core::EvaluationState::Complete
+    );
+    assert_eq!(presence.findings().len(), 1);
+    assert!(presence.gaps().is_empty());
+    assert!(presence.evaluated_scopes().is_empty());
+}
+
+#[test]
+fn constant_uniform_nonunit_scale_is_redundancy_plus_opt_in_presence() {
+    let mut doc = clean_doc();
+    add_scale_track(
+        &mut doc,
+        Interpolation::Linear,
+        vec![0.0, 0.5, 1.0],
+        vec![Vec3::splat(1.2); 3],
+    );
+    assert_eq!(scale_finding_ids(&doc), vec!["constant-track"]);
+    assert_eq!(
+        scale_finding_ids_with_config(&doc, &presence_enabled_config()),
+        vec!["constant-nonunit-scale", "constant-track"]
+    );
 }
 
 #[test]
@@ -465,98 +531,177 @@ fn single_key_nonunit_pin_is_not_redundant() {
         scale_finding_ids_with_config(&doc, &presence_enabled_config()),
         vec!["constant-nonunit-scale"]
     );
+    let enabled_findings = lint_with_config(&doc, &presence_enabled_config());
+    assert_eq!(enabled_findings.len(), 1);
+    assert_eq!(enabled_findings[0].check_id, "constant-nonunit-scale");
+    assert!(
+        enabled_findings
+            .iter()
+            .all(|finding| finding.check_id != "constant-track")
+    );
 }
 
 #[test]
 fn exact_and_over_tolerance_temporal_ranges_are_distinguished() {
-    let mut exact = clean_doc();
-    add_scale_track(
-        &mut exact,
-        Interpolation::Linear,
-        vec![0.0, 1.0],
-        vec![Vec3::ZERO, Vec3::splat(1e-4)],
-    );
-    assert!(
-        !scale_finding_ids(&exact).contains(&"scale-keys"),
-        "exact tolerance must remain constant"
-    );
+    let immediately_over = f32::from_bits(1e-4f32.to_bits() + 1);
+    for sign in [1.0, -1.0] {
+        let mut exact = clean_doc();
+        add_scale_track(
+            &mut exact,
+            Interpolation::Linear,
+            vec![0.0, 1.0],
+            vec![Vec3::ZERO, Vec3::splat(sign * 1e-4)],
+        );
+        assert!(
+            !scale_finding_ids(&exact).contains(&"scale-keys"),
+            "exact tolerance must remain constant"
+        );
 
-    let mut over = clean_doc();
-    add_scale_track(
-        &mut over,
-        Interpolation::Linear,
-        vec![0.0, 1.0],
-        vec![Vec3::ZERO, Vec3::splat(1.001e-4)],
-    );
-    assert!(
-        scale_finding_ids(&over).contains(&"scale-keys"),
-        "values over tolerance must vary"
-    );
+        let mut over = clean_doc();
+        add_scale_track(
+            &mut over,
+            Interpolation::Linear,
+            vec![0.0, 1.0],
+            vec![Vec3::ZERO, Vec3::splat(sign * immediately_over)],
+        );
+        assert!(
+            scale_finding_ids(&over).contains(&"scale-keys"),
+            "the next stored value over tolerance must vary"
+        );
+    }
 }
 
 #[test]
 fn exact_and_over_tolerance_non_uniform_spreads_are_distinguished() {
-    let mut exact = clean_doc();
-    add_scale_track(
-        &mut exact,
-        Interpolation::Linear,
-        vec![0.0],
-        vec![Vec3::new(1e-4, 0.0, 0.0)],
-    );
-    assert!(
-        !scale_finding_ids(&exact).contains(&"non-uniform-scale"),
-        "exact tolerance must remain uniform"
-    );
+    let immediately_over = f32::from_bits(1e-4f32.to_bits() + 1);
+    for sign in [1.0, -1.0] {
+        let mut exact = clean_doc();
+        add_scale_track(
+            &mut exact,
+            Interpolation::Linear,
+            vec![0.0],
+            vec![Vec3::new(sign * 1e-4, 0.0, 0.0)],
+        );
+        assert!(
+            !scale_finding_ids(&exact).contains(&"non-uniform-scale"),
+            "exact tolerance must remain uniform"
+        );
 
-    let mut over = clean_doc();
-    add_scale_track(
-        &mut over,
-        Interpolation::Linear,
-        vec![0.0],
-        vec![Vec3::new(1.001e-4, 0.0, 0.0)],
-    );
-    assert!(
-        scale_finding_ids(&over).contains(&"non-uniform-scale"),
-        "component spread over tolerance must be non-uniform"
-    );
+        let mut over = clean_doc();
+        add_scale_track(
+            &mut over,
+            Interpolation::Linear,
+            vec![0.0],
+            vec![Vec3::new(sign * immediately_over, 0.0, 0.0)],
+        );
+        assert!(
+            scale_finding_ids(&over).contains(&"non-uniform-scale"),
+            "the next component spread over tolerance must be non-uniform"
+        );
+    }
 }
 
 #[test]
-fn stored_values_on_each_side_of_unit_tolerance_are_distinguished() {
+fn stored_values_above_and_below_unit_tolerance_are_distinguished() {
     let unit = 1.0f32;
-    let mut at_or_below = unit;
-    let immediately_over = loop {
-        let next = f32::from_bits(at_or_below.to_bits() + 1);
-        if next - unit > 1e-4 {
-            break next;
+    let tolerance_pairs = [true, false].map(|increasing| {
+        let mut tolerated = unit;
+        loop {
+            let next_bits = if increasing {
+                tolerated.to_bits() + 1
+            } else {
+                tolerated.to_bits() - 1
+            };
+            let next = f32::from_bits(next_bits);
+            if (next - unit).abs() > 1e-4 {
+                break (tolerated, next);
+            }
+            tolerated = next;
         }
-        at_or_below = next;
-    };
-    assert!(at_or_below - unit <= 1e-4);
+    });
 
     let enabled = presence_enabled_config();
-    let mut tolerated = clean_doc();
-    add_scale_track(
-        &mut tolerated,
-        Interpolation::Linear,
-        vec![0.0],
-        vec![Vec3::splat(at_or_below)],
-    );
-    assert!(
-        !scale_finding_ids_with_config(&tolerated, &enabled).contains(&"constant-nonunit-scale")
-    );
+    for (tolerated_value, over_value) in tolerance_pairs {
+        assert!((tolerated_value - unit).abs() <= 1e-4);
+        assert!((over_value - unit).abs() > 1e-4);
 
-    let mut over = clean_doc();
-    add_scale_track(
-        &mut over,
-        Interpolation::Linear,
-        vec![0.0],
-        vec![Vec3::splat(immediately_over)],
-    );
-    let findings = lint_with_config(&over, &enabled);
-    assert!(findings.iter().any(|finding| {
-        finding.check_id == "constant-nonunit-scale" && finding.severity == Severity::Note
-    }));
+        let mut tolerated = clean_doc();
+        add_scale_track(
+            &mut tolerated,
+            Interpolation::Linear,
+            vec![0.0],
+            vec![Vec3::splat(tolerated_value)],
+        );
+        assert!(
+            !scale_finding_ids_with_config(&tolerated, &enabled)
+                .contains(&"constant-nonunit-scale")
+        );
+
+        let mut over = clean_doc();
+        add_scale_track(
+            &mut over,
+            Interpolation::Linear,
+            vec![0.0],
+            vec![Vec3::splat(over_value)],
+        );
+        let findings = lint_with_config(&over, &enabled);
+        assert!(findings.iter().any(|finding| {
+            finding.check_id == "constant-nonunit-scale" && finding.severity == Severity::Note
+        }));
+    }
+}
+
+#[test]
+fn invalid_scale_tracks_are_left_to_source_data_checks() {
+    let invalid_tracks = [
+        (
+            Track {
+                bone: 1,
+                property: Property::Scale,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Vec3s(vec![Vec3::ONE, Vec3::splat(f32::NAN)]),
+            },
+            Some("nan"),
+        ),
+        (
+            Track {
+                bone: 1,
+                property: Property::Scale,
+                interpolation: Interpolation::Step,
+                times: vec![0.0, 0.0],
+                values: TrackValues::Vec3s(vec![Vec3::ONE, Vec3::splat(1.2)]),
+            },
+            Some("time-monotonic"),
+        ),
+        (
+            Track {
+                bone: 1,
+                property: Property::Scale,
+                interpolation: Interpolation::CubicSpline,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::ONE, Vec3::ZERO]),
+            },
+            None,
+        ),
+    ];
+
+    for (track, owning_check) in invalid_tracks {
+        let mut doc = clean_doc();
+        doc.clips[0].tracks.push(track);
+        assert!(
+            scale_finding_ids_with_config(&doc, &presence_enabled_config()).is_empty(),
+            "invalid source data must not also be classified as a scale fact"
+        );
+        if let Some(owning_check) = owning_check {
+            assert!(
+                lint(&doc)
+                    .iter()
+                    .any(|finding| finding.check_id == owning_check),
+                "{owning_check} must retain invalid-source ownership"
+            );
+        }
+    }
 }
 
 #[test]
