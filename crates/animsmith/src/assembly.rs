@@ -4,7 +4,9 @@
 //! extracted asset files, but it does not own archive extraction, consuming
 //! project policy, acceptance contracts, or publication.
 
-use crate::material_recipe::{MaterialTextureRecipeEvidence, apply_material_texture_recipe};
+use crate::material_recipe::{
+    MaterialTextureRecipeEvidence, apply_material_texture_recipe_in_root,
+};
 use animsmith_core::model::{
     Clip, Document, Interpolation, MaterialAsset, MeshAsset, Property, Skeleton, TrackValues,
 };
@@ -429,8 +431,9 @@ pub(crate) fn assemble(
                 declared,
                 &resolved,
             )?);
-            let mut application = apply_material_texture_recipe(&resolved, &base)
-                .map_err(|error| error.to_string())?;
+            let mut application =
+                apply_material_texture_recipe_in_root(&resolved, &base, &resolver.root)
+                    .map_err(|error| error.to_string())?;
             let recipe_base = parent_or_current(&resolved);
             let texture_base = application
                 .evidence

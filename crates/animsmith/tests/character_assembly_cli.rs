@@ -1027,4 +1027,27 @@ fn assembles_synthetic_skinned_recipe_with_complete_public_provenance() {
     let diff: Value = serde_json::from_slice(&diff.stdout).expect("diff JSON");
     assert_eq!(diff["summary"]["deltas"], 0);
     assert_eq!(diff["deltas"], serde_json::json!([]));
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+
+        let linked_target = inputs.join("textures/base-target.png");
+        std::fs::rename(inputs.join("textures/base.png"), &linked_target)
+            .expect("moves texture behind a link");
+        symlink("base-target.png", inputs.join("textures/base.png"))
+            .expect("links texture inside its declared root");
+
+        let failure = run(dir.path());
+        assert_eq!(failure.status.code(), Some(2));
+        assert!(String::from_utf8_lossy(&failure.stderr).contains("traverses a symbolic link"));
+        assert_eq!(
+            std::fs::read(dir.path().join("character.glb")).unwrap(),
+            first_glb
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("character.assembly.json")).unwrap(),
+            first_evidence
+        );
+    }
 }

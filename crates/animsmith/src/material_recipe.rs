@@ -203,6 +203,23 @@ pub(crate) fn apply_material_texture_recipe(
     recipe_path: &Path,
     doc: &Document,
 ) -> Result<MaterialTextureRecipeApplication, MaterialTextureRecipeError> {
+    apply_material_texture_recipe_with_boundary(recipe_path, doc, None)
+}
+
+/// Apply a material recipe while confining every consumed path to `input_root`.
+pub(crate) fn apply_material_texture_recipe_in_root(
+    recipe_path: &Path,
+    doc: &Document,
+    input_root: &Path,
+) -> Result<MaterialTextureRecipeApplication, MaterialTextureRecipeError> {
+    apply_material_texture_recipe_with_boundary(recipe_path, doc, Some(input_root))
+}
+
+fn apply_material_texture_recipe_with_boundary(
+    recipe_path: &Path,
+    doc: &Document,
+    input_root: Option<&Path>,
+) -> Result<MaterialTextureRecipeApplication, MaterialTextureRecipeError> {
     let recipe_text = std::fs::read_to_string(recipe_path).map_err(|error| {
         MaterialTextureRecipeError::Recipe(format!(
             "cannot read {}: {error}",
@@ -236,13 +253,17 @@ pub(crate) fn apply_material_texture_recipe(
     }
 
     let recipe_base = recipe_path.parent().unwrap_or_else(|| Path::new("."));
-    let root = resolve_root(recipe_base, recipe.texture_root.as_deref())?;
+    let root = resolve_root(recipe_base, recipe.texture_root.as_deref(), input_root)?;
+    let path_policy = TexturePathPolicy {
+        recipe_base,
+        texture_root: root.as_deref(),
+        input_root,
+    };
     let mut prepared = Vec::with_capacity(doc.assets.materials.len() * 4);
     for (material_index, material) in doc.assets.materials.iter().enumerate() {
         let entry = entries[material.name.as_str()];
         prepared.push(prepare_texture(
-            recipe_base,
-            root.as_deref(),
+            path_policy,
             &entry.base_color,
             material_index,
             &material.name,
@@ -250,8 +271,7 @@ pub(crate) fn apply_material_texture_recipe(
             recipe.max_dimension,
         )?);
         prepared.push(prepare_texture(
-            recipe_base,
-            root.as_deref(),
+            path_policy,
             &entry.normal,
             material_index,
             &material.name,
@@ -260,8 +280,7 @@ pub(crate) fn apply_material_texture_recipe(
         )?);
         if let Some(path) = &entry.metallic_roughness {
             prepared.push(prepare_texture(
-                recipe_base,
-                root.as_deref(),
+                path_policy,
                 path,
                 material_index,
                 &material.name,
@@ -271,8 +290,7 @@ pub(crate) fn apply_material_texture_recipe(
         }
         if let Some(path) = &entry.occlusion {
             prepared.push(prepare_texture(
-                recipe_base,
-                root.as_deref(),
+                path_policy,
                 path,
                 material_index,
                 &material.name,
@@ -415,16 +433,24 @@ fn source_material_indices(
 fn resolve_root(
     base: &Path,
     declared_root: Option<&Path>,
+    input_root: Option<&Path>,
 ) -> Result<Option<PathBuf>, MaterialTextureRecipeError> {
     let Some(root) = declared_root else {
         return Ok(None);
     };
     validate_declared_path(root, true)?;
+    reject_linked_path(base, root)?;
     let joined = base.join(root);
     let canonical =
         std::fs::canonicalize(&joined).map_err(|_| MaterialTextureRecipeError::InvalidRoot {
             path: root.display().to_string(),
         })?;
+    if input_root.is_some_and(|input_root| !canonical.starts_with(input_root)) {
+        return Err(MaterialTextureRecipeError::UnsafePath {
+            path: root.display().to_string(),
+            reason: "resolves outside declared input root",
+        });
+    }
     if !std::fs::metadata(&canonical)
         .map(|metadata| metadata.is_dir())
         .unwrap_or(false)
@@ -436,32 +462,49 @@ fn resolve_root(
     Ok(Some(canonical))
 }
 
+#[derive(Clone, Copy)]
+struct TexturePathPolicy<'a> {
+    recipe_base: &'a Path,
+    texture_root: Option<&'a Path>,
+    input_root: Option<&'a Path>,
+}
+
 fn prepare_texture(
-    recipe_base: &Path,
-    root: Option<&Path>,
+    policy: TexturePathPolicy<'_>,
     declared_path: &Path,
     material_index: usize,
     material_name: &str,
     slot: TextureRole,
     max_dimension: u32,
 ) -> Result<PreparedTexture, MaterialTextureRecipeError> {
-    validate_declared_path(declared_path, root.is_some())?;
-    let joined = match root {
-        Some(root) => root.join(declared_path),
-        None => recipe_base.join(declared_path),
+    validate_declared_path(declared_path, policy.texture_root.is_some())?;
+    let path_base = match policy.texture_root {
+        Some(root) => root,
+        None => policy.recipe_base,
     };
+    reject_linked_path(path_base, declared_path)?;
+    let joined = path_base.join(declared_path);
     let canonical = std::fs::canonicalize(&joined).map_err(|error| {
         MaterialTextureRecipeError::TextureFile {
             path: declared_path.display().to_string(),
             reason: error.to_string(),
         }
     })?;
-    if let Some(root) = root
+    if let Some(root) = policy.texture_root
         && !canonical.starts_with(root)
     {
         return Err(MaterialTextureRecipeError::UnsafePath {
             path: declared_path.display().to_string(),
             reason: "resolves outside declared texture_root",
+        });
+    }
+    if policy
+        .input_root
+        .is_some_and(|input_root| !canonical.starts_with(input_root))
+    {
+        return Err(MaterialTextureRecipeError::UnsafePath {
+            path: declared_path.display().to_string(),
+            reason: "resolves outside declared input root",
         });
     }
     let metadata =
@@ -539,6 +582,28 @@ fn validate_declared_path(
             path: rendered,
             reason: "parent traversal is not allowed with texture_root",
         });
+    }
+    Ok(())
+}
+
+fn reject_linked_path(base: &Path, declared: &Path) -> Result<(), MaterialTextureRecipeError> {
+    let mut current = base.to_path_buf();
+    for component in declared.components() {
+        if component == Component::CurDir {
+            continue;
+        }
+        current.push(component.as_os_str());
+        let Ok(metadata) = std::fs::symlink_metadata(&current) else {
+            // The caller's canonicalize step owns the contextual missing or
+            // unreadable-path error. Nothing has been read at this point.
+            return Ok(());
+        };
+        if metadata.file_type().is_symlink() {
+            return Err(MaterialTextureRecipeError::UnsafePath {
+                path: declared.display().to_string(),
+                reason: "traverses a symbolic link",
+            });
+        }
     }
     Ok(())
 }
@@ -833,6 +898,77 @@ mod tests {
         assert!(matches!(
             apply_material_texture_recipe(&path, &document(&["one"])),
             Err(MaterialTextureRecipeError::UnsafePath { .. })
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_linked_texture_and_root_inside_the_declared_boundary() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let real_root = directory.path().join("real-textures");
+        std::fs::create_dir(&real_root).unwrap();
+        write_png(&real_root.join("target.png"));
+        symlink("target.png", real_root.join("linked.png")).unwrap();
+        let recipe_path = directory.path().join("recipe.toml");
+        std::fs::write(
+            &recipe_path,
+            recipe(
+                "[[materials]]\nname = \"one\"\nbase_color = \"linked.png\"\nnormal = \"target.png\"\n",
+                Some("real-textures"),
+            ),
+        )
+        .unwrap();
+        assert!(matches!(
+            apply_material_texture_recipe(&recipe_path, &document(&["one"])),
+            Err(MaterialTextureRecipeError::UnsafePath {
+                reason: "traverses a symbolic link",
+                ..
+            })
+        ));
+
+        std::fs::remove_file(real_root.join("linked.png")).unwrap();
+        symlink("real-textures", directory.path().join("linked-textures")).unwrap();
+        std::fs::write(
+            &recipe_path,
+            recipe(
+                "[[materials]]\nname = \"one\"\nbase_color = \"target.png\"\nnormal = \"target.png\"\n",
+                Some("linked-textures"),
+            ),
+        )
+        .unwrap();
+        assert!(matches!(
+            apply_material_texture_recipe(&recipe_path, &document(&["one"])),
+            Err(MaterialTextureRecipeError::UnsafePath {
+                reason: "traverses a symbolic link",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn assembly_boundary_rejects_unrooted_parent_texture() {
+        let directory = tempfile::tempdir().unwrap();
+        let input_root = directory.path().join("inputs");
+        std::fs::create_dir(&input_root).unwrap();
+        write_png(&directory.path().join("outside.png"));
+        let recipe_path = input_root.join("recipe.toml");
+        std::fs::write(
+            &recipe_path,
+            recipe(
+                "[[materials]]\nname = \"one\"\nbase_color = \"../outside.png\"\nnormal = \"../outside.png\"\n",
+                None,
+            ),
+        )
+        .unwrap();
+
+        assert!(matches!(
+            apply_material_texture_recipe_in_root(&recipe_path, &document(&["one"]), &input_root),
+            Err(MaterialTextureRecipeError::UnsafePath {
+                reason: "resolves outside declared input root",
+                ..
+            })
         ));
     }
 
