@@ -847,31 +847,37 @@ mod tests {
                 record(
                     "check-a",
                     vec![
-                        CoverageGap::new(CoverageGapCode::ROLES_UNRESOLVED, "roles"),
-                        CoverageGap::new(CoverageGapCode::MEASUREMENT_UNAVAILABLE, "measurement"),
+                        CoverageGap::new(CoverageGapCode::custom("test:roles"), "roles"),
+                        CoverageGap::new(
+                            CoverageGapCode::custom("test:measurement"),
+                            "measurement",
+                        ),
                     ],
                 ),
                 record(
                     "check-b",
-                    vec![CoverageGap::new(CoverageGapCode::ROLES_UNRESOLVED, "roles")],
+                    vec![CoverageGap::new(
+                        CoverageGapCode::custom("test:roles"),
+                        "roles",
+                    )],
                 ),
             ],
         );
 
         let text = render_text(std::slice::from_ref(&file), &[]);
         for row in [
-            "coverage[check-a] roles_unresolved ×1",
-            "coverage[check-a] measurement_unavailable ×1",
-            "coverage[check-b] roles_unresolved ×1",
+            "coverage[check-a] test:roles ×1",
+            "coverage[check-a] test:measurement ×1",
+            "coverage[check-b] test:roles ×1",
         ] {
             assert_eq!(text.matches(row).count(), 1, "{text}");
         }
 
         let markdown = render_markdown(&[file], &[]);
         for row in [
-            "| `check-a` | `roles_unresolved` | 1 |",
-            "| `check-a` | `measurement_unavailable` | 1 |",
-            "| `check-b` | `roles_unresolved` | 1 |",
+            "| `check-a` | `test:roles` | 1 |",
+            "| `check-a` | `test:measurement` | 1 |",
+            "| `check-b` | `test:roles` | 1 |",
         ] {
             assert_eq!(markdown.matches(row).count(), 1, "{markdown}");
         }

@@ -126,6 +126,13 @@ remain visible without executing. Severity overrides apply only to content
 findings. Coverage is nonblocking by default; the embedding host owns any
 required-check or release-lane policy.
 
+Built-in scope and gap codes may be emitted only by the checks declared in the
+core evidence-code authority; `CheckEvaluation::evaluated` returns a typed
+error when a different check claims one. Embedded checks retain an open
+vocabulary by using namespaced custom codes such as `acme:input_unavailable`.
+The public built-in-code slices are available to consumers that need to
+enumerate or allow-list animsmith-owned codes.
+
 For v0.1, prefer the crate-root flow: loader → role resolution → `Config` →
 `MetricGrids` → measurements/checks → findings. The durable automation
 contracts are deliberately narrower than the pre-1.0 Rust API:

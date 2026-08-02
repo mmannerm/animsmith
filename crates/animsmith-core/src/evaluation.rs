@@ -15,9 +15,22 @@ use crate::check::{Check, CheckCtx};
 use crate::config::SeveritySetting;
 use crate::finding::Finding;
 
+/// One authoritative built-in evidence-code definition.
+///
+/// The `builtin_codes!` rows below own each built-in code's serialized
+/// identity, meaning, and allowed emitters. Both runtime validation and the
+/// output-documentation contract consume these definitions.
+#[derive(Debug, Clone, Copy)]
+struct BuiltinEvidenceCode {
+    code: &'static str,
+    #[cfg_attr(not(test), allow(dead_code))]
+    meaning: &'static str,
+    emitted_by: &'static [&'static str],
+}
+
 macro_rules! builtin_codes {
     (
-        $kind:ident, $registry:ident, $docs:ident, $registry_doc:literal;
+        $kind:ident, $registry:ident, $definitions:ident, $error:ident, $registry_doc:literal;
         $($name:ident => $value:literal,
             meaning = $meaning:literal,
             emitted_by = [$($emitter:literal),+ $(,)?]),+ $(,)?
@@ -29,10 +42,32 @@ macro_rules! builtin_codes {
         #[doc = $registry_doc]
         pub const $registry: &[$kind] = &[$($kind::$name),+];
 
-        #[cfg(test)]
-        const $docs: &[(&str, &str, &[&str])] = &[
-            $(($value, $meaning, &[$($emitter),+])),+
+        const $definitions: &[BuiltinEvidenceCode] = &[
+            $(BuiltinEvidenceCode {
+                code: $value,
+                meaning: $meaning,
+                emitted_by: &[$($emitter),+],
+            }),+
         ];
+
+        impl $kind {
+            fn builtin_definition(self) -> Option<&'static BuiltinEvidenceCode> {
+                $definitions.iter().find(|definition| definition.code == self.0)
+            }
+
+            fn validate_emitter(self, check_id: &'static str) -> Result<(), EvaluationError> {
+                if self
+                    .builtin_definition()
+                    .is_some_and(|definition| !definition.emitted_by.contains(&check_id))
+                {
+                    return Err(EvaluationError::$error {
+                        check_id,
+                        code: self,
+                    });
+                }
+                Ok(())
+            }
+        }
     };
 }
 
@@ -89,8 +124,9 @@ pub struct EvaluationScopeCode(&'static str);
 builtin_codes!(
     EvaluationScopeCode,
     BUILTIN_EVALUATION_SCOPE_CODES,
-    BUILTIN_EVALUATION_SCOPE_CODE_DOCS,
-    "Built-in evaluation-scope codes used by animsmith's catalog.";
+    BUILTIN_EVALUATION_SCOPE_CODE_DEFINITIONS,
+    BuiltinEvaluationScopeEmitterMismatch,
+    "Complete built-in evaluation-scope vocabulary for consumers that need to inspect or allow-list animsmith's catalog codes. Custom checks may use additional namespaced codes.";
     FIRST_FRAME_REST_DELTA => "first_frame_rest_delta",
         meaning = "The named clip's first-frame/rest-pose rotation evidence was evaluated.",
         emitted_by = ["bind-pose"],
@@ -184,8 +220,9 @@ pub struct CoverageGapCode(&'static str);
 builtin_codes!(
     CoverageGapCode,
     BUILTIN_COVERAGE_GAP_CODES,
-    BUILTIN_COVERAGE_GAP_CODE_DOCS,
-    "Built-in coverage-gap codes used by animsmith's catalog.";
+    BUILTIN_COVERAGE_GAP_CODE_DEFINITIONS,
+    BuiltinCoverageGapEmitterMismatch,
+    "Complete built-in coverage-gap vocabulary for consumers that need to inspect or allow-list animsmith's catalog codes. Custom checks may use additional namespaced codes.";
     ROLES_UNRESOLVED => "roles_unresolved",
         meaning = "Required semantic rig roles were not resolved.",
         emitted_by = ["loop-seam", "root-motion-speed", "in-place", "foot-slide", "gait-group"],
@@ -317,8 +354,9 @@ impl CheckEvaluation {
     ///
     /// # Errors
     ///
-    /// Returns an error for an empty check id, malformed coverage codes, or
-    /// when a nested finding names a different check.
+    /// Returns an error for an empty check id, malformed coverage codes,
+    /// built-in evidence emitted by an undeclared check, or when a nested
+    /// finding names a different check.
     pub fn evaluated(check_id: &'static str, output: CheckOutput) -> Result<Self, EvaluationError> {
         if check_id.is_empty() {
             return Err(EvaluationError::InvalidCheckId(check_id));
@@ -342,31 +380,32 @@ impl CheckEvaluation {
                 finding_check_id: finding.check_id,
             });
         }
-        if output
-            .evaluated_scopes
-            .iter()
-            .any(|scope| scope.code.as_str().is_empty())
-        {
-            return Err(EvaluationError::InvalidCheckOutput {
-                check_id,
-                reason: "evaluated scope code cannot be empty",
-            });
+        for scope in &output.evaluated_scopes {
+            if scope.code.as_str().is_empty() {
+                return Err(EvaluationError::InvalidCheckOutput {
+                    check_id,
+                    reason: "evaluated scope code cannot be empty",
+                });
+            }
+            scope.code.validate_emitter(check_id)?;
         }
-        if output.gaps.iter().any(|gap| gap.code.as_str().is_empty()) {
-            return Err(EvaluationError::InvalidCheckOutput {
-                check_id,
-                reason: "coverage gap code cannot be empty",
-            });
-        }
-        if output.gaps.iter().any(|gap| {
-            gap.scope
-                .as_ref()
-                .is_some_and(|scope| scope.code.as_str().is_empty())
-        }) {
-            return Err(EvaluationError::InvalidCheckOutput {
-                check_id,
-                reason: "coverage gap scope code cannot be empty",
-            });
+        for gap in &output.gaps {
+            if gap.code.as_str().is_empty() {
+                return Err(EvaluationError::InvalidCheckOutput {
+                    check_id,
+                    reason: "coverage gap code cannot be empty",
+                });
+            }
+            gap.code.validate_emitter(check_id)?;
+            if let Some(scope) = &gap.scope {
+                if scope.code.as_str().is_empty() {
+                    return Err(EvaluationError::InvalidCheckOutput {
+                        check_id,
+                        reason: "coverage gap scope code cannot be empty",
+                    });
+                }
+                scope.code.validate_emitter(check_id)?;
+            }
         }
         Ok(Self {
             check_id,
@@ -529,6 +568,22 @@ pub enum EvaluationError {
         /// Mismatched nested finding id.
         finding_check_id: &'static str,
     },
+    /// A built-in completed or missing-work scope came from an undeclared check.
+    #[error("check {check_id:?} cannot emit built-in evaluation scope {code}")]
+    BuiltinEvaluationScopeEmitterMismatch {
+        /// Stable id of the check that emitted the scope.
+        check_id: &'static str,
+        /// Built-in scope code that does not declare this emitter.
+        code: EvaluationScopeCode,
+    },
+    /// A built-in coverage-gap code came from an undeclared check.
+    #[error("check {check_id:?} cannot emit built-in coverage gap {code}")]
+    BuiltinCoverageGapEmitterMismatch {
+        /// Stable id of the check that emitted the gap.
+        check_id: &'static str,
+        /// Built-in gap code that does not declare this emitter.
+        code: CoverageGapCode,
+    },
 }
 
 /// Evaluate a full catalog into one record per check.
@@ -541,8 +596,9 @@ pub enum EvaluationError {
 /// # Errors
 ///
 /// Returns an error for empty or duplicate catalog ids, unknown explicitly
-/// selected ids, malformed coverage evidence, or a nested finding whose id
-/// disagrees with its parent check.
+/// selected ids, malformed coverage evidence, built-in evidence emitted by an
+/// undeclared check, or a nested finding whose id disagrees with its parent
+/// check.
 pub fn evaluate_checks(
     ctx: &CheckCtx<'_>,
     checks: &[Box<dyn Check>],
@@ -603,13 +659,17 @@ pub fn evaluate_checks(
 }
 
 #[cfg(test)]
-mod docs_contract {
+mod authority_contract {
     use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
 
-    use super::{BUILTIN_COVERAGE_GAP_CODE_DOCS, BUILTIN_EVALUATION_SCOPE_CODE_DOCS};
+    use super::{
+        BUILTIN_COVERAGE_GAP_CODE_DEFINITIONS, BUILTIN_EVALUATION_SCOPE_CODE_DEFINITIONS,
+        BuiltinEvidenceCode, CheckEvaluation, CheckOutput, CoverageGap, CoverageGapCode,
+        EvaluationError, EvaluationScope, EvaluationScopeCode,
+    };
 
-    fn assert_reference_table(docs: &str, heading: &str, entries: &[(&str, &str, &[&str])]) {
+    fn assert_reference_table(docs: &str, heading: &str, entries: &[BuiltinEvidenceCode]) {
         let section = docs
             .split_once(heading)
             .unwrap_or_else(|| panic!("missing reference heading {heading:?}"))
@@ -622,7 +682,12 @@ mod docs_contract {
             .collect::<Vec<_>>();
         let expected = entries
             .iter()
-            .map(|(code, meaning, emitted_by)| {
+            .map(|definition| {
+                let BuiltinEvidenceCode {
+                    code,
+                    meaning,
+                    emitted_by,
+                } = definition;
                 assert!(
                     !meaning.trim().is_empty() && !meaning.contains(['\r', '\n']),
                     "{code} must have a one-line meaning"
@@ -662,13 +727,138 @@ mod docs_contract {
             assert_reference_table(
                 line_endings,
                 "Built-in gap codes are:",
-                BUILTIN_COVERAGE_GAP_CODE_DOCS,
+                BUILTIN_COVERAGE_GAP_CODE_DEFINITIONS,
             );
             assert_reference_table(
                 line_endings,
                 "Built-in completed/gap scope codes are:",
-                BUILTIN_EVALUATION_SCOPE_CODE_DOCS,
+                BUILTIN_EVALUATION_SCOPE_CODE_DEFINITIONS,
             );
+        }
+    }
+
+    #[test]
+    fn builtin_evidence_authority_has_unique_codes_and_known_emitters() {
+        let catalog_ids = crate::all_checks()
+            .into_iter()
+            .map(|check| check.id())
+            .collect::<BTreeSet<_>>();
+        let authorities = [
+            ("coverage-gap", BUILTIN_COVERAGE_GAP_CODE_DEFINITIONS),
+            (
+                "evaluation-scope",
+                BUILTIN_EVALUATION_SCOPE_CODE_DEFINITIONS,
+            ),
+        ];
+
+        for (kind, definitions) in authorities {
+            assert!(
+                definitions
+                    .iter()
+                    .all(|definition| !definition.code.is_empty()),
+                "{kind} authority codes must be nonempty"
+            );
+            let defined_codes = definitions
+                .iter()
+                .map(|definition| definition.code)
+                .collect::<BTreeSet<_>>();
+            assert_eq!(
+                defined_codes.len(),
+                definitions.len(),
+                "duplicate {kind} authority code"
+            );
+            for definition in definitions {
+                let emitters = definition
+                    .emitted_by
+                    .iter()
+                    .copied()
+                    .collect::<BTreeSet<_>>();
+                assert_eq!(
+                    emitters.len(),
+                    definition.emitted_by.len(),
+                    "{} has duplicate emitters",
+                    definition.code
+                );
+                for emitter in emitters {
+                    assert!(
+                        catalog_ids.contains(emitter),
+                        "{} declares unknown emitter {emitter:?}",
+                        definition.code
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_builtin_code_enforces_its_emitter_matrix() {
+        let catalog_ids = crate::all_checks()
+            .into_iter()
+            .map(|check| check.id())
+            .collect::<Vec<_>>();
+
+        for definition in BUILTIN_EVALUATION_SCOPE_CODE_DEFINITIONS {
+            for &check_id in &catalog_ids {
+                let code = EvaluationScopeCode::custom(definition.code);
+                let completed = CheckEvaluation::evaluated(
+                    check_id,
+                    CheckOutput::from_coverage(
+                        Vec::new(),
+                        vec![EvaluationScope::new(code)],
+                        Vec::new(),
+                    ),
+                );
+                let gap_scope = CheckEvaluation::evaluated(
+                    check_id,
+                    CheckOutput::from_coverage(
+                        Vec::new(),
+                        Vec::new(),
+                        vec![
+                            CoverageGap::new(CoverageGapCode::custom("test:gap"), "gap")
+                                .scope(EvaluationScope::new(code)),
+                        ],
+                    ),
+                );
+                if definition.emitted_by.contains(&check_id) {
+                    assert!(
+                        completed.is_ok(),
+                        "{} must allow {check_id:?}",
+                        definition.code
+                    );
+                    assert!(
+                        gap_scope.is_ok(),
+                        "{} must allow {check_id:?}",
+                        definition.code
+                    );
+                } else {
+                    let expected =
+                        EvaluationError::BuiltinEvaluationScopeEmitterMismatch { check_id, code };
+                    assert_eq!(completed.unwrap_err(), expected);
+                    assert_eq!(gap_scope.unwrap_err(), expected);
+                }
+            }
+        }
+
+        for definition in BUILTIN_COVERAGE_GAP_CODE_DEFINITIONS {
+            for &check_id in &catalog_ids {
+                let code = CoverageGapCode::custom(definition.code);
+                let gap = CheckEvaluation::evaluated(
+                    check_id,
+                    CheckOutput::from_coverage(
+                        Vec::new(),
+                        Vec::new(),
+                        vec![CoverageGap::new(code, "test gap")],
+                    ),
+                );
+                if definition.emitted_by.contains(&check_id) {
+                    assert!(gap.is_ok(), "{} must allow {check_id:?}", definition.code);
+                } else {
+                    assert_eq!(
+                        gap.unwrap_err(),
+                        EvaluationError::BuiltinCoverageGapEmitterMismatch { check_id, code }
+                    );
+                }
+            }
         }
     }
 
