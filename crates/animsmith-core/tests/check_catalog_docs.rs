@@ -24,22 +24,10 @@ fn docs_check_ids_match_the_registered_catalog() {
         return;
     };
 
-    assert_catalog_docs(
-        &readme,
-        &game_ready_clips,
-        &[(
-            "docs/pipeline-scenarios.md",
-            pipeline_scenarios.as_str(),
-            PIPELINE_MATRIX_MARKER,
-        )],
-    );
+    assert_catalog_docs(&readme, &game_ready_clips, &pipeline_scenarios);
 }
 
-fn assert_catalog_docs(
-    readme: &str,
-    game_ready_clips: &str,
-    partial_check_id_tables: &[(&str, &str, &str)],
-) {
+fn assert_catalog_docs(readme: &str, game_ready_clips: &str, pipeline_scenarios: &str) {
     let catalog = registered_check_ids();
     let mechanical = registered_mechanical_check_ids();
     let contract_aware: BTreeSet<_> = catalog.difference(&mechanical).copied().collect();
@@ -61,7 +49,7 @@ fn assert_catalog_docs(
     );
     assert_exact_ids(
         "docs/game-ready-clips.md File-ready level",
-        &guide_file_ready_check_ids(game_ready_clips, &catalog),
+        &guide_file_ready_check_ids(game_ready_clips),
         &mechanical,
     );
 
@@ -83,10 +71,9 @@ fn assert_catalog_docs(
         assert_no_unknown_check_ids(path, markdown, &catalog);
     }
 
-    for &(path, markdown, table_marker) in partial_check_id_tables {
-        let table = markdown_table_after(markdown, table_marker).join("\n");
-        assert_no_unknown_check_ids(path, &table, &catalog);
-    }
+    let pipeline_matrix =
+        markdown_table_after(pipeline_scenarios, PIPELINE_MATRIX_MARKER).join("\n");
+    assert_no_unknown_check_ids("docs/pipeline-scenarios.md", &pipeline_matrix, &catalog);
 }
 
 #[test]
@@ -142,19 +129,14 @@ fn assert_exact_ids(surface: &str, documented: &BTreeSet<&str>, expected: &BTree
         .copied()
         .filter(|id| !documented.contains(id))
         .collect();
-    assert!(
-        missing.is_empty(),
-        "{surface} does not document expected checks: {missing:?}"
-    );
-
-    let unknown: Vec<_> = documented
+    let unexpected: Vec<_> = documented
         .iter()
         .copied()
         .filter(|id| !expected.contains(id))
         .collect();
     assert!(
-        unknown.is_empty(),
-        "{surface} documents checks outside its expected partition: {unknown:?}"
+        missing.is_empty() && unexpected.is_empty(),
+        "{surface} check ids do not match; missing: {missing:?}; unexpected: {unexpected:?}"
     );
 }
 
@@ -204,14 +186,15 @@ fn guide_symptom_table_ids(guide: &str) -> BTreeSet<&str> {
         .collect()
 }
 
-fn guide_file_ready_check_ids<'a>(guide: &'a str, catalog: &BTreeSet<&str>) -> BTreeSet<&'a str> {
+fn guide_file_ready_check_ids(guide: &str) -> BTreeSet<&str> {
     inline_code_tokens(markdown_between(
         guide,
         "1. **File-ready**",
         "2. **Clip-ready**",
     ))
     .into_iter()
-    .filter(|token| catalog.contains(token))
+    .filter(|token| looks_like_check_id(token))
+    .filter(|token| !NON_CHECK_ID_LIKE_TOKENS.contains(token))
     .collect()
 }
 
@@ -287,57 +270,80 @@ fn panic_message(failure: Box<dyn std::any::Any + Send>) -> String {
 }
 
 #[test]
-fn partial_doc_stale_id_failure_names_the_file_and_id() {
+fn partial_doc_scan_covers_every_matrix_row_without_requiring_the_complete_catalog() {
     let Some((readme, game_ready_clips, pipeline_scenarios)) = read_source_catalog_docs() else {
         return;
     };
-    let stale_pipeline =
-        pipeline_scenarios.replacen("`scale-keys` warning", "`stale-scale-check` warning", 1);
-    assert_ne!(stale_pipeline, pipeline_scenarios, "mutation must apply");
+    let partial_result = std::panic::catch_unwind(|| {
+        assert_catalog_docs(&readme, &game_ready_clips, &pipeline_scenarios);
+    });
+    assert!(
+        partial_result.is_ok(),
+        "the partial matrix must not reproduce the complete catalog"
+    );
 
-    let failure = std::panic::catch_unwind(|| {
-        assert_catalog_docs(
-            &readme,
-            &game_ready_clips,
-            &[(
-                "docs/pipeline-scenarios.md",
-                stale_pipeline.as_str(),
-                PIPELINE_MATRIX_MARKER,
-            )],
-        );
-    })
-    .expect_err("a stale partial-doc check id must fail the docs gate");
-    let message = panic_message(failure);
+    for (documented, stale, offending) in [
+        (
+            "`scale-keys` warning",
+            "`stale-scale-check` warning",
+            "stale-scale-check",
+        ),
+        (
+            "`root-motion-speed`",
+            "`stale-speed-check`",
+            "stale-speed-check",
+        ),
+    ] {
+        let stale_pipeline = pipeline_scenarios.replacen(documented, stale, 1);
+        assert_ne!(stale_pipeline, pipeline_scenarios, "mutation must apply");
 
-    assert!(message.contains("docs/pipeline-scenarios.md"), "{message}");
-    assert!(message.contains("stale-scale-check"), "{message}");
+        let failure = std::panic::catch_unwind(|| {
+            assert_catalog_docs(&readme, &game_ready_clips, &stale_pipeline);
+        })
+        .expect_err("a stale partial-doc check id must fail the docs gate");
+        let message = panic_message(failure);
+
+        assert!(message.contains("docs/pipeline-scenarios.md"), "{message}");
+        assert!(message.contains(offending), "{message}");
+    }
 }
 
 #[test]
-fn readme_partition_mutation_fails_the_complete_docs_gate() {
-    let Some((readme, game_ready_clips, _)) = read_source_catalog_docs() else {
+fn both_readme_partition_directions_fail_the_complete_docs_gate() {
+    let Some((readme, game_ready_clips, pipeline_scenarios)) = read_source_catalog_docs() else {
         return;
     };
-    let mechanical_marker = "| `scale-keys` | warning";
-    let misplaced = readme.replacen(mechanical_marker, "| `fps` | warning", 1);
-    assert_ne!(misplaced, readme, "mutation must apply");
+    for (documented, misplaced, surface, offending) in [
+        (
+            "| `scale-keys` | warning",
+            "| `fps` | warning",
+            "README.md Mechanical checks table",
+            "fps",
+        ),
+        (
+            "| `fps` | warning",
+            "| `scale-keys` | warning",
+            "README.md Contract-aware checks table",
+            "scale-keys",
+        ),
+    ] {
+        let misplaced_readme = readme.replacen(documented, misplaced, 1);
+        assert_ne!(misplaced_readme, readme, "mutation must apply");
 
-    let failure = std::panic::catch_unwind(|| {
-        assert_catalog_docs(&misplaced, &game_ready_clips, &[]);
-    })
-    .expect_err("putting a contract-aware id in the mechanical table must fail");
-    let message = panic_message(failure);
+        let failure = std::panic::catch_unwind(|| {
+            assert_catalog_docs(&misplaced_readme, &game_ready_clips, &pipeline_scenarios);
+        })
+        .expect_err("putting an id in the wrong README partition must fail");
+        let message = panic_message(failure);
 
-    assert!(
-        message.contains("README.md Mechanical checks table"),
-        "{message}"
-    );
-    assert!(message.contains("scale-keys"), "{message}");
+        assert!(message.contains(surface), "{message}");
+        assert!(message.contains(offending), "{message}");
+    }
 }
 
 #[test]
 fn file_ready_partition_mutation_fails_the_complete_docs_gate() {
-    let Some((readme, game_ready_clips, _)) = read_source_catalog_docs() else {
+    let Some((readme, game_ready_clips, pipeline_scenarios)) = read_source_catalog_docs() else {
         return;
     };
     let file_ready = markdown_between(&game_ready_clips, "1. **File-ready**", "2. **Clip-ready**");
@@ -346,7 +352,7 @@ fn file_ready_partition_mutation_fails_the_complete_docs_gate() {
     let misplaced_guide = game_ready_clips.replacen(file_ready, &misplaced_file_ready, 1);
 
     let failure = std::panic::catch_unwind(|| {
-        assert_catalog_docs(&readme, &misplaced_guide, &[]);
+        assert_catalog_docs(&readme, &misplaced_guide, &pipeline_scenarios);
     })
     .expect_err("putting a contract-aware id in File-ready must fail");
     let message = panic_message(failure);
@@ -355,5 +361,5 @@ fn file_ready_partition_mutation_fails_the_complete_docs_gate() {
         message.contains("docs/game-ready-clips.md File-ready level"),
         "{message}"
     );
-    assert!(message.contains("constant-track"), "{message}");
+    assert!(message.contains("fps"), "{message}");
 }
