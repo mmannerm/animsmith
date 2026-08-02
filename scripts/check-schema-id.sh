@@ -13,6 +13,7 @@ fail() {
 check_schema() {
   file=$1
   expected=$2
+  shift 2
   schema_id=$(sed -nE 's/.*"\$id"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$file" | head -1)
   schema_const=$(sed -nE \
     '/"schema"[[:space:]]*:/,/}/ s/.*"const"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' \
@@ -24,15 +25,16 @@ check_schema() {
   if [ "$schema_const" != "$expected" ]; then
     fail "$file properties.schema const must be $expected (found ${schema_const:-none})"
   fi
-  for reference in crates/animsmith-core/src/contract.rs docs/output.md; do
+  for reference in "$@"; do
     if ! grep -Fq "$expected" "$reference"; then
       fail "$reference does not reference schema identity $expected"
     fi
   done
 }
 
-check_schema docs/schemas/output-v2.schema.json urn:animsmith:schema:output:2
-check_schema docs/schemas/measurements-v2.schema.json urn:animsmith:schema:measurements:2
+check_schema docs/schemas/output-v2.schema.json urn:animsmith:schema:output:2 crates/animsmith-core/src/contract.rs docs/output.md
+check_schema docs/schemas/measurements-v2.schema.json urn:animsmith:schema:measurements:2 crates/animsmith-core/src/contract.rs docs/output.md
+check_schema docs/schemas/conversion-evidence-v1.schema.json urn:animsmith:schema:conversion-evidence:1 docs/output.md docs/cli.md
 
 for removed_schema in \
   docs/schemas/output-v1.schema.json \
@@ -108,6 +110,7 @@ legacy_envelope_awk='
     escaped = 0
     closed_string = 0
     awaiting_version_depth = 0
+    awaiting_command_depth = 0
   }
   {
     # JSON strings cannot contain a raw newline. Candidate files are prose, so
@@ -131,7 +134,18 @@ legacy_envelope_awk='
           escaped = 1
         } else if (ch == "\"") {
           in_string = 0
-          closed_string = 1
+          if (awaiting_command_depth > 0) {
+            # Only the retired output envelope commands are legacy
+            # candidates. Other independently versioned JSON contracts may
+            # legitimately use schema_version 1.
+            if (token == "measure" || token == "lint" || token == "diff") {
+              mark_command(awaiting_command_depth)
+            }
+            awaiting_command_depth = 0
+            closed_string = 0
+          } else {
+            closed_string = 1
+          }
         } else {
           token = token ch
         }
@@ -146,7 +160,7 @@ legacy_envelope_awk='
           if (token == "schema_version") {
             awaiting_version_depth = depth
           } else if (token == "command") {
-            mark_command(depth)
+            awaiting_command_depth = depth
           }
           closed_string = 0
           continue

@@ -837,6 +837,40 @@ fn help_matches_compiled_feature_set() {
     );
 }
 
+#[cfg(feature = "fbx")]
+#[test]
+fn convert_help_exposes_static_bake_and_machine_evidence_contract() {
+    let output = animsmith()
+        .args(["convert", "--help"])
+        .output()
+        .expect("runs animsmith");
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    let out = stdout(&output);
+    assert!(out.contains("--bake-static-mesh-transforms"), "{out}");
+    assert!(out.contains("--format <FORMAT>"), "{out}");
+    assert!(out.contains("[default: text]"), "{out}");
+    assert!(out.contains("[possible values: text, json]"), "{out}");
+
+    let conflict = animsmith()
+        .args([
+            "convert",
+            "input.glb",
+            "-o",
+            "output.glb",
+            "--animation-only",
+            "--bake-static-mesh-transforms",
+        ])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(conflict.status.code(), Some(2));
+    assert!(
+        stderr(&conflict).contains("cannot be used with"),
+        "{}",
+        stderr(&conflict)
+    );
+}
+
 #[test]
 fn fix_help_lists_repair_possible_values() {
     let output = animsmith()

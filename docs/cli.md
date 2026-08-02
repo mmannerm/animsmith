@@ -52,7 +52,7 @@ animsmith lint <file...> [--format text|json|markdown] [--select id[,id]] [--all
 animsmith report <file> -o <report.html> [--clip name]
 animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor] [--fps N]
 animsmith fix <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
-animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb|out.gltf> [--animation-only]
+animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb|out.gltf> [--animation-only|--bake-static-mesh-transforms] [--format text|json]
 animsmith diff <before> <after> [--format text|json]
 ```
 
@@ -101,6 +101,26 @@ PNG/JPEG base-color and normal textures. Normal textures retain their glTF
 scale; FBX normal maps use glTF's default scale because ordinary FBX materials
 do not expose the same scalar.
 
+## Static mesh transform bake
+
+`convert --bake-static-mesh-transforms` is an explicit, opt-in conversion
+operation for a static mesh whose normalized placement must live directly in
+mesh-local geometry. It accumulates each accepted mesh node's rest transform
+through its hierarchy into positions, transforms normals with the
+inverse-transpose and normalizes them, and writes the result beneath a
+canonical identity root. Indices, UVs, model-supported material assignments,
+and embedded base-color and normal textures are retained. The default
+conversion is unchanged; `--bake-static-mesh-transforms` conflicts with
+`--animation-only`.
+
+The operation fails with exit code 2 rather than guessing when the input has
+any animation track, a skin signal, a mesh definition with no unambiguous
+single instance (including shared definitions), malformed or non-finite scene
+data, a singular or near-singular transform, or a reflection. Skin baking,
+animated-node baking, and reflection handling are outside this operation's
+contract. Same-platform runs over the same input and options produce a
+byte-identical artifact.
+
 ## Repairs
 
 Every repair is safe, lossless, and idempotent — that is the bar for
@@ -133,6 +153,13 @@ evidence has its own
 [`measurements-v2.schema.json`](schemas/measurements-v2.schema.json) contract.
 Alpha-era v1 and preview reports are not retained; regenerate them before
 using `diff`.
+
+`convert --format json` emits conversion evidence v1, with immutable identity
+`urn:animsmith:schema:conversion-evidence:1`; see [output.md](output.md) and
+[`conversion-evidence-v1.schema.json`](schemas/conversion-evidence-v1.schema.json).
+It records the requested options, counts from the written artifact, and, when
+requested, the exact static-mesh transforms baked into the output. `text` is
+the default human-readable write summary.
 
 Machine-readable lint rejects `--allow` so it cannot erase evidence. The flag
 remains a presentation and exit-policy convenience for text and Markdown.

@@ -8,6 +8,9 @@
 //! ([`contract::MeasureEnvelope`], [`contract::LintEnvelope`]), measurement diffs
 //! ([`diff::diff_measurements`]), structured findings ([`Finding`]), and
 //! check execution ([`CheckCtx`], [`all_checks`], [`evaluate_checks`]).
+//! The opt-in [`bake_static_mesh_transforms`] operation canonicalizes supported
+//! unanimated, unskinned mesh scenes into identity-root geometry and returns
+//! deterministic producer evidence.
 //! The [`animsmith-gltf`] and [`animsmith-fbx`] loader crates translate file
 //! formats into this model; their docs.rs pages continue the library path for
 //! format-specific loading and, for glTF, writing.
@@ -69,7 +72,7 @@
 //! same envelope types and immutable identities for CLI and embedded
 //! producers. The scene-asset
 //! structs in [`model`] and the pipeline-mechanical helpers in
-//! [`transform`] are public so the loader, writer, and CLI crates can
+//! [`transform`] and [`static_bake`] are public so the loader, writer, and CLI crates can
 //! share the same model, but they are less settled than the
 //! measurement/check embedding flow while the crate is pre-1.0. Metric
 //! formulas and individual Rust symbols are still subject to pre-1.0
@@ -98,6 +101,7 @@ pub mod metrics;
 pub mod model;
 pub mod profile;
 pub mod sample;
+pub mod static_bake;
 pub mod transform;
 
 pub use check::{Check, CheckCtx, all_checks, mechanical_checks};
@@ -128,3 +132,7 @@ pub use profile::{
     ResolvedRoles, RigProfile, Role, builtin_profiles, detect_profile, resolve_configured_roles,
 };
 pub use sample::{PoseGrid, TrackSample, default_frame_count, sample_clip, sample_track};
+pub use static_bake::{
+    StaticMeshBake, StaticMeshBakeError, StaticMeshBakeEvidence, StaticMeshBakeInstanceEvidence,
+    bake_static_mesh_transforms,
+};
