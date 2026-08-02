@@ -263,6 +263,18 @@ fn partial_doc_scan_covers_every_matrix_row_without_requiring_the_complete_catal
     let Some((readme, game_ready_clips, pipeline_scenarios)) = read_source_catalog_docs() else {
         return;
     };
+    let catalog = registered_check_ids();
+    let pipeline_matrix =
+        markdown_table_after(&pipeline_scenarios, PIPELINE_MATRIX_MARKER).join("\n");
+    let matrix_check_ids: BTreeSet<_> = inline_code_tokens(&pipeline_matrix)
+        .into_iter()
+        .filter(|token| catalog.contains(token))
+        .collect();
+    assert!(!matrix_check_ids.is_empty(), "matrix must name checks");
+    assert!(
+        matrix_check_ids.is_subset(&catalog) && matrix_check_ids.len() < catalog.len(),
+        "the matrix must remain a partial catalog reference"
+    );
     let partial_result = std::panic::catch_unwind(|| {
         assert_catalog_docs(&readme, &game_ready_clips, &pipeline_scenarios);
     });
@@ -271,20 +283,12 @@ fn partial_doc_scan_covers_every_matrix_row_without_requiring_the_complete_catal
         "the partial matrix must not reproduce the complete catalog"
     );
 
-    for (documented, stale, offending) in [
-        (
-            "`scale-keys` warning",
-            "`stale-scale-check` warning",
-            "stale-scale-check",
-        ),
-        (
-            "`root-motion-speed`",
-            "`stale-speed-check`",
-            "stale-speed-check",
-        ),
-    ] {
-        let stale_pipeline = pipeline_scenarios.replacen(documented, stale, 1);
-        assert_ne!(stale_pipeline, pipeline_scenarios, "mutation must apply");
+    for documented in matrix_check_ids {
+        let stale = format!("stale-{documented}");
+        let stale_matrix =
+            pipeline_matrix.replace(&format!("`{documented}`"), &format!("`{stale}`"));
+        assert_ne!(stale_matrix, pipeline_matrix, "mutation must apply");
+        let stale_pipeline = format!("{PIPELINE_MATRIX_MARKER}\n\n{stale_matrix}");
 
         let failure = std::panic::catch_unwind(|| {
             assert_catalog_docs(&readme, &game_ready_clips, &stale_pipeline);
@@ -293,7 +297,7 @@ fn partial_doc_scan_covers_every_matrix_row_without_requiring_the_complete_catal
         let message = panic_message(failure);
 
         assert!(message.contains("docs/pipeline-scenarios.md"), "{message}");
-        assert!(message.contains(offending), "{message}");
+        assert!(message.contains(&stale), "{message}");
     }
 }
 
@@ -328,6 +332,30 @@ fn both_readme_partition_directions_fail_the_complete_docs_gate() {
         assert!(message.contains(surface), "{message}");
         assert!(message.contains(offending), "{message}");
     }
+
+    let swapped_readme = readme
+        .replacen(
+            "| `scale-keys` | warning",
+            "| `partition-swap-placeholder` | warning",
+            1,
+        )
+        .replacen("| `fps` | warning", "| `scale-keys` | warning", 1)
+        .replacen(
+            "| `partition-swap-placeholder` | warning",
+            "| `fps` | warning",
+            1,
+        );
+    assert_ne!(swapped_readme, readme, "swap mutation must apply");
+    let failure = std::panic::catch_unwind(|| {
+        assert_catalog_docs(&swapped_readme, &game_ready_clips, &pipeline_scenarios);
+    })
+    .expect_err("swapping ids across README partitions must fail");
+    let message = panic_message(failure);
+    assert!(
+        message.contains("README.md Mechanical checks table"),
+        "{message}"
+    );
+    assert!(message.contains("fps"), "{message}");
 }
 
 #[test]
@@ -336,19 +364,21 @@ fn file_ready_partition_mutation_fails_the_complete_docs_gate() {
         return;
     };
     let file_ready = markdown_between(&game_ready_clips, "1. **File-ready**", "2. **Clip-ready**");
-    let misplaced_file_ready = file_ready.replacen("`constant-track`", "`fps`", 1);
-    assert_ne!(misplaced_file_ready, file_ready, "mutation must apply");
-    let misplaced_guide = game_ready_clips.replacen(file_ready, &misplaced_file_ready, 1);
+    for (replacement, offending) in [("`fps`", "fps"), ("", "constant-track")] {
+        let misplaced_file_ready = file_ready.replacen("`constant-track`", replacement, 1);
+        assert_ne!(misplaced_file_ready, file_ready, "mutation must apply");
+        let misplaced_guide = game_ready_clips.replacen(file_ready, &misplaced_file_ready, 1);
 
-    let failure = std::panic::catch_unwind(|| {
-        assert_catalog_docs(&readme, &misplaced_guide, &pipeline_scenarios);
-    })
-    .expect_err("putting a contract-aware id in File-ready must fail");
-    let message = panic_message(failure);
+        let failure = std::panic::catch_unwind(|| {
+            assert_catalog_docs(&readme, &misplaced_guide, &pipeline_scenarios);
+        })
+        .expect_err("File-ready partition drift must fail");
+        let message = panic_message(failure);
 
-    assert!(
-        message.contains("docs/game-ready-clips.md File-ready level"),
-        "{message}"
-    );
-    assert!(message.contains("fps"), "{message}");
+        assert!(
+            message.contains("docs/game-ready-clips.md File-ready level"),
+            "{message}"
+        );
+        assert!(message.contains(offending), "{message}");
+    }
 }
