@@ -273,7 +273,7 @@ gaps. Severity overrides therefore cannot turn missing evidence into a false
 error. `gait-group`, for example, can complete member-existence validation
 while reporting phase coherence as a gap. `severity = "off"` disables a check
 without hiding its applicability record. A check may also declare an opt-in
-default; assigning `note`, `warn`, or `error` enables it while retaining the
+default; assigning "note", "warn", or "error" enables it while retaining the
 same independent configuration record.
 
 The built-in evidence-code declarations are the single authority for each

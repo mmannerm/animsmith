@@ -125,8 +125,7 @@ The CLI crate is not the library API; it is one frontend over the same core.
 
 ## Checks
 
-Mechanical checks need no rig roles or clip expectations. Default-on checks run
-without project config; opt-in policy signals remain visible but disabled:
+Mechanical checks:
 
 | id | severity | what |
 |---|---|---|
@@ -139,6 +138,9 @@ without project config; opt-in policy signals remain visible but disabled:
 | `non-uniform-scale` | warning | non-uniform scale anywhere on the evaluated trajectory |
 | `constant-nonunit-scale` | off (opt-in) | constant non-unit scale channels, including single-key pins |
 | `constant-track` | note | multi-key tracks that never move |
+
+These checks need no rig roles or clip expectations. Default-on entries run
+without project config; opt-in policy signals remain visible but disabled.
 
 Contract-aware checks use declared expectations and, where needed, rig roles:
 
@@ -182,7 +184,7 @@ min_lr_amplitude_m = 0.03
 ```
 
 `--select`, `--allow`, and `[checks.*] severity` including `"off"`
-control what runs and how hard it fails. Assigning `note`, `warn`, or `error`
+control what runs and how hard it fails. Assigning "note", "warn", or "error"
 also enables an opt-in check such as `constant-nonunit-scale`. See the
 [worked config](https://github.com/mmannerm/animsmith/blob/main/examples/character.animsmith.toml)
 for a contract-style example.

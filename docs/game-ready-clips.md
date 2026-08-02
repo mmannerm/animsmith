@@ -127,7 +127,7 @@ them separate when you automate on the output:
 - **Was the check active?** The full catalog is selected by default;
   `--select` narrows the selected set, and `[checks.<id>] severity = "off"`
   disables a check. A built-in opt-in check stays disabled until its severity
-  is set to `note`, `warn`, or `error`. Final JSON still records inactive
+  is set to "note", "warn", or "error". Final JSON still records inactive
   checks without executing them.
 - **Did it apply here?** Contract-aware checks judge only declared
   expectations. With no `loop = true` clip in the config, `loop-seam`
