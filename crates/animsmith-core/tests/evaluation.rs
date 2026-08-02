@@ -41,6 +41,30 @@ impl Check for FindingCheck {
     }
 }
 
+struct OptInFindingCheck;
+
+impl Check for OptInFindingCheck {
+    fn id(&self) -> &'static str {
+        "opt-in-finding"
+    }
+
+    fn enabled_by_default(&self) -> bool {
+        false
+    }
+
+    fn evaluate(&self, _ctx: &CheckCtx) -> CheckOutput {
+        CheckOutput::from_coverage(
+            vec![Finding::new(
+                self.id(),
+                Severity::Note,
+                "opt-in content signal",
+            )],
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+}
+
 struct Partial;
 
 impl Check for Partial {
@@ -273,6 +297,45 @@ fn severity_override_changes_findings_but_not_gap_typing() {
         records[2].gaps()[0].code,
         CoverageGapCode::custom("test:roles_unresolved")
     );
+}
+
+#[test]
+fn opt_in_check_is_disabled_until_an_explicit_severity_enables_it() {
+    let doc = Document::default();
+    let roles = ResolvedRoles::default();
+    let checks: Vec<Box<dyn Check>> = vec![Box::new(OptInFindingCheck)];
+
+    let default_config = Config::default();
+    let default_grids = MetricGrids::new(&doc);
+    let default_ctx = CheckCtx::new(&default_grids, &roles, &default_config);
+    let records = evaluate_checks(&default_ctx, &checks, CheckSelection::All).unwrap();
+    assert_eq!(records[0].configuration(), ConfigurationState::Disabled);
+    assert_eq!(records[0].evaluation(), EvaluationState::NotEvaluated);
+    assert!(records[0].findings().is_empty());
+
+    for (setting, expected) in [
+        (SeveritySetting::Note, Severity::Note),
+        (SeveritySetting::Warn, Severity::Warning),
+        (SeveritySetting::Error, Severity::Error),
+    ] {
+        let enabled_config = Config {
+            checks: BTreeMap::from([(
+                "opt-in-finding".to_string(),
+                CheckSettings {
+                    severity: Some(setting),
+                    ..CheckSettings::default()
+                },
+            )]),
+            ..Config::default()
+        };
+        let enabled_grids = MetricGrids::new(&doc);
+        let enabled_ctx = CheckCtx::new(&enabled_grids, &roles, &enabled_config);
+        let records = evaluate_checks(&enabled_ctx, &checks, CheckSelection::All).unwrap();
+        assert_eq!(records[0].configuration(), ConfigurationState::Enabled);
+        assert_eq!(records[0].evaluation(), EvaluationState::Complete);
+        assert_eq!(records[0].findings().len(), 1);
+        assert_eq!(records[0].findings()[0].severity, expected);
+    }
 }
 
 #[test]

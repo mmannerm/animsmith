@@ -66,8 +66,9 @@ plainly what it did not evaluate — not to stamp the whole ladder.
    durations, clean track hygiene. This is animsmith's primary
    generic coverage: the mechanical checks (`nan`, `time-monotonic`,
    `quat-norm`, `quat-flip`, `duration-sanity`, `scale-keys`,
-   `constant-track`) run on every file with no configuration, and
-   `fix` repairs the two losslessly repairable defect classes
+   `non-uniform-scale`, `constant-track`) run on every file with no
+   configuration. The narrower `constant-nonunit-scale` policy signal is
+   registered but opt-in. `fix` repairs the two losslessly repairable defect classes
    (`quat-norm`, `quat-flip`).
 
 2. **Clip-ready** — the clip honors what you declared about it: loop
@@ -125,8 +126,9 @@ them separate when you automate on the output:
 
 - **Was the check active?** The full catalog is selected by default;
   `--select` narrows the selected set, and `[checks.<id>] severity = "off"`
-  disables a check. Final JSON still records inactive checks without
-  executing them.
+  disables a check. A built-in opt-in check stays disabled until its severity
+  is set to "note", "warn", or "error". Final JSON still records inactive
+  checks without executing them.
 - **Did it apply here?** Contract-aware checks judge only declared
   expectations. With no `loop = true` clip in the config, `loop-seam`
   has nothing to judge and is recorded as `not_applicable`.
@@ -335,12 +337,21 @@ they accumulate:
   exports. Harmless at runtime, wasteful on disk and in every blend
   the runtime evaluates — the `constant-track` check reports it as a
   note.
-- **Scale keys are usually an accident.** Scale animation on a skeletal
-  clip is typically an export artifact (a stray keyframe, a
-  unit-conversion bake), and many engine rigs ignore or mishandle it —
-  so its presence is a warning. Non-uniform scale is worse: most
-  runtimes and retargeters actively break on it, and the `scale-keys`
-  check calls it out separately.
+- **Scale facts have separate owners.** `scale-keys` warns only when the
+  interpolation-aware scale trajectory actually varies over time. A dense
+  constant channel is therefore redundancy, owned by `constant-track`, not
+  scale animation. `non-uniform-scale` independently warns when components
+  differ anywhere on the trajectory, including a constant channel. Teams
+  that also care about constant non-unit channels or single-key pins can
+  opt into the disabled-by-default signal:
+
+  ```toml
+  [checks.constant-nonunit-scale]
+  severity = "note"
+  ```
+
+  STEP, LINEAR, and CUBICSPLINE semantics are evaluated directly. Equal
+  cubic key values with moving tangents still count as temporal variation.
 
 ---
 
@@ -355,7 +366,7 @@ they accumulate:
 | Feet skate across blends | `gait-group` | `transform --gait-anchor` | `[gait_groups.<name>]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Feet slide within a clip | `foot-slide` | re-author in DCC | `[clips.<name>] speed_mps` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | T-posed limb, static bone, wrong bind | `missing-bones`, `frozen-bone`, `bind-pose` | re-export | `[clips.<name>] animates_bones`, `[rig]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
-| Bloat, retargeter breakage | `constant-track`, `scale-keys` | re-export with baked/clean channels | `[checks.<id>]` severity | [First gate](../examples/README.md#1-a-first-cli-gate) |
+| Bloat, retargeter breakage | `constant-track`, `scale-keys`, `non-uniform-scale`, opt-in `constant-nonunit-scale` | re-export with baked/clean channels | `[checks.<id>]` severity | [First gate](../examples/README.md#1-a-first-cli-gate) |
 
 Where the repair column says *re-export*, that is deliberate: animsmith
 rewrites a clip only in ways whose correctness its own checks can

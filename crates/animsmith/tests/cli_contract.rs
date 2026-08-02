@@ -12,13 +12,15 @@ const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:2";
 const HOSTILE_PRESENTATION_TEXT: &str = "forged\nline\u{1b}[31m\u{2028}\u{2029}\u{202e}";
 const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v2.schema.json");
 const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v2.schema.json");
-const EXPECTED_CHECK_IDS: [&str; 16] = [
+const EXPECTED_CHECK_IDS: [&str; 18] = [
     "nan",
     "time-monotonic",
     "quat-norm",
     "quat-flip",
     "duration-sanity",
     "scale-keys",
+    "non-uniform-scale",
+    "constant-nonunit-scale",
     "constant-track",
     "missing-bones",
     "frozen-bone",
@@ -1307,6 +1309,33 @@ fn lint_json_uses_versioned_envelope() {
         .map(|check| check["check_id"].as_str().expect("check id"))
         .collect();
     assert_eq!(actual_ids, EXPECTED_CHECK_IDS.into_iter().collect());
+    let constant_nonunit = json["files"][0]["checks"]
+        .as_array()
+        .expect("checks")
+        .iter()
+        .find(|check| check["check_id"] == "constant-nonunit-scale")
+        .expect("opt-in scale-channel record");
+    assert_eq!(constant_nonunit["selection"], "selected");
+    assert_eq!(constant_nonunit["configuration"], "disabled");
+    assert_eq!(constant_nonunit["evaluation"], "not_evaluated");
+    assert_eq!(
+        constant_nonunit
+            .as_object()
+            .expect("check object")
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        [
+            "check_id",
+            "selection",
+            "configuration",
+            "applicability",
+            "evaluation",
+            "findings",
+        ]
+        .into_iter()
+        .collect()
+    );
     assert_evaluation_summary_matches_checks(&json);
     assert_output_schema_valid(&json);
 }
@@ -1449,6 +1478,86 @@ fn lint_json_keeps_disabled_distinct_from_unselected() {
         .expect("duration record");
     assert_eq!(duration["selection"], "unselected");
     assert_eq!(duration["configuration"], "enabled");
+    let constant_nonunit = checks
+        .iter()
+        .find(|check| check["check_id"] == "constant-nonunit-scale")
+        .expect("opt-in scale-channel record");
+    assert_eq!(constant_nonunit["selection"], "unselected");
+    assert_eq!(constant_nonunit["configuration"], "disabled");
+    assert_eq!(constant_nonunit["evaluation"], "not_evaluated");
+}
+
+#[test]
+fn lint_json_explicit_severity_enables_opt_in_check() {
+    let dir = unique_temp_dir("v2-opt-in-scale-channel");
+    let config = write_config(
+        dir.path(),
+        "opt-in.toml",
+        "[checks.constant-nonunit-scale]\nseverity = \"note\"\n",
+    );
+    let output = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args([
+            "lint",
+            fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
+            "--format",
+            "json",
+            "--select",
+            "constant-nonunit-scale",
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    let check = json["files"][0]["checks"]
+        .as_array()
+        .expect("checks")
+        .iter()
+        .find(|check| check["check_id"] == "constant-nonunit-scale")
+        .expect("opt-in scale-channel record");
+    assert_eq!(check["selection"], "selected");
+    assert_eq!(check["configuration"], "enabled");
+    assert_eq!(check["evaluation"], "complete");
+    assert_eq!(check["findings"], json!([]));
+    assert_evaluation_summary_matches_checks(&json);
+    assert_output_schema_valid(&json);
+}
+
+#[test]
+fn lint_json_selects_non_uniform_scale_independently() {
+    let output = animsmith()
+        .args([
+            "lint",
+            fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
+            "--format",
+            "json",
+            "--select",
+            "non-uniform-scale",
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    let checks = json["files"][0]["checks"].as_array().expect("checks");
+    let non_uniform = checks
+        .iter()
+        .find(|check| check["check_id"] == "non-uniform-scale")
+        .expect("non-uniform scale record");
+    assert_eq!(non_uniform["selection"], "selected");
+    assert_eq!(non_uniform["configuration"], "enabled");
+    assert_eq!(non_uniform["evaluation"], "complete");
+    assert_eq!(non_uniform["findings"], json!([]));
+    let scale_keys = checks
+        .iter()
+        .find(|check| check["check_id"] == "scale-keys")
+        .expect("scale keys record");
+    assert_eq!(scale_keys["selection"], "unselected");
+    assert_eq!(scale_keys["evaluation"], "not_evaluated");
+    assert_evaluation_summary_matches_checks(&json);
+    assert_output_schema_valid(&json);
 }
 
 #[test]

@@ -147,9 +147,10 @@ The `animsmith-core` crate root owns the full
 [API status](https://docs.rs/animsmith-core) contract. Rust symbols, model and
 transform types, metric formulas, and diff thresholds may still be refined
 before 1.0. Match `#[non_exhaustive]` result types with a fallback arm. The
-`Check` trait supports experiments with custom checks, but there is no stable
-plugin registry yet; wrapping animsmith findings with host-owned checks keeps
-that boundary explicit.
+`Check` trait supports experiments with custom checks, including opt-in checks
+that override `enabled_by_default`; an explicit "note", "warn", or "error"
+setting activates one. There is no stable plugin registry yet; wrapping
+animsmith findings with host-owned checks keeps that boundary explicit.
 
 ## Migrating an existing pipeline
 

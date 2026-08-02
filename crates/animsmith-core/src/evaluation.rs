@@ -87,7 +87,8 @@ pub enum SelectionState {
 pub enum ConfigurationState {
     /// The check is enabled.
     Enabled,
-    /// `severity = "off"` disabled the check.
+    /// The check is opt-in without an enabling severity, or
+    /// `severity = "off"` disabled it.
     Disabled,
 }
 
@@ -588,10 +589,12 @@ pub enum EvaluationError {
 
 /// Evaluate a full catalog into one record per check.
 ///
-/// Selection and `severity = "off"` are recorded independently. Inactive
-/// checks never evaluate, but their cheap applicability predicate still
-/// establishes whether declared work exists. Coverage gaps are nonblocking
-/// evidence; callers own any stricter policy.
+/// Selection and configuration are recorded independently. A check can be
+/// disabled by `severity = "off"` or by its opt-in default; an explicit
+/// `note`, `warn`, or `error` severity enables an opt-in check. Inactive checks
+/// never evaluate, but their cheap applicability predicate still establishes
+/// whether declared work exists. Coverage gaps are nonblocking evidence;
+/// callers own any stricter policy.
 ///
 /// # Errors
 ///
@@ -629,10 +632,11 @@ pub fn evaluate_checks(
             SelectionState::Unselected
         };
         let setting = ctx.config.check_settings(check.id()).severity;
-        let configuration = if setting == Some(SeveritySetting::Off) {
-            ConfigurationState::Disabled
-        } else {
-            ConfigurationState::Enabled
+        let configuration = match setting {
+            Some(SeveritySetting::Off) => ConfigurationState::Disabled,
+            Some(_) => ConfigurationState::Enabled,
+            None if check.enabled_by_default() => ConfigurationState::Enabled,
+            None => ConfigurationState::Disabled,
         };
         let applicability = check.applicability(ctx);
 
