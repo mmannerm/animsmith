@@ -42,7 +42,7 @@ numbers, `lint` for the declared contract, `fix` for safe repairs,
 | Root motion | Is each clip in-place or root-motion? | Pin `[clips.<name>] in_place` and `speed_mps`; verify with `lint` and measure drift with `measure`. |
 | Conform | What needs artistic cleanup or retargeting? | Use findings as DCC work orders; reserve `fix` and `transform` for safe mechanical operations only. |
 | Validate | Does the clip meet the game contract? | Run config-backed `lint`; use `--deny-warnings` when warnings must block CI. |
-| Optimize | Did cleanup change what matters? | Run `lint` for `constant-track` / `scale-keys` hygiene, then use `diff` for metric deltas that catch motion drift. |
+| Optimize | Did cleanup change what matters? | Run `lint` for `constant-track`, `scale-keys`, and `non-uniform-scale` hygiene, then use `diff` for metric deltas that catch motion drift. |
 | Export | Which artifact does the engine consume? | Use `convert` for FBX/glTF handoff; keep transformed GLB and any sidecars separate from raw source. |
 | Gate/report | Can reviewers and automation trust the change? | Attach JSON or Markdown lint output to CI, and generate `report` artifacts for visual review. |
 
@@ -111,7 +111,7 @@ the contract grows to cover them or the team accepts them:
 
 | File | Evaluated clean | Findings | Not evaluated |
 |---|---|---|---|
-| `run_forward.glb` | mechanical checks except `scale-keys` | `scale-keys` warning | loop, speed, and gait checks — no expectations declared yet |
+| `run_forward.glb` | mechanical checks except `scale-keys` | `scale-keys` warning | loop, speed, and gait checks — no expectations declared yet; opt-in scale-channel policy disabled |
 | `idle.glb` | mechanical checks, `loop-seam` | — | `root-motion-speed` — no `speed_mps` declared |
 
 Use the first pass to catch obvious importer hazards: non-finite values,

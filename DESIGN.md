@@ -271,8 +271,10 @@ a cheap applicability predicate and one evaluation method. The evaluation
 returns content findings separately from completed scopes and typed coverage
 gaps. Severity overrides therefore cannot turn missing evidence into a false
 error. `gait-group`, for example, can complete member-existence validation
-while reporting phase coherence as a gap. `severity = "off"` disables the
-check without hiding its applicability record.
+while reporting phase coherence as a gap. `severity = "off"` disables a check
+without hiding its applicability record. A check may also declare an opt-in
+default; assigning `note`, `warn`, or `error` enables it while retaining the
+same independent configuration record.
 
 The built-in evidence-code declarations are the single authority for each
 scope or gap code's machine identity, meaning, and allowed emitting check ids.
@@ -286,6 +288,7 @@ they use namespaced custom codes rather than extending a closed enum.
 ```rust
 pub trait Check {
     fn id(&self) -> &'static str;              // "loop-seam", "quat-flip", …
+    fn enabled_by_default(&self) -> bool;       // true unless policy is opt-in
     fn applicability(&self, ctx: &CheckCtx) -> Applicability;
     fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput;
 }
@@ -315,8 +318,10 @@ golden-test against.
 | `quat-norm` | rotation keys with \|q\|−1 beyond tolerance | raw | eps (1e-3) | new |
 | `quat-flip` | adjacent keys with `dot < 0` (long-way slerp in engines that don't neighborhood-correct) | raw | severity | new |
 | `duration-sanity` | zero/degenerate duration; channels within one clip ending at different times; frame count non-integral at declared fps | raw + meta | expected fps list, pinned duration | reference contract `duration_s` pin |
-| `scale-keys` | scale tracks present (warn); non-uniform scale (opt-in error) | raw | severities | new |
-| `constant-track` | track never deviating from rest beyond eps (bloat), or a track that is *unexpectedly* constant | raw | eps | new |
+| `scale-keys` | interpolation-aware temporal scale variation beyond tolerance | raw trajectory | severity | new |
+| `non-uniform-scale` | component inequality anywhere on the interpolation-aware scale trajectory | raw trajectory | severity | new |
+| `constant-nonunit-scale` | constant non-unit scale channel or single-key pin | raw trajectory | opt-in severity (off by default) | new |
+| `constant-track` | redundant multi-key representation whose interpolation-aware trajectory never moves | raw trajectory | eps | new |
 | `frozen-bone` | required bone's max angular deviation from first frame below floor | grid + roles/meta | `min_rotation_deg` | reference contract rotation floor + measured rotation ranges |
 | `loop-seam` | last→first position wrap discontinuity of feet-relative-to-hips, normalized by the *local neighbour* per-frame step, with a stride floor so stationary clips skip | grid + Hips/feet/toe roles | `max_ratio`, `min_stride_step_m` | `locomotion_metrics.py` — port verbatim |
 | `root-motion-speed` | horizontal root/hips displacement ÷ duration vs declared `speed_mps`; flags stray speed pins on non-locomotion clips | grid + Root/Hips | pinned speed + tolerance (reference gate: 15%) | reference bake |

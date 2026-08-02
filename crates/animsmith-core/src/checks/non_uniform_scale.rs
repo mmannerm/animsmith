@@ -1,8 +1,5 @@
-//! `scale-keys` — scale animation on a skeletal clip is usually an
-//! export accident (a stray keyframe, a unit-conversion bake) and many
-//! engine rigs ignore or mishandle it. Presence is a warning;
-//! non-uniform scale (which most runtimes and retargeters actively
-//! break on) is called out separately.
+//! `non-uniform-scale` — unequal scale components are risky for many rigs and
+//! retargeters, whether they are animated or held in a constant channel.
 
 use super::tracks;
 use super::vec3_trajectory::analyze;
@@ -11,36 +8,37 @@ use crate::evaluation::CheckOutput;
 use crate::finding::{Finding, Severity};
 use crate::model::Property;
 
-/// Component range beyond which scale animation is temporally varying.
-pub const TEMPORAL_VARIATION_TOLERANCE: f32 = 1e-4;
+/// Relative component spread beyond which a scale trajectory counts as
+/// non-uniform.
+pub const NON_UNIFORM_TOLERANCE: f32 = 1e-4;
 
-pub struct ScaleKeys;
+pub struct NonUniformScale;
 
-impl Check for ScaleKeys {
+impl Check for NonUniformScale {
     fn id(&self) -> &'static str {
-        "scale-keys"
+        "non-uniform-scale"
     }
 
     fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
         let mut findings = Vec::new();
-        let doc = ctx.doc;
-        for (clip, bone, track) in tracks(doc) {
+        for (clip, bone, track) in tracks(ctx.doc) {
             if track.property != Property::Scale {
                 continue;
             }
             let Some(trajectory) = analyze(track) else {
                 continue;
             };
-            if trajectory.varies(TEMPORAL_VARIATION_TOLERANCE) {
+            if trajectory.is_non_uniform(NON_UNIFORM_TOLERANCE) {
                 findings.push(
                     Finding::new(
                         self.id(),
                         Severity::Warning,
-                        "scale animation present — verify it is intentional; many rigs \
-                         and retargeters mishandle animated scale",
+                        "non-uniform scale present — verify it is intentional; many rigs and \
+                         retargeters mishandle non-uniform scale",
                     )
                     .clip(clip)
-                    .bone(bone),
+                    .bone(bone)
+                    .time(trajectory.max_pairwise_time()),
                 );
             }
         }

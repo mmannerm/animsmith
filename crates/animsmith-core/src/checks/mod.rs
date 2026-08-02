@@ -2,6 +2,7 @@
 //! defaults documented on the type. See DESIGN.md §6 for the tiers.
 
 pub mod bind_pose;
+pub mod constant_nonunit_scale;
 pub mod constant_track;
 pub mod duration_sanity;
 pub mod foot_slide;
@@ -12,11 +13,14 @@ pub mod in_place;
 pub mod loop_seam;
 pub mod missing_bones;
 pub mod nan;
+pub mod non_uniform_scale;
 pub mod quat_flip;
 pub mod quat_norm;
 pub mod root_motion_speed;
 pub mod scale_keys;
 pub mod time_monotonic;
+
+mod vec3_trajectory;
 
 use crate::evaluation::{CoverageGap, CoverageGapCode};
 use crate::model::{Document, Track};

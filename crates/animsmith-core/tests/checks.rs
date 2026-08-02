@@ -2,10 +2,12 @@
 //! discipline: start from a clean document (zero findings), corrupt
 //! exactly one thing, and assert exactly the expected check fires.
 
+use animsmith_core::config::CheckSettings;
 use animsmith_core::model::*;
 use animsmith_core::profile::ResolvedRoles;
 use animsmith_core::{
-    CheckCtx, CheckSelection, Config, MetricGrids, Severity, evaluate_checks, mechanical_checks,
+    CheckCtx, CheckSelection, Config, MetricGrids, Severity, SeveritySetting, evaluate_checks,
+    mechanical_checks,
 };
 use glam::{Quat, Vec3};
 
@@ -65,10 +67,13 @@ fn clean_doc() -> Document {
 }
 
 fn lint(doc: &Document) -> Vec<animsmith_core::Finding> {
-    let config = Config::default();
+    lint_with_config(doc, &Config::default())
+}
+
+fn lint_with_config(doc: &Document, config: &Config) -> Vec<animsmith_core::Finding> {
     let roles = ResolvedRoles::default();
     let grids = MetricGrids::new(doc);
-    let ctx = CheckCtx::new(&grids, &roles, &config);
+    let ctx = CheckCtx::new(&grids, &roles, config);
     evaluate_checks(&ctx, &mechanical_checks(), CheckSelection::All)
         .expect("valid built-in catalog")
         .into_iter()
@@ -255,9 +260,20 @@ fn non_uniform_scale_gets_second_finding() {
             .iter()
             .filter(|f| f.check_id == "scale-keys")
             .count(),
-        2,
+        1,
         "got: {findings:#?}"
     );
+    assert_eq!(
+        findings
+            .iter()
+            .filter(|f| f.check_id == "non-uniform-scale")
+            .count(),
+        1,
+        "got: {findings:#?}"
+    );
+    assert!(findings.iter().any(|finding| {
+        finding.check_id == "non-uniform-scale" && finding.severity == Severity::Warning
+    }));
 }
 
 #[test]
@@ -271,6 +287,302 @@ fn all_ones_scale_track_is_constant_not_scaling() {
         values: TrackValues::Vec3s(vec![Vec3::ONE, Vec3::ONE]),
     });
     assert_single(&doc, "constant-track", Severity::Note);
+}
+
+fn add_scale_track(
+    doc: &mut Document,
+    interpolation: Interpolation,
+    times: Vec<f32>,
+    values: Vec<Vec3>,
+) {
+    doc.clips[0].tracks.push(Track {
+        bone: 1,
+        property: Property::Scale,
+        interpolation,
+        times,
+        values: TrackValues::Vec3s(values),
+    });
+}
+
+fn scale_finding_ids(doc: &Document) -> Vec<&'static str> {
+    scale_finding_ids_with_config(doc, &Config::default())
+}
+
+fn scale_finding_ids_with_config(doc: &Document, config: &Config) -> Vec<&'static str> {
+    let mut ids: Vec<_> = lint_with_config(doc, config)
+        .into_iter()
+        .filter(|finding| {
+            matches!(
+                finding.check_id,
+                "scale-keys" | "non-uniform-scale" | "constant-nonunit-scale" | "constant-track"
+            )
+        })
+        .map(|finding| finding.check_id)
+        .collect();
+    ids.sort_unstable();
+    ids
+}
+
+fn presence_enabled_config() -> Config {
+    let mut config = Config::default();
+    config.checks.insert(
+        "constant-nonunit-scale".into(),
+        CheckSettings {
+            severity: Some(SeveritySetting::Note),
+            ..CheckSettings::default()
+        },
+    );
+    config
+}
+
+#[test]
+fn constant_uniform_scale_is_redundancy_not_temporal_variation() {
+    let mut doc = clean_doc();
+    add_scale_track(
+        &mut doc,
+        Interpolation::Linear,
+        vec![0.0, 0.5, 1.0],
+        vec![Vec3::ONE; 3],
+    );
+    assert_eq!(scale_finding_ids(&doc), vec!["constant-track"]);
+}
+
+#[test]
+fn step_and_linear_scale_changes_are_temporal_variation() {
+    for interpolation in [Interpolation::Step, Interpolation::Linear] {
+        let mut doc = clean_doc();
+        add_scale_track(
+            &mut doc,
+            interpolation,
+            vec![0.0, 1.0],
+            vec![Vec3::ONE, Vec3::splat(1.2)],
+        );
+        assert_eq!(scale_finding_ids(&doc), vec!["scale-keys"]);
+    }
+}
+
+#[test]
+fn cubic_interior_temporal_excursion_is_not_constant() {
+    let mut doc = clean_doc();
+    // Equal endpoints, but equal positive tangents generate an interior
+    // Hermite excursion. A key-only test would incorrectly call this bloat.
+    add_scale_track(
+        &mut doc,
+        Interpolation::CubicSpline,
+        vec![0.0, 1.0],
+        vec![
+            Vec3::ZERO,
+            Vec3::ONE,
+            Vec3::splat(0.004),
+            Vec3::splat(0.004),
+            Vec3::ONE,
+            Vec3::ZERO,
+        ],
+    );
+    assert_eq!(scale_finding_ids(&doc), vec!["scale-keys"]);
+}
+
+#[test]
+fn cubic_duration_scales_tangent_excursion() {
+    let mut doc = clean_doc();
+    // The first 0.25 s segment stays under tolerance; the same tangent on
+    // the 2 s segment must exceed it after glTF's tangent-times-dt scaling.
+    add_scale_track(
+        &mut doc,
+        Interpolation::CubicSpline,
+        vec![0.0, 0.25, 2.25],
+        vec![
+            Vec3::ZERO,
+            Vec3::ONE,
+            Vec3::splat(0.001),
+            Vec3::splat(0.001),
+            Vec3::ONE,
+            Vec3::splat(0.001),
+            Vec3::splat(0.001),
+            Vec3::ONE,
+            Vec3::ZERO,
+        ],
+    );
+    assert_eq!(scale_finding_ids(&doc), vec!["scale-keys"]);
+}
+
+#[test]
+fn cubic_interior_non_uniformity_has_its_own_finding() {
+    let mut doc = clean_doc();
+    add_scale_track(
+        &mut doc,
+        Interpolation::CubicSpline,
+        vec![0.0, 1.0],
+        vec![
+            Vec3::ZERO,
+            Vec3::ONE,
+            Vec3::new(0.004, 0.0, 0.0),
+            Vec3::new(0.004, 0.0, 0.0),
+            Vec3::ONE,
+            Vec3::ZERO,
+        ],
+    );
+    assert_eq!(
+        scale_finding_ids(&doc),
+        vec!["non-uniform-scale", "scale-keys"]
+    );
+}
+
+#[test]
+fn constant_nonunit_scale_is_opt_in_and_distinct_from_nonuniformity() {
+    let mut doc = clean_doc();
+    add_scale_track(
+        &mut doc,
+        Interpolation::Linear,
+        vec![0.0, 1.0],
+        vec![Vec3::new(1.2, 1.0, 1.0); 2],
+    );
+    assert_eq!(
+        scale_finding_ids(&doc),
+        vec!["constant-track", "non-uniform-scale"]
+    );
+    assert_eq!(
+        scale_finding_ids_with_config(&doc, &presence_enabled_config()),
+        vec![
+            "constant-nonunit-scale",
+            "constant-track",
+            "non-uniform-scale"
+        ]
+    );
+}
+
+#[test]
+fn single_key_nonunit_pin_is_not_redundant() {
+    let mut doc = clean_doc();
+    add_scale_track(
+        &mut doc,
+        Interpolation::Linear,
+        vec![0.0],
+        vec![Vec3::splat(1.2)],
+    );
+    assert!(scale_finding_ids(&doc).is_empty());
+    assert_eq!(
+        scale_finding_ids_with_config(&doc, &presence_enabled_config()),
+        vec!["constant-nonunit-scale"]
+    );
+}
+
+#[test]
+fn exact_and_over_tolerance_temporal_ranges_are_distinguished() {
+    let mut exact = clean_doc();
+    add_scale_track(
+        &mut exact,
+        Interpolation::Linear,
+        vec![0.0, 1.0],
+        vec![Vec3::ZERO, Vec3::splat(1e-4)],
+    );
+    assert!(
+        !scale_finding_ids(&exact).contains(&"scale-keys"),
+        "exact tolerance must remain constant"
+    );
+
+    let mut over = clean_doc();
+    add_scale_track(
+        &mut over,
+        Interpolation::Linear,
+        vec![0.0, 1.0],
+        vec![Vec3::ZERO, Vec3::splat(1.001e-4)],
+    );
+    assert!(
+        scale_finding_ids(&over).contains(&"scale-keys"),
+        "values over tolerance must vary"
+    );
+}
+
+#[test]
+fn exact_and_over_tolerance_non_uniform_spreads_are_distinguished() {
+    let mut exact = clean_doc();
+    add_scale_track(
+        &mut exact,
+        Interpolation::Linear,
+        vec![0.0],
+        vec![Vec3::new(1e-4, 0.0, 0.0)],
+    );
+    assert!(
+        !scale_finding_ids(&exact).contains(&"non-uniform-scale"),
+        "exact tolerance must remain uniform"
+    );
+
+    let mut over = clean_doc();
+    add_scale_track(
+        &mut over,
+        Interpolation::Linear,
+        vec![0.0],
+        vec![Vec3::new(1.001e-4, 0.0, 0.0)],
+    );
+    assert!(
+        scale_finding_ids(&over).contains(&"non-uniform-scale"),
+        "component spread over tolerance must be non-uniform"
+    );
+}
+
+#[test]
+fn stored_values_on_each_side_of_unit_tolerance_are_distinguished() {
+    let unit = 1.0f32;
+    let mut at_or_below = unit;
+    let immediately_over = loop {
+        let next = f32::from_bits(at_or_below.to_bits() + 1);
+        if next - unit > 1e-4 {
+            break next;
+        }
+        at_or_below = next;
+    };
+    assert!(at_or_below - unit <= 1e-4);
+
+    let enabled = presence_enabled_config();
+    let mut tolerated = clean_doc();
+    add_scale_track(
+        &mut tolerated,
+        Interpolation::Linear,
+        vec![0.0],
+        vec![Vec3::splat(at_or_below)],
+    );
+    assert!(
+        !scale_finding_ids_with_config(&tolerated, &enabled).contains(&"constant-nonunit-scale")
+    );
+
+    let mut over = clean_doc();
+    add_scale_track(
+        &mut over,
+        Interpolation::Linear,
+        vec![0.0],
+        vec![Vec3::splat(immediately_over)],
+    );
+    let findings = lint_with_config(&over, &enabled);
+    assert!(findings.iter().any(|finding| {
+        finding.check_id == "constant-nonunit-scale" && finding.severity == Severity::Note
+    }));
+}
+
+#[test]
+fn cubic_quaternion_tangents_do_not_count_as_redundant() {
+    let mut doc = clean_doc();
+    let q = Quat::IDENTITY;
+    doc.clips[0].tracks[0] = Track {
+        bone: 1,
+        property: Property::Rotation,
+        interpolation: Interpolation::CubicSpline,
+        times: vec![0.0, 1.0],
+        values: TrackValues::Quats(vec![
+            Quat::from_xyzw(0.0, 0.0, 0.0, 0.0),
+            q,
+            Quat::from_xyzw(0.1, 0.0, 0.0, 0.0),
+            Quat::from_xyzw(0.1, 0.0, 0.0, 0.0),
+            q,
+            Quat::from_xyzw(0.0, 0.0, 0.0, 0.0),
+        ]),
+    };
+    assert!(
+        !lint(&doc)
+            .iter()
+            .any(|finding| finding.check_id == "constant-track"),
+        "moving cubic quaternion must not be called redundant"
+    );
 }
 
 #[test]

@@ -91,6 +91,16 @@ pub trait Check {
     /// output, and `--select`.
     fn id(&self) -> &'static str;
 
+    /// Whether the check runs when its configuration has no explicit
+    /// `severity` setting.
+    ///
+    /// Most checks are enabled by default. Checks for intentionally opt-in
+    /// policy signals may return `false`; setting their severity to `note`,
+    /// `warn`, or `error` enables them, while `off` keeps them disabled.
+    fn enabled_by_default(&self) -> bool {
+        true
+    }
+
     /// Whether this document and configuration declare work for the check.
     ///
     /// The runner calls this cheap predicate even for disabled or unselected
@@ -105,7 +115,9 @@ pub trait Check {
     fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput;
 }
 
-/// The mechanical P0 checks: no rig profile, no config required.
+/// The mechanical P0 catalog: no rig roles or clip expectations required.
+/// Individual policy signals may still be disabled by default and enabled by
+/// an explicit severity.
 pub fn mechanical_checks() -> Vec<Box<dyn Check>> {
     vec![
         Box::new(crate::checks::nan::Nan),
@@ -114,6 +126,8 @@ pub fn mechanical_checks() -> Vec<Box<dyn Check>> {
         Box::new(crate::checks::quat_flip::QuatFlip),
         Box::new(crate::checks::duration_sanity::DurationSanity),
         Box::new(crate::checks::scale_keys::ScaleKeys),
+        Box::new(crate::checks::non_uniform_scale::NonUniformScale),
+        Box::new(crate::checks::constant_nonunit_scale::ConstantNonunitScale),
         Box::new(crate::checks::constant_track::ConstantTrack),
     ]
 }

@@ -125,7 +125,8 @@ The CLI crate is not the library API; it is one frontend over the same core.
 
 ## Checks
 
-Mechanical checks run without project config:
+Mechanical checks need no rig roles or clip expectations. Default-on checks run
+without project config; opt-in policy signals remain visible but disabled:
 
 | id | severity | what |
 |---|---|---|
@@ -134,7 +135,9 @@ Mechanical checks run without project config:
 | `quat-norm` | error | non-unit rotation keys |
 | `quat-flip` | warning | adjacent rotation keys on opposite hemispheres |
 | `duration-sanity` | error/warning | degenerate duration, empty clips, or mismatched channel ends |
-| `scale-keys` | warning | animated scale or non-uniform scale |
+| `scale-keys` | warning | interpolation-aware temporal scale variation |
+| `non-uniform-scale` | warning | non-uniform scale anywhere on the evaluated trajectory |
+| `constant-nonunit-scale` | off (opt-in) | constant non-unit scale channels, including single-key pins |
 | `constant-track` | note | multi-key tracks that never move |
 
 Contract-aware checks use declared expectations and, where needed, rig roles:
@@ -179,7 +182,8 @@ min_lr_amplitude_m = 0.03
 ```
 
 `--select`, `--allow`, and `[checks.*] severity` including `"off"`
-control what runs and how hard it fails. See the
+control what runs and how hard it fails. Assigning `note`, `warn`, or `error`
+also enables an opt-in check such as `constant-nonunit-scale`. See the
 [worked config](https://github.com/mmannerm/animsmith/blob/main/examples/character.animsmith.toml)
 for a contract-style example.
 

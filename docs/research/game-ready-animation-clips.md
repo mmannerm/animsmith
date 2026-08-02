@@ -44,7 +44,8 @@ Shipped or already documented capabilities include:
 - A self-contained HTML `report` command.
 - Stable kebab-case check ids such as `time-monotonic`, `nan`,
   `quat-norm`, `quat-flip`, `duration-sanity`, `scale-keys`,
-  `constant-track`, `loop-seam`, `gait-group`, `root-motion-speed`,
+  `non-uniform-scale`, `constant-nonunit-scale`, `constant-track`,
+  `loop-seam`, `gait-group`, `root-motion-speed`,
   `missing-bones`, `frozen-bone`, `in-place`, `foot-slide`, `fps`, and
   `bind-pose`.
 - Safe mechanical repairs through `fix`, including quaternion

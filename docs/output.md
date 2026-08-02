@@ -219,7 +219,9 @@ Lint adds exactly one `files[].checks[]` record for every built-in catalog
 check. Each record keeps these dimensions independent:
 
 - `selection`: `selected` or `unselected`;
-- `configuration`: `enabled` or `disabled`;
+- `configuration`: `enabled` or `disabled`; a check is disabled when its
+  severity is `off` or its built-in policy is opt-in and no enabling severity
+  was configured;
 - `applicability`: `applicable` or `not_applicable`;
 - `evaluation`: `complete`, `partial`, or `not_evaluated`;
 - content `findings`;
