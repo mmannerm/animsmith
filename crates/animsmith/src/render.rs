@@ -783,8 +783,10 @@ mod tests {
     use animsmith_core::{
         Bone, CheckEvaluation, CheckOutput, Clip, CoverageGap, CoverageGapCode, Document,
         EvaluationScope, EvaluationScopeCode, Finding, LintFileReport, MeasureFileReport,
-        MeasurementContract, ResolvedRoles, RigInfo, SourceInfo, Transform,
+        MeasurementContract, ResolvedRoles, RigInfo, Role, SourceInfo, Track, TrackValues,
+        Transform,
     };
+    use animsmith_core::{Interpolation, Property};
     use serde_json::json;
     use std::collections::BTreeMap;
 
@@ -875,6 +877,47 @@ mod tests {
     }
 
     #[test]
+    fn measure_renderer_preserves_optional_absence_and_report_order() {
+        let clips = serde_json::from_value(json!({
+            "idle": {
+                "duration_s": 2.0,
+                "frame_count": 1,
+                "animated_bones": [],
+                "bone_rotation_range_deg": {}
+            }
+        }))
+        .expect("clip measurements deserialize");
+        let meshes = serde_json::from_value(json!([{
+            "name": "plain",
+            "vertex_count": 0,
+            "max_joints_per_vertex": 0
+        }]))
+        .expect("mesh measurements deserialize");
+        let reports = [
+            MeasureFileReport::new(
+                "first.glb",
+                empty_rig(),
+                MeasurementContract::new(clips, meshes).expect("finite measurements"),
+            ),
+            MeasureFileReport::new(
+                "second.glb",
+                empty_rig(),
+                MeasurementContract::new(BTreeMap::new(), Vec::new()).expect("empty measurements"),
+            ),
+        ];
+
+        assert_eq!(
+            render_measure_text(&reports).collect::<Vec<_>>(),
+            vec![
+                "first.glb:",
+                "  idle: 2.000s, 1 frames, 0 animated bones",
+                "  mesh plain: 0 verts",
+                "second.glb:",
+            ]
+        );
+    }
+
+    #[test]
     fn diff_renderer_owns_clean_dirty_layout_and_escaping() {
         assert_eq!(
             render_diff_text(&[]).collect::<Vec<_>>(),
@@ -905,6 +948,54 @@ mod tests {
             vec![
                 "  walk\\nclip duration_s: moved 1.0000 -> 1.1000",
                 "1 significant change(s)",
+            ]
+        );
+    }
+
+    #[test]
+    fn diff_renderer_preserves_value_presence_branches_and_delta_order() {
+        let before = serde_json::from_value(json!({
+            "a_removed": {
+                "duration_s": 1.0,
+                "frame_count": 1,
+                "animated_bones": [],
+                "bone_rotation_range_deg": {}
+            },
+            "b_shared": {
+                "duration_s": 1.0,
+                "frame_count": 1,
+                "animated_bones": [],
+                "bone_rotation_range_deg": {},
+                "loop_seam_ratio": 1.0
+            }
+        }))
+        .expect("before measurements deserialize");
+        let after = serde_json::from_value(json!({
+            "b_shared": {
+                "duration_s": 1.0,
+                "frame_count": 1,
+                "animated_bones": [],
+                "bone_rotation_range_deg": {},
+                "speed_mps": 2.0
+            },
+            "c_added": {
+                "duration_s": 1.0,
+                "frame_count": 1,
+                "animated_bones": [],
+                "bone_rotation_range_deg": {}
+            }
+        }))
+        .expect("after measurements deserialize");
+        let deltas = animsmith_core::diff::diff_measurements(&before, &after);
+
+        assert_eq!(
+            render_diff_text(&deltas).collect::<Vec<_>>(),
+            vec![
+                "  a_removed clip: clip removed",
+                "  b_shared loop_seam_ratio: disappeared 1.0000 -> (gone)",
+                "  b_shared speed_mps: appeared (none) -> 2.0000",
+                "  c_added clip: clip added",
+                "4 significant change(s)",
             ]
         );
     }
@@ -956,6 +1047,57 @@ mod tests {
     }
 
     #[test]
+    fn inspect_renderer_preserves_resolved_roles_and_deep_hierarchy() {
+        let skeleton = animsmith_core::Skeleton {
+            bones: vec![
+                Bone {
+                    name: "root".into(),
+                    parent: None,
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "hips".into(),
+                    parent: Some(0),
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "spine".into(),
+                    parent: Some(1),
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+            ],
+        };
+        let roles = ResolvedRoles::from_names(
+            &skeleton,
+            [
+                (Role::Root, "root".to_string()),
+                (Role::Hips, "hips".to_string()),
+            ],
+        );
+        let doc = Document {
+            skeleton,
+            ..Document::default()
+        };
+
+        assert_eq!(
+            render_inspect(&doc, &roles).collect::<Vec<_>>(),
+            vec![
+                "rig profile: custom (2 roles)",
+                "  root         -> root",
+                "  hips         -> hips",
+                "skeleton: 3 bones",
+                "  root",
+                "    hips",
+                "      spine",
+                "clips: 0",
+            ]
+        );
+    }
+
+    #[test]
     fn fix_renderer_owns_multiline_layout_and_escaping() {
         let mut report = FixReport::default();
         report.skipped.push("bone\ntrack".into());
@@ -965,6 +1107,31 @@ mod tests {
             vec![
                 "  skipped[quat-flip]: bone\\ntrack",
                 "0 key(s) would be fixed across 0 track(s) -> no output written",
+            ]
+        );
+    }
+
+    #[test]
+    fn fix_renderer_preserves_repaired_tracks_and_written_target_summary() {
+        let mut quats = animsmith_testkit::quats_from_angles(&[0.0, 0.1, 0.2, 0.3, 0.4]);
+        quats[3] = -quats[3];
+        let mut doc = animsmith_testkit::two_bone_rotation_doc("clip\nname", quats, false);
+        doc.skeleton.bones[1].name = "bone\nname".into();
+        let dir = tempfile::tempdir().expect("creates temporary directory");
+        let input = dir.path().join("input.glb");
+        let safe_output = dir.path().join("fixed.glb");
+        animsmith_gltf::write::write(&doc, &input).expect("writes repair fixture");
+        let report =
+            animsmith_gltf::fix::FixSession::apply_to_path(&input, &safe_output, Repair::QuatFlip)
+                .expect("repairs generated fixture");
+        let hostile_target = Path::new("fixed\npath\u{1b}[31m.glb");
+
+        assert_eq!(report.total_fixed(), 1, "analytic fixture repair count");
+        assert_eq!(
+            render_fix_report(Repair::QuatFlip, &report, Some(hostile_target)).collect::<Vec<_>>(),
+            vec![
+                "  fixed[quat-flip] clip 'clip\\nname' bone 'bone\\nname': 1 key(s) hemisphere-normalized",
+                "1 key(s) fixed across 1 track(s) -> fixed\\npath\\u{1b}[31m.glb",
             ]
         );
     }
@@ -992,22 +1159,97 @@ mod tests {
             render_transform_gait_anchor_skipped("walk\nclip", "bad\nreason"),
             "  gait-anchor skipped 'walk\\nclip': bad\\nreason\n"
         );
+
+        let clip_with_tracks = Clip {
+            name: "multi".into(),
+            duration_s: 1.0,
+            tracks: vec![
+                Track {
+                    bone: 0,
+                    property: Property::Translation,
+                    interpolation: Interpolation::Linear,
+                    times: vec![0.0, 1.0],
+                    values: TrackValues::Vec3s(vec![
+                        animsmith_core::glam::Vec3::ZERO,
+                        animsmith_core::glam::Vec3::ONE,
+                    ]),
+                },
+                Track {
+                    bone: 0,
+                    property: Property::Rotation,
+                    interpolation: Interpolation::Linear,
+                    times: vec![0.0, 0.25, 0.5, 1.0],
+                    values: TrackValues::Quats(vec![animsmith_core::glam::Quat::IDENTITY; 4]),
+                },
+            ],
+        };
+        assert_eq!(
+            render_transform_slice(&clip_with_tracks, 0.0, 1.0),
+            "  sliced 'multi' to [0:1]s (4 keys max)\n"
+        );
+        assert_eq!(
+            render_transform_gait_anchor("walk", 0.25, 0.0, 0, None),
+            "  gait-anchored 'walk': phase 0.250 -> 0.000 (offset 0, seam n/a)\n"
+        );
     }
 
     #[cfg(feature = "report")]
     #[test]
     fn report_renderer_owns_write_summary_and_path_escaping() {
         assert_eq!(
-            render_report_written(Path::new("report\nname.html"), 2, 3, 1_250_000),
-            "wrote report\\nname.html (2 clip(s), 3 finding(s), 1.2 MB)\n"
+            render_report_written(Path::new("report\nname.html"), 2, 3, 1_100_000),
+            "wrote report\\nname.html (2 clip(s), 3 finding(s), 1.1 MB)\n"
+        );
+    }
+
+    #[test]
+    fn write_summary_renderer_preserves_optional_dropped_clip_suffix() {
+        let dir = tempfile::tempdir().expect("creates temporary directory");
+        let empty_path = dir.path().join("empty.glb");
+        let empty_summary = animsmith_gltf::write::write(&Document::default(), &empty_path)
+            .expect("writes empty document");
+        assert_eq!(
+            render_write_summary(&empty_path, &empty_summary),
+            format!(
+                "wrote {} (0 node(s), 0 clip(s), 0 mesh(es) / 0 position(s), 0 material(s))\n",
+                empty_path.display()
+            )
+        );
+
+        let dropped_path = dir.path().join("dropped.glb");
+        let dropped_doc = Document {
+            skeleton: animsmith_core::Skeleton {
+                bones: vec![Bone {
+                    name: "root".into(),
+                    parent: None,
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                }],
+            },
+            clips: vec![Clip {
+                name: "empty".into(),
+                duration_s: 1.0,
+                tracks: Vec::new(),
+            }],
+            ..Document::default()
+        };
+        let dropped_summary = animsmith_gltf::write::write(&dropped_doc, &dropped_path)
+            .expect("writes document with dropped clip");
+        assert_eq!(
+            render_write_summary(&dropped_path, &dropped_summary),
+            format!(
+                "wrote {} (1 node(s), 0 clip(s), 0 mesh(es) / 0 position(s), 0 material(s)); dropped 1 clip(s) with no writable tracks\n",
+                dropped_path.display()
+            )
         );
     }
 
     #[test]
     fn operator_error_renderer_owns_prefix_newline_and_escaping() {
+        let hostile = "bad\npath\u{1b}[31m\u{2028}left\u{2029}right\u{202e}evil";
         assert_eq!(
-            render_operator_error("bad\npath"),
-            "animsmith: bad\\npath\n"
+            render_operator_error(hostile),
+            "animsmith: bad\\npath\\u{1b}[31m\\u{2028}left\\u{2029}right\\u{202e}evil\n"
         );
     }
 
