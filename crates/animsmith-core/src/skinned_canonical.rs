@@ -385,14 +385,18 @@ fn validate(
                 index: instance.mesh,
             },
         )?;
-        let geometry_world = *worlds.get(instance.node).ok_or(
+        // Keep the attachment-node reference structurally valid, but derive
+        // geometry bind space from the skin equation itself. FBX geometric
+        // transform helper nodes can make the attachment's ordinary rest
+        // world differ from the geometry-to-world matrix encoded by every
+        // inverse bind.
+        worlds.get(instance.node).ok_or(
             SkinnedBindPoseCanonicalizationError::MissingReference {
                 source_node_index: instance.source_node_index,
                 kind: "node",
                 index: instance.node,
             },
         )?;
-        validate_geometry_transform(geometry_world, instance.source_node_index)?;
         if instance.skin_joints.is_empty() {
             return Err(SkinnedBindPoseCanonicalizationError::UnskinnedInstance {
                 source_node_index: instance.source_node_index,
@@ -406,6 +410,7 @@ fn validate(
                 joints: instance.skin_joints.len(),
             });
         }
+        let mut geometry_world = None;
         for (slot, &joint) in instance.skin_joints.iter().enumerate() {
             let joint_world = *worlds.get(joint).ok_or(
                 SkinnedBindPoseCanonicalizationError::MissingReference {
@@ -414,7 +419,6 @@ fn validate(
                     index: joint,
                 },
             )?;
-            let expected = inverse_joint_matrix(joint_world, joint)? * geometry_world;
             let actual = if instance.skin_ibms.is_empty() {
                 doc.skeleton.bones[joint].inverse_bind.ok_or(
                     SkinnedBindPoseCanonicalizationError::MissingInverseBind {
@@ -425,7 +429,12 @@ fn validate(
             } else {
                 instance.skin_ibms[slot]
             };
-            if !matrix4_is_finite(actual) || !matrix_approximately_equal(actual, expected) {
+            let candidate = joint_world * actual;
+            if !matrix4_is_finite(actual)
+                || !matrix4_is_finite(candidate)
+                || geometry_world
+                    .is_some_and(|geometry| !matrix_approximately_equal(candidate, geometry))
+            {
                 return Err(
                     SkinnedBindPoseCanonicalizationError::InconsistentInverseBind {
                         source_node_index: instance.source_node_index,
@@ -433,7 +442,10 @@ fn validate(
                     },
                 );
             }
+            geometry_world.get_or_insert(candidate);
         }
+        let geometry_world = geometry_world.expect("non-empty skin joints established above");
+        validate_geometry_transform(geometry_world, instance.source_node_index)?;
         validate_mesh(mesh, instance.mesh, instance)?;
         plans.push(Plan {
             instance: instance_ordinal,

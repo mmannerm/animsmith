@@ -62,6 +62,14 @@ pub enum AssemblyError {
         /// Another matching bone.
         second: BoneId,
     },
+    /// A caller-selected completion target is outside the base skeleton.
+    #[error("selected base bone {bone} is outside the base skeleton ({bone_count} bones)")]
+    SelectedBoneOutOfBounds {
+        /// Invalid selected bone.
+        bone: BoneId,
+        /// Number of base bones.
+        bone_count: usize,
+    },
 }
 
 /// Selects which absent local-transform channels [`complete_rest_pose_tracks`]
@@ -214,13 +222,39 @@ pub fn complete_rest_pose_tracks(
     base: &Skeleton,
     options: RestPoseTrackOptions,
 ) -> usize {
+    complete_rest_pose_tracks_for_bones(clip, base, 0..base.bones.len(), options)
+        .expect("the complete base-skeleton range is valid")
+}
+
+/// Add absent rest-pose channels for an explicit base-bone selection.
+///
+/// Bone ids are sorted and deduplicated before tracks are appended, so caller
+/// ordering cannot change the output. Existing tracks are never altered.
+///
+/// # Errors
+///
+/// Returns [`AssemblyError::SelectedBoneOutOfBounds`] when a selected id is not
+/// present in `base`.
+pub fn complete_rest_pose_tracks_for_bones(
+    clip: &mut Clip,
+    base: &Skeleton,
+    bones: impl IntoIterator<Item = BoneId>,
+    options: RestPoseTrackOptions,
+) -> Result<usize, AssemblyError> {
     let properties = [
         (Property::Translation, options.translation),
         (Property::Rotation, options.rotation),
         (Property::Scale, options.scale),
     ];
     let mut added = 0;
-    for (bone, base_bone) in base.bones.iter().enumerate() {
+    let bones = bones.into_iter().collect::<BTreeSet<_>>();
+    for bone in bones {
+        let Some(base_bone) = base.bones.get(bone) else {
+            return Err(AssemblyError::SelectedBoneOutOfBounds {
+                bone,
+                bone_count: base.bones.len(),
+            });
+        };
         for (property, enabled) in properties {
             if !enabled
                 || clip
@@ -240,7 +274,7 @@ pub fn complete_rest_pose_tracks(
             added += 1;
         }
     }
-    added
+    Ok(added)
 }
 
 fn rest_track(
