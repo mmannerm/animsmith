@@ -740,6 +740,38 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn later_image_failure_does_not_mutate_the_source_document() {
+        let directory = tempfile::tempdir().unwrap();
+        write_png(&directory.path().join("base.png"));
+        std::fs::write(
+            directory.path().join("normal.png"),
+            b"\x89PNG\r\n\x1a\ntruncated",
+        )
+        .unwrap();
+        let path = directory.path().join("recipe.toml");
+        std::fs::write(
+            &path,
+            recipe(
+                "[[materials]]\nname = \"one\"\nbase_color = \"base.png\"\nnormal = \"normal.png\"\n",
+                None,
+            ),
+        )
+        .unwrap();
+        let source = document(&["one"]);
+
+        assert!(matches!(
+            apply_material_texture_recipe(&path, &source),
+            Err(MaterialTextureRecipeError::Image { .. })
+        ));
+        assert_eq!(
+            source.assets.materials[0].base_color,
+            [0.25, 0.5, 0.75, 1.0]
+        );
+        assert!(source.assets.materials[0].base_color_texture.is_none());
+        assert!(source.assets.materials[0].normal_texture.is_none());
+    }
+
     #[cfg(unix)]
     #[test]
     fn root_rejects_symlink_escape() {
