@@ -1,4 +1,4 @@
-use animsmith_core::all_checks;
+use animsmith_core::{all_checks, mechanical_checks};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -8,13 +8,20 @@ const NON_CHECK_ID_LIKE_TOKENS: &[&str] = &[
     "animsmith-fbx",
     "animsmith-gltf",
     "animsmith-report",
+    "convert",
+    "diff",
     "fix",
     "humanoid",
+    "inspect",
+    "lint",
     "measure",
     "mixamo",
+    "report",
     "transform",
     "ue-mannequin",
 ];
+
+const PARTIAL_CHECK_ID_DOCS: &[&str] = &["docs/pipeline-scenarios.md"];
 
 #[test]
 fn docs_check_ids_match_the_registered_catalog() {
@@ -26,16 +33,28 @@ fn docs_check_ids_match_the_registered_catalog() {
     let readme = read_workspace_doc(&workspace_root, "README.md");
     let game_ready_clips = read_workspace_doc(&workspace_root, "docs/game-ready-clips.md");
     let catalog = registered_check_ids();
+    let mechanical = registered_mechanical_check_ids();
+    let contract_aware: BTreeSet<_> = catalog.difference(&mechanical).copied().collect();
 
-    assert_catalog_ids(
-        "README.md check tables",
-        &readme_check_table_ids(&readme),
-        &catalog,
+    assert_exact_ids(
+        "README.md Mechanical checks table",
+        &readme_mechanical_check_table_ids(&readme),
+        &mechanical,
     );
-    assert_catalog_ids(
+    assert_exact_ids(
+        "README.md Contract-aware checks table",
+        &readme_contract_aware_check_table_ids(&readme),
+        &contract_aware,
+    );
+    assert_exact_ids(
         "docs/game-ready-clips.md symptom table",
         &guide_symptom_table_ids(&game_ready_clips),
         &catalog,
+    );
+    assert_exact_ids(
+        "docs/game-ready-clips.md File-ready level",
+        &guide_file_ready_check_ids(&game_ready_clips, &catalog),
+        &mechanical,
     );
 
     for (path, markdown) in [
@@ -53,17 +72,12 @@ fn docs_check_ids_match_the_registered_catalog() {
             "{path} inline-code scan must see the registered check ids"
         );
 
-        let unknown_check_ids: Vec<_> = tokens
-            .iter()
-            .copied()
-            .filter(|token| looks_like_check_id(token))
-            .filter(|token| !catalog.contains(token))
-            .filter(|token| !NON_CHECK_ID_LIKE_TOKENS.contains(token))
-            .collect();
-        assert!(
-            unknown_check_ids.is_empty(),
-            "{path} names check-like ids that are not registered: {unknown_check_ids:?}"
-        );
+        assert_no_unknown_check_ids(path, markdown, &catalog);
+    }
+
+    for path in PARTIAL_CHECK_ID_DOCS {
+        let markdown = read_workspace_doc(&workspace_root, path);
+        assert_no_unknown_check_ids(path, &markdown, &catalog);
     }
 }
 
@@ -105,44 +119,68 @@ fn read_workspace_doc(workspace_root: &Path, relative_path: &str) -> String {
         .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()))
 }
 
-fn assert_catalog_ids(surface: &str, documented: &BTreeSet<&str>, catalog: &BTreeSet<&str>) {
-    let missing: Vec<_> = catalog
+fn assert_exact_ids(surface: &str, documented: &BTreeSet<&str>, expected: &BTreeSet<&str>) {
+    let missing: Vec<_> = expected
         .iter()
         .copied()
         .filter(|id| !documented.contains(id))
         .collect();
     assert!(
         missing.is_empty(),
-        "{surface} does not document registered checks: {missing:?}"
+        "{surface} does not document expected checks: {missing:?}"
     );
 
     let unknown: Vec<_> = documented
         .iter()
         .copied()
-        .filter(|id| !catalog.contains(id))
+        .filter(|id| !expected.contains(id))
         .collect();
     assert!(
         unknown.is_empty(),
-        "{surface} documents checks that are not registered: {unknown:?}"
+        "{surface} documents checks outside its expected partition: {unknown:?}"
     );
 }
 
+fn assert_no_unknown_check_ids(path: &str, markdown: &str, catalog: &BTreeSet<&str>) {
+    if let Some(token) = inline_code_tokens(markdown).into_iter().find(|token| {
+        looks_like_check_id(token)
+            && !catalog.contains(token)
+            && !NON_CHECK_ID_LIKE_TOKENS.contains(token)
+    }) {
+        panic!("{path} names check-like id `{token}` that is not registered");
+    }
+}
+
 fn registered_check_ids() -> BTreeSet<&'static str> {
-    let checks = all_checks();
+    unique_check_ids(all_checks(), "registered")
+}
+
+fn registered_mechanical_check_ids() -> BTreeSet<&'static str> {
+    unique_check_ids(mechanical_checks(), "mechanical")
+}
+
+fn unique_check_ids(
+    checks: Vec<Box<dyn animsmith_core::Check>>,
+    catalog_name: &str,
+) -> BTreeSet<&'static str> {
     let ids: Vec<_> = checks.iter().map(|check| check.id()).collect();
     let unique: BTreeSet<_> = ids.iter().copied().collect();
-    assert_eq!(ids.len(), unique.len(), "duplicate registered check id");
+    assert_eq!(ids.len(), unique.len(), "duplicate {catalog_name} check id");
     unique
 }
 
-fn readme_check_table_ids(readme: &str) -> BTreeSet<&str> {
-    let tables = [
-        markdown_table_after(readme, "Mechanical checks"),
-        markdown_table_after(readme, "Contract-aware checks"),
-    ];
-    tables
+fn readme_mechanical_check_table_ids(readme: &str) -> BTreeSet<&str> {
+    check_table_ids_after(readme, "Mechanical checks")
+}
+
+fn readme_contract_aware_check_table_ids(readme: &str) -> BTreeSet<&str> {
+    check_table_ids_after(readme, "Contract-aware checks")
+}
+
+fn check_table_ids_after<'a>(markdown: &'a str, marker: &str) -> BTreeSet<&'a str> {
+    markdown_table_after(markdown, marker)
         .into_iter()
-        .flat_map(|table| table.into_iter().skip(2))
+        .skip(2)
         .filter_map(|row| table_cell(row, 0))
         .flat_map(inline_code_tokens)
         .collect()
@@ -155,6 +193,28 @@ fn guide_symptom_table_ids(guide: &str) -> BTreeSet<&str> {
         .filter_map(|row| table_cell(row, 1))
         .flat_map(inline_code_tokens)
         .collect()
+}
+
+fn guide_file_ready_check_ids<'a>(guide: &'a str, catalog: &BTreeSet<&str>) -> BTreeSet<&'a str> {
+    inline_code_tokens(markdown_between(
+        guide,
+        "1. **File-ready**",
+        "2. **Clip-ready**",
+    ))
+    .into_iter()
+    .filter(|token| catalog.contains(token))
+    .collect()
+}
+
+fn markdown_between<'a>(markdown: &'a str, start: &str, end: &str) -> &'a str {
+    let start_offset = markdown
+        .find(start)
+        .unwrap_or_else(|| panic!("missing marker: {start}"));
+    let rest = &markdown[start_offset..];
+    let end_offset = rest
+        .find(end)
+        .unwrap_or_else(|| panic!("missing marker: {end}"));
+    &rest[..end_offset]
 }
 
 fn markdown_table_after<'a>(markdown: &'a str, marker: &str) -> Vec<&'a str> {
@@ -206,4 +266,21 @@ fn looks_like_check_id(token: &str) -> bool {
     !token.starts_with('-')
         && !token.ends_with('-')
         && token.chars().all(|ch| ch.is_ascii_lowercase() || ch == '-')
+}
+
+#[test]
+fn unknown_check_id_failure_names_the_file_and_id() {
+    let catalog = BTreeSet::from(["known-check"]);
+    let failure = std::panic::catch_unwind(|| {
+        assert_no_unknown_check_ids("docs/example.md", "`stale-check`", &catalog);
+    })
+    .expect_err("a stale check id must fail the docs gate");
+    let message = failure
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| failure.downcast_ref::<&str>().copied())
+        .expect("panic payload must be a string");
+
+    assert!(message.contains("docs/example.md"), "{message}");
+    assert!(message.contains("stale-check"), "{message}");
 }
