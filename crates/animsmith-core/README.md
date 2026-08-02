@@ -47,6 +47,18 @@ removal. It rejects ambiguous or missing referenced names rather than guessing
 at a retargeting relationship. For a final-pose hold, use the existing
 `animsmith_core::transform::hold_extend` helper.
 
+## Skinned Bind-Pose Canonicalization
+
+`animsmith_core::canonicalize_skinned_bind_pose` prepares an unanimated,
+skinned character base for a right-handed, Y-up metre delivery space. The
+caller declares the source-to-target affine coordinate transform; the operation
+rejects reflections, shear, non-uniform unit conversion, malformed skin data,
+and inverse binds that disagree with the input rest pose. It emits one identity
+scene root, private bind-world mesh copies with inverse-transpose normalized
+normals, remapped joints, and regenerated inverse bind matrices. Optional
+ground-and-centre placement uses the complete converted bind-pose bounds in a
+deterministic source-node order.
+
 ## More Details
 
 - [API reference on docs.rs](https://docs.rs/animsmith-core)
