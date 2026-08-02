@@ -84,7 +84,7 @@ animsmith inspect <file>                           # clips, durations, tracks, b
 animsmith report  <file> -o report.html [--clip name]
 animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor]
 animsmith fix     <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
-animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb> [--animation-only]
+animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb> [--animation-only|--bake-static-mesh-transforms] [--format text|json]
 animsmith diff    <A> <B> [--format text|json]     # A/B: assets or single-file v2 measure/lint JSON
 ```
 
@@ -133,6 +133,16 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or single-file 
   remains a glTF-only pure-Rust CLI with validation, transform, fix, and
   diff commands intact; `report` is controlled separately by the
   `report` feature.
+- `convert --bake-static-mesh-transforms` is an opt-in static geometry
+  operation. It accumulates rest hierarchy transforms into positions and
+  inverse-transpose normalized normals, then writes canonical identity-root
+  geometry. It retains topology, UVs, and the model-supported material and
+  embedded base-color texture data. It fails closed for any animation track,
+  skin signal, uninstanced or shared mesh definition, malformed/non-finite
+  data, singular or near-singular transform, or reflection; it neither bakes
+  skinning nor guesses animated or reflected semantics. It conflicts with
+  `--animation-only`, leaves default conversion unchanged, and is deterministic
+  for repeated same-platform input/options.
 
 ## 4. Repository & crate layout
 
@@ -375,10 +385,16 @@ learns an embedder's contract schema.
   represents selection, configuration, applicability, evaluation coverage,
   content findings, completed scopes, and typed gaps independently. Measure
   and lint share a nested, independently versioned measurement contract.
+  `convert --format json` instead emits the separately versioned
+  `urn:animsmith:schema:conversion-evidence:1` producer-evidence contract:
+  requested options, written-artifact counts, and optional static mesh bake
+  entries with source/output identities and applied world transforms.
   CLI exit status derives only from content severity (warnings block only
   with `--deny-warnings`); coverage gaps are nonblocking evidence.
-  The envelope types and immutable identities live in `animsmith-core` so CLI
-  and embedded producers serialize the same contract.
+  The output-v2 envelope types and immutable identities live in
+  `animsmith-core` so CLI and embedded producers serialize the same reporting
+  contract. Static-bake evidence is also a public core type; the conversion
+  envelope remains a CLI producer contract.
 - **Future serializers**: no game-industry standard exists for skeletal
   animation lint results. Keep native JSON as the source of truth, then
   add serializers where downstream tools expect them: SARIF for code
@@ -452,6 +468,12 @@ to *that* frame N. Determinism is the feature.
   (assets included), so geometry survives a transform pass and
   `--animation-only` clears it uniformly across input formats (it is the only
   lever that drops geometry).
+  `--bake-static-mesh-transforms` is the separate opt-in path for static,
+  unskinned, singly-instanced geometry: it removes the effective rest
+  hierarchy transform by baking positions and normals under an identity root
+  and reports each applied transform in conversion evidence. Unsupported
+  animated, skinned, malformed/non-finite, singular/near-singular, or
+  reflected input is rejected before output.
 - **FBX pitfalls double as checks** when linting `.fbx` directly: source
   unit ≠ 1m (warn even though we convert), Z-up source, namespace-prefixed
   bone names (profile matcher strips), default "Take 001" naming (feeds

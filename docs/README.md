@@ -12,7 +12,7 @@ Find what you need by task — each page below owns one job.
 | [cli.md](cli.md) | Look up a command, flag, or exit code. |
 | [embedding.md](embedding.md) | Choose library crates and integration boundaries, then follow the embedded gate flow with the runnable [`embed`](../crates/animsmith/examples/embed.rs) example. |
 | [docs.rs API references](https://docs.rs/animsmith-core) | Look up exact published Rust API contracts for [`animsmith-core`](https://docs.rs/animsmith-core), [`animsmith-gltf`](https://docs.rs/animsmith-gltf), [`animsmith-fbx`](https://docs.rs/animsmith-fbx), and [`animsmith-report`](https://docs.rs/animsmith-report). |
-| [output.md](output.md) | Parse the versioned `--format json` envelope in a pipeline, validated by the JSON Schema under [`schemas/`](schemas/). |
+| [output.md](output.md) | Parse versioned `--format json` reports and conversion evidence in a pipeline, validated by the JSON Schema under [`schemas/`](schemas/). |
 | [README](../README.md) | Install and quickstart, plus the check and configuration reference. |
 | [DESIGN.md](../DESIGN.md) | Follow the architecture, check-catalog rationale, and roadmap. |
 | [CONTRIBUTING.md](../CONTRIBUTING.md) / [DEVELOPMENT.md](../DEVELOPMENT.md) | Work on animsmith itself — contribution flow and development setup. |

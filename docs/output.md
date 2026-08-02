@@ -18,6 +18,14 @@ Measurement evidence is nested and independently versioned as
 measurement-definition change can therefore bump that contract without
 redesigning the outer result envelope.
 
+`convert --format json` is deliberately a separate conversion-evidence
+contract, not another command in the output-v2 envelope. Its immutable
+identity is `urn:animsmith:schema:conversion-evidence:1`; its retrievable
+schema is
+[`conversion-evidence-v1.schema.json`](schemas/conversion-evidence-v1.schema.json).
+This lets producers pin conversion provenance independently of measurement
+and lint evidence.
+
 The project is alpha, so the final v2 cutover intentionally does not read or
 emit earlier v1 or preview reports. Regenerate old reports with the current
 `animsmith measure --format json` before passing them to `diff`.
@@ -51,6 +59,78 @@ fields `null`.
 Operator failures do not emit a JSON envelope. They exit 2, write a diagnostic
 to stderr, and leave stdout empty. Content findings exit 1 at the configured
 threshold; coverage gaps are evidence and are nonblocking by default.
+
+## `convert`
+
+`convert --format json` emits one conversion-evidence v1 document. It records
+the input and output paths, the requested options, and counts derived from the
+written artifact. It is producer evidence: consumers should use the stable
+field names and schema identity rather than parsing the text write summary.
+
+```json
+{
+  "schema_version": 1,
+  "schema": "urn:animsmith:schema:conversion-evidence:1",
+  "tool": {
+    "name": "animsmith",
+    "version": "0.1.0",
+    "source": { "revision": null, "dirty": null }
+  },
+  "command": "convert",
+  "input": "prop.fbx",
+  "output": "prop.glb",
+  "options": {
+    "animation_only": false,
+    "bake_static_mesh_transforms": true
+  },
+  "artifact": {
+    "nodes": 2,
+    "animations": 0,
+    "meshes": 1,
+    "primitive_positions": 3,
+    "materials": 1,
+    "clips_without_writable_tracks": 0
+  },
+  "static_mesh_bake": {
+    "output_root_is_identity": true,
+    "entries": [
+      {
+        "source_node_index": 4,
+        "source_node_name": "prop",
+        "source_mesh_ordinal": 0,
+        "source_mesh_index": 7,
+        "source_mesh_name": "prop_mesh",
+        "output_node_index": 1,
+        "output_mesh_index": 0,
+        "world_transform": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        "linear_determinant": 1,
+        "primitive_count": 1,
+        "position_count": 3,
+        "normal_count": 3
+      }
+    ]
+  }
+}
+```
+
+`static_mesh_bake` is absent unless
+`--bake-static-mesh-transforms` was requested. Its entries are in deterministic
+source-node order. `source_node_index`, `source_mesh_ordinal`, and
+`source_mesh_index` identify the source record; names are display data and
+need not be unique. `world_transform` is the 16-element column-major rest
+world matrix applied to the source positions. `linear_determinant` records the
+accepted transform's linear determinant. The output node and mesh indices are
+indices in the generated artifact. `output_root_is_identity` is always true
+when bake evidence is present.
+
+The static bake is opt-in and conflicts with `--animation-only`. It only
+accepts unanimated, unskinned, singly-instanced static geometry with finite,
+non-reflecting, non-singular (including near-singular) transforms. It bakes
+positions and inverse-transpose normalized normals into a canonical
+identity-root output while retaining indices, UVs, model-supported material
+assignments, and embedded base-color textures. Unsupported input is an
+operator error, not partial evidence. Repeated same-platform conversion with
+the same input and options emits a byte-identical artifact.
 
 ## `measure` and `lint`
 
