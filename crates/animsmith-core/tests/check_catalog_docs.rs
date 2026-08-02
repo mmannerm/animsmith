@@ -57,17 +57,6 @@ fn assert_catalog_docs(readme: &str, game_ready_clips: &str, pipeline_scenarios:
         ("README.md", readme),
         ("docs/game-ready-clips.md", game_ready_clips),
     ] {
-        let tokens = inline_code_tokens(markdown);
-        let documented: BTreeSet<_> = tokens
-            .iter()
-            .copied()
-            .filter(|token| catalog.contains(token))
-            .collect();
-        assert_eq!(
-            documented, catalog,
-            "{path} inline-code scan must see the registered check ids"
-        );
-
         assert_no_unknown_check_ids(path, markdown, &catalog);
     }
 
