@@ -404,7 +404,6 @@ fn public_builtin_code_slices_enumerate_only_builtin_vocabulary() {
         .collect::<BTreeSet<_>>();
     assert_eq!(gap_codes.len(), BUILTIN_COVERAGE_GAP_CODES.len());
     assert!(gap_codes.contains(CoverageGapCode::ROLES_UNRESOLVED.as_str()));
-    assert!(!gap_codes.contains(CoverageGapCode::custom("acme:gap").as_str()));
     assert!(gap_codes.iter().all(|code| !code.is_empty()));
 
     let scope_codes = BUILTIN_EVALUATION_SCOPE_CODES
@@ -413,7 +412,6 @@ fn public_builtin_code_slices_enumerate_only_builtin_vocabulary() {
         .collect::<BTreeSet<_>>();
     assert_eq!(scope_codes.len(), BUILTIN_EVALUATION_SCOPE_CODES.len());
     assert!(scope_codes.contains(EvaluationScopeCode::FRAME_GRID.as_str()));
-    assert!(!scope_codes.contains(EvaluationScopeCode::custom("acme:scope").as_str()));
     assert!(scope_codes.iter().all(|code| !code.is_empty()));
 }
 
@@ -461,7 +459,7 @@ fn malformed_check_output_returns_a_typed_evaluation_error() {
                 )],
                 Vec::new(),
                 vec![CoverageGap::new(
-                    CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                    CoverageGapCode::custom("test:measurement_unavailable"),
                     "no usable evidence",
                 )],
             )

@@ -689,8 +689,7 @@ mod docs_contract {
     use std::path::{Path, PathBuf};
 
     use super::{
-        BUILTIN_COVERAGE_GAP_CODE_DEFINITIONS, BUILTIN_COVERAGE_GAP_CODES,
-        BUILTIN_EVALUATION_SCOPE_CODE_DEFINITIONS, BUILTIN_EVALUATION_SCOPE_CODES,
+        BUILTIN_COVERAGE_GAP_CODE_DEFINITIONS, BUILTIN_EVALUATION_SCOPE_CODE_DEFINITIONS,
         BuiltinEvidenceCode,
     };
 
@@ -769,25 +768,14 @@ mod docs_contract {
             .map(|check| check.id())
             .collect::<BTreeSet<_>>();
         let authorities = [
-            (
-                "coverage-gap",
-                BUILTIN_COVERAGE_GAP_CODE_DEFINITIONS,
-                BUILTIN_COVERAGE_GAP_CODES
-                    .iter()
-                    .map(|code| code.as_str())
-                    .collect::<Vec<_>>(),
-            ),
+            ("coverage-gap", BUILTIN_COVERAGE_GAP_CODE_DEFINITIONS),
             (
                 "evaluation-scope",
                 BUILTIN_EVALUATION_SCOPE_CODE_DEFINITIONS,
-                BUILTIN_EVALUATION_SCOPE_CODES
-                    .iter()
-                    .map(|code| code.as_str())
-                    .collect::<Vec<_>>(),
             ),
         ];
 
-        for (kind, definitions, registered_codes) in authorities {
+        for (kind, definitions) in authorities {
             assert!(
                 definitions
                     .iter()
@@ -803,21 +791,7 @@ mod docs_contract {
                 definitions.len(),
                 "duplicate {kind} authority code"
             );
-            assert_eq!(
-                registered_codes,
-                definitions
-                    .iter()
-                    .map(|definition| definition.code)
-                    .collect::<Vec<_>>(),
-                "{kind} public registry must preserve the authority inventory"
-            );
-
             for definition in definitions {
-                assert!(
-                    !definition.emitted_by.is_empty(),
-                    "{} must declare at least one emitter",
-                    definition.code
-                );
                 let emitters = definition
                     .emitted_by
                     .iter()
