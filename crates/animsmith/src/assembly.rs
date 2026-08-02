@@ -5,10 +5,9 @@
 //! project policy, acceptance contracts, or publication.
 
 use crate::material_recipe::{MaterialTextureRecipeEvidence, apply_material_texture_recipe};
-use animsmith_core::glam::{Quat, Vec3};
+use animsmith_core::glam::Quat;
 use animsmith_core::model::{
-    Clip, Document, Interpolation, MaterialAsset, MeshAsset, MeshInstance, Property, Skeleton,
-    Track, TrackValues,
+    Clip, Document, Interpolation, MaterialAsset, MeshAsset, Property, Skeleton, TrackValues,
 };
 use animsmith_core::{Config, ToolInfo, resolve_configured_roles};
 use animsmith_gltf::write::WriteSummary;
@@ -395,7 +394,13 @@ pub(crate) fn assemble(
         clip.name.clone_from(&clip_recipe.name);
         apply_window(&mut clip, clip_recipe, recipe.fps)?;
         if clip_recipe.drop_closing_endpoint {
-            drop_closing_endpoint(&mut clip, recipe.fps)?;
+            let removed = animsmith_core::assembly::remove_final_keys(&mut clip);
+            if removed == 0 || clip.tracks.is_empty() {
+                return Err(format!(
+                    "clip {:?} has no retained animation after closing-endpoint removal",
+                    clip.name
+                ));
+            }
         }
         if clip_recipe.hold_frames > 0 {
             animsmith_core::transform::hold_extend(
@@ -403,14 +408,29 @@ pub(crate) fn assemble(
                 f64::from(clip_recipe.hold_frames) / recipe.fps,
             );
         }
-        let remapped_tracks = remap_clip(&mut clip, &source.skeleton, &base.skeleton)?;
-        let stripped_tracks = strip_tracks(&mut clip, &base.skeleton, &clip_recipe.strip_bones)?;
+        let remapped_tracks = clip.tracks.len();
+        clip =
+            animsmith_core::assembly::remap_clip_to_base(&clip, &source.skeleton, &base.skeleton)
+                .map_err(|error| format!("clip {:?}: {error}", clip.name))?;
+        validate_unique_channels(&clip, &base.skeleton)?;
+        require_named_bones(&base.skeleton, &clip_recipe.strip_bones, "strip_bones")?;
         let completed_tracks = if recipe.complete_tracks {
-            complete_tracks(&mut clip, &base.skeleton, &clip_recipe.strip_bones)?
+            animsmith_core::assembly::complete_rest_pose_tracks(
+                &mut clip,
+                &base.skeleton,
+                animsmith_core::assembly::RestPoseTrackOptions::ALL,
+            )
         } else {
             0
         };
-        normalize_quaternions(&mut clip)?;
+        let stripped_tracks = animsmith_core::assembly::strip_named_bone_tracks(
+            &mut clip,
+            &base.skeleton,
+            &clip_recipe.strip_bones,
+        )
+        .map_err(|error| format!("clip {:?}: {error}", clip.name))?;
+        normalize_quaternion_magnitudes(&mut clip)?;
+        animsmith_core::assembly::normalize_quaternion_hemispheres(&mut clip);
         let gait_anchor_frame_offset = if clip_recipe.gait_anchor {
             let roles = resolve_configured_roles(&base.skeleton, &config.rig);
             Some(
@@ -579,18 +599,6 @@ fn apply_window(clip: &mut Clip, recipe: &AssemblyClipRecipe, fps: f64) -> Resul
     Ok(())
 }
 
-fn drop_closing_endpoint(clip: &mut Clip, fps: f64) -> Result<(), String> {
-    let end = clip.duration_s - 1.0 / fps;
-    if end < 0.0 {
-        return Err(format!(
-            "clip {:?} is too short to drop a closing endpoint at {fps} fps",
-            clip.name
-        ));
-    }
-    animsmith_core::transform::slice(clip, 0.0, end, fps);
-    Ok(())
-}
-
 fn ensure_unique_bones(skeleton: &Skeleton, label: &str) -> Result<(), String> {
     let mut names = BTreeSet::new();
     for bone in &skeleton.bones {
@@ -607,134 +615,49 @@ fn ensure_unique_bones(skeleton: &Skeleton, label: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn bone_indices(skeleton: &Skeleton) -> BTreeMap<&str, usize> {
-    skeleton
+fn require_named_bones(skeleton: &Skeleton, names: &[String], label: &str) -> Result<(), String> {
+    let available = skeleton
         .bones
         .iter()
-        .enumerate()
-        .map(|(index, bone)| (bone.name.as_str(), index))
-        .collect()
+        .map(|bone| bone.name.as_str())
+        .collect::<BTreeSet<_>>();
+    for name in names {
+        if !available.contains(name.as_str()) {
+            return Err(format!(
+                "{label} target {name:?} is absent from the base skeleton"
+            ));
+        }
+    }
+    Ok(())
 }
 
-fn remap_clip(clip: &mut Clip, source: &Skeleton, base: &Skeleton) -> Result<usize, String> {
-    let base_by_name = bone_indices(base);
+fn validate_unique_channels(clip: &Clip, skeleton: &Skeleton) -> Result<(), String> {
     let mut targets = BTreeSet::new();
-    for track in &mut clip.tracks {
-        let source_bone = source.bones.get(track.bone).ok_or_else(|| {
-            format!(
-                "clip {:?} track targets source bone {} outside its skeleton",
-                clip.name, track.bone
-            )
-        })?;
-        track.bone = *base_by_name.get(source_bone.name.as_str()).ok_or_else(|| {
-            format!(
-                "clip {:?} targets bone {:?}, absent from the base skeleton",
-                clip.name, source_bone.name
-            )
-        })?;
+    for track in &clip.tracks {
         if !targets.insert((track.bone, track.property.as_str())) {
             return Err(format!(
                 "clip {:?} contains duplicate {} tracks for bone {:?}",
                 clip.name,
                 track.property.as_str(),
-                base.bone_name(track.bone)
+                skeleton.bone_name(track.bone)
             ));
         }
     }
-    Ok(clip.tracks.len())
+    Ok(())
 }
 
-fn strip_tracks(clip: &mut Clip, skeleton: &Skeleton, names: &[String]) -> Result<usize, String> {
-    let indices = bone_indices(skeleton);
-    let stripped = names
-        .iter()
-        .map(|name| {
-            indices
-                .get(name.as_str())
-                .copied()
-                .ok_or_else(|| format!("strip_bones target {name:?} is absent from base skeleton"))
-        })
-        .collect::<Result<BTreeSet<_>, _>>()?;
-    let before = clip.tracks.len();
-    clip.tracks.retain(|track| !stripped.contains(&track.bone));
-    Ok(before - clip.tracks.len())
-}
-
-fn complete_tracks(
-    clip: &mut Clip,
-    skeleton: &Skeleton,
-    excluded_names: &[String],
-) -> Result<usize, String> {
-    let excluded = excluded_names
-        .iter()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    let mut present = clip
-        .tracks
-        .iter()
-        .map(|track| (track.bone, track.property))
-        .collect::<Vec<_>>();
-    let mut added = 0;
-    for (bone, definition) in skeleton.bones.iter().enumerate() {
-        if excluded.contains(definition.name.as_str()) {
-            continue;
-        }
-        for (property, values) in [
-            (
-                Property::Translation,
-                TrackValues::Vec3s(vec![definition.rest.translation]),
-            ),
-            (
-                Property::Rotation,
-                TrackValues::Quats(vec![definition.rest.rotation]),
-            ),
-            (
-                Property::Scale,
-                TrackValues::Vec3s(vec![definition.rest.scale]),
-            ),
-        ] {
-            if present.contains(&(bone, property)) {
-                continue;
-            }
-            clip.tracks.push(Track {
-                bone,
-                property,
-                interpolation: Interpolation::Linear,
-                times: vec![0.0],
-                values,
-            });
-            present.push((bone, property));
-            added += 1;
-        }
-    }
-    clip.tracks
-        .sort_by_key(|track| (track.bone, property_order(track.property)));
-    if clip
-        .tracks
-        .iter()
-        .any(|track| track.bone >= skeleton.bones.len())
-    {
-        return Err("completed clip contains a track outside the base skeleton".into());
-    }
-    Ok(added)
-}
-
-fn property_order(property: Property) -> u8 {
-    match property {
-        Property::Translation => 0,
-        Property::Rotation => 1,
-        Property::Scale => 2,
-    }
-}
-
-fn normalize_quaternions(clip: &mut Clip) -> Result<(), String> {
+fn normalize_quaternion_magnitudes(clip: &mut Clip) -> Result<(), String> {
     for track in &mut clip.tracks {
+        let key_count = track.key_count();
+        let interpolation = track.interpolation;
         let TrackValues::Quats(values) = &mut track.values else {
             continue;
         };
-        let mut previous = None::<Quat>;
-        for key in 0..track.key_count() {
-            let index = track.value_index(key);
+        for key in 0..key_count {
+            let index = match interpolation {
+                Interpolation::CubicSpline => key * 3 + 1,
+                _ => key,
+            };
             let mut value = values[index];
             if !value.is_finite() || value.length_squared() <= f32::EPSILON {
                 return Err(format!(
@@ -743,16 +666,7 @@ fn normalize_quaternions(clip: &mut Clip) -> Result<(), String> {
                 ));
             }
             value = value.normalize();
-            let flip = previous.is_some_and(|prior| prior.dot(value) < 0.0);
-            if flip {
-                value = -value;
-                if track.interpolation == Interpolation::CubicSpline {
-                    values[index - 1] = -values[index - 1];
-                    values[index + 1] = -values[index + 1];
-                }
-            }
             values[index] = value;
-            previous = Some(value);
         }
     }
     Ok(())
@@ -975,14 +889,23 @@ mod tests {
             }],
         };
 
-        assert_eq!(remap_clip(&mut clip, &source, &base).unwrap(), 1);
+        clip = animsmith_core::assembly::remap_clip_to_base(&clip, &source, &base).unwrap();
         assert_eq!(clip.tracks[0].bone, 1);
-        assert_eq!(strip_tracks(&mut clip, &base, &["root".into()]).unwrap(), 0);
         assert_eq!(
-            complete_tracks(&mut clip, &base, &["root".into()]).unwrap(),
-            2
+            animsmith_core::assembly::strip_named_bone_tracks(&mut clip, &base, &["root"],)
+                .unwrap(),
+            0
         );
-        normalize_quaternions(&mut clip).unwrap();
+        assert_eq!(
+            animsmith_core::assembly::complete_rest_pose_tracks(
+                &mut clip,
+                &base,
+                animsmith_core::assembly::RestPoseTrackOptions::ALL,
+            ),
+            5
+        );
+        normalize_quaternion_magnitudes(&mut clip).unwrap();
+        animsmith_core::assembly::normalize_quaternion_hemispheres(&mut clip);
         let rotation = clip
             .tracks
             .iter()

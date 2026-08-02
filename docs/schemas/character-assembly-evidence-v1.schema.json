@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:animsmith:schema:character-assembly-evidence:1",
+  "title": "animsmith character assembly evidence v1",
+  "type": "object",
+  "required": ["schema_version", "schema", "tool", "command", "recipe", "inputs", "clips", "transforms", "artifact"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "schema": { "const": "urn:animsmith:schema:character-assembly-evidence:1" },
+    "tool": { "$ref": "#/$defs/tool" },
+    "command": { "const": "assemble" },
+    "recipe": { "$ref": "#/$defs/recipe" },
+    "inputs": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/input" } },
+    "clips": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/clip" } },
+    "transforms": { "$ref": "#/$defs/transforms" },
+    "material_texture_recipe": { "type": "object" },
+    "artifact": { "$ref": "#/$defs/artifact" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "tool": {
+      "type": "object",
+      "required": ["name", "version", "source"],
+      "properties": {
+        "name": { "const": "animsmith" },
+        "version": { "type": "string" },
+        "source": {
+          "type": "object",
+          "required": ["revision", "dirty"],
+          "properties": {
+            "revision": { "type": ["string", "null"], "pattern": "^[0-9a-fA-F]{40}$" },
+            "dirty": { "type": ["boolean", "null"] }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "recipe": {
+      "type": "object",
+      "required": ["path", "sha256", "effective"],
+      "properties": {
+        "path": { "type": "string" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "effective": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "input": {
+      "type": "object",
+      "required": ["role", "declared_path", "sha256", "bytes"],
+      "properties": {
+        "role": { "enum": ["base", "clip", "material_texture_recipe"] },
+        "declared_path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "bytes": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "clip": {
+      "type": "object",
+      "required": ["name", "declared_input", "source_take", "source_tracks", "emitted_tracks", "remapped_tracks", "completed_tracks", "stripped_tracks", "duration_s", "frame_window", "time_window", "dropped_closing_endpoint", "hold_frames", "gait_anchor_frame_offset"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "declared_input": { "type": "string", "minLength": 1 },
+        "source_take": { "type": "string", "minLength": 1 },
+        "source_tracks": { "type": "integer", "minimum": 0 },
+        "emitted_tracks": { "type": "integer", "minimum": 0 },
+        "remapped_tracks": { "type": "integer", "minimum": 0 },
+        "completed_tracks": { "type": "integer", "minimum": 0 },
+        "stripped_tracks": { "type": "integer", "minimum": 0 },
+        "duration_s": { "type": "number", "minimum": 0 },
+        "frame_window": { "type": ["array", "null"], "items": { "type": "integer", "minimum": 1 }, "minItems": 2, "maxItems": 2 },
+        "time_window": { "type": ["array", "null"], "items": { "type": "number", "minimum": 0 }, "minItems": 2, "maxItems": 2 },
+        "dropped_closing_endpoint": { "type": "boolean" },
+        "hold_frames": { "type": "integer", "minimum": 0 },
+        "gait_anchor_frame_offset": { "type": ["integer", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "transforms": {
+      "type": "object",
+      "required": ["retained_mesh_instances", "removed_mesh_instances", "canonicalized_skin", "ground_and_center"],
+      "properties": {
+        "retained_mesh_instances": { "type": "array", "items": { "type": "string" } },
+        "removed_mesh_instances": { "type": "integer", "minimum": 0 },
+        "canonicalized_skin": { "type": "boolean" },
+        "ground_and_center": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "artifact": {
+      "type": "object",
+      "required": ["path", "sha256", "bytes", "nodes", "animations", "meshes", "primitive_positions", "materials", "clips_without_writable_tracks"],
+      "properties": {
+        "path": { "type": "string" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "nodes": { "type": "integer", "minimum": 0 },
+        "animations": { "type": "integer", "minimum": 0 },
+        "meshes": { "type": "integer", "minimum": 0 },
+        "primitive_positions": { "type": "integer", "minimum": 0 },
+        "materials": { "type": "integer", "minimum": 0 },
+        "clips_without_writable_tracks": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    }
+  }
+}
