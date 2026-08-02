@@ -2,7 +2,10 @@
 //! centimetre, Z-up source transform and a mesh node distinct from its joints,
 //! so the test exercises the full `joint^-1 * geometry` IBM relationship.
 
-use animsmith_core::model::{MeshAsset, MeshInstance, Primitive, SceneAssets};
+use animsmith_core::model::{
+    Clip, Interpolation, MeshAsset, MeshInstance, Primitive, Property, SceneAssets, Track,
+    TrackValues,
+};
 use animsmith_core::{
     Bone, Document, Skeleton, SkinnedBindPoseCanonicalizationError,
     SkinnedBindPoseCanonicalizationOptions, SkinnedBindPosePlacement, Transform,
@@ -278,4 +281,68 @@ fn canonicalization_rejects_non_uniform_coordinate_conversion() {
             reason: "non_uniform_or_sheared"
         }
     ));
+}
+
+#[test]
+fn canonicalization_rejects_animated_base_scenes() {
+    let mut source = source_document();
+    source.clips.push(Clip {
+        name: "animated-base".into(),
+        duration_s: 1.0,
+        tracks: vec![Track {
+            bone: 0,
+            property: Property::Translation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::X]),
+        }],
+    });
+
+    let error =
+        canonicalize_skinned_bind_pose(&source, SkinnedBindPoseCanonicalizationOptions::default())
+            .unwrap_err();
+    assert!(matches!(
+        error,
+        SkinnedBindPoseCanonicalizationError::AnimationTrack {
+            ref clip,
+            node: 0,
+            property: "translation",
+        } if clip == "animated-base"
+    ));
+}
+
+#[test]
+fn canonicalization_accepts_bone_level_inverse_bind_fallback() {
+    let mut source = source_document();
+    let explicit_ibms = std::mem::take(&mut source.assets.instances[0].skin_ibms);
+    for (&joint, inverse_bind) in source.assets.instances[0]
+        .skin_joints
+        .iter()
+        .zip(&explicit_ibms)
+    {
+        source.skeleton.bones[joint].inverse_bind = Some(*inverse_bind);
+    }
+
+    let result = canonicalize_skinned_bind_pose(
+        &source,
+        SkinnedBindPoseCanonicalizationOptions {
+            source_to_meters_y_up: centimetres_z_up_to_meters_y_up(),
+            placement: SkinnedBindPosePlacement::Preserve,
+        },
+    )
+    .expect("bone-level inverse binds are a supported input representation");
+    let output = &result.document;
+    let instance = &output.assets.instances[0];
+    assert_eq!(instance.skin_ibms.len(), instance.skin_joints.len());
+    let output_worlds = worlds(&output.skeleton);
+    for (slot, &joint) in instance.skin_joints.iter().enumerate() {
+        assert_mat4_close(
+            output_worlds[joint] * instance.skin_ibms[slot],
+            Mat4::IDENTITY,
+        );
+        assert_eq!(
+            output.skeleton.bones[joint].inverse_bind,
+            Some(instance.skin_ibms[slot])
+        );
+    }
 }

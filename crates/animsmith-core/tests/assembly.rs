@@ -143,16 +143,11 @@ fn rest_completion_only_adds_requested_absent_channels() {
         duration_s: 2.0,
         tracks: vec![existing_translation.clone()],
     };
-    let added = complete_rest_pose_tracks(
-        &mut clip,
-        &base,
-        RestPoseTrackOptions {
-            translation: true,
-            rotation: true,
-            scale: false,
-        },
+    let added = complete_rest_pose_tracks(&mut clip, &base, RestPoseTrackOptions::ALL);
+    assert_eq!(
+        added, 5,
+        "root rotation/scale plus hand translation/rotation/scale"
     );
-    assert_eq!(added, 3, "root rotation plus hand translation/rotation");
     assert_eq!(
         clip.tracks[0].times, existing_translation.times,
         "authored channel stays untouched"
@@ -172,7 +167,18 @@ fn rest_completion_only_adds_requested_absent_channels() {
         .find(|t| t.bone == 1 && t.property == Property::Rotation)
         .unwrap();
     assert_eq!(hand_rotation.key_quat(0), Some(base.bones[1].rest.rotation));
-    assert!(clip.tracks.iter().all(|t| t.property != Property::Scale));
+    let hand_scale = clip
+        .tracks
+        .iter()
+        .find(|t| t.bone == 1 && t.property == Property::Scale)
+        .unwrap();
+    assert_eq!(hand_scale.key_vec3(0), Some(base.bones[1].rest.scale));
+    assert!(
+        clip.tracks
+            .iter()
+            .any(|t| t.bone == 0 && t.property == Property::Scale),
+        "root scale is completed too"
+    );
 }
 
 #[test]
@@ -221,9 +227,13 @@ fn removing_final_keys_keeps_cubic_alignment_and_retimes_duration() {
     let mut clip = Clip {
         name: "loop".into(),
         duration_s: 1.0,
-        tracks: vec![cubic, track(1, Property::Scale)],
+        tracks: vec![
+            cubic,
+            track(1, Property::Scale),
+            track(2, Property::Rotation),
+        ],
     };
-    assert_eq!(remove_final_keys(&mut clip), 2);
+    assert_eq!(remove_final_keys(&mut clip), 3);
     assert_eq!(clip.duration_s, 0.5);
     assert_eq!(clip.tracks[0].key_count(), 2);
     let TrackValues::Vec3s(values) = &clip.tracks[0].values else {
@@ -231,4 +241,6 @@ fn removing_final_keys_keeps_cubic_alignment_and_retimes_duration() {
     };
     assert_eq!(values.len(), 6);
     assert_eq!(clip.tracks[0].key_vec3(1), Some(Vec3::Y));
+    assert_eq!(clip.tracks[1].key_count(), 1);
+    assert_eq!(clip.tracks[2].key_count(), 1);
 }

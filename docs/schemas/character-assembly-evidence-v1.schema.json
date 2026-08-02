@@ -87,7 +87,7 @@
     },
     "clip": {
       "type": "object",
-      "required": ["name", "declared_input", "source_take", "source_tracks", "emitted_tracks", "remapped_tracks", "completed_tracks", "stripped_tracks", "stripped_bone_motion", "duration_s", "frame_window", "time_window", "dropped_closing_endpoint", "hold_frames", "gait_anchor_frame_offset"],
+      "required": ["name", "declared_input", "source_take", "source_tracks", "emitted_tracks", "remapped_tracks", "bone_remaps", "completed_tracks", "stripped_tracks", "stripped_bone_motion", "duration_s", "frame_window", "time_window", "dropped_closing_endpoint", "hold_frames", "gait_anchor_frame_offset"],
       "properties": {
         "name": { "type": "string", "minLength": 1 },
         "declared_input": { "type": "string", "minLength": 1 },
@@ -95,6 +95,7 @@
         "source_tracks": { "type": "integer", "minimum": 0 },
         "emitted_tracks": { "type": "integer", "minimum": 0 },
         "remapped_tracks": { "type": "integer", "minimum": 0 },
+        "bone_remaps": { "type": "array", "items": { "$ref": "#/$defs/bone_remap" } },
         "completed_tracks": { "type": "integer", "minimum": 0 },
         "stripped_tracks": { "type": "integer", "minimum": 0 },
         "stripped_bone_motion": { "type": "array", "items": { "$ref": "#/$defs/stripped_bone_motion" } },
@@ -104,6 +105,17 @@
         "dropped_closing_endpoint": { "type": "boolean" },
         "hold_frames": { "type": "integer", "minimum": 0 },
         "gait_anchor_frame_offset": { "type": ["integer", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "bone_remap": {
+      "type": "object",
+      "required": ["source_bone", "source_index", "base_bone", "base_index"],
+      "properties": {
+        "source_bone": { "type": "string", "minLength": 1 },
+        "source_index": { "type": "integer", "minimum": 0 },
+        "base_bone": { "type": "string", "minLength": 1 },
+        "base_index": { "type": "integer", "minimum": 0 }
       },
       "additionalProperties": false
     },

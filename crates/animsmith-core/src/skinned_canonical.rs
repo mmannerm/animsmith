@@ -444,7 +444,11 @@ fn validate(
             }
             geometry_world.get_or_insert(candidate);
         }
-        let geometry_world = geometry_world.expect("non-empty skin joints established above");
+        let Some(geometry_world) = geometry_world else {
+            return Err(SkinnedBindPoseCanonicalizationError::UnskinnedInstance {
+                source_node_index: instance.source_node_index,
+            });
+        };
         validate_geometry_transform(geometry_world, instance.source_node_index)?;
         validate_mesh(mesh, instance.mesh, instance)?;
         plans.push(Plan {

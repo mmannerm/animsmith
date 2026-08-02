@@ -23,6 +23,16 @@ const TINY_NORMAL_PNG: &[u8] = &[
     0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
 ];
 
+/// Produces a valid PNG with a slot-specific ancillary text chunk.  Keeping
+/// the image content tiny makes the material round-trip test focused, while
+/// the encoded payload still distinguishes every PBR texture slot.
+fn png_with_slot_label(label_chunk: &[u8]) -> Vec<u8> {
+    let mut bytes = TINY_PNG[..TINY_PNG.len() - 12].to_vec();
+    bytes.extend_from_slice(label_chunk);
+    bytes.extend_from_slice(&TINY_PNG[TINY_PNG.len() - 12..]);
+    bytes
+}
+
 fn skinned_triangle() -> Document {
     let skeleton = Skeleton {
         bones: vec![
@@ -224,6 +234,15 @@ fn material_texture_slots_round_trip_independently() {
     ] {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(format!("{label}.glb"));
+        let metallic_roughness_png = png_with_slot_label(&[
+            0x00, 0x00, 0x00, 0x17, 0x74, 0x45, 0x58, 0x74, 0x73, 0x6C, 0x6F, 0x74, 0x3D, 0x6D,
+            0x65, 0x74, 0x61, 0x6C, 0x6C, 0x69, 0x63, 0x2D, 0x72, 0x6F, 0x75, 0x67, 0x68, 0x6E,
+            0x65, 0x73, 0x73, 0x52, 0x45, 0x7E, 0x42,
+        ]);
+        let occlusion_png = png_with_slot_label(&[
+            0x00, 0x00, 0x00, 0x0E, 0x74, 0x45, 0x58, 0x74, 0x73, 0x6C, 0x6F, 0x74, 0x3D, 0x6F,
+            0x63, 0x63, 0x6C, 0x75, 0x73, 0x69, 0x6F, 0x6E, 0xEF, 0x29, 0x18, 0x05,
+        ]);
         let mut doc = skinned_triangle();
         let material = &mut doc.assets.materials[0];
         material.base_color_texture = has_base_color.then(|| TextureAsset {
@@ -238,12 +257,12 @@ fn material_texture_slots_round_trip_independently() {
             scale: 0.375,
         });
         material.metallic_roughness_texture = has_metallic_roughness.then(|| TextureAsset {
-            bytes: TINY_NORMAL_PNG.to_vec(),
+            bytes: metallic_roughness_png.clone(),
             mime: "image/png".into(),
         });
         material.occlusion_texture = has_occlusion.then(|| OcclusionTextureAsset {
             texture: TextureAsset {
-                bytes: TINY_PNG.to_vec(),
+                bytes: occlusion_png.clone(),
                 mime: "image/png".into(),
             },
             strength: 0.625,
@@ -309,7 +328,7 @@ fn material_texture_slots_round_trip_independently() {
                 .metallic_roughness_texture
                 .as_ref()
                 .map(|texture| texture.bytes.as_slice()),
-            has_metallic_roughness.then_some(TINY_NORMAL_PNG),
+            has_metallic_roughness.then_some(metallic_roughness_png.as_slice()),
             "{label}: metallic-roughness bytes"
         );
         assert_eq!(
@@ -317,7 +336,7 @@ fn material_texture_slots_round_trip_independently() {
                 .occlusion_texture
                 .as_ref()
                 .map(|occlusion| (occlusion.texture.bytes.as_slice(), occlusion.strength)),
-            has_occlusion.then_some((TINY_PNG, 0.625)),
+            has_occlusion.then_some((occlusion_png.as_slice(), 0.625)),
             "{label}: occlusion bytes and strength"
         );
     }

@@ -100,6 +100,7 @@ struct AssemblyClipEvidence {
     source_tracks: usize,
     emitted_tracks: usize,
     remapped_tracks: usize,
+    bone_remaps: Vec<AssemblyBoneRemapEvidence>,
     completed_tracks: usize,
     stripped_tracks: usize,
     stripped_bone_motion: Vec<StrippedBoneMotionEvidence>,
@@ -109,6 +110,14 @@ struct AssemblyClipEvidence {
     dropped_closing_endpoint: bool,
     hold_frames: u32,
     gait_anchor_frame_offset: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AssemblyBoneRemapEvidence {
+    source_bone: String,
+    source_index: usize,
+    base_bone: String,
+    base_index: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -356,7 +365,7 @@ pub(crate) fn assemble(
     output: &Path,
     evidence_output: &Path,
     config: &Config,
-    config_path: Option<&Path>,
+    config_source: Option<(&Path, &[u8])>,
     tool: ToolInfo,
 ) -> Result<AssemblyResult, String> {
     if !output
@@ -369,6 +378,15 @@ pub(crate) fn assemble(
     if output == evidence_output {
         return Err("artifact and evidence outputs must be different paths".into());
     }
+    let output_parent = parent_or_current(output);
+    let evidence_parent = parent_or_current(evidence_output);
+    require_output_parent(output_parent, output)?;
+    require_output_parent(evidence_parent, evidence_output)?;
+    let output_identity = destination_identity(output)?;
+    let evidence_identity = destination_identity(evidence_output)?;
+    if output_identity == evidence_identity {
+        return Err("artifact and evidence outputs must resolve to different paths".into());
+    }
     let recipe_bytes = fs::read(recipe_path)
         .map_err(|error| format!("cannot read recipe {}: {error}", recipe_path.display()))?;
     let recipe_text = std::str::from_utf8(&recipe_bytes)
@@ -377,16 +395,15 @@ pub(crate) fn assemble(
         toml::from_str(recipe_text).map_err(|error| format!("invalid assembly recipe: {error}"))?;
     validate_recipe(&recipe)?;
     let resolver = InputResolver::new(recipe_path, recipe.input_root.as_deref())?;
-    let config_evidence = match config_path {
-        Some(path) => {
-            let (sha256, bytes) = read_digest(path)?;
-            AssemblyConfigEvidence {
-                source: "file",
-                path: Some(path.display().to_string()),
-                sha256: Some(sha256),
-                bytes: Some(bytes),
-            }
-        }
+    let config_evidence = match config_source {
+        Some((path, contents)) => AssemblyConfigEvidence {
+            source: "file",
+            path: Some(path.display().to_string()),
+            sha256: Some(format!("{:x}", Sha256::digest(contents))),
+            bytes: Some(
+                u64::try_from(contents.len()).map_err(|_| "config size exceeds u64".to_owned())?,
+            ),
+        },
         None => AssemblyConfigEvidence {
             source: "built-in-defaults",
             path: None,
@@ -503,6 +520,7 @@ pub(crate) fn assemble(
                 f64::from(clip_recipe.hold_frames) / recipe.fps,
             );
         }
+        let bone_remaps = bone_remap_evidence(&clip, &source.skeleton, &base.skeleton)?;
         let remapped_tracks = clip.tracks.len();
         clip =
             animsmith_core::assembly::remap_clip_to_base(&clip, &source.skeleton, &base.skeleton)
@@ -539,6 +557,7 @@ pub(crate) fn assemble(
             source_tracks,
             emitted_tracks: 0,
             remapped_tracks,
+            bone_remaps,
             completed_tracks: 0,
             stripped_tracks,
             stripped_bone_motion,
@@ -599,10 +618,6 @@ pub(crate) fn assemble(
     }
     base.clips = output_clips;
 
-    let output_parent = parent_or_current(output);
-    let evidence_parent = parent_or_current(evidence_output);
-    require_output_parent(output_parent, output)?;
-    require_output_parent(evidence_parent, evidence_output)?;
     let artifact_temp = tempfile::Builder::new()
         .prefix(".animsmith-assemble-")
         .suffix(".glb")
@@ -714,6 +729,48 @@ fn exact_take<'a>(doc: &'a Document, take: &str, input: &Path) -> Result<&'a Cli
             input.display()
         )),
     }
+}
+
+fn bone_remap_evidence(
+    clip: &Clip,
+    source: &Skeleton,
+    base: &Skeleton,
+) -> Result<Vec<AssemblyBoneRemapEvidence>, String> {
+    let referenced = clip
+        .tracks
+        .iter()
+        .map(|track| track.bone)
+        .collect::<BTreeSet<_>>();
+    let base_by_name = base
+        .bones
+        .iter()
+        .enumerate()
+        .map(|(index, bone)| (bone.name.as_str(), index))
+        .collect::<BTreeMap<_, _>>();
+    referenced
+        .into_iter()
+        .map(|source_index| {
+            let source_bone = source.bones.get(source_index).ok_or_else(|| {
+                format!(
+                    "clip {:?} references source bone {source_index}, but its skeleton has {} bones",
+                    clip.name,
+                    source.bones.len()
+                )
+            })?;
+            let base_index = *base_by_name.get(source_bone.name.as_str()).ok_or_else(|| {
+                format!(
+                    "clip {:?} source bone {:?} is absent from the base skeleton",
+                    clip.name, source_bone.name
+                )
+            })?;
+            Ok(AssemblyBoneRemapEvidence {
+                source_bone: source_bone.name.clone(),
+                source_index,
+                base_bone: base.bones[base_index].name.clone(),
+                base_index,
+            })
+        })
+        .collect()
 }
 
 fn apply_window(clip: &mut Clip, recipe: &AssemblyClipRecipe, fps: f64) -> Result<(), String> {
@@ -978,6 +1035,20 @@ fn backup_destination(path: &Path) -> Result<Option<tempfile::TempPath>, String>
     Ok(Some(backup))
 }
 
+fn destination_identity(path: &Path) -> Result<PathBuf, String> {
+    let parent = parent_or_current(path);
+    let parent = fs::canonicalize(parent).map_err(|error| {
+        format!(
+            "cannot resolve output directory {}: {error}",
+            parent.display()
+        )
+    })?;
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| format!("output {} has no file name", path.display()))?;
+    Ok(parent.join(file_name))
+}
+
 fn restore_destination(path: &Path, backup: Option<&tempfile::TempPath>) -> Result<(), String> {
     if path.exists() {
         fs::remove_file(path)
@@ -1116,6 +1187,19 @@ mod tests {
         assert!(error.contains("injected evidence publication failure"));
         assert_eq!(fs::read(&artifact).unwrap(), b"old artifact");
         assert_eq!(fs::read(&evidence).unwrap(), b"old evidence");
+    }
+
+    #[test]
+    fn output_identity_rejects_lexical_aliases() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("nested")).unwrap();
+        let direct = dir.path().join("same.glb");
+        let alias = dir.path().join("nested/../same.glb");
+        assert_ne!(direct, alias);
+        assert_eq!(
+            destination_identity(&direct).unwrap(),
+            destination_identity(&alias).unwrap()
+        );
     }
 
     #[test]

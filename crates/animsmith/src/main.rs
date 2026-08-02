@@ -334,12 +334,7 @@ fn main() -> ExitCode {
 }
 
 fn load_config(explicit: Option<&Path>) -> Result<Config, String> {
-    let Some(path) = config_source_path(explicit) else {
-        return Ok(Config::default());
-    };
-    let text = std::fs::read_to_string(&path)
-        .map_err(|e| format!("cannot read config {}: {e}", path.display()))?;
-    toml::from_str(&text).map_err(|e| format!("bad config {}: {e}", path.display()))
+    Ok(load_config_with_source(explicit)?.0)
 }
 
 fn config_source_path(explicit: Option<&Path>) -> Option<PathBuf> {
@@ -347,6 +342,20 @@ fn config_source_path(explicit: Option<&Path>) -> Option<PathBuf> {
         let default = PathBuf::from("animsmith.toml");
         default.exists().then_some(default)
     })
+}
+
+fn load_config_with_source(
+    explicit: Option<&Path>,
+) -> Result<(Config, Option<(PathBuf, Vec<u8>)>), String> {
+    let Some(path) = config_source_path(explicit) else {
+        return Ok((Config::default(), None));
+    };
+    let bytes =
+        std::fs::read(&path).map_err(|e| format!("cannot read config {}: {e}", path.display()))?;
+    let text = std::str::from_utf8(&bytes)
+        .map_err(|e| format!("bad config {}: config is not UTF-8: {e}", path.display()))?;
+    let config = toml::from_str(text).map_err(|e| format!("bad config {}: {e}", path.display()))?;
+    Ok((config, Some((path, bytes))))
 }
 
 fn validate_check_selection(
@@ -709,14 +718,15 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             output,
             evidence,
         } => {
-            let config_source = config_source_path(cli.config.as_deref());
-            let config = load_config(cli.config.as_deref())?;
+            let (config, config_source) = load_config_with_source(cli.config.as_deref())?;
             let result = assembly::assemble(
                 &recipe,
                 &output,
                 &evidence,
                 &config,
-                config_source.as_deref(),
+                config_source
+                    .as_ref()
+                    .map(|(path, bytes)| (path.as_path(), bytes.as_slice())),
                 current_tool(),
             )?;
             println!(
