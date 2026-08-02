@@ -1153,7 +1153,8 @@ mod tests {
                 &mut clip,
                 &base,
                 animsmith_core::assembly::RestPoseTrackOptions::ALL,
-            ),
+            )
+            .unwrap(),
             5
         );
         normalize_quaternion_magnitudes(&mut clip).unwrap();

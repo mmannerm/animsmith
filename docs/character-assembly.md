@@ -15,6 +15,11 @@ writes a GLB and versioned JSON evidence as one publication pair. It prepares
 both files before replacing either destination and restores prior outputs if
 the second replacement fails.
 
+This rollback contract covers every error returned by the command. No portable
+filesystem primitive can make two independently named destinations
+power-loss-atomic, so after abrupt process or machine termination the consumer
+must verify the evidence artifact digest before publication.
+
 ## Boundary
 
 Assembly owns format-generic scene, skin, animation, material, and GLB work.
@@ -50,6 +55,11 @@ All input paths are relative to `input_root`, which is itself relative to the
 recipe. Absolute paths, parent traversal, symlink components, and paths that
 escape the canonical root are rejected. Output paths are command arguments so
 the recipe remains relocatable.
+
+The input root is an operator-controlled snapshot: do not mutate or replace its
+entries concurrently with assembly. Symlink checks and reads are separate
+portable filesystem operations, so the command does not claim to defend
+against an actor racing the input tree while it runs.
 
 The base supplies the authoritative skeleton, rest pose, meshes, skins,
 materials, and textures. `mesh_instances` names the exact base nodes whose

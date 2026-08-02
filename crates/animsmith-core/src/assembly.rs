@@ -221,9 +221,8 @@ pub fn complete_rest_pose_tracks(
     clip: &mut Clip,
     base: &Skeleton,
     options: RestPoseTrackOptions,
-) -> usize {
+) -> Result<usize, AssemblyError> {
     complete_rest_pose_tracks_for_bones(clip, base, 0..base.bones.len(), options)
-        .expect("the complete base-skeleton range is valid")
 }
 
 /// Add absent rest-pose channels for an explicit base-bone selection.

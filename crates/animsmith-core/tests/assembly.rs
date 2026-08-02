@@ -143,7 +143,7 @@ fn rest_completion_only_adds_requested_absent_channels() {
         duration_s: 2.0,
         tracks: vec![existing_translation.clone()],
     };
-    let added = complete_rest_pose_tracks(&mut clip, &base, RestPoseTrackOptions::ALL);
+    let added = complete_rest_pose_tracks(&mut clip, &base, RestPoseTrackOptions::ALL).unwrap();
     assert_eq!(
         added, 5,
         "root rotation/scale plus hand translation/rotation/scale"

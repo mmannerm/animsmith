@@ -231,7 +231,10 @@ fn recipe_conversion_is_schema_valid_byte_stable_and_semantically_ordered() {
     let normal = material.normal_texture.as_ref().expect("normal texture");
     assert_eq!(normal.texture.mime, "image/png");
     assert_eq!(normal.scale, 1.0);
-    assert!(material.metallic_roughness_texture.is_some());
+    let metallic_roughness = material
+        .metallic_roughness_texture
+        .as_ref()
+        .expect("metallic-roughness texture");
     let occlusion = material
         .occlusion_texture
         .as_ref()
@@ -268,6 +271,26 @@ fn recipe_conversion_is_schema_valid_byte_stable_and_semantically_ordered() {
     assert!(
         vector[0] > 0.69 && vector[1] > 0.69 && vector[2].abs() < 0.01,
         "normal semantics or filtering changed: {normal_pixel:?}"
+    );
+    let metallic_roughness_pixel = image::load_from_memory(&metallic_roughness.bytes)
+        .expect("decodes emitted metallic-roughness")
+        .into_rgba8()
+        .get_pixel(0, 0)
+        .0;
+    assert_eq!(
+        metallic_roughness_pixel,
+        [0, 96, 128, 255],
+        "linear data slots retain their channel meanings"
+    );
+    let occlusion_pixel = image::load_from_memory(&occlusion.texture.bytes)
+        .expect("decodes emitted occlusion")
+        .into_rgba8()
+        .get_pixel(0, 0)
+        .0;
+    assert_eq!(
+        occlusion_pixel,
+        [128, 0, 0, 255],
+        "occlusion remains in the red channel"
     );
 
     let second = run_convert(dir.path(), "recipes/materials.toml");

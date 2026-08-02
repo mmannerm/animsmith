@@ -346,3 +346,39 @@ fn canonicalization_accepts_bone_level_inverse_bind_fallback() {
         );
     }
 }
+
+#[test]
+fn canonicalization_rejects_malformed_skin_inputs() {
+    let options = SkinnedBindPoseCanonicalizationOptions::default();
+
+    let mut unskinned = source_document();
+    unskinned.assets.instances[0].skin_joints.clear();
+    unskinned.assets.instances[0].skin_ibms.clear();
+    assert!(matches!(
+        canonicalize_skinned_bind_pose(&unskinned, options),
+        Err(SkinnedBindPoseCanonicalizationError::UnskinnedInstance {
+            source_node_index: 23
+        })
+    ));
+
+    let mut missing_inverse_bind = source_document();
+    missing_inverse_bind.assets.instances[0].skin_ibms.clear();
+    assert!(matches!(
+        canonicalize_skinned_bind_pose(&missing_inverse_bind, options),
+        Err(SkinnedBindPoseCanonicalizationError::MissingInverseBind {
+            source_node_index: 23,
+            joint: 0,
+        })
+    ));
+
+    let mut invalid_weights = source_document();
+    invalid_weights.assets.meshes[0].primitives[0].weights[0] = [1.0, 1.0, 0.0, 0.0];
+    assert!(matches!(
+        canonicalize_skinned_bind_pose(&invalid_weights, options),
+        Err(SkinnedBindPoseCanonicalizationError::InvalidPrimitive {
+            mesh: 0,
+            primitive: 0,
+            reason: "skin_weights",
+        })
+    ));
+}
