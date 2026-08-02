@@ -52,7 +52,7 @@ animsmith lint <file...> [--format text|json|markdown] [--select id[,id]] [--all
 animsmith report <file> -o <report.html> [--clip name]
 animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor] [--fps N]
 animsmith fix <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
-animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb|out.gltf> [--animation-only|--bake-static-mesh-transforms] [--format text|json]
+animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb|out.gltf> [--material-texture-recipe recipe.toml] [--animation-only|--bake-static-mesh-transforms] [--format text|json]
 animsmith diff <before> <after> [--format text|json]
 ```
 
@@ -100,6 +100,13 @@ Full-scene conversion carries factor-only materials plus linked or embedded
 PNG/JPEG base-color and normal textures. Normal textures retain their glTF
 scale; FBX normal maps use glTF's default scale because ordinary FBX materials
 do not expose the same scalar.
+
+`--material-texture-recipe <PATH>` applies explicit BaseColor and normal image
+mappings during conversion. It conflicts with `--animation-only`, which removes
+materials, and is compatible with `--bake-static-mesh-transforms` and either
+`--format` value. Without a recipe, ordinary linked and embedded textures keep
+their existing conversion path. See [material texture recipes](material-texture-recipes.md)
+for the recipe contract, deterministic processing policy, and path rules.
 
 ## Static mesh transform bake
 
@@ -154,12 +161,12 @@ evidence has its own
 Alpha-era v1 and preview reports are not retained; regenerate them before
 using `diff`.
 
-`convert --format json` emits conversion evidence v1, with immutable identity
-`urn:animsmith:schema:conversion-evidence:1`; see [output.md](output.md) and
-[`conversion-evidence-v1.schema.json`](schemas/conversion-evidence-v1.schema.json).
-It records the requested options, counts from the written artifact, and, when
-requested, the exact static-mesh transforms baked into the output. `text` is
-the default human-readable write summary.
+`convert --format json` emits conversion evidence v2, with immutable identity
+`urn:animsmith:schema:conversion-evidence:2`; see [output.md](output.md) and
+[`conversion-evidence-v2.schema.json`](schemas/conversion-evidence-v2.schema.json).
+It records the requested options, counts from the written artifact, exact
+static-mesh transforms when requested, and recipe provenance when a material
+texture recipe is used. `text` is the default human-readable write summary.
 
 Machine-readable lint rejects `--allow` so it cannot erase evidence. The flag
 remains a presentation and exit-policy convenience for text and Markdown.

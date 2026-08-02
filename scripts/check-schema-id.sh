@@ -34,7 +34,8 @@ check_schema() {
 
 check_schema docs/schemas/output-v2.schema.json urn:animsmith:schema:output:2 crates/animsmith-core/src/contract.rs docs/output.md
 check_schema docs/schemas/measurements-v2.schema.json urn:animsmith:schema:measurements:2 crates/animsmith-core/src/contract.rs docs/output.md
-check_schema docs/schemas/conversion-evidence-v1.schema.json urn:animsmith:schema:conversion-evidence:1 docs/output.md docs/cli.md
+check_schema docs/schemas/conversion-evidence-v1.schema.json urn:animsmith:schema:conversion-evidence:1 docs/output.md
+check_schema docs/schemas/conversion-evidence-v2.schema.json urn:animsmith:schema:conversion-evidence:2 docs/output.md docs/cli.md
 
 for removed_schema in \
   docs/schemas/output-v1.schema.json \

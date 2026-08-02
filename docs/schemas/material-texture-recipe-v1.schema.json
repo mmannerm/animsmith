@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:animsmith:schema:material-texture-recipe:1",
+  "title": "animsmith material texture recipe v1",
+  "description": "Declarative material texture recipe accepted by animsmith convert.",
+  "type": "object",
+  "required": ["schema_version", "schema", "max_dimension", "materials"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "schema": { "const": "urn:animsmith:schema:material-texture-recipe:1" },
+    "texture_root": { "type": "string", "minLength": 1 },
+    "max_dimension": { "type": "integer", "minimum": 1, "maximum": 4096 },
+    "materials": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/material" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "material": {
+      "type": "object",
+      "required": ["name", "base_color", "normal"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "base_color": { "type": "string", "minLength": 1 },
+        "normal": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    }
+  }
+}

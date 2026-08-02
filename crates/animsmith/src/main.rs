@@ -35,7 +35,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+#[cfg(feature = "fbx")]
+mod material_recipe;
 mod render;
+#[cfg(feature = "fbx")]
+mod texture_processing;
 
 /// Exit codes, matching common asset-validation gate conventions:
 /// 0 = no failing findings (warnings/notes allowed), 1 = error
@@ -158,7 +162,7 @@ enum Cmd {
     },
     /// Convert FBX or glTF input to glTF.
     #[command(
-        long_about = "Convert FBX or glTF input to glTF: skeleton, animation, triangulated meshes, skins, factor-only materials, and embedded PNG/JPEG base-color and normal textures. A glTF input is re-emitted carrying its geometry; --animation-only drops it. --bake-static-mesh-transforms produces a strict canonical static scene whose mesh-local geometry includes accumulated rest transforms. Output format by extension: .glb binary, .gltf JSON with an embedded buffer."
+        long_about = "Convert FBX or glTF input to glTF: skeleton, animation, triangulated meshes, skins, factor-only materials, and embedded PNG/JPEG base-color and normal textures. A glTF input is re-emitted carrying its geometry; --animation-only drops it. --material-texture-recipe applies exact, declarative BaseColor and normal textures. --bake-static-mesh-transforms produces a strict canonical static scene whose mesh-local geometry includes accumulated rest transforms. Output format by extension: .glb binary, .gltf JSON with an embedded buffer."
     )]
     #[cfg(feature = "fbx")]
     Convert {
@@ -170,6 +174,9 @@ enum Cmd {
         /// Strip geometry: emit skeleton + animation only.
         #[arg(long, conflicts_with = "bake_static_mesh_transforms")]
         animation_only: bool,
+        /// Apply an exact declarative BaseColor and normal-texture recipe.
+        #[arg(long, value_name = "PATH", conflicts_with = "animation_only")]
+        material_texture_recipe: Option<PathBuf>,
         /// Bake accumulated static node transforms into mesh-local geometry.
         #[arg(long)]
         bake_static_mesh_transforms: bool,
@@ -198,15 +205,16 @@ enum Format {
 }
 
 #[cfg(feature = "fbx")]
-const CONVERSION_EVIDENCE_SCHEMA_VERSION: u32 = 1;
+const CONVERSION_EVIDENCE_SCHEMA_VERSION: u32 = 2;
 #[cfg(feature = "fbx")]
-const CONVERSION_EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:conversion-evidence:1";
+const CONVERSION_EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:conversion-evidence:2";
 
 #[cfg(feature = "fbx")]
 #[derive(Serialize)]
 struct ConversionOptions {
     animation_only: bool,
     bake_static_mesh_transforms: bool,
+    material_texture_recipe: Option<String>,
 }
 
 #[cfg(feature = "fbx")]
@@ -247,6 +255,8 @@ struct ConversionEnvelope<'a> {
     artifact: ConversionArtifact,
     #[serde(skip_serializing_if = "Option::is_none")]
     static_mesh_bake: Option<&'a animsmith_core::StaticMeshBakeEvidence>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    material_texture_recipe: Option<&'a material_recipe::MaterialTextureRecipeEvidence>,
 }
 
 /// Output format for `lint`. Adds a presentation-only Markdown rendering
@@ -606,6 +616,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             input,
             output,
             animation_only,
+            material_texture_recipe,
             bake_static_mesh_transforms,
             format,
         } => {
@@ -615,14 +626,25 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             if animation_only {
                 doc.assets = animsmith_core::model::SceneAssets::default();
             }
+            let recipe_application = material_texture_recipe
+                .as_deref()
+                .map(|path| material_recipe::apply_material_texture_recipe(path, &doc))
+                .transpose()
+                .map_err(|error| error.to_string())?;
+            let recipe_doc = recipe_application
+                .as_ref()
+                .map_or(&doc, |application| &application.document);
             let static_mesh_bake = if bake_static_mesh_transforms {
-                Some(animsmith_core::bake_static_mesh_transforms(&doc).map_err(|e| e.to_string())?)
+                Some(
+                    animsmith_core::bake_static_mesh_transforms(recipe_doc)
+                        .map_err(|e| e.to_string())?,
+                )
             } else {
                 None
             };
             let output_doc = static_mesh_bake
                 .as_ref()
-                .map_or(&doc, |bake| &bake.document);
+                .map_or(recipe_doc, |bake| &bake.document);
             let summary =
                 animsmith_gltf::write::write(output_doc, &output).map_err(|e| e.to_string())?;
             match format {
@@ -632,6 +654,12 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                         println!(
                             "baked {} static mesh instance(s) into identity-root geometry",
                             bake.evidence.entries.len()
+                        );
+                    }
+                    if let Some(application) = &recipe_application {
+                        println!(
+                            "applied material texture recipe; emitted {} texture(s)",
+                            application.evidence.emitted_textures.len()
                         );
                     }
                 }
@@ -645,9 +673,15 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     options: ConversionOptions {
                         animation_only,
                         bake_static_mesh_transforms,
+                        material_texture_recipe: material_texture_recipe
+                            .as_ref()
+                            .map(|path| path.display().to_string()),
                     },
                     artifact: summary.into(),
                     static_mesh_bake: static_mesh_bake.as_ref().map(|bake| &bake.evidence),
+                    material_texture_recipe: recipe_application
+                        .as_ref()
+                        .map(|application| &application.evidence),
                 }),
             }
             Ok(ExitCode::SUCCESS)
