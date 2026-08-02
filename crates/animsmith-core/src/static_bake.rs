@@ -237,6 +237,7 @@ pub enum StaticMeshBakeError {
 
 #[derive(Debug, Clone, Copy)]
 struct BakePlan {
+    instance: usize,
     mesh: usize,
     node: usize,
     world: Mat4,
@@ -255,10 +256,14 @@ struct BakePlan {
 ///
 /// # Errors
 ///
-/// Returns [`StaticMeshBakeError`] rather than changing semantics when the
-/// input is animated, skinned, malformed, reflected, or has a singular or
-/// non-finite transform. The full document is validated before output is
-/// constructed.
+/// Returns [`StaticMeshBakeError`] when there are no mesh instances, any
+/// animation track or skin signal is present, or a mesh definition is not
+/// attached to exactly one distinct source node. Missing references, invalid
+/// hierarchy or primitive layouts, non-finite transforms, attributes, or
+/// material factors, zero or unstable normals, near-singular transforms, and
+/// reflections are also rejected. Reflections would require rewriting the
+/// preserved triangle winding. The full document, including the transformed
+/// positions and normals, is validated before output is constructed.
 pub fn bake_static_mesh_transforms(doc: &Document) -> Result<StaticMeshBake, StaticMeshBakeError> {
     let plans = validate(doc)?;
     let mut meshes = Vec::with_capacity(plans.len());
@@ -275,7 +280,7 @@ pub fn bake_static_mesh_transforms(doc: &Document) -> Result<StaticMeshBake, Sta
 
     for (ordinal, plan) in plans.iter().enumerate() {
         let input_mesh = &doc.assets.meshes[plan.mesh];
-        let input_instance = &doc.assets.instances[ordinal];
+        let input_instance = &doc.assets.instances[plan.instance];
         let output_node = ordinal + 1;
         let output_mesh = ordinal;
         let baked_mesh = bake_mesh(input_mesh, plan, plan.mesh)?;
@@ -407,7 +412,7 @@ fn validate(doc: &Document) -> Result<Vec<BakePlan>, StaticMeshBakeError> {
     }
 
     let mut plans = Vec::with_capacity(doc.assets.instances.len());
-    for instance in &doc.assets.instances {
+    for (instance_ordinal, instance) in doc.assets.instances.iter().enumerate() {
         let mesh = &doc.assets.meshes[instance.mesh];
         validate_mesh(mesh, instance.mesh, doc.assets.materials.len())?;
         let world = worlds[instance.node];
@@ -439,6 +444,7 @@ fn validate(doc: &Document) -> Result<Vec<BakePlan>, StaticMeshBakeError> {
         }
         validate_baked_mesh(mesh, instance.mesh, world, normal)?;
         plans.push(BakePlan {
+            instance: instance_ordinal,
             mesh: instance.mesh,
             node: instance.node,
             world,

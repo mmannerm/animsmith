@@ -26,6 +26,16 @@ animsmith-gltf = "0.1"
 
 The workspace MSRV is Rust 1.88.
 
+## Static Mesh Transform Baking
+
+Embedders can opt into
+`animsmith_core::bake_static_mesh_transforms` to bake accumulated static
+rest transforms into mesh-local positions and inverse-transpose normalized
+normals. The operation returns a canonical identity-root document plus
+deterministic per-instance evidence. It validates the complete input before
+constructing output and fails closed for animation, skinning, ambiguous mesh
+instancing, malformed data, reflections, and ill-conditioned transforms.
+
 ## More Details
 
 - [API reference on docs.rs](https://docs.rs/animsmith-core)

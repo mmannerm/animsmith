@@ -4,8 +4,8 @@
 
 use animsmith_core::glam::{Mat3, Quat, Vec3};
 use animsmith_core::model::{
-    Bone, Document, MeshAsset, MeshInstance, Primitive, SceneAsset, SceneAssets, Skeleton,
-    Transform,
+    Bone, Clip, Document, Interpolation, MaterialAsset, MeshAsset, MeshInstance, Primitive,
+    Property, SceneAsset, SceneAssets, Skeleton, TextureAsset, Track, TrackValues, Transform,
 };
 use serde_json::Value;
 use std::path::Path;
@@ -14,6 +14,9 @@ use std::process::{Command, Output};
 const CONVERSION_SCHEMA: &str =
     include_str!("../../../docs/schemas/conversion-evidence-v1.schema.json");
 const EPSILON: f32 = 1.0e-5;
+const TINY_JPEG: &[u8] = &[
+    0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, b'J', b'F', b'I', b'F', 0xff, 0xd9,
+];
 
 fn fixture() -> Document {
     Document {
@@ -46,6 +49,7 @@ fn fixture() -> Document {
                 name: "asymmetric-triangle".into(),
                 source_mesh_index: 17,
                 primitives: vec![Primitive {
+                    material: Some(0),
                     indices: vec![0, 1, 2],
                     positions: vec![
                         Vec3::new(-1.0, 0.25, 0.5),
@@ -62,6 +66,16 @@ fn fixture() -> Document {
                 node: 1,
                 mesh: 0,
                 ..MeshInstance::default()
+            }],
+            materials: vec![MaterialAsset {
+                name: "painted".into(),
+                base_color: [0.3, 0.4, 0.5, 0.6],
+                metallic: 0.7,
+                roughness: 0.2,
+                base_color_texture: Some(TextureAsset {
+                    bytes: TINY_JPEG.to_vec(),
+                    mime: "image/jpeg".into(),
+                }),
             }],
             scenes: vec![SceneAsset {
                 source_scene_index: 0,
@@ -289,13 +303,34 @@ fn convert_json_without_static_bake_omits_bake_evidence_and_keeps_source_transfo
         source.assets.meshes[0].primitives[0].positions,
         "default conversion keeps mesh-local geometry unchanged"
     );
+    let ordinary_primitive = &ordinary.assets.meshes[0].primitives[0];
+    let source_primitive = &source.assets.meshes[0].primitives[0];
+    assert_eq!(ordinary_primitive.indices, source_primitive.indices);
+    assert_eq!(ordinary_primitive.normals, source_primitive.normals);
+    assert_eq!(ordinary_primitive.uvs, source_primitive.uvs);
+    assert_eq!(ordinary_primitive.material, source_primitive.material);
+    assert_eq!(
+        ordinary.assets.materials.len(),
+        source.assets.materials.len()
+    );
+    let ordinary_material = &ordinary.assets.materials[0];
+    let source_material = &source.assets.materials[0];
+    assert_eq!(ordinary_material.name, source_material.name);
+    assert_eq!(ordinary_material.base_color, source_material.base_color);
+    assert_eq!(ordinary_material.metallic, source_material.metallic);
+    assert_eq!(ordinary_material.roughness, source_material.roughness);
+    let ordinary_texture = ordinary_material
+        .base_color_texture
+        .as_ref()
+        .expect("ordinary conversion keeps embedded texture");
+    let source_texture = source_material.base_color_texture.as_ref().unwrap();
+    assert_eq!(ordinary_texture.bytes, source_texture.bytes);
+    assert_eq!(ordinary_texture.mime, source_texture.mime);
 }
 
 #[test]
-fn convert_static_bake_rejects_shared_mesh_before_creating_output() {
+fn convert_static_bake_rejects_invalid_inputs_before_creating_output() {
     let dir = tempfile::tempdir().expect("creates temp directory");
-    let input = dir.path().join("shared.glb");
-    let output = dir.path().join("must-not-exist.glb");
     let mut shared = fixture();
     shared.assets.instances.push(MeshInstance {
         source_node_index: 24,
@@ -303,13 +338,51 @@ fn convert_static_bake_rejects_shared_mesh_before_creating_output() {
         mesh: 0,
         ..MeshInstance::default()
     });
-    animsmith_gltf::write::write(&shared, &input).expect("writes shared input fixture");
 
-    let result = run_json_convert(&input, &output, true);
-    assert_eq!(result.status.code(), Some(2));
-    assert!(
-        result.stdout.is_empty(),
-        "operator failures emit no JSON evidence"
-    );
-    assert!(!output.exists(), "validation fails before output creation");
+    let mut singular = fixture();
+    singular.skeleton.bones[1].rest.scale.x = 0.0;
+
+    let mut animated = fixture();
+    animated.clips.push(Clip {
+        name: "moving".into(),
+        duration_s: 1.0,
+        tracks: vec![Track {
+            bone: 1,
+            property: Property::Rotation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Quats(vec![Quat::IDENTITY, Quat::from_rotation_z(0.5)]),
+        }],
+    });
+
+    let mut overflowing = fixture();
+    overflowing.assets.meshes[0].primitives[0].positions[0] = Vec3::splat(f32::MAX / 2.0);
+
+    for (case, input_document) in [
+        ("shared", shared),
+        ("singular", singular),
+        ("animated", animated),
+        ("overflowing", overflowing),
+    ] {
+        let input = dir.path().join(format!("{case}.glb"));
+        let output = dir.path().join(format!("{case}-must-not-exist.glb"));
+        animsmith_gltf::write::write(&input_document, &input)
+            .unwrap_or_else(|error| panic!("writes {case} input fixture: {error}"));
+
+        let result = run_json_convert(&input, &output, true);
+        assert_eq!(
+            result.status.code(),
+            Some(2),
+            "{case} unexpectedly succeeded: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(
+            result.stdout.is_empty(),
+            "{case} operator failure emits no JSON evidence"
+        );
+        assert!(
+            !output.exists(),
+            "{case} validation fails before output creation"
+        );
+    }
 }

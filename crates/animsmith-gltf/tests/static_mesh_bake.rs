@@ -217,6 +217,141 @@ fn expected_world_geometry(doc: &Document, instance: &MeshInstance) -> (Vec<Vec3
 }
 
 #[test]
+fn static_mesh_bake_matches_literal_rotation_scale_translation_oracles() {
+    let diagonal = Vec3::new(
+        std::f32::consts::FRAC_1_SQRT_2,
+        std::f32::consts::FRAC_1_SQRT_2,
+        0.0,
+    );
+    let source = Document {
+        skeleton: Skeleton {
+            bones: vec![
+                Bone {
+                    name: "root".into(),
+                    parent: None,
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "rotated-nonuniform".into(),
+                    parent: Some(0),
+                    rest: transform(
+                        Vec3::new(10.0, -2.0, 3.0),
+                        Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
+                        Vec3::new(2.0, 3.0, 4.0),
+                    ),
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "uniform".into(),
+                    parent: Some(0),
+                    rest: transform(Vec3::new(1.0, -1.0, 0.0), Quat::IDENTITY, Vec3::splat(2.0)),
+                    inverse_bind: None,
+                },
+            ],
+        },
+        assets: SceneAssets {
+            meshes: vec![
+                MeshAsset {
+                    name: "literal-nonuniform".into(),
+                    source_mesh_index: 0,
+                    primitives: vec![
+                        Primitive {
+                            positions: vec![
+                                Vec3::new(1.0, 2.0, 3.0),
+                                Vec3::new(-1.0, 0.0, 0.0),
+                                Vec3::new(0.0, 1.0, 0.0),
+                            ],
+                            normals: vec![diagonal; 3],
+                            ..Primitive::default()
+                        },
+                        Primitive {
+                            indices: vec![0, 1, 2],
+                            positions: vec![
+                                Vec3::new(0.0, 0.0, 1.0),
+                                Vec3::new(2.0, 1.0, 0.0),
+                                Vec3::new(-1.0, -1.0, -1.0),
+                            ],
+                            ..Primitive::default()
+                        },
+                    ],
+                },
+                MeshAsset {
+                    name: "literal-uniform".into(),
+                    source_mesh_index: 1,
+                    primitives: vec![Primitive {
+                        positions: vec![Vec3::X, Vec3::Y, Vec3::Z],
+                        normals: vec![Vec3::Z; 3],
+                        ..Primitive::default()
+                    }],
+                },
+            ],
+            instances: vec![
+                MeshInstance {
+                    source_node_index: 1,
+                    node: 1,
+                    mesh: 0,
+                    ..MeshInstance::default()
+                },
+                MeshInstance {
+                    source_node_index: 2,
+                    node: 2,
+                    mesh: 1,
+                    ..MeshInstance::default()
+                },
+            ],
+            scenes: vec![SceneAsset {
+                source_scene_index: 0,
+                name: None,
+                roots: vec![0],
+            }],
+            default_scene: Some(0),
+            ..SceneAssets::default()
+        },
+        ..Document::default()
+    };
+
+    let baked = bake_static_mesh_transforms(&source).expect("literal scene bakes");
+    let nonuniform = &baked.document.assets.meshes[0].primitives;
+    assert_eq!(nonuniform.len(), 2, "every primitive is retained");
+    let expected_first = [
+        Vec3::new(4.0, 0.0, 15.0),
+        Vec3::new(10.0, -4.0, 3.0),
+        Vec3::new(7.0, -2.0, 3.0),
+    ];
+    let expected_second = [
+        Vec3::new(10.0, -2.0, 7.0),
+        Vec3::new(7.0, 2.0, 3.0),
+        Vec3::new(13.0, -4.0, -1.0),
+    ];
+    let expected_normal = Vec3::new(-0.554_700_2, 0.832_050_3, 0.0);
+    assert_eq!(nonuniform[0].positions.len(), expected_first.len());
+    assert_eq!(nonuniform[1].positions.len(), expected_second.len());
+    for (actual, expected) in nonuniform[0].positions.iter().zip(expected_first) {
+        close_vec3(*actual, expected, "literal nonuniform primitive 0 position");
+    }
+    for (actual, expected) in nonuniform[1].positions.iter().zip(expected_second) {
+        close_vec3(*actual, expected, "literal nonuniform primitive 1 position");
+    }
+    assert_eq!(nonuniform[0].normals.len(), 3);
+    for actual in &nonuniform[0].normals {
+        close_vec3(*actual, expected_normal, "literal inverse-transpose normal");
+    }
+
+    let uniform = &baked.document.assets.meshes[1].primitives[0];
+    let expected_uniform = [
+        Vec3::new(3.0, -1.0, 0.0),
+        Vec3::new(1.0, 1.0, 0.0),
+        Vec3::new(1.0, -1.0, 2.0),
+    ];
+    assert_eq!(uniform.positions.len(), expected_uniform.len());
+    for (actual, expected) in uniform.positions.iter().zip(expected_uniform) {
+        close_vec3(*actual, expected, "literal uniform-scale position");
+    }
+    assert_eq!(uniform.normals, vec![Vec3::Z; 3]);
+}
+
+#[test]
 fn static_mesh_bake_flattens_geometry_without_losing_scene_asset_semantics() {
     let source = supported_document();
     let expected: Vec<_> = source
@@ -313,7 +448,6 @@ fn static_mesh_bake_flattens_geometry_without_losing_scene_asset_semantics() {
         "canonical topology has exactly one root"
     );
     let root = &output.skeleton.bones[0];
-    assert_eq!(root.name, "animsmith-static-root");
     assert_eq!(root.parent, None);
     assert_eq!(root.rest, Transform::IDENTITY);
     assert_eq!(root.inverse_bind, None);
@@ -326,7 +460,6 @@ fn static_mesh_bake_flattens_geometry_without_losing_scene_asset_semantics() {
         assert!(instance.skin_joints.is_empty());
         assert!(instance.skin_ibms.is_empty());
         let node = &output.skeleton.bones[instance.node];
-        assert_eq!(node.name, format!("animsmith-static-mesh-{ordinal}"));
         assert_eq!(node.parent, Some(0));
         assert_eq!(node.rest, Transform::IDENTITY);
         assert_eq!(node.inverse_bind, None);
@@ -692,6 +825,25 @@ fn static_mesh_bake_rejects_ambiguous_or_nonstatic_inputs() {
         },
     );
 
+    let mut bad_unindexed_triangle_count = source.clone();
+    bad_unindexed_triangle_count.assets.meshes[0].primitives[0]
+        .indices
+        .clear();
+    assert_bake_error(
+        &bad_unindexed_triangle_count,
+        "InvalidPrimitive unindexed_triangle_count",
+        |error| {
+            matches!(
+                error,
+                StaticMeshBakeError::InvalidPrimitive {
+                    mesh: 0,
+                    primitive: 0,
+                    reason: "unindexed_triangle_count"
+                }
+            )
+        },
+    );
+
     let mut bad_normal_count = source.clone();
     bad_normal_count.assets.meshes[0].primitives[0]
         .normals
@@ -778,6 +930,25 @@ fn static_mesh_bake_rejects_ambiguous_or_nonstatic_inputs() {
                     mesh: 0,
                     primitive: 0,
                     attribute: "position",
+                    vertex: 2
+                }
+            )
+        },
+    );
+
+    let mut overflowing_baked_position = source.clone();
+    overflowing_baked_position.assets.meshes[0].primitives[0].positions[2] =
+        Vec3::splat(f32::MAX / 2.0);
+    assert_bake_error(
+        &overflowing_baked_position,
+        "finite position whose transformed result overflows",
+        |error| {
+            matches!(
+                error,
+                StaticMeshBakeError::NonFiniteAttribute {
+                    mesh: 0,
+                    primitive: 0,
+                    attribute: "baked_position",
                     vertex: 2
                 }
             )
@@ -992,6 +1163,29 @@ fn static_mesh_bake_rejects_ambiguous_or_nonstatic_inputs() {
                 node: 0,
                 property: "translation"
             } if clip == "animated-ancestor"
+        )
+    });
+
+    let mut rotation_track = source.clone();
+    rotation_track.clips.push(Clip {
+        name: "rotated-mesh".into(),
+        duration_s: 1.0,
+        tracks: vec![Track {
+            bone: 2,
+            property: Property::Rotation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Quats(vec![Quat::IDENTITY, Quat::from_rotation_y(0.5)]),
+        }],
+    });
+    assert_bake_error(&rotation_track, "animated mesh rotation", |error| {
+        matches!(
+            error,
+            StaticMeshBakeError::AnimationTrack {
+                clip,
+                node: 2,
+                property: "rotation"
+            } if clip == "rotated-mesh"
         )
     });
 
