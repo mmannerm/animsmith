@@ -8,58 +8,66 @@ const NON_CHECK_ID_LIKE_TOKENS: &[&str] = &[
     "animsmith-fbx",
     "animsmith-gltf",
     "animsmith-report",
-    "convert",
-    "diff",
     "fix",
     "humanoid",
-    "inspect",
-    "lint",
     "measure",
     "mixamo",
-    "report",
     "transform",
     "ue-mannequin",
 ];
-
-const PARTIAL_CHECK_ID_DOCS: &[&str] = &["docs/pipeline-scenarios.md"];
+const PIPELINE_MATRIX_MARKER: &str = "the contract grows to cover them or the team accepts them:";
 
 #[test]
 fn docs_check_ids_match_the_registered_catalog() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let Some(workspace_root) = source_workspace_root(manifest_dir) else {
+    let Some((readme, game_ready_clips, pipeline_scenarios)) = read_source_catalog_docs() else {
         // Published crates intentionally exclude repository-level docs.
         return;
     };
-    let readme = read_workspace_doc(&workspace_root, "README.md");
-    let game_ready_clips = read_workspace_doc(&workspace_root, "docs/game-ready-clips.md");
+
+    assert_catalog_docs(
+        &readme,
+        &game_ready_clips,
+        &[(
+            "docs/pipeline-scenarios.md",
+            pipeline_scenarios.as_str(),
+            PIPELINE_MATRIX_MARKER,
+        )],
+    );
+}
+
+fn assert_catalog_docs(
+    readme: &str,
+    game_ready_clips: &str,
+    partial_check_id_tables: &[(&str, &str, &str)],
+) {
     let catalog = registered_check_ids();
     let mechanical = registered_mechanical_check_ids();
     let contract_aware: BTreeSet<_> = catalog.difference(&mechanical).copied().collect();
 
     assert_exact_ids(
         "README.md Mechanical checks table",
-        &readme_mechanical_check_table_ids(&readme),
+        &check_table_ids_after(readme, "Mechanical checks"),
         &mechanical,
     );
     assert_exact_ids(
         "README.md Contract-aware checks table",
-        &readme_contract_aware_check_table_ids(&readme),
+        &check_table_ids_after(readme, "Contract-aware checks"),
         &contract_aware,
     );
     assert_exact_ids(
         "docs/game-ready-clips.md symptom table",
-        &guide_symptom_table_ids(&game_ready_clips),
+        &guide_symptom_table_ids(game_ready_clips),
         &catalog,
     );
     assert_exact_ids(
         "docs/game-ready-clips.md File-ready level",
-        &guide_file_ready_check_ids(&game_ready_clips, &catalog),
+        &guide_file_ready_check_ids(game_ready_clips, &catalog),
         &mechanical,
     );
 
     for (path, markdown) in [
-        ("README.md", readme.as_str()),
-        ("docs/game-ready-clips.md", game_ready_clips.as_str()),
+        ("README.md", readme),
+        ("docs/game-ready-clips.md", game_ready_clips),
     ] {
         let tokens = inline_code_tokens(markdown);
         let documented: BTreeSet<_> = tokens
@@ -75,9 +83,9 @@ fn docs_check_ids_match_the_registered_catalog() {
         assert_no_unknown_check_ids(path, markdown, &catalog);
     }
 
-    for path in PARTIAL_CHECK_ID_DOCS {
-        let markdown = read_workspace_doc(&workspace_root, path);
-        assert_no_unknown_check_ids(path, &markdown, &catalog);
+    for &(path, markdown, table_marker) in partial_check_id_tables {
+        let table = markdown_table_after(markdown, table_marker).join("\n");
+        assert_no_unknown_check_ids(path, &table, &catalog);
     }
 }
 
@@ -117,6 +125,15 @@ fn read_workspace_doc(workspace_root: &Path, relative_path: &str) -> String {
     let path = workspace_root.join(relative_path);
     std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()))
+}
+
+fn read_source_catalog_docs() -> Option<(String, String, String)> {
+    let workspace_root = source_workspace_root(Path::new(env!("CARGO_MANIFEST_DIR")))?;
+    Some((
+        read_workspace_doc(&workspace_root, "README.md"),
+        read_workspace_doc(&workspace_root, "docs/game-ready-clips.md"),
+        read_workspace_doc(&workspace_root, "docs/pipeline-scenarios.md"),
+    ))
 }
 
 fn assert_exact_ids(surface: &str, documented: &BTreeSet<&str>, expected: &BTreeSet<&str>) {
@@ -167,14 +184,6 @@ fn unique_check_ids(
     let unique: BTreeSet<_> = ids.iter().copied().collect();
     assert_eq!(ids.len(), unique.len(), "duplicate {catalog_name} check id");
     unique
-}
-
-fn readme_mechanical_check_table_ids(readme: &str) -> BTreeSet<&str> {
-    check_table_ids_after(readme, "Mechanical checks")
-}
-
-fn readme_contract_aware_check_table_ids(readme: &str) -> BTreeSet<&str> {
-    check_table_ids_after(readme, "Contract-aware checks")
 }
 
 fn check_table_ids_after<'a>(markdown: &'a str, marker: &str) -> BTreeSet<&'a str> {
@@ -268,19 +277,83 @@ fn looks_like_check_id(token: &str) -> bool {
         && token.chars().all(|ch| ch.is_ascii_lowercase() || ch == '-')
 }
 
-#[test]
-fn unknown_check_id_failure_names_the_file_and_id() {
-    let catalog = BTreeSet::from(["known-check"]);
-    let failure = std::panic::catch_unwind(|| {
-        assert_no_unknown_check_ids("docs/example.md", "`stale-check`", &catalog);
-    })
-    .expect_err("a stale check id must fail the docs gate");
+fn panic_message(failure: Box<dyn std::any::Any + Send>) -> String {
     let message = failure
         .downcast_ref::<String>()
         .map(String::as_str)
         .or_else(|| failure.downcast_ref::<&str>().copied())
         .expect("panic payload must be a string");
+    message.to_owned()
+}
 
-    assert!(message.contains("docs/example.md"), "{message}");
-    assert!(message.contains("stale-check"), "{message}");
+#[test]
+fn partial_doc_stale_id_failure_names_the_file_and_id() {
+    let Some((readme, game_ready_clips, pipeline_scenarios)) = read_source_catalog_docs() else {
+        return;
+    };
+    let stale_pipeline =
+        pipeline_scenarios.replacen("`scale-keys` warning", "`stale-scale-check` warning", 1);
+    assert_ne!(stale_pipeline, pipeline_scenarios, "mutation must apply");
+
+    let failure = std::panic::catch_unwind(|| {
+        assert_catalog_docs(
+            &readme,
+            &game_ready_clips,
+            &[(
+                "docs/pipeline-scenarios.md",
+                stale_pipeline.as_str(),
+                PIPELINE_MATRIX_MARKER,
+            )],
+        );
+    })
+    .expect_err("a stale partial-doc check id must fail the docs gate");
+    let message = panic_message(failure);
+
+    assert!(message.contains("docs/pipeline-scenarios.md"), "{message}");
+    assert!(message.contains("stale-scale-check"), "{message}");
+}
+
+#[test]
+fn readme_partition_mutation_fails_the_complete_docs_gate() {
+    let Some((readme, game_ready_clips, _)) = read_source_catalog_docs() else {
+        return;
+    };
+    let mechanical_marker = "| `scale-keys` | warning";
+    let misplaced = readme.replacen(mechanical_marker, "| `fps` | warning", 1);
+    assert_ne!(misplaced, readme, "mutation must apply");
+
+    let failure = std::panic::catch_unwind(|| {
+        assert_catalog_docs(&misplaced, &game_ready_clips, &[]);
+    })
+    .expect_err("putting a contract-aware id in the mechanical table must fail");
+    let message = panic_message(failure);
+
+    assert!(
+        message.contains("README.md Mechanical checks table"),
+        "{message}"
+    );
+    assert!(message.contains("scale-keys"), "{message}");
+}
+
+#[test]
+fn file_ready_partition_mutation_fails_the_complete_docs_gate() {
+    let Some((readme, game_ready_clips, _)) = read_source_catalog_docs() else {
+        return;
+    };
+    let file_ready = markdown_between(&game_ready_clips, "1. **File-ready**", "2. **Clip-ready**");
+    let misplaced_file_ready = file_ready.replacen("`constant-track`", "`fps`", 1);
+    assert_ne!(misplaced_file_ready, file_ready, "mutation must apply");
+    let misplaced_guide = game_ready_clips.replacen(file_ready, &misplaced_file_ready, 1);
+
+    let failure = std::panic::catch_unwind(|| {
+        assert_catalog_docs(&readme, &misplaced_guide, &[]);
+    })
+    .expect_err("putting a contract-aware id in File-ready must fail");
+    let message = panic_message(failure);
+
+    assert!(
+        message.contains("docs/game-ready-clips.md File-ready level"),
+        "{message}"
+    );
+    assert!(message.contains("constant-track"), "{message}");
 }
