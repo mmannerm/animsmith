@@ -30,7 +30,7 @@ path = "src/main.rs"
 default = ["fbx", "report"]
 # FBX input via ufbx (bundles a C library; --no-default-features gives
 # a pure-Rust glTF-only build).
-fbx = ["dep:animsmith-fbx"]
+fbx = ["dep:animsmith-fbx", "dep:image"]
 # HTML report generation.
 report = ["dep:animsmith-report"]
 
@@ -40,6 +40,7 @@ animsmith-gltf = { workspace = true }
 animsmith-fbx = { workspace = true, optional = true }
 animsmith-report = { workspace = true, optional = true }
 clap = { workspace = true }
+image = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }

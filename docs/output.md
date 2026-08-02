@@ -20,11 +20,15 @@ redesigning the outer result envelope.
 
 `convert --format json` is deliberately a separate conversion-evidence
 contract, not another command in the output-v2 envelope. Its immutable
-identity is `urn:animsmith:schema:conversion-evidence:1`; its retrievable
+identity is `urn:animsmith:schema:conversion-evidence:2`; its retrievable
 schema is
-[`conversion-evidence-v1.schema.json`](schemas/conversion-evidence-v1.schema.json).
+[`conversion-evidence-v2.schema.json`](schemas/conversion-evidence-v2.schema.json).
 This lets producers pin conversion provenance independently of measurement
 and lint evidence.
+
+Conversion evidence v1 remains a historical immutable contract at
+`urn:animsmith:schema:conversion-evidence:1`. The current CLI emits v2
+exclusively; regenerate v1 evidence when a v2 consumer is required.
 
 The project is alpha, so the final v2 cutover intentionally does not read or
 emit earlier v1 or preview reports. Regenerate old reports with the current
@@ -62,15 +66,15 @@ threshold; coverage gaps are evidence and are nonblocking by default.
 
 ## `convert`
 
-`convert --format json` emits one conversion-evidence v1 document. It records
+`convert --format json` emits one conversion-evidence v2 document. It records
 the input and output paths, the requested options, and counts derived from the
 written artifact. It is producer evidence: consumers should use the stable
 field names and schema identity rather than parsing the text write summary.
 
 ```json
 {
-  "schema_version": 1,
-  "schema": "urn:animsmith:schema:conversion-evidence:1",
+  "schema_version": 2,
+  "schema": "urn:animsmith:schema:conversion-evidence:2",
   "tool": {
     "name": "animsmith",
     "version": "0.1.0",
@@ -81,7 +85,8 @@ field names and schema identity rather than parsing the text write summary.
   "output": "prop.glb",
   "options": {
     "animation_only": false,
-    "bake_static_mesh_transforms": true
+    "bake_static_mesh_transforms": true,
+    "material_texture_recipe": null
   },
   "artifact": {
     "nodes": 2,
@@ -129,6 +134,44 @@ identity-root output while retaining indices, UVs, model-supported material
 assignments, and embedded base-color and normal textures. Unsupported input is
 an operator error, not partial evidence. Repeated same-platform conversion
 with the same input and options emits a byte-identical artifact.
+
+When `options.material_texture_recipe` is a path, the top-level
+`material_texture_recipe` object is required. When it is `null`, that object is
+prohibited. This separates ordinary linked or embedded texture conversion from
+recipe provenance. The object records the recipe identity, declared recipe path
+and optional root, dimension cap, locked processor policy, and deterministic
+consumed/emitted image records:
+
+```json
+{
+  "schema_version": 1,
+  "schema": "urn:animsmith:schema:material-texture-recipe:1",
+  "path": "recipes/materials.toml",
+  "texture_root": "textures",
+  "max_dimension": 1024,
+  "processor": {
+    "image_crate": "image@0.25.10",
+    "png_crate": "png@0.18.1",
+    "jpeg_crate": "zune-jpeg@0.5.15",
+    "base_color_algorithm": "sRGB-to-linear premultiplied-alpha Lanczos3",
+    "normal_algorithm": "tangent-vector Triangle renormalize +Z fallback",
+    "output_encoding": "PNG RGBA8 compression=Best filter=NoFilter"
+  },
+  "consumed_inputs": [
+    { "material_index": 0, "material_name": "surface", "slot": "base_color", "declared_path": "surface-base.png", "mime": "image/png", "dimensions": [2048, 1024] }
+  ],
+  "emitted_textures": [
+    { "material_index": 0, "material_name": "surface", "slot": "base_color", "declared_path": "surface-base.png", "mime": "image/png", "dimensions": [1024, 512], "resized": true, "emitted_bytes": 1234 }
+  ]
+}
+```
+
+Each array has the exact BaseColor and normal pair for every recipe material:
+two records per material. Records are ordered by source-material index, then
+BaseColor before normal; recipe declaration order does not affect them.
+`material_index` is the source-material identity; `material_name` is display
+data. `emitted_bytes` is the encoded byte count. See [material texture
+recipes](material-texture-recipes.md) for containment and image semantics.
 
 ## `measure` and `lint`
 

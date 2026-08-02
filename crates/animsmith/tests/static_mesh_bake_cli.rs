@@ -13,7 +13,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 const CONVERSION_SCHEMA: &str =
-    include_str!("../../../docs/schemas/conversion-evidence-v1.schema.json");
+    include_str!("../../../docs/schemas/conversion-evidence-v2.schema.json");
 const EPSILON: f32 = 1.0e-5;
 const TINY_JPEG: &[u8] = &[
     0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, b'J', b'F', b'I', b'F', 0xff, 0xd9,
@@ -177,16 +177,17 @@ fn convert_static_bake_emits_schema_valid_evidence_and_byte_stable_identity_outp
         !validator.is_valid(&conflicting_options),
         "the schema rejects mutually exclusive conversion options"
     );
-    assert_eq!(evidence["schema_version"], 1);
+    assert_eq!(evidence["schema_version"], 2);
     assert_eq!(
         evidence["schema"],
-        "urn:animsmith:schema:conversion-evidence:1"
+        "urn:animsmith:schema:conversion-evidence:2"
     );
     assert_eq!(evidence["artifact"]["meshes"], 1);
     assert_eq!(evidence["artifact"]["primitive_positions"], 3);
     assert_eq!(evidence["artifact"]["nodes"], 2);
     assert_eq!(evidence["options"]["animation_only"], false);
     assert_eq!(evidence["options"]["bake_static_mesh_transforms"], true);
+    assert_eq!(evidence["options"]["material_texture_recipe"], Value::Null);
     let entries = evidence["static_mesh_bake"]["entries"]
         .as_array()
         .expect("bake entries array");

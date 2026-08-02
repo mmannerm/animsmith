@@ -95,6 +95,7 @@ $ animsmith inspect clip.glb
 $ animsmith report clip.glb -o report.html
 $ animsmith convert export.fbx -o clip.glb
 $ animsmith convert prop.fbx -o prop.glb --bake-static-mesh-transforms
+$ animsmith convert prop.fbx -o prop.glb --material-texture-recipe materials.toml
 $ animsmith diff old.glb new.glb
 $ animsmith fix clip.glb -o fixed.glb
 $ animsmith fix clip.glb --dry-run

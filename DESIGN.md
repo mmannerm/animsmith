@@ -84,7 +84,7 @@ animsmith inspect <file>                           # clips, durations, tracks, b
 animsmith report  <file> -o report.html [--clip name]
 animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor]
 animsmith fix     <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
-animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb> [--animation-only|--bake-static-mesh-transforms] [--format text|json]
+animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb> [--material-texture-recipe recipe.toml] [--animation-only|--bake-static-mesh-transforms] [--format text|json]
 animsmith diff    <A> <B> [--format text|json]     # A/B: assets or single-file v2 measure/lint JSON
 ```
 
@@ -143,6 +143,12 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or single-file 
   reflection; it neither bakes skinning nor guesses animated or reflected
   semantics. It conflicts with `--animation-only`, leaves default conversion
   unchanged, and is deterministic for repeated same-platform input/options.
+
+- `convert --material-texture-recipe` supplies exact named BaseColor and normal
+  mappings for a conversion. It conflicts with `--animation-only`, is
+  compatible with static baking, and leaves the ordinary linked/embedded
+  texture path untouched when omitted. Its versioned recipe and provenance
+  contracts pin path containment, image processing, and encoder behavior.
 
 ## 4. Repository & crate layout
 
@@ -386,9 +392,11 @@ learns an embedder's contract schema.
   content findings, completed scopes, and typed gaps independently. Measure
   and lint share a nested, independently versioned measurement contract.
   `convert --format json` instead emits the separately versioned
-  `urn:animsmith:schema:conversion-evidence:1` producer-evidence contract:
-  requested options, written-artifact counts, and optional static mesh bake
-  entries with source/output identities and applied world transforms.
+  `urn:animsmith:schema:conversion-evidence:2` producer-evidence contract:
+  requested options, written-artifact counts, optional static mesh bake entries
+  with source/output identities and applied world transforms, and deterministic
+  material-texture recipe provenance when requested. v1 remains historical;
+  the current CLI emits v2 exclusively.
   CLI exit status derives only from content severity (warnings block only
   with `--deny-warnings`); coverage gaps are nonblocking evidence.
   The output-v2 envelope types and immutable identities live in
