@@ -164,7 +164,7 @@ enum Cmd {
     },
     /// Convert FBX or glTF input to glTF.
     #[command(
-        long_about = "Convert FBX or glTF input to glTF: skeleton, animation, triangulated meshes, skins, factor-only materials, and embedded PNG/JPEG base-color and normal textures. A glTF input is re-emitted carrying its geometry; --animation-only drops it. --material-texture-recipe applies exact, declarative BaseColor and normal textures. --bake-static-mesh-transforms produces a strict canonical static scene whose mesh-local geometry includes accumulated rest transforms. Output format by extension: .glb binary, .gltf JSON with an embedded buffer."
+        long_about = "Convert FBX or glTF input to glTF: skeleton, animation, triangulated meshes, skins, PBR materials, and embedded PNG/JPEG base-color, normal, metallic-roughness, and occlusion textures. A glTF input is re-emitted carrying its geometry; --animation-only drops it. --material-texture-recipe applies exact, declarative BaseColor, normal, metallic-roughness, and occlusion textures. --bake-static-mesh-transforms produces a strict canonical static scene whose mesh-local geometry includes accumulated rest transforms. Output format by extension: .glb binary, .gltf JSON with an embedded buffer."
     )]
     #[cfg(feature = "fbx")]
     Convert {
@@ -176,7 +176,7 @@ enum Cmd {
         /// Strip geometry: emit skeleton + animation only.
         #[arg(long, conflicts_with = "bake_static_mesh_transforms")]
         animation_only: bool,
-        /// Apply an exact declarative BaseColor and normal-texture recipe.
+        /// Apply an exact declarative PBR material-texture recipe.
         #[arg(long, value_name = "PATH", conflicts_with = "animation_only")]
         material_texture_recipe: Option<PathBuf>,
         /// Bake accumulated static node transforms into mesh-local geometry.

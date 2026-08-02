@@ -16,7 +16,7 @@ files; unsafe external-buffer paths are rejected.
 
 `load` also fills `Document::assets` with the file's geometry — meshes
 (triangle lists), skins (joints + inverse bind matrices), and
-factor-only materials with embedded base-color and normal textures — in the same
+PBR materials with embedded base-color, normal, metallic-roughness, and occlusion textures — in the same
 single call, matching `animsmith-fbx`. Consumers that judge only
 animation ignore `assets`; `measure` reports mesh-level measurements
 from it and `convert` carries it through.

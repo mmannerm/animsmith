@@ -6,12 +6,12 @@
 //! returns a partially updated document.
 
 use crate::texture_processing::{
-    BASE_COLOR_ALGORITHM, IMAGE_CODEC_VERSION, JPEG_CODEC_VERSION, MAX_INPUT_BYTES,
+    BASE_COLOR_ALGORITHM, DATA_ALGORITHM, IMAGE_CODEC_VERSION, JPEG_CODEC_VERSION, MAX_INPUT_BYTES,
     MAX_MAX_DIMENSION, MIN_MAX_DIMENSION, NORMAL_ALGORITHM, OUTPUT_ENCODING, PNG_CODEC_VERSION,
     ProcessedImage, TextureRole, process_image,
 };
 use animsmith_core::Document;
-use animsmith_core::model::{NormalTextureAsset, TextureAsset};
+use animsmith_core::model::{NormalTextureAsset, OcclusionTextureAsset, TextureAsset};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -37,6 +37,10 @@ struct MaterialTextureRecipeMaterial {
     name: String,
     base_color: PathBuf,
     normal: PathBuf,
+    #[serde(default)]
+    metallic_roughness: Option<PathBuf>,
+    #[serde(default)]
+    occlusion: Option<PathBuf>,
 }
 
 /// A fully prepared recipe application and stable provenance evidence.
@@ -83,6 +87,8 @@ pub(crate) struct MaterialTextureProcessorEvidence {
     pub(crate) base_color_algorithm: &'static str,
     /// Normal-map resize behavior.
     pub(crate) normal_algorithm: &'static str,
+    /// Metallic-roughness and occlusion resize behavior.
+    pub(crate) data_algorithm: &'static str,
     /// Deterministic output encoding behavior.
     pub(crate) output_encoding: &'static str,
 }
@@ -231,7 +237,7 @@ pub(crate) fn apply_material_texture_recipe(
 
     let recipe_base = recipe_path.parent().unwrap_or_else(|| Path::new("."));
     let root = resolve_root(recipe_base, recipe.texture_root.as_deref())?;
-    let mut prepared = Vec::with_capacity(doc.assets.materials.len() * 2);
+    let mut prepared = Vec::with_capacity(doc.assets.materials.len() * 4);
     for (material_index, material) in doc.assets.materials.iter().enumerate() {
         let entry = entries[material.name.as_str()];
         prepared.push(prepare_texture(
@@ -252,6 +258,28 @@ pub(crate) fn apply_material_texture_recipe(
             TextureRole::Normal,
             recipe.max_dimension,
         )?);
+        if let Some(path) = &entry.metallic_roughness {
+            prepared.push(prepare_texture(
+                recipe_base,
+                root.as_deref(),
+                path,
+                material_index,
+                &material.name,
+                TextureRole::MetallicRoughness,
+                recipe.max_dimension,
+            )?);
+        }
+        if let Some(path) = &entry.occlusion {
+            prepared.push(prepare_texture(
+                recipe_base,
+                root.as_deref(),
+                path,
+                material_index,
+                &material.name,
+                TextureRole::Occlusion,
+                recipe.max_dimension,
+            )?);
+        }
     }
 
     let mut updated = doc.clone();
@@ -272,6 +300,13 @@ pub(crate) fn apply_material_texture_recipe(
                 material.normal_texture = Some(NormalTextureAsset {
                     texture: asset,
                     scale: 1.0,
+                });
+            }
+            TextureRole::MetallicRoughness => material.metallic_roughness_texture = Some(asset),
+            TextureRole::Occlusion => {
+                material.occlusion_texture = Some(OcclusionTextureAsset {
+                    texture: asset,
+                    strength: 1.0,
                 });
             }
         }
@@ -309,6 +344,7 @@ pub(crate) fn apply_material_texture_recipe(
                 jpeg_crate: JPEG_CODEC_VERSION,
                 base_color_algorithm: BASE_COLOR_ALGORITHM,
                 normal_algorithm: NORMAL_ALGORITHM,
+                data_algorithm: DATA_ALGORITHM,
                 output_encoding: OUTPUT_ENCODING,
             },
             consumed_inputs,
@@ -536,6 +572,8 @@ mod tests {
                 roughness: 1.0,
                 base_color_texture: None,
                 normal_texture: None,
+                metallic_roughness_texture: None,
+                occlusion_texture: None,
             })
             .collect();
         document

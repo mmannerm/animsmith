@@ -73,8 +73,8 @@ pub mod write;
 
 use animsmith_core::model::{
     Bone, Clip, Document, Interpolation, MaterialAsset, MeshAsset, MeshInstance,
-    NormalTextureAsset, Primitive, Property, SceneAsset, SceneAssets, Skeleton, SourceInfo,
-    TextureAsset, Track, TrackValues, Transform,
+    NormalTextureAsset, OcclusionTextureAsset, Primitive, Property, SceneAsset, SceneAssets,
+    Skeleton, SourceInfo, TextureAsset, Track, TrackValues, Transform,
 };
 use base64::Engine as _;
 use glam::{Mat4, Quat, Vec3};
@@ -695,6 +695,17 @@ fn extract_assets(
                 }
             })
         });
+        let metallic_roughness_texture = pbr
+            .metallic_roughness_texture()
+            .and_then(|info| read_image(info.texture().source().source(), buffers, base));
+        let occlusion_texture = material.occlusion_texture().and_then(|info| {
+            read_image(info.texture().source().source(), buffers, base).map(|texture| {
+                OcclusionTextureAsset {
+                    texture,
+                    strength: info.strength(),
+                }
+            })
+        });
         assets.materials.push(MaterialAsset {
             name: material.name().unwrap_or("material").to_string(),
             base_color: pbr.base_color_factor(),
@@ -702,6 +713,8 @@ fn extract_assets(
             roughness: pbr.roughness_factor(),
             base_color_texture,
             normal_texture,
+            metallic_roughness_texture,
+            occlusion_texture,
         });
     }
 

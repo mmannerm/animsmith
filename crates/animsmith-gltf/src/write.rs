@@ -408,6 +408,10 @@ pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
     let mut textures_json: Vec<Value> = Vec::new();
     let mut material_texture_index: Vec<Option<usize>> = vec![None; assets.materials.len()];
     let mut material_normal_texture_index: Vec<Option<usize>> = vec![None; assets.materials.len()];
+    let mut material_metallic_roughness_texture_index: Vec<Option<usize>> =
+        vec![None; assets.materials.len()];
+    let mut material_occlusion_texture_index: Vec<Option<usize>> =
+        vec![None; assets.materials.len()];
     for (mi, material) in assets.materials.iter().enumerate() {
         if let Some(texture) = &material.base_color_texture {
             let view = buffers.push_view(&texture.bytes);
@@ -424,6 +428,20 @@ pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
                 "mimeType": normal.texture.mime,
             }));
             material_normal_texture_index[mi] = Some(textures_json.len());
+            textures_json.push(json!({ "source": image }));
+        }
+        if let Some(texture) = &material.metallic_roughness_texture {
+            let view = buffers.push_view(&texture.bytes);
+            let image = images_json.len();
+            images_json.push(json!({ "bufferView": view, "mimeType": texture.mime }));
+            material_metallic_roughness_texture_index[mi] = Some(textures_json.len());
+            textures_json.push(json!({ "source": image }));
+        }
+        if let Some(occlusion) = &material.occlusion_texture {
+            let view = buffers.push_view(&occlusion.texture.bytes);
+            let image = images_json.len();
+            images_json.push(json!({ "bufferView": view, "mimeType": occlusion.texture.mime }));
+            material_occlusion_texture_index[mi] = Some(textures_json.len());
             textures_json.push(json!({ "source": image }));
         }
     }
@@ -494,6 +512,9 @@ pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
                         if let Some(slot) = material_texture_index[mi] {
                             pbr["baseColorTexture"] = json!({ "index": slot });
                         }
+                        if let Some(slot) = material_metallic_roughness_texture_index[mi] {
+                            pbr["metallicRoughnessTexture"] = json!({ "index": slot });
+                        }
                         let mut material = json!({ "name": m.name, "pbrMetallicRoughness": pbr });
                         if let (Some(slot), Some(normal)) =
                             (material_normal_texture_index[mi], &m.normal_texture)
@@ -501,6 +522,14 @@ pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
                             material["normalTexture"] = json!({
                                 "index": slot,
                                 "scale": normal.scale,
+                            });
+                        }
+                        if let (Some(slot), Some(occlusion)) =
+                            (material_occlusion_texture_index[mi], &m.occlusion_texture)
+                        {
+                            material["occlusionTexture"] = json!({
+                                "index": slot,
+                                "strength": occlusion.strength,
                             });
                         }
                         material

@@ -33,6 +33,8 @@ pub(crate) const JPEG_CODEC_VERSION: &str = "zune-jpeg@0.5.15";
 pub(crate) const BASE_COLOR_ALGORITHM: &str = "sRGB-to-linear premultiplied-alpha Lanczos3";
 /// Normal-map resize contract.
 pub(crate) const NORMAL_ALGORITHM: &str = "tangent-vector Triangle renormalize +Z fallback";
+/// Metallic-roughness and occlusion resize contract.
+pub(crate) const DATA_ALGORITHM: &str = "linear-channel Triangle";
 /// Canonical output encoding contract for resized textures.
 pub(crate) const OUTPUT_ENCODING: &str = "PNG RGBA8 compression=Best filter=NoFilter";
 
@@ -44,6 +46,10 @@ pub(crate) enum TextureRole {
     BaseColor,
     /// A tangent-space normal map.
     Normal,
+    /// A linear metallic-roughness map (roughness in G, metallic in B).
+    MetallicRoughness,
+    /// A linear occlusion map (occlusion in R).
+    Occlusion,
 }
 
 /// Texture bytes and dimensions produced from one recipe image.
@@ -155,6 +161,9 @@ pub(crate) fn process_image(
     let resized = match role {
         TextureRole::BaseColor => resize_base_color(&rgba, out_width, out_height),
         TextureRole::Normal => resize_normal(&rgba, out_width, out_height),
+        TextureRole::MetallicRoughness | TextureRole::Occlusion => {
+            imageops::resize(&rgba, out_width, out_height, FilterType::Triangle)
+        }
     };
     let output = encode_png(&resized)?;
     Ok(ProcessedImage {

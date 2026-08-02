@@ -35,7 +35,7 @@ normals. The operation returns a canonical identity-root document plus
 deterministic per-instance evidence. It validates the complete input before
 constructing output and fails closed for animation, skinning, ambiguous mesh
 instancing, malformed data, reflections, and ill-conditioned transforms.
-Model-supported material factors and embedded base-color and normal textures
+Model-supported material factors and embedded base-color, normal, metallic-roughness, and occlusion textures
 are preserved.
 
 ## Character Assembly Helpers

@@ -155,6 +155,7 @@ consumed/emitted image records:
     "jpeg_crate": "zune-jpeg@0.5.15",
     "base_color_algorithm": "sRGB-to-linear premultiplied-alpha Lanczos3",
     "normal_algorithm": "tangent-vector Triangle renormalize +Z fallback",
+    "data_algorithm": "linear-channel Triangle",
     "output_encoding": "PNG RGBA8 compression=Best filter=NoFilter"
   },
   "consumed_inputs": [
@@ -166,9 +167,10 @@ consumed/emitted image records:
 }
 ```
 
-Each array has the exact BaseColor and normal pair for every recipe material:
-two records per material. Records are ordered by source-material index, then
-BaseColor before normal; recipe declaration order does not affect them.
+Each array has the required BaseColor and normal pair plus any declared
+metallic-roughness and occlusion slots for every recipe material. Records are
+ordered by source-material index, then BaseColor, normal, metallic-roughness,
+and occlusion; recipe declaration order does not affect them.
 `material_index` is the source-material identity; `material_name` is display
 data. `emitted_bytes` is the encoded byte count. See [material texture
 recipes](material-texture-recipes.md) for containment and image semantics.

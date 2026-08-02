@@ -97,11 +97,11 @@ glTF-only workflow: `inspect`, `measure`, `lint`, `transform`, `fix`, and
 `convert` accepts FBX or glTF input (a glTF input is re-emitted,
 carrying its geometry) but is compiled only with the `fbx` feature.
 Full-scene conversion carries factor-only materials plus linked or embedded
-PNG/JPEG base-color and normal textures. Normal textures retain their glTF
+PNG/JPEG base-color, normal, metallic-roughness, and occlusion textures. Normal textures retain their glTF
 scale; FBX normal maps use glTF's default scale because ordinary FBX materials
 do not expose the same scalar.
 
-`--material-texture-recipe <PATH>` applies explicit BaseColor and normal image
+`--material-texture-recipe <PATH>` applies explicit BaseColor, normal, metallic-roughness, and occlusion image
 mappings during conversion. It conflicts with `--animation-only`, which removes
 materials, and is compatible with `--bake-static-mesh-transforms` and either
 `--format` value. Without a recipe, ordinary linked and embedded textures keep
@@ -116,7 +116,7 @@ mesh-local geometry. It accumulates each accepted mesh node's rest transform
 through its hierarchy into positions, transforms normals with the
 inverse-transpose and normalizes them, and writes the result beneath a
 canonical identity root. Indices, UVs, model-supported material assignments,
-and embedded base-color and normal textures are retained. The default
+and embedded base-color, normal, metallic-roughness, and occlusion textures are retained. The default
 conversion is unchanged; `--bake-static-mesh-transforms` conflicts with
 `--animation-only`.
 

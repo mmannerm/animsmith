@@ -249,6 +249,8 @@ fn write_textured_scene_glb(path: &std::path::Path) {
                         mime: "image/png".into(),
                     }),
                     normal_texture: None,
+                    metallic_roughness_texture: None,
+                    occlusion_texture: None,
                 },
                 MaterialAsset {
                     name: "bound-jpeg".into(),
@@ -266,6 +268,8 @@ fn write_textured_scene_glb(path: &std::path::Path) {
                         },
                         scale: 0.625,
                     }),
+                    metallic_roughness_texture: None,
+                    occlusion_texture: None,
                 },
                 MaterialAsset {
                     name: "normal-only-jpeg".into(),
@@ -280,6 +284,8 @@ fn write_textured_scene_glb(path: &std::path::Path) {
                         },
                         scale: 0.25,
                     }),
+                    metallic_roughness_texture: None,
+                    occlusion_texture: None,
                 },
             ],
             ..SceneAssets::default()

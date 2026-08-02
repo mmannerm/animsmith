@@ -137,15 +137,15 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or single-file 
   operation. It accumulates rest hierarchy transforms into positions and
   inverse-transpose normalized normals, then writes canonical identity-root
   geometry. It retains topology, UVs, and the model-supported material and
-  embedded base-color and normal-texture data. It fails closed for any
+  embedded base-color, normal, metallic-roughness, and occlusion-texture data. It fails closed for any
   animation track, skin signal, uninstanced or shared mesh definition,
   malformed/non-finite data, singular or near-singular transform, or
   reflection; it neither bakes skinning nor guesses animated or reflected
   semantics. It conflicts with `--animation-only`, leaves default conversion
   unchanged, and is deterministic for repeated same-platform input/options.
 
-- `convert --material-texture-recipe` supplies exact named BaseColor and normal
-  mappings for a conversion. It conflicts with `--animation-only`, is
+- `convert --material-texture-recipe` supplies exact named BaseColor, normal,
+  metallic-roughness, and occlusion mappings for a conversion. It conflicts with `--animation-only`, is
   compatible with static baking, and leaves the ordinary linked/embedded
   texture path untouched when omitted. Its versioned recipe and provenance
   contracts pin path containment, image processing, and encoder behavior.
@@ -211,8 +211,8 @@ quaternion flips, key density, and constant tracks. Exact Rust types and fields
 belong to the `animsmith-core` model rustdocs; build them with `just doc` or use
 the package README's stable docs.rs link.
 
-`assets` (meshes, skins, factor-only materials, and embedded base-color and
-normal textures) is the scene-asset half of
+`assets` (meshes, skins, PBR materials, and embedded base-color, normal,
+metallic-roughness, and occlusion textures) is the scene-asset half of
 the document. Both the FBX and glTF loaders populate it from a single
 `load` (there is no separate assets-carrying entry point — the two
 loaders share one shape); it is empty when the input carries no scene

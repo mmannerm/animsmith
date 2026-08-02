@@ -93,6 +93,8 @@ fn skinned_triangle() -> Document {
                 mime: "image/png".into(),
             }),
             normal_texture: None,
+            metallic_roughness_texture: None,
+            occlusion_texture: None,
         }],
         ..SceneAssets::default()
     };
@@ -212,11 +214,13 @@ fn skinned_mesh_round_trips_through_gltf_parser() {
 
 #[test]
 fn material_texture_slots_round_trip_independently() {
-    for (label, has_base_color, has_normal) in [
-        ("no-textures", false, false),
-        ("base-color-only", true, false),
-        ("normal-only", false, true),
-        ("base-color-and-normal", true, true),
+    for (label, has_base_color, has_normal, has_metallic_roughness, has_occlusion) in [
+        ("no-textures", false, false, false, false),
+        ("base-color-only", true, false, false, false),
+        ("normal-only", false, true, false, false),
+        ("metallic-roughness-only", false, false, true, false),
+        ("occlusion-only", false, false, false, true),
+        ("all-textures", true, true, true, true),
     ] {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(format!("{label}.glb"));
@@ -232,6 +236,17 @@ fn material_texture_slots_round_trip_independently() {
                 mime: "image/png".into(),
             },
             scale: 0.375,
+        });
+        material.metallic_roughness_texture = has_metallic_roughness.then(|| TextureAsset {
+            bytes: TINY_NORMAL_PNG.to_vec(),
+            mime: "image/png".into(),
+        });
+        material.occlusion_texture = has_occlusion.then(|| OcclusionTextureAsset {
+            texture: TextureAsset {
+                bytes: TINY_PNG.to_vec(),
+                mime: "image/png".into(),
+            },
+            strength: 0.625,
         });
 
         animsmith_gltf::write::write(&doc, &path).expect("writes");
@@ -250,8 +265,24 @@ fn material_texture_slots_round_trip_independently() {
             "{label}: raw normal slot and scale"
         );
         assert_eq!(
+            raw.pbr_metallic_roughness()
+                .metallic_roughness_texture()
+                .is_some(),
+            has_metallic_roughness,
+            "{label}: raw metallic-roughness slot"
+        );
+        assert_eq!(
+            raw.occlusion_texture()
+                .map(|occlusion| occlusion.strength()),
+            has_occlusion.then_some(0.625),
+            "{label}: raw occlusion slot and strength"
+        );
+        assert_eq!(
             gltf.images().count(),
-            usize::from(has_base_color) + usize::from(has_normal),
+            usize::from(has_base_color)
+                + usize::from(has_normal)
+                + usize::from(has_metallic_roughness)
+                + usize::from(has_occlusion),
             "{label}: independent images"
         );
 
@@ -272,6 +303,22 @@ fn material_texture_slots_round_trip_independently() {
                 .map(|normal| (normal.texture.bytes.as_slice(), normal.scale)),
             has_normal.then_some((TINY_NORMAL_PNG, 0.375)),
             "{label}: normal bytes and scale"
+        );
+        assert_eq!(
+            material
+                .metallic_roughness_texture
+                .as_ref()
+                .map(|texture| texture.bytes.as_slice()),
+            has_metallic_roughness.then_some(TINY_NORMAL_PNG),
+            "{label}: metallic-roughness bytes"
+        );
+        assert_eq!(
+            material
+                .occlusion_texture
+                .as_ref()
+                .map(|occlusion| (occlusion.texture.bytes.as_slice(), occlusion.strength)),
+            has_occlusion.then_some((TINY_PNG, 0.625)),
+            "{label}: occlusion bytes and strength"
         );
     }
 }

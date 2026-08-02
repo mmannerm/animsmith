@@ -24,7 +24,9 @@
       "properties": {
         "name": { "type": "string", "minLength": 1 },
         "base_color": { "type": "string", "minLength": 1 },
-        "normal": { "type": "string", "minLength": 1 }
+        "normal": { "type": "string", "minLength": 1 },
+        "metallic_roughness": { "type": "string", "minLength": 1 },
+        "occlusion": { "type": "string", "minLength": 1 }
       },
       "additionalProperties": false
     }
