@@ -63,7 +63,8 @@ emitted as PNG RGBA8.
 BaseColor resizing converts sRGB into linear light, premultiplies alpha, uses
 Lanczos3 filtering, then converts back to sRGB. Normal resizing decodes
 tangent-space vectors, uses Triangle filtering, and renormalizes vectors before
-encoding. Resized PNGs use `PngEncoder` with `Best` compression and `NoFilter`.
+encoding. For resized output, the pinned encoder uses `Best` compression and
+`NoFilter`.
 Producer evidence names the pinned primary packages `image 0.25.10`,
 `png 0.18.1`, and `zune-jpeg 0.5.15`; `Cargo.lock` pins their full dependency
 closure. Given the same supported-platform inputs, recipe, and tool version,
