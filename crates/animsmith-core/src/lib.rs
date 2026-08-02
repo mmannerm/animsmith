@@ -87,6 +87,7 @@
 
 #![warn(missing_docs)]
 
+pub mod assembly;
 pub mod check;
 mod checks;
 pub mod config;
