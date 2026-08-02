@@ -43,11 +43,12 @@ clap = { workspace = true }
 image = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
+tempfile = { workspace = true }
 toml = { workspace = true }
 
 [dev-dependencies]
 gltf = { workspace = true }
-tempfile = { workspace = true }
 animsmith-testkit = { path = "../animsmith-testkit" }
 pulldown-cmark = { workspace = true }
 jsonschema = { workspace = true }

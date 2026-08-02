@@ -176,6 +176,8 @@ fn supported_document() -> Document {
                         },
                         scale: 0.65,
                     }),
+                    metallic_roughness_texture: None,
+                    occlusion_texture: None,
                 },
                 MaterialAsset {
                     name: "plain".into(),
@@ -184,6 +186,8 @@ fn supported_document() -> Document {
                     roughness: 0.9,
                     base_color_texture: None,
                     normal_texture: None,
+                    metallic_roughness_texture: None,
+                    occlusion_texture: None,
                 },
             ],
             scenes: vec![SceneAsset {

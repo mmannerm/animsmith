@@ -389,6 +389,8 @@ fn extract_assets(scene: &ufbx::Scene, base_dir: Option<&Path>) -> SceneAssets {
                             },
                             base_color_texture: texture,
                             normal_texture,
+                            metallic_roughness_texture: None,
+                            occlusion_texture: None,
                         });
                         assets.materials.len() - 1
                     })

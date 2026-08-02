@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - add transform subcommand — slice, hold-extend, gait-anchor rotation
 - add fix subcommand with quat hemisphere normalization
 - M2 part 2 — self-contained HTML report with WebGL skeleton viewer
-- M1 — rig profiles, config, and rauta-parity semantic checks
+- M1 — rig profiles, config, and reference-parity semantic checks
 - bootstrap animlint M0 — workspace, core model, glTF ingest, mechanical checks
 
 ### Fixed

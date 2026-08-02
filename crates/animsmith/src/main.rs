@@ -1,15 +1,15 @@
 //! The animsmith CLI binary.
 //!
 //! This crate publishes the `animsmith` command: inspect, measure, lint,
-//! report, transform, fix, convert, and diff skeletal animation clips. It
+//! report, transform, fix, convert, assemble, and diff skeletal animation clips. It
 //! is not the Rust library API; use `animsmith-core` plus the loader
 //! crates (`animsmith-gltf`, `animsmith-fbx`) and `animsmith-report` from
 //! library code.
 //!
 //! Feature gates mirror the installed binary surface. The default build
 //! includes FBX input and HTML reports; `--no-default-features` leaves a
-//! pure-Rust glTF-only binary with report generation and FBX conversion
-//! omitted.
+//! pure-Rust glTF-only binary with report generation, FBX conversion, and
+//! multi-source assembly omitted.
 //!
 //! The GitHub [pipeline scenario guide] maps these commands to marketplace
 //! intake, mocap cleanup, outsourced acceptance, CI, and artifact-storage
@@ -35,6 +35,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+#[cfg(feature = "fbx")]
+mod assembly;
 #[cfg(feature = "fbx")]
 mod material_recipe;
 mod render;
@@ -162,7 +164,7 @@ enum Cmd {
     },
     /// Convert FBX or glTF input to glTF.
     #[command(
-        long_about = "Convert FBX or glTF input to glTF: skeleton, animation, triangulated meshes, skins, factor-only materials, and embedded PNG/JPEG base-color and normal textures. A glTF input is re-emitted carrying its geometry; --animation-only drops it. --material-texture-recipe applies exact, declarative BaseColor and normal textures. --bake-static-mesh-transforms produces a strict canonical static scene whose mesh-local geometry includes accumulated rest transforms. Output format by extension: .glb binary, .gltf JSON with an embedded buffer."
+        long_about = "Convert FBX or glTF input to glTF: skeleton, animation, triangulated meshes, skins, PBR materials, and embedded PNG/JPEG base-color, normal, metallic-roughness, and occlusion textures. A glTF input is re-emitted carrying its geometry; --animation-only drops it. --material-texture-recipe applies exact, declarative BaseColor, normal, metallic-roughness, and occlusion textures. --bake-static-mesh-transforms produces a strict canonical static scene whose mesh-local geometry includes accumulated rest transforms. Output format by extension: .glb binary, .gltf JSON with an embedded buffer."
     )]
     #[cfg(feature = "fbx")]
     Convert {
@@ -174,7 +176,7 @@ enum Cmd {
         /// Strip geometry: emit skeleton + animation only.
         #[arg(long, conflicts_with = "bake_static_mesh_transforms")]
         animation_only: bool,
-        /// Apply an exact declarative BaseColor and normal-texture recipe.
+        /// Apply an exact declarative PBR material-texture recipe.
         #[arg(long, value_name = "PATH", conflicts_with = "animation_only")]
         material_texture_recipe: Option<PathBuf>,
         /// Bake accumulated static node transforms into mesh-local geometry.
@@ -183,6 +185,21 @@ enum Cmd {
         /// Render a human write summary or versioned conversion evidence.
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
+    },
+    /// Assemble a multi-source skinned character from a versioned recipe.
+    #[command(
+        long_about = "Assemble one runtime GLB from an authoritative skinned base and animation takes supplied by FBX or glTF inputs. The versioned recipe owns exact mesh selection, skeleton remapping, clip windows and mechanical transforms; source extraction, project policy, and publication remain consumer responsibilities."
+    )]
+    #[cfg(feature = "fbx")]
+    Assemble {
+        /// Versioned assembly recipe (.toml).
+        recipe: PathBuf,
+        /// Output .glb path.
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Versioned JSON evidence output path.
+        #[arg(long)]
+        evidence: PathBuf,
     },
     /// Compare animation measurements.
     #[command(
@@ -316,20 +333,47 @@ fn main() -> ExitCode {
     }
 }
 
+struct LoadedConfig {
+    config: Config,
+    #[cfg(feature = "fbx")]
+    source: Option<LoadedConfigSource>,
+}
+
+#[cfg(feature = "fbx")]
+struct LoadedConfigSource {
+    path: PathBuf,
+    bytes: Vec<u8>,
+}
+
 fn load_config(explicit: Option<&Path>) -> Result<Config, String> {
-    let path = match explicit {
-        Some(p) => p.to_path_buf(),
-        None => {
-            let default = PathBuf::from("animsmith.toml");
-            if !default.exists() {
-                return Ok(Config::default());
-            }
-            default
-        }
+    Ok(load_config_with_source(explicit)?.config)
+}
+
+fn config_source_path(explicit: Option<&Path>) -> Option<PathBuf> {
+    explicit.map(Path::to_path_buf).or_else(|| {
+        let default = PathBuf::from("animsmith.toml");
+        default.exists().then_some(default)
+    })
+}
+
+fn load_config_with_source(explicit: Option<&Path>) -> Result<LoadedConfig, String> {
+    let Some(path) = config_source_path(explicit) else {
+        return Ok(LoadedConfig {
+            config: Config::default(),
+            #[cfg(feature = "fbx")]
+            source: None,
+        });
     };
-    let text = std::fs::read_to_string(&path)
-        .map_err(|e| format!("cannot read config {}: {e}", path.display()))?;
-    toml::from_str(&text).map_err(|e| format!("bad config {}: {e}", path.display()))
+    let bytes =
+        std::fs::read(&path).map_err(|e| format!("cannot read config {}: {e}", path.display()))?;
+    let text = std::str::from_utf8(&bytes)
+        .map_err(|e| format!("bad config {}: config is not UTF-8: {e}", path.display()))?;
+    let config = toml::from_str(text).map_err(|e| format!("bad config {}: {e}", path.display()))?;
+    Ok(LoadedConfig {
+        config,
+        #[cfg(feature = "fbx")]
+        source: Some(LoadedConfigSource { path, bytes }),
+    })
 }
 
 fn validate_check_selection(
@@ -684,6 +728,34 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                         .map(|application| &application.evidence),
                 }),
             }
+            Ok(ExitCode::SUCCESS)
+        }
+        #[cfg(feature = "fbx")]
+        Cmd::Assemble {
+            recipe,
+            output,
+            evidence,
+        } => {
+            let loaded_config = load_config_with_source(cli.config.as_deref())?;
+            let result = assembly::assemble(
+                &recipe,
+                &output,
+                &evidence,
+                &loaded_config.config,
+                loaded_config
+                    .source
+                    .as_ref()
+                    .map(|source| (source.path.as_path(), source.bytes.as_slice())),
+                current_tool(),
+            )?;
+            println!(
+                "wrote {} and {} ({} clip(s), {} mesh(es), {} material(s))",
+                output.display(),
+                evidence.display(),
+                result.animations,
+                result.meshes,
+                result.materials,
+            );
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Diff { a, b, format } => {

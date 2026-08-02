@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:animsmith:schema:character-assembly-recipe:1",
+  "title": "animsmith character assembly recipe v1",
+  "type": "object",
+  "required": ["schema_version", "schema", "base_input", "clips"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "schema": { "const": "urn:animsmith:schema:character-assembly-recipe:1" },
+    "input_root": { "type": "string", "minLength": 1 },
+    "base_input": { "type": "string", "minLength": 1 },
+    "mesh_instances": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "material_texture_recipe": { "type": "string", "minLength": 1 },
+    "complete_tracks": { "type": "boolean" },
+    "canonicalize_skin": { "type": "boolean" },
+    "ground_and_center": { "type": "boolean" },
+    "fps": { "type": "number", "exclusiveMinimum": 0, "maximum": 1000 },
+    "clips": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/clip" } }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "clip": {
+      "type": "object",
+      "required": ["name", "input", "take"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "input": { "type": "string", "minLength": 1 },
+        "take": { "type": "string", "minLength": 1 },
+        "frame_window": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "minItems": 2, "maxItems": 2 },
+        "time_window": { "type": "array", "prefixItems": [{ "type": "number", "minimum": 0 }, { "type": "number", "exclusiveMinimum": 0 }], "minItems": 2, "maxItems": 2 },
+        "drop_closing_endpoint": { "type": "boolean" },
+        "hold_frames": { "type": "integer", "minimum": 0 },
+        "gait_anchor": { "type": "boolean" },
+        "strip_bones": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+      },
+      "not": { "required": ["frame_window", "time_window"] },
+      "additionalProperties": false
+    }
+  }
+}

@@ -57,6 +57,8 @@ fn fixture() -> Document {
                 roughness: 0.8,
                 base_color_texture: None,
                 normal_texture: None,
+                metallic_roughness_texture: None,
+                occlusion_texture: None,
             }],
             scenes: vec![SceneAsset {
                 source_scene_index: 0,
@@ -116,6 +118,16 @@ fn write_success_fixture(dir: &Path) {
     )
     .expect("writes normal fixture");
     std::fs::write(
+        dir.join("recipes/textures/metallic-roughness.png"),
+        png_rgba(2, 1, &[0, 128, 64, 255, 0, 64, 192, 255]),
+    )
+    .expect("writes metallic-roughness fixture");
+    std::fs::write(
+        dir.join("recipes/textures/occlusion.png"),
+        png_rgba(2, 1, &[32, 0, 0, 255, 224, 0, 0, 255]),
+    )
+    .expect("writes occlusion fixture");
+    std::fs::write(
         dir.join("recipes/materials.toml"),
         concat!(
             "schema_version = 1\n",
@@ -127,6 +139,8 @@ fn write_success_fixture(dir: &Path) {
             "name = \"painted\"\n",
             "base_color = \"base.png\"\n",
             "normal = \"normal.png\"\n",
+            "metallic_roughness = \"metallic-roughness.png\"\n",
+            "occlusion = \"occlusion.png\"\n",
         ),
     )
     .expect("writes recipe");
@@ -186,10 +200,12 @@ fn recipe_conversion_is_schema_valid_byte_stable_and_semantically_ordered() {
     let emitted = evidence["material_texture_recipe"]["emitted_textures"]
         .as_array()
         .expect("emitted texture array");
-    assert_eq!(consumed.len(), 2);
-    assert_eq!(emitted.len(), 2);
+    assert_eq!(consumed.len(), 4);
+    assert_eq!(emitted.len(), 4);
     assert_eq!(consumed[0]["slot"], "base_color");
     assert_eq!(consumed[1]["slot"], "normal");
+    assert_eq!(consumed[2]["slot"], "metallic_roughness");
+    assert_eq!(consumed[3]["slot"], "occlusion");
     assert_eq!(consumed[0]["dimensions"], serde_json::json!([2, 1]));
     assert_eq!(consumed[1]["dimensions"], serde_json::json!([2, 1]));
     assert_eq!(emitted[0]["mime"], "image/png");
@@ -198,6 +214,8 @@ fn recipe_conversion_is_schema_valid_byte_stable_and_semantically_ordered() {
     assert_eq!(emitted[1]["mime"], "image/png");
     assert_eq!(emitted[1]["dimensions"], serde_json::json!([1, 1]));
     assert_eq!(emitted[1]["resized"], true);
+    assert_eq!(emitted[2]["slot"], "metallic_roughness");
+    assert_eq!(emitted[3]["slot"], "occlusion");
 
     let loaded = animsmith_gltf::load(&dir.path().join("output.glb")).expect("loads output");
     let material = &loaded.assets.materials[0];
@@ -213,6 +231,15 @@ fn recipe_conversion_is_schema_valid_byte_stable_and_semantically_ordered() {
     let normal = material.normal_texture.as_ref().expect("normal texture");
     assert_eq!(normal.texture.mime, "image/png");
     assert_eq!(normal.scale, 1.0);
+    let metallic_roughness = material
+        .metallic_roughness_texture
+        .as_ref()
+        .expect("metallic-roughness texture");
+    let occlusion = material
+        .occlusion_texture
+        .as_ref()
+        .expect("occlusion texture");
+    assert_eq!(occlusion.strength, 1.0);
     let base_pixel = image::load_from_memory(&material.base_color_texture.as_ref().unwrap().bytes)
         .expect("decodes emitted base color")
         .into_rgba8()
@@ -244,6 +271,26 @@ fn recipe_conversion_is_schema_valid_byte_stable_and_semantically_ordered() {
     assert!(
         vector[0] > 0.69 && vector[1] > 0.69 && vector[2].abs() < 0.01,
         "normal semantics or filtering changed: {normal_pixel:?}"
+    );
+    let metallic_roughness_pixel = image::load_from_memory(&metallic_roughness.bytes)
+        .expect("decodes emitted metallic-roughness")
+        .into_rgba8()
+        .get_pixel(0, 0)
+        .0;
+    assert_eq!(
+        metallic_roughness_pixel,
+        [0, 96, 128, 255],
+        "linear data slots retain their channel meanings"
+    );
+    let occlusion_pixel = image::load_from_memory(&occlusion.texture.bytes)
+        .expect("decodes emitted occlusion")
+        .into_rgba8()
+        .get_pixel(0, 0)
+        .0;
+    assert_eq!(
+        occlusion_pixel,
+        [128, 0, 0, 255],
+        "occlusion remains in the red channel"
     );
 
     let second = run_convert(dir.path(), "recipes/materials.toml");

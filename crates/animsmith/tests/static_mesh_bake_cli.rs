@@ -84,6 +84,8 @@ fn fixture() -> Document {
                     },
                     scale: 0.65,
                 }),
+                metallic_roughness_texture: None,
+                occlusion_texture: None,
             }],
             scenes: vec![SceneAsset {
                 source_scene_index: 0,

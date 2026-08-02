@@ -85,6 +85,7 @@ animsmith report  <file> -o report.html [--clip name]
 animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor]
 animsmith fix     <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
 animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb> [--material-texture-recipe recipe.toml] [--animation-only|--bake-static-mesh-transforms] [--format text|json]
+animsmith assemble <recipe.toml> -o <out.glb> --evidence <out.json>
 animsmith diff    <A> <B> [--format text|json]     # A/B: assets or single-file v2 measure/lint JSON
 ```
 
@@ -129,7 +130,7 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or single-file 
   is not byte-identical and would rewrite bytes `fix` must leave
   untouched. The `Document` round-trip is the right tool for
   `convert`/`transform`; in-place `fix` is not a round-trip.
-- `convert` is compiled only with the `fbx` feature. `--no-default-features`
+- `convert` and `assemble` are compiled only with the `fbx` feature. `--no-default-features`
   remains a glTF-only pure-Rust CLI with validation, transform, fix, and
   diff commands intact; `report` is controlled separately by the
   `report` feature.
@@ -137,18 +138,27 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or single-file 
   operation. It accumulates rest hierarchy transforms into positions and
   inverse-transpose normalized normals, then writes canonical identity-root
   geometry. It retains topology, UVs, and the model-supported material and
-  embedded base-color and normal-texture data. It fails closed for any
+  embedded base-color, normal, metallic-roughness, and occlusion-texture data. It fails closed for any
   animation track, skin signal, uninstanced or shared mesh definition,
   malformed/non-finite data, singular or near-singular transform, or
   reflection; it neither bakes skinning nor guesses animated or reflected
   semantics. It conflicts with `--animation-only`, leaves default conversion
   unchanged, and is deterministic for repeated same-platform input/options.
 
-- `convert --material-texture-recipe` supplies exact named BaseColor and normal
-  mappings for a conversion. It conflicts with `--animation-only`, is
+- `convert --material-texture-recipe` supplies exact named BaseColor, normal,
+  metallic-roughness, and occlusion mappings for a conversion. It conflicts with `--animation-only`, is
   compatible with static baking, and leaves the ordinary linked/embedded
   texture path untouched when omitted. Its versioned recipe and provenance
   contracts pin path containment, image processing, and encoder behavior.
+
+- `assemble` is the versioned generic boundary for a skinned base plus clips
+  spread across separate files or master timelines. It permits only explicit,
+  mechanically verifiable operations: exact-name skeleton remap, exact mesh
+  selection, clip slicing/endpoint/hold/gait operations, named channel removal,
+  rest-track completion, quaternion cleanup, bind-consistent skin
+  canonicalization, material recipes, and deterministic GLB/evidence emission.
+  Archive extraction, gameplay naming and acceptance policy, cache/generation
+  policy, and publication remain with the consumer.
 
 ## 4. Repository & crate layout
 
@@ -211,8 +221,8 @@ quaternion flips, key density, and constant tracks. Exact Rust types and fields
 belong to the `animsmith-core` model rustdocs; build them with `just doc` or use
 the package README's stable docs.rs link.
 
-`assets` (meshes, skins, factor-only materials, and embedded base-color and
-normal textures) is the scene-asset half of
+`assets` (meshes, skins, PBR materials, and embedded base-color, normal,
+metallic-roughness, and occlusion textures) is the scene-asset half of
 the document. Both the FBX and glTF loaders populate it from a single
 `load` (there is no separate assets-carrying entry point — the two
 loaders share one shape); it is empty when the input carries no scene

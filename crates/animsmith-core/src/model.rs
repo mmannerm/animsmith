@@ -327,7 +327,20 @@ pub struct NormalTextureAsset {
     pub scale: f32,
 }
 
-/// Factor-only material plus optional embedded base-color and normal textures.
+/// An occlusion texture and the scalar applied to its sampled value.
+///
+/// Keeping the strength beside the texture makes the glTF occlusion-texture
+/// state atomic: a strength cannot accidentally survive after its texture is
+/// removed.
+#[derive(Debug, Clone)]
+pub struct OcclusionTextureAsset {
+    /// Embedded encoded occlusion texture.
+    pub texture: TextureAsset,
+    /// Scalar multiplier for the sampled occlusion value.
+    pub strength: f32,
+}
+
+/// PBR material factors plus optional embedded glTF texture slots.
 #[derive(Debug, Clone)]
 pub struct MaterialAsset {
     /// Material name.
@@ -343,6 +356,12 @@ pub struct MaterialAsset {
     pub base_color_texture: Option<TextureAsset>,
     /// Embedded tangent-space normal texture, if one was loaded.
     pub normal_texture: Option<NormalTextureAsset>,
+    /// Embedded metallic-roughness texture, if one was loaded.
+    ///
+    /// glTF stores roughness in green and metallic in blue.
+    pub metallic_roughness_texture: Option<TextureAsset>,
+    /// Embedded occlusion texture, if one was loaded.
+    pub occlusion_texture: Option<OcclusionTextureAsset>,
 }
 
 impl Primitive {

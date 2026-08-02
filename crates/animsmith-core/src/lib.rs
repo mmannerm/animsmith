@@ -87,6 +87,7 @@
 
 #![warn(missing_docs)]
 
+pub mod assembly;
 pub mod check;
 mod checks;
 pub mod config;
@@ -101,6 +102,7 @@ pub mod metrics;
 pub mod model;
 pub mod profile;
 pub mod sample;
+pub mod skinned_canonical;
 pub mod static_bake;
 pub mod transform;
 
@@ -132,6 +134,11 @@ pub use profile::{
     ResolvedRoles, RigProfile, Role, builtin_profiles, detect_profile, resolve_configured_roles,
 };
 pub use sample::{PoseGrid, TrackSample, default_frame_count, sample_clip, sample_track};
+pub use skinned_canonical::{
+    SkinnedBindPoseCanonicalization, SkinnedBindPoseCanonicalizationError,
+    SkinnedBindPoseCanonicalizationOptions, SkinnedBindPosePlacement,
+    canonicalize_skinned_bind_pose,
+};
 pub use static_bake::{
     StaticMeshBake, StaticMeshBakeError, StaticMeshBakeEvidence, StaticMeshBakeInstanceEvidence,
     bake_static_mesh_transforms,
