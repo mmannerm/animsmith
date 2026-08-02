@@ -8,7 +8,7 @@
 use crate::texture_processing::{
     BASE_COLOR_ALGORITHM, IMAGE_CODEC_VERSION, JPEG_CODEC_VERSION, MAX_INPUT_BYTES,
     MAX_MAX_DIMENSION, MIN_MAX_DIMENSION, NORMAL_ALGORITHM, OUTPUT_ENCODING, PNG_CODEC_VERSION,
-    ProcessedImage, TextureSemantic, process_image,
+    ProcessedImage, TextureRole, process_image,
 };
 use animsmith_core::Document;
 use animsmith_core::model::{NormalTextureAsset, TextureAsset};
@@ -95,7 +95,7 @@ pub(crate) struct MaterialTextureConsumedInput {
     /// Source material name.
     pub(crate) material_name: String,
     /// Texture role on the material.
-    pub(crate) slot: MaterialTextureSlot,
+    pub(crate) slot: TextureRole,
     /// Path exactly as declared in the recipe, never canonicalized.
     pub(crate) declared_path: String,
     /// Detected source image MIME type.
@@ -112,7 +112,7 @@ pub(crate) struct MaterialTextureEmittedTexture {
     /// Source material name.
     pub(crate) material_name: String,
     /// Texture role on the material.
-    pub(crate) slot: MaterialTextureSlot,
+    pub(crate) slot: TextureRole,
     /// Path exactly as declared in the recipe, never canonicalized.
     pub(crate) declared_path: String,
     /// MIME type of the embedded output.
@@ -123,25 +123,6 @@ pub(crate) struct MaterialTextureEmittedTexture {
     pub(crate) resized: bool,
     /// Number of embedded encoded bytes.
     pub(crate) emitted_bytes: usize,
-}
-
-/// A material texture role in recipe provenance.
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum MaterialTextureSlot {
-    /// The PBR base-color texture.
-    BaseColor,
-    /// The tangent-space normal texture.
-    Normal,
-}
-
-impl MaterialTextureSlot {
-    fn semantic(self) -> TextureSemantic {
-        match self {
-            Self::BaseColor => TextureSemantic::BaseColor,
-            Self::Normal => TextureSemantic::Normal,
-        }
-    }
 }
 
 /// A recipe, mapping, path, or image-processing failure.
@@ -259,7 +240,7 @@ pub(crate) fn apply_material_texture_recipe(
             &entry.base_color,
             material_index,
             &material.name,
-            MaterialTextureSlot::BaseColor,
+            TextureRole::BaseColor,
             recipe.max_dimension,
         )?);
         prepared.push(prepare_texture(
@@ -268,7 +249,7 @@ pub(crate) fn apply_material_texture_recipe(
             &entry.normal,
             material_index,
             &material.name,
-            MaterialTextureSlot::Normal,
+            TextureRole::Normal,
             recipe.max_dimension,
         )?);
     }
@@ -283,11 +264,11 @@ pub(crate) fn apply_material_texture_recipe(
         };
         let material = &mut updated.assets.materials[texture.material_index];
         match texture.slot {
-            MaterialTextureSlot::BaseColor => {
+            TextureRole::BaseColor => {
                 material.base_color = [1.0, 1.0, 1.0, 1.0];
                 material.base_color_texture = Some(asset);
             }
-            MaterialTextureSlot::Normal => {
+            TextureRole::Normal => {
                 material.normal_texture = Some(NormalTextureAsset {
                     texture: asset,
                     scale: 1.0,
@@ -425,7 +406,7 @@ fn prepare_texture(
     declared_path: &Path,
     material_index: usize,
     material_name: &str,
-    slot: MaterialTextureSlot,
+    slot: TextureRole,
     max_dimension: u32,
 ) -> Result<PreparedTexture, MaterialTextureRecipeError> {
     validate_declared_path(declared_path, root.is_some())?;
@@ -469,7 +450,7 @@ fn prepare_texture(
             path: declared_path.display().to_string(),
             reason: error.to_string(),
         })?;
-    let image = process_image(&bytes, max_dimension, slot.semantic()).map_err(|error| {
+    let image = process_image(&bytes, max_dimension, slot).map_err(|error| {
         MaterialTextureRecipeError::Image {
             path: declared_path.display().to_string(),
             reason: error.to_string(),
@@ -501,10 +482,10 @@ fn validate_declared_path(
             reason: "backslashes are not supported",
         });
     }
-    if is_drive_absolute(&rendered) {
+    if is_drive_prefixed(&rendered) {
         return Err(MaterialTextureRecipeError::UnsafePath {
             path: rendered,
-            reason: "drive-letter absolute paths are not supported",
+            reason: "drive-letter paths are not supported",
         });
     }
     if path.is_absolute() {
@@ -526,15 +507,15 @@ fn validate_declared_path(
     Ok(())
 }
 
-fn is_drive_absolute(path: &str) -> bool {
+fn is_drive_prefixed(path: &str) -> bool {
     let bytes = path.as_bytes();
-    bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'/'
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
 
 struct PreparedTexture {
     material_index: usize,
     material_name: String,
-    slot: MaterialTextureSlot,
+    slot: TextureRole,
     declared_path: String,
     image: ProcessedImage,
 }
@@ -590,16 +571,20 @@ mod tests {
 
         let applied = apply_material_texture_recipe(&path, &document(&["first", "second"]))
             .expect("exact recipe applies");
-        assert_eq!(applied.evidence.consumed_inputs.len(), 4);
-        assert_eq!(applied.evidence.consumed_inputs[0].material_name, "first");
-        assert!(matches!(
-            applied.evidence.consumed_inputs[0].slot,
-            MaterialTextureSlot::BaseColor
-        ));
-        assert!(matches!(
-            applied.evidence.consumed_inputs[1].slot,
-            MaterialTextureSlot::Normal
-        ));
+        assert_eq!(
+            applied
+                .evidence
+                .consumed_inputs
+                .iter()
+                .map(|input| (input.material_name.as_str(), input.slot))
+                .collect::<Vec<_>>(),
+            vec![
+                ("first", TextureRole::BaseColor),
+                ("first", TextureRole::Normal),
+                ("second", TextureRole::BaseColor),
+                ("second", TextureRole::Normal),
+            ]
+        );
         assert_eq!(applied.document.assets.materials[0].base_color, [1.0; 4]);
         assert_eq!(
             applied.document.assets.materials[0]
@@ -682,6 +667,25 @@ mod tests {
             error.to_string().contains("unknown field `unexpected`"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn material_names_are_case_sensitive() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("recipe.toml");
+        std::fs::write(
+            &path,
+            recipe(
+                "[[materials]]\nname = \"Painted\"\nbase_color = \"base.png\"\nnormal = \"normal.png\"\n",
+                None,
+            ),
+        )
+        .unwrap();
+
+        assert!(matches!(
+            apply_material_texture_recipe(&path, &document(&["painted"])),
+            Err(MaterialTextureRecipeError::UnusedRecipeMaterial { .. })
+        ));
     }
 
     #[test]
@@ -768,6 +772,41 @@ mod tests {
             validate_declared_path(Path::new("C:/assets/texture.png"), false),
             Err(MaterialTextureRecipeError::UnsafePath { .. })
         ));
+        assert!(matches!(
+            validate_declared_path(Path::new("C:assets/texture.png"), false),
+            Err(MaterialTextureRecipeError::UnsafePath { .. })
+        ));
         assert!(validate_declared_path(Path::new("../assets/texture.png"), false).is_ok());
+    }
+
+    #[test]
+    fn unrooted_parent_paths_resolve_from_the_recipe_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let recipes = directory.path().join("recipes");
+        std::fs::create_dir(&recipes).unwrap();
+        write_png(&directory.path().join("base.png"));
+        write_png(&directory.path().join("normal.png"));
+        let path = recipes.join("recipe.toml");
+        std::fs::write(
+            &path,
+            recipe(
+                "[[materials]]\nname = \"one\"\nbase_color = \"../base.png\"\nnormal = \"../normal.png\"\n",
+                None,
+            ),
+        )
+        .unwrap();
+
+        let applied = apply_material_texture_recipe(&path, &document(&["one"]))
+            .expect("recipe-relative parent paths apply without a root");
+        assert!(
+            applied.document.assets.materials[0]
+                .base_color_texture
+                .is_some()
+        );
+        assert!(
+            applied.document.assets.materials[0]
+                .normal_texture
+                .is_some()
+        );
     }
 }

@@ -6,6 +6,7 @@ use image::{
     ExtendedColorType, GenericImageView, ImageEncoder, ImageFormat, ImageReader, Limits, Rgba,
     Rgba32FImage, RgbaImage,
 };
+use serde::Serialize;
 use std::fmt;
 use std::io::Cursor;
 
@@ -35,9 +36,10 @@ pub(crate) const NORMAL_ALGORITHM: &str = "tangent-vector Triangle renormalize +
 /// Canonical output encoding contract for resized textures.
 pub(crate) const OUTPUT_ENCODING: &str = "PNG RGBA8 compression=Best filter=NoFilter";
 
-/// Semantic interpretation of a texture's RGB components.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TextureSemantic {
+/// Material role and semantic interpretation of a texture's RGB components.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum TextureRole {
     /// An sRGB base-color texture.
     BaseColor,
     /// A tangent-space normal map.
@@ -112,7 +114,7 @@ impl std::error::Error for TextureProcessError {}
 pub(crate) fn process_image(
     bytes: &[u8],
     max_dimension: u32,
-    semantic: TextureSemantic,
+    role: TextureRole,
 ) -> Result<ProcessedImage, TextureProcessError> {
     if bytes.len() > MAX_INPUT_BYTES {
         return Err(TextureProcessError::InputTooLarge { bytes: bytes.len() });
@@ -150,9 +152,9 @@ pub(crate) fn process_image(
     }
 
     let rgba = decoded.into_rgba8();
-    let resized = match semantic {
-        TextureSemantic::BaseColor => resize_base_color(&rgba, out_width, out_height),
-        TextureSemantic::Normal => resize_normal(&rgba, out_width, out_height),
+    let resized = match role {
+        TextureRole::BaseColor => resize_base_color(&rgba, out_width, out_height),
+        TextureRole::Normal => resize_normal(&rgba, out_width, out_height),
     };
     let output = encode_png(&resized)?;
     Ok(ProcessedImage {
@@ -329,16 +331,16 @@ mod tests {
     #[test]
     fn rejects_limits_and_non_png_jpeg_magic() {
         assert!(matches!(
-            process_image(b"not an image", 1, TextureSemantic::BaseColor),
+            process_image(b"not an image", 1, TextureRole::BaseColor),
             Err(TextureProcessError::UnsupportedFormat)
         ));
         assert!(matches!(
-            process_image(&[], 0, TextureSemantic::BaseColor),
+            process_image(&[], 0, TextureRole::BaseColor),
             Err(TextureProcessError::InvalidMaxDimension { .. })
         ));
         let too_large = vec![0; MAX_INPUT_BYTES + 1];
         assert!(matches!(
-            process_image(&too_large, 1, TextureSemantic::BaseColor),
+            process_image(&too_large, 1, TextureRole::BaseColor),
             Err(TextureProcessError::InputTooLarge { .. })
         ));
 
@@ -350,7 +352,7 @@ mod tests {
             0, 255, 0,
         ];
         assert!(matches!(
-            process_image(&bmp, 1, TextureSemantic::BaseColor),
+            process_image(&bmp, 1, TextureRole::BaseColor),
             Err(TextureProcessError::UnsupportedFormat)
         ));
     }
@@ -358,7 +360,7 @@ mod tests {
     #[test]
     fn no_op_preserves_exact_original_bytes_after_decode() {
         let source = png(1, 1, vec![7, 11, 13, 17]);
-        let processed = process_image(&source, 1, TextureSemantic::BaseColor).expect("processes");
+        let processed = process_image(&source, 1, TextureRole::BaseColor).expect("processes");
         assert_eq!(processed.bytes, source);
         assert_eq!(processed.source_mime, "image/png");
         assert_eq!(processed.output_mime, "image/png");
@@ -370,7 +372,7 @@ mod tests {
     #[test]
     fn jpeg_no_op_preserves_exact_original_bytes_and_mime() {
         let source = jpeg(1, 1, vec![7, 11, 13]);
-        let processed = process_image(&source, 1, TextureSemantic::BaseColor).expect("processes");
+        let processed = process_image(&source, 1, TextureRole::BaseColor).expect("processes");
         assert_eq!(processed.bytes, source);
         assert_eq!(processed.source_mime, "image/jpeg");
         assert_eq!(processed.output_mime, "image/jpeg");
@@ -380,9 +382,21 @@ mod tests {
     }
 
     #[test]
+    fn jpeg_resize_uses_the_declared_dimensions_and_png_output() {
+        let source = jpeg(5, 3, [12, 34, 56].repeat(15));
+        let processed = process_image(&source, 2, TextureRole::BaseColor).expect("resizes JPEG");
+        assert_eq!(processed.source_mime, "image/jpeg");
+        assert_eq!(processed.source_dimensions, [5, 3]);
+        assert_eq!(processed.output_mime, "image/png");
+        assert_eq!(processed.output_dimensions, [2, 1]);
+        assert_eq!(decoded_png(&processed.bytes).dimensions(), (2, 1));
+        assert!(processed.resized);
+    }
+
+    #[test]
     fn floor_aspect_ratio_dimensions_are_pinned() {
         let source = png(5, 3, [1, 2, 3, 255].repeat(15));
-        let processed = process_image(&source, 2, TextureSemantic::BaseColor).expect("resizes");
+        let processed = process_image(&source, 2, TextureRole::BaseColor).expect("resizes");
         assert_eq!(processed.output_dimensions, [2, 1]);
         assert!(processed.resized);
     }
@@ -390,7 +404,7 @@ mod tests {
     #[test]
     fn base_color_filters_in_linear_light() {
         let source = png(2, 1, vec![0, 0, 0, 255, 255, 255, 255, 255]);
-        let processed = process_image(&source, 1, TextureSemantic::BaseColor).expect("resizes");
+        let processed = process_image(&source, 1, TextureRole::BaseColor).expect("resizes");
         let pixel = decoded_png(&processed.bytes).get_pixel(0, 0).0;
         assert!(
             (187..=189).contains(&pixel[0]),
@@ -401,15 +415,23 @@ mod tests {
     }
 
     #[test]
+    fn base_color_filtering_uses_premultiplied_alpha() {
+        let source = png(2, 1, vec![255, 255, 255, 255, 255, 0, 0, 0]);
+        let processed = process_image(&source, 1, TextureRole::BaseColor).expect("resizes");
+        let pixel = decoded_png(&processed.bytes).get_pixel(0, 0).0;
+        assert_eq!(pixel, [255, 255, 255, 128]);
+    }
+
+    #[test]
     fn normal_resize_renormalizes_and_falls_back_to_positive_z() {
         let source = png(2, 1, vec![255, 128, 128, 255, 128, 255, 128, 255]);
-        let processed = process_image(&source, 1, TextureSemantic::Normal).expect("resizes");
+        let processed = process_image(&source, 1, TextureRole::Normal).expect("resizes");
         let pixel = decoded_png(&processed.bytes).get_pixel(0, 0).0;
         assert!((216..=220).contains(&pixel[0]), "normalized X: {pixel:?}");
         assert!((216..=220).contains(&pixel[1]), "normalized Y: {pixel:?}");
 
         let cancelling = png(2, 1, vec![0, 128, 128, 255, 255, 127, 127, 255]);
-        let processed = process_image(&cancelling, 1, TextureSemantic::Normal).expect("resizes");
+        let processed = process_image(&cancelling, 1, TextureRole::Normal).expect("resizes");
         assert_eq!(
             decoded_png(&processed.bytes).get_pixel(0, 0).0,
             [128, 128, 255, 255]
@@ -423,8 +445,8 @@ mod tests {
             1,
             vec![12, 34, 56, 255, 78, 90, 123, 255, 210, 111, 45, 255],
         );
-        let first = process_image(&source, 1, TextureSemantic::BaseColor).expect("first process");
-        let second = process_image(&source, 1, TextureSemantic::BaseColor).expect("second process");
+        let first = process_image(&source, 1, TextureRole::BaseColor).expect("first process");
+        let second = process_image(&source, 1, TextureRole::BaseColor).expect("second process");
         assert_eq!(first.bytes, second.bytes);
     }
 }

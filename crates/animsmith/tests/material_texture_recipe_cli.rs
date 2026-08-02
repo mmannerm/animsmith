@@ -111,8 +111,8 @@ fn write_success_fixture(dir: &Path) {
     )
     .expect("writes base-color fixture");
     std::fs::write(
-        dir.join("recipes/textures/normal.jpg"),
-        jpeg_rgb(1, 1, &[128, 128, 255]),
+        dir.join("recipes/textures/normal.png"),
+        png_rgba(2, 1, &[255, 128, 128, 255, 128, 255, 128, 255]),
     )
     .expect("writes normal fixture");
     std::fs::write(
@@ -126,7 +126,7 @@ fn write_success_fixture(dir: &Path) {
             "[[materials]]\n",
             "name = \"painted\"\n",
             "base_color = \"base.png\"\n",
-            "normal = \"normal.jpg\"\n",
+            "normal = \"normal.png\"\n",
         ),
     )
     .expect("writes recipe");
@@ -191,12 +191,13 @@ fn recipe_conversion_is_schema_valid_byte_stable_and_semantically_ordered() {
     assert_eq!(consumed[0]["slot"], "base_color");
     assert_eq!(consumed[1]["slot"], "normal");
     assert_eq!(consumed[0]["dimensions"], serde_json::json!([2, 1]));
-    assert_eq!(consumed[1]["dimensions"], serde_json::json!([1, 1]));
+    assert_eq!(consumed[1]["dimensions"], serde_json::json!([2, 1]));
     assert_eq!(emitted[0]["mime"], "image/png");
     assert_eq!(emitted[0]["dimensions"], serde_json::json!([1, 1]));
     assert_eq!(emitted[0]["resized"], true);
-    assert_eq!(emitted[1]["mime"], "image/jpeg");
-    assert_eq!(emitted[1]["resized"], false);
+    assert_eq!(emitted[1]["mime"], "image/png");
+    assert_eq!(emitted[1]["dimensions"], serde_json::json!([1, 1]));
+    assert_eq!(emitted[1]["resized"], true);
 
     let loaded = animsmith_gltf::load(&dir.path().join("output.glb")).expect("loads output");
     let material = &loaded.assets.materials[0];
@@ -210,8 +211,40 @@ fn recipe_conversion_is_schema_valid_byte_stable_and_semantically_ordered() {
         "image/png"
     );
     let normal = material.normal_texture.as_ref().expect("normal texture");
-    assert_eq!(normal.texture.mime, "image/jpeg");
+    assert_eq!(normal.texture.mime, "image/png");
     assert_eq!(normal.scale, 1.0);
+    let base_pixel = image::load_from_memory(&material.base_color_texture.as_ref().unwrap().bytes)
+        .expect("decodes emitted base color")
+        .into_rgba8()
+        .get_pixel(0, 0)
+        .0;
+    assert!(
+        (187..=189).contains(&base_pixel[0]),
+        "linear-light base-color midpoint: {base_pixel:?}"
+    );
+    assert_eq!(base_pixel[0], base_pixel[1]);
+    assert_eq!(base_pixel[1], base_pixel[2]);
+    assert_eq!(base_pixel[3], 255);
+    let normal_pixel = image::load_from_memory(&normal.texture.bytes)
+        .expect("decodes emitted normal")
+        .into_rgba8()
+        .get_pixel(0, 0)
+        .0;
+    let vector = [normal_pixel[0], normal_pixel[1], normal_pixel[2]]
+        .map(|component| f32::from(component) / 255.0 * 2.0 - 1.0);
+    let length = vector
+        .iter()
+        .map(|component| component * component)
+        .sum::<f32>()
+        .sqrt();
+    assert!(
+        (length - 1.0).abs() < 0.01,
+        "normal was not renormalized: {normal_pixel:?}"
+    );
+    assert!(
+        vector[0] > 0.69 && vector[1] > 0.69 && vector[2].abs() < 0.01,
+        "normal semantics or filtering changed: {normal_pixel:?}"
+    );
 
     let second = run_convert(dir.path(), "recipes/materials.toml");
     assert!(second.status.success());

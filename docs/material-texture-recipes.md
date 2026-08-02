@@ -42,8 +42,9 @@ determined from file magic, not a filename extension.
 
 ## Paths and containment
 
-All paths are interpreted relative to the recipe file. Empty and absolute paths
-and backslash spellings are rejected for consistent cross-platform behavior.
+All paths are interpreted relative to the recipe file. Empty, absolute,
+drive-prefixed, and backslash spellings are rejected for consistent
+cross-platform behavior.
 `texture_root` is
 optional. When it is set, it too is recipe-relative and is a containment root:
 the converter canonicalizes the root and every image path and rejects traversal
