@@ -36,6 +36,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 #[cfg(feature = "fbx")]
+mod assembly;
+#[cfg(feature = "fbx")]
 mod material_recipe;
 mod render;
 #[cfg(feature = "fbx")]
@@ -183,6 +185,21 @@ enum Cmd {
         /// Render a human write summary or versioned conversion evidence.
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
+    },
+    /// Assemble a multi-source skinned character from a versioned recipe.
+    #[command(
+        long_about = "Assemble one runtime GLB from an authoritative skinned base and animation takes supplied by FBX or glTF inputs. The versioned recipe owns exact mesh selection, skeleton remapping, clip windows and mechanical transforms; source extraction, project policy, and publication remain consumer responsibilities."
+    )]
+    #[cfg(feature = "fbx")]
+    Assemble {
+        /// Versioned assembly recipe (.toml).
+        recipe: PathBuf,
+        /// Output .glb path.
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Versioned JSON evidence output path.
+        #[arg(long)]
+        evidence: PathBuf,
     },
     /// Compare animation measurements.
     #[command(
@@ -684,6 +701,24 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                         .map(|application| &application.evidence),
                 }),
             }
+            Ok(ExitCode::SUCCESS)
+        }
+        #[cfg(feature = "fbx")]
+        Cmd::Assemble {
+            recipe,
+            output,
+            evidence,
+        } => {
+            let config = load_config(cli.config.as_deref())?;
+            let result = assembly::assemble(&recipe, &output, &evidence, &config, current_tool())?;
+            println!(
+                "wrote {} and {} ({} clip(s), {} mesh(es), {} material(s))",
+                output.display(),
+                evidence.display(),
+                result.animations,
+                result.meshes,
+                result.materials,
+            );
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Diff { a, b, format } => {
