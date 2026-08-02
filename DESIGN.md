@@ -96,6 +96,11 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or single-file 
   pending repairs under `fix --dry-run`), `2` operator/tool error
   (unreadable file, bad config).
   `--deny-warnings` promotes warnings to errors.
+- Human-readable command results are assembled by pure functions in the CLI's
+  renderer module. Command dispatch keeps execution, file writes, and exit
+  policy in `main.rs` and passes structured values to the renderer; the
+  renderer is the single owner of escaping untrusted text for terminal-safe
+  presentation. JSON result serialization remains a separate, unchanged path.
 - Inputs: `.glb`, `.gltf` (+ external buffers), `.fbx` (via the `fbx`
   feature, default-on in the released binary).
 - **Malformation policy**: *structural* malformation — keyframe/value

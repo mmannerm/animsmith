@@ -3,15 +3,23 @@
 //! `docs/output.md` frames the JSON envelope as the machine-readable
 //! source of truth, with text and Markdown as presentation-only views
 //! over the same [`LintFileReport`] model. This module houses the shared JSON
-//! serializer and `lint`'s text and Markdown renderers, so they don't
-//! accrete as free functions in `main`. `measure` and `diff` still format
-//! their text inline at their call sites; future serializers (SARIF,
-//! GitLab Code Quality, JUnit, CSV) belong here alongside the JSON one.
+//! serializer and every human-readable command renderer. Command dispatch
+//! passes structured results here and retains execution, write, and exit
+//! policy; this module owns presentation and escaping. Future serializers
+//! (SARIF, GitLab Code Quality, JUnit, CSV) belong here alongside JSON.
 
-use animsmith_core::{CoverageGap, CoverageGapCode, Finding, LintFileReport, Severity};
+use animsmith_core::diff::MetricDelta;
+use animsmith_core::model::Clip;
+use animsmith_core::{
+    CoverageGap, CoverageGapCode, Document, Finding, LintFileReport, MeasureFileReport,
+    ResolvedRoles, Severity,
+};
+use animsmith_gltf::fix::{FixReport, Repair};
+use animsmith_gltf::write::WriteSummary;
 use serde::Serialize;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 #[derive(Default)]
 struct FindingSummary {
@@ -35,6 +43,302 @@ impl FindingSummary {
 pub(crate) fn print_json<T: Serialize>(value: &T) {
     let out = serde_json::to_string_pretty(value);
     println!("{}", out.expect("report serializes"));
+}
+
+/// Render one operator error for stderr.
+pub(crate) fn render_operator_error(message: &str) -> String {
+    format!("animsmith: {}\n", text_atom(message))
+}
+
+/// Render measurement reports in the presentation-only text format.
+pub(crate) fn render_measure_text(reports: &[MeasureFileReport]) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    for report in reports {
+        let _ = writeln!(out, "{}:", text_atom(report.path()));
+        for (clip, measurement) in report.measurements().clips() {
+            let seam = measurement
+                .loop_seam_ratio
+                .map(|ratio| format!(" seam×{ratio:.2}"))
+                .unwrap_or_default();
+            let gait = measurement
+                .gait
+                .as_ref()
+                .and_then(|gait| gait.phase.map(|phase| (phase, gait.lr_amplitude_m)))
+                .map(|(phase, amplitude)| {
+                    format!(" gait φ={phase:.2} ({:.1}cm)", amplitude * 100.0)
+                })
+                .unwrap_or_default();
+            let _ = writeln!(
+                out,
+                "  {}: {:.3}s, {} frames, {} animated bones{seam}{gait}",
+                text_atom(clip),
+                measurement.duration_s,
+                measurement.frame_count,
+                measurement.animated_bones.len()
+            );
+        }
+        for mesh in report.measurements().meshes() {
+            let bbox = mesh
+                .aabb
+                .as_ref()
+                .map(|bounds| {
+                    let size = [
+                        bounds.max[0] - bounds.min[0],
+                        bounds.max[1] - bounds.min[1],
+                        bounds.max[2] - bounds.min[2],
+                    ];
+                    format!(" bbox {:.3}×{:.3}×{:.3}", size[0], size[1], size[2])
+                })
+                .unwrap_or_default();
+            let skin = match (mesh.weight_sum_min, mesh.weight_sum_max) {
+                (Some(min), Some(max)) => format!(
+                    ", ≤{} joints/vtx, weight-sum {min:.3}–{max:.3}",
+                    mesh.max_joints_per_vertex
+                ),
+                _ => String::new(),
+            };
+            let _ = writeln!(
+                out,
+                "  mesh {}: {} verts{bbox}{skin}",
+                text_atom(&mesh.name),
+                mesh.vertex_count
+            );
+        }
+    }
+    out
+}
+
+/// Render significant measurement deltas in the presentation-only text format.
+pub(crate) fn render_diff_text(deltas: &[MetricDelta]) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    if deltas.is_empty() {
+        let _ = writeln!(out, "no significant movement");
+    }
+    for delta in deltas {
+        let values = match (delta.before, delta.after) {
+            (Some(before), Some(after)) => format!(" {before:.4} -> {after:.4}"),
+            (Some(before), None) => format!(" {before:.4} -> (gone)"),
+            (None, Some(after)) => format!(" (none) -> {after:.4}"),
+            (None, None) => String::new(),
+        };
+        let _ = writeln!(
+            out,
+            "  {} {}: {}{values}",
+            text_atom(&delta.clip),
+            text_atom(&delta.metric),
+            text_atom(&delta.note)
+        );
+    }
+    let _ = writeln!(out, "{} significant change(s)", deltas.len());
+    out
+}
+
+/// Render an inspected document and resolved rig roles.
+pub(crate) fn render_inspect(doc: &Document, roles: &ResolvedRoles) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    if let Some(path) = &doc.source.path {
+        let _ = writeln!(out, "{}", text_atom(path));
+    }
+    if roles.is_empty() {
+        let _ = writeln!(out, "rig profile: none detected");
+    } else {
+        let _ = writeln!(
+            out,
+            "rig profile: {} ({} roles)",
+            text_atom(&roles.profile),
+            roles.len()
+        );
+        for (role, bone) in roles.iter() {
+            let _ = writeln!(
+                out,
+                "  {:<12} -> {}",
+                role.as_str(),
+                text_atom(&doc.skeleton.bones[bone].name)
+            );
+        }
+    }
+    let _ = writeln!(out, "skeleton: {} bones", doc.skeleton.bones.len());
+    for bone in &doc.skeleton.bones {
+        let mut depth = 0;
+        let mut parent = bone.parent;
+        while let Some(parent_index) = parent {
+            depth += 1;
+            parent = doc.skeleton.bones[parent_index].parent;
+        }
+        let skinned = if bone.inverse_bind.is_some() {
+            " [skinned]"
+        } else {
+            ""
+        };
+        let _ = writeln!(
+            out,
+            "  {}{}{}",
+            "  ".repeat(depth),
+            text_atom(&bone.name),
+            skinned
+        );
+    }
+    let _ = writeln!(out, "clips: {}", doc.clips.len());
+    for clip in &doc.clips {
+        let keys = clip
+            .tracks
+            .iter()
+            .map(|track| track.key_count())
+            .max()
+            .unwrap_or(0);
+        let _ = writeln!(
+            out,
+            "  {}: {:.3}s, {} tracks, {} keys max",
+            text_atom(&clip.name),
+            clip.duration_s,
+            clip.tracks.len(),
+            keys
+        );
+    }
+    out
+}
+
+/// Render one report artifact write summary.
+#[cfg(feature = "report")]
+pub(crate) fn render_report_written(
+    output: &Path,
+    clip_count: usize,
+    finding_count: usize,
+    html_bytes: usize,
+) -> String {
+    format!(
+        "wrote {} ({clip_count} clip(s), {finding_count} finding(s), {:.1} MB)\n",
+        text_atom(&output.display().to_string()),
+        html_bytes as f64 / 1e6
+    )
+}
+
+/// Render the message emitted after slicing one clip.
+pub(crate) fn render_transform_slice(clip: &Clip, start: f64, end: f64) -> String {
+    let keys = clip
+        .tracks
+        .iter()
+        .map(|track| track.key_count())
+        .max()
+        .unwrap_or(0);
+    format!(
+        "  sliced '{}' to [{start}:{end}]s ({keys} keys max)\n",
+        text_atom(&clip.name)
+    )
+}
+
+/// Render the message emitted after hold-extending one clip.
+pub(crate) fn render_transform_hold_extend(clip: &Clip, hold_s: f64) -> String {
+    format!("  hold-extended '{}' by {hold_s}s\n", text_atom(&clip.name))
+}
+
+/// Render the message emitted after successful gait-anchor alignment.
+pub(crate) fn render_transform_gait_anchor(
+    clip_name: &str,
+    phase_before: f64,
+    phase_after: f64,
+    frame_offset: i32,
+    seam_after: Option<f64>,
+) -> String {
+    let seam = seam_after
+        .map(|seam| format!("{seam:.2}"))
+        .unwrap_or_else(|| "n/a".into());
+    format!(
+        "  gait-anchored '{}': phase {phase_before:.3} -> {phase_after:.3} (offset {frame_offset}, seam {seam})\n",
+        text_atom(clip_name)
+    )
+}
+
+/// Render the message emitted when gait-anchor alignment is skipped.
+pub(crate) fn render_transform_gait_anchor_skipped(clip_name: &str, reason: &str) -> String {
+    format!(
+        "  gait-anchor skipped '{}': {}\n",
+        text_atom(clip_name),
+        text_atom(reason)
+    )
+}
+
+fn repair_action(repair: Repair) -> &'static str {
+    match repair {
+        Repair::QuatNorm => "unit-normalized",
+        Repair::QuatFlip => "hemisphere-normalized",
+        _ => "repaired",
+    }
+}
+
+/// Render one byte-surgical repair pass. `target = None` means dry-run.
+pub(crate) fn render_fix_report(
+    repair: Repair,
+    report: &FixReport,
+    target: Option<&Path>,
+) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    let verb = if target.is_none() {
+        "would fix"
+    } else {
+        "fixed"
+    };
+    for track in &report.tracks {
+        let _ = writeln!(
+            out,
+            "  {verb}[{}] clip '{}' bone '{}': {} key(s) {}",
+            repair.id(),
+            text_atom(&track.clip),
+            text_atom(&track.bone),
+            track.fixed_keys,
+            repair_action(repair)
+        );
+    }
+    for skipped in &report.skipped {
+        let _ = writeln!(out, "  skipped[{}]: {}", repair.id(), text_atom(skipped));
+    }
+    let destination = target
+        .map(|path| text_atom(&path.display().to_string()).into_owned())
+        .unwrap_or_else(|| "no output written".into());
+    let _ = writeln!(
+        out,
+        "{} key(s) {} across {} track(s) -> {destination}",
+        report.total_fixed(),
+        if target.is_none() {
+            "would be fixed"
+        } else {
+            "fixed"
+        },
+        report.tracks.len(),
+    );
+    out
+}
+
+/// Render the shared `transform`/`convert` artifact write summary.
+pub(crate) fn render_write_summary(output: &Path, summary: &WriteSummary) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = format!(
+        "wrote {} ({} node(s), {} clip(s), {} mesh(es) / {} position(s), {} material(s))",
+        text_atom(&output.display().to_string()),
+        summary.nodes,
+        summary.animations,
+        summary.meshes,
+        summary.primitive_positions,
+        summary.materials,
+    );
+    if summary.clips_without_writable_tracks > 0 {
+        let _ = write!(
+            out,
+            "; dropped {} clip(s) with no writable tracks",
+            summary.clips_without_writable_tracks
+        );
+    }
+    out.push('\n');
+    out
 }
 
 /// Human-readable one-line-per-finding text output for `lint`.
@@ -226,7 +530,7 @@ fn is_presentation_control(ch: char) -> bool {
 /// formatting characters while leaving ordinary Unicode text readable. Each
 /// untrusted value therefore remains one visibly ordered physical line and
 /// cannot inject ANSI terminal commands.
-pub(crate) fn text_atom(text: &str) -> Cow<'_, str> {
+fn text_atom(text: &str) -> Cow<'_, str> {
     if !text.chars().any(is_presentation_control) {
         return Cow::Borrowed(text);
     }
@@ -480,9 +784,11 @@ fn md_cell(text: &str) -> String {
 mod tests {
     use super::*;
     use animsmith_core::{
-        CheckEvaluation, CheckOutput, CoverageGap, CoverageGapCode, Document, EvaluationScope,
-        EvaluationScopeCode, Finding, LintFileReport, MeasurementContract, ResolvedRoles, RigInfo,
+        Bone, CheckEvaluation, CheckOutput, Clip, CoverageGap, CoverageGapCode, Document,
+        EvaluationScope, EvaluationScopeCode, Finding, LintFileReport, MeasureFileReport,
+        MeasurementContract, ResolvedRoles, RigInfo, SourceInfo, Transform,
     };
+    use serde_json::json;
     use std::collections::BTreeMap;
 
     fn evaluation(
@@ -524,6 +830,170 @@ mod tests {
             MeasurementContract::new(BTreeMap::new(), Vec::new())
                 .expect("empty measurements are valid"),
         )
+    }
+
+    fn empty_rig() -> RigInfo {
+        let doc = Document::default();
+        RigInfo::from_resolved(&doc, &ResolvedRoles::default())
+            .expect("empty roles match an empty document")
+    }
+
+    #[test]
+    fn measure_renderer_owns_layout_and_escaping() {
+        let clips = serde_json::from_value(json!({
+            "walk\nclip": {
+                "duration_s": 1.0,
+                "frame_count": 2,
+                "animated_bones": ["hips"],
+                "bone_rotation_range_deg": {},
+                "loop_seam_ratio": 0.25,
+                "gait": { "phase": 0.5, "lr_amplitude_m": 0.1 }
+            }
+        }))
+        .expect("clip measurements deserialize");
+        let meshes = serde_json::from_value(json!([{
+            "name": "body\nmesh",
+            "vertex_count": 3,
+            "aabb": { "min": [0.0, 0.0, 0.0], "max": [1.0, 2.0, 3.0] },
+            "max_joints_per_vertex": 4,
+            "weight_sum_min": 0.9,
+            "weight_sum_max": 1.1
+        }]))
+        .expect("mesh measurements deserialize");
+        let measurements = MeasurementContract::new(clips, meshes).expect("finite measurements");
+        let reports = [MeasureFileReport::new(
+            "asset\npath.glb",
+            empty_rig(),
+            measurements,
+        )];
+
+        assert_eq!(
+            render_measure_text(&reports),
+            "asset\\npath.glb:\n  walk\\nclip: 1.000s, 2 frames, 1 animated bones seam×0.25 gait φ=0.50 (10.0cm)\n  mesh body\\nmesh: 3 verts bbox 1.000×2.000×3.000, ≤4 joints/vtx, weight-sum 0.900–1.100\n"
+        );
+    }
+
+    #[test]
+    fn diff_renderer_owns_clean_dirty_layout_and_escaping() {
+        assert_eq!(
+            render_diff_text(&[]),
+            "no significant movement\n0 significant change(s)\n"
+        );
+
+        let before = serde_json::from_value(json!({
+            "walk\nclip": {
+                "duration_s": 1.0,
+                "frame_count": 2,
+                "animated_bones": [],
+                "bone_rotation_range_deg": {}
+            }
+        }))
+        .expect("before measurements deserialize");
+        let after = serde_json::from_value(json!({
+            "walk\nclip": {
+                "duration_s": 1.1,
+                "frame_count": 2,
+                "animated_bones": [],
+                "bone_rotation_range_deg": {}
+            }
+        }))
+        .expect("after measurements deserialize");
+        let deltas = animsmith_core::diff::diff_measurements(&before, &after);
+        assert_eq!(
+            render_diff_text(&deltas),
+            "  walk\\nclip duration_s: moved 1.0000 -> 1.1000\n1 significant change(s)\n"
+        );
+    }
+
+    #[test]
+    fn inspect_renderer_owns_tree_layout_and_escaping() {
+        let hostile = "asset\nname";
+        let doc = Document {
+            skeleton: animsmith_core::Skeleton {
+                bones: vec![
+                    Bone {
+                        name: "root\nname".into(),
+                        parent: None,
+                        rest: Transform::IDENTITY,
+                        inverse_bind: None,
+                    },
+                    Bone {
+                        name: "child\nname".into(),
+                        parent: Some(0),
+                        rest: Transform::IDENTITY,
+                        inverse_bind: Some(animsmith_core::glam::Mat4::IDENTITY),
+                    },
+                ],
+            },
+            clips: vec![Clip {
+                name: "clip\nname".into(),
+                duration_s: 1.0,
+                tracks: Vec::new(),
+            }],
+            source: SourceInfo {
+                path: Some(hostile.into()),
+                format: Some("glb".into()),
+            },
+            ..Document::default()
+        };
+
+        assert_eq!(
+            render_inspect(&doc, &ResolvedRoles::default()),
+            "asset\\nname\nrig profile: none detected\nskeleton: 2 bones\n  root\\nname\n    child\\nname [skinned]\nclips: 1\n  clip\\nname: 1.000s, 0 tracks, 0 keys max\n"
+        );
+    }
+
+    #[test]
+    fn fix_renderer_owns_multiline_layout_and_escaping() {
+        let mut report = FixReport::default();
+        report.skipped.push("bone\ntrack".into());
+
+        assert_eq!(
+            render_fix_report(Repair::QuatFlip, &report, None),
+            "  skipped[quat-flip]: bone\\ntrack\n0 key(s) would be fixed across 0 track(s) -> no output written\n"
+        );
+    }
+
+    #[test]
+    fn transform_renderers_own_operation_layout_and_escaping() {
+        let clip = Clip {
+            name: "walk\nclip".into(),
+            duration_s: 1.0,
+            tracks: Vec::new(),
+        };
+        assert_eq!(
+            render_transform_slice(&clip, 0.25, 0.75),
+            "  sliced 'walk\\nclip' to [0.25:0.75]s (0 keys max)\n"
+        );
+        assert_eq!(
+            render_transform_hold_extend(&clip, 0.5),
+            "  hold-extended 'walk\\nclip' by 0.5s\n"
+        );
+        assert_eq!(
+            render_transform_gait_anchor("walk\nclip", 0.25, 0.0, -1, Some(1.234)),
+            "  gait-anchored 'walk\\nclip': phase 0.250 -> 0.000 (offset -1, seam 1.23)\n"
+        );
+        assert_eq!(
+            render_transform_gait_anchor_skipped("walk\nclip", "bad\nreason"),
+            "  gait-anchor skipped 'walk\\nclip': bad\\nreason\n"
+        );
+    }
+
+    #[cfg(feature = "report")]
+    #[test]
+    fn report_renderer_owns_write_summary_and_path_escaping() {
+        assert_eq!(
+            render_report_written(Path::new("report\nname.html"), 2, 3, 1_250_000),
+            "wrote report\\nname.html (2 clip(s), 3 finding(s), 1.2 MB)\n"
+        );
+    }
+
+    #[test]
+    fn operator_error_renderer_owns_prefix_newline_and_escaping() {
+        assert_eq!(
+            render_operator_error("bad\npath"),
+            "animsmith: bad\\npath\n"
+        );
     }
 
     #[test]

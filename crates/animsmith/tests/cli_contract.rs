@@ -1005,6 +1005,33 @@ fn measure_text_escapes_controls_in_the_input_path() {
 
 #[cfg(unix)]
 #[test]
+fn measure_text_renderer_escapes_hostile_asset_text_and_input_path() {
+    let dir = unique_temp_dir("measure-renderer-controls");
+    let input = dir
+        .path()
+        .join(format!("asset-{HOSTILE_PRESENTATION_TEXT}.glb"));
+    write_hostile_glb(&input, HOSTILE_PRESENTATION_TEXT, false);
+
+    let output = animsmith()
+        .arg("measure")
+        .arg(&input)
+        .args(["--format", "text"])
+        .output()
+        .expect("runs measure");
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+
+    let text = stdout(&output);
+    assert_hostile_text_is_escaped(&text);
+    assert_eq!(
+        text.matches("forged\\nline\\u{1b}[31m\\u{2028}\\u{2029}\\u{202e}")
+            .count(),
+        3,
+        "input path, clip, and mesh should each be escaped:\n{text}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn command_text_escapes_output_and_operator_error_paths() {
     let dir = unique_temp_dir("command-path-controls");
     let input = dir.path().join("clean.glb");
