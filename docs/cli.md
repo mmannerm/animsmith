@@ -96,6 +96,10 @@ glTF-only workflow: `inspect`, `measure`, `lint`, `transform`, `fix`, and
 `diff`. The HTML `report` command is controlled by the `report` feature.
 `convert` accepts FBX or glTF input (a glTF input is re-emitted,
 carrying its geometry) but is compiled only with the `fbx` feature.
+Full-scene conversion carries factor-only materials plus linked or embedded
+PNG/JPEG base-color and normal textures. Normal textures retain their glTF
+scale; FBX normal maps use glTF's default scale because ordinary FBX materials
+do not expose the same scalar.
 
 ## Repairs
 

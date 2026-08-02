@@ -205,6 +205,7 @@ fn write_summary_omits_materials_when_document_has_no_meshes() {
         metallic: 0.0,
         roughness: 1.0,
         base_color_texture: None,
+        normal_texture: None,
     });
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("meshless-material.glb");

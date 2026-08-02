@@ -2,7 +2,7 @@
 //! skeleton (node hierarchy + rest TRS), each clip's writable animation tracks,
 //! and whatever scene assets the [`Document`] carries ([`Document::assets`]
 //! — triangulated meshes, skins, factor-only materials, and embedded
-//! base-color textures). A document with default-empty assets writes
+//! base-color and normal textures). A document with default-empty assets writes
 //! animation + skeleton only, so
 //! animation data can still enter glTF-based tooling (including animsmith
 //! itself) straight from a DCC export.
@@ -261,8 +261,8 @@ fn plan_glb_lengths(json_len: usize, bin_len: usize) -> Result<GlbLengths, Write
 /// Serialize `doc` to `path` (`.glb` for binary, anything else as
 /// `.gltf` JSON with an embedded data-URI buffer): skeleton, animation,
 /// and any scene assets it carries ([`Document::assets`] — triangulated
-/// meshes, skins, factor-only materials, and embedded PNG/JPEG base-color
-/// textures). A `Document` with default-empty assets writes animation and
+/// meshes, skins, factor-only materials, and embedded PNG/JPEG base-color and
+/// normal textures). A `Document` with default-empty assets writes animation and
 /// skeleton only.
 ///
 /// # Errors
@@ -402,17 +402,28 @@ pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
         node_attach.push((instance.node, instance.mesh, skin_index));
     }
 
-    // Embedded base-color textures: raw encoded bytes as buffer views
+    // Embedded material textures: raw encoded bytes as buffer views
     // (glTF never decodes; PNG/JPEG pass through untouched).
     let mut images_json: Vec<Value> = Vec::new();
     let mut textures_json: Vec<Value> = Vec::new();
     let mut material_texture_index: Vec<Option<usize>> = vec![None; assets.materials.len()];
+    let mut material_normal_texture_index: Vec<Option<usize>> = vec![None; assets.materials.len()];
     for (mi, material) in assets.materials.iter().enumerate() {
         if let Some(texture) = &material.base_color_texture {
             let view = buffers.push_view(&texture.bytes);
             let image = images_json.len();
             images_json.push(json!({ "bufferView": view, "mimeType": texture.mime }));
             material_texture_index[mi] = Some(textures_json.len());
+            textures_json.push(json!({ "source": image }));
+        }
+        if let Some(normal) = &material.normal_texture {
+            let view = buffers.push_view(&normal.texture.bytes);
+            let image = images_json.len();
+            images_json.push(json!({
+                "bufferView": view,
+                "mimeType": normal.texture.mime,
+            }));
+            material_normal_texture_index[mi] = Some(textures_json.len());
             textures_json.push(json!({ "source": image }));
         }
     }
@@ -483,7 +494,16 @@ pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
                         if let Some(slot) = material_texture_index[mi] {
                             pbr["baseColorTexture"] = json!({ "index": slot });
                         }
-                        json!({ "name": m.name, "pbrMetallicRoughness": pbr })
+                        let mut material = json!({ "name": m.name, "pbrMetallicRoughness": pbr });
+                        if let (Some(slot), Some(normal)) =
+                            (material_normal_texture_index[mi], &m.normal_texture)
+                        {
+                            material["normalTexture"] = json!({
+                                "index": slot,
+                                "scale": normal.scale,
+                            });
+                        }
+                        material
                     })
                     .collect(),
             );

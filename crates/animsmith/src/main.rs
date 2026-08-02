@@ -104,7 +104,7 @@ enum Cmd {
     },
     /// Apply mechanical clip transforms.
     #[command(
-        long_about = "Apply pipeline-mechanical clip transforms and write the result as glTF, carrying through any scene assets the input brought (FBX or glTF meshes, skins, materials, and embedded base-color textures). Operations apply to every clip, or one clip via --clip."
+        long_about = "Apply pipeline-mechanical clip transforms and write the result as glTF, carrying through any scene assets the input brought (FBX or glTF meshes, skins, materials, and embedded base-color and normal textures). Operations apply to every clip, or one clip via --clip."
     )]
     Transform {
         /// Input .glb, .gltf, or .fbx file.
@@ -156,7 +156,7 @@ enum Cmd {
     },
     /// Convert FBX or glTF input to glTF.
     #[command(
-        long_about = "Convert FBX or glTF input to glTF: skeleton, animation, triangulated meshes, skins, factor-only materials, and embedded PNG/JPEG base-color textures. A glTF input is re-emitted carrying its geometry; --animation-only drops it. Output format by extension: .glb binary, .gltf JSON with an embedded buffer."
+        long_about = "Convert FBX or glTF input to glTF: skeleton, animation, triangulated meshes, skins, factor-only materials, and embedded PNG/JPEG base-color and normal textures. A glTF input is re-emitted carrying its geometry; --animation-only drops it. Output format by extension: .glb binary, .gltf JSON with an embedded buffer."
     )]
     #[cfg(feature = "fbx")]
     Convert {

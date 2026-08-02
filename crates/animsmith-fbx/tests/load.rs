@@ -2,6 +2,48 @@ use animsmith_core::glam::{Mat4, Vec3};
 use animsmith_core::model::Property;
 use std::path::PathBuf;
 
+/// A valid 1x1 PNG used as an externally referenced FBX normal map.
+const TINY_PNG: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+    0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0xF8, 0xFF, 0xFF, 0x3F,
+    0x00, 0x05, 0xFE, 0x02, 0xFE, 0xA7, 0x35, 0x81, 0x84, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
+    0x44, 0xAE, 0x42, 0x60, 0x82,
+];
+
+const TINY_PNG_B64: &str =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4//8/AAX+Av6nNYGEAAAAAElFTkSuQmCC";
+
+/// A valid, self-authored 1x1 JPEG used to prove opaque byte pass-through.
+const TINY_JPEG: &[u8] = &[
+    0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01,
+    0x00, 0x01, 0x00, 0x00, 0xFF, 0xDB, 0x00, 0x43, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xDB, 0x00, 0x43, 0x01, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0,
+    0x00, 0x11, 0x08, 0x00, 0x01, 0x00, 0x01, 0x03, 0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11,
+    0x01, 0xFF, 0xC4, 0x00, 0x15, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xFF, 0xC4, 0x00, 0x14, 0x10, 0x01, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xC4,
+    0x00, 0x14, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0xFF, 0xC4, 0x00, 0x14, 0x11, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xDA, 0x00, 0x0C, 0x03, 0x01,
+    0x00, 0x02, 0x11, 0x03, 0x11, 0x00, 0x3F, 0x00, 0xA0, 0x00, 0xFF, 0xD9,
+];
+
+#[derive(Clone, Copy)]
+enum NormalImage {
+    Linked(&'static [u8]),
+    Embedded,
+    MissingWithParentDecoy,
+    Unreadable,
+}
+
 fn fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/rigged_triangle.fbx")
 }
@@ -72,6 +114,132 @@ fn loads_self_authored_rigged_triangle_fixture() {
     assert_eq!(prim.weights, vec![[1.0, 0.0, 0.0, 0.0]; 3]);
 
     assert_eq!(doc.assets.materials.len(), 0);
+}
+
+fn load_normal_material(image: NormalImage) -> animsmith_core::Document {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let source_dir = dir.path().join("scene");
+    std::fs::create_dir(&source_dir).expect("create source directory");
+    let source = std::fs::read_to_string(fixture())
+        .expect("read fixture")
+        .replace("\r\n", "\n");
+    let source = source.replacen(
+        "\tObjectType: \"Deformer\" { Count: 2 }\n}",
+        "\tObjectType: \"Deformer\" { Count: 2 }\n\tObjectType: \"Material\" { Count: 1 }\n\tObjectType: \"Texture\" { Count: 1 }\n\tObjectType: \"Video\" { Count: 1 }\n}",
+        1,
+    );
+    let content = if matches!(image, NormalImage::Embedded) {
+        format!("\n\t\tContent: ,\"{TINY_PNG_B64}\"")
+    } else {
+        String::new()
+    };
+    let material_objects = format!(
+        r#"	Material: 5001, "Material::normal_mat", "" {{
+		Version: 102
+		ShadingModel: "phong"
+		MultiLayer: 0
+	}}
+	Texture: 5002, "Texture::normal", "" {{
+		Type: "TextureVideoClip"
+		Version: 202
+		TextureName: "Texture::normal"
+		Media: "Video::normal"
+		FileName: "normal.png"
+		RelativeFilename: "normal.png"
+		ModelUVTranslation: 0,0
+		ModelUVScaling: 1,1
+		Texture_Alpha_Source: "None"
+		Cropping: 0,0,0,0
+	}}
+	Video: 5003, "Video::normal", "Clip" {{
+		Type: "Clip"
+		Properties70: {{
+			P: "Path", "KString", "XRefUrl", "", "normal.png"
+		}}
+		FileName: "normal.png"
+		RelativeFilename: "normal.png"{content}
+	}}
+}}
+Connections: {{"#
+    );
+    let source = source.replacen("}\nConnections: {", &material_objects, 1);
+    let source = source.replacen(
+        "Connections: {",
+        "Connections: {\n\tC: \"OO\",5001,1002\n\tC: \"OP\",5002,5001,\"NormalMap\"\n\tC: \"OO\",5003,5002",
+        1,
+    );
+    assert!(source.contains("Material::normal_mat"));
+    assert!(source.contains("5002,5001,\"NormalMap\""));
+
+    let path = source_dir.join("normal-material.fbx");
+    std::fs::write(&path, source).expect("write FBX");
+    match image {
+        NormalImage::Linked(bytes) => {
+            std::fs::write(source_dir.join("normal.png"), bytes).expect("write normal image");
+        }
+        NormalImage::Embedded => {}
+        NormalImage::MissingWithParentDecoy => {
+            std::fs::write(dir.path().join("normal.png"), TINY_PNG)
+                .expect("write parent-directory decoy");
+        }
+        NormalImage::Unreadable => {
+            std::fs::create_dir(source_dir.join("normal.png"))
+                .expect("create unreadable image path");
+        }
+    }
+
+    animsmith_fbx::load(&path).expect("normal-map FBX loads")
+}
+
+fn assert_normal_texture(doc: &animsmith_core::Document) {
+    assert_eq!(doc.assets.materials.len(), 1);
+    let normal = doc.assets.materials[0]
+        .normal_texture
+        .as_ref()
+        .expect("normal map carried");
+    assert_eq!(normal.texture.mime, "image/png");
+    assert_eq!(normal.texture.bytes, TINY_PNG);
+    assert_eq!(normal.scale, 1.0, "FBX uses glTF default normal scale");
+    assert!(doc.assets.materials[0].base_color_texture.is_none());
+}
+
+#[test]
+fn loads_linked_fbx_normal_texture() {
+    assert_normal_texture(&load_normal_material(NormalImage::Linked(TINY_PNG)));
+}
+
+#[test]
+fn loads_embedded_fbx_normal_texture() {
+    assert_normal_texture(&load_normal_material(NormalImage::Embedded));
+}
+
+#[test]
+fn loads_linked_fbx_jpeg_normal_texture_without_rewriting_bytes() {
+    let doc = load_normal_material(NormalImage::Linked(TINY_JPEG));
+    let normal = doc.assets.materials[0]
+        .normal_texture
+        .as_ref()
+        .expect("JPEG normal map carried");
+    assert_eq!(normal.texture.mime, "image/jpeg");
+    assert_eq!(normal.texture.bytes, TINY_JPEG);
+}
+
+#[test]
+fn missing_unreadable_and_unsupported_fbx_normal_images_are_not_guessed_or_injected() {
+    for (label, image) in [
+        (
+            "missing-with-parent-decoy",
+            NormalImage::MissingWithParentDecoy,
+        ),
+        ("unreadable", NormalImage::Unreadable),
+        ("unsupported", NormalImage::Linked(b"not an image")),
+    ] {
+        let doc = load_normal_material(image);
+        assert!(
+            doc.assets.materials[0].normal_texture.is_none(),
+            "{label}: no normal texture should be invented"
+        );
+    }
 }
 
 #[test]

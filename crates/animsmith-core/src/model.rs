@@ -315,7 +315,19 @@ pub struct TextureAsset {
     pub mime: String,
 }
 
-/// Factor-only material plus an optional embedded base-color texture.
+/// A normal-map texture and the scalar applied to its X/Y components.
+///
+/// Keeping the scale beside the texture makes the glTF normal-texture state
+/// atomic: a scale cannot accidentally survive after its texture is removed.
+#[derive(Debug, Clone)]
+pub struct NormalTextureAsset {
+    /// Embedded encoded normal-map image.
+    pub texture: TextureAsset,
+    /// Scalar multiplier for the decoded tangent-space X/Y components.
+    pub scale: f32,
+}
+
+/// Factor-only material plus optional embedded base-color and normal textures.
 #[derive(Debug, Clone)]
 pub struct MaterialAsset {
     /// Material name.
@@ -329,6 +341,8 @@ pub struct MaterialAsset {
     pub roughness: f32,
     /// Embedded base-color texture, if one was loaded.
     pub base_color_texture: Option<TextureAsset>,
+    /// Embedded tangent-space normal texture, if one was loaded.
+    pub normal_texture: Option<NormalTextureAsset>,
 }
 
 impl Primitive {
