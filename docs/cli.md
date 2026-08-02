@@ -41,7 +41,7 @@ animsmith fix --help
 There are no man pages yet, so `--help` is the canonical installed CLI
 reference. The help output reflects compile-time features: a
 `--no-default-features` binary omits feature-gated commands such as
-`report` and `convert`.
+`report`, `convert`, and `assemble`.
 
 ## Commands
 
@@ -53,6 +53,7 @@ animsmith report <file> -o <report.html> [--clip name]
 animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor] [--fps N]
 animsmith fix <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
 animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb|out.gltf> [--material-texture-recipe recipe.toml] [--animation-only|--bake-static-mesh-transforms] [--format text|json]
+animsmith assemble <recipe.toml> -o <out.glb> --evidence <out.json>
 animsmith diff <before> <after> [--format text|json]
 ```
 
@@ -96,6 +97,8 @@ glTF-only workflow: `inspect`, `measure`, `lint`, `transform`, `fix`, and
 `diff`. The HTML `report` command is controlled by the `report` feature.
 `convert` accepts FBX or glTF input (a glTF input is re-emitted,
 carrying its geometry) but is compiled only with the `fbx` feature.
+`assemble` is gated by the same feature because its maintained boundary accepts
+FBX sources as well as glTF.
 Full-scene conversion carries factor-only materials plus linked or embedded
 PNG/JPEG base-color, normal, metallic-roughness, and occlusion textures. Normal textures retain their glTF
 scale; FBX normal maps use glTF's default scale because ordinary FBX materials
@@ -107,6 +110,12 @@ materials, and is compatible with `--bake-static-mesh-transforms` and either
 `--format` value. Without a recipe, ordinary linked and embedded textures keep
 their existing conversion path. See [material texture recipes](material-texture-recipes.md)
 for the recipe contract, deterministic processing policy, and path rules.
+
+`assemble` reads a [versioned multi-source character recipe](character-assembly.md),
+uses one input as the authoritative skinned base, and exact-name remaps selected
+takes from other FBX or glTF inputs. It writes a GLB and assembly-evidence JSON
+as a rollback-safe publication pair. The command owns generic asset transforms;
+source extraction, project policy, and publication remain consumer concerns.
 
 ## Static mesh transform bake
 
@@ -167,6 +176,10 @@ using `diff`.
 It records the requested options, counts from the written artifact, exact
 static-mesh transforms when requested, and recipe provenance when a material
 texture recipe is used. `text` is the default human-readable write summary.
+
+`assemble` writes evidence v1 to its required `--evidence` path, with immutable
+identity `urn:animsmith:schema:character-assembly-evidence:1`; see
+[`character-assembly-evidence-v1.schema.json`](schemas/character-assembly-evidence-v1.schema.json).
 
 Machine-readable lint rejects `--allow` so it cannot erase evidence. The flag
 remains a presentation and exit-policy convenience for text and Markdown.

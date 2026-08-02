@@ -7,7 +7,7 @@ future machine serializers should project the JSON contract.
 
 ## Contract identities
 
-Every JSON command emits output contract v2 with the immutable protocol
+Validation and comparison JSON commands emit output contract v2 with the immutable protocol
 identity `urn:animsmith:schema:output:2`. The retrievable schema is
 [`output-v2.schema.json`](schemas/output-v2.schema.json); its repository URL
 is a retrieval location, not the protocol identity.
@@ -25,6 +25,13 @@ schema is
 [`conversion-evidence-v2.schema.json`](schemas/conversion-evidence-v2.schema.json).
 This lets producers pin conversion provenance independently of measurement
 and lint evidence.
+
+`assemble` writes a separate character-assembly-evidence v1 document to its
+required `--evidence` path. Its immutable identity is
+`urn:animsmith:schema:character-assembly-evidence:1`; its retrievable schema is
+[`character-assembly-evidence-v1.schema.json`](schemas/character-assembly-evidence-v1.schema.json).
+The paired GLB and evidence are prepared before publication, so an operator
+failure emits neither new destination and restores any prior pair.
 
 Conversion evidence v1 remains a historical immutable contract at
 `urn:animsmith:schema:conversion-evidence:1`. The current CLI emits v2
@@ -174,6 +181,23 @@ and occlusion; recipe declaration order does not affect them.
 `material_index` is the source-material identity; `material_name` is display
 data. `emitted_bytes` is the encoded byte count. See [material texture
 recipes](material-texture-recipes.md) for containment and image semantics.
+
+## `assemble`
+
+`assemble` writes character-assembly evidence v1 beside its GLB. The evidence
+binds the effective recipe and its SHA-256, every base/clip/recipe/texture input
+and digest, selected source takes and windows, exact track-operation counts,
+removed named-bone translation deltas, mesh and skin canonicalization, tool
+identity, and the final artifact digest and counts. Paths remain
+operator-declared; canonical host paths used for containment checks are not
+serialized.
+
+The normative recipe and evidence contracts are
+[`character-assembly-recipe-v1.schema.json`](schemas/character-assembly-recipe-v1.schema.json)
+and
+[`character-assembly-evidence-v1.schema.json`](schemas/character-assembly-evidence-v1.schema.json).
+See [multi-source character assembly](character-assembly.md) for operation and
+consumer-boundary semantics.
 
 ## `measure` and `lint`
 

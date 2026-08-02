@@ -85,6 +85,7 @@ animsmith report  <file> -o report.html [--clip name]
 animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor]
 animsmith fix     <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
 animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb> [--material-texture-recipe recipe.toml] [--animation-only|--bake-static-mesh-transforms] [--format text|json]
+animsmith assemble <recipe.toml> -o <out.glb> --evidence <out.json>
 animsmith diff    <A> <B> [--format text|json]     # A/B: assets or single-file v2 measure/lint JSON
 ```
 
@@ -129,7 +130,7 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or single-file 
   is not byte-identical and would rewrite bytes `fix` must leave
   untouched. The `Document` round-trip is the right tool for
   `convert`/`transform`; in-place `fix` is not a round-trip.
-- `convert` is compiled only with the `fbx` feature. `--no-default-features`
+- `convert` and `assemble` are compiled only with the `fbx` feature. `--no-default-features`
   remains a glTF-only pure-Rust CLI with validation, transform, fix, and
   diff commands intact; `report` is controlled separately by the
   `report` feature.
@@ -149,6 +150,15 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or single-file 
   compatible with static baking, and leaves the ordinary linked/embedded
   texture path untouched when omitted. Its versioned recipe and provenance
   contracts pin path containment, image processing, and encoder behavior.
+
+- `assemble` is the versioned generic boundary for a skinned base plus clips
+  spread across separate files or master timelines. It permits only explicit,
+  mechanically verifiable operations: exact-name skeleton remap, exact mesh
+  selection, clip slicing/endpoint/hold/gait operations, named channel removal,
+  rest-track completion, quaternion cleanup, bind-consistent skin
+  canonicalization, material recipes, and deterministic GLB/evidence emission.
+  Archive extraction, gameplay naming and acceptance policy, cache/generation
+  policy, and publication remain with the consumer.
 
 ## 4. Repository & crate layout
 

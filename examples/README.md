@@ -431,6 +431,16 @@ $ animsmith report clip.glb -o report.html
 $ animsmith diff old.glb clip.glb
 ```
 
+When one authoritative skinned base and its animation takes live in separate
+files, use the versioned [`character-assembly.toml`](character-assembly.toml)
+recipe instead. `assemble` produces one GLB and evidence pair; source-package
+extraction and project publication stay outside animsmith.
+
+```console
+$ animsmith assemble examples/character-assembly.toml \
+    -o character.glb --evidence character.assembly.json
+```
+
 ### Getting a test asset
 
 We do not ship third-party assets. To try this on a real rig:

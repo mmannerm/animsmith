@@ -69,8 +69,9 @@ apply:
   the selected `animsmith.toml` rig configuration;
 - `strip_bones = [...]`: remove every TRS track for named base bones.
 
-`complete_tracks = true` fills absent TRS channels from the base rest pose,
-then `strip_bones` removes deliberately excluded bones. Rotation key values are
+`complete_tracks = true` fills absent TRS channels from the base rest pose for
+the union of selected skin joints and nodes targeted by any emitted clip.
+Per-clip `strip_bones` entries stay excluded. Rotation key values are
 unit-normalized and made hemisphere-consistent without changing cubic tangent
 sign relationships.
 
@@ -94,8 +95,9 @@ The normative recipe schema is
 The evidence identity is
 `urn:animsmith:schema:character-assembly-evidence:1`. It records the effective
 recipe, recipe and input SHA-256 digests, selected takes and windows, track
-operation counts, mesh selection, canonicalization flags, tool identity, and
-the final artifact digest and counts. See
+operation counts, start/end/delta facts for named translation tracks removed by
+`strip_bones`, mesh selection, canonicalization flags, tool identity, and the
+final artifact digest and counts. See
 [`character-assembly-evidence-v1.schema.json`](schemas/character-assembly-evidence-v1.schema.json).
 
 Given identical recipe bytes, input bytes, config, tool build, paths, and
