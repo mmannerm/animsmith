@@ -60,6 +60,7 @@ fn assembles_schema_valid_byte_stable_character_and_evidence() {
     let dir = tempfile::tempdir().expect("creates temp directory");
     write_inputs(dir.path());
     std::fs::write(dir.path().join("recipe.toml"), success_recipe()).expect("writes recipe");
+    std::fs::write(dir.path().join("animsmith.toml"), b"").expect("writes config");
 
     let first = run(dir.path());
     assert!(
@@ -88,6 +89,13 @@ fn assembles_schema_valid_byte_stable_character_and_evidence() {
         "urn:animsmith:schema:character-assembly-evidence:1"
     );
     assert_eq!(evidence["recipe"]["effective"]["input_root"], "inputs");
+    assert_eq!(evidence["config"]["source"], "file");
+    assert_eq!(evidence["config"]["path"], "animsmith.toml");
+    assert_eq!(
+        evidence["config"]["sha256"],
+        format!("{:x}", Sha256::digest(b""))
+    );
+    assert_eq!(evidence["config"]["bytes"], 0);
     assert_eq!(evidence["clips"][0]["source_tracks"], 3);
     assert_eq!(evidence["clips"][0]["remapped_tracks"], 3);
     assert_eq!(evidence["clips"][0]["dropped_closing_endpoint"], true);

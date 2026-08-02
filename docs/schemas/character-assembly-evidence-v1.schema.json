@@ -3,13 +3,14 @@
   "$id": "urn:animsmith:schema:character-assembly-evidence:1",
   "title": "animsmith character assembly evidence v1",
   "type": "object",
-  "required": ["schema_version", "schema", "tool", "command", "recipe", "inputs", "clips", "transforms", "artifact"],
+  "required": ["schema_version", "schema", "tool", "command", "recipe", "config", "inputs", "clips", "transforms", "artifact"],
   "properties": {
     "schema_version": { "const": 1 },
     "schema": { "const": "urn:animsmith:schema:character-assembly-evidence:1" },
     "tool": { "$ref": "#/$defs/tool" },
     "command": { "const": "assemble" },
     "recipe": { "$ref": "#/$defs/recipe" },
+    "config": { "$ref": "#/$defs/config" },
     "inputs": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/input" } },
     "clips": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/clip" } },
     "transforms": { "$ref": "#/$defs/transforms" },
@@ -46,6 +47,32 @@
         "effective": { "type": "object" }
       },
       "additionalProperties": false
+    },
+    "config": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["source", "path", "sha256", "bytes"],
+          "properties": {
+            "source": { "const": "file" },
+            "path": { "type": "string", "minLength": 1 },
+            "sha256": { "$ref": "#/$defs/sha256" },
+            "bytes": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["source", "path", "sha256", "bytes"],
+          "properties": {
+            "source": { "const": "built-in-defaults" },
+            "path": { "type": "null" },
+            "sha256": { "type": "null" },
+            "bytes": { "type": "null" }
+          },
+          "additionalProperties": false
+        }
+      ]
     },
     "input": {
       "type": "object",

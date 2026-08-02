@@ -77,6 +77,14 @@ struct AssemblyRecipeEvidence {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct AssemblyConfigEvidence {
+    source: &'static str,
+    path: Option<String>,
+    sha256: Option<String>,
+    bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct AssemblyInputEvidence {
     role: &'static str,
     declared_path: String,
@@ -143,6 +151,7 @@ struct AssemblyEvidence {
     tool: ToolInfo,
     command: &'static str,
     recipe: AssemblyRecipeEvidence,
+    config: AssemblyConfigEvidence,
     inputs: Vec<AssemblyInputEvidence>,
     clips: Vec<AssemblyClipEvidence>,
     transforms: AssemblyTransformEvidence,
@@ -347,6 +356,7 @@ pub(crate) fn assemble(
     output: &Path,
     evidence_output: &Path,
     config: &Config,
+    config_path: Option<&Path>,
     tool: ToolInfo,
 ) -> Result<AssemblyResult, String> {
     if !output
@@ -367,6 +377,23 @@ pub(crate) fn assemble(
         toml::from_str(recipe_text).map_err(|error| format!("invalid assembly recipe: {error}"))?;
     validate_recipe(&recipe)?;
     let resolver = InputResolver::new(recipe_path, recipe.input_root.as_deref())?;
+    let config_evidence = match config_path {
+        Some(path) => {
+            let (sha256, bytes) = read_digest(path)?;
+            AssemblyConfigEvidence {
+                source: "file",
+                path: Some(path.display().to_string()),
+                sha256: Some(sha256),
+                bytes: Some(bytes),
+            }
+        }
+        None => AssemblyConfigEvidence {
+            source: "built-in-defaults",
+            path: None,
+            sha256: None,
+            bytes: None,
+        },
+    };
 
     let base_path = resolver.resolve(&recipe.base_input)?;
     let mut inputs = vec![input_evidence("base", &recipe.base_input, &base_path)?];
@@ -601,6 +628,7 @@ pub(crate) fn assemble(
             sha256: format!("{:x}", Sha256::digest(&recipe_bytes)),
             effective: recipe.clone(),
         },
+        config: config_evidence,
         inputs,
         clips: clip_evidence,
         transforms: AssemblyTransformEvidence {

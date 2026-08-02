@@ -94,12 +94,13 @@ The normative recipe schema is
 
 The evidence identity is
 `urn:animsmith:schema:character-assembly-evidence:1`. It records the effective
-recipe, recipe and input SHA-256 digests, selected takes and windows, track
+recipe, recipe and input SHA-256 digests, the selected configuration file's
+declared path and digest (or an explicit built-in-defaults marker), selected takes and windows, track
 operation counts, start/end/delta facts for named translation tracks removed by
 `strip_bones`, mesh selection, canonicalization flags, tool identity, and the
 final artifact digest and counts. See
 [`character-assembly-evidence-v1.schema.json`](schemas/character-assembly-evidence-v1.schema.json).
 
-Given identical recipe bytes, input bytes, config, tool build, paths, and
+Given identical recipe bytes, input and config bytes, tool build, paths, and
 platform, repeated runs emit byte-identical GLB and evidence. Evidence keeps
 operator-declared paths rather than leaking canonical host paths.

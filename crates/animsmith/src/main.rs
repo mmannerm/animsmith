@@ -334,19 +334,19 @@ fn main() -> ExitCode {
 }
 
 fn load_config(explicit: Option<&Path>) -> Result<Config, String> {
-    let path = match explicit {
-        Some(p) => p.to_path_buf(),
-        None => {
-            let default = PathBuf::from("animsmith.toml");
-            if !default.exists() {
-                return Ok(Config::default());
-            }
-            default
-        }
+    let Some(path) = config_source_path(explicit) else {
+        return Ok(Config::default());
     };
     let text = std::fs::read_to_string(&path)
         .map_err(|e| format!("cannot read config {}: {e}", path.display()))?;
     toml::from_str(&text).map_err(|e| format!("bad config {}: {e}", path.display()))
+}
+
+fn config_source_path(explicit: Option<&Path>) -> Option<PathBuf> {
+    explicit.map(Path::to_path_buf).or_else(|| {
+        let default = PathBuf::from("animsmith.toml");
+        default.exists().then_some(default)
+    })
 }
 
 fn validate_check_selection(
@@ -709,8 +709,16 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             output,
             evidence,
         } => {
+            let config_source = config_source_path(cli.config.as_deref());
             let config = load_config(cli.config.as_deref())?;
-            let result = assembly::assemble(&recipe, &output, &evidence, &config, current_tool())?;
+            let result = assembly::assemble(
+                &recipe,
+                &output,
+                &evidence,
+                &config,
+                config_source.as_deref(),
+                current_tool(),
+            )?;
             println!(
                 "wrote {} and {} ({} clip(s), {} mesh(es), {} material(s))",
                 output.display(),
