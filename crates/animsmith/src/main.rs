@@ -288,7 +288,9 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let config = load_config(cli.config.as_deref())?;
             let doc = load(&file)?;
             let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
-            print!("{}", render::render_inspect(&doc, &roles));
+            for line in render::render_inspect(&doc, &roles) {
+                println!("{line}");
+            }
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Measure { files, format } => {
@@ -314,7 +316,11 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     let envelope = MeasureEnvelope::new(current_tool(), reports);
                     render::print_json(&envelope);
                 }
-                Format::Text => print!("{}", render::render_measure_text(&reports)),
+                Format::Text => {
+                    for line in render::render_measure_text(&reports) {
+                        println!("{line}");
+                    }
+                }
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -373,8 +379,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     let envelope = LintEnvelope::new(current_tool(), reports);
                     render::print_json(&envelope);
                 }
-                LintFormat::Text => render::print_text(&reports, &allow),
-                LintFormat::Markdown => render::print_markdown(&reports, &allow),
+                LintFormat::Text => print!("{}", render::render_text(&reports, &allow)),
+                LintFormat::Markdown => print!("{}", render::render_markdown(&reports, &allow)),
             }
             let fail_at = if deny_warnings {
                 Severity::Warning
@@ -523,10 +529,9 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             for (repair, report) in &reports {
                 // clap rejects --dry-run with a write target, so
                 // `output` is None exactly when this is a dry run.
-                print!(
-                    "{}",
-                    render::render_fix_report(*repair, report, output.as_deref())
-                );
+                for line in render::render_fix_report(*repair, report, output.as_deref()) {
+                    println!("{line}");
+                }
             }
             // Dry run doubles as a CI check mode: pending repairs are
             // findings, mirroring `lint`'s exit contract.
@@ -565,7 +570,11 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     b.display().to_string(),
                     deltas,
                 )),
-                Format::Text => print!("{}", render::render_diff_text(&deltas)),
+                Format::Text => {
+                    for line in render::render_diff_text(&deltas) {
+                        println!("{line}");
+                    }
+                }
             }
             Ok(if has_deltas {
                 ExitCode::from(EXIT_FINDINGS)

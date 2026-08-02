@@ -1007,9 +1007,8 @@ fn measure_text_escapes_controls_in_the_input_path() {
 #[test]
 fn measure_text_renderer_escapes_hostile_asset_text_and_input_path() {
     let dir = unique_temp_dir("measure-renderer-controls");
-    let input = dir
-        .path()
-        .join(format!("asset-{HOSTILE_PRESENTATION_TEXT}.glb"));
+    let hostile_path_text = "path\nasset\u{1b}[32m\u{2028}\u{2029}\u{2066}";
+    let input = dir.path().join(format!("asset-{hostile_path_text}.glb"));
     write_hostile_glb(&input, HOSTILE_PRESENTATION_TEXT, false);
 
     let output = animsmith()
@@ -1022,11 +1021,27 @@ fn measure_text_renderer_escapes_hostile_asset_text_and_input_path() {
 
     let text = stdout(&output);
     assert_hostile_text_is_escaped(&text);
+    assert!(
+        !text.contains(hostile_path_text),
+        "raw path leaked:\n{text}"
+    );
+    let escaped_path = "path\\nasset\\u{1b}[32m\\u{2028}\\u{2029}\\u{2066}";
+    let escaped_asset = "forged\\nline\\u{1b}[31m\\u{2028}\\u{2029}\\u{202e}";
     assert_eq!(
-        text.matches("forged\\nline\\u{1b}[31m\\u{2028}\\u{2029}\\u{202e}")
-            .count(),
-        3,
-        "input path, clip, and mesh should each be escaped:\n{text}"
+        text.matches(escaped_path).count(),
+        1,
+        "input path should be escaped once:\n{text}"
+    );
+    assert_eq!(
+        text.matches(escaped_asset).count(),
+        2,
+        "clip and mesh names should each be escaped:\n{text}"
+    );
+    assert!(
+        text.lines()
+            .next()
+            .is_some_and(|line| line.contains(escaped_path)),
+        "escaped path should remain the heading:\n{text}"
     );
 }
 

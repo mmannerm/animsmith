@@ -50,158 +50,166 @@ pub(crate) fn render_operator_error(message: &str) -> String {
     format!("animsmith: {}\n", text_atom(message))
 }
 
-/// Render measurement reports in the presentation-only text format.
-pub(crate) fn render_measure_text(reports: &[MeasureFileReport]) -> String {
-    use std::fmt::Write as _;
+/// Yield measurement reports in the presentation-only text format, one
+/// escaped line at a time without retaining the full transcript.
+pub(crate) fn render_measure_text(
+    reports: &[MeasureFileReport],
+) -> impl Iterator<Item = String> + '_ {
+    reports.iter().flat_map(|report| {
+        std::iter::once(format!("{}:", text_atom(report.path())))
+            .chain(
+                report
+                    .measurements()
+                    .clips()
+                    .iter()
+                    .map(|(clip, measurement)| {
+                        let seam = measurement
+                            .loop_seam_ratio
+                            .map(|ratio| format!(" seam×{ratio:.2}"))
+                            .unwrap_or_default();
+                        let gait = measurement
+                            .gait
+                            .as_ref()
+                            .and_then(|gait| gait.phase.map(|phase| (phase, gait.lr_amplitude_m)))
+                            .map(|(phase, amplitude)| {
+                                format!(" gait φ={phase:.2} ({:.1}cm)", amplitude * 100.0)
+                            })
+                            .unwrap_or_default();
+                        format!(
+                            "  {}: {:.3}s, {} frames, {} animated bones{seam}{gait}",
+                            text_atom(clip),
+                            measurement.duration_s,
+                            measurement.frame_count,
+                            measurement.animated_bones.len()
+                        )
+                    }),
+            )
+            .chain(report.measurements().meshes().iter().map(|mesh| {
+                let bbox = mesh
+                    .aabb
+                    .as_ref()
+                    .map(|bounds| {
+                        let size = [
+                            bounds.max[0] - bounds.min[0],
+                            bounds.max[1] - bounds.min[1],
+                            bounds.max[2] - bounds.min[2],
+                        ];
+                        format!(" bbox {:.3}×{:.3}×{:.3}", size[0], size[1], size[2])
+                    })
+                    .unwrap_or_default();
+                let skin = match (mesh.weight_sum_min, mesh.weight_sum_max) {
+                    (Some(min), Some(max)) => format!(
+                        ", ≤{} joints/vtx, weight-sum {min:.3}–{max:.3}",
+                        mesh.max_joints_per_vertex
+                    ),
+                    _ => String::new(),
+                };
+                format!(
+                    "  mesh {}: {} verts{bbox}{skin}",
+                    text_atom(&mesh.name),
+                    mesh.vertex_count
+                )
+            }))
+    })
+}
 
-    let mut out = String::new();
-    for report in reports {
-        let _ = writeln!(out, "{}:", text_atom(report.path()));
-        for (clip, measurement) in report.measurements().clips() {
-            let seam = measurement
-                .loop_seam_ratio
-                .map(|ratio| format!(" seam×{ratio:.2}"))
-                .unwrap_or_default();
-            let gait = measurement
-                .gait
-                .as_ref()
-                .and_then(|gait| gait.phase.map(|phase| (phase, gait.lr_amplitude_m)))
-                .map(|(phase, amplitude)| {
-                    format!(" gait φ={phase:.2} ({:.1}cm)", amplitude * 100.0)
-                })
-                .unwrap_or_default();
-            let _ = writeln!(
-                out,
-                "  {}: {:.3}s, {} frames, {} animated bones{seam}{gait}",
-                text_atom(clip),
-                measurement.duration_s,
-                measurement.frame_count,
-                measurement.animated_bones.len()
-            );
-        }
-        for mesh in report.measurements().meshes() {
-            let bbox = mesh
-                .aabb
-                .as_ref()
-                .map(|bounds| {
-                    let size = [
-                        bounds.max[0] - bounds.min[0],
-                        bounds.max[1] - bounds.min[1],
-                        bounds.max[2] - bounds.min[2],
-                    ];
-                    format!(" bbox {:.3}×{:.3}×{:.3}", size[0], size[1], size[2])
-                })
-                .unwrap_or_default();
-            let skin = match (mesh.weight_sum_min, mesh.weight_sum_max) {
-                (Some(min), Some(max)) => format!(
-                    ", ≤{} joints/vtx, weight-sum {min:.3}–{max:.3}",
-                    mesh.max_joints_per_vertex
-                ),
-                _ => String::new(),
+/// Yield significant measurement deltas in the presentation-only text format,
+/// one escaped line at a time without retaining the full transcript.
+pub(crate) fn render_diff_text(deltas: &[MetricDelta]) -> impl Iterator<Item = String> + '_ {
+    deltas
+        .is_empty()
+        .then(|| "no significant movement".to_string())
+        .into_iter()
+        .chain(deltas.iter().map(|delta| {
+            let values = match (delta.before, delta.after) {
+                (Some(before), Some(after)) => format!(" {before:.4} -> {after:.4}"),
+                (Some(before), None) => format!(" {before:.4} -> (gone)"),
+                (None, Some(after)) => format!(" (none) -> {after:.4}"),
+                (None, None) => String::new(),
             };
-            let _ = writeln!(
-                out,
-                "  mesh {}: {} verts{bbox}{skin}",
-                text_atom(&mesh.name),
-                mesh.vertex_count
-            );
-        }
-    }
-    out
+            format!(
+                "  {} {}: {}{values}",
+                text_atom(&delta.clip),
+                text_atom(&delta.metric),
+                text_atom(&delta.note)
+            )
+        }))
+        .chain(std::iter::once(format!(
+            "{} significant change(s)",
+            deltas.len()
+        )))
 }
 
-/// Render significant measurement deltas in the presentation-only text format.
-pub(crate) fn render_diff_text(deltas: &[MetricDelta]) -> String {
-    use std::fmt::Write as _;
-
-    let mut out = String::new();
-    if deltas.is_empty() {
-        let _ = writeln!(out, "no significant movement");
-    }
-    for delta in deltas {
-        let values = match (delta.before, delta.after) {
-            (Some(before), Some(after)) => format!(" {before:.4} -> {after:.4}"),
-            (Some(before), None) => format!(" {before:.4} -> (gone)"),
-            (None, Some(after)) => format!(" (none) -> {after:.4}"),
-            (None, None) => String::new(),
-        };
-        let _ = writeln!(
-            out,
-            "  {} {}: {}{values}",
-            text_atom(&delta.clip),
-            text_atom(&delta.metric),
-            text_atom(&delta.note)
-        );
-    }
-    let _ = writeln!(out, "{} significant change(s)", deltas.len());
-    out
-}
-
-/// Render an inspected document and resolved rig roles.
-pub(crate) fn render_inspect(doc: &Document, roles: &ResolvedRoles) -> String {
-    use std::fmt::Write as _;
-
-    let mut out = String::new();
-    if let Some(path) = &doc.source.path {
-        let _ = writeln!(out, "{}", text_atom(path));
-    }
-    if roles.is_empty() {
-        let _ = writeln!(out, "rig profile: none detected");
+/// Yield an inspected document and resolved rig roles one escaped line at a
+/// time. Bone depths are derived in one parent-before-child pass.
+pub(crate) fn render_inspect<'a>(
+    doc: &'a Document,
+    roles: &'a ResolvedRoles,
+) -> impl Iterator<Item = String> + 'a {
+    let source = doc
+        .source
+        .path
+        .iter()
+        .map(|path| text_atom(path).into_owned());
+    let profile = std::iter::once(if roles.is_empty() {
+        "rig profile: none detected".to_string()
     } else {
-        let _ = writeln!(
-            out,
+        format!(
             "rig profile: {} ({} roles)",
             text_atom(&roles.profile),
             roles.len()
-        );
-        for (role, bone) in roles.iter() {
-            let _ = writeln!(
-                out,
-                "  {:<12} -> {}",
-                role.as_str(),
-                text_atom(&doc.skeleton.bones[bone].name)
-            );
-        }
-    }
-    let _ = writeln!(out, "skeleton: {} bones", doc.skeleton.bones.len());
-    for bone in &doc.skeleton.bones {
-        let mut depth = 0;
-        let mut parent = bone.parent;
-        while let Some(parent_index) = parent {
-            depth += 1;
-            parent = doc.skeleton.bones[parent_index].parent;
-        }
-        let skinned = if bone.inverse_bind.is_some() {
-            " [skinned]"
-        } else {
-            ""
-        };
-        let _ = writeln!(
-            out,
-            "  {}{}{}",
-            "  ".repeat(depth),
-            text_atom(&bone.name),
-            skinned
-        );
-    }
-    let _ = writeln!(out, "clips: {}", doc.clips.len());
-    for clip in &doc.clips {
+        )
+    });
+    let role_lines = roles.iter().map(|(role, bone)| {
+        format!(
+            "  {:<12} -> {}",
+            role.as_str(),
+            text_atom(&doc.skeleton.bones[bone].name)
+        )
+    });
+    let skeleton = std::iter::once(format!("skeleton: {} bones", doc.skeleton.bones.len()));
+    let bone_lines = doc.skeleton.bones.iter().scan(
+        Vec::with_capacity(doc.skeleton.bones.len()),
+        |depths, bone| {
+            let depth = bone.parent.map_or(0, |parent| depths[parent] + 1);
+            depths.push(depth);
+            let skinned = if bone.inverse_bind.is_some() {
+                " [skinned]"
+            } else {
+                ""
+            };
+            Some(format!(
+                "  {}{}{}",
+                "  ".repeat(depth),
+                text_atom(&bone.name),
+                skinned
+            ))
+        },
+    );
+    let clips = std::iter::once(format!("clips: {}", doc.clips.len()));
+    let clip_lines = doc.clips.iter().map(|clip| {
         let keys = clip
             .tracks
             .iter()
             .map(|track| track.key_count())
             .max()
             .unwrap_or(0);
-        let _ = writeln!(
-            out,
+        format!(
             "  {}: {:.3}s, {} tracks, {} keys max",
             text_atom(&clip.name),
             clip.duration_s,
             clip.tracks.len(),
             keys
-        );
-    }
-    out
+        )
+    });
+
+    source
+        .chain(profile)
+        .chain(role_lines)
+        .chain(skeleton)
+        .chain(bone_lines)
+        .chain(clips)
+        .chain(clip_lines)
 }
 
 /// Render one report artifact write summary.
@@ -272,49 +280,48 @@ fn repair_action(repair: Repair) -> &'static str {
     }
 }
 
-/// Render one byte-surgical repair pass. `target = None` means dry-run.
-pub(crate) fn render_fix_report(
+/// Yield one byte-surgical repair pass one escaped line at a time.
+/// `target = None` means dry-run.
+pub(crate) fn render_fix_report<'a>(
     repair: Repair,
-    report: &FixReport,
-    target: Option<&Path>,
-) -> String {
-    use std::fmt::Write as _;
-
-    let mut out = String::new();
+    report: &'a FixReport,
+    target: Option<&'a Path>,
+) -> impl Iterator<Item = String> + 'a {
     let verb = if target.is_none() {
         "would fix"
     } else {
         "fixed"
     };
-    for track in &report.tracks {
-        let _ = writeln!(
-            out,
+    let tracks = report.tracks.iter().map(move |track| {
+        format!(
             "  {verb}[{}] clip '{}' bone '{}': {} key(s) {}",
             repair.id(),
             text_atom(&track.clip),
             text_atom(&track.bone),
             track.fixed_keys,
             repair_action(repair)
-        );
-    }
-    for skipped in &report.skipped {
-        let _ = writeln!(out, "  skipped[{}]: {}", repair.id(), text_atom(skipped));
-    }
-    let destination = target
-        .map(|path| text_atom(&path.display().to_string()).into_owned())
-        .unwrap_or_else(|| "no output written".into());
-    let _ = writeln!(
-        out,
-        "{} key(s) {} across {} track(s) -> {destination}",
-        report.total_fixed(),
-        if target.is_none() {
-            "would be fixed"
-        } else {
-            "fixed"
-        },
-        report.tracks.len(),
-    );
-    out
+        )
+    });
+    let skipped = report
+        .skipped
+        .iter()
+        .map(move |skipped| format!("  skipped[{}]: {}", repair.id(), text_atom(skipped)));
+    let summary = std::iter::once_with(move || {
+        let destination = target
+            .map(|path| text_atom(&path.display().to_string()).into_owned())
+            .unwrap_or_else(|| "no output written".into());
+        format!(
+            "{} key(s) {} across {} track(s) -> {destination}",
+            report.total_fixed(),
+            if target.is_none() {
+                "would be fixed"
+            } else {
+                "fixed"
+            },
+            report.tracks.len(),
+        )
+    });
+    tracks.chain(skipped).chain(summary)
 }
 
 /// Render the shared `transform`/`convert` artifact write summary.
@@ -341,12 +348,8 @@ pub(crate) fn render_write_summary(output: &Path, summary: &WriteSummary) -> Str
     out
 }
 
-/// Human-readable one-line-per-finding text output for `lint`.
-pub(crate) fn print_text(reports: &[LintFileReport], suppressed: &[String]) {
-    print!("{}", render_text(reports, suppressed));
-}
-
-fn render_text(reports: &[LintFileReport], suppressed: &[String]) -> String {
+/// Render human-readable one-line-per-finding text output for `lint`.
+pub(crate) fn render_text(reports: &[LintFileReport], suppressed: &[String]) -> String {
     use std::fmt::Write as _;
 
     let mut out = String::new();
@@ -555,22 +558,16 @@ const MARKDOWN_COLLAPSE_AT: usize = 10;
 
 /// Render findings as GitHub/GitLab-flavored Markdown for CI comments and
 /// asset-review threads. Presentation-only: the JSON output is the
-/// machine-readable contract, and this layout carries no stability
-/// guarantees. Mirrors the text output's information — severity, check
-/// id, location, measured/expected values, per-clip grouping — as tables
-/// inside per-file collapsible sections.
-pub(crate) fn print_markdown(reports: &[LintFileReport], suppressed: &[String]) {
-    print!("{}", render_markdown(reports, suppressed));
-}
-
-/// Pure Markdown renderer behind [`print_markdown`], returning the whole
-/// document as a string. Keeping it side-effect free lets the per-clip
+/// machine-readable contract, and this layout carries no stability guarantees.
+/// It mirrors text output's severity, check id, location, measured/expected
+/// values, and per-clip grouping as tables inside per-file sections. Keeping
+/// it side-effect free lets the per-clip
 /// grouping, cell escaping, collapse threshold, and summary tallies be
 /// unit-tested directly without spawning the CLI.
 ///
 /// Findings are sorted here before grouping so callers cannot accidentally
 /// emit repeated per-clip headers from an interleaved input slice.
-fn render_markdown(reports: &[LintFileReport], suppressed: &[String]) -> String {
+pub(crate) fn render_markdown(reports: &[LintFileReport], suppressed: &[String]) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
     let mut total = FindingSummary::default();
@@ -868,16 +865,20 @@ mod tests {
         )];
 
         assert_eq!(
-            render_measure_text(&reports),
-            "asset\\npath.glb:\n  walk\\nclip: 1.000s, 2 frames, 1 animated bones seam×0.25 gait φ=0.50 (10.0cm)\n  mesh body\\nmesh: 3 verts bbox 1.000×2.000×3.000, ≤4 joints/vtx, weight-sum 0.900–1.100\n"
+            render_measure_text(&reports).collect::<Vec<_>>(),
+            vec![
+                "asset\\npath.glb:",
+                "  walk\\nclip: 1.000s, 2 frames, 1 animated bones seam×0.25 gait φ=0.50 (10.0cm)",
+                "  mesh body\\nmesh: 3 verts bbox 1.000×2.000×3.000, ≤4 joints/vtx, weight-sum 0.900–1.100",
+            ]
         );
     }
 
     #[test]
     fn diff_renderer_owns_clean_dirty_layout_and_escaping() {
         assert_eq!(
-            render_diff_text(&[]),
-            "no significant movement\n0 significant change(s)\n"
+            render_diff_text(&[]).collect::<Vec<_>>(),
+            vec!["no significant movement", "0 significant change(s)"]
         );
 
         let before = serde_json::from_value(json!({
@@ -900,8 +901,11 @@ mod tests {
         .expect("after measurements deserialize");
         let deltas = animsmith_core::diff::diff_measurements(&before, &after);
         assert_eq!(
-            render_diff_text(&deltas),
-            "  walk\\nclip duration_s: moved 1.0000 -> 1.1000\n1 significant change(s)\n"
+            render_diff_text(&deltas).collect::<Vec<_>>(),
+            vec![
+                "  walk\\nclip duration_s: moved 1.0000 -> 1.1000",
+                "1 significant change(s)",
+            ]
         );
     }
 
@@ -938,8 +942,16 @@ mod tests {
         };
 
         assert_eq!(
-            render_inspect(&doc, &ResolvedRoles::default()),
-            "asset\\nname\nrig profile: none detected\nskeleton: 2 bones\n  root\\nname\n    child\\nname [skinned]\nclips: 1\n  clip\\nname: 1.000s, 0 tracks, 0 keys max\n"
+            render_inspect(&doc, &ResolvedRoles::default()).collect::<Vec<_>>(),
+            vec![
+                "asset\\nname",
+                "rig profile: none detected",
+                "skeleton: 2 bones",
+                "  root\\nname",
+                "    child\\nname [skinned]",
+                "clips: 1",
+                "  clip\\nname: 1.000s, 0 tracks, 0 keys max",
+            ]
         );
     }
 
@@ -949,8 +961,11 @@ mod tests {
         report.skipped.push("bone\ntrack".into());
 
         assert_eq!(
-            render_fix_report(Repair::QuatFlip, &report, None),
-            "  skipped[quat-flip]: bone\\ntrack\n0 key(s) would be fixed across 0 track(s) -> no output written\n"
+            render_fix_report(Repair::QuatFlip, &report, None).collect::<Vec<_>>(),
+            vec![
+                "  skipped[quat-flip]: bone\\ntrack",
+                "0 key(s) would be fixed across 0 track(s) -> no output written",
+            ]
         );
     }
 
