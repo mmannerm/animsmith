@@ -448,6 +448,9 @@ fn measurement_report_input_rejects_inconsistent_static_node_and_scene_evidence(
     let mut inconsistent_scene_count = base.clone();
     inconsistent_scene_count["files"][0]["measurements"]["scenes"][0]["excluded_instance_count"] =
         serde_json::json!(2);
+    let mut inverted_node_aabb = base.clone();
+    inverted_node_aabb["files"][0]["measurements"]["node_instances"][0]["static_node_world_aabb"]
+        ["min"][0] = serde_json::json!(2.0);
     let mut dangling_default_scene = base;
     dangling_default_scene["files"][0]["measurements"]["default_scene_index"] =
         serde_json::json!(99);
@@ -476,6 +479,12 @@ fn measurement_report_input_rejects_inconsistent_static_node_and_scene_evidence(
             inconsistent_scene_count,
             "scenes[0].excluded_instance_count",
             "excluded_instance_count cannot exceed instance_count",
+        ),
+        (
+            "node AABB has inverted corners",
+            inverted_node_aabb,
+            "node_instances[0].static_node_world_aabb.min[0]",
+            "AABB minimum cannot exceed maximum",
         ),
         (
             "dangling default scene reference",

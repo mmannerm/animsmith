@@ -575,6 +575,30 @@ fn load_preserves_mesh_definition_instance_and_scene_identity() {
     assert_eq!(doc.assets.scenes[1].roots, vec![1]);
 }
 
+/// Absence of glTF's optional top-level `scene` property is distinct from
+/// explicitly selecting scene zero.
+#[test]
+fn load_preserves_absent_default_scene() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("no-default-scene.gltf");
+    std::fs::write(
+        &path,
+        r#"{
+            "asset": { "version": "2.0" },
+            "nodes": [{ "name": "root" }],
+            "scenes": [{ "name": "declared-not-default", "nodes": [0] }]
+        }"#,
+    )
+    .unwrap();
+
+    let doc = animsmith_gltf::load(&path).expect("loads");
+    assert_eq!(doc.assets.scenes.len(), 1, "declared scene is retained");
+    assert_eq!(
+        doc.assets.default_scene, None,
+        "missing `scene` must not imply scene zero"
+    );
+}
+
 /// Unskinned mesh definitions can be attached to more than one node. Writing
 /// must emit one definition with both node attachments, and loading must keep
 /// each instance's skeleton node (and therefore its authored transform).
