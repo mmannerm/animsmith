@@ -1526,6 +1526,41 @@ fn lint_json_explicit_severity_enables_opt_in_check() {
 }
 
 #[test]
+fn lint_json_selects_non_uniform_scale_independently() {
+    let output = animsmith()
+        .args([
+            "lint",
+            fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
+            "--format",
+            "json",
+            "--select",
+            "non-uniform-scale",
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    let checks = json["files"][0]["checks"].as_array().expect("checks");
+    let non_uniform = checks
+        .iter()
+        .find(|check| check["check_id"] == "non-uniform-scale")
+        .expect("non-uniform scale record");
+    assert_eq!(non_uniform["selection"], "selected");
+    assert_eq!(non_uniform["configuration"], "enabled");
+    assert_eq!(non_uniform["evaluation"], "complete");
+    assert_eq!(non_uniform["findings"], json!([]));
+    let scale_keys = checks
+        .iter()
+        .find(|check| check["check_id"] == "scale-keys")
+        .expect("scale keys record");
+    assert_eq!(scale_keys["selection"], "unselected");
+    assert_eq!(scale_keys["evaluation"], "not_evaluated");
+    assert_evaluation_summary_matches_checks(&json);
+    assert_output_schema_valid(&json);
+}
+
+#[test]
 fn lint_json_gait_group_can_carry_finding_and_coverage_gap() {
     let dir = unique_temp_dir("v2-partial-gait");
     let config = write_config(

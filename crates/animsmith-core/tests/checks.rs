@@ -330,16 +330,20 @@ fn scale_finding_ids_with_config(doc: &Document, config: &Config) -> Vec<&'stati
     ids
 }
 
-fn presence_enabled_config() -> Config {
+fn presence_enabled_config_with(severity: SeveritySetting) -> Config {
     let mut config = Config::default();
     config.checks.insert(
         "constant-nonunit-scale".into(),
         CheckSettings {
-            severity: Some(SeveritySetting::Note),
+            severity: Some(severity),
             ..CheckSettings::default()
         },
     );
     config
+}
+
+fn presence_enabled_config() -> Config {
+    presence_enabled_config_with(SeveritySetting::Note)
 }
 
 #[test]
@@ -419,6 +423,62 @@ fn cubic_opposite_tangents_create_a_one_component_excursion() {
 }
 
 #[test]
+fn cubic_y_and_z_only_tangents_are_temporal_variation_and_non_uniform() {
+    for tangent in [Vec3::new(0.0, 0.004, 0.0), Vec3::new(0.0, 0.0, 0.004)] {
+        let mut doc = clean_doc();
+        add_scale_track(
+            &mut doc,
+            Interpolation::CubicSpline,
+            vec![0.0, 1.0],
+            vec![
+                Vec3::ZERO,
+                Vec3::ONE,
+                tangent,
+                -tangent,
+                Vec3::ONE,
+                Vec3::ZERO,
+            ],
+        );
+        assert_eq!(
+            scale_finding_ids(&doc),
+            vec!["non-uniform-scale", "scale-keys"]
+        );
+    }
+}
+
+#[test]
+fn cubic_temporal_variation_respects_the_tolerance_direction() {
+    // Equal tangents produce a peak-to-trough range of about 0.1924 times the
+    // tangent, placing these cases just below and above the 1e-4 threshold.
+    let below_tolerance_tangent = 0.0005f32;
+    let over_tolerance_tangent = 0.0006f32;
+    for (tangent, expected) in [
+        (below_tolerance_tangent, false),
+        (over_tolerance_tangent, true),
+    ] {
+        let mut doc = clean_doc();
+        add_scale_track(
+            &mut doc,
+            Interpolation::CubicSpline,
+            vec![0.0, 1.0],
+            vec![
+                Vec3::ZERO,
+                Vec3::ONE,
+                Vec3::splat(tangent),
+                Vec3::splat(tangent),
+                Vec3::ONE,
+                Vec3::ZERO,
+            ],
+        );
+        assert_eq!(
+            scale_finding_ids(&doc).contains(&"scale-keys"),
+            expected,
+            "tangent {tangent:?}"
+        );
+    }
+}
+
+#[test]
 fn cubic_duration_scales_tangent_excursion() {
     // Put the decisive long segment on each side in turn. Both must exceed
     // tolerance after glTF's tangent-times-dt scaling.
@@ -445,6 +505,39 @@ fn cubic_duration_scales_tangent_excursion() {
 }
 
 #[test]
+fn cubic_tangents_use_their_own_segment_duration() {
+    let scale_values = vec![
+        Vec3::ZERO,
+        Vec3::ONE,
+        Vec3::splat(0.0004),
+        Vec3::ZERO,
+        Vec3::ONE,
+        Vec3::ZERO,
+        Vec3::ZERO,
+        Vec3::ONE,
+        Vec3::ZERO,
+    ];
+
+    let mut short_first = clean_doc();
+    add_scale_track(
+        &mut short_first,
+        Interpolation::CubicSpline,
+        vec![0.0, 0.25, 2.25],
+        scale_values.clone(),
+    );
+    assert_eq!(scale_finding_ids(&short_first), vec!["constant-track"]);
+
+    let mut long_first = clean_doc();
+    add_scale_track(
+        &mut long_first,
+        Interpolation::CubicSpline,
+        vec![0.0, 2.0, 2.25],
+        scale_values,
+    );
+    assert_eq!(scale_finding_ids(&long_first), vec!["scale-keys"]);
+}
+
+#[test]
 fn cubic_interior_non_uniformity_has_its_own_finding() {
     let mut doc = clean_doc();
     add_scale_track(
@@ -456,6 +549,30 @@ fn cubic_interior_non_uniformity_has_its_own_finding() {
             Vec3::ONE,
             Vec3::new(0.004, 0.0, 0.0),
             Vec3::new(0.004, 0.0, 0.0),
+            Vec3::ONE,
+            Vec3::ZERO,
+        ],
+    );
+    assert_eq!(
+        scale_finding_ids(&doc),
+        vec!["non-uniform-scale", "scale-keys"]
+    );
+}
+
+#[test]
+fn cubic_off_grid_interior_extremum_is_detected() {
+    let mut doc = clean_doc();
+    // With equal endpoints and this tangent pair, the x extremum is at u=1/3,
+    // not an endpoint or midpoint.
+    add_scale_track(
+        &mut doc,
+        Interpolation::CubicSpline,
+        vec![0.0, 1.0],
+        vec![
+            Vec3::ZERO,
+            Vec3::ONE,
+            Vec3::new(0.0008, 0.0, 0.0),
+            Vec3::ZERO,
             Vec3::ONE,
             Vec3::ZERO,
         ],
@@ -502,6 +619,28 @@ fn constant_nonunit_scale_is_opt_in_and_distinct_from_nonuniformity() {
 }
 
 #[test]
+fn constant_nonunit_scale_honors_each_enabling_severity() {
+    let mut doc = clean_doc();
+    add_scale_track(
+        &mut doc,
+        Interpolation::Linear,
+        vec![0.0],
+        vec![Vec3::splat(1.2)],
+    );
+
+    for (setting, expected) in [
+        (SeveritySetting::Note, Severity::Note),
+        (SeveritySetting::Warn, Severity::Warning),
+        (SeveritySetting::Error, Severity::Error),
+    ] {
+        let findings = lint_with_config(&doc, &presence_enabled_config_with(setting));
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].check_id, "constant-nonunit-scale");
+        assert_eq!(findings[0].severity, expected);
+    }
+}
+
+#[test]
 fn constant_uniform_nonunit_scale_is_redundancy_plus_opt_in_presence() {
     let mut doc = clean_doc();
     add_scale_track(
@@ -538,6 +677,22 @@ fn single_key_nonunit_pin_is_not_redundant() {
         enabled_findings
             .iter()
             .all(|finding| finding.check_id != "constant-track")
+    );
+}
+
+#[test]
+fn single_key_yz_nonuniform_pin_has_presence_and_nonuniform_owners() {
+    let mut doc = clean_doc();
+    add_scale_track(
+        &mut doc,
+        Interpolation::Linear,
+        vec![0.0],
+        vec![Vec3::new(1.0, 1.0, 1.2)],
+    );
+    assert_eq!(scale_finding_ids(&doc), vec!["non-uniform-scale"]);
+    assert_eq!(
+        scale_finding_ids_with_config(&doc, &presence_enabled_config()),
+        vec!["constant-nonunit-scale", "non-uniform-scale"]
     );
 }
 
@@ -684,6 +839,23 @@ fn invalid_scale_tracks_are_left_to_source_data_checks() {
             },
             None,
         ),
+        (
+            Track {
+                bone: 1,
+                property: Property::Scale,
+                interpolation: Interpolation::CubicSpline,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Vec3s(vec![
+                    Vec3::ZERO,
+                    Vec3::ONE,
+                    Vec3::splat(f32::NAN),
+                    Vec3::ZERO,
+                    Vec3::ONE,
+                    Vec3::ZERO,
+                ]),
+            },
+            Some("nan"),
+        ),
     ];
 
     for (track, owning_check) in invalid_tracks {
@@ -701,6 +873,63 @@ fn invalid_scale_tracks_are_left_to_source_data_checks() {
                 "{owning_check} must retain invalid-source ownership"
             );
         }
+    }
+}
+
+#[test]
+fn cubic_translation_tangents_do_not_count_as_redundant() {
+    let mut doc = clean_doc();
+    doc.clips[0].tracks[1] = Track {
+        bone: 0,
+        property: Property::Translation,
+        interpolation: Interpolation::CubicSpline,
+        times: vec![0.0, 1.0],
+        values: TrackValues::Vec3s(vec![
+            Vec3::ZERO,
+            Vec3::ZERO,
+            Vec3::new(0.004, 0.0, 0.0),
+            Vec3::new(0.004, 0.0, 0.0),
+            Vec3::ZERO,
+            Vec3::ZERO,
+        ]),
+    };
+    assert!(
+        !lint(&doc)
+            .iter()
+            .any(|finding| finding.check_id == "constant-track"),
+        "moving cubic translation must not be called redundant"
+    );
+}
+
+#[test]
+fn scale_findings_are_content_not_coverage_gaps_and_not_duplicated() {
+    let mut doc = clean_doc();
+    add_scale_track(
+        &mut doc,
+        Interpolation::CubicSpline,
+        vec![0.0, 1.0],
+        vec![
+            Vec3::ZERO,
+            Vec3::ONE,
+            Vec3::new(0.004, 0.0, 0.0),
+            Vec3::new(-0.004, 0.0, 0.0),
+            Vec3::ONE,
+            Vec3::ZERO,
+        ],
+    );
+    let evaluations = evaluations_with_config(&doc, &Config::default());
+    for check_id in ["scale-keys", "non-uniform-scale"] {
+        let evaluation = evaluations
+            .iter()
+            .find(|evaluation| evaluation.check_id() == check_id)
+            .expect("registered scale evaluation");
+        assert_eq!(
+            evaluation.evaluation(),
+            animsmith_core::EvaluationState::Complete
+        );
+        assert_eq!(evaluation.findings().len(), 1);
+        assert!(evaluation.gaps().is_empty());
+        assert!(evaluation.evaluated_scopes().is_empty());
     }
 }
 
