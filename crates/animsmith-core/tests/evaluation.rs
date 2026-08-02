@@ -281,6 +281,10 @@ fn builtin_evidence_codes_reject_undeclared_emitters() {
 
     for &builtin in BUILTIN_EVALUATION_SCOPE_CODES {
         let code = EvaluationScopeCode::custom(builtin.as_str());
+        assert_eq!(
+            code, builtin,
+            "custom() must preserve built-in scope identity"
+        );
         let completed_scope = CheckEvaluation::evaluated(
             UNDECLARED,
             CheckOutput::from_coverage(Vec::new(), vec![EvaluationScope::new(code)], Vec::new()),
@@ -317,6 +321,10 @@ fn builtin_evidence_codes_reject_undeclared_emitters() {
 
     for &builtin in BUILTIN_COVERAGE_GAP_CODES {
         let code = CoverageGapCode::custom(builtin.as_str());
+        assert_eq!(
+            code, builtin,
+            "custom() must preserve built-in gap identity"
+        );
         let gap = CheckEvaluation::evaluated(
             UNDECLARED,
             CheckOutput::from_coverage(Vec::new(), Vec::new(), vec![CoverageGap::new(code, "gap")]),
@@ -371,6 +379,27 @@ fn declared_builtin_emitters_and_namespaced_custom_codes_are_accepted() {
     assert_eq!(json["evaluated_scopes"][0]["code"], "acme:completed");
     assert_eq!(json["gaps"][0]["code"], "acme:unavailable");
     assert_eq!(json["gaps"][0]["scope"]["code"], "acme:missing");
+
+    for (check_id, scope_code, gap_code) in [
+        ("vendor-check", "vendor:completed", "vendor:unavailable"),
+        (
+            "reverse-domain-check",
+            "org.example:completed",
+            "org.example:unavailable",
+        ),
+    ] {
+        CheckEvaluation::evaluated(
+            check_id,
+            CheckOutput::from_coverage(
+                Vec::new(),
+                vec![EvaluationScope::new(EvaluationScopeCode::custom(
+                    scope_code,
+                ))],
+                vec![CoverageGap::new(CoverageGapCode::custom(gap_code), "gap")],
+            ),
+        )
+        .expect("custom constructors must remain open to namespaced values");
+    }
 }
 
 #[test]

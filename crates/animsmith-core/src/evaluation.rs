@@ -666,7 +666,7 @@ mod authority_contract {
     use super::{
         BUILTIN_COVERAGE_GAP_CODE_DEFINITIONS, BUILTIN_EVALUATION_SCOPE_CODE_DEFINITIONS,
         BuiltinEvidenceCode, CheckEvaluation, CheckOutput, CoverageGap, CoverageGapCode,
-        EvaluationScope, EvaluationScopeCode,
+        EvaluationError, EvaluationScope, EvaluationScopeCode,
     };
 
     fn assert_reference_table(docs: &str, heading: &str, entries: &[BuiltinEvidenceCode]) {
@@ -791,47 +791,73 @@ mod authority_contract {
     }
 
     #[test]
-    fn every_declared_builtin_emitter_is_accepted() {
+    fn every_builtin_code_enforces_its_emitter_matrix() {
+        let catalog_ids = crate::all_checks()
+            .into_iter()
+            .map(|check| check.id())
+            .collect::<Vec<_>>();
+
         for definition in BUILTIN_EVALUATION_SCOPE_CODE_DEFINITIONS {
-            for &check_id in definition.emitted_by {
-                CheckEvaluation::evaluated(
+            for &check_id in &catalog_ids {
+                let code = EvaluationScopeCode::custom(definition.code);
+                let completed = CheckEvaluation::evaluated(
                     check_id,
                     CheckOutput::from_coverage(
                         Vec::new(),
-                        vec![EvaluationScope::new(EvaluationScopeCode::custom(
-                            definition.code,
-                        ))],
+                        vec![EvaluationScope::new(code)],
                         Vec::new(),
                     ),
-                )
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "{} must allow declared emitter {check_id:?}: {error}",
+                );
+                let gap_scope = CheckEvaluation::evaluated(
+                    check_id,
+                    CheckOutput::from_coverage(
+                        Vec::new(),
+                        Vec::new(),
+                        vec![
+                            CoverageGap::new(CoverageGapCode::custom("test:gap"), "gap")
+                                .scope(EvaluationScope::new(code)),
+                        ],
+                    ),
+                );
+                if definition.emitted_by.contains(&check_id) {
+                    assert!(
+                        completed.is_ok(),
+                        "{} must allow {check_id:?}",
                         definition.code
-                    )
-                });
+                    );
+                    assert!(
+                        gap_scope.is_ok(),
+                        "{} must allow {check_id:?}",
+                        definition.code
+                    );
+                } else {
+                    let expected =
+                        EvaluationError::BuiltinEvaluationScopeEmitterMismatch { check_id, code };
+                    assert_eq!(completed.unwrap_err(), expected);
+                    assert_eq!(gap_scope.unwrap_err(), expected);
+                }
             }
         }
 
         for definition in BUILTIN_COVERAGE_GAP_CODE_DEFINITIONS {
-            for &check_id in definition.emitted_by {
-                CheckEvaluation::evaluated(
+            for &check_id in &catalog_ids {
+                let code = CoverageGapCode::custom(definition.code);
+                let gap = CheckEvaluation::evaluated(
                     check_id,
                     CheckOutput::from_coverage(
                         Vec::new(),
                         Vec::new(),
-                        vec![CoverageGap::new(
-                            CoverageGapCode::custom(definition.code),
-                            "test gap",
-                        )],
+                        vec![CoverageGap::new(code, "test gap")],
                     ),
-                )
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "{} must allow declared emitter {check_id:?}: {error}",
-                        definition.code
-                    )
-                });
+                );
+                if definition.emitted_by.contains(&check_id) {
+                    assert!(gap.is_ok(), "{} must allow {check_id:?}", definition.code);
+                } else {
+                    assert_eq!(
+                        gap.unwrap_err(),
+                        EvaluationError::BuiltinCoverageGapEmitterMismatch { check_id, code }
+                    );
+                }
             }
         }
     }
