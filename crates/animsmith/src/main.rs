@@ -335,9 +335,11 @@ fn main() -> ExitCode {
 
 struct LoadedConfig {
     config: Config,
+    #[cfg(feature = "fbx")]
     source: Option<LoadedConfigSource>,
 }
 
+#[cfg(feature = "fbx")]
 struct LoadedConfigSource {
     path: PathBuf,
     bytes: Vec<u8>,
@@ -358,6 +360,7 @@ fn load_config_with_source(explicit: Option<&Path>) -> Result<LoadedConfig, Stri
     let Some(path) = config_source_path(explicit) else {
         return Ok(LoadedConfig {
             config: Config::default(),
+            #[cfg(feature = "fbx")]
             source: None,
         });
     };
@@ -368,6 +371,7 @@ fn load_config_with_source(explicit: Option<&Path>) -> Result<LoadedConfig, Stri
     let config = toml::from_str(text).map_err(|e| format!("bad config {}: {e}", path.display()))?;
     Ok(LoadedConfig {
         config,
+        #[cfg(feature = "fbx")]
         source: Some(LoadedConfigSource { path, bytes }),
     })
 }
