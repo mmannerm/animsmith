@@ -75,17 +75,19 @@ fn fixture() -> Document {
     }
 }
 
-fn run_bake(input: &Path, output: &Path) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_animsmith"))
+fn run_json_convert(input: &Path, output: &Path, bake: bool) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_animsmith"));
+    command
         .arg("convert")
         .arg(input)
         .arg("-o")
         .arg(output)
-        .arg("--bake-static-mesh-transforms")
         .arg("--format")
-        .arg("json")
-        .output()
-        .expect("runs animsmith convert")
+        .arg("json");
+    if bake {
+        command.arg("--bake-static-mesh-transforms");
+    }
+    command.output().expect("runs animsmith convert")
 }
 
 fn assert_vec3_close(actual: Vec3, expected: Vec3) {
@@ -120,7 +122,7 @@ fn convert_static_bake_emits_schema_valid_evidence_and_byte_stable_identity_outp
         .map(|normal| (normal_matrix * *normal).normalize())
         .collect::<Vec<_>>();
 
-    let first = run_bake(&input, &output_a);
+    let first = run_json_convert(&input, &output_a, true);
     assert!(
         first.status.success(),
         "convert failed: {}",
@@ -133,6 +135,27 @@ fn convert_static_bake_emits_schema_valid_evidence_and_byte_stable_identity_outp
         validator.is_valid(&evidence),
         "evidence does not satisfy conversion schema: {evidence:#}"
     );
+    let mut missing_bake_payload = evidence.clone();
+    missing_bake_payload
+        .as_object_mut()
+        .unwrap()
+        .remove("static_mesh_bake");
+    assert!(
+        !validator.is_valid(&missing_bake_payload),
+        "the schema requires bake evidence when the bake option is true"
+    );
+    let mut unexpected_bake_payload = evidence.clone();
+    unexpected_bake_payload["options"]["bake_static_mesh_transforms"] = false.into();
+    assert!(
+        !validator.is_valid(&unexpected_bake_payload),
+        "the schema rejects bake evidence when the bake option is false"
+    );
+    let mut conflicting_options = evidence.clone();
+    conflicting_options["options"]["animation_only"] = true.into();
+    assert!(
+        !validator.is_valid(&conflicting_options),
+        "the schema rejects mutually exclusive conversion options"
+    );
     assert_eq!(evidence["schema_version"], 1);
     assert_eq!(
         evidence["schema"],
@@ -140,18 +163,40 @@ fn convert_static_bake_emits_schema_valid_evidence_and_byte_stable_identity_outp
     );
     assert_eq!(evidence["artifact"]["meshes"], 1);
     assert_eq!(evidence["artifact"]["primitive_positions"], 3);
-    assert_eq!(
-        evidence["static_mesh_bake"]["output_root_is_identity"],
-        true
-    );
+    assert_eq!(evidence["artifact"]["nodes"], 2);
+    assert_eq!(evidence["options"]["animation_only"], false);
+    assert_eq!(evidence["options"]["bake_static_mesh_transforms"], true);
     let entries = evidence["static_mesh_bake"]["entries"]
         .as_array()
         .expect("bake entries array");
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0]["source_node_index"], instance.source_node_index);
-    assert_eq!(entries[0]["world_transform"].as_array().unwrap().len(), 16);
+    assert_eq!(
+        entries[0]["source_node_name"],
+        loaded_input.skeleton.bones[instance.node].name
+    );
+    assert_eq!(entries[0]["source_mesh_ordinal"], instance.mesh);
+    assert_eq!(
+        entries[0]["source_mesh_index"],
+        loaded_input.assets.meshes[instance.mesh].source_mesh_index
+    );
+    assert_eq!(
+        entries[0]["source_mesh_name"],
+        loaded_input.assets.meshes[instance.mesh].name
+    );
+    assert_eq!(entries[0]["output_node_index"], 1);
+    assert_eq!(entries[0]["output_mesh_index"], 0);
+    assert_eq!(entries[0]["primitive_count"], 1);
+    assert_eq!(entries[0]["position_count"], 3);
+    assert_eq!(entries[0]["normal_count"], 3);
+    let evidence_world: [f32; 16] =
+        serde_json::from_value(entries[0]["world_transform"].clone()).unwrap();
+    assert_eq!(evidence_world, world.to_cols_array());
+    let evidence_determinant: f32 =
+        serde_json::from_value(entries[0]["linear_determinant"].clone()).unwrap();
+    assert_eq!(evidence_determinant, Mat3::from_mat4(world).determinant());
 
-    let second = run_bake(&input, &output_b);
+    let second = run_json_convert(&input, &output_b, true);
     assert!(
         second.status.success(),
         "second convert failed: {}",
@@ -176,6 +221,8 @@ fn convert_static_bake_emits_schema_valid_evidence_and_byte_stable_identity_outp
     let primitive = &baked.assets.meshes[baked.assets.instances[0].mesh].primitives[0];
     assert_eq!(primitive.indices, source_primitive.indices);
     assert_eq!(primitive.uvs, source_primitive.uvs);
+    assert_eq!(primitive.positions.len(), expected_positions.len());
+    assert_eq!(primitive.normals.len(), expected_normals.len());
     for (actual, expected) in primitive.positions.iter().zip(expected_positions) {
         assert_vec3_close(*actual, expected);
     }
@@ -186,12 +233,62 @@ fn convert_static_bake_emits_schema_valid_evidence_and_byte_stable_identity_outp
     let gltf = gltf::Gltf::from_slice(&std::fs::read(&output_a).unwrap()).expect("valid GLB");
     let scene = gltf.default_scene().expect("default baked scene");
     assert_eq!(scene.nodes().count(), 1, "one canonical scene root");
+    let root = scene.nodes().next().expect("canonical scene root");
+    assert!(root.mesh().is_none(), "the canonical root is only a root");
+    let children = root.children().collect::<Vec<_>>();
+    assert_eq!(children.len(), 1, "one identity child per baked mesh");
+    assert!(
+        children[0].mesh().is_some(),
+        "the identity child owns the mesh"
+    );
+    assert_eq!(children[0].children().count(), 0);
     assert!(gltf.nodes().all(|node| {
         let (translation, rotation, scale) = node.transform().decomposed();
         translation == [0.0, 0.0, 0.0]
             && rotation == [0.0, 0.0, 0.0, 1.0]
             && scale == [1.0, 1.0, 1.0]
     }));
+}
+
+#[test]
+fn convert_json_without_static_bake_omits_bake_evidence_and_keeps_source_transforms() {
+    let dir = tempfile::tempdir().expect("creates temp directory");
+    let input = dir.path().join("input.glb");
+    let output = dir.path().join("ordinary.glb");
+    animsmith_gltf::write::write(&fixture(), &input).expect("writes input fixture");
+    let source = animsmith_gltf::load(&input).expect("loads input fixture");
+
+    let result = run_json_convert(&input, &output, false);
+    assert!(
+        result.status.success(),
+        "convert failed: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let evidence: Value = serde_json::from_slice(&result.stdout).expect("stdout is JSON evidence");
+    let schema: Value = serde_json::from_str(CONVERSION_SCHEMA).expect("schema is JSON");
+    assert!(
+        jsonschema::validator_for(&schema)
+            .expect("schema compiles")
+            .is_valid(&evidence)
+    );
+    assert_eq!(evidence["options"]["animation_only"], false);
+    assert_eq!(evidence["options"]["bake_static_mesh_transforms"], false);
+    assert!(
+        evidence.get("static_mesh_bake").is_none(),
+        "ordinary conversion must not claim static-bake evidence"
+    );
+
+    let ordinary = animsmith_gltf::load(&output).expect("loads ordinary conversion");
+    assert_eq!(ordinary.skeleton.bones.len(), source.skeleton.bones.len());
+    for (actual, expected) in ordinary.skeleton.bones.iter().zip(&source.skeleton.bones) {
+        assert_eq!(actual.parent, expected.parent);
+        assert_eq!(actual.rest, expected.rest);
+    }
+    assert_eq!(
+        ordinary.assets.meshes[0].primitives[0].positions,
+        source.assets.meshes[0].primitives[0].positions,
+        "default conversion keeps mesh-local geometry unchanged"
+    );
 }
 
 #[test]
@@ -208,7 +305,7 @@ fn convert_static_bake_rejects_shared_mesh_before_creating_output() {
     });
     animsmith_gltf::write::write(&shared, &input).expect("writes shared input fixture");
 
-    let result = run_bake(&input, &output);
+    let result = run_json_convert(&input, &output, true);
     assert_eq!(result.status.code(), Some(2));
     assert!(
         result.stdout.is_empty(),

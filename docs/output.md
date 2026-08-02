@@ -92,7 +92,6 @@ field names and schema identity rather than parsing the text write summary.
     "clips_without_writable_tracks": 0
   },
   "static_mesh_bake": {
-    "output_root_is_identity": true,
     "entries": [
       {
         "source_node_index": 4,
@@ -120,8 +119,7 @@ source-node order. `source_node_index`, `source_mesh_ordinal`, and
 need not be unique. `world_transform` is the 16-element column-major rest
 world matrix applied to the source positions. `linear_determinant` records the
 accepted transform's linear determinant. The output node and mesh indices are
-indices in the generated artifact. `output_root_is_identity` is always true
-when bake evidence is present.
+indices in the generated artifact.
 
 The static bake is opt-in and conflicts with `--animation-only`. It only
 accepts unanimated, unskinned, singly-instanced static geometry with finite,

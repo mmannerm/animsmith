@@ -11,6 +11,7 @@ use crate::model::{
 };
 use glam::{Mat3, Mat4};
 use serde::Serialize;
+use std::collections::HashSet;
 
 /// Relative determinant threshold below which a linear transform is too
 /// ill-conditioned to invert reliably for normal transformation.
@@ -31,9 +32,6 @@ pub struct StaticMeshBake {
 #[derive(Debug, Clone, Serialize)]
 #[non_exhaustive]
 pub struct StaticMeshBakeEvidence {
-    /// Whether the generated root has exact identity TRS. This is always true
-    /// for a successful bake and is included for producer-manifest consumers.
-    pub output_root_is_identity: bool,
     /// Baked instances in input instance order.
     pub entries: Vec<StaticMeshBakeInstanceEvidence>,
 }
@@ -114,6 +112,12 @@ pub enum StaticMeshBakeError {
     DuplicateNodeAttachment {
         /// Source node identity claimed more than once.
         source_node_index: usize,
+    },
+    /// More than one model instance attaches a mesh to one internal skeleton node.
+    #[error("cannot bake static transforms: skeleton node {node} has duplicate mesh attachments")]
+    DuplicateSkeletonNodeAttachment {
+        /// Internal skeleton node claimed more than once.
+        node: usize,
     },
     /// The input contains animation data, which a static-only bake cannot retain.
     #[error(
@@ -274,7 +278,7 @@ pub fn bake_static_mesh_transforms(doc: &Document) -> Result<StaticMeshBake, Sta
         let input_instance = &doc.assets.instances[ordinal];
         let output_node = ordinal + 1;
         let output_mesh = ordinal;
-        let baked_mesh = bake_mesh(input_mesh, plan);
+        let baked_mesh = bake_mesh(input_mesh, plan, plan.mesh)?;
         let position_count = baked_mesh
             .primitives
             .iter()
@@ -333,10 +337,7 @@ pub fn bake_static_mesh_transforms(doc: &Document) -> Result<StaticMeshBake, Sta
             },
             source: doc.source.clone(),
         },
-        evidence: StaticMeshBakeEvidence {
-            output_root_is_identity: true,
-            entries: evidence,
-        },
+        evidence: StaticMeshBakeEvidence { entries: evidence },
     })
 }
 
@@ -362,8 +363,8 @@ fn validate(doc: &Document) -> Result<Vec<BakePlan>, StaticMeshBakeError> {
     let worlds = world_matrices(&doc.skeleton)?;
     validate_materials(&doc.assets)?;
     let mut mesh_counts = vec![0usize; doc.assets.meshes.len()];
-    let mut source_nodes = Vec::with_capacity(doc.assets.instances.len());
-    let mut skeleton_nodes = Vec::with_capacity(doc.assets.instances.len());
+    let mut source_nodes = HashSet::with_capacity(doc.assets.instances.len());
+    let mut skeleton_nodes = vec![false; doc.skeleton.bones.len()];
     for instance in &doc.assets.instances {
         let Some(count) = mesh_counts.get_mut(instance.mesh) else {
             return Err(StaticMeshBakeError::MissingMesh {
@@ -378,18 +379,17 @@ fn validate(doc: &Document) -> Result<Vec<BakePlan>, StaticMeshBakeError> {
                 node: instance.node,
             });
         }
-        if source_nodes.contains(&instance.source_node_index) {
+        if !source_nodes.insert(instance.source_node_index) {
             return Err(StaticMeshBakeError::DuplicateNodeAttachment {
                 source_node_index: instance.source_node_index,
             });
         }
-        source_nodes.push(instance.source_node_index);
-        if skeleton_nodes.contains(&instance.node) {
-            return Err(StaticMeshBakeError::DuplicateNodeAttachment {
-                source_node_index: instance.source_node_index,
+        if skeleton_nodes[instance.node] {
+            return Err(StaticMeshBakeError::DuplicateSkeletonNodeAttachment {
+                node: instance.node,
             });
         }
-        skeleton_nodes.push(instance.node);
+        skeleton_nodes[instance.node] = true;
         if !instance.skin_joints.is_empty() || !instance.skin_ibms.is_empty() {
             return Err(StaticMeshBakeError::SkinnedInstance {
                 source_node_index: instance.source_node_index,
@@ -502,6 +502,13 @@ fn validate_mesh(
     mesh_ordinal: usize,
     materials: usize,
 ) -> Result<(), StaticMeshBakeError> {
+    if mesh.primitives.is_empty() {
+        return Err(StaticMeshBakeError::InvalidPrimitive {
+            mesh: mesh_ordinal,
+            primitive: 0,
+            reason: "empty_primitives",
+        });
+    }
     for (primitive_ordinal, primitive) in mesh.primitives.iter().enumerate() {
         validate_primitive(primitive, mesh_ordinal, primitive_ordinal, materials)?;
     }
@@ -621,7 +628,7 @@ fn validate_baked_mesh(
                     vertex,
                 });
             }
-            if transformed.length_squared() == 0.0 {
+            if transformed.try_normalize().is_none() {
                 return Err(StaticMeshBakeError::ZeroNormal {
                     mesh: mesh_ordinal,
                     primitive: primitive_ordinal,
@@ -633,23 +640,34 @@ fn validate_baked_mesh(
     Ok(())
 }
 
-fn bake_mesh(mesh: &MeshAsset, plan: &BakePlan) -> MeshAsset {
+fn bake_mesh(
+    mesh: &MeshAsset,
+    plan: &BakePlan,
+    mesh_ordinal: usize,
+) -> Result<MeshAsset, StaticMeshBakeError> {
     let mut baked = mesh.clone();
-    for primitive in &mut baked.primitives {
+    for (primitive_ordinal, primitive) in baked.primitives.iter_mut().enumerate() {
         for position in &mut primitive.positions {
             *position = plan.world.transform_point3(*position);
         }
-        for normal in &mut primitive.normals {
+        for (vertex, normal) in primitive.normals.iter_mut().enumerate() {
             // Leave canonical unit normals under an exact identity matrix
             // untouched so baking an already baked artifact stays byte-stable.
             if plan.world == Mat4::IDENTITY && normal.is_normalized() {
                 continue;
             }
             let transformed = plan.normal * *normal;
-            *normal = transformed.normalize();
+            let Some(normalized) = transformed.try_normalize() else {
+                return Err(StaticMeshBakeError::ZeroNormal {
+                    mesh: mesh_ordinal,
+                    primitive: primitive_ordinal,
+                    vertex,
+                });
+            };
+            *normal = normalized;
         }
     }
-    baked
+    Ok(baked)
 }
 
 fn matrix4_is_finite(matrix: Mat4) -> bool {

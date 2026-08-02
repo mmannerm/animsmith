@@ -16,6 +16,23 @@
     "artifact": { "$ref": "#/$defs/artifact" },
     "static_mesh_bake": { "$ref": "#/$defs/static_mesh_bake" }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "options": {
+            "properties": {
+              "bake_static_mesh_transforms": { "const": true }
+            },
+            "required": ["bake_static_mesh_transforms"]
+          }
+        },
+        "required": ["options"]
+      },
+      "then": { "required": ["static_mesh_bake"] },
+      "else": { "not": { "required": ["static_mesh_bake"] } }
+    }
+  ],
   "additionalProperties": false,
   "$defs": {
     "tool": {
@@ -43,6 +60,12 @@
         "animation_only": { "type": "boolean" },
         "bake_static_mesh_transforms": { "type": "boolean" }
       },
+      "not": {
+        "properties": {
+          "animation_only": { "const": true },
+          "bake_static_mesh_transforms": { "const": true }
+        }
+      },
       "additionalProperties": false
     },
     "artifact": {
@@ -60,11 +83,11 @@
     },
     "static_mesh_bake": {
       "type": "object",
-      "required": ["output_root_is_identity", "entries"],
+      "required": ["entries"],
       "properties": {
-        "output_root_is_identity": { "const": true },
         "entries": {
           "type": "array",
+          "minItems": 1,
           "items": { "$ref": "#/$defs/static_mesh_bake_entry" }
         }
       },
