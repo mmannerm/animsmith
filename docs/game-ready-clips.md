@@ -337,21 +337,85 @@ they accumulate:
   exports. Harmless at runtime, wasteful on disk and in every blend
   the runtime evaluates — the `constant-track` check reports it as a
   note.
-- **Scale facts have separate owners.** `scale-keys` warns only when the
-  interpolation-aware scale trajectory actually varies over time. A dense
-  constant channel is therefore redundancy, owned by `constant-track`, not
-  scale animation. `non-uniform-scale` independently warns when components
-  differ anywhere on the trajectory, including a constant channel. Teams
-  that also care about constant non-unit channels or single-key pins can
-  opt into the disabled-by-default signal:
 
-  ```toml
-  [checks.constant-nonunit-scale]
-  severity = "note"
-  ```
+### Why scale animation deserves its own review
 
-  STEP, LINEAR, and CUBICSPLINE semantics are evaluated directly. Equal
-  cubic key values with moving tangents still count as temporal variation.
+A transform scale is a three-component value `(x, y, z)`. A value of
+`(1, 1, 1)` preserves the authored size, a uniform value such as `(2, 2, 2)`
+doubles every axis, and a non-uniform value such as `(1, 2, 1)` stretches one
+axis. The [glTF animation model](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#animations)
+allows a node's scale to be keyframed with STEP, LINEAR, or CUBICSPLINE
+interpolation. Blender's
+[keyframe guide](https://docs.blender.org/manual/en/latest/animation/keyframes/introduction.html)
+explains the artist-facing version of the same idea: keys store property values
+and interpolation curves determine every value between them.
+
+Scale animation is not automatically invalid. It may be an intentional
+squash-and-stretch effect, visibility technique, or gameplay deformation.
+Unreal, for example, explicitly
+[supports non-uniform scale animation](https://dev.epicgames.com/documentation/en-us/unreal-engine/non-uniform-scale-animation?application_version=4.27)
+and stores scale only for animations that need it. The warning exists because
+unintentional scale curves are also a common export artifact and because
+runtime consequences are project- and engine-dependent. Unity documents that
+[non-uniform parent scale](https://docs.unity3d.com/6000.1/Documentation/Manual/class-Transform.html#non-uniform-scaling)
+can skew rotated children and disagree with some collider shapes.
+
+animsmith separates four facts so a team can make that policy decision without
+conflating them:
+
+| Check | Literal fact | Typical source | Why review it |
+|---|---|---|---|
+| `scale-keys` | At least one scale component changes over time after interpolation. | Intentional squash/stretch; constraint or retarget bake; unit-conversion keys; exporter-created curves. | It can change proportions, child placement, blending, physics assumptions, and animation storage. Confirm the motion is intentional in the target engine. |
+| `non-uniform-scale` | X, Y, and Z differ somewhere on the evaluated trajectory. | Stretching one bone axis; unapplied object scale; cubic interpolation overshoot between apparently harmless keys. | Parent/child hierarchies, normals, colliders, and engine components may treat non-uniform scale differently from uniform scale. |
+| `constant-nonunit-scale` | A scale channel or single-key pin stays away from `(1, 1, 1)`. Disabled by default. | Unit conversion; a deliberately resized character; an unapplied static transform that survived into the rig. | Often harmless, sometimes a pipeline-policy violation. Enable it only when the project expects unit scale in animation channels. |
+| `constant-track` | A multi-key track stores repeated values and never changes. | "Key everything" export, baked controls, or importer-generated constant curves. | It is redundant data even when its value is valid. Unity exposes a corresponding importer option to [remove constant scale curves](https://docs.unity3d.com/ScriptReference/ModelImporter-removeConstantScaleCurves.html). |
+
+Examples:
+
+- Keys `(1,1,1) → (1.1,1.1,1.1) → (1,1,1)` trigger `scale-keys` but not
+  `non-uniform-scale`: the character grows uniformly and returns.
+- A constant `(1,1.2,1)` channel triggers `non-uniform-scale`, and triggers
+  `constant-nonunit-scale` only when that opt-in check is enabled. Multiple
+  repeated keys also trigger `constant-track`.
+- Dense `(1,1,1)` keys trigger `constant-track`, not `scale-keys`; there is no
+  temporal scale motion.
+- Equal CUBICSPLINE key values can still trigger `scale-keys` when their
+  tangents move the curve between keys. Inspect the curve, not only the key
+  diamonds.
+
+To opt into a unit-scale policy:
+
+```toml
+[checks.constant-nonunit-scale]
+severity = "note" # or "warn" / "error" for your project
+```
+
+### Fix the source, then verify the exported result
+
+For an unintentional finding, inspect scale channels in the DCC's Graph Editor,
+identify whether the curve belongs to a deform bone, control, helper, or object,
+and remove or rebake only the unwanted channel. Check exporter options that key
+all transforms or resample the FBX transform stack. Blender's
+[Apply transforms](https://docs.blender.org/manual/en/latest/scene_layout/object/editing/apply.html)
+can move object-level scale into object data before rigging, but its manual
+explicitly warns that applying an armature object transform does not rewrite
+pose animation curves or constraints. Do not treat `Ctrl-A` as a universal fix
+for an already animated rig.
+
+Re-export, rerun `animsmith lint`, and preview the result in the target engine.
+The desired end state depends on intent:
+
+- deliberate scale motion remains and is accepted by project policy;
+- unnecessary dense keys are removed while the evaluated pose stays the same;
+- accidental scale motion or non-uniformity is removed at its authoring source;
+- a constant non-unit pin remains only when the rig/import contract requires it.
+
+animsmith does not delete scale tracks, flatten skeletal scale into mesh
+geometry, retarget the clip, rewrite cubic tangents, or decide whether an
+effect is artistically correct. Those operations can change deformation and
+must stay in the DCC or an engine-aware retarget/import pipeline. The checks
+turn the exported facts into a reviewable work order; they are not an automatic
+scale repair.
 
 ---
 
