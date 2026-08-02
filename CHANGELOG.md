@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/mmannerm/animsmith/compare/v0.1.0...v0.2.0) - 2026-08-02
+
+### Added
+
+- *(measure)* define static asset bound domains
+- [**breaking**] finalize result contract v2
+- add provisional v2 evaluation results
+
+### Fixed
+
+- *(cli)* stream human-readable output
+- preserve diff cardinality error precedence
+- address final result-contract audit
+- close final contract audit gaps
+- enforce schema-valid embedded results
+- validate embedded rig evidence
+- close final result contract audit gaps
+- close audit coverage gaps
+- address result contract review findings
+- harden final result contract
+- close result contract audit gaps
+- preserve v1 contracts in evaluation preview
+- bind rig evidence to resolved skeleton
+
 ## [0.1.0](https://github.com/mmannerm/animsmith/releases/tag/v0.1.0) - 2026-07-11
 
 ### Added
