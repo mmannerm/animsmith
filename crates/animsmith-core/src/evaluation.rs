@@ -28,15 +28,9 @@ struct BuiltinEvidenceCode {
     emitted_by: &'static [&'static str],
 }
 
-impl BuiltinEvidenceCode {
-    fn allows(self, check_id: &str) -> bool {
-        self.emitted_by.contains(&check_id)
-    }
-}
-
 macro_rules! builtin_codes {
     (
-        $kind:ident, $registry:ident, $definitions:ident, $registry_doc:literal;
+        $kind:ident, $registry:ident, $definitions:ident, $error:ident, $registry_doc:literal;
         $($name:ident => $value:literal,
             meaning = $meaning:literal,
             emitted_by = [$($emitter:literal),+ $(,)?]),+ $(,)?
@@ -59,6 +53,19 @@ macro_rules! builtin_codes {
         impl $kind {
             fn builtin_definition(self) -> Option<&'static BuiltinEvidenceCode> {
                 $definitions.iter().find(|definition| definition.code == self.0)
+            }
+
+            fn validate_emitter(self, check_id: &'static str) -> Result<(), EvaluationError> {
+                if self
+                    .builtin_definition()
+                    .is_some_and(|definition| !definition.emitted_by.contains(&check_id))
+                {
+                    return Err(EvaluationError::$error {
+                        check_id,
+                        code: self,
+                    });
+                }
+                Ok(())
             }
         }
     };
@@ -118,6 +125,7 @@ builtin_codes!(
     EvaluationScopeCode,
     BUILTIN_EVALUATION_SCOPE_CODES,
     BUILTIN_EVALUATION_SCOPE_CODE_DEFINITIONS,
+    BuiltinEvaluationScopeEmitterMismatch,
     "Complete built-in evaluation-scope vocabulary for consumers that need to inspect or allow-list animsmith's catalog codes. Custom checks may use additional namespaced codes.";
     FIRST_FRAME_REST_DELTA => "first_frame_rest_delta",
         meaning = "The named clip's first-frame/rest-pose rotation evidence was evaluated.",
@@ -213,6 +221,7 @@ builtin_codes!(
     CoverageGapCode,
     BUILTIN_COVERAGE_GAP_CODES,
     BUILTIN_COVERAGE_GAP_CODE_DEFINITIONS,
+    BuiltinCoverageGapEmitterMismatch,
     "Complete built-in coverage-gap vocabulary for consumers that need to inspect or allow-list animsmith's catalog codes. Custom checks may use additional namespaced codes.";
     ROLES_UNRESOLVED => "roles_unresolved",
         meaning = "Required semantic rig roles were not resolved.",
@@ -371,39 +380,31 @@ impl CheckEvaluation {
                 finding_check_id: finding.check_id,
             });
         }
-        if output
-            .evaluated_scopes
-            .iter()
-            .any(|scope| scope.code.as_str().is_empty())
-        {
-            return Err(EvaluationError::InvalidCheckOutput {
-                check_id,
-                reason: "evaluated scope code cannot be empty",
-            });
-        }
-        if output.gaps.iter().any(|gap| gap.code.as_str().is_empty()) {
-            return Err(EvaluationError::InvalidCheckOutput {
-                check_id,
-                reason: "coverage gap code cannot be empty",
-            });
-        }
-        if output.gaps.iter().any(|gap| {
-            gap.scope
-                .as_ref()
-                .is_some_and(|scope| scope.code.as_str().is_empty())
-        }) {
-            return Err(EvaluationError::InvalidCheckOutput {
-                check_id,
-                reason: "coverage gap scope code cannot be empty",
-            });
-        }
         for scope in &output.evaluated_scopes {
-            validate_scope_emitter(check_id, scope.code)?;
+            if scope.code.as_str().is_empty() {
+                return Err(EvaluationError::InvalidCheckOutput {
+                    check_id,
+                    reason: "evaluated scope code cannot be empty",
+                });
+            }
+            scope.code.validate_emitter(check_id)?;
         }
         for gap in &output.gaps {
-            validate_gap_emitter(check_id, gap.code)?;
+            if gap.code.as_str().is_empty() {
+                return Err(EvaluationError::InvalidCheckOutput {
+                    check_id,
+                    reason: "coverage gap code cannot be empty",
+                });
+            }
+            gap.code.validate_emitter(check_id)?;
             if let Some(scope) = &gap.scope {
-                validate_scope_emitter(check_id, scope.code)?;
+                if scope.code.as_str().is_empty() {
+                    return Err(EvaluationError::InvalidCheckOutput {
+                        check_id,
+                        reason: "coverage gap scope code cannot be empty",
+                    });
+                }
+                scope.code.validate_emitter(check_id)?;
             }
         }
         Ok(Self {
@@ -585,32 +586,6 @@ pub enum EvaluationError {
     },
 }
 
-fn validate_scope_emitter(
-    check_id: &'static str,
-    code: EvaluationScopeCode,
-) -> Result<(), EvaluationError> {
-    if code
-        .builtin_definition()
-        .is_some_and(|definition| !definition.allows(check_id))
-    {
-        return Err(EvaluationError::BuiltinEvaluationScopeEmitterMismatch { check_id, code });
-    }
-    Ok(())
-}
-
-fn validate_gap_emitter(
-    check_id: &'static str,
-    code: CoverageGapCode,
-) -> Result<(), EvaluationError> {
-    if code
-        .builtin_definition()
-        .is_some_and(|definition| !definition.allows(check_id))
-    {
-        return Err(EvaluationError::BuiltinCoverageGapEmitterMismatch { check_id, code });
-    }
-    Ok(())
-}
-
 /// Evaluate a full catalog into one record per check.
 ///
 /// Selection and `severity = "off"` are recorded independently. Inactive
@@ -684,13 +659,14 @@ pub fn evaluate_checks(
 }
 
 #[cfg(test)]
-mod docs_contract {
+mod authority_contract {
     use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
 
     use super::{
         BUILTIN_COVERAGE_GAP_CODE_DEFINITIONS, BUILTIN_EVALUATION_SCOPE_CODE_DEFINITIONS,
-        BuiltinEvidenceCode,
+        BuiltinEvidenceCode, CheckEvaluation, CheckOutput, CoverageGap, CoverageGapCode,
+        EvaluationScope, EvaluationScopeCode,
     };
 
     fn assert_reference_table(docs: &str, heading: &str, entries: &[BuiltinEvidenceCode]) {
@@ -810,6 +786,52 @@ mod docs_contract {
                         definition.code
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn every_declared_builtin_emitter_is_accepted() {
+        for definition in BUILTIN_EVALUATION_SCOPE_CODE_DEFINITIONS {
+            for &check_id in definition.emitted_by {
+                CheckEvaluation::evaluated(
+                    check_id,
+                    CheckOutput::from_coverage(
+                        Vec::new(),
+                        vec![EvaluationScope::new(EvaluationScopeCode::custom(
+                            definition.code,
+                        ))],
+                        Vec::new(),
+                    ),
+                )
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "{} must allow declared emitter {check_id:?}: {error}",
+                        definition.code
+                    )
+                });
+            }
+        }
+
+        for definition in BUILTIN_COVERAGE_GAP_CODE_DEFINITIONS {
+            for &check_id in definition.emitted_by {
+                CheckEvaluation::evaluated(
+                    check_id,
+                    CheckOutput::from_coverage(
+                        Vec::new(),
+                        Vec::new(),
+                        vec![CoverageGap::new(
+                            CoverageGapCode::custom(definition.code),
+                            "test gap",
+                        )],
+                    ),
+                )
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "{} must allow declared emitter {check_id:?}: {error}",
+                        definition.code
+                    )
+                });
             }
         }
     }

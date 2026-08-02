@@ -125,6 +125,25 @@ impl Check for MismatchedFinding {
     }
 }
 
+struct ForeignBuiltin;
+
+impl Check for ForeignBuiltin {
+    fn id(&self) -> &'static str {
+        "foreign-builtin"
+    }
+
+    fn evaluate(&self, _ctx: &CheckCtx) -> CheckOutput {
+        CheckOutput::from_coverage(
+            Vec::new(),
+            Vec::new(),
+            vec![CoverageGap::new(
+                CoverageGapCode::ROLES_UNRESOLVED,
+                "wrong owner",
+            )],
+        )
+    }
+}
+
 fn catalog() -> Vec<Box<dyn Check>> {
     vec![
         Box::new(Complete),
@@ -258,101 +277,59 @@ fn severity_override_changes_findings_but_not_gap_typing() {
 
 #[test]
 fn builtin_evidence_codes_reject_undeclared_emitters() {
-    let completed_scope = CheckEvaluation::evaluated(
-        "fps",
-        CheckOutput::from_coverage(
-            Vec::new(),
-            vec![EvaluationScope::new(EvaluationScopeCode::LOOP_SEAM)],
-            Vec::new(),
-        ),
-    )
-    .expect_err("fps must not claim loop-seam's built-in scope");
-    assert_eq!(
-        completed_scope,
-        EvaluationError::BuiltinEvaluationScopeEmitterMismatch {
-            check_id: "fps",
-            code: EvaluationScopeCode::LOOP_SEAM,
-        }
-    );
+    const UNDECLARED: &str = "test:undeclared";
 
-    let builtin_spelled_through_custom = CheckEvaluation::evaluated(
-        "fps",
-        CheckOutput::from_coverage(
-            Vec::new(),
-            vec![EvaluationScope::new(EvaluationScopeCode::custom(
-                "loop_seam",
-            ))],
-            Vec::new(),
-        ),
-    )
-    .expect_err("a built-in identity cannot bypass ownership through custom()");
-    assert_eq!(
-        builtin_spelled_through_custom,
-        EvaluationError::BuiltinEvaluationScopeEmitterMismatch {
-            check_id: "fps",
-            code: EvaluationScopeCode::LOOP_SEAM,
-        }
-    );
+    for &builtin in BUILTIN_EVALUATION_SCOPE_CODES {
+        let code = EvaluationScopeCode::custom(builtin.as_str());
+        let completed_scope = CheckEvaluation::evaluated(
+            UNDECLARED,
+            CheckOutput::from_coverage(Vec::new(), vec![EvaluationScope::new(code)], Vec::new()),
+        )
+        .expect_err("every built-in completed scope must enforce its declared emitters");
+        assert_eq!(
+            completed_scope,
+            EvaluationError::BuiltinEvaluationScopeEmitterMismatch {
+                check_id: UNDECLARED,
+                code,
+            }
+        );
 
-    let gap_spelled_through_custom = CheckEvaluation::evaluated(
-        "fps",
-        CheckOutput::from_coverage(
-            Vec::new(),
-            Vec::new(),
-            vec![CoverageGap::new(
-                CoverageGapCode::custom("roles_unresolved"),
-                "wrong owner",
-            )],
-        ),
-    )
-    .expect_err("a built-in gap identity cannot bypass ownership through custom()");
-    assert_eq!(
-        gap_spelled_through_custom,
-        EvaluationError::BuiltinCoverageGapEmitterMismatch {
-            check_id: "fps",
-            code: CoverageGapCode::ROLES_UNRESOLVED,
-        }
-    );
+        let gap_scope = CheckEvaluation::evaluated(
+            UNDECLARED,
+            CheckOutput::from_coverage(
+                Vec::new(),
+                Vec::new(),
+                vec![
+                    CoverageGap::new(CoverageGapCode::custom("test:gap"), "gap")
+                        .scope(EvaluationScope::new(code)),
+                ],
+            ),
+        )
+        .expect_err("every built-in gap scope must enforce its declared emitters");
+        assert_eq!(
+            gap_scope,
+            EvaluationError::BuiltinEvaluationScopeEmitterMismatch {
+                check_id: UNDECLARED,
+                code,
+            }
+        );
+    }
 
-    let gap = CheckEvaluation::evaluated(
-        "fps",
-        CheckOutput::from_coverage(
-            Vec::new(),
-            Vec::new(),
-            vec![CoverageGap::new(
-                CoverageGapCode::ROLES_UNRESOLVED,
-                "wrong owner",
-            )],
-        ),
-    )
-    .expect_err("fps must not emit another check's built-in gap");
-    assert_eq!(
-        gap,
-        EvaluationError::BuiltinCoverageGapEmitterMismatch {
-            check_id: "fps",
-            code: CoverageGapCode::ROLES_UNRESOLVED,
-        }
-    );
-
-    let missing_scope = CheckEvaluation::evaluated(
-        "fps",
-        CheckOutput::from_coverage(
-            Vec::new(),
-            Vec::new(),
-            vec![
-                CoverageGap::new(CoverageGapCode::INVALID_DECLARED_FPS, "valid gap owner")
-                    .scope(EvaluationScope::new(EvaluationScopeCode::LOOP_SEAM)),
-            ],
-        ),
-    )
-    .expect_err("gap scopes must obey the same built-in ownership rule");
-    assert_eq!(
-        missing_scope,
-        EvaluationError::BuiltinEvaluationScopeEmitterMismatch {
-            check_id: "fps",
-            code: EvaluationScopeCode::LOOP_SEAM,
-        }
-    );
+    for &builtin in BUILTIN_COVERAGE_GAP_CODES {
+        let code = CoverageGapCode::custom(builtin.as_str());
+        let gap = CheckEvaluation::evaluated(
+            UNDECLARED,
+            CheckOutput::from_coverage(Vec::new(), Vec::new(), vec![CoverageGap::new(code, "gap")]),
+        )
+        .expect_err("every built-in gap must enforce its declared emitters");
+        assert_eq!(
+            gap,
+            EvaluationError::BuiltinCoverageGapEmitterMismatch {
+                check_id: UNDECLARED,
+                code,
+            }
+        );
+    }
 }
 
 #[test]
@@ -397,25 +374,6 @@ fn declared_builtin_emitters_and_namespaced_custom_codes_are_accepted() {
 }
 
 #[test]
-fn public_builtin_code_slices_enumerate_only_builtin_vocabulary() {
-    let gap_codes = BUILTIN_COVERAGE_GAP_CODES
-        .iter()
-        .map(|code| code.as_str())
-        .collect::<BTreeSet<_>>();
-    assert_eq!(gap_codes.len(), BUILTIN_COVERAGE_GAP_CODES.len());
-    assert!(gap_codes.contains(CoverageGapCode::ROLES_UNRESOLVED.as_str()));
-    assert!(gap_codes.iter().all(|code| !code.is_empty()));
-
-    let scope_codes = BUILTIN_EVALUATION_SCOPE_CODES
-        .iter()
-        .map(|code| code.as_str())
-        .collect::<BTreeSet<_>>();
-    assert_eq!(scope_codes.len(), BUILTIN_EVALUATION_SCOPE_CODES.len());
-    assert!(scope_codes.contains(EvaluationScopeCode::FRAME_GRID.as_str()));
-    assert!(scope_codes.iter().all(|code| !code.is_empty()));
-}
-
-#[test]
 fn catalog_and_output_invariants_return_typed_errors() {
     with_ctx(|ctx| {
         let duplicate: Vec<Box<dyn Check>> = vec![Box::new(Complete), Box::new(Complete)];
@@ -436,6 +394,15 @@ fn catalog_and_output_invariants_return_typed_errors() {
             EvaluationError::FindingCheckIdMismatch {
                 check_id: "parent",
                 finding_check_id: "other",
+            }
+        );
+
+        let foreign_builtin: Vec<Box<dyn Check>> = vec![Box::new(ForeignBuiltin)];
+        assert_eq!(
+            evaluate_checks(ctx, &foreign_builtin, CheckSelection::All).unwrap_err(),
+            EvaluationError::BuiltinCoverageGapEmitterMismatch {
+                check_id: "foreign-builtin",
+                code: CoverageGapCode::ROLES_UNRESOLVED,
             }
         );
     });
