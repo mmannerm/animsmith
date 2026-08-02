@@ -12,6 +12,9 @@ time: right-handed +Y-up axes, metres, transform-adjust space
 conversion, helper nodes for geometric transforms, and scale-compensated
 inheritance where needed. Animation stacks are baked into linear TRS
 tracks so downstream checks operate on a plain skeleton-and-clip model.
+Scene assets carry triangulated meshes, skins, factor-only materials, and
+linked or embedded PNG/JPEG base-color and normal textures into the shared
+format-independent model.
 
 ## Install
 

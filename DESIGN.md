@@ -195,8 +195,8 @@ quaternion flips, key density, and constant tracks. Exact Rust types and fields
 belong to the `animsmith-core` model rustdocs; build them with `just doc` or use
 the package README's stable docs.rs link.
 
-`assets` (meshes, skins, factor-only materials, and embedded base-color
-textures) is the scene-asset half of
+`assets` (meshes, skins, factor-only materials, and embedded base-color and
+normal textures) is the scene-asset half of
 the document. Both the FBX and glTF loaders populate it from a single
 `load` (there is no separate assets-carrying entry point — the two
 loaders share one shape); it is empty when the input carries no scene

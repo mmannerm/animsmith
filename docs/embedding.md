@@ -54,7 +54,9 @@ cargo run -p animsmith --example embed
    `animsmith_fbx::load`. glTF animation values remain authored; FBX scenes
    are normalized to metres, right-handed +Y-up coordinates and baked into
    linear TRS tracks. Structural failures are loader errors. Semantic
-   defects load and become findings.
+   defects load and become findings. The same document carries meshes, skins,
+   factor-only materials, and available base-color and normal textures for
+   scene round-trips.
 2. **Resolve rig roles.** Use `resolve_configured_roles` to apply the same
    named/auto profile plus inline-override policy as the CLI. Lower-level
    `detect_profile`, `profile::resolve_named`, and

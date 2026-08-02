@@ -51,9 +51,9 @@
 #![warn(missing_docs)]
 
 use animsmith_core::model::{
-    Bone, Clip, Document, Interpolation, MaterialAsset, MeshAsset, MeshInstance, Primitive,
-    Property, SceneAsset, SceneAssets, Skeleton, SourceInfo, TextureAsset, Track, TrackValues,
-    Transform,
+    Bone, Clip, Document, Interpolation, MaterialAsset, MeshAsset, MeshInstance,
+    NormalTextureAsset, Primitive, Property, SceneAsset, SceneAssets, Skeleton, SourceInfo,
+    TextureAsset, Track, TrackValues, Transform,
 };
 use glam::{Mat4, Quat, Vec3};
 use std::path::Path;
@@ -274,18 +274,9 @@ pub fn load(path: &Path) -> Result<Document, LoadError> {
     })
 }
 
-/// Triangulated, unindexed geometry + skins + factor-only materials.
-/// Corner attributes come straight from ufbx's indexed accessors; skin
-/// weights are per source vertex (top four, renormalized).
-/// Encoded image bytes for a material's base-color texture: embedded
-/// FBX content first, else the referenced file next to the source.
-/// Only PNG/JPEG pass through (glTF's mandated formats).
-fn base_color_texture(material: &ufbx::Material, base_dir: Option<&Path>) -> Option<TextureAsset> {
-    let texture = material.pbr.base_color.texture.as_ref().or(material
-        .fbx
-        .diffuse_color
-        .texture
-        .as_ref())?;
+/// Read one ufbx texture: embedded FBX content first, else a referenced file
+/// next to the source. Only PNG/JPEG pass through (glTF's mandated formats).
+fn texture_asset(texture: &ufbx::Texture, base_dir: Option<&Path>) -> Option<TextureAsset> {
     let bytes: Vec<u8> = if !texture.content.is_empty() {
         texture.content.to_vec()
     } else {
@@ -322,6 +313,37 @@ fn base_color_texture(material: &ufbx::Material, base_dir: Option<&Path>) -> Opt
     })
 }
 
+fn base_color_texture(material: &ufbx::Material, base_dir: Option<&Path>) -> Option<TextureAsset> {
+    let texture = material.pbr.base_color.texture.as_ref().or(material
+        .fbx
+        .diffuse_color
+        .texture
+        .as_ref())?;
+    texture_asset(texture, base_dir)
+}
+
+fn normal_texture(
+    material: &ufbx::Material,
+    base_dir: Option<&Path>,
+) -> Option<NormalTextureAsset> {
+    let texture = material.pbr.normal_map.texture.as_ref().or(material
+        .fbx
+        .normal_map
+        .texture
+        .as_ref())?;
+    texture_asset(texture, base_dir).map(|texture| NormalTextureAsset {
+        texture,
+        // ufbx exposes the linked image but no glTF-compatible normal X/Y
+        // scalar for ordinary FBX materials. Preserve the image and use the
+        // glTF default rather than guessing from unrelated bump fields.
+        scale: 1.0,
+    })
+}
+
+/// Extract triangulated geometry, skins, and factor-only materials with
+/// optional base-color and normal textures. Corner attributes come straight
+/// from ufbx's indexed accessors; skin weights keep the top four influences
+/// per source vertex and are renormalized.
 fn extract_assets(scene: &ufbx::Scene, base_dir: Option<&Path>) -> SceneAssets {
     let mut assets = SceneAssets::default();
     let mut material_index: std::collections::BTreeMap<u32, usize> =
@@ -345,6 +367,7 @@ fn extract_assets(scene: &ufbx::Scene, base_dir: Option<&Path>) -> SceneAssets {
                             m.fbx.diffuse_color.value_vec4
                         };
                         let texture = base_color_texture(m, base_dir);
+                        let normal_texture = normal_texture(m, base_dir);
                         assets.materials.push(MaterialAsset {
                             name: m.element.name.to_string(),
                             // Exporter convention: a texture replaces
@@ -365,6 +388,7 @@ fn extract_assets(scene: &ufbx::Scene, base_dir: Option<&Path>) -> SceneAssets {
                                 1.0
                             },
                             base_color_texture: texture,
+                            normal_texture,
                         });
                         assets.materials.len() - 1
                     })

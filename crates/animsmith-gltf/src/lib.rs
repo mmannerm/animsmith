@@ -72,9 +72,9 @@ pub mod fix;
 pub mod write;
 
 use animsmith_core::model::{
-    Bone, Clip, Document, Interpolation, MaterialAsset, MeshAsset, MeshInstance, Primitive,
-    Property, SceneAsset, SceneAssets, Skeleton, SourceInfo, TextureAsset, Track, TrackValues,
-    Transform,
+    Bone, Clip, Document, Interpolation, MaterialAsset, MeshAsset, MeshInstance,
+    NormalTextureAsset, Primitive, Property, SceneAsset, SceneAssets, Skeleton, SourceInfo,
+    TextureAsset, Track, TrackValues, Transform,
 };
 use base64::Engine as _;
 use glam::{Mat4, Quat, Vec3};
@@ -304,7 +304,7 @@ fn validate_track_lengths(
 }
 
 /// Load a `.glb` or `.gltf` file into a core [`Document`], including the
-/// scene assets (meshes, skins, materials, and embedded base-color textures)
+/// scene assets (meshes, skins, materials, and embedded base-color and normal textures)
 /// its geometry describes — the
 /// symmetric read side of [`write::write`], and the same one-call shape
 /// `animsmith_fbx::load` uses. Consumers that judge only animation
@@ -659,7 +659,7 @@ fn topology(doc: &gltf::Document) -> Result<Topology, LoadError> {
 }
 
 /// Parse meshes (indexed or unindexed), skins (joints + inverse bind
-/// matrices), and materials (PBR factors + embedded base-color texture)
+/// matrices), and materials (PBR factors + embedded base-color and normal textures)
 /// into the core [`SceneAssets`] model — the symmetric read side of
 /// [`write::write`], mirroring `animsmith-fbx`'s `extract_assets`.
 ///
@@ -687,12 +687,21 @@ fn extract_assets(
         let base_color_texture = pbr
             .base_color_texture()
             .and_then(|info| read_image(info.texture().source().source(), buffers, base));
+        let normal_texture = material.normal_texture().and_then(|info| {
+            read_image(info.texture().source().source(), buffers, base).map(|texture| {
+                NormalTextureAsset {
+                    texture,
+                    scale: info.scale(),
+                }
+            })
+        });
         assets.materials.push(MaterialAsset {
             name: material.name().unwrap_or("material").to_string(),
             base_color: pbr.base_color_factor(),
             metallic: pbr.metallic_factor(),
             roughness: pbr.roughness_factor(),
             base_color_texture,
+            normal_texture,
         });
     }
 

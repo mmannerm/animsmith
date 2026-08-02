@@ -125,8 +125,8 @@ fn first_primitive_positions(glb: &std::path::Path) -> Vec<[f32; 3]> {
 }
 
 /// Assert that the first primitive still points through its named material to
-/// the original embedded base-color image, independent of how it is embedded.
-fn assert_embedded_base_color_textures(glb: &std::path::Path) {
+/// the original embedded base-color and normal images, independent of storage.
+fn assert_embedded_material_textures(glb: &std::path::Path) {
     let bytes = std::fs::read(glb).unwrap();
     let gltf = gltf::Gltf::from_slice(&bytes).expect("valid glTF");
     let primitive = gltf
@@ -152,6 +152,13 @@ fn assert_embedded_base_color_textures(glb: &std::path::Path) {
         .expect("linked material keeps its base-color texture");
     assert_eq!(texture.mime, "image/jpeg");
     assert_eq!(texture.bytes, TINY_JPEG, "embedded image bytes survive");
+    let normal = doc.assets.materials[loaded_material_index]
+        .normal_texture
+        .as_ref()
+        .expect("linked material keeps its normal texture");
+    assert_eq!(normal.texture.mime, "image/png");
+    assert_eq!(normal.texture.bytes, TINY_PNG);
+    assert_eq!(normal.scale, 0.625, "normal scale survives");
 
     let unused_texture = doc
         .assets
@@ -167,6 +174,21 @@ fn assert_embedded_base_color_textures(glb: &std::path::Path) {
         unused_texture.bytes, TINY_PNG,
         "unreferenced embedded image bytes survive"
     );
+
+    let normal_only = doc
+        .assets
+        .materials
+        .iter()
+        .find(|material| material.name == "normal-only-jpeg")
+        .expect("normal-only material survives");
+    assert!(normal_only.base_color_texture.is_none());
+    let normal = normal_only
+        .normal_texture
+        .as_ref()
+        .expect("normal-only material keeps its normal texture");
+    assert_eq!(normal.texture.mime, "image/jpeg");
+    assert_eq!(normal.texture.bytes, TINY_JPEG);
+    assert_eq!(normal.scale, 0.25);
 }
 
 /// Author a minimal animated and textured GLB (one unindexed triangle) to
@@ -226,6 +248,7 @@ fn write_textured_scene_glb(path: &std::path::Path) {
                         bytes: TINY_PNG.to_vec(),
                         mime: "image/png".into(),
                     }),
+                    normal_texture: None,
                 },
                 MaterialAsset {
                     name: "bound-jpeg".into(),
@@ -236,6 +259,27 @@ fn write_textured_scene_glb(path: &std::path::Path) {
                         bytes: TINY_JPEG.to_vec(),
                         mime: "image/jpeg".into(),
                     }),
+                    normal_texture: Some(NormalTextureAsset {
+                        texture: TextureAsset {
+                            bytes: TINY_PNG.to_vec(),
+                            mime: "image/png".into(),
+                        },
+                        scale: 0.625,
+                    }),
+                },
+                MaterialAsset {
+                    name: "normal-only-jpeg".into(),
+                    base_color: [1.0; 4],
+                    metallic: 0.0,
+                    roughness: 1.0,
+                    base_color_texture: None,
+                    normal_texture: Some(NormalTextureAsset {
+                        texture: TextureAsset {
+                            bytes: TINY_JPEG.to_vec(),
+                            mime: "image/jpeg".into(),
+                        },
+                        scale: 0.25,
+                    }),
                 },
             ],
             ..SceneAssets::default()
@@ -243,11 +287,11 @@ fn write_textured_scene_glb(path: &std::path::Path) {
         source: SourceInfo::default(),
     };
     animsmith_gltf::write::write(&doc, path).expect("writes input glb");
-    assert_embedded_base_color_textures(path);
+    assert_embedded_material_textures(path);
 }
 
 #[test]
-fn cli_transform_preserves_embedded_base_color_textures() {
+fn cli_transform_preserves_embedded_material_textures() {
     let dir = tempfile::tempdir().unwrap();
     let input = dir.path().join("textured.glb");
     let output = dir.path().join("transformed.glb");
@@ -271,7 +315,7 @@ fn cli_transform_preserves_embedded_base_color_textures() {
         .expect("runs animsmith transform");
     assert!(status.success(), "transform exited {status}");
 
-    assert_embedded_base_color_textures(&output);
+    assert_embedded_material_textures(&output);
     assert_eq!(
         skin_binding_snapshot(&output),
         input_skin,
@@ -289,7 +333,7 @@ fn cli_convert_gltf_input_carries_and_strips_geometry() {
     let input_doc = animsmith_gltf::load(&input).expect("loads authored input");
     assert_eq!(
         scene_asset_counts(&input),
-        (1, 1, 2, 2, 2),
+        (1, 1, 3, 4, 4),
         "input GLB carries the complete scene-asset fixture"
     );
 
@@ -309,7 +353,7 @@ fn cli_convert_gltf_input_carries_and_strips_geometry() {
         let written = animsmith_gltf::load(out).expect("loads converted output");
         assert_eq!(
             (written.assets.meshes.len(), written.assets.materials.len()),
-            if animation_only { (0, 0) } else { (1, 2) },
+            if animation_only { (0, 0) } else { (1, 3) },
             "summary fixture pins non-zero default and zero animation-only asset counts"
         );
         let corners: usize = written
@@ -339,10 +383,10 @@ fn cli_convert_gltf_input_carries_and_strips_geometry() {
     convert(&carried, false);
     assert_eq!(
         scene_asset_counts(&carried),
-        (1, 1, 2, 2, 2),
+        (1, 1, 3, 4, 4),
         "convert carries the complete glTF scene-asset set through"
     );
-    assert_embedded_base_color_textures(&carried);
+    assert_embedded_material_textures(&carried);
     // Not just *a* mesh — the actual fixture triangle survived.
     assert_eq!(
         first_primitive_positions(&carried),

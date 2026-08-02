@@ -14,6 +14,15 @@ const TINY_PNG: &[u8] = &[
     0x44, 0xAE, 0x42, 0x60, 0x82,
 ];
 
+/// A second valid 1x1 white PNG with distinct encoded bytes.
+const TINY_NORMAL_PNG: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+    0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0xDA, 0x63, 0xF8, 0xFF, 0xFF, 0xFF,
+    0x7F, 0x00, 0x09, 0xFB, 0x03, 0xFD, 0xF5, 0xD8, 0xF1, 0x9A, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
+    0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+];
+
 fn skinned_triangle() -> Document {
     let skeleton = Skeleton {
         bones: vec![
@@ -83,6 +92,7 @@ fn skinned_triangle() -> Document {
                 bytes: TINY_PNG.to_vec(),
                 mime: "image/png".into(),
             }),
+            normal_texture: None,
         }],
         ..SceneAssets::default()
     };
@@ -198,6 +208,72 @@ fn skinned_mesh_round_trips_through_gltf_parser() {
     // POSITION accessor carries the spec-required min/max.
     let pos_accessor = prim.get(&gltf::Semantic::Positions).unwrap();
     assert!(pos_accessor.min().is_some() && pos_accessor.max().is_some());
+}
+
+#[test]
+fn material_texture_slots_round_trip_independently() {
+    for (label, has_base_color, has_normal) in [
+        ("no-textures", false, false),
+        ("base-color-only", true, false),
+        ("normal-only", false, true),
+        ("base-color-and-normal", true, true),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(format!("{label}.glb"));
+        let mut doc = skinned_triangle();
+        let material = &mut doc.assets.materials[0];
+        material.base_color_texture = has_base_color.then(|| TextureAsset {
+            bytes: TINY_PNG.to_vec(),
+            mime: "image/png".into(),
+        });
+        material.normal_texture = has_normal.then(|| NormalTextureAsset {
+            texture: TextureAsset {
+                bytes: TINY_NORMAL_PNG.to_vec(),
+                mime: "image/png".into(),
+            },
+            scale: 0.375,
+        });
+
+        animsmith_gltf::write::write(&doc, &path).expect("writes");
+
+        let bytes = std::fs::read(&path).unwrap();
+        let gltf = gltf::Gltf::from_slice(&bytes).expect("valid glTF");
+        let raw = gltf.materials().next().expect("material");
+        assert_eq!(
+            raw.pbr_metallic_roughness().base_color_texture().is_some(),
+            has_base_color,
+            "{label}: raw base-color slot"
+        );
+        assert_eq!(
+            raw.normal_texture().map(|normal| normal.scale()),
+            has_normal.then_some(0.375),
+            "{label}: raw normal slot and scale"
+        );
+        assert_eq!(
+            gltf.images().count(),
+            usize::from(has_base_color) + usize::from(has_normal),
+            "{label}: independent images"
+        );
+
+        let loaded = animsmith_gltf::load(&path).expect("reloads");
+        let material = &loaded.assets.materials[0];
+        assert_eq!(
+            material
+                .base_color_texture
+                .as_ref()
+                .map(|texture| texture.bytes.as_slice()),
+            has_base_color.then_some(TINY_PNG),
+            "{label}: base-color bytes"
+        );
+        assert_eq!(
+            material
+                .normal_texture
+                .as_ref()
+                .map(|normal| (normal.texture.bytes.as_slice(), normal.scale)),
+            has_normal.then_some((TINY_NORMAL_PNG, 0.375)),
+            "{label}: normal bytes and scale"
+        );
+    }
 }
 
 /// `write` is driven entirely by `Document::assets`: clearing them (what
@@ -733,6 +809,34 @@ fn load_reads_data_uri_texture() {
         .expect("data-URI texture recovered");
     assert_eq!(texture.mime, "image/png", "MIME parsed from the data URI");
     assert_eq!(texture.bytes, TINY_PNG, "decoded bytes match the source");
+}
+
+#[test]
+fn load_reads_normal_texture_and_scale() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("normal-data-uri.gltf");
+    let json = format!(
+        r#"{{
+            "asset": {{ "version": "2.0" }},
+            "images": [{{ "uri": "data:image/png;base64,{TINY_PNG_B64}" }}],
+            "textures": [{{ "source": 0 }}],
+            "materials": [{{
+                "name": "normal-mat",
+                "normalTexture": {{ "index": 0, "scale": 0.625 }}
+            }}]
+        }}"#
+    );
+    std::fs::write(&path, json).unwrap();
+
+    let doc = animsmith_gltf::load(&path).expect("loads");
+    let normal = doc.assets.materials[0]
+        .normal_texture
+        .as_ref()
+        .expect("normal texture recovered");
+    assert_eq!(normal.texture.mime, "image/png");
+    assert_eq!(normal.texture.bytes, TINY_PNG);
+    assert_eq!(normal.scale, 0.625);
+    assert!(doc.assets.materials[0].base_color_texture.is_none());
 }
 
 /// A base-color texture whose image is an external sibling file — the
