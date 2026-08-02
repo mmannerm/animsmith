@@ -23,8 +23,8 @@ use animsmith_core::Document;
 use animsmith_core::{
     CheckCtx, CheckSelection, Config, DiffEnvelope, LintEnvelope, LintFileReport, MeasureEnvelope,
     MeasureFileReport, MeasurementContract, MeasurementFileError, MeasurementReportError,
-    MeasurementReportInput, MetricGrids, ResolvedRoles, RigInfo, Severity, ToolInfo, ToolSource,
-    all_checks, evaluate_checks, resolve_configured_roles,
+    MeasurementReportInput, MetricGrids, RigInfo, Severity, ToolInfo, ToolSource, all_checks,
+    evaluate_checks, resolve_configured_roles,
 };
 use animsmith_gltf::fix::Repair;
 use clap::builder::{PossibleValue, PossibleValuesParser, TypedValueParser};
@@ -218,14 +218,6 @@ fn repair_value_parser() -> impl TypedValueParser<Value = Repair> {
         .map(|id| Repair::from_id(&id).expect("possible-values parser returned a known repair id"))
 }
 
-fn repair_action(repair: Repair) -> &'static str {
-    match repair {
-        Repair::QuatNorm => "unit-normalized",
-        Repair::QuatFlip => "hemisphere-normalized",
-        _ => "repaired",
-    }
-}
-
 fn dedup_preserving_order<T: Copy + Eq>(items: impl IntoIterator<Item = T>) -> Vec<T> {
     let mut selected = Vec::new();
     for item in items {
@@ -248,7 +240,7 @@ fn main() -> ExitCode {
     match run(cli) {
         Ok(code) => code,
         Err(message) => {
-            eprintln!("animsmith: {}", render::text_atom(&message));
+            eprint!("{}", render::render_operator_error(&message));
             ExitCode::from(EXIT_OPERATOR)
         }
     }
@@ -268,49 +260,6 @@ fn load_config(explicit: Option<&Path>) -> Result<Config, String> {
     let text = std::fs::read_to_string(&path)
         .map_err(|e| format!("cannot read config {}: {e}", path.display()))?;
     toml::from_str(&text).map_err(|e| format!("bad config {}: {e}", path.display()))
-}
-
-/// Print one repair's report. `target` is the written path; `None`
-/// means dry run (nothing written).
-fn print_fix_report(
-    repair: Repair,
-    report: &animsmith_gltf::fix::FixReport,
-    target: Option<&Path>,
-) {
-    let verb = if target.is_none() {
-        "would fix"
-    } else {
-        "fixed"
-    };
-    for t in &report.tracks {
-        let line = format!(
-            "  {verb}[{}] clip '{}' bone '{}': {} key(s) {}",
-            repair.id(),
-            t.clip,
-            t.bone,
-            t.fixed_keys,
-            repair_action(repair)
-        );
-        println!("{}", render::text_atom(&line));
-    }
-    for s in &report.skipped {
-        let line = format!("  skipped[{}]: {s}", repair.id());
-        println!("{}", render::text_atom(&line));
-    }
-    let destination = target
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| "no output written".into());
-    let line = format!(
-        "{} key(s) {} across {} track(s) -> {destination}",
-        report.total_fixed(),
-        if target.is_none() {
-            "would be fixed"
-        } else {
-            "fixed"
-        },
-        report.tracks.len(),
-    );
-    println!("{}", render::text_atom(&line));
 }
 
 fn validate_check_selection(
@@ -339,7 +288,9 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let config = load_config(cli.config.as_deref())?;
             let doc = load(&file)?;
             let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
-            inspect(&doc, &roles);
+            for line in render::render_inspect(&doc, &roles) {
+                println!("{line}");
+            }
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Measure { files, format } => {
@@ -366,53 +317,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     render::print_json(&envelope);
                 }
                 Format::Text => {
-                    for report in &reports {
-                        println!("{}:", render::text_atom(report.path()));
-                        for (clip, m) in report.measurements().clips() {
-                            let seam = m
-                                .loop_seam_ratio
-                                .map(|r| format!(" seam×{r:.2}"))
-                                .unwrap_or_default();
-                            let gait = m
-                                .gait
-                                .as_ref()
-                                .and_then(|g| g.phase.map(|p| (p, g.lr_amplitude_m)))
-                                .map(|(p, a)| format!(" gait φ={p:.2} ({:.1}cm)", a * 100.0))
-                                .unwrap_or_default();
-                            println!(
-                                "  {}: {:.3}s, {} frames, {} animated bones{seam}{gait}",
-                                render::text_atom(clip),
-                                m.duration_s,
-                                m.frame_count,
-                                m.animated_bones.len()
-                            );
-                        }
-                        for mesh in report.measurements().meshes() {
-                            let bbox = mesh
-                                .aabb
-                                .as_ref()
-                                .map(|b| {
-                                    let s = [
-                                        b.max[0] - b.min[0],
-                                        b.max[1] - b.min[1],
-                                        b.max[2] - b.min[2],
-                                    ];
-                                    format!(" bbox {:.3}×{:.3}×{:.3}", s[0], s[1], s[2])
-                                })
-                                .unwrap_or_default();
-                            let skin = match (mesh.weight_sum_min, mesh.weight_sum_max) {
-                                (Some(lo), Some(hi)) => format!(
-                                    ", ≤{} joints/vtx, weight-sum {lo:.3}–{hi:.3}",
-                                    mesh.max_joints_per_vertex
-                                ),
-                                _ => String::new(),
-                            };
-                            println!(
-                                "  mesh {}: {} verts{bbox}{skin}",
-                                render::text_atom(&mesh.name),
-                                mesh.vertex_count
-                            );
-                        }
+                    for line in render::render_measure_text(&reports) {
+                        println!("{line}");
                     }
                 }
             }
@@ -473,8 +379,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     let envelope = LintEnvelope::new(current_tool(), reports);
                     render::print_json(&envelope);
                 }
-                LintFormat::Text => render::print_text(&reports, &allow),
-                LintFormat::Markdown => render::print_markdown(&reports, &allow),
+                LintFormat::Text => print!("{}", render::render_text(&reports, &allow)),
+                LintFormat::Markdown => print!("{}", render::render_markdown(&reports, &allow)),
             }
             let fail_at = if deny_warnings {
                 Severity::Warning
@@ -502,14 +408,10 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let html = animsmith_report::render(&grids, &roles, &findings, clip.as_deref());
             std::fs::write(&output, &html)
                 .map_err(|e| format!("cannot write {}: {e}", output.display()))?;
-            let line = format!(
-                "wrote {} ({} clip(s), {} finding(s), {:.1} MB)",
-                output.display(),
-                doc.clips.len(),
-                findings.len(),
-                html.len() as f64 / 1e6
+            print!(
+                "{}",
+                render::render_report_written(&output, doc.clips.len(), findings.len(), html.len())
             );
-            println!("{}", render::text_atom(&line));
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Transform {
@@ -547,37 +449,28 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 touched += 1;
                 if let Some((a, b)) = window {
                     animsmith_core::transform::slice(c, a, b, fps);
-                    let line = format!(
-                        "  sliced '{}' to [{a}:{b}]s ({} keys max)",
-                        c.name,
-                        c.tracks.iter().map(|t| t.key_count()).max().unwrap_or(0)
-                    );
-                    println!("{}", render::text_atom(&line));
+                    print!("{}", render::render_transform_slice(c, a, b));
                 }
                 if let Some(hold) = hold_extend {
                     animsmith_core::transform::hold_extend(c, hold);
-                    let line = format!("  hold-extended '{}' by {hold}s", c.name);
-                    println!("{}", render::text_atom(&line));
+                    print!("{}", render::render_transform_hold_extend(c, hold));
                 }
                 if gait_anchor {
                     match animsmith_core::transform::align_gait_anchor(&skeleton, c, &roles, fps) {
-                        Ok(o) => {
-                            let line = format!(
-                                "  gait-anchored '{}': phase {:.3} -> {:.3} (offset {}, seam {})",
-                                c.name,
-                                o.phase_before,
-                                o.phase_after,
-                                o.frame_offset,
-                                o.seam_after
-                                    .map(|s| format!("{s:.2}"))
-                                    .unwrap_or_else(|| "n/a".into()),
-                            );
-                            println!("{}", render::text_atom(&line));
-                        }
-                        Err(reason) => {
-                            let line = format!("  gait-anchor skipped '{}': {reason}", c.name);
-                            println!("{}", render::text_atom(&line));
-                        }
+                        Ok(outcome) => print!(
+                            "{}",
+                            render::render_transform_gait_anchor(
+                                &c.name,
+                                outcome.phase_before,
+                                outcome.phase_after,
+                                outcome.frame_offset,
+                                outcome.seam_after
+                            )
+                        ),
+                        Err(reason) => print!(
+                            "{}",
+                            render::render_transform_gait_anchor_skipped(&c.name, &reason)
+                        ),
                     }
                 }
             }
@@ -588,7 +481,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 });
             }
             let summary = animsmith_gltf::write::write(&doc, &output).map_err(|e| e.to_string())?;
-            println!("{}", format_write_summary(&output, &summary));
+            print!("{}", render::render_write_summary(&output, &summary));
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Fix {
@@ -636,7 +529,9 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             for (repair, report) in &reports {
                 // clap rejects --dry-run with a write target, so
                 // `output` is None exactly when this is a dry run.
-                print_fix_report(*repair, report, output.as_deref());
+                for line in render::render_fix_report(*repair, report, output.as_deref()) {
+                    println!("{line}");
+                }
             }
             // Dry run doubles as a CI check mode: pending repairs are
             // findings, mirroring `lint`'s exit contract.
@@ -659,7 +554,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 doc.assets = animsmith_core::model::SceneAssets::default();
             }
             let summary = animsmith_gltf::write::write(&doc, &output).map_err(|e| e.to_string())?;
-            println!("{}", format_write_summary(&output, &summary));
+            print!("{}", render::render_write_summary(&output, &summary));
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Diff { a, b, format } => {
@@ -676,24 +571,9 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     deltas,
                 )),
                 Format::Text => {
-                    if deltas.is_empty() {
-                        println!("no significant movement");
+                    for line in render::render_diff_text(&deltas) {
+                        println!("{line}");
                     }
-                    for d in &deltas {
-                        let values = match (d.before, d.after) {
-                            (Some(x), Some(y)) => format!(" {x:.4} -> {y:.4}"),
-                            (Some(x), None) => format!(" {x:.4} -> (gone)"),
-                            (None, Some(y)) => format!(" (none) -> {y:.4}"),
-                            (None, None) => String::new(),
-                        };
-                        println!(
-                            "  {} {}: {}{values}",
-                            render::text_atom(&d.clip),
-                            render::text_atom(&d.metric),
-                            render::text_atom(&d.note)
-                        );
-                    }
-                    println!("{} significant change(s)", deltas.len());
                 }
             }
             Ok(if has_deltas {
@@ -703,25 +583,6 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             })
         }
     }
-}
-
-fn format_write_summary(output: &Path, summary: &animsmith_gltf::write::WriteSummary) -> String {
-    let mut text = format!(
-        "wrote {} ({} node(s), {} clip(s), {} mesh(es) / {} position(s), {} material(s))",
-        output.display(),
-        summary.nodes,
-        summary.animations,
-        summary.meshes,
-        summary.primitive_positions,
-        summary.materials,
-    );
-    if summary.clips_without_writable_tracks > 0 {
-        text.push_str(&format!(
-            "; dropped {} clip(s) with no writable tracks",
-            summary.clips_without_writable_tracks
-        ));
-    }
-    render::text_atom(&text).into_owned()
 }
 
 /// Measurements for `diff`: an asset file (measured now) or a prior
@@ -850,59 +711,6 @@ fn load(path: &Path) -> Result<Document, String> {
             "{}: unsupported input (expected .glb, .gltf, or .fbx)",
             path.display()
         )),
-    }
-}
-
-fn inspect(doc: &Document, roles: &ResolvedRoles) {
-    if let Some(path) = &doc.source.path {
-        println!("{}", render::text_atom(path));
-    }
-    if roles.is_empty() {
-        println!("rig profile: none detected");
-    } else {
-        let line = format!("rig profile: {} ({} roles)", roles.profile, roles.len());
-        println!("{}", render::text_atom(&line));
-        for (role, bone) in roles.iter() {
-            let line = format!(
-                "  {:<12} -> {}",
-                role.as_str(),
-                doc.skeleton.bones[bone].name
-            );
-            println!("{}", render::text_atom(&line));
-        }
-    }
-    println!("skeleton: {} bones", doc.skeleton.bones.len());
-    for bone in &doc.skeleton.bones {
-        let mut depth = 0;
-        let mut parent = bone.parent;
-        while let Some(p) = parent {
-            depth += 1;
-            parent = doc.skeleton.bones[p].parent;
-        }
-        let skinned = if bone.inverse_bind.is_some() {
-            " [skinned]"
-        } else {
-            ""
-        };
-        let line = format!("  {}{}{}", "  ".repeat(depth), bone.name, skinned);
-        println!("{}", render::text_atom(&line));
-    }
-    println!("clips: {}", doc.clips.len());
-    for clip in &doc.clips {
-        let keys = clip
-            .tracks
-            .iter()
-            .map(animsmith_core::model::Track::key_count)
-            .max()
-            .unwrap_or(0);
-        let line = format!(
-            "  {}: {:.3}s, {} tracks, {} keys max",
-            clip.name,
-            clip.duration_s,
-            clip.tracks.len(),
-            keys
-        );
-        println!("{}", render::text_atom(&line));
     }
 }
 
