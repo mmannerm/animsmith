@@ -109,8 +109,9 @@ mesh-local geometry. It accumulates each accepted mesh node's rest transform
 through its hierarchy into positions, transforms normals with the
 inverse-transpose and normalizes them, and writes the result beneath a
 canonical identity root. Indices, UVs, model-supported material assignments,
-and embedded base-color textures are retained. The default conversion is
-unchanged; `--bake-static-mesh-transforms` conflicts with `--animation-only`.
+and embedded base-color and normal textures are retained. The default
+conversion is unchanged; `--bake-static-mesh-transforms` conflicts with
+`--animation-only`.
 
 The operation fails with exit code 2 rather than guessing when the input has
 any animation track, a skin signal, a mesh definition with no unambiguous

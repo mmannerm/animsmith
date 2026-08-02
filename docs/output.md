@@ -126,9 +126,9 @@ accepts unanimated, unskinned, singly-instanced static geometry with finite,
 non-reflecting, non-singular (including near-singular) transforms. It bakes
 positions and inverse-transpose normalized normals into a canonical
 identity-root output while retaining indices, UVs, model-supported material
-assignments, and embedded base-color textures. Unsupported input is an
-operator error, not partial evidence. Repeated same-platform conversion with
-the same input and options emits a byte-identical artifact.
+assignments, and embedded base-color and normal textures. Unsupported input is
+an operator error, not partial evidence. Repeated same-platform conversion
+with the same input and options emits a byte-identical artifact.
 
 ## `measure` and `lint`
 

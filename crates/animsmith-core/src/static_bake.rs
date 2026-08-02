@@ -252,7 +252,7 @@ struct BakePlan {
 /// child, no clips, no skins, and one scene. Positions are transformed by the
 /// accumulated rest/world matrix; normals use its inverse transpose and are
 /// normalized. Indices, UVs, material assignment, material values, and
-/// embedded texture bytes are copied unchanged.
+/// embedded base-color and normal-texture state is copied unchanged.
 ///
 /// # Errors
 ///
@@ -477,6 +477,16 @@ fn validate_materials(assets: &SceneAssets) -> Result<(), StaticMeshBakeError> {
             return Err(StaticMeshBakeError::NonFiniteMaterial {
                 material,
                 factor: "roughness",
+            });
+        }
+        if value
+            .normal_texture
+            .as_ref()
+            .is_some_and(|normal| !normal.scale.is_finite())
+        {
+            return Err(StaticMeshBakeError::NonFiniteMaterial {
+                material,
+                factor: "normal_texture_scale",
             });
         }
     }

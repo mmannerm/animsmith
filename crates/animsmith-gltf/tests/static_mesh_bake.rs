@@ -169,6 +169,13 @@ fn supported_document() -> Document {
                         bytes: TINY_JPEG.to_vec(),
                         mime: "image/jpeg".into(),
                     }),
+                    normal_texture: Some(NormalTextureAsset {
+                        texture: TextureAsset {
+                            bytes: TINY_JPEG.to_vec(),
+                            mime: "image/jpeg".into(),
+                        },
+                        scale: 0.65,
+                    }),
                 },
                 MaterialAsset {
                     name: "plain".into(),
@@ -176,6 +183,7 @@ fn supported_document() -> Document {
                     metallic: 0.1,
                     roughness: 0.9,
                     base_color_texture: None,
+                    normal_texture: None,
                 },
             ],
             scenes: vec![SceneAsset {
@@ -470,6 +478,10 @@ fn static_mesh_bake_flattens_geometry_without_losing_scene_asset_semantics() {
         assert_eq!(actual.base_color, expected.base_color);
         assert_eq!(actual.metallic, expected.metallic);
         assert_eq!(actual.roughness, expected.roughness);
+        assert_eq!(
+            actual.normal_texture.as_ref().map(|normal| normal.scale),
+            expected.normal_texture.as_ref().map(|normal| normal.scale)
+        );
     }
     assert_eq!(
         output.assets.materials[0]
@@ -487,6 +499,13 @@ fn static_mesh_bake_flattens_geometry_without_losing_scene_asset_semantics() {
             .mime,
         "image/jpeg"
     );
+    let output_normal_texture = output.assets.materials[0]
+        .normal_texture
+        .as_ref()
+        .expect("normal texture survives core bake");
+    assert_eq!(output_normal_texture.texture.bytes, TINY_JPEG);
+    assert_eq!(output_normal_texture.texture.mime, "image/jpeg");
+    assert_eq!(output_normal_texture.scale, 0.65);
 
     for (index, instance) in output.assets.instances.iter().enumerate() {
         let primitive = &output.assets.meshes[instance.mesh].primitives[0];
@@ -603,6 +622,13 @@ fn static_mesh_bake_flattens_geometry_without_losing_scene_asset_semantics() {
         .expect("embedded texture survives write and reload");
     assert_eq!(reloaded_texture.bytes, TINY_JPEG);
     assert_eq!(reloaded_texture.mime, "image/jpeg");
+    let reloaded_normal_texture = reloaded.assets.materials[0]
+        .normal_texture
+        .as_ref()
+        .expect("normal texture survives write and reload");
+    assert_eq!(reloaded_normal_texture.texture.bytes, TINY_JPEG);
+    assert_eq!(reloaded_normal_texture.texture.mime, "image/jpeg");
+    assert_eq!(reloaded_normal_texture.scale, 0.65);
     for bone in &reloaded.skeleton.bones {
         assert_eq!(
             bone.rest,
@@ -1022,6 +1048,26 @@ fn static_mesh_bake_rejects_ambiguous_or_nonstatic_inputs() {
                 StaticMeshBakeError::NonFiniteMaterial {
                     material: 1,
                     factor: "roughness"
+                }
+            )
+        },
+    );
+
+    let mut nonfinite_normal_texture_scale = source.clone();
+    nonfinite_normal_texture_scale.assets.materials[0]
+        .normal_texture
+        .as_mut()
+        .unwrap()
+        .scale = f32::NAN;
+    assert_bake_error(
+        &nonfinite_normal_texture_scale,
+        "NonFiniteMaterial normal_texture_scale",
+        |error| {
+            matches!(
+                error,
+                StaticMeshBakeError::NonFiniteMaterial {
+                    material: 0,
+                    factor: "normal_texture_scale"
                 }
             )
         },

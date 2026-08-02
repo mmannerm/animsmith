@@ -4,8 +4,9 @@
 
 use animsmith_core::glam::{Mat3, Quat, Vec3};
 use animsmith_core::model::{
-    Bone, Clip, Document, Interpolation, MaterialAsset, MeshAsset, MeshInstance, Primitive,
-    Property, SceneAsset, SceneAssets, Skeleton, TextureAsset, Track, TrackValues, Transform,
+    Bone, Clip, Document, Interpolation, MaterialAsset, MeshAsset, MeshInstance,
+    NormalTextureAsset, Primitive, Property, SceneAsset, SceneAssets, Skeleton, TextureAsset,
+    Track, TrackValues, Transform,
 };
 use serde_json::Value;
 use std::path::Path;
@@ -76,6 +77,13 @@ fn fixture() -> Document {
                     bytes: TINY_JPEG.to_vec(),
                     mime: "image/jpeg".into(),
                 }),
+                normal_texture: Some(NormalTextureAsset {
+                    texture: TextureAsset {
+                        bytes: TINY_JPEG.to_vec(),
+                        mime: "image/jpeg".into(),
+                    },
+                    scale: 0.65,
+                }),
             }],
             scenes: vec![SceneAsset {
                 source_scene_index: 0,
@@ -83,7 +91,6 @@ fn fixture() -> Document {
                 roots: vec![0],
             }],
             default_scene: Some(0),
-            ..SceneAssets::default()
         },
         ..Document::default()
     }
@@ -235,6 +242,24 @@ fn convert_static_bake_emits_schema_valid_evidence_and_byte_stable_identity_outp
     let primitive = &baked.assets.meshes[baked.assets.instances[0].mesh].primitives[0];
     assert_eq!(primitive.indices, source_primitive.indices);
     assert_eq!(primitive.uvs, source_primitive.uvs);
+    assert_eq!(primitive.material, source_primitive.material);
+    let baked_normal_texture = baked.assets.materials[0]
+        .normal_texture
+        .as_ref()
+        .expect("static bake keeps embedded normal texture");
+    let source_normal_texture = loaded_input.assets.materials[0]
+        .normal_texture
+        .as_ref()
+        .unwrap();
+    assert_eq!(
+        baked_normal_texture.texture.bytes,
+        source_normal_texture.texture.bytes
+    );
+    assert_eq!(
+        baked_normal_texture.texture.mime,
+        source_normal_texture.texture.mime
+    );
+    assert_eq!(baked_normal_texture.scale, source_normal_texture.scale);
     assert_eq!(primitive.positions.len(), expected_positions.len());
     assert_eq!(primitive.normals.len(), expected_normals.len());
     for (actual, expected) in primitive.positions.iter().zip(expected_positions) {
@@ -326,6 +351,20 @@ fn convert_json_without_static_bake_omits_bake_evidence_and_keeps_source_transfo
     let source_texture = source_material.base_color_texture.as_ref().unwrap();
     assert_eq!(ordinary_texture.bytes, source_texture.bytes);
     assert_eq!(ordinary_texture.mime, source_texture.mime);
+    let ordinary_normal_texture = ordinary_material
+        .normal_texture
+        .as_ref()
+        .expect("ordinary conversion keeps embedded normal texture");
+    let source_normal_texture = source_material.normal_texture.as_ref().unwrap();
+    assert_eq!(
+        ordinary_normal_texture.texture.bytes,
+        source_normal_texture.texture.bytes
+    );
+    assert_eq!(
+        ordinary_normal_texture.texture.mime,
+        source_normal_texture.texture.mime
+    );
+    assert_eq!(ordinary_normal_texture.scale, source_normal_texture.scale);
 }
 
 #[test]

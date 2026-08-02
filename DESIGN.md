@@ -137,12 +137,12 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or single-file 
   operation. It accumulates rest hierarchy transforms into positions and
   inverse-transpose normalized normals, then writes canonical identity-root
   geometry. It retains topology, UVs, and the model-supported material and
-  embedded base-color texture data. It fails closed for any animation track,
-  skin signal, uninstanced or shared mesh definition, malformed/non-finite
-  data, singular or near-singular transform, or reflection; it neither bakes
-  skinning nor guesses animated or reflected semantics. It conflicts with
-  `--animation-only`, leaves default conversion unchanged, and is deterministic
-  for repeated same-platform input/options.
+  embedded base-color and normal-texture data. It fails closed for any
+  animation track, skin signal, uninstanced or shared mesh definition,
+  malformed/non-finite data, singular or near-singular transform, or
+  reflection; it neither bakes skinning nor guesses animated or reflected
+  semantics. It conflicts with `--animation-only`, leaves default conversion
+  unchanged, and is deterministic for repeated same-platform input/options.
 
 ## 4. Repository & crate layout
 
