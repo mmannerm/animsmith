@@ -5,6 +5,22 @@
 use animsmith_core::glam::{Mat4, Vec3};
 use animsmith_core::model::*;
 
+const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v2.schema.json");
+
+fn assert_measurements_schema_valid(measurements: &serde_json::Value) {
+    let schema = serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid measurement schema JSON");
+    let validator = jsonschema::validator_for(&schema).expect("measurement schema compiles");
+    let errors = validator
+        .iter_errors(measurements)
+        .map(|error| error.to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        errors.is_empty(),
+        "measurement output must satisfy the published v2 schema:\n{}\ninstance: {measurements:#}",
+        errors.join("\n")
+    );
+}
+
 fn write_nested_instanced_gltf(path: &std::path::Path) {
     let positions = [
         [0.0_f32, 0.0, 0.0],
@@ -75,14 +91,14 @@ fn write_nested_instanced_gltf(path: &std::path::Path) {
         ],
         "meshes": [
             {
-                "name": "shared",
+                "name": "duplicate-definition",
                 "weights": [1.0],
                 "primitives": [{
                     "attributes": { "POSITION": 0 },
                     "targets": [{ "POSITION": 1 }]
                 }]
             },
-            { "name": "uninstanced", "primitives": [{ "attributes": { "POSITION": 0 } }] }
+            { "name": "duplicate-definition", "primitives": [{ "attributes": { "POSITION": 0 } }] }
         ],
         "nodes": [
             { "name": "root", "translation": [10.0, 0.0, 0.0], "children": [1] },
@@ -216,6 +232,7 @@ fn cli_measure_emits_mesh_measurements() {
 
     let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid JSON");
     let measurements = &report["files"][0]["measurements"];
+    assert_measurements_schema_valid(measurements);
     assert_body_mesh(&measurements["mesh_definitions"][0]);
     assert_eq!(
         measurements["node_instances"][0]["static_node_world_aabb_unavailable_reason"],
@@ -245,6 +262,7 @@ fn cli_lint_json_emits_mesh_measurements() {
 
     let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid JSON");
     let measurements = &report["files"][0]["measurements"];
+    assert_measurements_schema_valid(measurements);
     assert_body_mesh(&measurements["mesh_definitions"][0]);
     assert_eq!(
         measurements["node_instances"][0]["static_node_world_aabb_unavailable_reason"],
@@ -298,6 +316,7 @@ fn cli_measure_distinguishes_definition_instance_and_scene_domains() {
     );
     let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid JSON");
     let measurements = &report["files"][0]["measurements"];
+    assert_measurements_schema_valid(measurements);
     assert!(
         measurements["clips"]["move"].is_object(),
         "the animated transform was loaded but must not affect static bounds"
@@ -309,6 +328,12 @@ fn cli_measure_distinguishes_definition_instance_and_scene_domains() {
     assert_eq!(definitions.len(), 2, "uninstanced definition is retained");
     assert_eq!(definitions[0]["mesh_index"], 0);
     assert_eq!(definitions[1]["mesh_index"], 1);
+    assert!(
+        definitions
+            .iter()
+            .all(|definition| definition["name"] == "duplicate-definition"),
+        "definition identity comes from source indices, not names"
+    );
     assert_eq!(
         definitions[0]["geometry_aabb"],
         serde_json::json!({ "min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0] })
