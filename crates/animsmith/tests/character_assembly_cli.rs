@@ -828,11 +828,10 @@ fn assembles_synthetic_skinned_recipe_with_complete_public_provenance() {
     assert_eq!(evidence["clips"][0]["name"], "assembled_cycle");
     assert_eq!(evidence["clips"][0]["source_take"], "selected_take");
     assert_eq!(evidence["clips"][0]["declared_input"], "clips.glb");
-    assert_eq!(
+    assert!(
         evidence["clips"][0]["gait_anchor_frame_offset"]
             .as_i64()
-            .is_some(),
-        true
+            .is_some()
     );
     assert_eq!(evidence["clips"][0]["stripped_tracks"], 1);
     assert_eq!(
