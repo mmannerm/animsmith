@@ -72,8 +72,9 @@ pub mod fix;
 pub mod write;
 
 use animsmith_core::model::{
-    Bone, Clip, Document, Interpolation, MaterialAsset, MeshAsset, Primitive, Property,
-    SceneAssets, Skeleton, SourceInfo, TextureAsset, Track, TrackValues, Transform,
+    Bone, Clip, Document, Interpolation, MaterialAsset, MeshAsset, MeshInstance, Primitive,
+    Property, SceneAsset, SceneAssets, Skeleton, SourceInfo, TextureAsset, Track, TrackValues,
+    Transform,
 };
 use base64::Engine as _;
 use glam::{Mat4, Quat, Vec3};
@@ -338,6 +339,8 @@ pub fn load(path: &Path) -> Result<Document, LoadError> {
     let topo = topology(&gltf.document)?;
     let mut doc = build_document(&gltf, &buffers, path, &topo)?;
     doc.assets = extract_assets(&gltf.document, &buffers, path.parent(), &topo.bone_of_node);
+    doc.assets.scenes = extract_scenes(&gltf.document, &topo.bone_of_node);
+    doc.assets.default_scene = gltf.document.default_scene().map(|scene| scene.index());
     Ok(doc)
 }
 
@@ -693,37 +696,11 @@ fn extract_assets(
         });
     }
 
-    for node in doc.nodes() {
-        let Some(mesh) = node.mesh() else { continue };
-        let node_bone = bone_of_node[node.index()].unwrap_or(0);
-
-        let skin = node.skin();
-        // Skin joints are node indices in the file; map them into bone
-        // ids so they index the core skeleton, matching the writer,
-        // which emits joints in bone order.
-        let skin_joints: Vec<usize> = skin
-            .as_ref()
-            .map(|s| {
-                s.joints()
-                    .map(|j| bone_of_node[j.index()].unwrap_or(0))
-                    .collect()
-            })
-            .unwrap_or_default();
-        // gltf 1.4's accessor iterator underflows (panics) on a count-0
-        // accessor — the same bug the animation path guards before
-        // reading. Only read an inverse-bind accessor that has entries.
-        let skin_ibms: Vec<Mat4> = skin
-            .as_ref()
-            .filter(|s| s.inverse_bind_matrices().is_some_and(|a| a.count() > 0))
-            .map(|s| {
-                let reader = s.reader(|b| buffers.get(b.index()).map(Vec::as_slice));
-                reader
-                    .read_inverse_bind_matrices()
-                    .map(|it| it.map(|m| Mat4::from_cols_array_2d(&m)).collect())
-                    .unwrap_or_default()
-            })
-            .unwrap_or_default();
-
+    // Keep definitions apart from their node instances. In particular, a
+    // valid definition that no node references is still observable to later
+    // definition-domain measurement work.
+    let mut core_mesh_of_source = vec![None; doc.meshes().count()];
+    for mesh in doc.meshes() {
         let mut primitives = Vec::new();
         for prim in mesh.primitives() {
             // Only triangle lists are ingested. The core model and the
@@ -796,17 +773,75 @@ fn extract_assets(
         if primitives.is_empty() {
             continue;
         }
-
+        let core_mesh = assets.meshes.len();
+        core_mesh_of_source[mesh.index()] = Some(core_mesh);
         assets.meshes.push(MeshAsset {
             name: mesh.name().unwrap_or("mesh").to_string(),
-            node: node_bone,
+            source_mesh_index: mesh.index(),
             primitives,
+        });
+    }
+
+    for node in doc.nodes() {
+        let Some(source_mesh) = node.mesh() else {
+            continue;
+        };
+        let Some(mesh) = core_mesh_of_source[source_mesh.index()] else {
+            continue;
+        };
+        let skin = node.skin();
+        let skin_joints = skin
+            .as_ref()
+            .map(|skin| {
+                skin.joints()
+                    .map(|joint| bone_of_node[joint.index()].unwrap_or(0))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let skin_ibms = skin
+            .as_ref()
+            .filter(|skin| {
+                skin.inverse_bind_matrices()
+                    .is_some_and(|accessor| accessor.count() > 0)
+            })
+            .map(|skin| {
+                let reader = skin.reader(|buffer| buffers.get(buffer.index()).map(Vec::as_slice));
+                reader
+                    .read_inverse_bind_matrices()
+                    .map(|matrices| {
+                        matrices
+                            .map(|matrix| Mat4::from_cols_array_2d(&matrix))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default();
+        assets.instances.push(MeshInstance {
+            source_node_index: node.index(),
+            node: bone_of_node[node.index()].unwrap_or(0),
+            mesh,
             skin_joints,
             skin_ibms,
         });
     }
 
     assets
+}
+
+/// Preserve declared glTF scene membership separately from the all-node
+/// skeleton topology. A node can be reachable from the forest yet absent from
+/// any declared scene, so membership must not be inferred from `Bone::parent`.
+fn extract_scenes(doc: &gltf::Document, bone_of_node: &[Option<usize>]) -> Vec<SceneAsset> {
+    doc.scenes()
+        .map(|scene| SceneAsset {
+            source_scene_index: scene.index(),
+            name: scene.name().map(str::to_owned),
+            roots: scene
+                .nodes()
+                .filter_map(|node| bone_of_node[node.index()])
+                .collect(),
+        })
+        .collect()
 }
 
 /// Read an embedded glTF image into a [`TextureAsset`] (raw encoded

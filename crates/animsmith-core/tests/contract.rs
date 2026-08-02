@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use animsmith_core::check::{Check, CheckCtx};
 use animsmith_core::config::{CheckSettings, SeveritySetting};
-use animsmith_core::measure::{ClipMeasurements, MeshMeasurements};
+use animsmith_core::measure::{AssetMeasurements, ClipMeasurements, MeshDefinitionMeasurements};
 use animsmith_core::{
     Bone, CheckEvaluation, CheckOutput, CheckSelection, Config, CoverageGap, CoverageGapCode,
     Document, EvaluationScope, EvaluationScopeCode, Finding, LintEnvelope, LintFileReport,
@@ -24,7 +24,8 @@ fn rig() -> RigInfo {
 }
 
 fn measurements() -> MeasurementContract {
-    MeasurementContract::new(BTreeMap::new(), Vec::new()).expect("empty measurements are valid")
+    MeasurementContract::new(BTreeMap::new(), AssetMeasurements::default())
+        .expect("empty measurements are valid")
 }
 
 #[test]
@@ -167,6 +168,9 @@ fn current_measure_report() -> serde_json::Value {
                 "schema_version": MEASUREMENTS_SCHEMA_VERSION,
                 "schema": MEASUREMENTS_SCHEMA_ID,
                 "clips": {},
+                "mesh_definitions": [],
+                "node_instances": [],
+                "scenes": [],
             },
         }],
     })
@@ -318,6 +322,33 @@ fn measurement_report_input_rejects_every_invalid_contract_branch() {
             },
             "files[0] measurement contract has no `clips` map".to_owned(),
         ),
+        (
+            "missing mesh definitions",
+            without("/files/0/measurements/mesh_definitions"),
+            MeasurementReportError::File {
+                file_index: 0,
+                source: MeasurementFileError::MissingMeshDefinitions,
+            },
+            "files[0] measurement contract has no `mesh_definitions` array".to_owned(),
+        ),
+        (
+            "missing node instances",
+            without("/files/0/measurements/node_instances"),
+            MeasurementReportError::File {
+                file_index: 0,
+                source: MeasurementFileError::MissingNodeInstances,
+            },
+            "files[0] measurement contract has no `node_instances` array".to_owned(),
+        ),
+        (
+            "missing scenes",
+            without("/files/0/measurements/scenes"),
+            MeasurementReportError::File {
+                file_index: 0,
+                source: MeasurementFileError::MissingScenes,
+            },
+            "files[0] measurement contract has no `scenes` array".to_owned(),
+        ),
     ];
 
     for (name, value, expected, expected_display) in cases {
@@ -335,10 +366,11 @@ fn measurement_report_input_rejects_every_invalid_contract_branch() {
 #[test]
 fn measurement_report_input_rejects_finite_value_that_overflows_mesh_f32() {
     let mut report = current_measure_report();
-    report["files"][0]["measurements"]["meshes"] = serde_json::json!([{
+    report["files"][0]["measurements"]["mesh_definitions"] = serde_json::json!([{
+        "mesh_index": 0,
         "name": "overflow",
         "vertex_count": 1,
-        "aabb": {
+        "geometry_aabb": {
             "min": [1e39, 0.0, 0.0],
             "max": [1e39, 0.0, 0.0],
         },
@@ -352,7 +384,7 @@ fn measurement_report_input_rejects_finite_value_that_overflows_mesh_f32() {
             file_index: 0,
             source: MeasurementFileError::InvalidMeasurements {
                 source: MeasurementContractError::NonFiniteValue {
-                    path: "meshes[0].aabb.min[0]".into(),
+                    path: "mesh_definitions[0].geometry_aabb.min[0]".into(),
                 },
             },
         }
@@ -360,7 +392,7 @@ fn measurement_report_input_rejects_finite_value_that_overflows_mesh_f32() {
     assert_eq!(error.file_index(), Some(0));
     assert_eq!(
         error.to_string(),
-        "files[0] has invalid measurements: measurement value meshes[0].aabb.min[0] must be finite"
+        "files[0] has invalid measurements: measurement value mesh_definitions[0].geometry_aabb.min[0] must be finite"
     );
 }
 
@@ -374,6 +406,9 @@ fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
                 "schema_version": MEASUREMENTS_SCHEMA_VERSION,
                 "schema": MEASUREMENTS_SCHEMA_ID,
                 "clips": { "walk": valid_clip_measurements() },
+                "mesh_definitions": [],
+                "node_instances": [],
+                "scenes": [],
             },
         },
         {
@@ -382,7 +417,9 @@ fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
                 "schema_version": MEASUREMENTS_SCHEMA_VERSION,
                 "schema": MEASUREMENTS_SCHEMA_ID,
                 "clips": { "run": valid_clip_measurements() },
-                "meshes": [valid_mesh_measurements()],
+                "mesh_definitions": [valid_mesh_measurements()],
+                "node_instances": [],
+                "scenes": [],
             },
         },
         {
@@ -391,6 +428,9 @@ fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
                 "schema_version": MEASUREMENTS_SCHEMA_VERSION,
                 "schema": MEASUREMENTS_SCHEMA_ID,
                 "clips": { "idle": valid_clip_measurements() },
+                "mesh_definitions": [],
+                "node_instances": [],
+                "scenes": [],
             },
         },
     ]);
@@ -426,9 +466,9 @@ fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
             .collect::<Vec<_>>(),
         expected_measurements
     );
-    type MeasurementParts = (BTreeMap<String, ClipMeasurements>, Vec<MeshMeasurements>);
+    type MeasurementParts = (BTreeMap<String, ClipMeasurements>, AssetMeasurements);
     let into_parts: fn(MeasurementContract) -> MeasurementParts = MeasurementContract::into_parts;
-    let (run_clips, run_meshes) = into_parts(
+    let (run_clips, run_assets) = into_parts(
         files
             .into_iter()
             .nth(1)
@@ -440,8 +480,9 @@ fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
         expected_measurements[1]["clips"]
     );
     assert_eq!(
-        serde_json::to_value(run_meshes).expect("recovered meshes serialize"),
-        expected_measurements[1]["meshes"]
+        serde_json::to_value(run_assets.mesh_definitions)
+            .expect("recovered mesh definitions serialize"),
+        expected_measurements[1]["mesh_definitions"]
     );
 
     let mut empty_report = current_measure_report();
@@ -582,11 +623,12 @@ fn valid_clip_measurements() -> ClipMeasurements {
     .expect("valid clip measurement fixture")
 }
 
-fn valid_mesh_measurements() -> MeshMeasurements {
+fn valid_mesh_measurements() -> MeshDefinitionMeasurements {
     serde_json::from_value(serde_json::json!({
+        "mesh_index": 0,
         "name": "mesh",
         "vertex_count": 3,
-        "aabb": { "min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 1.0] },
+        "geometry_aabb": { "min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 1.0] },
         "max_joints_per_vertex": 4,
         "weight_sum_min": 0.9,
         "weight_sum_max": 1.1,
@@ -594,23 +636,71 @@ fn valid_mesh_measurements() -> MeshMeasurements {
     .expect("valid mesh measurement fixture")
 }
 
+fn valid_asset_measurements() -> AssetMeasurements {
+    serde_json::from_value(serde_json::json!({
+        "mesh_definitions": [valid_mesh_measurements()],
+        "node_instances": [{
+            "node_index": 2,
+            "node_name": "node",
+            "mesh_index": 0,
+            "static_node_world_aabb": {
+                "min": [0.0, 0.0, 0.0],
+                "max": [1.0, 1.0, 1.0]
+            }
+        }],
+        "scenes": [{
+            "scene_index": 4,
+            "instance_count": 1,
+            "static_scene_world_aabb": {
+                "min": [0.0, 0.0, 0.0],
+                "max": [1.0, 1.0, 1.0]
+            },
+            "excluded_instance_count": 0
+        }],
+        "default_scene_index": 4
+    }))
+    .expect("valid static asset measurement fixture")
+}
+
+fn assert_invalid_assets(
+    mutate: impl FnOnce(&mut AssetMeasurements),
+    expected_path: &str,
+    expected_reason: &str,
+) {
+    let mut assets = valid_asset_measurements();
+    mutate(&mut assets);
+    assert_eq!(
+        MeasurementContract::new(BTreeMap::new(), assets)
+            .expect_err("structurally inconsistent evidence must be rejected"),
+        MeasurementContractError::InvalidStructure {
+            path: expected_path.into(),
+            reason: expected_reason.into(),
+        }
+    );
+}
+
 fn assert_invalid_clip(mutate: impl FnOnce(&mut ClipMeasurements), expected_path: &str) {
     let mut clip = valid_clip_measurements();
     mutate(&mut clip);
     assert_eq!(
-        MeasurementContract::new(BTreeMap::from([("walk".into(), clip)]), Vec::new())
-            .expect_err("non-finite clip evidence must be rejected"),
+        MeasurementContract::new(
+            BTreeMap::from([("walk".into(), clip)]),
+            AssetMeasurements::default(),
+        )
+        .expect_err("non-finite clip evidence must be rejected"),
         MeasurementContractError::NonFiniteValue {
             path: expected_path.into(),
         }
     );
 }
 
-fn assert_invalid_mesh(mutate: impl FnOnce(&mut MeshMeasurements), expected_path: &str) {
+fn assert_invalid_mesh(mutate: impl FnOnce(&mut MeshDefinitionMeasurements), expected_path: &str) {
     let mut mesh = valid_mesh_measurements();
     mutate(&mut mesh);
+    let mut assets = AssetMeasurements::default();
+    assets.mesh_definitions.push(mesh);
     assert_eq!(
-        MeasurementContract::new(BTreeMap::new(), vec![mesh])
+        MeasurementContract::new(BTreeMap::new(), assets)
             .expect_err("non-finite mesh evidence must be rejected"),
         MeasurementContractError::NonFiniteValue {
             path: expected_path.into(),
@@ -648,20 +738,102 @@ fn measurement_contract_rejects_every_non_finite_numeric_branch() {
         "clips[\"walk\"].speed_mps",
     );
     assert_invalid_mesh(
-        |mesh| mesh.aabb.as_mut().expect("fixture aabb").min[1] = f32::NAN,
-        "meshes[0].aabb.min[1]",
+        |mesh| {
+            mesh.geometry_aabb.as_mut().expect("fixture aabb").min[1] = f32::NAN;
+        },
+        "mesh_definitions[0].geometry_aabb.min[1]",
     );
     assert_invalid_mesh(
-        |mesh| mesh.aabb.as_mut().expect("fixture aabb").max[2] = f32::INFINITY,
-        "meshes[0].aabb.max[2]",
+        |mesh| {
+            mesh.geometry_aabb.as_mut().expect("fixture aabb").max[2] = f32::INFINITY;
+        },
+        "mesh_definitions[0].geometry_aabb.max[2]",
     );
     assert_invalid_mesh(
         |mesh| mesh.weight_sum_min = Some(f64::NEG_INFINITY),
-        "meshes[0].weight_sum_min",
+        "mesh_definitions[0].weight_sum_min",
     );
     assert_invalid_mesh(
         |mesh| mesh.weight_sum_max = Some(f64::NAN),
-        "meshes[0].weight_sum_max",
+        "mesh_definitions[0].weight_sum_max",
+    );
+}
+
+#[test]
+fn measurement_contract_rejects_inconsistent_static_asset_relationships() {
+    assert_invalid_assets(
+        |assets| {
+            assets.mesh_definitions[0]
+                .geometry_aabb
+                .as_mut()
+                .expect("fixture geometry AABB")
+                .min[0] = 2.0;
+        },
+        "mesh_definitions[0].geometry_aabb.min[0]",
+        "AABB minimum cannot exceed maximum",
+    );
+    assert_invalid_assets(
+        |assets| {
+            assets.node_instances[0]
+                .static_node_world_aabb
+                .as_mut()
+                .expect("fixture node AABB")
+                .min[1] = 2.0;
+        },
+        "node_instances[0].static_node_world_aabb.min[1]",
+        "AABB minimum cannot exceed maximum",
+    );
+    assert_invalid_assets(
+        |assets| {
+            assets.scenes[0]
+                .static_scene_world_aabb
+                .as_mut()
+                .expect("fixture scene AABB")
+                .min[2] = 2.0;
+        },
+        "scenes[0].static_scene_world_aabb.min[2]",
+        "AABB minimum cannot exceed maximum",
+    );
+    assert_invalid_assets(
+        |assets| {
+            let duplicate = assets.mesh_definitions[0].clone();
+            assets.mesh_definitions.push(duplicate);
+        },
+        "mesh_definitions[1].mesh_index",
+        "mesh_index must be unique",
+    );
+    assert_invalid_assets(
+        |assets| assets.node_instances[0].mesh_index = 99,
+        "node_instances[0].mesh_index",
+        "mesh_index must reference a mesh definition",
+    );
+    assert_invalid_assets(
+        |assets| assets.node_instances[0].static_node_world_aabb = None,
+        "node_instances[0]",
+        "a missing static node AABB requires an unavailable reason",
+    );
+    assert_invalid_assets(
+        |assets| {
+            assets.node_instances[0].static_node_world_aabb_unavailable_reason =
+                Some(animsmith_core::measure::StaticNodeAabbUnavailableReason::NonFiniteTransform);
+        },
+        "node_instances[0]",
+        "an available static node AABB cannot have an unavailable reason",
+    );
+    assert_invalid_assets(
+        |assets| assets.scenes[0].excluded_instance_count = 2,
+        "scenes[0].excluded_instance_count",
+        "excluded_instance_count cannot exceed instance_count",
+    );
+    assert_invalid_assets(
+        |assets| assets.scenes[0].static_scene_world_aabb = None,
+        "scenes[0].static_scene_world_aabb",
+        "a scene with available instances requires an AABB",
+    );
+    assert_invalid_assets(
+        |assets| assets.default_scene_index = Some(99),
+        "default_scene_index",
+        "default_scene_index must reference a declared scene",
     );
 }
 

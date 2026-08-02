@@ -51,8 +51,9 @@
 #![warn(missing_docs)]
 
 use animsmith_core::model::{
-    Bone, Clip, Document, Interpolation, MaterialAsset, MeshAsset, Primitive, Property,
-    SceneAssets, Skeleton, SourceInfo, TextureAsset, Track, TrackValues, Transform,
+    Bone, Clip, Document, Interpolation, MaterialAsset, MeshAsset, MeshInstance, Primitive,
+    Property, SceneAsset, SceneAssets, Skeleton, SourceInfo, TextureAsset, Track, TrackValues,
+    Transform,
 };
 use glam::{Mat4, Quat, Vec3};
 use std::path::Path;
@@ -326,7 +327,7 @@ fn extract_assets(scene: &ufbx::Scene, base_dir: Option<&Path>) -> SceneAssets {
     let mut material_index: std::collections::BTreeMap<u32, usize> =
         std::collections::BTreeMap::new();
 
-    for node in &scene.nodes {
+    for (source_node_index, node) in scene.nodes.iter().enumerate() {
         let Some(mesh) = &node.mesh else { continue };
         let node_id = node.element.typed_id as usize;
 
@@ -473,13 +474,33 @@ fn extract_assets(scene: &ufbx::Scene, base_dir: Option<&Path>) -> SceneAssets {
         if primitives.is_empty() {
             continue;
         }
+        let source_mesh_index = assets.meshes.len();
         assets.meshes.push(MeshAsset {
             name: mesh.element.name.to_string(),
-            node: node_id,
+            // FBX has no glTF-style mesh/node arrays to preserve. Use the
+            // source traversal order so these ids are deterministic within
+            // the normalized document.
+            source_mesh_index,
             primitives,
+        });
+        assets.instances.push(MeshInstance {
+            source_node_index,
+            node: node_id,
+            mesh: source_mesh_index,
             skin_joints,
             skin_ibms,
         });
     }
+    assets.scenes.push(SceneAsset {
+        source_scene_index: 0,
+        name: None,
+        roots: scene
+            .nodes
+            .iter()
+            .filter(|node| node.is_root)
+            .map(|node| node.element.typed_id as usize)
+            .collect(),
+    });
+    assets.default_scene = Some(0);
     assets
 }

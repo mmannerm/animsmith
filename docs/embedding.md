@@ -85,13 +85,13 @@ exact profile, override, and unresolved-role contracts.
 ## Compose the outputs you need
 
 An embedded gate does not need to reproduce every CLI output. It can emit
-clip measurements, add mesh measurements, run findings, render HTML, or
+clip measurements, add static asset measurements, run findings, render HTML, or
 combine those results with host-owned checks. Share the same `MetricGrids`
 within the limits documented by its rustdoc so those consumers judge one
 sampled representation.
 
-The `MetricGrids`, `measure_document`, and `measure_meshes` rustdocs own cache
-thread-safety, sampling, measurement scope, and map-key details.
+The `MetricGrids`, `measure_document`, and `measure_assets` rustdocs own cache
+thread-safety, sampling, static-domain scope, and identity details.
 
 When the host needs to exchange the same JSON as the CLI, construct
 `MeasurementContract`, `MeasureFileReport`/`LintFileReport`, and

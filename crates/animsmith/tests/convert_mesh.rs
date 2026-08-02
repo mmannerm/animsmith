@@ -36,29 +36,25 @@ fn mesh_count(glb: &Path) -> usize {
         .count()
 }
 
-fn loaded_meshes(glb: &Path) -> Vec<animsmith_core::model::MeshAsset> {
+fn loaded_assets(glb: &Path) -> animsmith_core::model::SceneAssets {
     animsmith_gltf::load(glb)
         .expect("converted GLB loads")
         .assets
-        .meshes
 }
 
-fn baseline_meshes(fbx: &Path, out: &Path) -> Vec<animsmith_core::model::MeshAsset> {
+fn baseline_assets(fbx: &Path, out: &Path) -> animsmith_core::model::SceneAssets {
     let doc = animsmith_fbx::load(fbx).expect("FBX loads");
     animsmith_gltf::write::write(&doc, out).expect("writes baseline GLB");
-    loaded_meshes(out)
+    loaded_assets(out)
 }
 
 fn assert_meshes_match(
-    expected: &[animsmith_core::model::MeshAsset],
-    actual: &[animsmith_core::model::MeshAsset],
+    expected: &animsmith_core::model::SceneAssets,
+    actual: &animsmith_core::model::SceneAssets,
 ) {
-    assert_eq!(actual.len(), expected.len(), "mesh count");
-    for (expected, actual) in expected.iter().zip(actual) {
+    assert_eq!(actual.meshes.len(), expected.meshes.len(), "mesh count");
+    for (expected, actual) in expected.meshes.iter().zip(&actual.meshes) {
         assert_eq!(actual.name, expected.name);
-        assert_eq!(actual.node, expected.node);
-        assert_eq!(actual.skin_joints, expected.skin_joints);
-        assert_eq!(actual.skin_ibms, expected.skin_ibms);
         assert_eq!(actual.primitives.len(), expected.primitives.len());
         for (expected, actual) in expected.primitives.iter().zip(&actual.primitives) {
             assert_eq!(actual.material, expected.material);
@@ -70,6 +66,16 @@ fn assert_meshes_match(
             assert_eq!(actual.weights, expected.weights);
         }
     }
+    assert_eq!(
+        actual.instances.len(),
+        expected.instances.len(),
+        "instance count"
+    );
+    for (expected, actual) in expected.instances.iter().zip(&actual.instances) {
+        assert_eq!(actual.node, expected.node);
+        assert_eq!(actual.skin_joints, expected.skin_joints);
+        assert_eq!(actual.skin_ibms, expected.skin_ibms);
+    }
 }
 
 #[test]
@@ -78,7 +84,7 @@ fn converted_mesh_is_structurally_sound() {
     let fbx = write_fixture(dir.path());
     let doc = animsmith_fbx::load(&fbx).expect("FBX loads");
     assert!(!doc.assets.meshes.is_empty(), "fixture must carry meshes");
-    assert_eq!(doc.assets.meshes[0].skin_joints.len(), 1);
+    assert_eq!(doc.assets.instances[0].skin_joints.len(), 1);
 
     let out = dir.path().join("converted.glb");
     animsmith_gltf::write::write(&doc, &out).expect("writes");
@@ -207,9 +213,9 @@ fn cli_convert_carries_and_strips_geometry() {
 
     let carried = dir.path().join("carried.glb");
     convert(&carried, false);
-    let baseline = baseline_meshes(&fbx, &dir.path().join("baseline.glb"));
-    let carried_meshes = loaded_meshes(&carried);
-    assert_meshes_match(&baseline, &carried_meshes);
+    let baseline = baseline_assets(&fbx, &dir.path().join("baseline.glb"));
+    let carried_assets = loaded_assets(&carried);
+    assert_meshes_match(&baseline, &carried_assets);
 
     let stripped = dir.path().join("stripped.glb");
     convert(&stripped, true);
@@ -348,6 +354,6 @@ fn cli_transform_preserves_geometry() {
         ),
         "transform summary matches its written artifact"
     );
-    let baseline = baseline_meshes(&fbx, &dir.path().join("baseline.glb"));
-    assert_meshes_match(&baseline, &written.assets.meshes);
+    let baseline = baseline_assets(&fbx, &dir.path().join("baseline.glb"));
+    assert_meshes_match(&baseline, &written.assets);
 }

@@ -50,6 +50,15 @@ pub(crate) fn render_operator_error(message: &str) -> String {
     format!("animsmith: {}\n", text_atom(message))
 }
 
+fn render_aabb_size(label: &str, bounds: &animsmith_core::measure::Aabb) -> String {
+    let size = [
+        bounds.max[0] - bounds.min[0],
+        bounds.max[1] - bounds.min[1],
+        bounds.max[2] - bounds.min[2],
+    ];
+    format!(" {label} {:.3}×{:.3}×{:.3}", size[0], size[1], size[2])
+}
+
 /// Yield measurement reports in the presentation-only text format, one
 /// escaped line at a time without retaining the full transcript.
 pub(crate) fn render_measure_text(
@@ -84,19 +93,12 @@ pub(crate) fn render_measure_text(
                         )
                     }),
             )
-            .chain(report.measurements().meshes().iter().map(|mesh| {
+            .chain(report.measurements().assets().mesh_definitions.iter().map(|mesh| {
                 let bbox = mesh
-                    .aabb
+                    .geometry_aabb
                     .as_ref()
-                    .map(|bounds| {
-                        let size = [
-                            bounds.max[0] - bounds.min[0],
-                            bounds.max[1] - bounds.min[1],
-                            bounds.max[2] - bounds.min[2],
-                        ];
-                        format!(" bbox {:.3}×{:.3}×{:.3}", size[0], size[1], size[2])
-                    })
-                    .unwrap_or_default();
+                    .map(|bounds| render_aabb_size("geometry bbox", bounds))
+                    .unwrap_or_else(|| " geometry bbox unavailable".into());
                 let skin = match (mesh.weight_sum_min, mesh.weight_sum_max) {
                     (Some(min), Some(max)) => format!(
                         ", ≤{} joints/vtx, weight-sum {min:.3}–{max:.3}",
@@ -105,9 +107,60 @@ pub(crate) fn render_measure_text(
                     _ => String::new(),
                 };
                 format!(
-                    "  mesh {}: {} verts{bbox}{skin}",
+                    "  mesh definition #{} {}: {} verts{bbox}{skin}",
+                    mesh.mesh_index,
                     text_atom(&mesh.name),
                     mesh.vertex_count
+                )
+            }))
+            .chain(report.measurements().assets().node_instances.iter().map(|instance| {
+                let bounds = instance
+                    .static_node_world_aabb
+                    .as_ref()
+                    .map(|bounds| render_aabb_size("static node-world bbox", bounds))
+                    .unwrap_or_else(|| {
+                        let reason = match instance.static_node_world_aabb_unavailable_reason {
+                            Some(animsmith_core::measure::StaticNodeAabbUnavailableReason::NoFinitePositions) => "no finite positions",
+                            Some(animsmith_core::measure::StaticNodeAabbUnavailableReason::SkinnedDeformationExcluded) => "skinned deformation excluded",
+                            Some(animsmith_core::measure::StaticNodeAabbUnavailableReason::NonFiniteTransform) => "non-finite transform",
+                            Some(_) => "unsupported reason",
+                            None => "unknown reason",
+                        };
+                        format!(" static node-world bbox unavailable ({reason})")
+                    });
+                format!(
+                    "  node instance #{} {} -> mesh #{}:{bounds}",
+                    instance.node_index,
+                    text_atom(&instance.node_name),
+                    instance.mesh_index
+                )
+            }))
+            .chain(report.measurements().assets().scenes.iter().map(|scene| {
+                let default = if report.measurements().assets().default_scene_index
+                    == Some(scene.scene_index)
+                {
+                    " [default]"
+                } else {
+                    ""
+                };
+                let name = scene
+                    .name
+                    .as_deref()
+                    .map(|name| format!(" {}", text_atom(name)))
+                    .unwrap_or_default();
+                let bounds = scene
+                    .static_scene_world_aabb
+                    .as_ref()
+                    .map(|bounds| render_aabb_size("static scene-world bbox", bounds))
+                    .unwrap_or_else(|| " static scene-world bbox unavailable".into());
+                let excluded = if scene.excluded_instance_count > 0 {
+                    format!(", {} excluded", scene.excluded_instance_count)
+                } else {
+                    String::new()
+                };
+                format!(
+                    "  scene #{}{}{}: {} instances{bounds}{excluded}",
+                    scene.scene_index, name, default, scene.instance_count
                 )
             }))
     })
@@ -826,8 +879,11 @@ mod tests {
             RigInfo::from_resolved(&doc, &ResolvedRoles::default())
                 .expect("empty roles match an empty document"),
             checks,
-            MeasurementContract::new(BTreeMap::new(), Vec::new())
-                .expect("empty measurements are valid"),
+            MeasurementContract::new(
+                BTreeMap::new(),
+                animsmith_core::measure::AssetMeasurements::default(),
+            )
+            .expect("empty measurements are valid"),
         )
     }
 
@@ -850,16 +906,33 @@ mod tests {
             }
         }))
         .expect("clip measurements deserialize");
-        let meshes = serde_json::from_value(json!([{
-            "name": "body\nmesh",
-            "vertex_count": 3,
-            "aabb": { "min": [0.0, 0.0, 0.0], "max": [1.0, 2.0, 3.0] },
-            "max_joints_per_vertex": 4,
-            "weight_sum_min": 0.9,
-            "weight_sum_max": 1.1
-        }]))
-        .expect("mesh measurements deserialize");
-        let measurements = MeasurementContract::new(clips, meshes).expect("finite measurements");
+        let assets = serde_json::from_value(json!({
+            "mesh_definitions": [{
+                "mesh_index": 7,
+                "name": "body\nmesh",
+                "vertex_count": 3,
+                "geometry_aabb": { "min": [0.0, 0.0, 0.0], "max": [1.0, 2.0, 3.0] },
+                "max_joints_per_vertex": 4,
+                "weight_sum_min": 0.9,
+                "weight_sum_max": 1.1
+            }],
+            "node_instances": [{
+                "node_index": 9,
+                "node_name": "body\nnode",
+                "mesh_index": 7,
+                "static_node_world_aabb": { "min": [2.0, 0.0, 0.0], "max": [3.0, 2.0, 3.0] }
+            }],
+            "scenes": [{
+                "scene_index": 2,
+                "name": "main\nscene",
+                "instance_count": 1,
+                "static_scene_world_aabb": { "min": [2.0, 0.0, 0.0], "max": [3.0, 2.0, 3.0] },
+                "excluded_instance_count": 0
+            }],
+            "default_scene_index": 2
+        }))
+        .expect("asset measurements deserialize");
+        let measurements = MeasurementContract::new(clips, assets).expect("finite measurements");
         let reports = [MeasureFileReport::new(
             "asset\npath.glb",
             empty_rig(),
@@ -871,7 +944,9 @@ mod tests {
             vec![
                 "asset\\npath.glb:",
                 "  walk\\nclip: 1.000s, 2 frames, 1 animated bones seam×0.25 gait φ=0.50 (10.0cm)",
-                "  mesh body\\nmesh: 3 verts bbox 1.000×2.000×3.000, ≤4 joints/vtx, weight-sum 0.900–1.100",
+                "  mesh definition #7 body\\nmesh: 3 verts geometry bbox 1.000×2.000×3.000, ≤4 joints/vtx, weight-sum 0.900–1.100",
+                "  node instance #9 body\\nnode -> mesh #7: static node-world bbox 1.000×2.000×3.000",
+                "  scene #2 main\\nscene [default]: 1 instances static scene-world bbox 1.000×2.000×3.000",
             ]
         );
     }
@@ -887,22 +962,31 @@ mod tests {
             }
         }))
         .expect("clip measurements deserialize");
-        let meshes = serde_json::from_value(json!([{
-            "name": "plain",
-            "vertex_count": 0,
-            "max_joints_per_vertex": 0
-        }]))
-        .expect("mesh measurements deserialize");
+        let assets = serde_json::from_value(json!({
+            "mesh_definitions": [{
+                "mesh_index": 0,
+                "name": "plain",
+                "vertex_count": 0,
+                "max_joints_per_vertex": 0
+            }],
+            "node_instances": [],
+            "scenes": []
+        }))
+        .expect("asset measurements deserialize");
         let reports = [
             MeasureFileReport::new(
                 "first.glb",
                 empty_rig(),
-                MeasurementContract::new(clips, meshes).expect("finite measurements"),
+                MeasurementContract::new(clips, assets).expect("finite measurements"),
             ),
             MeasureFileReport::new(
                 "second.glb",
                 empty_rig(),
-                MeasurementContract::new(BTreeMap::new(), Vec::new()).expect("empty measurements"),
+                MeasurementContract::new(
+                    BTreeMap::new(),
+                    animsmith_core::measure::AssetMeasurements::default(),
+                )
+                .expect("empty measurements"),
             ),
         ];
 
@@ -911,7 +995,7 @@ mod tests {
             vec![
                 "first.glb:",
                 "  idle: 2.000s, 1 frames, 0 animated bones",
-                "  mesh plain: 0 verts",
+                "  mesh definition #0 plain: 0 verts geometry bbox unavailable",
                 "second.glb:",
             ]
         );

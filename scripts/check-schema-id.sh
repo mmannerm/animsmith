@@ -32,7 +32,7 @@ check_schema() {
 }
 
 check_schema docs/schemas/output-v2.schema.json urn:animsmith:schema:output:2
-check_schema docs/schemas/measurements-v1.schema.json urn:animsmith:schema:measurements:1
+check_schema docs/schemas/measurements-v2.schema.json urn:animsmith:schema:measurements:2
 
 for removed_schema in \
   docs/schemas/output-v1.schema.json \
@@ -186,7 +186,7 @@ legacy_envelope_awk='
 legacy_candidate_pattern='"schema_version"'
 
 # Pin the scanner against a normal outer envelope whose schema/tool fields sit
-# between its version and command. Also prove that nested measurements v1 in a
+# between its version and command. Also prove that nested measurements v2 in a
 # current output-v2 envelope are not mistaken for an outer legacy contract.
 legacy_scanner_regression=$(
   printf '%s\n' \
@@ -272,14 +272,14 @@ modern_scanner_regression=$(
     '  "schema_version": 2,' \
     '  "command": "measure",' \
     '  "files": [{ "measurements": {' \
-    '    "schema_version": 1,' \
-    '    "schema": "urn:animsmith:schema:measurements:1"' \
+    '    "schema_version": 2,' \
+    '    "schema": "urn:animsmith:schema:measurements:2"' \
     '  }}]' \
     '}' \
     | awk "$legacy_envelope_awk"
 )
 if [ -n "$modern_scanner_regression" ]; then
-  fail "legacy-envelope scanner misclassified nested measurements v1"
+  fail "legacy-envelope scanner misclassified nested measurements v2"
 fi
 
 legacy_envelope=$(

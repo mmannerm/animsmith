@@ -8,10 +8,10 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 
 const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:2";
-const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:1";
+const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:2";
 const HOSTILE_PRESENTATION_TEXT: &str = "forged\nline\u{1b}[31m\u{2028}\u{2029}\u{202e}";
 const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v2.schema.json");
-const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v1.schema.json");
+const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v2.schema.json");
 const EXPECTED_CHECK_IDS: [&str; 16] = [
     "nan",
     "time-monotonic",
@@ -191,7 +191,7 @@ fn write_hostile_glb(path: &std::path::Path, hostile: &str, flipped: bool) {
     }
     doc.assets.meshes.push(MeshAsset {
         name: hostile.into(),
-        node: 0,
+        source_mesh_index: doc.assets.meshes.len(),
         primitives: vec![Primitive {
             positions: vec![
                 Vec3::new(0.0, 0.0, 0.0),
@@ -200,7 +200,12 @@ fn write_hostile_glb(path: &std::path::Path, hostile: &str, flipped: bool) {
             ],
             ..Primitive::default()
         }],
-        ..MeshAsset::default()
+    });
+    doc.assets.instances.push(MeshInstance {
+        source_node_index: doc.assets.instances.len(),
+        node: 0,
+        mesh: doc.assets.meshes.len() - 1,
+        ..MeshInstance::default()
     });
     animsmith_gltf::write::write(&doc, path).expect("writes hostile-name fixture");
 }
@@ -249,7 +254,7 @@ fn measurement_report(duration_s: f64) -> Value {
             "path": "fixture.gltf",
             "rig": { "profile": "unknown" },
             "measurements": {
-                "schema_version": 1,
+                "schema_version": 2,
                 "schema": MEASUREMENTS_SCHEMA_ID,
                 "clips": {
                     "walk": {
@@ -258,7 +263,10 @@ fn measurement_report(duration_s: f64) -> Value {
                         "animated_bones": [],
                         "bone_rotation_range_deg": {}
                     }
-                }
+                },
+                "mesh_definitions": [],
+                "node_instances": [],
+                "scenes": []
             }
         }]
     })
@@ -899,7 +907,7 @@ fn measure_json_uses_versioned_envelope() {
     assert_eq!(files.len(), 1);
     assert_eq!(files[0]["rig"]["profile"], "unknown");
     assert!(files[0]["checks"].is_null());
-    assert_eq!(files[0]["measurements"]["schema_version"], 1);
+    assert_eq!(files[0]["measurements"]["schema_version"], 2);
     assert_eq!(files[0]["measurements"]["schema"], MEASUREMENTS_SCHEMA_ID);
     assert!(files[0]["measurements"]["clips"]["walk"]["duration_s"].is_number());
 }
@@ -924,17 +932,25 @@ fn measure_text_escapes_controls_in_clip_and_mesh_names() {
     );
     let text = stdout(&output);
     assert_hostile_text_is_escaped(&text);
-    assert_eq!(text.matches("\\n").count(), 2, "clip and mesh: {text}");
-    assert_eq!(text.matches("\\u{1b}").count(), 2, "clip and mesh: {text}");
+    assert_eq!(
+        text.matches("\\n").count(),
+        3,
+        "clip, mesh, and node: {text}"
+    );
+    assert_eq!(
+        text.matches("\\u{1b}").count(),
+        3,
+        "clip, mesh, and node: {text}"
+    );
     assert_eq!(
         text.matches("\\u{2028}").count(),
-        2,
-        "clip and mesh: {text}"
+        3,
+        "clip, mesh, and node: {text}"
     );
     assert_eq!(
         text.matches("\\u{202e}").count(),
-        2,
-        "clip and mesh: {text}"
+        3,
+        "clip, mesh, and node: {text}"
     );
 }
 
@@ -1034,8 +1050,8 @@ fn measure_text_renderer_escapes_hostile_asset_text_and_input_path() {
     );
     assert_eq!(
         text.matches(escaped_asset).count(),
-        2,
-        "clip and mesh names should each be escaped:\n{text}"
+        3,
+        "clip, mesh-definition, and node names should each be escaped:\n{text}"
     );
     assert!(
         text.lines()
@@ -1130,7 +1146,7 @@ fn embedded_contract_types_emit_the_published_v2_envelope() {
         checks,
         animsmith_core::MeasurementContract::new(
             animsmith_core::measure::measure_document(&grids, &roles, &config),
-            animsmith_core::measure::measure_meshes(&doc.assets),
+            animsmith_core::measure::measure_assets(&doc),
         )
         .expect("measured evidence is finite"),
     );
@@ -1178,8 +1194,11 @@ fn output_schema_rejects_every_empty_custom_check_identifier() {
             animsmith_core::RigInfo::from_resolved(&doc, &roles)
                 .expect("empty roles match an empty document"),
             vec![check],
-            animsmith_core::MeasurementContract::new(BTreeMap::new(), Vec::new())
-                .expect("empty measurements are valid"),
+            animsmith_core::MeasurementContract::new(
+                BTreeMap::new(),
+                animsmith_core::measure::AssetMeasurements::default(),
+            )
+            .expect("empty measurements are valid"),
         )],
     );
     let valid = serde_json::to_value(envelope).expect("embedded envelope serializes");
@@ -1221,7 +1240,7 @@ fn lint_json_uses_versioned_envelope() {
     assert_eq!(json["command"], "lint");
     assert_eq!(json["summary"]["files"], 1);
     assert!(json["files"][0]["checks"].is_array());
-    assert_eq!(json["files"][0]["measurements"]["schema_version"], 1);
+    assert_eq!(json["files"][0]["measurements"]["schema_version"], 2);
     assert_eq!(
         json["files"][0]["measurements"]["schema"],
         MEASUREMENTS_SCHEMA_ID
@@ -1568,7 +1587,7 @@ fn output_schema_rejects_cross_command_and_nested_contract_drift() {
     assert!(!validator.is_valid(&foreign_field));
 
     let mut nested_version = measure.clone();
-    nested_version["files"][0]["measurements"]["schema_version"] = json!(2);
+    nested_version["files"][0]["measurements"]["schema_version"] = json!(3);
     assert!(!validator.is_valid(&nested_version));
 
     let mut lint_without_checks = measure;
@@ -1852,7 +1871,7 @@ fn diff_preserves_tailored_report_errors_and_remediation() {
     let mut unsupported_command = base.clone();
     unsupported_command["command"] = json!("diff");
     let mut unsupported_measurement_version = base.clone();
-    unsupported_measurement_version["files"][0]["measurements"]["schema_version"] = json!(2);
+    unsupported_measurement_version["files"][0]["measurements"]["schema_version"] = json!(3);
     let mut wrong_measurement_identity = base.clone();
     wrong_measurement_identity["files"][0]["measurements"]["schema"] =
         json!("urn:other:measurements");
@@ -1907,7 +1926,7 @@ fn diff_preserves_tailored_report_errors_and_remediation() {
         (
             "unsupported measurement version",
             unsupported_measurement_version,
-            "has measurement schema_version 2; this build reads measurement schema_version 1"
+            "has measurement schema_version 3; this build reads measurement schema_version 2"
                 .to_owned(),
         ),
         (
@@ -2022,10 +2041,10 @@ fn diff_rejects_outer_and_nested_contract_identity_drift() {
         (
             {
                 let mut report = measurement_report(1.0);
-                report["files"][0]["measurements"]["schema_version"] = json!(2);
+                report["files"][0]["measurements"]["schema_version"] = json!(3);
                 report
             },
-            "measurement schema_version 2",
+            "measurement schema_version 3",
         ),
         (
             {
