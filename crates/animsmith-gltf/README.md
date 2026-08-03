@@ -21,6 +21,13 @@ single call, matching `animsmith-fbx`. Consumers that judge only
 animation ignore `assets`; `measure` reports mesh-level measurements
 from it and `convert` carries it through.
 
+For measurement, the loader also records whether each primitive declares
+secondary `JOINTS_n` or `WEIGHTS_n` attributes. Mesh measurements retain an
+individual-primitive mismatch signal when complementary sides occur on
+different primitives. This is presence metadata only: secondary values are not
+evaluated as skinning influences or preserved by the writer. See the
+machine-readable output contract for the exact boundary.
+
 ## Install
 
 ```toml

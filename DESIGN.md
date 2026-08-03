@@ -236,6 +236,13 @@ animation, skin deformation, morph deformation, and runtime placement are
 excluded. The output contract records unavailable static node bounds and scene
 partial coverage rather than serializing non-finite values.
 
+The glTF loader also retains metadata-only presence for secondary
+`JOINTS_n`/`WEIGHTS_n` attributes. Measurement contract v3 aggregates those
+independent sides per mesh definition so unsupported or unpaired sets are
+observable without changing the primary four-influence semantics. Secondary
+per-vertex payloads, repair, and writer preservation remain outside the core
+skinning model.
+
 The scene-asset model keeps source mesh definitions separate from their
 mesh-bearing node instances and retains declared scene roots plus the optional
 default-scene index. That identity is measurement evidence: duplicate names do

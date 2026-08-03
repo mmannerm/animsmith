@@ -244,6 +244,11 @@ pub struct Document {
 /// One triangle-list primitive sharing a material. Attribute arrays may be
 /// indexed already; [`Primitive::weld`] dedupes an unindexed primitive into
 /// indexed form.
+///
+/// Additional glTF skin-influence attribute sets are intentionally metadata
+/// only. The primary four influences remain in [`Self::joints`] and
+/// [`Self::weights`]; consumers can use this metadata to apply their own
+/// policy without the core assuming how additional influences are evaluated.
 #[derive(Debug, Clone, Default)]
 pub struct Primitive {
     /// Index into [`SceneAssets::materials`].
@@ -260,6 +265,28 @@ pub struct Primitive {
     pub joints: Vec<[u16; 4]>,
     /// Skinning weights parallel to [`Primitive::joints`].
     pub weights: Vec<[f32; 4]>,
+    /// Declared non-primary skin-influence attribute sets.
+    ///
+    /// Each entry records whether the glTF primitive had `JOINTS_n` and/or
+    /// `WEIGHTS_n` for `n >= 1`. Entries are sorted by
+    /// [`AdditionalInfluenceSet::set_index`].
+    pub additional_influence_sets: Vec<AdditionalInfluenceSet>,
+}
+
+/// Presence metadata for one non-primary glTF skin-influence attribute set.
+///
+/// A set may contain only one side because source assets can declare
+/// `JOINTS_n` and `WEIGHTS_n` independently. This type deliberately does not
+/// retain the corresponding per-vertex values: the core model's skinning
+/// semantics remain the primary `JOINTS_0` / `WEIGHTS_0` set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AdditionalInfluenceSet {
+    /// glTF attribute-set number (`n >= 1`).
+    pub set_index: u32,
+    /// Whether `JOINTS_n` was declared.
+    pub joints_present: bool,
+    /// Whether `WEIGHTS_n` was declared.
+    pub weights_present: bool,
 }
 
 /// One source mesh definition, independent of any node that instances it.

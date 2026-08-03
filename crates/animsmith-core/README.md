@@ -26,6 +26,16 @@ animsmith-gltf = "0.1"
 
 The workspace MSRV is Rust 1.88.
 
+## Additional Skin-Influence Evidence
+
+`Primitive::additional_influence_sets` carries independent presence metadata
+for secondary glTF `JOINTS_n` and `WEIGHTS_n` attributes. The measurement
+contract aggregates that metadata per source mesh and retains whether either
+side was unpaired on an individual primitive, so complementary declarations on
+different primitives are not reported as a clean pair. It intentionally does
+not retain secondary per-vertex payloads or change the primary four-influence
+skinning semantics.
+
 ## Static Mesh Transform Baking
 
 Embedders can opt into

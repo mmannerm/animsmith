@@ -802,9 +802,9 @@ fn load_measurements(
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         let report: MeasurementReportInput = serde_json::from_str(&text)
             .map_err(|e| format!("bad JSON in {}: {e}", path.display()))?;
-        // Only the final v2 envelope with measurement contract v2 is
-        // accepted. Pre-finalization report shapes are intentionally not
-        // retained while the project is alpha.
+        // Only the current output-v2 envelope with measurement contract v3 is
+        // accepted. Older report shapes are intentionally not retained while
+        // the project is alpha.
         let file_count = report.file_count();
         let files = report.into_files().map_err(|error| {
             format!(

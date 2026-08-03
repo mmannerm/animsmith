@@ -81,6 +81,7 @@ fn skinned_triangle() -> Document {
                     ],
                     joints: vec![[0, 1, 0, 0]; 6],
                     weights: vec![[0.75, 0.25, 0.0, 0.0]; 6],
+                    ..Primitive::default()
                 };
                 prim.weld();
                 prim
@@ -564,6 +565,7 @@ fn load_preserves_unindexed_primitives() {
                     uvs: uvs.clone(),
                     joints: joints.clone(),
                     weights: weights.clone(),
+                    ..Primitive::default()
                 }],
             }],
             instances: vec![MeshInstance {
@@ -1145,4 +1147,93 @@ fn load_survives_zero_count_indices() {
     let prim = &doc.assets.meshes[0].primitives[0];
     assert_eq!(prim.positions.len(), 3, "mesh still loads");
     assert!(prim.indices.is_empty(), "empty index accessor dropped");
+}
+
+#[test]
+fn load_records_secondary_influence_set_sides_without_changing_primary_attributes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("secondary-influences.gltf");
+    let buffer_path = dir.path().join("secondary-influences.bin");
+
+    let mut bytes = Vec::new();
+    for value in [
+        [0.0_f32, 0.0, 0.0],
+        [1.0_f32, 0.0, 0.0],
+        [0.0_f32, 1.0, 0.0],
+    ]
+    .into_iter()
+    .flatten()
+    {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    // JOINTS_0, WEIGHTS_0, JOINTS_1, WEIGHTS_2, JOINTS_2.
+    bytes.extend_from_slice(&[0, 1, 0, 0].repeat(3));
+    for value in [0.75_f32, 0.25, 0.0, 0.0].repeat(3) {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes.extend_from_slice(&[2, 3, 0, 0].repeat(3));
+    for value in [0.1_f32, 0.2, 0.3, 0.4].repeat(3) {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes.extend_from_slice(&[4, 5, 0, 0].repeat(3));
+    std::fs::write(&buffer_path, &bytes).expect("writes buffer");
+
+    std::fs::write(
+        &path,
+        serde_json::json!({
+            "asset": { "version": "2.0" },
+            "buffers": [{ "uri": "secondary-influences.bin", "byteLength": bytes.len() }],
+            "bufferViews": [
+                { "buffer": 0, "byteOffset": 0, "byteLength": 36 },
+                { "buffer": 0, "byteOffset": 36, "byteLength": 12 },
+                { "buffer": 0, "byteOffset": 48, "byteLength": 48 },
+                { "buffer": 0, "byteOffset": 96, "byteLength": 12 },
+                { "buffer": 0, "byteOffset": 108, "byteLength": 48 },
+                { "buffer": 0, "byteOffset": 156, "byteLength": 12 }
+            ],
+            "accessors": [
+                { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0, 0, 0], "max": [1, 1, 0] },
+                { "bufferView": 1, "componentType": 5121, "count": 3, "type": "VEC4" },
+                { "bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC4" },
+                { "bufferView": 3, "componentType": 5121, "count": 3, "type": "VEC4" },
+                { "bufferView": 4, "componentType": 5126, "count": 3, "type": "VEC4" },
+                { "bufferView": 5, "componentType": 5121, "count": 3, "type": "VEC4" }
+            ],
+            "meshes": [{ "primitives": [
+                { "attributes": { "POSITION": 0, "JOINTS_0": 1, "WEIGHTS_0": 2, "JOINTS_1": 3, "WEIGHTS_2": 4, "JOINTS_2": 5 } },
+                { "attributes": { "POSITION": 0 } }
+            ] }],
+            "nodes": [{ "mesh": 0 }],
+            "scenes": [{ "nodes": [0] }],
+            "scene": 0
+        })
+        .to_string(),
+    )
+    .expect("writes glTF");
+
+    let doc = animsmith_gltf::load(&path).expect("loads");
+    let first = &doc.assets.meshes[0].primitives[0];
+    assert_eq!(first.joints, vec![[0, 1, 0, 0]; 3]);
+    assert_eq!(first.weights, vec![[0.75, 0.25, 0.0, 0.0]; 3]);
+    assert_eq!(
+        first.additional_influence_sets,
+        vec![
+            AdditionalInfluenceSet {
+                set_index: 1,
+                joints_present: true,
+                weights_present: false
+            },
+            AdditionalInfluenceSet {
+                set_index: 2,
+                joints_present: true,
+                weights_present: true
+            },
+        ]
+    );
+    assert!(
+        doc.assets.meshes[0].primitives[1]
+            .additional_influence_sets
+            .is_empty(),
+        "a different primitive must not inherit secondary metadata"
+    );
 }
