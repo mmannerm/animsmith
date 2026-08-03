@@ -82,6 +82,12 @@ fn default_loop_caps_are_applied_at_the_boundary() {
             .findings()
             .is_empty()
     );
+    let position_at = translation_doc([0.0, 0.0025, 0.005, 0.0075, 0.01]);
+    assert!(
+        check(&evaluate(&position_at, &loop_config()), "loop-closure")
+            .findings()
+            .is_empty()
+    );
     let position_over = translation_doc([0.0, 0.00275, 0.0055, 0.00825, 0.011]);
     assert_eq!(
         check(&evaluate(&position_over, &loop_config()), "loop-closure")
@@ -98,6 +104,9 @@ fn default_loop_caps_are_applied_at_the_boundary() {
         .findings()
         .is_empty()
     );
+    let rotation_at = evaluate(&rotation_doc(1.0), &loop_config());
+    let rotation_at = check(&rotation_at, "loop-closure");
+    assert!(rotation_at.findings().is_empty(), "{rotation_at:#?}");
     assert_eq!(
         check(
             &evaluate(&rotation_doc(1.1), &loop_config()),
@@ -111,6 +120,12 @@ fn default_loop_caps_are_applied_at_the_boundary() {
     let velocity_under = translation_doc([0.0, 0.01125, 0.02, 0.01125, 0.0]);
     assert!(
         check(&evaluate(&velocity_under, &loop_config()), "loop-seam-vel")
+            .findings()
+            .is_empty()
+    );
+    let velocity_at = translation_doc([0.0, 0.0125, 0.02, 0.0125, 0.0]);
+    assert!(
+        check(&evaluate(&velocity_at, &loop_config()), "loop-seam-vel")
             .findings()
             .is_empty()
     );
@@ -208,6 +223,25 @@ fn closed_pose_with_a_velocity_cusp_fails_only_c1() {
 }
 
 #[test]
+fn seam_velocity_uses_independent_incoming_and_outgoing_steps() {
+    // Outgoing is +0.1 m/s and incoming is -0.2 m/s. Keeping the slopes
+    // asymmetric distinguishes the C1 definition from a symmetric cusp
+    // shortcut while the endpoint pose remains exactly closed.
+    let doc = translation_doc([0.0, 0.025, 0.08, 0.05, 0.0]);
+    let roles = ResolvedRoles::default();
+    let grids = MetricGrids::new(&doc);
+    let measurements =
+        animsmith_core::measure::measure_document(&grids, &roles, &Config::default());
+    let metric = &measurements["guard"]
+        .loop_continuity
+        .as_ref()
+        .expect("continuity")
+        .bones[0];
+    assert_eq!(metric.position_delta_m, 0.0);
+    assert!((metric.seam_velocity_delta_mps - 0.3).abs() < 1e-6);
+}
+
+#[test]
 fn rotation_closure_uses_shortest_path_model_space_delta() {
     let doc = rotation_doc(10.0);
     let records = evaluate(&doc, &loop_config());
@@ -218,13 +252,27 @@ fn rotation_closure_uses_shortest_path_model_space_delta() {
             .message
             .contains("does not close in rotation")
     );
+    let roles = ResolvedRoles::default();
+    let grids = MetricGrids::new(&doc);
+    let measurements =
+        animsmith_core::measure::measure_document(&grids, &roles, &Config::default());
+    assert!(
+        (measurements["guard"]
+            .loop_continuity
+            .as_ref()
+            .unwrap()
+            .bones[0]
+            .rotation_delta_deg
+            - 10.0)
+            .abs()
+            < 1e-5
+    );
 
     let mut sign_equivalent = rotation_doc(0.0);
     let TrackValues::Quats(values) = &mut sign_equivalent.clips[0].tracks[1].values else {
         unreachable!()
     };
     values[4] = -Quat::IDENTITY;
-    let roles = ResolvedRoles::default();
     let grids = MetricGrids::new(&sign_equivalent);
     let measurements =
         animsmith_core::measure::measure_document(&grids, &roles, &Config::default());
@@ -301,17 +349,21 @@ fn undeclared_and_too_short_clips_keep_typed_coverage_semantics() {
 
 #[test]
 fn non_finite_model_evidence_is_a_typed_gap_not_a_loop_finding() {
-    let doc = translation_doc([0.0, f32::NAN, 0.0, 0.0, 0.0]);
-    let records = evaluate(&doc, &loop_config());
-    for id in ["loop-closure", "loop-seam-vel"] {
-        let result = check(&records, id);
-        assert_eq!(result.evaluation(), EvaluationState::NotEvaluated);
-        assert!(result.findings().is_empty(), "{result:#?}");
-        assert_eq!(result.gaps().len(), 1);
-        assert_eq!(
-            result.gaps()[0].code,
-            CoverageGapCode::MEASUREMENT_UNAVAILABLE
-        );
+    for values in [
+        [0.0, f32::NAN, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, f32::INFINITY],
+    ] {
+        let records = evaluate(&translation_doc(values), &loop_config());
+        for id in ["loop-closure", "loop-seam-vel"] {
+            let result = check(&records, id);
+            assert_eq!(result.evaluation(), EvaluationState::NotEvaluated);
+            assert!(result.findings().is_empty(), "{result:#?}");
+            assert_eq!(result.gaps().len(), 1);
+            assert_eq!(
+                result.gaps()[0].code,
+                CoverageGapCode::MEASUREMENT_UNAVAILABLE
+            );
+        }
     }
 }
 

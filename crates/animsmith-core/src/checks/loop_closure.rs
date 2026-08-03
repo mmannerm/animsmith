@@ -9,6 +9,8 @@ use crate::evaluation::{
 use crate::finding::{Finding, Severity};
 use crate::metrics::loop_continuity_metrics;
 
+use super::exceeds_f32_cap;
+
 /// Default maximum last-to-first model-space position delta: 1 cm.
 pub const DEFAULT_MAX_POSITION_DELTA_M: f64 = 0.01;
 /// Default maximum shortest-path model-space rotation delta: 1 degree.
@@ -71,7 +73,7 @@ impl Check for LoopClosure {
                 .enumerate()
                 .max_by(|(_, a), (_, b)| a.position_delta_m.total_cmp(&b.position_delta_m));
             if let Some((bone_index, metric)) = max_position
-                && metric.position_delta_m > max_position_delta_m
+                && exceeds_f32_cap(metric.position_delta_m, max_position_delta_m)
             {
                 let bone = &ctx.doc.skeleton.bones[bone_index].name;
                 findings.push(
@@ -96,7 +98,7 @@ impl Check for LoopClosure {
                 .enumerate()
                 .max_by(|(_, a), (_, b)| a.rotation_delta_deg.total_cmp(&b.rotation_delta_deg));
             if let Some((bone_index, metric)) = max_rotation
-                && metric.rotation_delta_deg > max_rotation_delta_deg
+                && exceeds_f32_cap(metric.rotation_delta_deg, max_rotation_delta_deg)
             {
                 let bone = &ctx.doc.skeleton.bones[bone_index].name;
                 findings.push(

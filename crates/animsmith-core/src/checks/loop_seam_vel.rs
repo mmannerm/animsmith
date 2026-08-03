@@ -9,6 +9,8 @@ use crate::evaluation::{
 use crate::finding::{Finding, Severity};
 use crate::metrics::loop_continuity_metrics;
 
+use super::exceeds_f32_cap;
+
 /// Default maximum difference between the velocities entering and leaving
 /// the seam: 0.1 metres per second.
 pub const DEFAULT_MAX_VELOCITY_DELTA_MPS: f64 = 0.1;
@@ -69,7 +71,7 @@ impl Check for LoopSeamVelocity {
                     .total_cmp(&b.seam_velocity_delta_mps)
             });
             if let Some((bone_index, metric)) = max_velocity
-                && metric.seam_velocity_delta_mps > max_velocity_delta_mps
+                && exceeds_f32_cap(metric.seam_velocity_delta_mps, max_velocity_delta_mps)
             {
                 let bone = &ctx.doc.skeleton.bones[bone_index].name;
                 findings.push(

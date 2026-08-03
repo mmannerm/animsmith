@@ -1073,12 +1073,17 @@ fn measure_json_uses_versioned_envelope() {
     let loop_bones = files[0]["measurements"]["clips"]["walk"]["loop_continuity"]["bones"]
         .as_array()
         .expect("measurable clip exposes per-bone loop continuity");
-    assert!(!loop_bones.is_empty());
-    assert_eq!(loop_bones[0]["bone_index"], 0);
-    assert!(loop_bones[0]["bone_name"].is_string());
-    assert!(loop_bones[0]["position_delta_m"].is_number());
-    assert!(loop_bones[0]["rotation_delta_deg"].is_number());
-    assert!(loop_bones[0]["seam_velocity_delta_mps"].is_number());
+    assert_eq!(loop_bones.len(), 3);
+    for (bone, (index, name)) in loop_bones
+        .iter()
+        .zip([(0, "root"), (1, "hips"), (2, "foot")])
+    {
+        assert_eq!(bone["bone_index"], index);
+        assert_eq!(bone["bone_name"], name);
+        assert!(bone["position_delta_m"].is_number());
+        assert!(bone["rotation_delta_deg"].is_number());
+        assert!(bone["seam_velocity_delta_mps"].is_number());
+    }
 }
 
 #[test]

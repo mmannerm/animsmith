@@ -393,6 +393,30 @@ mod tests {
     }
 
     #[test]
+    fn loop_continuity_diff_floors_are_inclusive() {
+        let mut before = clip_measurements();
+        let before_bone = &mut before.loop_continuity.as_mut().unwrap().bones[0];
+        before_bone.position_delta_m = 0.0;
+        before_bone.rotation_delta_deg = 0.0;
+        before_bone.seam_velocity_delta_mps = 0.0;
+
+        let mut at_floor = before.clone();
+        let after_bone = &mut at_floor.loop_continuity.as_mut().unwrap().bones[0];
+        after_bone.position_delta_m = 0.001;
+        after_bone.rotation_delta_deg = 0.1;
+        after_bone.seam_velocity_delta_mps = 0.01;
+
+        assert!(
+            diff_measurements(
+                &measurement_map("walk", before),
+                &measurement_map("walk", at_floor),
+            )
+            .is_empty(),
+            "movement exactly at a significance floor is noise"
+        );
+    }
+
+    #[test]
     fn reports_clip_added_and_removed() {
         let deltas = diff_measurements(
             &measurement_map("removed", clip_measurements()),

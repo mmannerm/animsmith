@@ -146,8 +146,10 @@ pub fn loop_continuity_metrics(grid: &PoseGrid) -> Option<Vec<BoneLoopContinuity
 
             let first_rotation = first_rotation.normalize();
             let last_rotation = last_rotation.normalize();
-            let dot = first_rotation.dot(last_rotation).abs().clamp(0.0, 1.0);
-            let rotation_delta_deg = f64::from(2.0 * dot.acos().to_degrees());
+            let delta = first_rotation.conjugate() * last_rotation;
+            let [x, y, z, w] = delta.to_array();
+            let sin_half_angle = Vec3::new(x, y, z).length();
+            let rotation_delta_deg = f64::from(2.0 * sin_half_angle.atan2(w.abs()).to_degrees());
             let position_delta_m = f64::from((last - first).length());
             let outgoing_velocity = (next - first) / first_dt as f32;
             let incoming_velocity = (last - previous) / last_dt as f32;
