@@ -40,17 +40,24 @@ impl Check for LoopClosure {
         let mut evaluated_scopes = Vec::new();
         let mut gaps = Vec::new();
         let settings = ctx.config.check_settings(self.id());
-        let max_position_delta_m = settings
+        let global_max_position_delta_m = settings
             .max_position_delta_m
             .unwrap_or(DEFAULT_MAX_POSITION_DELTA_M);
-        let max_rotation_delta_deg = settings
+        let global_max_rotation_delta_deg = settings
             .max_rotation_delta_deg
             .unwrap_or(DEFAULT_MAX_ROTATION_DELTA_DEG);
 
         for (clip_index, clip) in ctx.doc.clips.iter().enumerate() {
-            if ctx.expectations(clip_index).looping != Some(true) {
+            let expectations = ctx.expectations(clip_index);
+            if expectations.looping != Some(true) {
                 continue;
             }
+            let max_position_delta_m = expectations
+                .max_loop_position_delta_m
+                .unwrap_or(global_max_position_delta_m);
+            let max_rotation_delta_deg = expectations
+                .max_loop_rotation_delta_deg
+                .unwrap_or(global_max_rotation_delta_deg);
             let scope = EvaluationScope::new(EvaluationScopeCode::LOOP_CLOSURE).subject(&clip.name);
             let Some(metrics) = ctx
                 .grid(clip_index)

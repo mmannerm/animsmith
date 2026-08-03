@@ -38,16 +38,20 @@ impl Check for LoopSeamVelocity {
         let mut findings = Vec::new();
         let mut evaluated_scopes = Vec::new();
         let mut gaps = Vec::new();
-        let max_velocity_delta_mps = ctx
+        let global_max_velocity_delta_mps = ctx
             .config
             .check_settings(self.id())
             .max_velocity_delta_mps
             .unwrap_or(DEFAULT_MAX_VELOCITY_DELTA_MPS);
 
         for (clip_index, clip) in ctx.doc.clips.iter().enumerate() {
-            if ctx.expectations(clip_index).looping != Some(true) {
+            let expectations = ctx.expectations(clip_index);
+            if expectations.looping != Some(true) {
                 continue;
             }
+            let max_velocity_delta_mps = expectations
+                .max_loop_velocity_delta_mps
+                .unwrap_or(global_max_velocity_delta_mps);
             let scope =
                 EvaluationScope::new(EvaluationScopeCode::LOOP_SEAM_VELOCITY).subject(&clip.name);
             let Some(metrics) = ctx

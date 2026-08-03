@@ -478,6 +478,9 @@ the structured fields as automation data; treat `message` as display text.
 The nested `check_id` intentionally repeats its owning check record so a
 finding stays self-describing when extracted or consumed through the embedded
 API; the evaluator rejects mismatched parent/child ids.
+For `loop-closure` and `loop-seam-vel`, `expected` is the effective cap for
+that finding's clip after exact-name and glob expectations are resolved, with
+the corresponding global check setting or built-in default as fallback.
 
 Numeric equality in the JSON contract means equality of decoded JSON numbers,
 not byte-for-byte lexical spelling. For example, `1`, `1.0`, and `1e0` denote

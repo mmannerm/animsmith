@@ -341,9 +341,9 @@ golden-test against.
 | `constant-track` | redundant multi-key representation whose interpolation-aware trajectory never moves | raw trajectory | eps | new |
 | `frozen-bone` | required bone's max angular deviation from first frame below floor | grid + roles/meta | `min_rotation_deg` | reference contract rotation floor + measured rotation ranges |
 | `duplicate-loop-endpoint` | strict authored-key duplicate closing endpoint in a declared loop; warning/default-on | common finite strictly increasing timeline, valid cardinality, matching endpoints, interior motion + loop declaration | — | mechanical subset of #22's endpoint classifier plus open-cycle transform |
-| `loop-closure` | maximum per-bone model-space last→first position and shortest-path rotation delta | grid + loop declaration | `max_position_delta_m`, `max_rotation_delta_deg` | consumer-neutral authoring-loop requirement |
+| `loop-closure` | maximum per-bone model-space last→first position and shortest-path rotation delta | grid + loop declaration | global `max_position_delta_m` / `max_rotation_delta_deg`; clip `max_loop_position_delta_m` / `max_loop_rotation_delta_deg` | consumer-neutral authoring-loop requirement |
 | `loop-seam` | last→first position wrap discontinuity of feet-relative-to-hips, normalized by the *local neighbour* per-frame step, with a stride floor so stationary clips skip | grid + Hips/feet/toe roles | `max_ratio`, `min_stride_step_m` | `locomotion_metrics.py` — port verbatim |
-| `loop-seam-vel` | maximum per-bone model-space difference between the in-clip velocities entering and leaving the wrap | grid + loop declaration | `max_velocity_delta_mps` | consumer-neutral authoring-loop requirement |
+| `loop-seam-vel` | maximum per-bone model-space difference between the in-clip velocities entering and leaving the wrap | grid + loop declaration | global `max_velocity_delta_mps`; clip `max_loop_velocity_delta_mps` | consumer-neutral authoring-loop requirement |
 | `loop-seam-rot` | maximum per-bone shortest-path model-space angular-velocity difference between the in-clip steps entering and leaving the wrap | grid + loop declaration | `max_angular_velocity_delta_degps` | consumer-neutral authoring-loop requirement |
 | `root-motion-speed` | horizontal root/hips displacement ÷ duration vs declared `speed_mps`; flags stray speed pins on non-locomotion clips | grid + Root/Hips | pinned speed + tolerance (reference gate: 15%) | reference bake |
 | `missing-bones` | declared-required animated bones absent; tracks targeting nodes outside the skeleton | raw + meta | bone/role list | reference contract `animates_bones` |
@@ -400,8 +400,14 @@ severity = "warn"
 [clips."run_*"]                    # glob; exact > glob, later entries win ties
 loop = true
 in_place = true
+max_loop_position_delta_m = 0.04   # finite per-family override; global is fallback
+max_loop_rotation_delta_deg = 2.0
+max_loop_velocity_delta_mps = 0.2
 speed_mps = { value = 3.1, tolerance = 0.25 }
 fps = 30
+
+[clips.run_forward]                # exact fields overlay matching globs
+max_loop_rotation_delta_deg = 0.5
 
 [gait_groups.run-ring]
 clips = ["run_forward", "run_back", "run_left", "run_right"]

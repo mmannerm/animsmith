@@ -59,6 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             fps: Some(2.0), // the fixture keys at 0.0/0.5/1.0 s
             speed_mps: None,
             animates_bones: Some(vec!["hips".into()]),
+            ..Default::default()
         },
     );
 

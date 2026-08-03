@@ -107,7 +107,9 @@ pub mod static_bake;
 pub mod transform;
 
 pub use check::{Check, CheckCtx, all_checks, mechanical_checks};
-pub use config::{ClipExpectations, Config, GaitGroup, Pinned, SeveritySetting};
+pub use config::{
+    ClipExpectations, Config, ConfigValidationError, GaitGroup, Pinned, SeveritySetting,
+};
 pub use contract::{
     DiffEnvelope, LintEnvelope, LintFileReport, MEASUREMENTS_SCHEMA_ID,
     MEASUREMENTS_SCHEMA_VERSION, MeasureEnvelope, MeasureFileReport, MeasurementContract,

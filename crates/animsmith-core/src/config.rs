@@ -13,7 +13,7 @@
 use crate::finding::Severity;
 use crate::metrics::MIN_STRIDE_STEP_M;
 use crate::profile::Role;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use std::collections::BTreeMap;
 
 /// A pinned expectation: declared value ± tolerance.
@@ -98,6 +98,21 @@ pub struct ClipExpectations {
     /// The clip is a cyclic loop; loop checks apply.
     #[serde(rename = "loop")]
     pub looping: Option<bool>,
+    /// `loop-closure`: per-clip maximum model-space position delta in
+    /// metres. When unset, the global `loop-closure` setting (or its
+    /// built-in default) applies.
+    #[serde(default, deserialize_with = "deserialize_nonnegative_finite_option")]
+    pub max_loop_position_delta_m: Option<f64>,
+    /// `loop-closure`: per-clip maximum model-space rotation delta in
+    /// degrees. When unset, the global `loop-closure` setting (or its
+    /// built-in default) applies.
+    #[serde(default, deserialize_with = "deserialize_nonnegative_finite_option")]
+    pub max_loop_rotation_delta_deg: Option<f64>,
+    /// `loop-seam-vel`: per-clip maximum incoming/outgoing model-space
+    /// linear-velocity difference in metres per second. When unset, the
+    /// global `loop-seam-vel` setting (or its built-in default) applies.
+    #[serde(default, deserialize_with = "deserialize_nonnegative_finite_option")]
+    pub max_loop_velocity_delta_mps: Option<f64>,
     /// Expected clip duration in seconds; consumed by the
     /// `duration-sanity` check. Its value must be finite and positive,
     /// and its tolerance must be finite and non-negative.
@@ -122,6 +137,15 @@ impl ClipExpectations {
     fn merged_with(&self, other: &ClipExpectations) -> ClipExpectations {
         ClipExpectations {
             looping: other.looping.or(self.looping),
+            max_loop_position_delta_m: other
+                .max_loop_position_delta_m
+                .or(self.max_loop_position_delta_m),
+            max_loop_rotation_delta_deg: other
+                .max_loop_rotation_delta_deg
+                .or(self.max_loop_rotation_delta_deg),
+            max_loop_velocity_delta_mps: other
+                .max_loop_velocity_delta_mps
+                .or(self.max_loop_velocity_delta_mps),
             duration_s: other.duration_s.or(self.duration_s),
             speed_mps: other.speed_mps.or(self.speed_mps),
             in_place: other.in_place.or(self.in_place),
@@ -132,6 +156,29 @@ impl ClipExpectations {
                 .or_else(|| self.animates_bones.clone()),
         }
     }
+}
+
+/// Deserialize an optional non-negative finite cap.
+///
+/// Loop-continuity evidence is always non-negative and finite, so accepting a
+/// negative or non-finite cap would make its pass/fail result surprising.
+fn deserialize_nonnegative_finite_option<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<f64>::deserialize(deserializer)?;
+    if let Some(value) = value
+        && !is_valid_loop_cap(value)
+    {
+        return Err(serde::de::Error::custom(
+            "must be a finite non-negative number",
+        ));
+    }
+    Ok(value)
+}
+
+fn is_valid_loop_cap(value: f64) -> bool {
+    value.is_finite() && value >= 0.0
 }
 
 /// A set of clips whose gait phases must agree (a directional blend
@@ -178,6 +225,23 @@ impl Default for RigConfig {
     }
 }
 
+/// Invalid values in a directly constructed [`Config`].
+///
+/// Numeric values are intentionally not retained in this error so it remains
+/// equality-comparable even when the rejected input was `NaN`.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum ConfigValidationError {
+    /// A per-clip loop-continuity cap was negative or non-finite.
+    #[error("clip selector {selector:?} field {field:?} must be a finite non-negative number")]
+    InvalidClipLoopCap {
+        /// Exact clip name or glob containing the invalid cap.
+        selector: String,
+        /// Stable public [`ClipExpectations`] field name.
+        field: &'static str,
+    },
+}
+
 /// The whole configuration. Field names match the `animsmith.toml`
 /// sections.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -202,6 +266,45 @@ pub struct Config {
 }
 
 impl Config {
+    /// Validate values that can also be supplied through the public Rust
+    /// configuration structs.
+    ///
+    /// Deserialization rejects the same invalid values at the file/config
+    /// boundary. Embedded callers that construct [`Config`] directly may call
+    /// this method for an earlier error; [`crate::evaluate_checks`] always
+    /// calls it before inspecting or executing the supplied check catalog.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigValidationError::InvalidClipLoopCap`] when a clip
+    /// selector contains a negative or non-finite per-clip loop cap.
+    pub fn validate(&self) -> Result<(), ConfigValidationError> {
+        for (selector, expectations) in &self.clips {
+            for (field, value) in [
+                (
+                    "max_loop_position_delta_m",
+                    expectations.max_loop_position_delta_m,
+                ),
+                (
+                    "max_loop_rotation_delta_deg",
+                    expectations.max_loop_rotation_delta_deg,
+                ),
+                (
+                    "max_loop_velocity_delta_mps",
+                    expectations.max_loop_velocity_delta_mps,
+                ),
+            ] {
+                if value.is_some_and(|value| !is_valid_loop_cap(value)) {
+                    return Err(ConfigValidationError::InvalidClipLoopCap {
+                        selector: selector.clone(),
+                        field,
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Effective expectations for a clip: glob matches (in key order)
     /// overlaid, exact match last.
     pub fn expectations_for(&self, clip: &str) -> ClipExpectations {
