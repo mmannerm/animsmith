@@ -92,7 +92,7 @@ should fail on warnings too:
 $ animsmith lint --deny-warnings examples/assets/clip-dirty.glb   # exits 1
 ```
 
-For machine consumption, `--format json` emits the v3 result envelope
+For machine consumption, `--format json` emits the v4 result envelope
 (see [output.md](../docs/output.md)). This `jq` projection keeps the example
 short while showing where retained/promotion evidence, content findings, and
 independently versioned measurement evidence live:
@@ -103,8 +103,8 @@ $ animsmith lint --format json examples/assets/clip-dirty.glb | jq \
       check: (.files[0].checks[] | select(.check_id == "quat-norm")),
       measurements: (.files[0].measurements | {schema_version, schema})}'
 {
-  "schema_version": 3,
-  "schema": "urn:animsmith:schema:output:3",
+  "schema_version": 4,
+  "schema": "urn:animsmith:schema:output:4",
   "command": "lint",
   "input": {
     "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
@@ -123,8 +123,8 @@ $ animsmith lint --format json examples/assets/clip-dirty.glb | jq \
     ]
   },
   "measurements": {
-    "schema_version": 8,
-    "schema": "urn:animsmith:schema:measurements:8",
+    "schema_version": 9,
+    "schema": "urn:animsmith:schema:measurements:9",
     "clips": {},
     "mesh_definitions": [],
     "node_instances": [],
@@ -284,6 +284,12 @@ also need resolvable rig roles. Without those roles they report a typed coverage
 gap rather than guess, so a config that pins a `[rig] profile` (or inline
 `[rig.roles]`) is what makes them fire.
 
+`sync-group` is role-independent: use it for same-time or absolute-sync blend
+sets, where compatible duration, longest-channel key count, validated declared
+FPS grid, and loop endpoint mode matter. Each group declares non-negative
+duration, key-count, and FPS spread tolerances; incompatible findings retain a
+machine-readable row for every configured member.
+
 `examples/assets/walk.glb` is a committed rig for this: a hips + two-foot
 skeleton with a one-second walk cycle. Its bone names resolve a built-in
 profile, so `inspect` binds the rig with no config at all:
@@ -312,8 +318,8 @@ since this cycle returns its feet exactly), gait phase, and L/R foot amplitude:
 ```console
 $ animsmith measure examples/assets/walk.glb          # --format json
 {
-  "schema_version": 3,
-  "schema": "urn:animsmith:schema:output:3",
+  "schema_version": 4,
+  "schema": "urn:animsmith:schema:output:4",
   "tool": { "name": "animsmith", "version": "0.1.0",
             "source": { "revision": null, "dirty": null } },
   "command": "measure",
@@ -328,8 +334,8 @@ $ animsmith measure examples/assets/walk.glb          # --format json
       "rig": { "profile": "ue-mannequin", "resolved_roles": {
         "hips": "pelvis", "left_foot": "foot_l", "right_foot": "foot_r" } },
       "measurements": {
-        "schema_version": 8,
-        "schema": "urn:animsmith:schema:measurements:8",
+        "schema_version": 9,
+        "schema": "urn:animsmith:schema:measurements:9",
         "clips": { "walk": {
           "duration_s": 1.0, "frame_count": 33,
           "animated_bones": ["foot_l", "foot_r"],

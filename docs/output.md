@@ -7,20 +7,20 @@ future machine serializers should project the JSON contract.
 
 ## Contract identities
 
-Validation and comparison JSON commands emit output contract v3 with the immutable protocol
-identity `urn:animsmith:schema:output:3`. The retrievable schema is
-[`output-v3.schema.json`](schemas/output-v3.schema.json); its repository URL
+Validation and comparison JSON commands emit output contract v4 with the immutable protocol
+identity `urn:animsmith:schema:output:4`. The retrievable schema is
+[`output-v4.schema.json`](schemas/output-v4.schema.json); its repository URL
 is a retrieval location, not the protocol identity.
 
 Measurement evidence is nested and independently versioned as
-`urn:animsmith:schema:measurements:8`. Its retrievable schema is
-[`measurements-v8.schema.json`](schemas/measurements-v8.schema.json). Version 8
-adds per-bone angular seam-velocity evidence; a future
+`urn:animsmith:schema:measurements:9`. Its retrievable schema is
+[`measurements-v9.schema.json`](schemas/measurements-v9.schema.json). Version 9
+adds declared-loop endpoint modes and validated declared-FPS grid evidence; a future
 measurement-definition change can therefore bump that contract without
 redesigning the outer result envelope.
 
 `convert --format json` is deliberately a separate conversion-evidence
-contract, not another command in the output-v3 envelope. Its immutable
+contract, not another command in the output-v4 envelope. Its immutable
 identity is `urn:animsmith:schema:conversion-evidence:2`; its retrievable
 schema is
 [`conversion-evidence-v2.schema.json`](schemas/conversion-evidence-v2.schema.json).
@@ -40,15 +40,15 @@ exclusively; regenerate v1 evidence when a v2 consumer is required.
 
 [`Output-v2`](schemas/output-v2.schema.json) remains a historical immutable
 contract. The current CLI emits and
-`diff` reads output-v3; regenerate a current output-v3 report from the original
+`diff` reads output-v4; regenerate a current output-v4 report from the original
 asset with `animsmith measure --format json` before passing it to `diff`.
 
 ## Common envelope
 
 ```json
 {
-  "schema_version": 3,
-  "schema": "urn:animsmith:schema:output:3",
+  "schema_version": 4,
+  "schema": "urn:animsmith:schema:output:4",
   "tool": {
     "name": "animsmith",
     "version": "0.1.0",
@@ -219,8 +219,8 @@ Both commands put evidence under `files[].measurements`:
 
 ```json
 {
-  "schema_version": 8,
-  "schema": "urn:animsmith:schema:measurements:8",
+  "schema_version": 9,
+  "schema": "urn:animsmith:schema:measurements:9",
   "clips": {},
   "mesh_definitions": [],
   "node_instances": [],
@@ -238,6 +238,16 @@ Both commands put evidence under `files[].measurements`:
 `clips` maps clip names to duration, frame count, animated bones, rotation
 ranges, optional per-bone loop continuity, and optional role-dependent gait,
 foot-seam, and speed metrics.
+
+For clips declared with `loop = true`, `loop_endpoint_mode` is present when
+AnimSmith can distinguish a strict mechanically removable
+`duplicate_endpoint`, a non-duplicate `unique_cycle` within the effective
+position/rotation closure caps, or a `non_closing` cycle beyond either cap.
+Clips not declared as loops and loops without enough finite evidence omit the
+field. When a positive declared FPS places the duration and every authored key
+on its frame grid, `frame_grid` records that `fps` and the rounded number of
+`frame_intervals`; `frame_count` remains the longest authored channel's key
+count and is not relabeled as an authored FPS grid.
 
 `loop_continuity.bones[]` is present when a clip has at least three samples and
 the seam-adjacent model-space evidence is finite. Rows stay in skeleton order
@@ -437,11 +447,12 @@ Built-in gap codes are:
 | Gap code | Meaning | Emitted by |
 |---|---|---|
 | `roles_unresolved` | Required semantic rig roles were not resolved. | `loop-seam`, `root-motion-speed`, `in-place`, `foot-slide`, `gait-group` |
-| `measurement_unavailable` | A required numeric measurement could not be produced or did not meet its evidence floor. | `loop-closure`, `duplicate-loop-endpoint`, `loop-seam`, `loop-seam-vel`, `loop-seam-rot`, `root-motion-speed`, `in-place`, `foot-slide`, `gait-group` |
+| `measurement_unavailable` | A required numeric measurement could not be produced or did not meet its evidence floor. | `loop-closure`, `duplicate-loop-endpoint`, `loop-seam`, `loop-seam-vel`, `loop-seam-rot`, `root-motion-speed`, `in-place`, `foot-slide`, `gait-group`, `sync-group` |
 | `skeleton_unavailable` | Required skeleton presence work could not run because the file has no usable skeleton. | `required-bones` |
-| `insufficient_measurable_members` | Fewer than two gait-group members produced usable phases. | `gait-group` |
-| `members_not_evaluated` | Some configured gait-group members did not produce usable phases. | `gait-group` |
+| `insufficient_measurable_members` | Fewer than two configured group members produced usable comparison evidence. | `gait-group`, `sync-group` |
+| `members_not_evaluated` | Some configured group members did not produce usable comparison evidence. | `gait-group`, `sync-group` |
 | `invalid_declared_fps` | A declared frame rate was zero, negative, or non-finite. | `fps` |
+| `sync_frame_grid_unavailable` | A same-time sync-group member lacks usable declared frame-grid evidence. | `sync-group` |
 | `insufficient_rotation_evidence` | Too few usable rotation tracks existed for a bind-pose comparison. | `bind-pose` |
 
 Built-in completed/gap scope codes are:
@@ -450,9 +461,11 @@ Built-in completed/gap scope codes are:
 |---|---|---|
 | `loop_closure` | One named clip's per-bone model-space pose closure was measured. | `loop-closure` |
 | `duplicate_loop_endpoint` | One named clip's authored tracks were analyzed for redundant closing endpoint keys. | `duplicate-loop-endpoint` |
-| `member_existence` | Configured gait-group members were checked for existence. | `gait-group` |
+| `member_existence` | Configured group members were checked for existence. | `gait-group`, `sync-group` |
 | `phase_measurement` | One named clip's gait phase was measured or lacked usable evidence. | `gait-group` |
 | `phase_coherence` | One named gait group's measurable phases were compared. | `gait-group` |
+| `sync_member_measurement` | One named same-time sync-group member's timing evidence was measured. | `sync-group` |
+| `sync_compatibility` | One named same-time sync group had compatible member timing evidence compared. | `sync-group` |
 | `loop_seam` | One named clip's positional loop seam was measured. | `loop-seam` |
 | `loop_seam_velocity` | One named clip's per-bone model-space seam velocity continuity was measured. | `loop-seam-vel` |
 | `loop_seam_rotation` | One named clip's per-bone model-space angular seam velocity continuity was measured. | `loop-seam-rot` |
@@ -490,6 +503,10 @@ counts still reflect every underlying per-scope JSON gap.
 Findings carry `check_id`, `severity`, optional `clip`, `bone`, `time_s`,
 `measured`, and `expected` fields, plus a human message. Treat `check_id` and
 the structured fields as automation data; treat `message` as display text.
+Group-level findings may also carry `members`, a configured-order array whose
+rows contain the member name and a key-sorted map of scalar measurements.
+Missing or unavailable evidence stays explicit in those rows; consumers do
+not need to parse the finding message to recover the comparison table.
 The nested `check_id` intentionally repeats its owning check record so a
 finding stays self-describing when extracted or consumed through the embedded
 API; the evaluator rejects mismatched parent/child ids.
@@ -503,13 +520,13 @@ the same numeric value to a conforming adapter.
 
 ## `diff`
 
-`diff --format json` uses the same output v3 header and emits `inputs`, a
+`diff --format json` uses the same output v4 header and emits `inputs`, a
 delta count, and structured metric deltas:
 
 ```json
 {
-  "schema_version": 3,
-  "schema": "urn:animsmith:schema:output:3",
+  "schema_version": 4,
+  "schema": "urn:animsmith:schema:output:4",
   "tool": {
     "name": "animsmith",
     "version": "0.1.0",
@@ -524,8 +541,8 @@ delta count, and structured metric deltas:
 }
 ```
 
-`diff` accepts asset files or one-file v3 `measure`/`lint` reports carrying
-measurement contract v8. Multi-file reports and unsupported contract versions
+`diff` accepts asset files or one-file v4 `measure`/`lint` reports carrying
+measurement contract v9. Multi-file reports and unsupported contract versions
 are rejected as operator errors. Before extracting the clip metrics it uses,
 `diff` validates the complete measurement record, including mesh evidence, and
 rejects malformed or non-finite payload values.

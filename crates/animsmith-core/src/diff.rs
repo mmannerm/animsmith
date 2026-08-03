@@ -290,6 +290,8 @@ mod tests {
                     seam_angular_velocity_delta_degps: 10.0,
                 }],
             }),
+            loop_endpoint_mode: None,
+            frame_grid: None,
             loop_seam_ratio: Some(0.2),
             gait: Some(GaitMeasurement {
                 phase: Some(0.25),

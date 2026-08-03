@@ -33,18 +33,20 @@ check_schema() {
 }
 
 check_schema docs/schemas/output-v2.schema.json urn:animsmith:schema:output:2
-check_schema docs/schemas/output-v3.schema.json urn:animsmith:schema:output:3 crates/animsmith-core/src/contract.rs docs/output.md
-check_schema docs/schemas/measurements-v8.schema.json urn:animsmith:schema:measurements:8 crates/animsmith-core/src/contract.rs docs/output.md
+check_schema docs/schemas/output-v3.schema.json urn:animsmith:schema:output:3
+check_schema docs/schemas/output-v4.schema.json urn:animsmith:schema:output:4 crates/animsmith-core/src/contract.rs docs/output.md
+check_schema docs/schemas/measurements-v8.schema.json urn:animsmith:schema:measurements:8
+check_schema docs/schemas/measurements-v9.schema.json urn:animsmith:schema:measurements:9 crates/animsmith-core/src/contract.rs docs/output.md
 check_schema docs/schemas/conversion-evidence-v1.schema.json urn:animsmith:schema:conversion-evidence:1 docs/output.md
 check_schema docs/schemas/conversion-evidence-v2.schema.json urn:animsmith:schema:conversion-evidence:2 docs/output.md docs/cli.md
 
 # Current-contract descriptions must not send readers back to the immutable
 # output-v2 schema. Keep these exact statements aligned with the current outer
 # contract when it advances.
-grep -Fq 'Final output-v3 record for one catalog check.' crates/animsmith-core/src/evaluation.rs \
-  || fail 'CheckEvaluation documentation does not identify output v3'
-grep -Fq 'regenerate a current output-v3 report from the original' docs/output.md \
-  || fail 'report migration documentation does not identify output v3'
+grep -Fq 'Final output-v4 record for one catalog check.' crates/animsmith-core/src/evaluation.rs \
+  || fail 'CheckEvaluation documentation does not identify output v4'
+grep -Fq 'regenerate a current output-v4 report from the original' docs/output.md \
+  || fail 'report migration documentation does not identify output v4'
 
 for removed_schema in \
   docs/schemas/output-v1.schema.json \
@@ -210,7 +212,7 @@ legacy_candidate_pattern='"schema_version"'
 
 # Pin the scanner against a normal outer envelope whose schema/tool fields sit
 # between its version and command. Also prove that current nested measurements in a
-# current output-v3 envelope are not mistaken for an outer legacy contract.
+# current output-v4 envelope are not mistaken for an outer legacy contract.
 legacy_scanner_regression=$(
   printf '%s\n' \
     '{' \
@@ -295,14 +297,14 @@ modern_scanner_regression=$(
     '  "schema_version": 2,' \
     '  "command": "measure",' \
     '  "files": [{ "measurements": {' \
-    '    "schema_version": 8,' \
-    '    "schema": "urn:animsmith:schema:measurements:8"' \
+    '    "schema_version": 9,' \
+    '    "schema": "urn:animsmith:schema:measurements:9"' \
     '  }}]' \
     '}' \
     | awk "$legacy_envelope_awk"
 )
 if [ -n "$modern_scanner_regression" ]; then
-  fail "legacy-envelope scanner misclassified nested measurements v8"
+  fail "legacy-envelope scanner misclassified nested measurements v9"
 fi
 
 legacy_envelope=$(

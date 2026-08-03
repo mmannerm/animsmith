@@ -86,7 +86,7 @@ animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hol
 animsmith fix     <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
 animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb> [--material-texture-recipe recipe.toml] [--animation-only|--bake-static-mesh-transforms] [--format text|json]
 animsmith assemble <recipe.toml> -o <out.glb> --evidence <out.json>
-animsmith diff    <A> <B> [--format text|json]     # A/B: assets or single-file v3 measure/lint JSON
+animsmith diff    <A> <B> [--format text|json]     # A/B: assets or single-file v4 measure/lint JSON
 ```
 
 - `lint` = measure + judge against config. `measure` is lint minus
@@ -430,8 +430,8 @@ learns an embedder's contract schema.
 
 - **Text** (default): findings grouped per clip, measured-vs-expected on
   one line, colored; `--quiet` for CI summaries.
-- **JSON** (`--format json`): final output v3, identified by
-  `urn:animsmith:schema:output:3`. Lint emits one result per catalog check and
+- **JSON** (`--format json`): final output v4, identified by
+  `urn:animsmith:schema:output:4`. Lint emits one result per catalog check and
   represents selection, configuration, applicability, evaluation coverage,
   content findings, completed scopes, and typed gaps independently. Measure
   and lint share a nested, independently versioned measurement contract. The
@@ -450,7 +450,7 @@ learns an embedder's contract schema.
   the current CLI emits v2 exclusively.
   CLI exit status derives only from content severity (warnings block only
   with `--deny-warnings`); coverage gaps are nonblocking evidence.
-  The output-v3 envelope types and immutable identities live in
+  The output-v4 envelope types and immutable identities live in
   `animsmith-core` so CLI and embedded producers serialize the same reporting
   contract. Static-bake evidence is also a public core type; the conversion
   envelope remains a CLI producer contract.

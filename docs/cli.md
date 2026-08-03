@@ -189,11 +189,11 @@ animsmith fix clip.glb --repair quat-norm,quat-flip -o fixed.glb
 `measure`, `lint`, and `diff` support `--format json`. The native JSON
 contract is the source of truth and is versioned with `schema_version`.
 See [output.md](output.md) and
-[`output-v3.schema.json`](schemas/output-v3.schema.json). Nested measurement
+[`output-v4.schema.json`](schemas/output-v4.schema.json). Nested measurement
 evidence has its own
-[`measurements-v8.schema.json`](schemas/measurements-v8.schema.json) contract.
-Output-v2 and earlier reports are historical contracts; regenerate them with
-the current CLI before using `diff`.
+[`measurements-v9.schema.json`](schemas/measurements-v9.schema.json) contract.
+Output-v3 and earlier reports are historical contracts; regenerate a current
+report from the original asset with the current CLI before using `diff`.
 
 `convert --format json` emits conversion evidence v2, with immutable identity
 `urn:animsmith:schema:conversion-evidence:2`; see [output.md](output.md) and

@@ -3,6 +3,7 @@
 //! `loop = true`; no rig roles or locomotion stride are required.
 
 use crate::check::{Check, CheckCtx};
+use crate::config::{ClipExpectations, Config};
 use crate::evaluation::{
     Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope, EvaluationScopeCode,
 };
@@ -15,6 +16,24 @@ use super::exceeds_f32_cap;
 pub const DEFAULT_MAX_POSITION_DELTA_M: f64 = 0.01;
 /// Default maximum shortest-path model-space rotation delta: 1 degree.
 pub const DEFAULT_MAX_ROTATION_DELTA_DEG: f64 = 1.0;
+
+/// Resolve the global/default and per-clip loop-closure caps once for every
+/// check and measurement surface that classifies endpoint closure.
+pub(crate) fn effective_caps(config: &Config, expectations: &ClipExpectations) -> (f64, f64) {
+    let settings = config.check_settings("loop-closure");
+    (
+        expectations.max_loop_position_delta_m.unwrap_or(
+            settings
+                .max_position_delta_m
+                .unwrap_or(DEFAULT_MAX_POSITION_DELTA_M),
+        ),
+        expectations.max_loop_rotation_delta_deg.unwrap_or(
+            settings
+                .max_rotation_delta_deg
+                .unwrap_or(DEFAULT_MAX_ROTATION_DELTA_DEG),
+        ),
+    )
+}
 
 pub struct LoopClosure;
 
@@ -39,25 +58,13 @@ impl Check for LoopClosure {
         let mut findings = Vec::new();
         let mut evaluated_scopes = Vec::new();
         let mut gaps = Vec::new();
-        let settings = ctx.config.check_settings(self.id());
-        let global_max_position_delta_m = settings
-            .max_position_delta_m
-            .unwrap_or(DEFAULT_MAX_POSITION_DELTA_M);
-        let global_max_rotation_delta_deg = settings
-            .max_rotation_delta_deg
-            .unwrap_or(DEFAULT_MAX_ROTATION_DELTA_DEG);
-
         for (clip_index, clip) in ctx.doc.clips.iter().enumerate() {
             let expectations = ctx.expectations(clip_index);
             if expectations.looping != Some(true) {
                 continue;
             }
-            let max_position_delta_m = expectations
-                .max_loop_position_delta_m
-                .unwrap_or(global_max_position_delta_m);
-            let max_rotation_delta_deg = expectations
-                .max_loop_rotation_delta_deg
-                .unwrap_or(global_max_rotation_delta_deg);
+            let (max_position_delta_m, max_rotation_delta_deg) =
+                effective_caps(ctx.config, expectations);
             let scope = EvaluationScope::new(EvaluationScopeCode::LOOP_CLOSURE).subject(&clip.name);
             let Some(metrics) = ctx
                 .grid(clip_index)

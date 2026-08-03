@@ -149,7 +149,7 @@ them separate when you automate on the output:
 
 There is deliberately no single "pass" state: a run can complete with
 warnings, and it can evaluate some declared work while skipping the
-rest. See [machine-readable output](output.md) for the final v3
+rest. See [machine-readable output](output.md) for the final v4
 representation. It models selection, configuration, applicability, and
 evaluation independently, keeps content findings separate from typed gaps,
 and records completed work scopes. This is evidence about animsmith's checks,
@@ -284,9 +284,9 @@ and Unity's [looping-clip guide](https://docs.unity3d.com/Manual/LoopingAnimatio
 are useful places to inspect the authored range and engine import behavior.
 
 An open cycle intentionally does not keep `loop-closure` green: that existing
-inclusive check compares a repeated final sample with frame 0. It is not a
-general endpoint-mode classifier; [#22](https://github.com/mmannerm/animsmith/issues/22)
-continues to own the complete endpoint-mode measurement and sync-group policy.
+inclusive check compares a repeated final sample with frame 0. The
+`loop_endpoint_mode` measurement distinguishes strict duplicate endpoints,
+non-duplicate closing cycles, and non-closing cycles for declared loops.
 
 The first three checks are per-bone and role independent, so idle, guard,
 block, aim-offset, facial, and prop loops remain testable without a humanoid
@@ -551,6 +551,7 @@ scale repair.
 | The loop pops or pulses at the wrap | `duplicate-loop-endpoint`, `loop-closure`, `loop-seam-vel`, `loop-seam-rot`, `loop-seam` | drop a strict duplicated endpoint with `transform --drop-duplicate-loop-endpoint`; otherwise re-author endpoint pose/tangents; `transform --gait-anchor` only for locomotion phase | `[clips.<name>] loop = true`, `[checks.loop-closure]`, `[checks.loop-seam-vel]`, `[checks.loop-seam-rot]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Glides or runs in place | `in-place`, `root-motion-speed` | re-export; `measure` for ground truth | `[clips.<name>] in_place`, `speed_mps` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Feet skate across blends | `gait-group` | `transform --gait-anchor` | `[gait_groups.<name>]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
+| Same-time blend members drift or pop | `sync-group` | re-slice or re-time at source | `[sync_groups.<name>]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Feet slide within a clip | `foot-slide` | re-author in DCC | `[clips.<name>] speed_mps` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Missing runtime socket or IK target | `required-bones` | repair source rig / re-export | `[rig] required_bones` | [Structural rig contract](../examples/README.md#keeping-the-exported-rig-shape-stable) |
 | T-posed limb, static bone, wrong bind | `missing-bones`, `frozen-bone`, `bind-pose` | re-export | `[clips.<name>] animates_bones`, `[rig]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
