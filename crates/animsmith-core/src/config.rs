@@ -76,6 +76,9 @@ pub struct CheckSettings {
     /// `loop-seam-vel`: maximum incoming/outgoing model-space linear-velocity
     /// difference in metres per second (default 0.1).
     pub max_velocity_delta_mps: Option<f64>,
+    /// `loop-seam-rot`: maximum incoming/outgoing model-space angular-velocity
+    /// difference in degrees per second (default 5.0).
+    pub max_angular_velocity_delta_degps: Option<f64>,
     /// `frozen-bone`: rotation floor in degrees (default 1.0).
     pub min_rotation_deg: Option<f64>,
     /// `bind-pose`: mean first-frame deviation cap in degrees

@@ -8,11 +8,11 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 
 const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:2";
-const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:7";
+const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:8";
 const HOSTILE_PRESENTATION_TEXT: &str = "forged\nline\u{1b}[31m\u{2028}\u{2029}\u{202e}";
 const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v2.schema.json");
-const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v7.schema.json");
-const EXPECTED_CHECK_IDS: [&str; 21] = [
+const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v8.schema.json");
+const EXPECTED_CHECK_IDS: [&str; 22] = [
     "nan",
     "time-monotonic",
     "quat-norm",
@@ -28,6 +28,7 @@ const EXPECTED_CHECK_IDS: [&str; 21] = [
     "loop-closure",
     "loop-seam",
     "loop-seam-vel",
+    "loop-seam-rot",
     "root-motion-speed",
     "gait-group",
     "in-place",
@@ -178,6 +179,18 @@ fn write_distinct_repair_glb(path: &std::path::Path) {
 
 fn write_clean_glb(path: &std::path::Path) {
     animsmith_gltf::write::write(&sway_doc(false), path).expect("writes clean fixture");
+}
+
+/// A closed rotational loop with a C1 cusp at the wrap: it leaves at 2 rad/s
+/// and enters at -1 rad/s. There are no translation tracks, so the linear
+/// seam metric must remain zero while the angular check reports the cusp.
+fn write_angular_cusp_glb(path: &std::path::Path) {
+    let doc = two_bone_rotation_doc(
+        "angular_cusp",
+        quats_from_angles(&[0.0, 0.5, 1.0, 0.25, 0.0]),
+        false,
+    );
+    animsmith_gltf::write::write(&doc, path).expect("writes angular-cusp fixture");
 }
 
 fn write_two_clip_clean_glb(path: &std::path::Path) {
@@ -374,7 +387,7 @@ fn measurement_report(duration_s: f64) -> Value {
             "path": "fixture.gltf",
             "rig": { "profile": "unknown" },
             "measurements": {
-                "schema_version": 7,
+                "schema_version": 8,
                 "schema": MEASUREMENTS_SCHEMA_ID,
                 "clips": {
                     "walk": {
@@ -519,7 +532,7 @@ fn duplicate_loop_endpoint_cli_detects_trims_and_exposes_changed_contracts() {
     assert_output_schema_valid(&lint_json);
     assert_eq!(lint_json["schema_version"], 2);
     assert_eq!(lint_json["schema"], OUTPUT_SCHEMA_ID);
-    assert_eq!(lint_json["files"][0]["measurements"]["schema_version"], 7);
+    assert_eq!(lint_json["files"][0]["measurements"]["schema_version"], 8);
     assert_eq!(
         lint_json["files"][0]["measurements"]["schema"],
         MEASUREMENTS_SCHEMA_ID
@@ -1297,7 +1310,7 @@ fn measure_json_uses_versioned_envelope() {
     assert_eq!(files.len(), 1);
     assert_eq!(files[0]["rig"]["profile"], "unknown");
     assert!(files[0]["checks"].is_null());
-    assert_eq!(files[0]["measurements"]["schema_version"], 7);
+    assert_eq!(files[0]["measurements"]["schema_version"], 8);
     assert_eq!(files[0]["measurements"]["schema"], MEASUREMENTS_SCHEMA_ID);
     assert!(files[0]["measurements"]["clips"]["walk"]["duration_s"].is_number());
     let loop_bones = files[0]["measurements"]["clips"]["walk"]["loop_continuity"]["bones"]
@@ -1313,7 +1326,115 @@ fn measure_json_uses_versioned_envelope() {
         assert!(bone["position_delta_m"].is_number());
         assert!(bone["rotation_delta_deg"].is_number());
         assert!(bone["seam_velocity_delta_mps"].is_number());
+        assert!(bone["seam_angular_velocity_delta_degps"].is_number());
     }
+}
+
+#[test]
+fn angular_loop_seam_is_versioned_and_configurable_at_the_cli_boundary() {
+    let dir = unique_temp_dir("angular-loop-seam");
+    let input = dir.path().join("angular-cusp.glb");
+    write_angular_cusp_glb(&input);
+    let config = write_config(
+        dir.path(),
+        "angular-loop.toml",
+        "[clips.angular_cusp]\nloop = true\n",
+    );
+
+    let baseline = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .arg("lint")
+        .arg(&input)
+        .args(["--select", "loop-seam-rot", "--format", "json"])
+        .output()
+        .expect("runs angular seam lint");
+    assert_eq!(
+        baseline.status.code(),
+        Some(1),
+        "stderr:\n{}",
+        stderr(&baseline)
+    );
+    let baseline: Value = serde_json::from_slice(&baseline.stdout).expect("valid lint JSON");
+    assert_output_schema_valid(&baseline);
+    assert_eq!(baseline["files"][0]["measurements"]["schema_version"], 8);
+    assert_eq!(
+        baseline["files"][0]["measurements"]["schema"],
+        MEASUREMENTS_SCHEMA_ID
+    );
+    let mut missing_angular_evidence = baseline.clone();
+    missing_angular_evidence["files"][0]["measurements"]["clips"]["angular_cusp"]
+        ["loop_continuity"]["bones"][0]
+        .as_object_mut()
+        .expect("bone measurement object")
+        .remove("seam_angular_velocity_delta_degps");
+    assert!(
+        !output_validator().is_valid(&missing_angular_evidence),
+        "measurements-v8 requires angular seam evidence in every loop-continuity row"
+    );
+    let bones =
+        baseline["files"][0]["measurements"]["clips"]["angular_cusp"]["loop_continuity"]["bones"]
+            .as_array()
+            .expect("per-bone loop continuity");
+    assert_eq!(bones.len(), 2);
+    for (bone, (index, name)) in bones.iter().zip([(0, "root"), (1, "spine")]) {
+        assert_eq!(bone["bone_index"], index);
+        assert_eq!(bone["bone_name"], name);
+        assert_eq!(bone["seam_velocity_delta_mps"], 0.0);
+    }
+    let spine = &bones[1];
+    assert!(
+        spine["seam_angular_velocity_delta_degps"]
+            .as_f64()
+            .expect("angular seam metric")
+            > 100.0,
+        "expected analytic angular cusp: {spine:#}"
+    );
+    let check = baseline["files"][0]["checks"]
+        .as_array()
+        .expect("checks")
+        .iter()
+        .find(|check| check["check_id"] == "loop-seam-rot")
+        .expect("angular seam check");
+    assert_eq!(check["applicability"], "applicable");
+    assert_eq!(check["evaluation"], "complete");
+    assert_eq!(check["evaluated_scopes"][0]["code"], "loop_seam_rotation");
+    assert_eq!(check["findings"][0]["severity"], "error");
+    assert_eq!(check["findings"][0]["bone"], "spine");
+    assert_eq!(
+        check["findings"][0]["measured"],
+        spine["seam_angular_velocity_delta_degps"]
+    );
+    assert_eq!(check["findings"][0]["expected"], 5.0);
+
+    let relaxed = write_config(
+        dir.path(),
+        "relaxed-angular-loop.toml",
+        "[clips.angular_cusp]\nloop = true\n\n[checks.loop-seam-rot]\nmax_angular_velocity_delta_degps = 200.0\n",
+    );
+    let relaxed = animsmith()
+        .arg("--config")
+        .arg(&relaxed)
+        .arg("lint")
+        .arg(&input)
+        .args(["--select", "loop-seam-rot", "--format", "json"])
+        .output()
+        .expect("runs configured angular seam lint");
+    assert_eq!(
+        relaxed.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&relaxed)
+    );
+    let relaxed: Value = serde_json::from_slice(&relaxed.stdout).expect("valid lint JSON");
+    let check = relaxed["files"][0]["checks"]
+        .as_array()
+        .expect("checks")
+        .iter()
+        .find(|check| check["check_id"] == "loop-seam-rot")
+        .expect("angular seam check");
+    assert_eq!(check["findings"], json!([]));
+    assert_eq!(check["evaluation"], "complete");
 }
 
 #[test]
@@ -1336,6 +1457,7 @@ fn measure_text_escapes_controls_in_clip_and_mesh_names() {
     );
     let text = stdout(&output);
     assert_hostile_text_is_escaped(&text);
+    assert!(text.contains("Δω=0.00°/s"), "angular aggregate: {text}");
     assert_eq!(
         text.matches("\\n").count(),
         3,
@@ -1644,7 +1766,7 @@ fn lint_json_uses_versioned_envelope() {
     assert_eq!(json["command"], "lint");
     assert_eq!(json["summary"]["files"], 1);
     assert!(json["files"][0]["checks"].is_array());
-    assert_eq!(json["files"][0]["measurements"]["schema_version"], 7);
+    assert_eq!(json["files"][0]["measurements"]["schema_version"], 8);
     assert_eq!(
         json["files"][0]["measurements"]["schema"],
         MEASUREMENTS_SCHEMA_ID
@@ -2098,7 +2220,7 @@ fn output_schema_rejects_cross_command_and_nested_contract_drift() {
     assert!(!validator.is_valid(&foreign_field));
 
     let mut nested_version = measure.clone();
-    nested_version["files"][0]["measurements"]["schema_version"] = json!(8);
+    nested_version["files"][0]["measurements"]["schema_version"] = json!(7);
     assert!(!validator.is_valid(&nested_version));
 
     let mut lint_without_checks = measure;
@@ -2382,7 +2504,7 @@ fn diff_preserves_tailored_report_errors_and_remediation() {
     let mut unsupported_command = base.clone();
     unsupported_command["command"] = json!("diff");
     let mut unsupported_measurement_version = base.clone();
-    unsupported_measurement_version["files"][0]["measurements"]["schema_version"] = json!(8);
+    unsupported_measurement_version["files"][0]["measurements"]["schema_version"] = json!(7);
     let mut wrong_measurement_identity = base.clone();
     wrong_measurement_identity["files"][0]["measurements"]["schema"] =
         json!("urn:other:measurements");
@@ -2437,7 +2559,7 @@ fn diff_preserves_tailored_report_errors_and_remediation() {
         (
             "unsupported measurement version",
             unsupported_measurement_version,
-            "has measurement schema_version 8; this build reads measurement schema_version 7"
+            "has measurement schema_version 7; this build reads measurement schema_version 8"
                 .to_owned(),
         ),
         (
@@ -2552,10 +2674,10 @@ fn diff_rejects_outer_and_nested_contract_identity_drift() {
         (
             {
                 let mut report = measurement_report(1.0);
-                report["files"][0]["measurements"]["schema_version"] = json!(8);
+                report["files"][0]["measurements"]["schema_version"] = json!(7);
                 report
             },
-            "has measurement schema_version 8; this build reads measurement schema_version 7",
+            "has measurement schema_version 7; this build reads measurement schema_version 8",
         ),
         (
             {
@@ -2778,7 +2900,7 @@ fn diff_rejects_unsupported_schema_versions() {
 fn diff_rejects_all_unsupported_nested_measurement_schema_versions() {
     let dir = unique_temp_dir("diff-unsupported-nested-schema");
     let report_path = dir.path().join("report.json");
-    for version in [0, 1, 2, 3, 4, 5, 6, 8, 99] {
+    for version in [0, 1, 2, 3, 4, 5, 6, 7, 9, 99] {
         let mut report = measurement_report(1.0);
         report["files"][0]["measurements"]["schema_version"] = json!(version);
         write_json(&report_path, &report);
@@ -2798,7 +2920,7 @@ fn diff_rejects_all_unsupported_nested_measurement_schema_versions() {
         );
         assert!(
             stderr(&output).contains(&format!(
-                "has measurement schema_version {version}; this build reads measurement schema_version 7"
+                "has measurement schema_version {version}; this build reads measurement schema_version 8"
             )),
             "version {version}: stderr:\n{}",
             stderr(&output)

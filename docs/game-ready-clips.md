@@ -240,7 +240,7 @@ abruptly, producing a hitch or pulse once per cycle. Unity's
 shows the same artist-facing start/end match problem and the special treatment
 root-motion axes may need.
 
-Animsmith separates three questions:
+Animsmith separates four questions:
 
 - `loop-closure` finds the largest last-to-first **model-space position** and
   shortest-path **model-space rotation** delta across all skeleton bones. The
@@ -250,6 +250,11 @@ Animsmith separates three questions:
   0.1 m/s. A closed triangle-wave trajectory demonstrates the problem: the
   first and last position are identical, but the bone reverses direction at
   the wrap.
+- `loop-seam-rot` finds the largest difference between the **shortest-path
+  model-space angular velocities** entering the last sample and leaving frame
+  0. Its default cap is 5 deg/s. This is rotational C1 continuity: the pose
+  can close rotationally (C0) yet still snap in direction or turn rate at the
+  wrap when the two seam-adjacent rotation steps disagree.
 - `loop-seam` remains the locomotion-specific test. It compares feet relative
   to hips and normalizes by the neighbouring stride step, so it needs resolved
   hips/foot roles and deliberately has no result for a stationary clip.
@@ -283,12 +288,13 @@ inclusive check compares a repeated final sample with frame 0. It is not a
 general endpoint-mode classifier; [#22](https://github.com/mmannerm/animsmith/issues/22)
 continues to own the complete endpoint-mode measurement and sync-group policy.
 
-The first two checks are per-bone and role independent, so idle, guard, block,
-aim-offset, facial, and prop loops remain testable without a humanoid profile
-or detectable stride. Model-space is intentional: a parent mismatch can move
-many descendants even when their local keys match. JSON measurements retain a
-stable `bone_index` plus display `bone_name` for every row, while findings name
-only the maximum offending bone for each judged dimension.
+The first three checks are per-bone and role independent, so idle, guard,
+block, aim-offset, facial, and prop loops remain testable without a humanoid
+profile or detectable stride. Model-space is intentional: a parent mismatch
+can move or rotate many descendants even when their local keys match. JSON
+measurements retain a stable `bone_index` plus display `bone_name` for every
+row, while findings name only the maximum offending bone for each judged
+dimension.
 
 Typical causes are an export range ending one frame early, a cycle modifier or
 procedural controller not being baked, copied endpoint keys whose Bezier
@@ -299,6 +305,9 @@ diagnostic split is:
 - nonzero position/rotation delta: repair the endpoint pose or clip range;
 - zero pose delta but high velocity delta: repair the endpoint tangents or the
   seam-adjacent keys;
+- closed rotational pose but high angular-velocity delta: repair the endpoint
+  rotation tangents or the seam-adjacent rotation keys using the intended
+  shortest turn;
 - many descendants reporting the same displacement: inspect their first
   mismatching ancestor;
 - only `loop-seam` failing: inspect locomotion phase and foot/hips-relative
@@ -318,7 +327,8 @@ Root-motion locomotion is the important exception. Intentional horizontal root
 travel does not return to its starting model-space position, and every child
 inherits that travel. Tune `max_position_delta_m` to the contract or disable
 `loop-closure` for such a pipeline; keep using `loop-seam` for feet-relative
-locomotion. `loop-seam-vel` can still validate constant extracted travel.
+locomotion. `loop-seam-vel` and `loop-seam-rot` can still validate constant
+inherited linear and angular motion respectively.
 
 There is no general automatic repair. `transform --gait-anchor` can rotate a
 locomotion cycle in time to choose a better stride cut, but it does not rewrite
@@ -516,7 +526,7 @@ scale repair.
 |---|---|---|---|---|
 | Pose flickers, spins, or explodes | `nan`, `quat-norm`, `quat-flip`, `time-monotonic` | `fix` (quat repairs, lossless) | — | [First gate](../examples/README.md#1-a-first-cli-gate), [Repair](../examples/README.md#2-repairing-an-asset) |
 | Wrong length, freezes at the end | `duration-sanity`, `fps` | `transform --slice`, `--hold-extend` | `[clips.<name>] duration_s`, `fps` | [Editing a clip](../examples/README.md#3-editing-a-clip) |
-| The loop pops or pulses at the wrap | `duplicate-loop-endpoint`, `loop-closure`, `loop-seam-vel`, `loop-seam` | drop a strict duplicated endpoint with `transform --drop-duplicate-loop-endpoint`; otherwise re-author endpoint pose/tangents; `transform --gait-anchor` only for locomotion phase | `[clips.<name>] loop = true`, `[checks.loop-closure]`, `[checks.loop-seam-vel]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
+| The loop pops or pulses at the wrap | `duplicate-loop-endpoint`, `loop-closure`, `loop-seam-vel`, `loop-seam-rot`, `loop-seam` | drop a strict duplicated endpoint with `transform --drop-duplicate-loop-endpoint`; otherwise re-author endpoint pose/tangents; `transform --gait-anchor` only for locomotion phase | `[clips.<name>] loop = true`, `[checks.loop-closure]`, `[checks.loop-seam-vel]`, `[checks.loop-seam-rot]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Glides or runs in place | `in-place`, `root-motion-speed` | re-export; `measure` for ground truth | `[clips.<name>] in_place`, `speed_mps` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Feet skate across blends | `gait-group` | `transform --gait-anchor` | `[gait_groups.<name>]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Feet slide within a clip | `foot-slide` | re-author in DCC | `[clips.<name>] speed_mps` | [Contract config](../examples/README.md#4-a-project-contract-config) |
@@ -533,7 +543,7 @@ out of scope.
 The gait and root-motion checks (`loop-seam`, `in-place`,
 `root-motion-speed`, `gait-group`, `foot-slide`) additionally need a
 resolved rig profile so they know which bones are the hips, feet, and
-root. `loop-closure` and `loop-seam-vel` do not. Built-in profiles cover
+root. `loop-closure`, `loop-seam-vel`, and `loop-seam-rot` do not. Built-in profiles cover
 `mixamo`, `ue-mannequin`, and `humanoid`
 rigs; `[rig] profile = "auto"` scores them against your skeleton, and
 `[rig.roles]` binds bone names explicitly for everything else. See the

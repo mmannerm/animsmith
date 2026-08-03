@@ -10,6 +10,10 @@ profile = "auto" # or a named profile / inline [rig.roles]
 [checks.loop-seam]
 max_ratio = 1.6
 
+[checks.loop-seam-rot]
+# Rotational C1: incoming/outgoing shortest-path model-space angular velocity.
+max_angular_velocity_delta_degps = 5.0
+
 [checks.frozen-bone]
 min_rotation_deg = 0.5
 

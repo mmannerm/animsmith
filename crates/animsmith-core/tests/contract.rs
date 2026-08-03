@@ -808,7 +808,8 @@ fn valid_clip_measurements() -> ClipMeasurements {
             "bone_name": "hips",
             "position_delta_m": 0.01,
             "rotation_delta_deg": 0.5,
-            "seam_velocity_delta_mps": 0.02
+            "seam_velocity_delta_mps": 0.02,
+            "seam_angular_velocity_delta_degps": 2.0
         }] },
         "loop_seam_ratio": 0.1,
         "gait": { "phase": 0.25, "lr_amplitude_m": 0.2 },
@@ -1339,6 +1340,13 @@ fn measurement_contract_rejects_every_non_finite_numeric_branch() {
         "clips[\"walk\"].loop_continuity.bones[0].seam_velocity_delta_mps",
     );
     assert_invalid_clip(
+        |clip| {
+            clip.loop_continuity.as_mut().unwrap().bones[0].seam_angular_velocity_delta_degps =
+                f64::NAN;
+        },
+        "clips[\"walk\"].loop_continuity.bones[0].seam_angular_velocity_delta_degps",
+    );
+    assert_invalid_clip(
         |clip| clip.loop_seam_ratio = Some(f64::NEG_INFINITY),
         "clips[\"walk\"].loop_seam_ratio",
     );
@@ -1427,7 +1435,8 @@ fn measurement_contract_rejects_invalid_loop_continuity_structure() {
             "bone_name": "foot",
             "position_delta_m": 0.0,
             "rotation_delta_deg": 0.0,
-            "seam_velocity_delta_mps": 0.0
+            "seam_velocity_delta_mps": 0.0,
+            "seam_angular_velocity_delta_degps": 0.0
         }));
 
     let mut non_contiguous: ClipMeasurements =
@@ -1460,7 +1469,7 @@ fn measurement_contract_rejects_invalid_loop_continuity_structure() {
     );
 
     let mut negative: ClipMeasurements =
-        serde_json::from_value(two_bone_json).expect("two-bone fixture");
+        serde_json::from_value(two_bone_json.clone()).expect("two-bone fixture");
     negative.loop_continuity.as_mut().unwrap().bones[1].seam_velocity_delta_mps = -0.01;
     assert_eq!(
         MeasurementContract::new(
@@ -1470,6 +1479,23 @@ fn measurement_contract_rejects_invalid_loop_continuity_structure() {
         .expect_err("later-row values must also be nonnegative"),
         MeasurementContractError::InvalidStructure {
             path: "clips[\"walk\"].loop_continuity.bones[1].seam_velocity_delta_mps".into(),
+            reason: "loop-continuity deltas must be non-negative".into(),
+        }
+    );
+
+    let mut angular_negative: ClipMeasurements =
+        serde_json::from_value(two_bone_json).expect("two-bone fixture");
+    angular_negative.loop_continuity.as_mut().unwrap().bones[1].seam_angular_velocity_delta_degps =
+        -0.01;
+    assert_eq!(
+        MeasurementContract::new(
+            BTreeMap::from([("walk".into(), angular_negative)]),
+            AssetMeasurements::default(),
+        )
+        .expect_err("angular seam deltas must also be nonnegative"),
+        MeasurementContractError::InvalidStructure {
+            path: "clips[\"walk\"].loop_continuity.bones[1].seam_angular_velocity_delta_degps"
+                .into(),
             reason: "loop-continuity deltas must be non-negative".into(),
         }
     );

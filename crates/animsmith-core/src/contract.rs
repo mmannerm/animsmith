@@ -29,9 +29,9 @@ pub const OUTPUT_SCHEMA_VERSION: u32 = 2;
 /// Immutable identity of the current outer result envelope.
 pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:2";
 /// Current nested measurement-contract version.
-pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 7;
+pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 8;
 /// Immutable identity of the current nested measurement contract.
-pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:7";
+pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:8";
 
 /// Source checkout identity for the producing animsmith build.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -262,6 +262,10 @@ fn validate_measurements(
                     ("position_delta_m", bone.position_delta_m),
                     ("rotation_delta_deg", bone.rotation_delta_deg),
                     ("seam_velocity_delta_mps", bone.seam_velocity_delta_mps),
+                    (
+                        "seam_angular_velocity_delta_degps",
+                        bone.seam_angular_velocity_delta_degps,
+                    ),
                 ] {
                     finite(value, format!("{path}.{field}"))?;
                     if value < 0.0 {

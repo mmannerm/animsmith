@@ -344,6 +344,7 @@ golden-test against.
 | `loop-closure` | maximum per-bone model-space last→first position and shortest-path rotation delta | grid + loop declaration | `max_position_delta_m`, `max_rotation_delta_deg` | consumer-neutral authoring-loop requirement |
 | `loop-seam` | last→first position wrap discontinuity of feet-relative-to-hips, normalized by the *local neighbour* per-frame step, with a stride floor so stationary clips skip | grid + Hips/feet/toe roles | `max_ratio`, `min_stride_step_m` | `locomotion_metrics.py` — port verbatim |
 | `loop-seam-vel` | maximum per-bone model-space difference between the in-clip velocities entering and leaving the wrap | grid + loop declaration | `max_velocity_delta_mps` | consumer-neutral authoring-loop requirement |
+| `loop-seam-rot` | maximum per-bone shortest-path model-space angular-velocity difference between the in-clip steps entering and leaving the wrap | grid + loop declaration | `max_angular_velocity_delta_degps` | consumer-neutral authoring-loop requirement |
 | `root-motion-speed` | horizontal root/hips displacement ÷ duration vs declared `speed_mps`; flags stray speed pins on non-locomotion clips | grid + Root/Hips | pinned speed + tolerance (reference gate: 15%) | reference bake |
 | `missing-bones` | declared-required animated bones absent; tracks targeting nodes outside the skeleton | raw + meta | bone/role list | reference contract `animates_bones` |
 | `naming` | clip names vs convention pattern | meta | regex/glob | new |
@@ -358,7 +359,6 @@ golden-test against.
 | `foot-slide` | detect stance (foot height + near-zero vertical velocity), measure horizontal foot velocity during stance in the travel-cancelled frame | new; hardest check — ships opt-in until corpus-tuned |
 | `bind-pose` | rest pose vs first frame delta (clip authored against wrong bind); T-pose/A-pose classification; node-TRS rest disagreeing with IBM-derived rest (the disagreement is itself a finding) | reference sidecar already derives rest from IBMs |
 | `axis-conventions` | character forward/up at rest vs declared axes; root orientation drift over a loop | reference contract axis vocabulary |
-| `loop-seam-rot` | rotational C1 seam continuity (angular-velocity derivative matching) | unimplemented; rotational C0 ships in `loop-closure` |
 | `key-density` | keys/sec far above the clip fps (unbaked-curve bloat) or far below (starved track) | new |
 
 ### P2 — corpus/cross-clip
@@ -390,6 +390,9 @@ max_rotation_delta_deg = 1.0
 
 [checks.loop-seam-vel]
 max_velocity_delta_mps = 0.1
+
+[checks.loop-seam-rot]
+max_angular_velocity_delta_degps = 5.0
 
 [checks.quat-flip]
 severity = "warn"

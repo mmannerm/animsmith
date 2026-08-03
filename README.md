@@ -153,6 +153,7 @@ Contract-aware checks use declared expectations and, where needed, rig roles:
 | `loop-closure` | error | maximum per-bone model-space position and rotation mismatch in declared loops |
 | `loop-seam` | error | feet-relative-to-hips wrap discontinuity in declared loops |
 | `loop-seam-vel` | error | maximum per-bone model-space linear-velocity change across a declared loop wrap |
+| `loop-seam-rot` | error | maximum per-bone model-space angular-velocity change across a declared loop wrap |
 | `in-place` | error | declared in-place vs root-motion mode must match measured travel |
 | `gait-group` | error | stride-phase spread across a declared directional blend ring |
 | `root-motion-speed` | error | measured horizontal root travel vs a declared speed pin |
@@ -161,7 +162,7 @@ Contract-aware checks use declared expectations and, where needed, rig roles:
 | `frozen-bone` | error | required bones whose rotation never exceeds the configured floor |
 | `bind-pose` | warning | first frame deviating too far from the skeleton rest pose |
 
-`duplicate-loop-endpoint`, `loop-closure`, and `loop-seam-vel` need no rig
+`duplicate-loop-endpoint`, `loop-closure`, `loop-seam-vel`, and `loop-seam-rot` need no rig
 roles or locomotion stride. `duplicate-loop-endpoint` is default-on but applies
 only when `[clips.<name>] loop = true`: it warns only for the strict authored-key
 case where every track shares one finite, strictly increasing timeline, has
@@ -194,6 +195,9 @@ max_rotation_delta_deg = 1.0
 
 [checks.loop-seam-vel]
 max_velocity_delta_mps = 0.1
+
+[checks.loop-seam-rot]
+max_angular_velocity_delta_degps = 5.0
 
 [clips."run_*"]
 loop = true
