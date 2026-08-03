@@ -243,12 +243,14 @@ fn cli_measure_reports_embedded_image_metadata() {
         "asset": { "version": "2.0" },
         "buffers": [{ "byteLength": 70 }],
         "bufferViews": [{ "buffer": 0, "byteLength": 70 }],
-        "images": [{ "name": "packed", "bufferView": 0, "mimeType": "image/png" }]
+        "images": [{ "name": "packed", "bufferView": 0, "mimeType": "image/jpeg" }]
     }))
     .expect("serializes GLB JSON");
     while !json.len().is_multiple_of(4) {
         json.push(b' ');
     }
+    // The declaration is intentionally JPEG while the payload is PNG: these
+    // are distinct source and byte-inspection facts in the output contract.
     let mut image = png(ExtendedColorType::Rgba8, &[1, 2, 3, 255]);
     let image_len = image.len();
     // Keep the declared buffer/view lengths exact while retaining legal GLB padding.
@@ -256,7 +258,7 @@ fn cli_measure_reports_embedded_image_metadata() {
         "asset": { "version": "2.0" },
         "buffers": [{ "byteLength": image_len }],
         "bufferViews": [{ "buffer": 0, "byteLength": image_len }],
-        "images": [{ "name": "packed", "bufferView": 0, "mimeType": "image/png" }]
+        "images": [{ "name": "packed", "bufferView": 0, "mimeType": "image/jpeg" }]
     }))
     .expect("serializes GLB JSON");
     while !json.len().is_multiple_of(4) {
@@ -284,7 +286,7 @@ fn cli_measure_reports_embedded_image_metadata() {
             "image_index": 0,
             "name": "packed",
             "source_kind": "embedded",
-            "declared_mime_type": "image/png",
+            "declared_mime_type": "image/jpeg",
             "detected_container": "png",
             "width": 1,
             "height": 1,
