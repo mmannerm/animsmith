@@ -5,7 +5,6 @@ export LC_ALL=C
 
 REPO_URL="https://github.com/mmannerm/animsmith"
 REPO_BLOB_URL="${REPO_URL}/blob/main/"
-REPO_TREE_URL="${REPO_URL}/tree/main/"
 SUPPORT_URL="${REPO_BLOB_URL}SUPPORT.md"
 SECURITY_URL="${REPO_BLOB_URL}SECURITY.md"
 SECURITY_ADVISORY_URL="${REPO_URL}/security/advisories/new"
@@ -105,23 +104,17 @@ require_workflow_cron() {
   require_literal "$path" "cron: '$cron'" "schedule $cron"
 }
 
-# Markdown link validation (target existence, #anchor resolution, and
-# the absolute-only policy for published READMEs) lives in the
-# markdown-parser-backed workspace test crates/animsmith/tests/
-# docs_links.rs (pulldown-cmark), which runs under `cargo test
-# --workspace`; its sibling docs_index.rs keeps the Document-index
-# completeness gate. This script keeps the assertions that are
-# genuinely string-shaped: required literals, ordering, issue-form and
-# workflow contracts.
+# Markdown link validation (required README routes, target existence,
+# #anchor resolution, and the absolute-only policy for published
+# READMEs) lives in the markdown-parser-backed workspace test
+# crates/animsmith/tests/docs_links.rs (pulldown-cmark), which runs
+# under `cargo test --workspace`; its sibling docs_index.rs keeps the
+# Document-index completeness gate. This script keeps the assertions
+# that are not Markdown-link-shaped: required literals, ordering,
+# issue-form, and workflow contracts.
 
 require_order README.md "cargo install animsmith" "CONTRIBUTING.md"
 require_order README.md "animsmith lint clip.glb" "CONTRIBUTING.md"
-
-require_literal README.md "${REPO_TREE_URL}docs" "documentation index link"
-require_match README.md "${REPO_BLOB_URL}docs/cli[.]md" "CLI reference link"
-require_match README.md "${REPO_BLOB_URL}docs/embedding[.]md" "embedding guide link"
-require_match README.md "${REPO_BLOB_URL}CONTRIBUTING[.]md" "contributor guide link"
-require_match README.md "${REPO_BLOB_URL}DEVELOPMENT[.]md" "development setup link"
 
 require_match CONTRIBUTING.md '^## Pull Request Flow$' "PR flow"
 require_match CONTRIBUTING.md '^## Conventional Commits$' "Conventional Commits policy"
