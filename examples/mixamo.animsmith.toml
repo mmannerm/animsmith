@@ -22,8 +22,8 @@ profile = "mixamo"
 
 [clips."mixamo.com"]
 # Downloaded with In Place checked, so the walk must not travel;
-# declaring in_place arms the in-place check. loop = true arms
-# loop-seam: the feet must return to their first-frame pose.
+# declaring in_place arms the in-place check. loop = true arms role-free
+# per-bone pose/velocity closure plus locomotion-specific loop-seam.
 loop = true
 in_place = true
 
@@ -39,3 +39,10 @@ in_place = true
 [checks.loop-seam]
 # Fail a wrap discontinuity more than 1.6x the in-clip stride step.
 max_ratio = 1.6
+
+[checks.loop-closure]
+max_position_delta_m = 0.01
+max_rotation_delta_deg = 1.0
+
+[checks.loop-seam-vel]
+max_velocity_delta_mps = 0.1

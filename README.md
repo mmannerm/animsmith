@@ -149,7 +149,9 @@ Contract-aware checks use declared expectations and, where needed, rig roles:
 | id | severity | what |
 |---|---|---|
 | `fps` | warning | duration and keys must land on the declared frame grid |
+| `loop-closure` | error | maximum per-bone model-space position and rotation mismatch in declared loops |
 | `loop-seam` | error | feet-relative-to-hips wrap discontinuity in declared loops |
+| `loop-seam-vel` | error | maximum per-bone model-space linear-velocity change across a declared loop wrap |
 | `in-place` | error | declared in-place vs root-motion mode must match measured travel |
 | `gait-group` | error | stride-phase spread across a declared directional blend ring |
 | `root-motion-speed` | error | measured horizontal root travel vs a declared speed pin |
@@ -158,8 +160,10 @@ Contract-aware checks use declared expectations and, where needed, rig roles:
 | `frozen-bone` | error | required bones whose rotation never exceeds the configured floor |
 | `bind-pose` | warning | first frame deviating too far from the skeleton rest pose |
 
-Checks whose rig roles cannot be resolved report a typed, nonblocking
-coverage gap rather than guessing or manufacturing a content finding.
+`loop-closure` and `loop-seam-vel` inspect every skeleton bone and need no rig
+roles or locomotion stride. Checks that do require semantic roles report a
+typed, nonblocking coverage gap when those roles cannot be resolved rather
+than guessing or manufacturing a content finding.
 
 ## Configuration
 
@@ -172,6 +176,13 @@ profile = "auto"            # or mixamo / ue-mannequin / humanoid, or inline [ri
 
 [checks.loop-seam]
 max_ratio = 1.6
+
+[checks.loop-closure]
+max_position_delta_m = 0.01
+max_rotation_delta_deg = 1.0
+
+[checks.loop-seam-vel]
+max_velocity_delta_mps = 0.1
 
 [clips."run_*"]
 loop = true

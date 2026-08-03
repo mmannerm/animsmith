@@ -119,8 +119,8 @@ $ animsmith lint --format json examples/assets/clip-dirty.glb | jq \
     ]
   },
   "measurements": {
-    "schema_version": 6,
-    "schema": "urn:animsmith:schema:measurements:6",
+    "schema_version": 7,
+    "schema": "urn:animsmith:schema:measurements:7",
     "clips": {},
     "mesh_definitions": [],
     "node_instances": [],
@@ -286,10 +286,9 @@ clips: 1
   walk: 1.000s, 2 tracks, 33 keys max
 ```
 
-`measure` reports the semantic metrics the checks judge — the loop-seam
-ratio (the wrap discontinuity as a multiple of one in-clip step; ≈ 0
-here, since this cycle returns its feet exactly), the gait phase, and the
-L/R foot amplitude:
+`measure` reports the semantic metrics the checks judge — per-bone C0 pose
+closure and C1 seam velocity, the feet-relative loop-seam ratio (≈ 0 here,
+since this cycle returns its feet exactly), gait phase, and L/R foot amplitude:
 
 ```console
 $ animsmith measure examples/assets/walk.glb          # --format json
@@ -306,12 +305,23 @@ $ animsmith measure examples/assets/walk.glb          # --format json
       "rig": { "profile": "ue-mannequin", "resolved_roles": {
         "hips": "pelvis", "left_foot": "foot_l", "right_foot": "foot_r" } },
       "measurements": {
-        "schema_version": 6,
-        "schema": "urn:animsmith:schema:measurements:6",
+        "schema_version": 7,
+        "schema": "urn:animsmith:schema:measurements:7",
         "clips": { "walk": {
           "duration_s": 1.0, "frame_count": 33,
           "animated_bones": ["foot_l", "foot_r"],
           "bone_rotation_range_deg": {},
+          "loop_continuity": { "bones": [
+            { "bone_index": 0, "bone_name": "pelvis",
+              "position_delta_m": 0.0, "rotation_delta_deg": 0.0,
+              "seam_velocity_delta_mps": 0.0 },
+            { "bone_index": 1, "bone_name": "foot_l",
+              "position_delta_m": 3.7e-17, "rotation_delta_deg": 0.0,
+              "seam_velocity_delta_mps": 0.0 },
+            { "bone_index": 2, "bone_name": "foot_r",
+              "position_delta_m": 3.7e-17, "rotation_delta_deg": 0.0,
+              "seam_velocity_delta_mps": 0.0 }
+          ] },
           "loop_seam_ratio": 1.2e-15,
           "gait": { "phase": 0.75, "lr_amplitude_m": 0.2 },
           "speed_mps": 0.0
@@ -333,9 +343,9 @@ $ animsmith measure examples/assets/walk.glb          # --format json
 ```
 
 [`examples/walk.animsmith.toml`](walk.animsmith.toml) is the
-contract: it declares the clip a loop (which arms `loop-seam`) and
-in-place, and caps the seam ratio. Against the clean rig every semantic
-check passes:
+contract: it declares the clip a loop (which arms all three loop checks) and
+in-place, and caps their tolerances. Against the clean rig every semantic check
+passes:
 
 ```console
 $ animsmith lint --config examples/walk.animsmith.toml examples/assets/walk.glb
@@ -351,15 +361,21 @@ the classic popped loop seam. The same contract catches it:
 ```console
 $ animsmith lint --config examples/walk.animsmith.toml examples/assets/walk-dirty.glb
 examples/assets/walk-dirty.glb:
+  error[loop-closure] clip 'walk' bone 'foot_r' @1.000s: loop does not close
+    in position: bone 'foot_r' is 0.1581 m from its first-frame model-space
+    position (cap 0.0100 m) (measured 0.1581, expected 0.0100)
   error[loop-seam] clip 'walk' @1.000s: loop seam pops: wrap discontinuity
     is 6.82× the neighbouring in-clip step (cap 1.60) — the clip does not
     close its cycle (measured 6.8152, expected 1.6000)
-1 error(s), 0 warning(s), 0 note(s), 1 coverage gap(s)  # exits 1
+  error[loop-seam-vel] clip 'walk' bone 'foot_r' @1.000s: loop velocity
+    changes at the seam: bone 'foot_r' differs by 0.7972 m/s between the
+    incoming and outgoing model-space velocities (cap 0.1000 m/s)
+3 error(s), 0 warning(s), 0 note(s), 1 coverage gap(s)  # exits 1
 ```
 
 The contract is load-bearing: a bare `animsmith lint examples/assets/walk-dirty.glb`
-(no config) reports no findings — with no `loop = true` declared,
-`loop-seam` is explicitly not applicable. Semantic checks
+(no config) reports no findings — with no `loop = true` declared, the three
+loop checks are explicitly not applicable. Semantic checks
 enforce *your* declared expectations, not a guess.
 
 ### Scaling up to a full character
@@ -373,6 +389,11 @@ profile = "auto"            # or mixamo / ue-mannequin / humanoid
 
 [checks.loop-seam]
 max_ratio = 1.6             # per-check tuning
+[checks.loop-closure]
+max_position_delta_m = 0.01
+max_rotation_delta_deg = 1.0
+[checks.loop-seam-vel]
+max_velocity_delta_mps = 0.1
 [checks.frozen-bone]
 min_rotation_deg = 0.5
 [checks.quat-flip]

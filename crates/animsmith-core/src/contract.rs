@@ -29,9 +29,9 @@ pub const OUTPUT_SCHEMA_VERSION: u32 = 2;
 /// Immutable identity of the current outer result envelope.
 pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:2";
 /// Current nested measurement-contract version.
-pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 6;
+pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 7;
 /// Immutable identity of the current nested measurement contract.
-pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:6";
+pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:7";
 
 /// Source checkout identity for the producing animsmith build.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -238,6 +238,40 @@ fn validate_measurements(
                 *value,
                 format!("clips[{clip_name:?}].bone_rotation_range_deg[{bone:?}]"),
             )?;
+        }
+        if let Some(loop_continuity) = &clip.loop_continuity {
+            if loop_continuity.bones.is_empty() {
+                return Err(MeasurementContractError::InvalidStructure {
+                    path: format!("clips[{clip_name:?}].loop_continuity.bones"),
+                    reason: "present loop-continuity evidence must contain at least one bone"
+                        .into(),
+                });
+            }
+            for (expected_index, bone) in loop_continuity.bones.iter().enumerate() {
+                let path = format!("clips[{clip_name:?}].loop_continuity.bones[{expected_index}]");
+                if usize::try_from(bone.bone_index) != Ok(expected_index) {
+                    return Err(MeasurementContractError::InvalidStructure {
+                        path: format!("{path}.bone_index"),
+                        reason: format!(
+                            "expected skeleton-order index {expected_index}, found {}",
+                            bone.bone_index
+                        ),
+                    });
+                }
+                for (field, value) in [
+                    ("position_delta_m", bone.position_delta_m),
+                    ("rotation_delta_deg", bone.rotation_delta_deg),
+                    ("seam_velocity_delta_mps", bone.seam_velocity_delta_mps),
+                ] {
+                    finite(value, format!("{path}.{field}"))?;
+                    if value < 0.0 {
+                        return Err(MeasurementContractError::InvalidStructure {
+                            path: format!("{path}.{field}"),
+                            reason: "loop-continuity deltas must be non-negative".into(),
+                        });
+                    }
+                }
+            }
         }
         if let Some(value) = clip.loop_seam_ratio {
             finite(value, format!("clips[{clip_name:?}].loop_seam_ratio"))?;
@@ -1517,6 +1551,7 @@ mod measurement_report_input_tests {
             frame_count: 1,
             animated_bones: Vec::new(),
             bone_rotation_range_deg: BTreeMap::new(),
+            loop_continuity: None,
             loop_seam_ratio: None,
             gait: None,
             speed_mps: None,

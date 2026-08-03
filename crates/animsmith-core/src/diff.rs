@@ -13,6 +13,12 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const DURATION_THRESHOLD_S: f64 = 0.017; // half a frame at 30 fps
 /// Bone rotation range movement threshold, in degrees.
 pub const ROTATION_RANGE_THRESHOLD_DEG: f64 = 1.0;
+/// Per-bone loop-closure position movement threshold, in metres.
+pub const LOOP_POSITION_THRESHOLD_M: f64 = 0.001;
+/// Per-bone loop-closure rotation movement threshold, in degrees.
+pub const LOOP_ROTATION_THRESHOLD_DEG: f64 = 0.1;
+/// Per-bone seam-velocity movement threshold, in metres per second.
+pub const LOOP_VELOCITY_THRESHOLD_MPS: f64 = 0.01;
 /// Loop-seam ratio movement threshold.
 pub const SEAM_THRESHOLD: f64 = 0.05;
 /// Gait phase movement threshold, in circular cycle fraction.
@@ -150,6 +156,52 @@ pub fn diff_measurements(
             false,
         );
 
+        let a_loop_bones: BTreeMap<_, _> = ma
+            .loop_continuity
+            .as_ref()
+            .into_iter()
+            .flat_map(|continuity| &continuity.bones)
+            .map(|bone| (bone.bone_index, bone))
+            .collect();
+        let b_loop_bones: BTreeMap<_, _> = mb
+            .loop_continuity
+            .as_ref()
+            .into_iter()
+            .flat_map(|continuity| &continuity.bones)
+            .map(|bone| (bone.bone_index, bone))
+            .collect();
+        for bone_index in a_loop_bones
+            .keys()
+            .chain(b_loop_bones.keys())
+            .copied()
+            .collect::<BTreeSet<_>>()
+        {
+            let a_bone = a_loop_bones.get(&bone_index).copied();
+            let b_bone = b_loop_bones.get(&bone_index).copied();
+            let metric = |field: &str| format!("loop_continuity.bones[{bone_index}].{field}");
+            push_num(
+                &metric("position_delta_m"),
+                finite(a_bone.map(|bone| bone.position_delta_m)),
+                finite(b_bone.map(|bone| bone.position_delta_m)),
+                LOOP_POSITION_THRESHOLD_M,
+                false,
+            );
+            push_num(
+                &metric("rotation_delta_deg"),
+                finite(a_bone.map(|bone| bone.rotation_delta_deg)),
+                finite(b_bone.map(|bone| bone.rotation_delta_deg)),
+                LOOP_ROTATION_THRESHOLD_DEG,
+                false,
+            );
+            push_num(
+                &metric("seam_velocity_delta_mps"),
+                finite(a_bone.map(|bone| bone.seam_velocity_delta_mps)),
+                finite(b_bone.map(|bone| bone.seam_velocity_delta_mps)),
+                LOOP_VELOCITY_THRESHOLD_MPS,
+                false,
+            );
+        }
+
         for bone in ma
             .bone_rotation_range_deg
             .keys()
@@ -209,7 +261,9 @@ pub fn diff_measurements(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::measure::{ClipMeasurements, GaitMeasurement};
+    use crate::measure::{
+        BoneLoopContinuityMeasurement, ClipMeasurements, GaitMeasurement, LoopContinuityMeasurement,
+    };
 
     fn clip_measurements() -> ClipMeasurements {
         ClipMeasurements {
@@ -217,6 +271,15 @@ mod tests {
             frame_count: 31,
             animated_bones: vec!["hips".into()],
             bone_rotation_range_deg: BTreeMap::from([("hips".into(), 10.0)]),
+            loop_continuity: Some(LoopContinuityMeasurement {
+                bones: vec![BoneLoopContinuityMeasurement {
+                    bone_index: 0,
+                    bone_name: "hips".into(),
+                    position_delta_m: 0.02,
+                    rotation_delta_deg: 2.0,
+                    seam_velocity_delta_mps: 0.2,
+                }],
+            }),
             loop_seam_ratio: Some(0.2),
             gait: Some(GaitMeasurement {
                 phase: Some(0.25),
@@ -271,6 +334,32 @@ mod tests {
     }
 
     #[test]
+    fn reports_per_bone_loop_continuity_appearance_by_stable_index() {
+        let before = clip_measurements();
+        let mut after = before.clone();
+        after.loop_continuity = None;
+
+        let disappeared = diff_measurements(
+            &measurement_map("walk", before.clone()),
+            &measurement_map("walk", after.clone()),
+        );
+        assert_eq!(disappeared.len(), 3, "{:?}", delta_metrics(&disappeared));
+        assert!(disappeared.iter().all(|delta| delta.note == "disappeared"));
+        assert!(
+            disappeared
+                .iter()
+                .all(|delta| { delta.metric.starts_with("loop_continuity.bones[0].") })
+        );
+
+        let appeared = diff_measurements(
+            &measurement_map("walk", after),
+            &measurement_map("walk", before),
+        );
+        assert_eq!(appeared.len(), 3, "{:?}", delta_metrics(&appeared));
+        assert!(appeared.iter().all(|delta| delta.note == "appeared"));
+    }
+
+    #[test]
     fn reports_clip_added_and_removed() {
         let deltas = diff_measurements(
             &measurement_map("removed", clip_measurements()),
@@ -301,7 +390,8 @@ mod tests {
     #[test]
     fn literal_stimuli_pin_documented_thresholds() {
         // Base fixture: duration_s 1.0, loop_seam_ratio 0.2,
-        // lr_amplitude_m 0.1, speed_mps 1.0, hips rotation 10.0.
+        // lr_amplitude_m 0.1, speed_mps 1.0, hips rotation 10.0,
+        // loop position 0.02 m, rotation 2.0 deg, velocity 0.2 m/s.
         struct Case {
             metric: &'static str,
             over: fn(&mut ClipMeasurements),  // clears the threshold
@@ -335,6 +425,33 @@ mod tests {
                 },
                 under: |m| {
                     m.bone_rotation_range_deg.insert("hips".into(), 10.5);
+                },
+            },
+            Case {
+                metric: "loop_continuity.bones[0].position_delta_m", // threshold 0.001 m
+                over: |m| {
+                    m.loop_continuity.as_mut().unwrap().bones[0].position_delta_m = 0.022;
+                },
+                under: |m| {
+                    m.loop_continuity.as_mut().unwrap().bones[0].position_delta_m = 0.0205;
+                },
+            },
+            Case {
+                metric: "loop_continuity.bones[0].rotation_delta_deg", // threshold 0.1 deg
+                over: |m| {
+                    m.loop_continuity.as_mut().unwrap().bones[0].rotation_delta_deg = 2.2;
+                },
+                under: |m| {
+                    m.loop_continuity.as_mut().unwrap().bones[0].rotation_delta_deg = 2.05;
+                },
+            },
+            Case {
+                metric: "loop_continuity.bones[0].seam_velocity_delta_mps", // threshold 0.01 m/s
+                over: |m| {
+                    m.loop_continuity.as_mut().unwrap().bones[0].seam_velocity_delta_mps = 0.22;
+                },
+                under: |m| {
+                    m.loop_continuity.as_mut().unwrap().bones[0].seam_velocity_delta_mps = 0.205;
                 },
             },
         ];

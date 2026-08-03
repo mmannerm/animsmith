@@ -67,6 +67,15 @@ pub struct CheckSettings {
     pub max_ratio: Option<f64>,
     /// `loop-seam`: stride floor in metres (default 0.02).
     pub min_stride_step_m: Option<f64>,
+    /// `loop-closure`: maximum model-space position delta in metres
+    /// (default 0.01).
+    pub max_position_delta_m: Option<f64>,
+    /// `loop-closure`: maximum model-space rotation delta in degrees
+    /// (default 1.0).
+    pub max_rotation_delta_deg: Option<f64>,
+    /// `loop-seam-vel`: maximum incoming/outgoing model-space linear-velocity
+    /// difference in metres per second (default 0.1).
+    pub max_velocity_delta_mps: Option<f64>,
     /// `frozen-bone`: rotation floor in degrees (default 1.0).
     pub min_rotation_deg: Option<f64>,
     /// `bind-pose`: mean first-frame deviation cap in degrees

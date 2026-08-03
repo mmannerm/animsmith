@@ -231,28 +231,77 @@ clip](../examples/README.md#3-editing-a-clip).
 
 ## The loop pops
 
-A looping clip must end where it began — not just near it. At the wrap
-point the runtime jumps from the last frame back to the first, and any
-residual offset in the pose becomes a visible hitch, once per cycle,
-forever.
+A looping clip needs both pose and motion continuity at the wrap. A pose
+offset is a C0 discontinuity: the runtime jumps when it returns to frame 0. A
+matching pose with mismatched incoming and outgoing velocity is a C1
+discontinuity: it reaches the right point but changes direction or speed
+abruptly, producing a hitch or pulse once per cycle. Unity's
+[looping-clip guide](https://docs.unity3d.com/Manual/LoopingAnimationClips.html)
+shows the same artist-facing start/end match problem and the special treatment
+root-motion axes may need.
 
-The `loop-seam` check measures the wrap discontinuity of the feet
-relative to the hips, normalized by the seam-adjacent in-clip steps: a
-clean cyclic clip wraps by about one locally-normal step (ratio ≈ 1),
-while a clip whose cut dropped the loop closure pops well above that.
-It is judged only on clips declared `loop = true` in the config —
-whether a clip is *supposed* to loop is a fact about your project, not
-the file — though the measured ratio is always available via
-`animsmith measure`.
+Animsmith separates three questions:
 
-When the seam is broken because the cycle is badly anchored rather
-than badly cut, `transform --gait-anchor` rotates the clip in time so the
-measured stride anchor lands at t=0, picking the candidate frame with
-the lowest seam ratio.
+- `loop-closure` finds the largest last-to-first **model-space position** and
+  shortest-path **model-space rotation** delta across all skeleton bones. The
+  default caps are 0.01 m and 1 degree.
+- `loop-seam-vel` finds the largest difference between the model-space linear
+  velocity entering the last sample and leaving frame 0. Its default cap is
+  0.1 m/s. A closed triangle-wave trajectory demonstrates the problem: the
+  first and last position are identical, but the bone reverses direction at
+  the wrap.
+- `loop-seam` remains the locomotion-specific test. It compares feet relative
+  to hips and normalizes by the neighbouring stride step, so it needs resolved
+  hips/foot roles and deliberately has no result for a stationary clip.
 
-Workflow: [a project contract
-config](../examples/README.md#4-a-project-contract-config) shows the
-same walk cycle passing clean and failing with a popped seam — and why
+The first two checks are per-bone and role independent, so idle, guard, block,
+aim-offset, facial, and prop loops remain testable without a humanoid profile
+or detectable stride. Model-space is intentional: a parent mismatch can move
+many descendants even when their local keys match. JSON measurements retain a
+stable `bone_index` plus display `bone_name` for every row, while findings name
+only the maximum offending bone for each judged dimension.
+
+Typical causes are an export range ending one frame early, a cycle modifier or
+procedural controller not being baked, copied endpoint keys whose Bezier
+tangents do not match, retargeting or resampling that changes one endpoint, and
+an engine importer using a different clip range from the DCC. A useful
+diagnostic split is:
+
+- nonzero position/rotation delta: repair the endpoint pose or clip range;
+- zero pose delta but high velocity delta: repair the endpoint tangents or the
+  seam-adjacent keys;
+- many descendants reporting the same displacement: inspect their first
+  mismatching ancestor;
+- only `loop-seam` failing: inspect locomotion phase and foot/hips-relative
+  motion rather than a stationary pose loop.
+
+The normal fix is in the DCC: select the intended complete cycle, bake
+procedural motion, make the last pose match the first where appropriate, match
+the derivative on both sides, then re-export and rerun `animsmith measure` and
+`animsmith lint`.
+Blender's [Cycles F-curve
+modifier](https://docs.blender.org/manual/en/latest/editors/graph_editor/fcurves/modifiers.html#cycles-modifier)
+can preview repeated curves, but the evaluated endpoint and tangents still
+need to survive baking and export. Engine-side loop-pose blending can hide a
+small mismatch at runtime; it does not make the source measurement close.
+
+Root-motion locomotion is the important exception. Intentional horizontal root
+travel does not return to its starting model-space position, and every child
+inherits that travel. Tune `max_position_delta_m` to the contract or disable
+`loop-closure` for such a pipeline; keep using `loop-seam` for feet-relative
+locomotion. `loop-seam-vel` can still validate constant extracted travel.
+
+There is no general automatic repair. `transform --gait-anchor` can rotate a
+locomotion cycle in time to choose a better stride cut, but it does not rewrite
+arbitrary bone endpoint poses or tangents. Angular-velocity C1 continuity,
+acceleration/jerk continuity, root-motion extraction policy, and runtime blend
+settings remain out of scope.
+
+All three checks are judged only on clips declared `loop = true` — whether a
+clip is intended to loop is project knowledge — while raw measurements are
+always available for measurable clips through `animsmith measure`. Workflow:
+[a project contract config](../examples/README.md#4-a-project-contract-config)
+shows the same walk cycle passing clean and failing with a popped seam, and why
 an undeclared loop is reported clean.
 
 ## The character glides or runs in place
@@ -438,7 +487,7 @@ scale repair.
 |---|---|---|---|---|
 | Pose flickers, spins, or explodes | `nan`, `quat-norm`, `quat-flip`, `time-monotonic` | `fix` (quat repairs, lossless) | — | [First gate](../examples/README.md#1-a-first-cli-gate), [Repair](../examples/README.md#2-repairing-an-asset) |
 | Wrong length, freezes at the end | `duration-sanity`, `fps` | `transform --slice`, `--hold-extend` | `[clips.<name>] duration_s`, `fps` | [Editing a clip](../examples/README.md#3-editing-a-clip) |
-| The loop pops | `loop-seam` | `transform --gait-anchor` | `[clips.<name>] loop = true` | [Contract config](../examples/README.md#4-a-project-contract-config) |
+| The loop pops or pulses at the wrap | `loop-closure`, `loop-seam-vel`, `loop-seam` | re-author endpoint pose/tangents; `transform --gait-anchor` only for locomotion phase | `[clips.<name>] loop = true`, `[checks.loop-closure]`, `[checks.loop-seam-vel]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Glides or runs in place | `in-place`, `root-motion-speed` | re-export; `measure` for ground truth | `[clips.<name>] in_place`, `speed_mps` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Feet skate across blends | `gait-group` | `transform --gait-anchor` | `[gait_groups.<name>]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Feet slide within a clip | `foot-slide` | re-author in DCC | `[clips.<name>] speed_mps` | [Contract config](../examples/README.md#4-a-project-contract-config) |
@@ -455,7 +504,8 @@ out of scope.
 The gait and root-motion checks (`loop-seam`, `in-place`,
 `root-motion-speed`, `gait-group`, `foot-slide`) additionally need a
 resolved rig profile so they know which bones are the hips, feet, and
-root. Built-in profiles cover `mixamo`, `ue-mannequin`, and `humanoid`
+root. `loop-closure` and `loop-seam-vel` do not. Built-in profiles cover
+`mixamo`, `ue-mannequin`, and `humanoid`
 rigs; `[rig] profile = "auto"` scores them against your skeleton, and
 `[rig.roles]` binds bone names explicitly for everything else. See the
 [configuration reference](../README.md#configuration) for every key.

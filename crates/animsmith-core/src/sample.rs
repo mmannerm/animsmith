@@ -23,6 +23,7 @@ pub struct PoseGrid {
     /// Frame-major: `local[frame * bone_count + bone]`.
     local: Vec<Transform>,
     model: Vec<Mat4>,
+    model_rotation: Vec<Quat>,
 }
 
 impl PoseGrid {
@@ -75,6 +76,17 @@ impl PoseGrid {
     /// Panics if either index is outside the grid bounds.
     pub fn model_position(&self, frame: usize, bone: usize) -> Vec3 {
         self.model(frame, bone).w_axis.truncate()
+    }
+
+    /// Model-space joint rotation, composed from the local rotation chain
+    /// independently of scale. This avoids extracting an ambiguous rotation
+    /// from a model matrix that contains non-uniform scale or shear.
+    ///
+    /// # Panics
+    ///
+    /// Panics if either index is outside the grid bounds.
+    pub fn model_rotation(&self, frame: usize, bone: usize) -> Quat {
+        self.model_rotation[self.index(frame, bone)]
     }
 }
 
@@ -133,12 +145,18 @@ pub fn sample_clip(skeleton: &Skeleton, clip: &Clip, frames: usize) -> PoseGrid 
     }
 
     let mut model = vec![Mat4::IDENTITY; frames * nb];
+    let mut model_rotation = vec![Quat::IDENTITY; frames * nb];
     for f in 0..frames {
         for (b, bone) in skeleton.bones.iter().enumerate() {
             let m = local[f * nb + b].to_mat4();
             model[f * nb + b] = match bone.parent {
                 Some(p) => model[f * nb + p] * m,
                 None => m,
+            };
+            let rotation = local[f * nb + b].rotation;
+            model_rotation[f * nb + b] = match bone.parent {
+                Some(p) => model_rotation[f * nb + p] * rotation,
+                None => rotation,
             };
         }
     }
@@ -148,6 +166,7 @@ pub fn sample_clip(skeleton: &Skeleton, clip: &Clip, frames: usize) -> PoseGrid 
         bone_count: nb,
         local,
         model,
+        model_rotation,
     }
 }
 

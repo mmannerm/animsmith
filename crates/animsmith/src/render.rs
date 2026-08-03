@@ -83,6 +83,27 @@ pub(crate) fn render_measure_text(
                             .loop_seam_ratio
                             .map(|ratio| format!(" seam×{ratio:.2}"))
                             .unwrap_or_default();
+                        let continuity = measurement
+                            .loop_continuity
+                            .as_ref()
+                            .filter(|continuity| !continuity.bones.is_empty())
+                            .map(|continuity| {
+                                let (position, rotation, velocity) = continuity.bones.iter().fold(
+                                    (0.0f64, 0.0f64, 0.0f64),
+                                    |(position, rotation, velocity), bone| {
+                                        (
+                                            position.max(bone.position_delta_m),
+                                            rotation.max(bone.rotation_delta_deg),
+                                            velocity.max(bone.seam_velocity_delta_mps),
+                                        )
+                                    },
+                                );
+                                format!(
+                                    " loop Δp={:.2}cm Δr={rotation:.2}° Δv={velocity:.3}m/s",
+                                    position * 100.0
+                                )
+                            })
+                            .unwrap_or_default();
                         let gait = measurement
                             .gait
                             .as_ref()
@@ -92,7 +113,7 @@ pub(crate) fn render_measure_text(
                             })
                             .unwrap_or_default();
                         format!(
-                            "  {}: {:.3}s, {} frames, {} animated bones{seam}{gait}",
+                            "  {}: {:.3}s, {} frames, {} animated bones{continuity}{seam}{gait}",
                             text_atom(clip),
                             measurement.duration_s,
                             measurement.frame_count,
@@ -1098,6 +1119,13 @@ mod tests {
                 "frame_count": 2,
                 "animated_bones": ["hips"],
                 "bone_rotation_range_deg": {},
+                "loop_continuity": { "bones": [{
+                    "bone_index": 0,
+                    "bone_name": "hips",
+                    "position_delta_m": 0.012,
+                    "rotation_delta_deg": 2.5,
+                    "seam_velocity_delta_mps": 0.3456
+                }] },
                 "loop_seam_ratio": 0.25,
                 "gait": { "phase": 0.5, "lr_amplitude_m": 0.1 }
             }
@@ -1162,7 +1190,7 @@ mod tests {
             render_measure_text(&reports).collect::<Vec<_>>(),
             vec![
                 "asset\\npath.glb:",
-                "  walk\\nclip: 1.000s, 2 frames, 1 animated bones seam×0.25 gait φ=0.50 (10.0cm)",
+                "  walk\\nclip: 1.000s, 2 frames, 1 animated bones loop Δp=1.20cm Δr=2.50° Δv=0.346m/s seam×0.25 gait φ=0.50 (10.0cm)",
                 "  material resources: 1 materials, 1 textures, 1 images (complete)",
                 "  mesh definition #7 body\\nmesh: 3 verts geometry bbox 1.000×2.000×3.000 geometry centroid (0.250, 1.000, -0.500), ≤4 joints/vtx, weight-sum 0.900–1.100, additional influence sets: JOINTS_1 + WEIGHTS_1 (also JOINTS-only and WEIGHTS-only primitives), JOINTS_2 (also JOINTS-only primitives), WEIGHTS_3 (also WEIGHTS-only primitives)",
                 "  node instance #9 body\\nnode -> mesh #7: static node-world bbox 1.000×2.000×3.000",

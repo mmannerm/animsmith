@@ -195,7 +195,7 @@ fn tutorial_contract_gates_the_walk() {
 
     // The committed contract passes the clean in-place walk: the clip
     // pattern matches the mixamo.com take, the pinned profile resolves
-    // the rig, and loop-seam / in-place both judge and pass.
+    // the rig, and the loop checks / in-place all judge and pass.
     let (code, out) = run(&["lint", "--config", &config, &clean]);
     assert_eq!(code, Some(0), "clean walk passes the tutorial contract");
     assert!(
@@ -203,16 +203,19 @@ fn tutorial_contract_gates_the_walk() {
         "clean walk has no findings: {out}"
     );
 
-    // The same contract fails the popped loop, and loop-seam is the
-    // *only* finding — the clean rig differs by exactly this (a stale
-    // clip name or broken profile pin would skip it and pass both).
+    // The same contract fails the popped loop across C0 pose closure,
+    // locomotion-relative seam distance, and C1 velocity continuity.
     let (code, json) = run(&["lint", "--config", &config, "--format", "json", &popped]);
     assert_eq!(code, Some(1), "popped loop fails the contract");
     let ids = finding_ids(&json);
     assert_eq!(
         ids,
-        vec![("loop-seam".to_owned(), "error".to_owned())],
-        "the popped seam is the only finding: {ids:?}"
+        vec![
+            ("loop-closure".to_owned(), "error".to_owned()),
+            ("loop-seam".to_owned(), "error".to_owned()),
+            ("loop-seam-vel".to_owned(), "error".to_owned()),
+        ],
+        "the popped seam produces the three complementary findings: {ids:?}"
     );
 
     // And the in-place declaration is judged, not just parsed: a walk

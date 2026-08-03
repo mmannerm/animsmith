@@ -177,7 +177,7 @@ contract is the source of truth and is versioned with `schema_version`.
 See [output.md](output.md) and
 [`output-v2.schema.json`](schemas/output-v2.schema.json). Nested measurement
 evidence has its own
-[`measurements-v6.schema.json`](schemas/measurements-v6.schema.json) contract.
+[`measurements-v7.schema.json`](schemas/measurements-v7.schema.json) contract.
 Alpha-era v1 and preview reports are not retained; regenerate them before
 using `diff`.
 

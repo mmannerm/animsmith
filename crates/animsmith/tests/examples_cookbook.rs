@@ -293,8 +293,8 @@ fn cookbook_semantic_contract() {
     assert_eq!(code, Some(0), "clean walk passes its contract");
     assert!(out.contains("0 error(s)"), "walk has no findings: {out}");
 
-    // The popped-seam rig fails loop-seam under the same contract, and
-    // that is its *only* finding (the clean rig differs by exactly this).
+    // The popped-seam rig fails C0 pose closure, locomotion-relative seam,
+    // and C1 velocity continuity under the same contract.
     let (code, out) = run(&["lint", "--config", config, dirty]);
     assert_eq!(code, Some(1), "popped seam fails loop-seam");
     assert!(out.contains("loop-seam"), "names loop-seam: {out}");
@@ -314,11 +314,15 @@ fn cookbook_semantic_contract() {
         .collect();
     assert_eq!(
         ids,
-        vec![("loop-seam", "error")],
-        "the popped seam is the only finding: {ids:?}"
+        vec![
+            ("loop-closure", "error"),
+            ("loop-seam", "error"),
+            ("loop-seam-vel", "error"),
+        ],
+        "the popped seam produces the three complementary findings: {ids:?}"
     );
 
-    // Without the contract, loop-seam has nothing to check and skips —
+    // Without the contract, all loop checks have nothing to judge and skip —
     // the semantic checks enforce declared expectations, not a guess.
     let (code, out) = run(&["lint", dirty]);
     assert_eq!(code, Some(0), "bare lint skips loop-seam");
