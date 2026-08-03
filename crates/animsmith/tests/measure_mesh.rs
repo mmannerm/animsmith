@@ -475,6 +475,36 @@ fn cli_measure_reports_secondary_influence_set_presence_without_changing_primary
             }]),
             vec![(true, false), (false, true)],
         ),
+        (
+            "paired-with-joints-only-mismatch",
+            vec![
+                SecondaryInfluenceSet::Paired,
+                SecondaryInfluenceSet::JointsOnly,
+            ],
+            serde_json::json!([{
+                "set_index": 1,
+                "joints_present": true,
+                "weights_present": true,
+                "joints_without_weights_present": true,
+                "weights_without_joints_present": false,
+            }]),
+            vec![(true, true), (true, false)],
+        ),
+        (
+            "paired-with-weights-only-mismatch",
+            vec![
+                SecondaryInfluenceSet::Paired,
+                SecondaryInfluenceSet::WeightsOnly,
+            ],
+            serde_json::json!([{
+                "set_index": 1,
+                "joints_present": true,
+                "weights_present": true,
+                "joints_without_weights_present": false,
+                "weights_without_joints_present": true,
+            }]),
+            vec![(true, true), (false, true)],
+        ),
     ];
 
     for (name, sets, expected_sets, expected_source_presence) in cases {
