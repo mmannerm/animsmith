@@ -29,6 +29,12 @@ or unsupported image data remains explicit unavailable evidence rather than a
 repair request. This sidecar is descriptive only and is not a writer
 preservation, image acceptance, resize/transcode, or recipe-authority promise.
 
+The glTF source-skeleton sidecar likewise preserves source node and skin
+indices independently from the parent-before-child sampling skeleton. It keeps
+authored local rest representations, skin-slot joint order, inverse-bind
+accessor availability, and source-node skin attachments so measurement can
+report facts without choosing a retargeting profile or inferring absent binds.
+
 For measurement, the loader also records whether each primitive declares
 secondary `JOINTS_n` or `WEIGHTS_n` attributes. Mesh measurements retain an
 individual-primitive mismatch signal when complementary sides occur on

@@ -3,6 +3,7 @@
 //! readable and weights normalized.
 
 use animsmith_core::model::*;
+use base64::Engine as _;
 use glam::{Mat4, Quat, Vec3};
 
 /// A valid 1×1 white PNG.
@@ -1235,5 +1236,306 @@ fn load_records_secondary_influence_set_sides_without_changing_primary_attribute
             .additional_influence_sets
             .is_empty(),
         "a different primitive must not inherit secondary metadata"
+    );
+}
+
+/// Write a compact glTF fixture with a shared POSITION accessor and optional
+/// inverse-bind accessors. `declared_count` is intentionally independent from
+/// the readable matrix count so hardening cases can be represented directly.
+fn write_source_skeleton_gltf(
+    path: &std::path::Path,
+    nodes: serde_json::Value,
+    skins: serde_json::Value,
+    meshes: serde_json::Value,
+    inverse_bind_accessors: &[(usize, Vec<Mat4>)],
+    scene_roots: &[usize],
+) {
+    let mut bytes = Vec::new();
+    for value in [
+        [0.0_f32, 0.0, 0.0],
+        [1.0_f32, 0.0, 0.0],
+        [0.0_f32, 1.0, 0.0],
+    ]
+    .into_iter()
+    .flatten()
+    {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    let mut views = vec![serde_json::json!({
+        "buffer": 0,
+        "byteOffset": 0,
+        "byteLength": 36,
+    })];
+    let mut accessors = vec![serde_json::json!({
+        "bufferView": 0,
+        "componentType": 5126,
+        "count": 3,
+        "type": "VEC3",
+        "min": [0, 0, 0],
+        "max": [1, 1, 0],
+    })];
+    for (declared_count, matrices) in inverse_bind_accessors {
+        let offset = bytes.len();
+        for matrix in matrices {
+            for value in matrix.to_cols_array() {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        let view = views.len();
+        // A count-zero accessor is never read by the loader. Reusing the
+        // position view keeps the fixture parser-valid without an empty view.
+        if *declared_count > 0 {
+            views.push(serde_json::json!({
+                "buffer": 0,
+                "byteOffset": offset,
+                "byteLength": matrices.len() * 64,
+            }));
+        }
+        accessors.push(serde_json::json!({
+            "bufferView": if *declared_count == 0 { 0 } else { view },
+            "componentType": 5126,
+            "count": declared_count,
+            "type": "MAT4",
+        }));
+    }
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    std::fs::write(
+        path,
+        serde_json::json!({
+            "asset": { "version": "2.0" },
+            "buffers": [{
+                "byteLength": bytes.len(),
+                "uri": format!("data:application/octet-stream;base64,{encoded}"),
+            }],
+            "bufferViews": views,
+            "accessors": accessors,
+            "meshes": meshes,
+            "nodes": nodes,
+            "skins": skins,
+            "scenes": [{ "nodes": scene_roots }],
+            "scene": 0,
+        })
+        .to_string(),
+    )
+    .expect("writes source-skeleton fixture");
+}
+
+#[test]
+fn load_preserves_source_node_order_parentage_and_declared_skin_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("source-order.gltf");
+    write_source_skeleton_gltf(
+        &path,
+        serde_json::json!([
+            { "name": "tip", "translation": [0, 1, 0] },
+            { "name": "scene-root", "translation": [10, 0, 0], "children": [2, 4] },
+            { "name": "rig-helper", "matrix": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1], "children": [3] },
+            { "name": "root", "children": [0] },
+            { "name": "body", "mesh": 0, "skin": 0 }
+        ]),
+        serde_json::json!([{ "name": "body-skin", "joints": [3, 0], "skeleton": 2, "inverseBindMatrices": 1 }]),
+        serde_json::json!([{ "primitives": [{ "attributes": { "POSITION": 0 } }] }]),
+        &[(
+            2,
+            vec![
+                Mat4::IDENTITY,
+                Mat4::from_translation(Vec3::new(0.0, -1.0, 0.0)),
+            ],
+        )],
+        &[1],
+    );
+
+    let doc = animsmith_gltf::load(&path).expect("loads");
+    let source = &doc.assets.source_skeleton;
+    assert_eq!(source.coverage, SourceSkeletonCoverage::Complete);
+    assert_eq!(
+        source
+            .nodes
+            .iter()
+            .map(|node| node.source_node_index)
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2, 3, 4],
+        "source order is independent from DFS bone order"
+    );
+    assert_eq!(source.nodes[0].parent_source_node_index, Some(3));
+    assert_eq!(source.nodes[2].parent_source_node_index, Some(1));
+    assert_eq!(source.nodes[1].scene_root_indices, vec![0]);
+    assert!(matches!(
+        source.nodes[2].local_rest,
+        SourceNodeLocalRest::Matrix(matrix) if matrix.w_axis.x == 1.0
+    ));
+    assert_eq!(
+        doc.skeleton
+            .bones
+            .iter()
+            .map(|bone| bone.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["scene-root", "rig-helper", "root", "tip", "body"],
+        "normalized skeleton keeps its independent parent-before-child order"
+    );
+
+    let skin = &source.skins[0];
+    assert_eq!(skin.source_skin_index, 0);
+    assert_eq!(skin.name.as_deref(), Some("body-skin"));
+    assert_eq!(skin.skeleton_root_source_node_index, Some(2));
+    assert_eq!(skin.joint_source_node_indices, vec![3, 0]);
+    assert_eq!(
+        skin.inverse_bind_accessor.status,
+        SourceInverseBindAccessorStatus::Available
+    );
+    assert_eq!(skin.inverse_bind_accessor.declared_count, Some(2));
+    assert_eq!(skin.inverse_bind_accessor.matrices.len(), 2);
+    assert_eq!(
+        skin.attachments
+            .iter()
+            .map(|attachment| (attachment.source_node_index, attachment.source_mesh_index))
+            .collect::<Vec<_>>(),
+        vec![(4, Some(0))]
+    );
+}
+
+#[test]
+fn load_keeps_multiple_skin_bindings_and_skipped_mesh_attachments_separate() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("multiple-skins.gltf");
+    write_source_skeleton_gltf(
+        &path,
+        serde_json::json!([
+            { "name": "joint" },
+            { "name": "body-a", "mesh": 0, "skin": 0 },
+            { "name": "body-b", "mesh": 0, "skin": 1 },
+            { "name": "skipped", "mesh": 1, "skin": 0 }
+        ]),
+        serde_json::json!([
+            { "name": "first", "joints": [0], "skeleton": 0, "inverseBindMatrices": 1 },
+            { "name": "second", "joints": [0], "inverseBindMatrices": 2 }
+        ]),
+        serde_json::json!([
+            { "primitives": [{ "attributes": { "POSITION": 0 } }] },
+            { "primitives": [{ "mode": 0, "attributes": { "POSITION": 0 } }] }
+        ]),
+        &[
+            (
+                2,
+                vec![
+                    Mat4::IDENTITY,
+                    Mat4::from_translation(Vec3::new(1.0, 0.0, 0.0)),
+                ],
+            ),
+            (1, vec![Mat4::from_translation(Vec3::new(2.0, 0.0, 0.0))]),
+        ],
+        &[0, 1, 2, 3],
+    );
+
+    let doc = animsmith_gltf::load(&path).expect("loads");
+    let source = &doc.assets.source_skeleton;
+    assert_eq!(source.skins.len(), 2);
+    assert_eq!(source.skins[0].joint_source_node_indices, vec![0]);
+    assert_eq!(source.skins[1].joint_source_node_indices, vec![0]);
+    assert_eq!(source.skins[0].skeleton_root_source_node_index, Some(0));
+    assert_eq!(source.skins[1].skeleton_root_source_node_index, None);
+    assert_eq!(
+        source.skins[0].inverse_bind_accessor.declared_count,
+        Some(2)
+    );
+    assert_eq!(
+        source.skins[0].inverse_bind_accessor.status,
+        SourceInverseBindAccessorStatus::Available,
+        "extra IBM rows remain valid and visible"
+    );
+    assert_eq!(source.skins[0].inverse_bind_accessor.matrices.len(), 2);
+    assert_eq!(source.skins[1].inverse_bind_accessor.matrices.len(), 1);
+    assert_eq!(
+        source.skins[0]
+            .attachments
+            .iter()
+            .map(|attachment| (attachment.source_node_index, attachment.source_mesh_index))
+            .collect::<Vec<_>>(),
+        vec![(1, Some(0)), (3, Some(1))],
+        "skin attachment evidence includes a node whose POINTS mesh is skipped"
+    );
+    assert_eq!(
+        source.skins[1]
+            .attachments
+            .iter()
+            .map(|attachment| attachment.source_node_index)
+            .collect::<Vec<_>>(),
+        vec![2]
+    );
+    assert_eq!(doc.assets.instances.len(), 2, "POINTS mesh remains skipped");
+    assert_eq!(
+        doc.skeleton.bones[0].inverse_bind,
+        Some(Mat4::from_translation(Vec3::new(2.0, 0.0, 0.0))),
+        "legacy bone fallback retains its existing last-skin-wins behavior at its independent topo ordinal"
+    );
+}
+
+#[test]
+fn load_records_absent_empty_short_singular_and_non_finite_inverse_binds() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("inverse-bind-states.gltf");
+    write_source_skeleton_gltf(
+        &path,
+        serde_json::json!([
+            { "name": "joint" },
+            { "mesh": 0, "skin": 0 },
+            { "mesh": 0, "skin": 1 },
+            { "mesh": 0, "skin": 2 },
+            { "mesh": 0, "skin": 3 },
+            { "mesh": 0, "skin": 4 }
+        ]),
+        serde_json::json!([
+            { "joints": [0] },
+            { "joints": [0], "inverseBindMatrices": 1 },
+            { "joints": [0, 0], "inverseBindMatrices": 2 },
+            { "joints": [0], "inverseBindMatrices": 3 },
+            { "joints": [0], "inverseBindMatrices": 4 }
+        ]),
+        serde_json::json!([{ "primitives": [{ "attributes": { "POSITION": 0 } }] }]),
+        &[
+            (0, vec![]),
+            (1, vec![Mat4::IDENTITY]),
+            (1, vec![Mat4::ZERO]),
+            (1, vec![Mat4::from_cols_array(&[f32::NAN; 16])]),
+        ],
+        &[0, 1, 2, 3, 4, 5],
+    );
+
+    let doc = animsmith_gltf::load(&path).expect("loads");
+    let skins = &doc.assets.source_skeleton.skins;
+    assert_eq!(
+        skins[0].inverse_bind_accessor.status,
+        SourceInverseBindAccessorStatus::Absent
+    );
+    assert_eq!(skins[0].inverse_bind_accessor.declared_count, None);
+    assert_eq!(
+        skins[1].inverse_bind_accessor.status,
+        SourceInverseBindAccessorStatus::EmptyAccessor
+    );
+    assert_eq!(skins[1].inverse_bind_accessor.declared_count, Some(0));
+    assert_eq!(
+        skins[2].inverse_bind_accessor.status,
+        SourceInverseBindAccessorStatus::CountMismatch
+    );
+    assert_eq!(skins[2].inverse_bind_accessor.declared_count, Some(1));
+    assert_eq!(
+        skins[2].inverse_bind_accessor.matrices,
+        vec![Mat4::IDENTITY]
+    );
+    assert_eq!(
+        skins[3].inverse_bind_accessor.status,
+        SourceInverseBindAccessorStatus::Available
+    );
+    assert_eq!(skins[3].inverse_bind_accessor.matrices, vec![Mat4::ZERO]);
+    assert_eq!(
+        skins[4].inverse_bind_accessor.status,
+        SourceInverseBindAccessorStatus::Available
+    );
+    assert!(
+        skins[4].inverse_bind_accessor.matrices[0]
+            .to_cols_array()
+            .iter()
+            .all(|value| value.is_nan()),
+        "source sidecar retains parseable non-finite matrix values for later coverage reporting"
     );
 }

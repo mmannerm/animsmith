@@ -5,7 +5,7 @@
 use animsmith_core::glam::Vec3;
 use animsmith_core::model::{
     Bone, Document, MaterialAsset, MeshAsset, MeshInstance, NormalTextureAsset, Primitive,
-    SceneAsset, SceneAssets, Skeleton, TextureAsset, Transform,
+    SceneAsset, SceneAssets, Skeleton, SourceSkeletonAssets, TextureAsset, Transform,
 };
 use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
@@ -67,6 +67,7 @@ fn fixture() -> Document {
                 roots: vec![0],
             }],
             default_scene: Some(0),
+            source_skeleton: SourceSkeletonAssets::default(),
         },
         ..Document::default()
     }

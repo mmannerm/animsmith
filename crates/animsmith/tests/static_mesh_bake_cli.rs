@@ -5,8 +5,8 @@
 use animsmith_core::glam::{Mat3, Quat, Vec3};
 use animsmith_core::model::{
     Bone, Clip, Document, Interpolation, MaterialAsset, MeshAsset, MeshInstance,
-    NormalTextureAsset, Primitive, Property, SceneAsset, SceneAssets, Skeleton, TextureAsset,
-    Track, TrackValues, Transform,
+    NormalTextureAsset, Primitive, Property, SceneAsset, SceneAssets, Skeleton,
+    SourceSkeletonAssets, TextureAsset, Track, TrackValues, Transform,
 };
 use serde_json::Value;
 use std::path::Path;
@@ -94,6 +94,7 @@ fn fixture() -> Document {
                 roots: vec![0],
             }],
             default_scene: Some(0),
+            source_skeleton: SourceSkeletonAssets::default(),
         },
         ..Document::default()
     }

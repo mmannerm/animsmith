@@ -13,8 +13,8 @@ identity `urn:animsmith:schema:output:2`. The retrievable schema is
 is a retrieval location, not the protocol identity.
 
 Measurement evidence is nested and independently versioned as
-`urn:animsmith:schema:measurements:4`. Its retrievable schema is
-[`measurements-v4.schema.json`](schemas/measurements-v4.schema.json). A future
+`urn:animsmith:schema:measurements:5`. Its retrievable schema is
+[`measurements-v5.schema.json`](schemas/measurements-v5.schema.json). A future
 measurement-definition change can therefore bump that contract without
 redesigning the outer result envelope.
 
@@ -205,12 +205,15 @@ Both commands put evidence under `files[].measurements`:
 
 ```json
 {
-  "schema_version": 4,
-  "schema": "urn:animsmith:schema:measurements:4",
+  "schema_version": 5,
+  "schema": "urn:animsmith:schema:measurements:5",
   "clips": {},
   "mesh_definitions": [],
   "node_instances": [],
   "scenes": [],
+  "skeleton_source_coverage": "unavailable",
+  "skeleton_nodes": [],
+  "skins": [],
   "material_resource_coverage": "complete",
   "material_definitions": [],
   "textures": [],
@@ -301,6 +304,63 @@ makes partial coverage explicit. A node can contribute to more than one scene.
 Mesh-bearing nodes not reachable from a declared scene remain node instances
 but contribute to no scene aggregate. `default_scene_index` is present only
 when the source names a default scene; its absence does not select scene zero.
+
+`skeleton_source_coverage` separates a loader that cannot expose source-node
+and source-skin identity from a source that genuinely contains no nodes or
+skins. When it is `"unavailable"`, both `skeleton_nodes` and `skins` are
+empty. When it is `"complete"`, `skeleton_nodes` is the source node table in
+ascending `node_index` order. `node_index`, `parent_node_index`, skin index,
+and joint index are source identities; names are display data and need not be
+unique. `scene_root_indices` lists the source scenes that directly declare the
+node as a root, in ascending source-scene order. A joint can name any source
+node as its parent, including a non-joint helper node.
+Structurally inconsistent source identity tables, such as a missing parent or
+parent cycle, downgrade the whole skeleton source domain to `"unavailable"`
+instead of publishing a self-contradictory complete table.
+
+Every source node records its authored `local_rest`, tagged as `"trs"`,
+`"matrix"`, or `"unavailable"`. A TRS has `translation_m`,
+`rotation_xyzw`, and `scale`; the quaternion is `[x, y, z, w]`. A matrix is a
+16-element column-major local transform. `rest_world_matrix` is a separately
+derived, column-major default/rest world matrix, or its typed unavailable
+reason. An unavailable local representation carries its stable `reason`. The
+local representation is never silently decomposed or replaced by
+the world transform. A declared scene is membership only, not a transform
+domain: `scene_root_indices` is membership evidence and adds no transform. A
+transformed node selected as a scene root retains its own local rest record,
+and its ancestors determine the derived world matrix.
+
+`skins` is a source-skin table in ascending `skin_index` order. Its `joints`
+are in declared skin-slot order; each joint row owns its `joint_index`,
+`node_index`, `joint_bind_to_mesh`, and `mesh_bind_world` observations.
+`skeleton_root_node_index` is present only when the source explicitly declares
+one. `inverse_bind_accessor` reports
+whether the inverse-bind accessor was absent, readable, empty, count-mismatched,
+or unreadable. A readable finite accessor retains its raw column-major matrices
+in slot order. Absent, malformed, and non-finite inverse-bind evidence is not
+inferred from node-local rest data.
+
+Each skin's `attachments` names every source node that declares use of that
+skin, in source-node order. In each joint row, `joint_bind_to_mesh` is
+`inverse(inverse_bind_matrix)`, so it maps joint bind-local coordinates into
+the mesh-local bind domain declared by that skin; `mesh_bind_world` is
+`joint_rest_world * inverse_bind_matrix`, mapping that mesh-local bind domain
+into world bind coordinates when the authored rest and bind poses agree. These
+remain per-joint observations rather than claims that rows agree. Attachments
+are identity evidence, not an extra transform folded into either calculation.
+Each derived field is either a finite matrix or a typed unavailable reason.
+These are descriptive calculations only. animsmith does not decide whether a
+consumer requires a joint, whether a skin/rest comparison is close enough,
+which root is canonical, or whether an unavailable matrix is acceptable.
+
+These facts help an artist or engine integration diagnose common handoff
+questions without reparsing the source: whether a joint is nested below a
+helper, whether a transformed scene root participates, whether two mesh nodes
+reuse a skin, and whether inverse-bind data is missing or singular. The node
+and skin terminology follows the [glTF 2.0 specification](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html).
+They do not select a required bone list, validate an engine's tolerance,
+retarget, normalize, repair, or rewrite the asset; those remain consuming
+project policy.
 
 Lint adds exactly one `files[].checks[]` record for every built-in catalog
 check. Each record keeps these dimensions independent:
@@ -405,7 +465,7 @@ delta count, and structured metric deltas:
 ```
 
 `diff` accepts asset files or one-file v2 `measure`/`lint` reports carrying
-measurement contract v3. Multi-file reports and unsupported contract versions
+measurement contract v5. Multi-file reports and unsupported contract versions
 are rejected as operator errors. Before extracting the clip metrics it uses,
 `diff` validates the complete measurement record, including mesh evidence, and
 rejects malformed or non-finite payload values.
