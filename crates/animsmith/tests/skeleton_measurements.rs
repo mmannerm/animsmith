@@ -442,6 +442,41 @@ fn assert_skeleton_serializer_order(stdout: &[u8]) {
     assert_ordered_key_markers(mesh_bind_world, &["matrix"]);
 }
 
+fn assert_inverse_bind_serializer_order(
+    stdout: &[u8],
+    skin_index: usize,
+    accessor_keys: &[&str],
+    unavailable_joint_indices: &[usize],
+) {
+    let measurements = json_container_after_key(stdout, "measurements", b'{', b'}');
+    let skin = json_object_in_array_after_key(measurements, "skins", skin_index);
+    let accessor = json_container_after_key(skin, "inverse_bind_accessor", b'{', b'}');
+    assert_ordered_key_markers(accessor, accessor_keys);
+
+    for &joint_index in unavailable_joint_indices {
+        let joint = json_object_in_array_after_key(skin, "joints", joint_index);
+        assert_ordered_key_markers(
+            joint,
+            &[
+                "joint_index",
+                "node_index",
+                "joint_bind_to_mesh",
+                "mesh_bind_world",
+            ],
+        );
+        for field in ["joint_bind_to_mesh", "mesh_bind_world"] {
+            let derived = json_container_after_key(joint, field, b'{', b'}');
+            assert_ordered_key_markers(derived, &["unavailable_reason"]);
+            assert!(
+                !derived
+                    .windows(b"\"matrix\":".len())
+                    .any(|window| window == b"\"matrix\":"),
+                "unavailable {field} omits matrix"
+            );
+        }
+    }
+}
+
 #[test]
 fn cli_measure_preserves_source_skin_identity_and_coordinate_domains() {
     let dir = tempfile::tempdir().expect("temp dir");
@@ -589,9 +624,10 @@ fn cli_measure_marks_absent_and_singular_inverse_binds_without_substitution() {
     let dir = tempfile::tempdir().expect("temp dir");
     let absent = dir.path().join("absent.gltf");
     write_source_skin_gltf(&absent, InverseBindCase::Absent, false);
-    let (absent, _) = measure(&absent);
+    let (absent, absent_bytes) = measure(&absent);
     let absent = &absent["files"][0]["measurements"];
     assert_measurements_schema(absent);
+    assert_inverse_bind_serializer_order(&absent_bytes, 0, &["status", "matrices"], &[0]);
     let absent_skin = &absent["skins"][0];
     assert_eq!(
         absent_skin["inverse_bind_accessor"],
@@ -645,6 +681,33 @@ fn cli_measure_preserves_each_inverse_bind_accessor_state() {
         "every inverse-bind state has deterministic JSON output"
     );
     assert_eq!(measurements, &second["files"][0]["measurements"]);
+
+    assert_inverse_bind_serializer_order(
+        &first_bytes,
+        0,
+        &["status", "declared_count", "matrices"],
+        &[],
+    );
+    assert_inverse_bind_serializer_order(
+        &first_bytes,
+        1,
+        &["status", "declared_count", "matrices"],
+        &[0],
+    );
+    assert_inverse_bind_serializer_order(
+        &first_bytes,
+        2,
+        &["status", "declared_count", "matrices"],
+        &[1],
+    );
+    for skin_index in [3, 4] {
+        assert_inverse_bind_serializer_order(
+            &first_bytes,
+            skin_index,
+            &["status", "declared_count", "matrices"],
+            &[0],
+        );
+    }
 
     let skins = measurements["skins"].as_array().expect("skins");
     assert_eq!(skins.len(), 5);
