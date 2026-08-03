@@ -268,6 +268,23 @@ fn rotation_closure_uses_shortest_path_model_space_delta() {
             < 1e-5
     );
 
+    let long_path = rotation_doc(350.0);
+    let grids = MetricGrids::new(&long_path);
+    let measurements =
+        animsmith_core::measure::measure_document(&grids, &roles, &Config::default());
+    assert!(
+        (measurements["guard"]
+            .loop_continuity
+            .as_ref()
+            .unwrap()
+            .bones[0]
+            .rotation_delta_deg
+            - 10.0)
+            .abs()
+            < 1e-4,
+        "350 degrees must measure as the 10-degree shortest path"
+    );
+
     let mut sign_equivalent = rotation_doc(0.0);
     let TrackValues::Quats(values) = &mut sign_equivalent.clips[0].tracks[1].values else {
         unreachable!()
