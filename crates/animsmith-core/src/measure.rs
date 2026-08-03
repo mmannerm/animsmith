@@ -1225,9 +1225,13 @@ pub struct BoneLoopContinuityMeasurement {
     /// Difference between the model-space linear velocities immediately
     /// before and after the wrap (metres per second).
     pub seam_velocity_delta_mps: f64,
+    /// Difference between the model-space angular velocities immediately
+    /// before and after the wrap (degrees per second).
+    pub seam_angular_velocity_delta_degps: f64,
 }
 
-/// Per-bone C0 pose closure and C1 linear-velocity continuity for one clip.
+/// Per-bone C0 pose closure plus C1 linear- and angular-velocity continuity
+/// for one clip.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct LoopContinuityMeasurement {
@@ -1250,8 +1254,9 @@ pub struct ClipMeasurements {
     /// keyed rotation. Bones under [`MIN_RECORDED_ROTATION_DEG`] are
     /// omitted.
     pub bone_rotation_range_deg: BTreeMap<String, f64>,
-    /// Model-space pose closure and seam-adjacent linear-velocity continuity
-    /// for every skeleton bone. Available without rig-role resolution.
+    /// Model-space pose closure plus seam-adjacent linear- and angular-velocity
+    /// continuity for every skeleton bone. Available without rig-role
+    /// resolution.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loop_continuity: Option<LoopContinuityMeasurement>,
     /// Loop wrap discontinuity ratio; needs hips + foot roles and a
@@ -1324,6 +1329,8 @@ pub fn measure_document(
                             position_delta_m: metrics.position_delta_m,
                             rotation_delta_deg: metrics.rotation_delta_deg,
                             seam_velocity_delta_mps: metrics.seam_velocity_delta_mps,
+                            seam_angular_velocity_delta_degps: metrics
+                                .seam_angular_velocity_delta_degps,
                         })
                         .collect(),
                 })

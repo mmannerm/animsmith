@@ -250,8 +250,8 @@ $ animsmith measure --format json walking.glb
         "hips": "mixamorig:Hips", "spine": "mixamorig:Spine",
         "left_foot": "mixamorig:LeftFoot", "right_foot": "mixamorig:RightFoot" } },
       "measurements": {
-        "schema_version": 7,
-        "schema": "urn:animsmith:schema:measurements:7",
+        "schema_version": 8,
+        "schema": "urn:animsmith:schema:measurements:8",
         "clips": { "mixamo.com": {
           "duration_s": 1.0, "frame_count": 33,
           "animated_bones": ["mixamorig:Hips", "mixamorig:LeftFoot", "mixamorig:RightFoot"],
@@ -259,13 +259,16 @@ $ animsmith measure --format json walking.glb
           "loop_continuity": { "bones": [
             { "bone_index": 0, "bone_name": "mixamorig:Hips",
               "position_delta_m": 0.0, "rotation_delta_deg": 0.0,
-              "seam_velocity_delta_mps": 0.0 },
+              "seam_velocity_delta_mps": 0.0,
+              "seam_angular_velocity_delta_degps": 0.0 },
             { "bone_index": 1, "bone_name": "mixamorig:LeftFoot",
               "position_delta_m": 3.7e-17, "rotation_delta_deg": 0.0,
-              "seam_velocity_delta_mps": 0.0 },
+              "seam_velocity_delta_mps": 0.0,
+              "seam_angular_velocity_delta_degps": 0.0 },
             { "bone_index": 2, "bone_name": "mixamorig:RightFoot",
               "position_delta_m": 3.7e-17, "rotation_delta_deg": 0.0,
-              "seam_velocity_delta_mps": 0.0 }
+              "seam_velocity_delta_mps": 0.0,
+              "seam_angular_velocity_delta_degps": 0.0 }
           ] },
           "loop_seam_ratio": 1.2e-15,
           "gait": { "phase": 0.75, "lr_amplitude_m": 0.2 },
@@ -314,6 +317,9 @@ max_rotation_delta_deg = 1.0
 
 [checks.loop-seam-vel]
 max_velocity_delta_mps = 0.1
+
+[checks.loop-seam-rot]
+max_angular_velocity_delta_degps = 5.0
 ```
 
 The same contract is committed as
@@ -321,7 +327,7 @@ The same contract is committed as
 for reference (from a repo checkout, pass it with
 `--config examples/mixamo.animsmith.toml` instead of saving a local
 copy). It pins the profile rather than trusting auto-detection, declares
-the clip a loop (arming all three loop checks) and in-place (arming `in-place`,
+the clip a loop (arming the loop checks) and in-place (arming `in-place`,
 judged on the Hips track per the callout above). Every key, glob
 pattern, and severity override is documented in the
 [configuration reference](../README.md#configuration).

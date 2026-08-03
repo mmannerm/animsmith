@@ -31,3 +31,7 @@ max_rotation_delta_deg = 1.0
 [checks.loop-seam-vel]
 # Fail when incoming/outgoing model-space linear velocity differs by >0.1 m/s.
 max_velocity_delta_mps = 0.1
+
+[checks.loop-seam-rot]
+# Fail when shortest-path model-space angular velocity differs by >5 deg/s.
+max_angular_velocity_delta_degps = 5.0

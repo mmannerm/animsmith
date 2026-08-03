@@ -13,8 +13,9 @@ identity `urn:animsmith:schema:output:2`. The retrievable schema is
 is a retrieval location, not the protocol identity.
 
 Measurement evidence is nested and independently versioned as
-`urn:animsmith:schema:measurements:7`. Its retrievable schema is
-[`measurements-v7.schema.json`](schemas/measurements-v7.schema.json). A future
+`urn:animsmith:schema:measurements:8`. Its retrievable schema is
+[`measurements-v8.schema.json`](schemas/measurements-v8.schema.json). Version 8
+adds per-bone angular seam-velocity evidence; a future
 measurement-definition change can therefore bump that contract without
 redesigning the outer result envelope.
 
@@ -205,8 +206,8 @@ Both commands put evidence under `files[].measurements`:
 
 ```json
 {
-  "schema_version": 7,
-  "schema": "urn:animsmith:schema:measurements:7",
+  "schema_version": 8,
+  "schema": "urn:animsmith:schema:measurements:8",
   "clips": {},
   "mesh_definitions": [],
   "node_instances": [],
@@ -235,6 +236,9 @@ while the name is display context and need not be unique. Each row reports:
   difference (C0);
 - `seam_velocity_delta_mps`: difference between the model-space linear
   velocities entering the last sample and leaving frame 0 (C1).
+- `seam_angular_velocity_delta_degps`: shortest-path model-space angular
+  velocity difference, in degrees per second, between those same incoming and
+  outgoing steps (rotational C1).
 
 The velocity comparison deliberately uses the two in-clip steps adjacent to
 the wrap. The uniform grid contains both `t=0` and `t=duration`, so treating
@@ -243,8 +247,8 @@ a perfectly closed loop. Model-space values include ancestor motion; the
 rotation chain is composed independently of scale rather than decomposed from
 a potentially sheared matrix. These measurements need no rig profile and are
 emitted for measurable clips whether or not project configuration declares
-them as loops. The `loop-closure` and `loop-seam-vel` checks judge them only
-where `[clips.<name>] loop = true`.
+them as loops. The `loop-closure`, `loop-seam-vel`, and `loop-seam-rot` checks
+judge them only where `[clips.<name>] loop = true`.
 
 `mesh_definitions` contains one record per source mesh definition. Its
 `geometry_aabb` reduces finite primitive `POSITION` values in the mesh's own
@@ -420,7 +424,7 @@ Built-in gap codes are:
 | Gap code | Meaning | Emitted by |
 |---|---|---|
 | `roles_unresolved` | Required semantic rig roles were not resolved. | `loop-seam`, `root-motion-speed`, `in-place`, `foot-slide`, `gait-group` |
-| `measurement_unavailable` | A required numeric measurement could not be produced or did not meet its evidence floor. | `loop-closure`, `duplicate-loop-endpoint`, `loop-seam`, `loop-seam-vel`, `root-motion-speed`, `in-place`, `foot-slide`, `gait-group` |
+| `measurement_unavailable` | A required numeric measurement could not be produced or did not meet its evidence floor. | `loop-closure`, `duplicate-loop-endpoint`, `loop-seam`, `loop-seam-vel`, `loop-seam-rot`, `root-motion-speed`, `in-place`, `foot-slide`, `gait-group` |
 | `insufficient_measurable_members` | Fewer than two gait-group members produced usable phases. | `gait-group` |
 | `members_not_evaluated` | Some configured gait-group members did not produce usable phases. | `gait-group` |
 | `invalid_declared_fps` | A declared frame rate was zero, negative, or non-finite. | `fps` |
@@ -437,6 +441,7 @@ Built-in completed/gap scope codes are:
 | `phase_coherence` | One named gait group's measurable phases were compared. | `gait-group` |
 | `loop_seam` | One named clip's positional loop seam was measured. | `loop-seam` |
 | `loop_seam_velocity` | One named clip's per-bone model-space seam velocity continuity was measured. | `loop-seam-vel` |
+| `loop_seam_rotation` | One named clip's per-bone model-space angular seam velocity continuity was measured. | `loop-seam-rot` |
 | `root_motion_speed` | One named clip's root-motion speed was measured. | `root-motion-speed` |
 | `travel_mode` | One named clip's in-place/root-motion declaration was judged. | `in-place` |
 | `foot_stance` | Whole-clip prerequisites for stance analysis were evaluated. | `foot-slide` |
@@ -502,14 +507,15 @@ delta count, and structured metric deltas:
 ```
 
 `diff` accepts asset files or one-file v2 `measure`/`lint` reports carrying
-measurement contract v7. Multi-file reports and unsupported contract versions
+measurement contract v8. Multi-file reports and unsupported contract versions
 are rejected as operator errors. Before extracting the clip metrics it uses,
 `diff` validates the complete measurement record, including mesh evidence, and
 rejects malformed or non-finite payload values.
 
 Loop-continuity rows compare by `bone_index`. Re-export noise at or below
 0.001 m for `position_delta_m`, 0.1 degree for `rotation_delta_deg`, and
-0.01 m/s for `seam_velocity_delta_mps` is silent; larger changes produce
-metric paths such as `loop_continuity.bones[12].rotation_delta_deg`. These are
-diff significance floors, not the lint caps configured under
-`[checks.loop-closure]` and `[checks.loop-seam-vel]`.
+0.01 m/s for `seam_velocity_delta_mps` is silent; the 0.5 degree/s floor
+applies to `seam_angular_velocity_delta_degps`. Larger changes produce metric
+paths such as `loop_continuity.bones[12].rotation_delta_deg`. These are diff
+significance floors, not the lint caps configured under
+`[checks.loop-closure]`, `[checks.loop-seam-vel]`, and `[checks.loop-seam-rot]`.

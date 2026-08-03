@@ -33,7 +33,7 @@ check_schema() {
 }
 
 check_schema docs/schemas/output-v2.schema.json urn:animsmith:schema:output:2 crates/animsmith-core/src/contract.rs docs/output.md
-check_schema docs/schemas/measurements-v7.schema.json urn:animsmith:schema:measurements:7 crates/animsmith-core/src/contract.rs docs/output.md
+check_schema docs/schemas/measurements-v8.schema.json urn:animsmith:schema:measurements:8 crates/animsmith-core/src/contract.rs docs/output.md
 check_schema docs/schemas/conversion-evidence-v1.schema.json urn:animsmith:schema:conversion-evidence:1 docs/output.md
 check_schema docs/schemas/conversion-evidence-v2.schema.json urn:animsmith:schema:conversion-evidence:2 docs/output.md docs/cli.md
 
@@ -287,14 +287,14 @@ modern_scanner_regression=$(
     '  "schema_version": 2,' \
     '  "command": "measure",' \
     '  "files": [{ "measurements": {' \
-    '    "schema_version": 7,' \
-    '    "schema": "urn:animsmith:schema:measurements:7"' \
+    '    "schema_version": 8,' \
+    '    "schema": "urn:animsmith:schema:measurements:8"' \
     '  }}]' \
     '}' \
     | awk "$legacy_envelope_awk"
 )
 if [ -n "$modern_scanner_regression" ]; then
-  fail "legacy-envelope scanner misclassified nested measurements v7"
+  fail "legacy-envelope scanner misclassified nested measurements v8"
 fi
 
 legacy_envelope=$(

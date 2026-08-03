@@ -38,18 +38,30 @@ fn translation_doc(values: [f32; 5]) -> Document {
 
 fn rotation_doc(end_degrees: f32) -> Document {
     let mut doc = translation_doc([0.0; 5]);
-    doc.clips[0].tracks.push(Track {
+    doc.clips[0].tracks.push(rotation_track(
+        [0.0, 0.25, 0.5, 0.75, 1.0].map(|fraction| end_degrees * fraction),
+    ));
+    doc
+}
+
+fn rotation_track(degrees: [f32; 5]) -> Track {
+    Track {
         bone: 0,
         property: Property::Rotation,
         interpolation: Interpolation::Linear,
         times: TIMES.into(),
         values: TrackValues::Quats(
-            [0.0, 0.25, 0.5, 0.75, 1.0]
+            degrees
                 .into_iter()
-                .map(|fraction| Quat::from_rotation_y(end_degrees.to_radians() * fraction))
+                .map(|degrees| Quat::from_rotation_y(degrees.to_radians()))
                 .collect(),
         ),
-    });
+    }
+}
+
+fn rotation_steps_doc(degrees: [f32; 5]) -> Document {
+    let mut doc = translation_doc([0.0; 5]);
+    doc.clips[0].tracks.push(rotation_track(degrees));
     doc
 }
 
@@ -136,6 +148,28 @@ fn default_loop_caps_are_applied_at_the_boundary() {
             .len(),
         1
     );
+
+    // With the 0.25-second seam-adjacent steps, 1.25 degrees is exactly
+    // 5 deg/s. The linear metric remains zero for every rotational fixture.
+    let angular_under = rotation_steps_doc([0.0, 1.0, 5.0, 0.0, 0.0]);
+    assert!(
+        check(&evaluate(&angular_under, &loop_config()), "loop-seam-rot")
+            .findings()
+            .is_empty()
+    );
+    let angular_at = rotation_steps_doc([0.0, 1.25, 5.0, 0.0, 0.0]);
+    assert!(
+        check(&evaluate(&angular_at, &loop_config()), "loop-seam-rot")
+            .findings()
+            .is_empty()
+    );
+    let angular_over = rotation_steps_doc([0.0, 1.5, 5.0, 0.0, 0.0]);
+    assert_eq!(
+        check(&evaluate(&angular_over, &loop_config()), "loop-seam-rot")
+            .findings()
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -156,11 +190,13 @@ fn clean_stationary_loop_is_measured_without_roles_or_stride() {
     assert_eq!(root.position_delta_m, 0.0);
     assert_eq!(root.rotation_delta_deg, 0.0);
     assert_eq!(root.seam_velocity_delta_mps, 0.0);
+    assert_eq!(root.seam_angular_velocity_delta_degps, 0.0);
 
     let records = evaluate(&doc, &config);
     for (id, scope_code) in [
         ("loop-closure", EvaluationScopeCode::LOOP_CLOSURE),
         ("loop-seam-vel", EvaluationScopeCode::LOOP_SEAM_VELOCITY),
+        ("loop-seam-rot", EvaluationScopeCode::LOOP_SEAM_ROTATION),
     ] {
         let result = check(&records, id);
         assert_eq!(result.evaluation(), EvaluationState::Complete, "{id}");
@@ -171,6 +207,89 @@ fn clean_stationary_loop_is_measured_without_roles_or_stride() {
             Some("guard")
         );
     }
+}
+
+#[test]
+fn angular_continuity_catches_a_rotational_cusp_with_no_linear_metric() {
+    // The endpoint rotation is C0-closed and all translations are fixed. The
+    // +40 deg/s outgoing step and -40 deg/s incoming step still make the
+    // rotational derivative discontinuous at playback wrap.
+    let doc = rotation_steps_doc([0.0, 10.0, 20.0, 10.0, 0.0]);
+    let records = evaluate(&doc, &loop_config());
+    assert!(
+        check(&records, "loop-closure").findings().is_empty(),
+        "the endpoint pose closes"
+    );
+    assert!(
+        check(&records, "loop-seam-vel").findings().is_empty(),
+        "fixed translations have no linear seam change"
+    );
+    let angular = check(&records, "loop-seam-rot");
+    assert_eq!(angular.findings().len(), 1, "{angular:#?}");
+    assert_eq!(angular.findings()[0].bone.as_deref(), Some("root"));
+    assert!(
+        angular.findings()[0]
+            .message
+            .contains("angular velocity changes")
+    );
+
+    let grids = MetricGrids::new(&doc);
+    let measurements = animsmith_core::measure::measure_document(
+        &grids,
+        &ResolvedRoles::default(),
+        &Config::default(),
+    );
+    let metric = &measurements["guard"]
+        .loop_continuity
+        .as_ref()
+        .expect("continuity")
+        .bones[0];
+    assert_eq!(metric.seam_velocity_delta_mps, 0.0);
+    assert!((metric.seam_angular_velocity_delta_degps - 80.0).abs() < 1e-4);
+}
+
+#[test]
+fn angular_continuity_uses_shortest_path_and_quaternion_sign_equivalence() {
+    // The 350-to-360 degree incoming step is +10 degrees on the shortest
+    // path, matching the 0-to-10 degree outgoing step. Negating an endpoint
+    // is the same rotation and must preserve that result.
+    let doc = rotation_steps_doc([0.0, 10.0, 180.0, 350.0, 360.0]);
+    let grids = MetricGrids::new(&doc);
+    let clean = animsmith_core::measure::measure_document(
+        &grids,
+        &ResolvedRoles::default(),
+        &Config::default(),
+    );
+    let clean_metric = clean["guard"]
+        .loop_continuity
+        .as_ref()
+        .expect("continuity")
+        .bones[0]
+        .seam_angular_velocity_delta_degps;
+    assert!(clean_metric < 1e-3, "{clean_metric}");
+    let clean_records = evaluate(&doc, &loop_config());
+    let clean_check = check(&clean_records, "loop-seam-rot");
+    assert!(clean_check.findings().is_empty(), "{clean_check:#?}");
+    assert_eq!(clean_check.evaluation(), EvaluationState::Complete);
+
+    let mut sign_equivalent = doc;
+    let TrackValues::Quats(values) = &mut sign_equivalent.clips[0].tracks[1].values else {
+        unreachable!()
+    };
+    values[4] = -values[4];
+    let grids = MetricGrids::new(&sign_equivalent);
+    let sign_equivalent = animsmith_core::measure::measure_document(
+        &grids,
+        &ResolvedRoles::default(),
+        &Config::default(),
+    );
+    let sign_metric = sign_equivalent["guard"]
+        .loop_continuity
+        .as_ref()
+        .expect("continuity")
+        .bones[0]
+        .seam_angular_velocity_delta_degps;
+    assert!((sign_metric - clean_metric).abs() < 1e-4, "{sign_metric}");
 }
 
 #[test]
@@ -332,13 +451,25 @@ fn configurable_caps_control_each_check() {
             .findings()
             .is_empty()
     );
+
+    let angular_cusp = rotation_steps_doc([0.0, 10.0, 20.0, 10.0, 0.0]);
+    let angular_config: Config = serde_json::from_value(serde_json::json!({
+        "clips": { "guard": { "loop": true } },
+        "checks": { "loop-seam-rot": { "max_angular_velocity_delta_degps": 80.1 } }
+    }))
+    .expect("angular velocity config");
+    assert!(
+        check(&evaluate(&angular_cusp, &angular_config), "loop-seam-rot")
+            .findings()
+            .is_empty()
+    );
 }
 
 #[test]
 fn undeclared_and_too_short_clips_keep_typed_coverage_semantics() {
     let doc = translation_doc([0.0; 5]);
     let records = evaluate(&doc, &Config::default());
-    for id in ["loop-closure", "loop-seam-vel"] {
+    for id in ["loop-closure", "loop-seam-vel", "loop-seam-rot"] {
         let result = check(&records, id);
         assert_eq!(result.applicability(), Applicability::NotApplicable);
         assert_eq!(result.evaluation(), EvaluationState::NotEvaluated);
@@ -349,7 +480,7 @@ fn undeclared_and_too_short_clips_keep_typed_coverage_semantics() {
     short.clips[0].tracks[0].times = vec![0.0, 1.0];
     short.clips[0].tracks[0].values = TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::ZERO]);
     let records = evaluate(&short, &loop_config());
-    for id in ["loop-closure", "loop-seam-vel"] {
+    for id in ["loop-closure", "loop-seam-vel", "loop-seam-rot"] {
         let result = check(&records, id);
         assert_eq!(result.evaluation(), EvaluationState::NotEvaluated);
         assert_eq!(result.gaps().len(), 1);
@@ -371,7 +502,7 @@ fn non_finite_model_evidence_is_a_typed_gap_not_a_loop_finding() {
         [0.0, 0.0, 0.0, 0.0, f32::INFINITY],
     ] {
         let records = evaluate(&translation_doc(values), &loop_config());
-        for id in ["loop-closure", "loop-seam-vel"] {
+        for id in ["loop-closure", "loop-seam-vel", "loop-seam-rot"] {
             let result = check(&records, id);
             assert_eq!(result.evaluation(), EvaluationState::NotEvaluated);
             assert!(result.findings().is_empty(), "{result:#?}");
@@ -381,6 +512,27 @@ fn non_finite_model_evidence_is_a_typed_gap_not_a_loop_finding() {
                 CoverageGapCode::MEASUREMENT_UNAVAILABLE
             );
         }
+    }
+
+    for frame in [0, 1, 3, 4] {
+        let mut non_finite_rotation = rotation_steps_doc([0.0, 10.0, 20.0, 10.0, 0.0]);
+        let TrackValues::Quats(values) = &mut non_finite_rotation.clips[0].tracks[1].values else {
+            unreachable!()
+        };
+        values[frame] = Quat::from_xyzw(f32::NAN, 0.0, 0.0, 1.0);
+        let records = evaluate(&non_finite_rotation, &loop_config());
+        let angular = check(&records, "loop-seam-rot");
+        assert_eq!(
+            angular.evaluation(),
+            EvaluationState::NotEvaluated,
+            "frame {frame}"
+        );
+        assert!(angular.findings().is_empty(), "{angular:#?}");
+        assert_eq!(angular.gaps().len(), 1);
+        assert_eq!(
+            angular.gaps()[0].code,
+            CoverageGapCode::MEASUREMENT_UNAVAILABLE
+        );
     }
 }
 
@@ -514,4 +666,31 @@ fn child_metrics_include_parent_driven_model_space_c0_and_c1_motion() {
         .bones;
     assert_eq!(bones[0].seam_velocity_delta_mps, 0.0);
     assert!(bones[1].seam_velocity_delta_mps > 0.1);
+
+    let angular_cusp_doc = {
+        let mut doc = rotation_steps_doc([0.0, 10.0, 20.0, 10.0, 0.0]);
+        doc.skeleton.bones.push(Bone {
+            name: "angular-child".into(),
+            parent: Some(0),
+            rest: Transform {
+                rotation: Quat::from_rotation_x(0.5),
+                ..Transform::IDENTITY
+            },
+            inverse_bind: None,
+        });
+        doc
+    };
+    let grids = MetricGrids::new(&angular_cusp_doc);
+    let angular_measurements = animsmith_core::measure::measure_document(
+        &grids,
+        &ResolvedRoles::default(),
+        &Config::default(),
+    );
+    let angular_bones = &angular_measurements["guard"]
+        .loop_continuity
+        .as_ref()
+        .expect("continuity")
+        .bones;
+    assert!(angular_bones[0].seam_angular_velocity_delta_degps > 79.9);
+    assert!(angular_bones[1].seam_angular_velocity_delta_degps > 79.9);
 }

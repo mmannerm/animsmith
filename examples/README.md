@@ -119,8 +119,8 @@ $ animsmith lint --format json examples/assets/clip-dirty.glb | jq \
     ]
   },
   "measurements": {
-    "schema_version": 7,
-    "schema": "urn:animsmith:schema:measurements:7",
+    "schema_version": 8,
+    "schema": "urn:animsmith:schema:measurements:8",
     "clips": {},
     "mesh_definitions": [],
     "node_instances": [],
@@ -273,8 +273,8 @@ declared locomotion or blend assumptions before animsmith can judge
 them.
 
 Mechanical checks run with no config. Contract-aware checks run only for the
-expectations you declare. `duplicate-loop-endpoint`, `loop-closure`, and
-`loop-seam-vel` need only `loop = true`; role-dependent checks such as
+expectations you declare. `duplicate-loop-endpoint`, `loop-closure`,
+`loop-seam-vel`, and `loop-seam-rot` need only `loop = true`; role-dependent checks such as
 `loop-seam`, `gait-group`, `root-motion-speed`, `in-place`, and `foot-slide`
 also need resolvable rig roles. Without those roles they report a typed coverage
 gap rather than guess, so a config that pins a `[rig] profile` (or inline
@@ -320,8 +320,8 @@ $ animsmith measure examples/assets/walk.glb          # --format json
       "rig": { "profile": "ue-mannequin", "resolved_roles": {
         "hips": "pelvis", "left_foot": "foot_l", "right_foot": "foot_r" } },
       "measurements": {
-        "schema_version": 7,
-        "schema": "urn:animsmith:schema:measurements:7",
+        "schema_version": 8,
+        "schema": "urn:animsmith:schema:measurements:8",
         "clips": { "walk": {
           "duration_s": 1.0, "frame_count": 33,
           "animated_bones": ["foot_l", "foot_r"],
@@ -329,13 +329,16 @@ $ animsmith measure examples/assets/walk.glb          # --format json
           "loop_continuity": { "bones": [
             { "bone_index": 0, "bone_name": "pelvis",
               "position_delta_m": 0.0, "rotation_delta_deg": 0.0,
-              "seam_velocity_delta_mps": 0.0 },
+              "seam_velocity_delta_mps": 0.0,
+              "seam_angular_velocity_delta_degps": 0.0 },
             { "bone_index": 1, "bone_name": "foot_l",
               "position_delta_m": 3.7e-17, "rotation_delta_deg": 0.0,
-              "seam_velocity_delta_mps": 0.0 },
+              "seam_velocity_delta_mps": 0.0,
+              "seam_angular_velocity_delta_degps": 0.0 },
             { "bone_index": 2, "bone_name": "foot_r",
               "position_delta_m": 3.7e-17, "rotation_delta_deg": 0.0,
-              "seam_velocity_delta_mps": 0.0 }
+              "seam_velocity_delta_mps": 0.0,
+              "seam_angular_velocity_delta_degps": 0.0 }
           ] },
           "loop_seam_ratio": 1.2e-15,
           "gait": { "phase": 0.75, "lr_amplitude_m": 0.2 },
@@ -358,7 +361,7 @@ $ animsmith measure examples/assets/walk.glb          # --format json
 ```
 
 [`examples/walk.animsmith.toml`](walk.animsmith.toml) is the
-contract: it declares the clip a loop (which arms all three loop checks) and
+contract: it declares the clip a loop (which arms the loop checks) and
 in-place, and caps their tolerances. Against the clean rig every semantic check
 passes:
 
@@ -409,6 +412,8 @@ max_position_delta_m = 0.01
 max_rotation_delta_deg = 1.0
 [checks.loop-seam-vel]
 max_velocity_delta_mps = 0.1
+[checks.loop-seam-rot]
+max_angular_velocity_delta_degps = 5.0
 [checks.frozen-bone]
 min_rotation_deg = 0.5
 [checks.quat-flip]

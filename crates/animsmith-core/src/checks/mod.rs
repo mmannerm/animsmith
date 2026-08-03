@@ -13,6 +13,7 @@ pub mod gait_group;
 pub mod in_place;
 pub mod loop_closure;
 pub mod loop_seam;
+pub mod loop_seam_rot;
 pub mod loop_seam_vel;
 pub mod missing_bones;
 pub mod nan;

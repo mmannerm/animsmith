@@ -46,3 +46,6 @@ max_rotation_delta_deg = 1.0
 
 [checks.loop-seam-vel]
 max_velocity_delta_mps = 0.1
+
+[checks.loop-seam-rot]
+max_angular_velocity_delta_degps = 5.0

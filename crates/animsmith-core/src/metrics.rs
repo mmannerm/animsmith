@@ -7,7 +7,7 @@
 use crate::model::{Clip, Document, Property, Track};
 use crate::profile::{ResolvedRoles, Role};
 use crate::sample::{PoseGrid, sample_clip};
-use glam::Vec3;
+use glam::{Quat, Vec3};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -93,9 +93,45 @@ pub struct BoneLoopContinuityMetrics {
     /// Difference between the model-space linear velocities immediately
     /// before and after the wrap (metres per second).
     pub seam_velocity_delta_mps: f64,
+    /// Difference between the model-space angular velocities immediately
+    /// before and after the wrap (degrees per second).
+    pub seam_angular_velocity_delta_degps: f64,
 }
 
-/// Measure C0 pose closure and C1 linear-velocity continuity for every bone.
+/// Return the shortest-path model-space rotation vector from `from` to `to`.
+///
+/// The left-relative step (`to * from⁻¹`) expresses the angular direction in
+/// model space. Canonicalizing the quaternion hemisphere makes the result
+/// invariant to the equivalent `q`/`-q` representation. At exactly 180
+/// degrees, where `w` cannot choose a hemisphere, the first non-zero vector
+/// component breaks the tie deterministically.
+fn shortest_path_model_rotation_vector(from: Quat, to: Quat) -> Option<Vec3> {
+    let mut step = to * from.conjugate();
+    if !step.is_finite() {
+        return None;
+    }
+
+    let [x, y, z, w] = step.to_array();
+    if w < 0.0 || (w == 0.0 && (x < 0.0 || (x == 0.0 && (y < 0.0 || (y == 0.0 && z < 0.0))))) {
+        step = -step;
+    }
+
+    let vector = step.xyz();
+    let sin_half_angle = vector.length();
+    if !sin_half_angle.is_finite() {
+        return None;
+    }
+    if sin_half_angle == 0.0 {
+        return Some(Vec3::ZERO);
+    }
+
+    let angle_rad = 2.0 * sin_half_angle.atan2(step.w);
+    let rotation_vector = vector * (angle_rad / sin_half_angle);
+    rotation_vector.is_finite().then_some(rotation_vector)
+}
+
+/// Measure C0 pose closure plus C1 linear- and angular-velocity continuity
+/// for every bone.
 ///
 /// The grid spans `[0, duration]`, including both endpoints. C1 continuity is
 /// therefore the difference between the in-clip step entering the last sample
@@ -130,22 +166,25 @@ pub fn loop_continuity_metrics(grid: &PoseGrid) -> Option<Vec<BoneLoopContinuity
                 return None;
             }
 
-            let first_rotation = grid.model_rotation(0, bone);
-            let last_rotation = grid.model_rotation(frames - 1, bone);
-            let first_length_squared = first_rotation.length_squared();
-            let last_length_squared = last_rotation.length_squared();
-            if !first_rotation.is_finite()
-                || !last_rotation.is_finite()
-                || !first_length_squared.is_finite()
-                || !last_length_squared.is_finite()
-                || first_length_squared == 0.0
-                || last_length_squared == 0.0
-            {
+            let rotations = [
+                grid.model_rotation(0, bone),
+                grid.model_rotation(1, bone),
+                grid.model_rotation(frames - 2, bone),
+                grid.model_rotation(frames - 1, bone),
+            ];
+            if rotations.iter().any(|rotation| {
+                !rotation.is_finite()
+                    || !rotation.length_squared().is_finite()
+                    || rotation.length_squared() == 0.0
+            }) {
                 return None;
             }
-
-            let first_rotation = first_rotation.normalize();
-            let last_rotation = last_rotation.normalize();
+            let [
+                first_rotation,
+                next_rotation,
+                previous_rotation,
+                last_rotation,
+            ] = rotations.map(Quat::normalize);
             let delta = first_rotation.conjugate() * last_rotation;
             let [x, y, z, w] = delta.to_array();
             let sin_half_angle = Vec3::new(x, y, z).length();
@@ -155,10 +194,22 @@ pub fn loop_continuity_metrics(grid: &PoseGrid) -> Option<Vec<BoneLoopContinuity
             let incoming_velocity = (last - previous) / last_dt as f32;
             let seam_velocity_delta_mps =
                 f64::from((outgoing_velocity - incoming_velocity).length());
+            let outgoing_angular_velocity =
+                shortest_path_model_rotation_vector(first_rotation, next_rotation)?
+                    / first_dt as f32;
+            let incoming_angular_velocity =
+                shortest_path_model_rotation_vector(previous_rotation, last_rotation)?
+                    / last_dt as f32;
+            let seam_angular_velocity_delta_degps = f64::from(
+                (outgoing_angular_velocity - incoming_angular_velocity)
+                    .length()
+                    .to_degrees(),
+            );
 
             if !position_delta_m.is_finite()
                 || !rotation_delta_deg.is_finite()
                 || !seam_velocity_delta_mps.is_finite()
+                || !seam_angular_velocity_delta_degps.is_finite()
             {
                 return None;
             }
@@ -166,6 +217,7 @@ pub fn loop_continuity_metrics(grid: &PoseGrid) -> Option<Vec<BoneLoopContinuity
                 position_delta_m,
                 rotation_delta_deg,
                 seam_velocity_delta_mps,
+                seam_angular_velocity_delta_degps,
             })
         })
         .collect()

@@ -1,7 +1,8 @@
 use animsmith_core::diff::{
-    AMPLITUDE_THRESHOLD_M, DURATION_THRESHOLD_S, LOOP_POSITION_THRESHOLD_M,
-    LOOP_ROTATION_THRESHOLD_DEG, LOOP_VELOCITY_THRESHOLD_MPS, MetricDelta, PHASE_THRESHOLD,
-    ROTATION_RANGE_THRESHOLD_DEG, SEAM_THRESHOLD, SPEED_THRESHOLD_MPS, diff_measurements,
+    AMPLITUDE_THRESHOLD_M, DURATION_THRESHOLD_S, LOOP_ANGULAR_VELOCITY_THRESHOLD_DEGPS,
+    LOOP_POSITION_THRESHOLD_M, LOOP_ROTATION_THRESHOLD_DEG, LOOP_VELOCITY_THRESHOLD_MPS,
+    MetricDelta, PHASE_THRESHOLD, ROTATION_RANGE_THRESHOLD_DEG, SEAM_THRESHOLD,
+    SPEED_THRESHOLD_MPS, diff_measurements,
 };
 use animsmith_core::measure::ClipMeasurements;
 use serde_json::json;
@@ -24,7 +25,8 @@ fn measurements(duration_s: f64) -> MeasurementMap {
                 "bone_name": "hips",
                 "position_delta_m": 0.02,
                 "rotation_delta_deg": 2.0,
-                "seam_velocity_delta_mps": 0.2
+                "seam_velocity_delta_mps": 0.2,
+                "seam_angular_velocity_delta_degps": 10.0
             }] },
             "loop_seam_ratio": 0.2,
             "gait": {
@@ -57,6 +59,7 @@ fn threshold_constants_are_public_and_unchanged() {
     assert_eq!(LOOP_POSITION_THRESHOLD_M, 0.001);
     assert_eq!(LOOP_ROTATION_THRESHOLD_DEG, 0.1);
     assert_eq!(LOOP_VELOCITY_THRESHOLD_MPS, 0.01);
+    assert_eq!(LOOP_ANGULAR_VELOCITY_THRESHOLD_DEGPS, 0.5);
     assert_eq!(SEAM_THRESHOLD, 0.05);
     assert_eq!(PHASE_THRESHOLD, 0.05);
     assert_eq!(AMPLITUDE_THRESHOLD_M, 0.005);
@@ -144,6 +147,16 @@ fn public_diff_treats_non_finite_measurements_as_absent() {
             finite: 0.2,
             make_non_finite: |clip| {
                 clip.loop_continuity.as_mut().unwrap().bones[0].seam_velocity_delta_mps =
+                    f64::NEG_INFINITY;
+            },
+            appeared_note: "appeared",
+            disappeared_note: "disappeared",
+        },
+        Case {
+            metric: "loop_continuity.bones[0].seam_angular_velocity_delta_degps",
+            finite: 10.0,
+            make_non_finite: |clip| {
+                clip.loop_continuity.as_mut().unwrap().bones[0].seam_angular_velocity_delta_degps =
                     f64::NEG_INFINITY;
             },
             appeared_note: "appeared",
