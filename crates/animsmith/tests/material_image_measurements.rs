@@ -92,7 +92,7 @@ fn write_fixture(path: &Path) {
             { "name": "untextured" },
             { "name": "painted", "pbrMetallicRoughness": { "baseColorTexture": { "index": 0 } } },
             { "name": "detailed", "pbrMetallicRoughness": { "baseColorTexture": { "index": 0 } }, "normalTexture": { "index": 1 } },
-            { "name": "photo-material", "pbrMetallicRoughness": { "baseColorTexture": { "index": 2 } }, "occlusionTexture": { "index": 3 } }
+            { "name": "photo-material", "pbrMetallicRoughness": { "baseColorTexture": { "index": 2 }, "metallicRoughnessTexture": { "index": 3 } }, "occlusionTexture": { "index": 3 } }
         ]
     });
     std::fs::write(
@@ -163,7 +163,7 @@ fn cli_measure_reports_deterministic_material_image_inventory_without_paths() {
             { "material_index": 0, "name": "untextured", "texture_bindings": [] },
             { "material_index": 1, "name": "painted", "texture_bindings": [{ "slot": "base_color", "texture_index": 0 }] },
             { "material_index": 2, "name": "detailed", "texture_bindings": [{ "slot": "base_color", "texture_index": 0 }, { "slot": "normal", "texture_index": 1 }] },
-            { "material_index": 3, "name": "photo-material", "texture_bindings": [{ "slot": "base_color", "texture_index": 2 }, { "slot": "occlusion", "texture_index": 3 }] }
+            { "material_index": 3, "name": "photo-material", "texture_bindings": [{ "slot": "base_color", "texture_index": 2 }, { "slot": "metallic_roughness", "texture_index": 3 }, { "slot": "occlusion", "texture_index": 3 }] }
         ])
     );
     assert_eq!(
@@ -179,6 +179,23 @@ fn cli_measure_reports_deterministic_material_image_inventory_without_paths() {
         .as_array()
         .expect("image measurements");
     assert_eq!(images.len(), 8);
+    assert_eq!(
+        images
+            .iter()
+            .map(|image| image["name"].as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            Some("luminance"),
+            Some("luminance-alpha"),
+            Some("rgb"),
+            Some("rgba"),
+            Some("photo"),
+            Some("broken"),
+            Some("unsupported"),
+            Some("inline"),
+        ],
+        "authored image names remain source-ordered identity evidence"
+    );
     for (index, color_type, channels) in
         [(0, "l8", 1), (1, "la8", 2), (2, "rgb8", 3), (3, "rgba8", 4)]
     {
@@ -193,6 +210,9 @@ fn cli_measure_reports_deterministic_material_image_inventory_without_paths() {
     }
     assert_eq!(images[4]["source_kind"], "external");
     assert_eq!(images[4]["detected_container"], "jpeg");
+    assert_eq!(images[4]["width"], 1);
+    assert_eq!(images[4]["height"], 1);
+    assert_eq!(images[4]["channel_count"], 3);
     assert_eq!(images[4]["decoded_color_type"], "rgb8");
     assert_eq!(images[5]["source_kind"], "external");
     assert_eq!(images[5]["detected_container"], "png");
