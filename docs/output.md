@@ -446,11 +446,11 @@ Built-in gap codes are:
 
 | Gap code | Meaning | Emitted by |
 |---|---|---|
-| `roles_unresolved` | Required semantic rig roles were not resolved. | `loop-seam`, `root-motion-speed`, `in-place`, `foot-slide`, `gait-group` |
-| `measurement_unavailable` | A required numeric measurement could not be produced or did not meet its evidence floor. | `loop-closure`, `duplicate-loop-endpoint`, `loop-seam`, `loop-seam-vel`, `loop-seam-rot`, `root-motion-speed`, `in-place`, `foot-slide`, `gait-group`, `sync-group` |
+| `roles_unresolved` | Required semantic rig roles were not resolved. | `loop-seam`, `root-motion-speed`, `in-place`, `foot-slide`, `gait-group`, `time-complement` |
+| `measurement_unavailable` | A required numeric measurement could not be produced or did not meet its evidence floor. | `loop-closure`, `duplicate-loop-endpoint`, `loop-seam`, `loop-seam-vel`, `loop-seam-rot`, `root-motion-speed`, `in-place`, `foot-slide`, `gait-group`, `sync-group`, `time-complement` |
 | `skeleton_unavailable` | Required skeleton presence work could not run because the file has no usable skeleton. | `required-bones` |
-| `insufficient_measurable_members` | Fewer than two configured group members produced usable comparison evidence. | `gait-group`, `sync-group` |
-| `members_not_evaluated` | Some configured group members did not produce usable comparison evidence. | `gait-group`, `sync-group` |
+| `insufficient_measurable_members` | Fewer than two configured group members produced usable comparison evidence. | `gait-group`, `sync-group`, `time-complement` |
+| `members_not_evaluated` | Some configured group members did not produce usable comparison evidence. | `gait-group`, `sync-group`, `time-complement` |
 | `invalid_declared_fps` | A declared frame rate was zero, negative, or non-finite. | `fps` |
 | `sync_frame_grid_unavailable` | A same-time sync-group member lacks usable declared frame-grid evidence. | `sync-group` |
 | `insufficient_rotation_evidence` | Too few usable rotation tracks existed for a bind-pose comparison. | `bind-pose` |
@@ -461,9 +461,9 @@ Built-in completed/gap scope codes are:
 |---|---|---|
 | `loop_closure` | One named clip's per-bone model-space pose closure was measured. | `loop-closure` |
 | `duplicate_loop_endpoint` | One named clip's authored tracks were analyzed for redundant closing endpoint keys. | `duplicate-loop-endpoint` |
-| `member_existence` | Configured group members were checked for existence. | `gait-group`, `sync-group` |
-| `phase_measurement` | One named clip's gait phase was measured or lacked usable evidence. | `gait-group` |
-| `phase_coherence` | One named gait group's measurable phases were compared. | `gait-group` |
+| `member_existence` | Configured group members were checked for existence. | `gait-group`, `sync-group`, `time-complement` |
+| `phase_measurement` | One named clip's gait phase was measured or lacked usable evidence. | `gait-group`, `time-complement` |
+| `phase_coherence` | One named group's measurable gait phases were compared. | `gait-group`, `time-complement` |
 | `sync_member_measurement` | One named same-time sync-group member's timing evidence was measured. | `sync-group` |
 | `sync_compatibility` | One named same-time sync group had compatible member timing evidence compared. | `sync-group` |
 | `loop_seam` | One named clip's positional loop seam was measured. | `loop-seam` |

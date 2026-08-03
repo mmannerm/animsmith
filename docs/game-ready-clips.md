@@ -85,7 +85,9 @@ plainly what it did not evaluate — not to stamp the whole ladder.
 3. **Set-ready** — clips that blend or sync together are compatible
    as a set. Generic measurement and checking where implemented:
    `gait-group` holds a declared directional blend ring to a shared
-   stride phase, `measure` supplies the per-clip numbers, and
+   stride phase, `sync-group` checks same-time timing surfaces, and
+   `time-complement` explains pairs whose stride phase aligns materially
+   better under reflected time. `measure` supplies the per-clip numbers, and
    `animsmith diff` catches drift between revisions. Set
    compatibility beyond the implemented checks is yours to review.
 
@@ -404,6 +406,47 @@ max_gait_phase_spread = 0.15
 rotates a cyclic clip so its stride anchor lands at t=0, aligning the
 set member by member.
 
+### A blend pair is time-complementary
+
+A pair can be individually clean yet unsuitable for a runtime that samples
+both clips at the same normalized time. One clip's left/right gait signal may
+align much better with the other at one minus normalized cycle time than at
+the same cycle time; blending them together then mixes different stride
+moments. Unity's
+[Blend Tree guidance](https://docs.unity3d.com/Manual/class-BlendTree.html)
+similarly calls for blended movements and foot contacts to occur at matching
+normalized times, while Godot documents explicit
+[cyclic sync modes](https://docs.godotengine.org/en/stable/tutorials/animation/animation_tree.html#sync-mode)
+for keeping blend-space phases aligned.
+
+Enable the pair diagnostic on a declared same-time group:
+
+```toml
+[sync_groups.run-ring]
+clips = ["run_forward", "run_backward", "run_left", "run_right"]
+max_duration_delta_s = 0.001
+max_frame_count_delta = 0
+max_fps_delta = 0.01
+
+[sync_groups.run-ring.time_complement]
+min_reflected_time_advantage = 0.25
+min_lr_amplitude_m = 0.03
+```
+
+`time-complement` compares every unordered pair using the existing
+left-minus-right foot-height fundamental. It reports same-time and
+reflected-time similarity on `[0, 1]` (higher is closer) and warns only when
+the reflected score wins by more than the configured advantage. Signals below
+the amplitude floor are coverage gaps, not findings: a stationary or noisy
+clip does not carry enough phase evidence to classify.
+
+This warning belongs to the declared same-time/absolute-sync contract, not to
+either animation in isolation. Typical resolutions are to re-author or
+re-export the pair with aligned contacts, add contact/phase markers, or use an
+explicit phase-remap strategy in the runtime. animsmith does not reverse or
+retime the clips, choose the runtime strategy, or claim that full-body motion
+is identical under time reflection.
+
 ## Feet slide within one clip
 
 During stance — the part of the stride where a foot is planted — the
@@ -553,6 +596,7 @@ scale repair.
 | Glides or runs in place | `in-place`, `root-motion-speed` | re-export; `measure` for ground truth | `[clips.<name>] in_place`, `speed_mps` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Feet skate across blends | `gait-group` | `transform --gait-anchor` | `[gait_groups.<name>]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Same-time blend members drift or pop | `sync-group` | re-slice or re-time at source | `[sync_groups.<name>]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
+| Same-time pair looks mirrored or swaps footfall timing | `time-complement` | align contacts in DCC, add markers, or phase-remap in the runtime | `[sync_groups.<name>.time_complement]` | [A blend pair is time-complementary](#a-blend-pair-is-time-complementary) |
 | Feet slide within a clip | `foot-slide` | re-author in DCC | `[clips.<name>] speed_mps` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Missing runtime socket or IK target | `required-bones` | repair source rig / re-export | `[rig] required_bones` | [Structural rig contract](../examples/README.md#keeping-the-exported-rig-shape-stable) |
 | T-posed limb, static bone, wrong bind | `missing-bones`, `frozen-bone`, `bind-pose` | re-export | `[clips.<name>] animates_bones`, `[rig]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
@@ -566,7 +610,7 @@ transformation — retargeting, motion editing — is DCC work and stays
 out of scope.
 
 The gait and root-motion checks (`loop-seam`, `in-place`,
-`root-motion-speed`, `gait-group`, `foot-slide`) additionally need a
+`root-motion-speed`, `gait-group`, `time-complement`, `foot-slide`) additionally need a
 resolved rig profile so they know which bones are the hips, feet, and
 root. `loop-closure`, `loop-seam-vel`, and `loop-seam-rot` do not. Built-in profiles cover
 `mixamo`, `ue-mannequin`, and `humanoid`

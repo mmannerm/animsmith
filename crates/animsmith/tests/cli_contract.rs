@@ -12,7 +12,7 @@ const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:9";
 const HOSTILE_PRESENTATION_TEXT: &str = "forged\nline\u{1b}[31m\u{2028}\u{2029}\u{202e}";
 const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v4.schema.json");
 const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v9.schema.json");
-const EXPECTED_CHECK_IDS: [&str; 24] = [
+const EXPECTED_CHECK_IDS: [&str; 25] = [
     "nan",
     "time-monotonic",
     "quat-norm",
@@ -33,6 +33,7 @@ const EXPECTED_CHECK_IDS: [&str; 24] = [
     "root-motion-speed",
     "gait-group",
     "sync-group",
+    "time-complement",
     "in-place",
     "fps",
     "bind-pose",
@@ -134,6 +135,12 @@ fn animsmith() -> Command {
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("testdata")
+        .join(name)
+}
+
+fn example_asset(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/assets")
         .join(name)
 }
 
@@ -241,6 +248,22 @@ fn write_two_clip_clean_glb(path: &std::path::Path) {
     second.name = "sway_b".into();
     doc.clips.push(second);
     animsmith_gltf::write::write(&doc, path).expect("writes two-clip fixture");
+}
+
+fn write_time_complement_glb(path: &std::path::Path) {
+    let mut doc =
+        animsmith_gltf::load(&example_asset("walk.glb")).expect("loads synthetic walk example");
+    doc.clips[0].name = "forward".into();
+    let mut reflected = doc.clips[0].clone();
+    reflected.name = "reflected".into();
+    for track in &mut reflected.tracks {
+        match &mut track.values {
+            TrackValues::Vec3s(values) => values.reverse(),
+            TrackValues::Quats(_) => unreachable!("walk fixture uses translation tracks"),
+        }
+    }
+    doc.clips.push(reflected);
+    animsmith_gltf::write::write(&doc, path).expect("writes time-complement fixture");
 }
 
 fn write_duplicate_loop_endpoint_glb(path: &std::path::Path) {
@@ -2237,6 +2260,85 @@ fn lint_json_sync_group_emits_schema_valid_member_table() {
 }
 
 #[test]
+fn lint_json_time_complement_emits_stable_pair_scores() {
+    let dir = unique_temp_dir("v4-time-complement");
+    let input = dir.path().join("time-complement.glb");
+    write_time_complement_glb(&input);
+    let config = write_config(
+        dir.path(),
+        "time-complement.toml",
+        "[sync_groups.ring]\nclips = [\"forward\", \"reflected\"]\nmax_duration_delta_s = 0.001\nmax_frame_count_delta = 0\nmax_fps_delta = 0.01\n\n[sync_groups.ring.time_complement]\nmin_reflected_time_advantage = 0.25\nmin_lr_amplitude_m = 0.03\n",
+    );
+    let output = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .arg("lint")
+        .arg(&input)
+        .args([
+            "--format",
+            "json",
+            "--select",
+            "time-complement",
+            "--deny-warnings",
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_output_schema_valid(&json);
+    let check = json["files"][0]["checks"]
+        .as_array()
+        .expect("checks")
+        .iter()
+        .find(|check| check["check_id"] == "time-complement")
+        .expect("time-complement record");
+    assert_eq!(check["applicability"], "applicable");
+    assert_eq!(check["evaluation"], "complete");
+    assert!(check.get("gaps").is_none(), "empty gaps are omitted");
+
+    let finding = &check["findings"][0];
+    assert_eq!(finding["severity"], "warning");
+    assert_eq!(finding["expected"], 0.25);
+    assert!(
+        finding["message"]
+            .as_str()
+            .unwrap()
+            .contains("'forward' and 'reflected'")
+    );
+    let members = finding["members"].as_array().expect("pair member rows");
+    assert_eq!(members.len(), 2);
+    assert_eq!(members[0]["member"], "forward");
+    assert_eq!(members[1]["member"], "reflected");
+    for member in members {
+        let measurements = member["measurements"].as_object().expect("measurements");
+        assert_eq!(
+            measurements.keys().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "gait_phase",
+                "lr_amplitude_m",
+                "reflected_time_advantage",
+                "reflected_time_similarity",
+                "same_time_similarity",
+            ]
+        );
+    }
+    let scores = members[0]["measurements"].as_object().unwrap();
+    let same = scores["same_time_similarity"].as_f64().unwrap();
+    let reflected = scores["reflected_time_similarity"].as_f64().unwrap();
+    let advantage = scores["reflected_time_advantage"].as_f64().unwrap();
+    assert!(reflected > same);
+    assert!((advantage - (reflected - same)).abs() < 1e-12);
+    assert_eq!(finding["measured"].as_f64().unwrap(), advantage);
+    assert_evaluation_summary_matches_checks(&json);
+}
+
+#[test]
 fn lint_json_exit_policy_uses_findings_not_coverage_gaps() {
     let warning_dir = unique_temp_dir("v2-warning-exit");
     let warning_input = warning_dir.path().join("flipped.glb");
@@ -4004,6 +4106,62 @@ fn invalid_sync_group_tolerances_are_operator_errors() {
                 fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
                 "--select",
                 "sync-group",
+            ])
+            .output()
+            .expect("runs animsmith");
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{name}: stdout:\n{}\nstderr:\n{}",
+            stdout(&output),
+            stderr(&output)
+        );
+        let error = stderr(&output);
+        assert!(error.starts_with("animsmith: "), "{name}: {error}");
+        assert!(error.contains(field), "{name}: {error}");
+    }
+}
+
+#[test]
+fn invalid_time_complement_settings_are_operator_errors() {
+    let dir = unique_temp_dir("invalid-time-complement-setting");
+    for (name, field, advantage, amplitude) in [
+        (
+            "negative-advantage",
+            "min_reflected_time_advantage",
+            "-0.01",
+            "0.03",
+        ),
+        (
+            "advantage-over-one",
+            "min_reflected_time_advantage",
+            "1.01",
+            "0.03",
+        ),
+        (
+            "nonfinite-advantage",
+            "min_reflected_time_advantage",
+            "nan",
+            "0.03",
+        ),
+        ("negative-amplitude", "min_lr_amplitude_m", "0.25", "-0.01"),
+        ("nonfinite-amplitude", "min_lr_amplitude_m", "0.25", "nan"),
+    ] {
+        let config = write_config(
+            dir.path(),
+            &format!("{name}.toml"),
+            &format!(
+                "[sync_groups.ring]\nclips = [\"walk\", \"run\"]\nmax_duration_delta_s = 0.001\nmax_frame_count_delta = 0\nmax_fps_delta = 0.01\n\n[sync_groups.ring.time_complement]\nmin_reflected_time_advantage = {advantage}\nmin_lr_amplitude_m = {amplitude}\n"
+            ),
+        );
+        let output = animsmith()
+            .arg("--config")
+            .arg(&config)
+            .args([
+                "lint",
+                fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
+                "--select",
+                "time-complement",
             ])
             .output()
             .expect("runs animsmith");
