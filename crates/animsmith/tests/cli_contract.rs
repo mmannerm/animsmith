@@ -4093,6 +4093,11 @@ fn invalid_clip_loop_caps_are_operator_errors() {
         ("negative", "max_loop_position_delta_m", "-0.01"),
         ("nan", "max_loop_rotation_delta_deg", "nan"),
         ("infinite", "max_loop_velocity_delta_mps", "inf"),
+        (
+            "angular-infinite",
+            "max_loop_angular_velocity_delta_degps",
+            "inf",
+        ),
     ] {
         let config = write_config(
             dir.path(),

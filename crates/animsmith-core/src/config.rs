@@ -113,6 +113,11 @@ pub struct ClipExpectations {
     /// global `loop-seam-vel` setting (or its built-in default) applies.
     #[serde(default, deserialize_with = "deserialize_nonnegative_finite_option")]
     pub max_loop_velocity_delta_mps: Option<f64>,
+    /// `loop-seam-rot`: per-clip maximum incoming/outgoing model-space
+    /// angular-velocity difference in degrees per second. When unset, the
+    /// global `loop-seam-rot` setting (or its built-in default) applies.
+    #[serde(default, deserialize_with = "deserialize_nonnegative_finite_option")]
+    pub max_loop_angular_velocity_delta_degps: Option<f64>,
     /// Expected clip duration in seconds; consumed by the
     /// `duration-sanity` check. Its value must be finite and positive,
     /// and its tolerance must be finite and non-negative.
@@ -146,6 +151,9 @@ impl ClipExpectations {
             max_loop_velocity_delta_mps: other
                 .max_loop_velocity_delta_mps
                 .or(self.max_loop_velocity_delta_mps),
+            max_loop_angular_velocity_delta_degps: other
+                .max_loop_angular_velocity_delta_degps
+                .or(self.max_loop_angular_velocity_delta_degps),
             duration_s: other.duration_s.or(self.duration_s),
             speed_mps: other.speed_mps.or(self.speed_mps),
             in_place: other.in_place.or(self.in_place),
@@ -298,6 +306,10 @@ impl Config {
                 (
                     "max_loop_velocity_delta_mps",
                     expectations.max_loop_velocity_delta_mps,
+                ),
+                (
+                    "max_loop_angular_velocity_delta_degps",
+                    expectations.max_loop_angular_velocity_delta_degps,
                 ),
             ] {
                 if value.is_some_and(|value| !is_valid_loop_cap(value)) {

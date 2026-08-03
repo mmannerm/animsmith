@@ -632,11 +632,52 @@ fn exact_clip_loop_caps_report_effective_values_and_global_velocity_fallback() {
 }
 
 #[test]
+fn angular_clip_caps_layer_global_glob_and_exact_contracts() {
+    let mut doc = rotation_steps_doc([0.0, 10.0, 20.0, 10.0, 0.0]);
+    doc.clips[0].name = "turn_family".into();
+    let mut exact = doc.clips[0].clone();
+    exact.name = "turn_exact".into();
+    doc.clips.push(exact);
+    let mut global = doc.clips[0].clone();
+    global.name = "plain_turn".into();
+    doc.clips.push(global);
+
+    let config: Config = serde_json::from_value(serde_json::json!({
+        "checks": {
+            "loop-seam-rot": { "max_angular_velocity_delta_degps": 70.0 }
+        },
+        "clips": {
+            "turn_*": {
+                "loop": true,
+                "max_loop_angular_velocity_delta_degps": 79.0
+            },
+            "turn_exact": { "max_loop_angular_velocity_delta_degps": 78.0 },
+            "plain_turn": { "loop": true }
+        }
+    }))
+    .expect("angular clip caps config");
+
+    let records = evaluate(&doc, &config);
+    let angular = check(&records, "loop-seam-rot");
+    assert_eq!(angular.findings().len(), 3, "{angular:#?}");
+    assert!(angular.findings().iter().any(|finding| {
+        finding.clip.as_deref() == Some("plain_turn") && number(&finding.expected) == 70.0
+    }));
+    assert!(angular.findings().iter().any(|finding| {
+        finding.clip.as_deref() == Some("turn_family") && number(&finding.expected) == 79.0
+    }));
+    assert!(angular.findings().iter().any(|finding| {
+        finding.clip.as_deref() == Some("turn_exact") && number(&finding.expected) == 78.0
+    }));
+}
+
+#[test]
 fn every_clip_loop_cap_accepts_zero_and_rejects_negative_or_non_finite_values() {
     for field in [
         "max_loop_position_delta_m",
         "max_loop_rotation_delta_deg",
         "max_loop_velocity_delta_mps",
+        "max_loop_angular_velocity_delta_degps",
     ] {
         for value in ["-0.01", "nan", "inf", "-inf"] {
             let config = format!("[clips.guard]\n{field} = {value}\n");
@@ -653,6 +694,9 @@ fn every_clip_loop_cap_accepts_zero_and_rejects_negative_or_non_finite_values() 
             "max_loop_position_delta_m" => expectations.max_loop_position_delta_m,
             "max_loop_rotation_delta_deg" => expectations.max_loop_rotation_delta_deg,
             "max_loop_velocity_delta_mps" => expectations.max_loop_velocity_delta_mps,
+            "max_loop_angular_velocity_delta_degps" => {
+                expectations.max_loop_angular_velocity_delta_degps
+            }
             _ => unreachable!(),
         };
         assert_eq!(value, Some(0.0), "did not preserve zero {field}");
@@ -669,6 +713,7 @@ fn programmatic_clip_loop_caps_fail_closed_in_validation_and_evaluation() {
         "max_loop_position_delta_m",
         "max_loop_rotation_delta_deg",
         "max_loop_velocity_delta_mps",
+        "max_loop_angular_velocity_delta_degps",
     ] {
         for value in [-0.01, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
             let mut expectations = ClipExpectations::default();
@@ -679,6 +724,9 @@ fn programmatic_clip_loop_caps_fail_closed_in_validation_and_evaluation() {
                 }
                 "max_loop_velocity_delta_mps" => {
                     expectations.max_loop_velocity_delta_mps = Some(value)
+                }
+                "max_loop_angular_velocity_delta_degps" => {
+                    expectations.max_loop_angular_velocity_delta_degps = Some(value)
                 }
                 _ => unreachable!(),
             }
@@ -707,6 +755,7 @@ fn programmatic_clip_loop_caps_fail_closed_in_validation_and_evaluation() {
             max_loop_position_delta_m: Some(0.0),
             max_loop_rotation_delta_deg: Some(0.0),
             max_loop_velocity_delta_mps: Some(0.0),
+            max_loop_angular_velocity_delta_degps: Some(0.0),
             ..ClipExpectations::default()
         },
     );
@@ -726,11 +775,13 @@ fn loop_caps_merge_later_globs_then_exact_entries_fieldwise() {
             },
             "walk_*": {
                 "max_loop_position_delta_m": 0.02,
-                "max_loop_velocity_delta_mps": 0.2
+                "max_loop_velocity_delta_mps": 0.2,
+                "max_loop_angular_velocity_delta_degps": 20.0
             },
             "walk_position": { "max_loop_position_delta_m": 0.03 },
             "walk_rotation": { "max_loop_rotation_delta_deg": 2.0 },
-            "walk_velocity": { "max_loop_velocity_delta_mps": 0.3 }
+            "walk_velocity": { "max_loop_velocity_delta_mps": 0.3 },
+            "walk_angular": { "max_loop_angular_velocity_delta_degps": 30.0 }
         }
     }))
     .expect("glob and exact cap config");
@@ -739,16 +790,25 @@ fn loop_caps_merge_later_globs_then_exact_entries_fieldwise() {
     assert_eq!(position.max_loop_position_delta_m, Some(0.03));
     assert_eq!(position.max_loop_rotation_delta_deg, Some(1.0));
     assert_eq!(position.max_loop_velocity_delta_mps, Some(0.2));
+    assert_eq!(position.max_loop_angular_velocity_delta_degps, Some(20.0));
 
     let rotation = config.expectations_for("walk_rotation");
     assert_eq!(rotation.max_loop_position_delta_m, Some(0.02));
     assert_eq!(rotation.max_loop_rotation_delta_deg, Some(2.0));
     assert_eq!(rotation.max_loop_velocity_delta_mps, Some(0.2));
+    assert_eq!(rotation.max_loop_angular_velocity_delta_degps, Some(20.0));
 
     let velocity = config.expectations_for("walk_velocity");
     assert_eq!(velocity.max_loop_position_delta_m, Some(0.02));
     assert_eq!(velocity.max_loop_rotation_delta_deg, Some(1.0));
     assert_eq!(velocity.max_loop_velocity_delta_mps, Some(0.3));
+    assert_eq!(velocity.max_loop_angular_velocity_delta_degps, Some(20.0));
+
+    let angular = config.expectations_for("walk_angular");
+    assert_eq!(angular.max_loop_position_delta_m, Some(0.02));
+    assert_eq!(angular.max_loop_rotation_delta_deg, Some(1.0));
+    assert_eq!(angular.max_loop_velocity_delta_mps, Some(0.2));
+    assert_eq!(angular.max_loop_angular_velocity_delta_degps, Some(30.0));
 }
 
 #[test]
@@ -757,7 +817,8 @@ fn cap_only_clip_expectations_do_not_declare_a_loop() {
         "clips": { "guard": {
             "max_loop_position_delta_m": 0.0,
             "max_loop_rotation_delta_deg": 0.0,
-            "max_loop_velocity_delta_mps": 0.0
+            "max_loop_velocity_delta_mps": 0.0,
+            "max_loop_angular_velocity_delta_degps": 0.0
         } }
     }))
     .expect("cap-only clip config");
