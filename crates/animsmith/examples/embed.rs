@@ -48,6 +48,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "walk".into(),
         ClipExpectations {
             looping: Some(true),
+            duration_s: Some(Pinned {
+                value: 1.0,
+                tolerance: 0.02,
+            }),
             // Deliberately wrong: the fixture's root travels 1 m/s, so
             // this declaration produces an `in-place` Error below —
             // demonstrating a finding and the non-zero gate exit.

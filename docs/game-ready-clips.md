@@ -200,12 +200,21 @@ meshes, skins, materials, and textures pass through byte-identical.
   shorter channel — a limb freezes while the rest of the body keeps
   moving. The `duration-sanity` check flags degenerate durations and
   mismatched channel ends.
+- **A valid-looking clip can still be one frame too short.** Export slicing,
+  inclusive-vs-exclusive frame ranges, and endpoint removal can produce a
+  positive duration whose channels agree but which no longer matches the
+  gameplay or animation manifest. Declare
+  `duration_s = { value = 1.033, tolerance = 0.02 }` for the clip and
+  `duration-sanity` reports the measured and expected seconds when that pin
+  is missed. The tolerance absorbs harmless exporter rounding; it does not
+  repair or resample the clip.
 - **Keys off the frame grid mean a retiming step drifted.** A clip with
   a declared frame rate should keep its keys on that rate's time grid
   and span a whole number of frames. Off-grid keys mean a resample or
   retiming step drifted; a fractional frame count means a slice cut
   mid-frame — and engines care: Unreal, for example, documents that
-  animations with non-whole end frames do not import correctly. The
+  [animations with non-whole end frames do not import
+  correctly](https://dev.epicgames.com/documentation/en-us/unreal-engine/animation-sequences-in-unreal-engine). The
   `fps` check verifies both once the config declares a rate.
 
 When the wrong length is the *input* problem — a capture with garbage
@@ -424,7 +433,7 @@ scale repair.
 | Symptom | Check(s) | Repair / transform | Config surface | Workflow |
 |---|---|---|---|---|
 | Pose flickers, spins, or explodes | `nan`, `quat-norm`, `quat-flip`, `time-monotonic` | `fix` (quat repairs, lossless) | — | [First gate](../examples/README.md#1-a-first-cli-gate), [Repair](../examples/README.md#2-repairing-an-asset) |
-| Wrong length, freezes at the end | `duration-sanity`, `fps` | `transform --slice`, `--hold-extend` | `[clips.<name>] fps` | [Editing a clip](../examples/README.md#3-editing-a-clip) |
+| Wrong length, freezes at the end | `duration-sanity`, `fps` | `transform --slice`, `--hold-extend` | `[clips.<name>] duration_s`, `fps` | [Editing a clip](../examples/README.md#3-editing-a-clip) |
 | The loop pops | `loop-seam` | `transform --gait-anchor` | `[clips.<name>] loop = true` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Glides or runs in place | `in-place`, `root-motion-speed` | re-export; `measure` for ground truth | `[clips.<name>] in_place`, `speed_mps` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Feet skate across blends | `gait-group` | `transform --gait-anchor` | `[gait_groups.<name>]` | [Contract config](../examples/README.md#4-a-project-contract-config) |

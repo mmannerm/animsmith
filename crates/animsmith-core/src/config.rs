@@ -86,6 +86,9 @@ pub struct ClipExpectations {
     /// The clip is a cyclic loop; loop checks apply.
     #[serde(rename = "loop")]
     pub looping: Option<bool>,
+    /// Expected clip duration in seconds; consumed by the
+    /// `duration-sanity` check.
+    pub duration_s: Option<Pinned>,
     /// Declared locomotion speed (m/s) carried by the clip's root
     /// motion.
     pub speed_mps: Option<Pinned>,
@@ -106,6 +109,7 @@ impl ClipExpectations {
     fn merged_with(&self, other: &ClipExpectations) -> ClipExpectations {
         ClipExpectations {
             looping: other.looping.or(self.looping),
+            duration_s: other.duration_s.or(self.duration_s),
             speed_mps: other.speed_mps.or(self.speed_mps),
             in_place: other.in_place.or(self.in_place),
             fps: other.fps.or(self.fps),

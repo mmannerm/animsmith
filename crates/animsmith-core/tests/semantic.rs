@@ -860,12 +860,22 @@ fn undeclared_checks_are_not_applicable_without_gaps() {
 fn glob_expectations_merge_with_exact_winning() {
     let config = json_config(serde_json::json!({
         "clips": {
-            "walk_*": { "loop": true, "fps": 30.0 },
-            "walk_fast": { "fps": 60.0 }
+            "walk_*": {
+                "loop": true,
+                "duration_s": { "value": 1.0, "tolerance": 0.02 },
+                "fps": 30.0
+            },
+            "walk_fast": {
+                "duration_s": { "value": 0.5, "tolerance": 0.01 },
+                "fps": 60.0
+            }
         }
     }));
     let exp = config.expectations_for("walk_fast");
     assert_eq!(exp.looping, Some(true)); // from the glob
+    let duration = exp.duration_s.expect("exact duration pin");
+    assert_eq!(duration.value, 0.5);
+    assert_eq!(duration.tolerance, 0.01);
     assert_eq!(exp.fps, Some(60.0)); // exact wins
     let other = config.expectations_for("run_fast");
     assert_eq!(other.looping, None);

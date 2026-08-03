@@ -134,14 +134,15 @@ Mechanical checks:
 | `time-monotonic` | error | non-increasing or negative key times; late first key notes |
 | `quat-norm` | error | non-unit rotation keys |
 | `quat-flip` | warning | adjacent rotation keys on opposite hemispheres |
-| `duration-sanity` | error/warning | degenerate duration, empty clips, or mismatched channel ends |
+| `duration-sanity` | error/warning | degenerate or unexpectedly changed duration, empty clips, or mismatched channel ends |
 | `scale-keys` | warning | interpolation-aware temporal scale variation |
 | `non-uniform-scale` | warning | non-uniform scale anywhere on the evaluated trajectory |
 | `constant-nonunit-scale` | off (opt-in) | constant non-unit scale channels, including single-key pins |
 | `constant-track` | note | multi-key tracks that never move |
 
-These checks need no rig roles or clip expectations. Default-on entries run
-without project config; opt-in policy signals remain visible but disabled.
+These checks need no rig roles. Default-on entries run without project config;
+`duration-sanity` can additionally enforce a declared per-clip duration, and
+opt-in policy signals remain visible but disabled.
 
 Contract-aware checks use declared expectations and, where needed, rig roles:
 
@@ -176,6 +177,7 @@ max_ratio = 1.6
 loop = true
 
 [clips.run_forward]
+duration_s = { value = 1.033, tolerance = 0.02 }
 speed_mps = { value = 3.1, tolerance = 0.25 }
 
 [gait_groups.run-ring]

@@ -367,6 +367,7 @@ severity = "note"           # demote while an upstream fix lands
 [clips."run_*"]             # glob: every run clip loops
 loop = true
 [clips.run_forward]
+duration_s = { value = 1.033, tolerance = 0.02 } # authored clip-length contract
 speed_mps = { value = 3.1, tolerance = 0.25 }   # root-motion contract
 
 [gait_groups.run-ring]      # a directional blend ring
