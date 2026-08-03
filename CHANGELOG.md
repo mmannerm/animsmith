@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/mmannerm/animsmith/compare/v0.1.0...v0.2.0) - 2026-08-03
+
+### Added
+
+- add required bone presence check
+- add angular loop seam continuity
+- detect duplicate loop endpoints
+- add loop continuity checks
+- measure mesh geometry centroid
+- measure skeleton rest-pose domains
+- report material and image measurements
+- report additional skin influence sets
+- add pinned clip duration expectations
+- *(inspect)* inventory mesh instances
+- *(cli)* verify complete assembly publication
+- support PBR material texture slots
+- *(cli)* add recipe-driven character assembly
+- *(convert)* apply material texture recipes
+- *(convert)* bake static mesh transforms
+- *(convert)* preserve normal textures
+- *(measure)* define static asset bound domains
+- [**breaking**] finalize result contract v2
+- add provisional v2 evaluation results
+- *(core)* canonicalize skinned bind poses
+- *(core)* add character assembly clip operations
+
+### Fixed
+
+- honor inclusive loop continuity caps
+- align skeleton schema states
+- simplify skeleton coverage states
+- harden skeleton measurement validation
+- resolve encoded external resource paths
+- preserve per-primitive influence mismatches
+- reject invalid duration pins
+- *(inspect)* emit copyable TOML selectors
+- *(inspect)* mirror assembly name ambiguity
+- *(cli)* reject linked assembly textures
+- *(cli)* gate assembly config provenance
+- *(cli)* simplify loaded config evidence
+- *(cli)* bind assembly config evidence
+- *(cli)* satisfy assembly lint gates
+- *(lint)* separate scale diagnostic ownership
+- *(convert)* harden recipe path and image contracts
+- *(convert)* preserve normal texture bake state
+- *(convert)* harden static bake validation
+- *(cli)* stream human-readable output
+- preserve diff cardinality error precedence
+- address final result-contract audit
+- close final contract audit gaps
+- enforce schema-valid embedded results
+- validate embedded rig evidence
+- close final result contract audit gaps
+- close audit coverage gaps
+- address result contract review findings
+- harden final result contract
+- close result contract audit gaps
+- preserve v1 contracts in evaluation preview
+- preserve empty clip warning behavior
+- retain expected duration on degenerate clips
+- *(core)* derive skinned geometry bind space
+- *(convert)* order bake evidence by source node
+- bind rig evidence to resolved skeleton
+- keep image dimensions policy-neutral
+
 ### Added
 
 - *(convert)* preserve normal textures through FBX ingestion and glTF scene round-trips, including glTF normal scale ([#222](https://github.com/mmannerm/animsmith/issues/222))
