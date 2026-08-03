@@ -153,6 +153,31 @@ fn split_fragment(url: &str) -> (&str, Option<&str>) {
     }
 }
 
+/// README routes that must appear as rendered links. A fragment does
+/// not change the route: the previous shell assertions intentionally
+/// accepted links such as `docs/cli.md#install`.
+fn required_readme_link_routes() -> [String; 5] {
+    [
+        format!("{REPO_TREE_URL}docs"),
+        format!("{REPO_BLOB_URL}docs/cli.md"),
+        format!("{REPO_BLOB_URL}docs/embedding.md"),
+        format!("{REPO_BLOB_URL}CONTRIBUTING.md"),
+        format!("{REPO_BLOB_URL}DEVELOPMENT.md"),
+    ]
+}
+
+fn missing_required_readme_link_routes(markdown: &str) -> Vec<String> {
+    let rendered_routes: BTreeSet<String> = rendered_link_destinations(markdown)
+        .into_iter()
+        .map(|url| split_fragment(&url).0.to_owned())
+        .collect();
+
+    required_readme_link_routes()
+        .into_iter()
+        .filter(|route| !rendered_routes.contains(route))
+        .collect()
+}
+
 /// Heading anchors of an existing file, cached by canonical path so a
 /// page linked from many gated files is parsed once.
 fn cached_anchors<'a>(
@@ -347,6 +372,43 @@ fn oracle_sees_all_rendered_link_forms_and_only_those() {
         destinations, expected,
         "rendered links only — code-block and code-span decoys must not count"
     );
+}
+
+/// README routing requirements belong to the rendered-link gate, not
+/// the shell grep gate. Each route must be a real Markdown link; text
+/// that only resembles one inside a code span or fenced block cannot
+/// satisfy the requirement.
+#[test]
+fn root_readme_renders_required_routing_links_and_decoys_do_not_count() {
+    let readme = std::fs::read_to_string(repo_root().join("README.md")).expect("reads root README");
+    let missing = missing_required_readme_link_routes(&readme);
+    assert!(
+        missing.is_empty(),
+        "README.md must render required routing links:\n{}",
+        missing.join("\n")
+    );
+
+    for required in required_readme_link_routes() {
+        for decoy in [
+            format!("`[inline decoy]({required})`"),
+            format!("```text\n[fenced decoy]({required})\n```"),
+        ] {
+            let mut fixture = required_readme_link_routes()
+                .into_iter()
+                .filter(|route| route != &required)
+                .map(|route| format!("[rendered]({route})"))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            fixture.push_str("\n\n");
+            fixture.push_str(&decoy);
+
+            assert_eq!(
+                missing_required_readme_link_routes(&fixture),
+                vec![required.clone()],
+                "a code-shaped decoy must not satisfy {required}"
+            );
+        }
+    }
 }
 
 /// The anchor forms the docs actually link, matched against GitHub's

@@ -5,7 +5,6 @@ export LC_ALL=C
 
 REPO_URL="https://github.com/mmannerm/animsmith"
 REPO_BLOB_URL="${REPO_URL}/blob/main/"
-REPO_TREE_URL="${REPO_URL}/tree/main/"
 SUPPORT_URL="${REPO_BLOB_URL}SUPPORT.md"
 SECURITY_URL="${REPO_BLOB_URL}SECURITY.md"
 SECURITY_ADVISORY_URL="${REPO_URL}/security/advisories/new"
@@ -116,12 +115,6 @@ require_workflow_cron() {
 
 require_order README.md "cargo install animsmith" "CONTRIBUTING.md"
 require_order README.md "animsmith lint clip.glb" "CONTRIBUTING.md"
-
-require_literal README.md "${REPO_TREE_URL}docs" "documentation index link"
-require_match README.md "${REPO_BLOB_URL}docs/cli[.]md" "CLI reference link"
-require_match README.md "${REPO_BLOB_URL}docs/embedding[.]md" "embedding guide link"
-require_match README.md "${REPO_BLOB_URL}CONTRIBUTING[.]md" "contributor guide link"
-require_match README.md "${REPO_BLOB_URL}DEVELOPMENT[.]md" "development setup link"
 
 require_match CONTRIBUTING.md '^## Pull Request Flow$' "PR flow"
 require_match CONTRIBUTING.md '^## Conventional Commits$' "Conventional Commits policy"
