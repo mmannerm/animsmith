@@ -27,6 +27,7 @@ enum SecondaryInfluenceSet {
     Paired,
     JointsOnly,
     WeightsOnly,
+    HigherIndependentSets,
 }
 
 fn append_accessor(
@@ -123,12 +124,14 @@ fn write_secondary_influence_gltf(path: &std::path::Path, sets: &[SecondaryInflu
             ("JOINTS_0".into(), serde_json::json!(joints)),
             ("WEIGHTS_0".into(), serde_json::json!(weights)),
         ]);
-        if matches!(
-            set,
-            SecondaryInfluenceSet::Paired | SecondaryInfluenceSet::JointsOnly
-        ) {
+        let joints_set_index = match set {
+            SecondaryInfluenceSet::Paired | SecondaryInfluenceSet::JointsOnly => Some(1),
+            SecondaryInfluenceSet::HigherIndependentSets => Some(3),
+            _ => None,
+        };
+        if let Some(set_index) = joints_set_index {
             attributes.insert(
-                "JOINTS_1".into(),
+                format!("JOINTS_{set_index}"),
                 serde_json::json!(joints_accessor(
                     &mut bytes,
                     &mut buffer_views,
@@ -136,12 +139,14 @@ fn write_secondary_influence_gltf(path: &std::path::Path, sets: &[SecondaryInflu
                 )),
             );
         }
-        if matches!(
-            set,
-            SecondaryInfluenceSet::Paired | SecondaryInfluenceSet::WeightsOnly
-        ) {
+        let weights_set_index = match set {
+            SecondaryInfluenceSet::Paired | SecondaryInfluenceSet::WeightsOnly => Some(1),
+            SecondaryInfluenceSet::HigherIndependentSets => Some(2),
+            _ => None,
+        };
+        if let Some(set_index) = weights_set_index {
             attributes.insert(
-                "WEIGHTS_1".into(),
+                format!("WEIGHTS_{set_index}"),
                 serde_json::json!(weights_accessor(
                     &mut bytes,
                     &mut buffer_views,
@@ -496,6 +501,50 @@ fn cli_measure_reports_secondary_influence_set_presence_without_changing_primary
         assert_eq!(mesh["weight_sum_min"], 1.0, "{name}: primary only");
         assert_eq!(mesh["weight_sum_max"], 1.0, "{name}: primary only");
     }
+}
+
+#[test]
+fn cli_measure_reports_higher_independent_influence_sets_in_ascending_order() {
+    let dir = tempfile::tempdir().expect("creates temp directory");
+    let input = dir.path().join("higher-independent-influences.gltf");
+    write_secondary_influence_gltf(&input, &[SecondaryInfluenceSet::HigherIndependentSets]);
+
+    let source = gltf::Gltf::open(&input).expect("fixture is valid glTF");
+    let primitive = source
+        .meshes()
+        .next()
+        .expect("fixture mesh")
+        .primitives()
+        .next()
+        .expect("fixture primitive");
+    assert!(primitive.get(&gltf::Semantic::Joints(3)).is_some());
+    assert!(primitive.get(&gltf::Semantic::Weights(2)).is_some());
+    assert!(primitive.get(&gltf::Semantic::Joints(2)).is_none());
+    assert!(primitive.get(&gltf::Semantic::Weights(3)).is_none());
+
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_animsmith"))
+        .args([
+            "measure",
+            input.to_str().expect("utf-8 fixture path"),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("runs animsmith");
+    assert!(
+        out.status.success(),
+        "measure stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid JSON");
+    let mesh = &report["files"][0]["measurements"]["mesh_definitions"][0];
+    assert_eq!(
+        mesh["additional_influence_sets"],
+        serde_json::json!([
+            { "set_index": 2, "joints_present": false, "weights_present": true },
+            { "set_index": 3, "joints_present": true, "weights_present": false },
+        ])
+    );
 }
 
 /// Final lint JSON carries the same nested measurement evidence as measure.

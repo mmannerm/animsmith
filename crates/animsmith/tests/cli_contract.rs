@@ -2522,6 +2522,38 @@ fn diff_rejects_unsupported_schema_versions() {
 }
 
 #[test]
+fn diff_rejects_all_unsupported_nested_measurement_schema_versions() {
+    let dir = unique_temp_dir("diff-unsupported-nested-schema");
+    let report_path = dir.path().join("report.json");
+    for version in [0, 1, 2, 4, 99] {
+        let mut report = measurement_report(1.0);
+        report["files"][0]["measurements"]["schema_version"] = json!(version);
+        write_json(&report_path, &report);
+        let output = animsmith()
+            .args([
+                "diff",
+                report_path.to_str().expect("utf-8 path"),
+                fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
+            ])
+            .output()
+            .expect("runs animsmith");
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "version {version}: stdout:\n{}",
+            stdout(&output)
+        );
+        assert!(
+            stderr(&output).contains(&format!(
+                "has measurement schema_version {version}; this build reads measurement schema_version 3"
+            )),
+            "version {version}: stderr:\n{}",
+            stderr(&output)
+        );
+    }
+}
+
+#[test]
 fn diff_rejects_envelope_without_files() {
     let dir = unique_temp_dir("diff-no-files");
     let report = dir.path().join("no-files.json");

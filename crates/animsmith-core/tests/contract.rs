@@ -974,6 +974,14 @@ fn measurement_contract_rejects_inconsistent_static_asset_relationships() {
 fn measurement_contract_rejects_invalid_additional_influence_set_ordering() {
     assert_invalid_assets(
         |assets| {
+            assets.mesh_definitions[0].additional_influence_sets =
+                vec![additional_influence_set(0, true, false)];
+        },
+        "mesh_definitions[0].additional_influence_sets[0].set_index",
+        "set_index must be at least 1",
+    );
+    assert_invalid_assets(
+        |assets| {
             assets.mesh_definitions[0].additional_influence_sets = vec![
                 additional_influence_set(1, true, false),
                 additional_influence_set(0, false, true),
@@ -990,6 +998,17 @@ fn measurement_contract_rejects_invalid_additional_influence_set_ordering() {
             ];
         },
         "mesh_definitions[0].additional_influence_sets[1].set_index",
+        "set_index values must be strictly increasing and unique",
+    );
+    assert_invalid_assets(
+        |assets| {
+            assets.mesh_definitions[0].additional_influence_sets = vec![
+                additional_influence_set(1, true, true),
+                additional_influence_set(3, true, false),
+                additional_influence_set(2, false, true),
+            ];
+        },
+        "mesh_definitions[0].additional_influence_sets[2].set_index",
         "set_index values must be strictly increasing and unique",
     );
     assert_invalid_assets(
