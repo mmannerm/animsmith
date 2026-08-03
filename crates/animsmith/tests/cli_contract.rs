@@ -2329,6 +2329,16 @@ fn lint_json_time_complement_emits_stable_pair_scores() {
         );
     }
     let scores = members[0]["measurements"].as_object().unwrap();
+    for score in [
+        "same_time_similarity",
+        "reflected_time_similarity",
+        "reflected_time_advantage",
+    ] {
+        assert_eq!(
+            members[0]["measurements"][score],
+            members[1]["measurements"][score]
+        );
+    }
     let same = scores["same_time_similarity"].as_f64().unwrap();
     let reflected = scores["reflected_time_similarity"].as_f64().unwrap();
     let advantage = scores["reflected_time_advantage"].as_f64().unwrap();
