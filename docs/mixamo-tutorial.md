@@ -112,6 +112,8 @@ skeleton: 9 bones
       mixamorig:Head
       mixamorig:LeftHand
       mixamorig:RightHand
+materials: 0
+mesh instances: 0
 clips: 1
   mixamo.com: 1.000s, 2 tracks, 33 keys max
 ```
@@ -129,6 +131,13 @@ skeleton: 70 bones
     mixamorig:Hips [skinned]
       mixamorig:Spine [skinned]
         ...
+materials: 2
+  ...the exact quoted source material names...
+mesh instances: 2
+  node "<first mesh node name>"
+    ...mesh, skin, and primitive/material context...
+  node "<second mesh node name>"
+    ...mesh, skin, and primitive/material context...
 clips: 1
   mixamo.com: 1.033s, 156 tracks, 32 keys max
 ```

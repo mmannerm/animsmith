@@ -212,6 +212,101 @@ fn write_hostile_glb(path: &std::path::Path, hostile: &str, flipped: bool) {
     animsmith_gltf::write::write(&doc, path).expect("writes hostile-name fixture");
 }
 
+fn write_multi_mesh_glb(path: &std::path::Path) {
+    let bone = |name: &str| Bone {
+        name: name.into(),
+        parent: None,
+        rest: Transform::IDENTITY,
+        inverse_bind: None,
+    };
+    let material = |name: &str| MaterialAsset {
+        name: name.into(),
+        base_color: [1.0; 4],
+        metallic: 0.0,
+        roughness: 1.0,
+        base_color_texture: None,
+        normal_texture: None,
+        metallic_roughness_texture: None,
+        occlusion_texture: None,
+    };
+    let primitive = |material| Primitive {
+        material,
+        positions: vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        ],
+        ..Primitive::default()
+    };
+    let doc = Document {
+        skeleton: Skeleton {
+            bones: vec![
+                bone("body-node"),
+                bone("prop-node"),
+                bone(" duplicate-node "),
+                bone(" duplicate-node "),
+                bone(" duplicate-node "),
+            ],
+        },
+        assets: SceneAssets {
+            meshes: vec![
+                MeshAsset {
+                    name: "body-mesh".into(),
+                    source_mesh_index: 0,
+                    primitives: vec![primitive(Some(0))],
+                },
+                MeshAsset {
+                    name: "prop-mesh".into(),
+                    source_mesh_index: 1,
+                    primitives: vec![primitive(Some(1))],
+                },
+            ],
+            instances: vec![
+                MeshInstance {
+                    source_node_index: 0,
+                    node: 0,
+                    mesh: 0,
+                    ..MeshInstance::default()
+                },
+                MeshInstance {
+                    source_node_index: 1,
+                    node: 1,
+                    mesh: 1,
+                    ..MeshInstance::default()
+                },
+                MeshInstance {
+                    source_node_index: 2,
+                    node: 2,
+                    mesh: 0,
+                    ..MeshInstance::default()
+                },
+                MeshInstance {
+                    source_node_index: 3,
+                    node: 3,
+                    mesh: 0,
+                    ..MeshInstance::default()
+                },
+                MeshInstance {
+                    source_node_index: 4,
+                    node: 4,
+                    mesh: 0,
+                    ..MeshInstance::default()
+                },
+            ],
+            materials: vec![
+                material("body-material"),
+                material("prop-material"),
+                material(" duplicate-material "),
+                material(" duplicate-material "),
+                material(" duplicate-material "),
+            ],
+            ..SceneAssets::default()
+        },
+        ..Document::default()
+    };
+    animsmith_gltf::write::write(&doc, path).expect("writes multi-mesh fixture");
+}
+
 fn assert_hostile_text_is_escaped(text: &str) {
     assert!(
         !text.contains(HOSTILE_PRESENTATION_TEXT),
@@ -3203,5 +3298,63 @@ fn inspect_reports_clip_and_profile() {
     assert!(
         out.contains("skeleton: 3 bones"),
         "no skeleton line:\n{out}"
+    );
+}
+
+#[test]
+fn inspect_reports_every_selectable_mesh_instance_and_material() {
+    let dir = unique_temp_dir("inspect-mesh-instances");
+    let input = dir.path().join("multi-mesh.glb");
+    write_multi_mesh_glb(&input);
+
+    let output = animsmith()
+        .args(["inspect", input.to_str().expect("utf-8 path")])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    let out = stdout(&output);
+    let inventory = &out[out.find("materials:").expect("material inventory")..];
+    assert_eq!(
+        inventory,
+        concat!(
+            "materials: 5\n",
+            "  #0 \"body-material\"\n",
+            "  #1 \"prop-material\"\n",
+            "  #2 \" duplicate-material \" [ambiguous: 3 materials share this name]\n",
+            "  #3 \" duplicate-material \" [ambiguous: 3 materials share this name]\n",
+            "  #4 \" duplicate-material \" [ambiguous: 3 materials share this name]\n",
+            "mesh instances: 5\n",
+            "  node \"body-node\"\n",
+            "    source node: #0\n",
+            "    mesh: #0 \"body-mesh\" (source mesh #0)\n",
+            "    skin: unskinned\n",
+            "    primitive #0: material #0 \"body-material\"\n",
+            "  node \"prop-node\"\n",
+            "    source node: #1\n",
+            "    mesh: #1 \"prop-mesh\" (source mesh #1)\n",
+            "    skin: unskinned\n",
+            "    primitive #0: material #1 \"prop-material\"\n",
+            "  node \" duplicate-node \" [ambiguous: 3 skeleton nodes share this name]\n",
+            "    source node: #2\n",
+            "    mesh: #0 \"body-mesh\" (source mesh #0)\n",
+            "    skin: unskinned\n",
+            "    primitive #0: material #0 \"body-material\"\n",
+            "  node \" duplicate-node \" [ambiguous: 3 skeleton nodes share this name]\n",
+            "    source node: #3\n",
+            "    mesh: #0 \"body-mesh\" (source mesh #0)\n",
+            "    skin: unskinned\n",
+            "    primitive #0: material #0 \"body-material\"\n",
+            "  node \" duplicate-node \" [ambiguous: 3 skeleton nodes share this name]\n",
+            "    source node: #4\n",
+            "    mesh: #0 \"body-mesh\" (source mesh #0)\n",
+            "    skin: unskinned\n",
+            "    primitive #0: material #0 \"body-material\"\n",
+            "clips: 0\n",
+        )
     );
 }

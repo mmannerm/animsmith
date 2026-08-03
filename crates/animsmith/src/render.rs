@@ -239,6 +239,103 @@ pub(crate) fn render_inspect<'a>(
             ))
         },
     );
+    let material_name_counts =
+        doc.assets
+            .materials
+            .iter()
+            .fold(BTreeMap::<&str, usize>::new(), |mut counts, material| {
+                *counts.entry(material.name.as_str()).or_default() += 1;
+                counts
+            });
+    let materials = std::iter::once(format!("materials: {}", doc.assets.materials.len()));
+    let material_lines = doc
+        .assets
+        .materials
+        .iter()
+        .enumerate()
+        .map(move |(index, material)| {
+            let ambiguity = match material_name_counts.get(material.name.as_str()) {
+                Some(count) if *count > 1 => {
+                    format!(" [ambiguous: {count} materials share this name]")
+                }
+                _ => String::new(),
+            };
+            format!("  #{index} {}{ambiguity}", quoted_text_atom(&material.name))
+        });
+    let node_name_counts =
+        doc.skeleton
+            .bones
+            .iter()
+            .fold(BTreeMap::<&str, usize>::new(), |mut counts, bone| {
+                *counts.entry(bone.name.as_str()).or_default() += 1;
+                counts
+            });
+    let mesh_instances = std::iter::once(format!("mesh instances: {}", doc.assets.instances.len()));
+    let mesh_instance_lines = doc.assets.instances.iter().flat_map(move |instance| {
+        let (node_name, ambiguity) = doc.skeleton.bones.get(instance.node).map_or_else(
+            || (format!("<missing node #{}>", instance.node), String::new()),
+            |bone| {
+                let ambiguity = match node_name_counts.get(bone.name.as_str()) {
+                    Some(count) if *count > 1 => {
+                        format!(" [ambiguous: {count} skeleton nodes share this name]")
+                    }
+                    _ => String::new(),
+                };
+                (quoted_text_atom(&bone.name), ambiguity)
+            },
+        );
+        let mut lines = vec![format!("  node {node_name}{ambiguity}")];
+        lines.push(format!("    source node: #{}", instance.source_node_index));
+        if let Some(mesh) = doc.assets.meshes.get(instance.mesh) {
+            lines.push(format!(
+                "    mesh: #{} {} (source mesh #{})",
+                instance.mesh,
+                quoted_text_atom(&mesh.name),
+                mesh.source_mesh_index
+            ));
+            lines.push(format!(
+                "    skin: {}",
+                if instance.skin_joints.is_empty() {
+                    "unskinned"
+                } else {
+                    "skinned"
+                }
+            ));
+            if mesh.primitives.is_empty() {
+                lines.push("    primitives: none".to_string());
+            } else {
+                for (primitive_index, primitive) in mesh.primitives.iter().enumerate() {
+                    let material = primitive.material.map_or_else(
+                        || "no material".to_string(),
+                        |material_index| {
+                            doc.assets.materials.get(material_index).map_or_else(
+                                || format!("missing material #{material_index}"),
+                                |material| {
+                                    format!(
+                                        "material #{material_index} {}",
+                                        quoted_text_atom(&material.name)
+                                    )
+                                },
+                            )
+                        },
+                    );
+                    lines.push(format!("    primitive #{primitive_index}: {material}"));
+                }
+            }
+        } else {
+            lines.push(format!("    mesh: <missing mesh #{}>", instance.mesh));
+            lines.push(format!(
+                "    skin: {}",
+                if instance.skin_joints.is_empty() {
+                    "unskinned"
+                } else {
+                    "skinned"
+                }
+            ));
+            lines.push("    primitives: unavailable".to_string());
+        }
+        lines
+    });
     let clips = std::iter::once(format!("clips: {}", doc.clips.len()));
     let clip_lines = doc.clips.iter().map(|clip| {
         let keys = clip
@@ -261,6 +358,10 @@ pub(crate) fn render_inspect<'a>(
         .chain(role_lines)
         .chain(skeleton)
         .chain(bone_lines)
+        .chain(materials)
+        .chain(material_lines)
+        .chain(mesh_instances)
+        .chain(mesh_instance_lines)
         .chain(clips)
         .chain(clip_lines)
 }
@@ -574,11 +675,20 @@ fn is_presentation_control(ch: char) -> bool {
     ch.is_control()
         || matches!(
             ch,
-            '\u{061c}'
-                | '\u{200e}'
-                | '\u{200f}'
+            '\u{00ad}'
+                | '\u{034f}'
+                | '\u{061c}'
+                | '\u{180b}'..='\u{180e}'
+                | '\u{200b}'..='\u{200f}'
                 | '\u{2028}'..='\u{202e}'
-                | '\u{2066}'..='\u{206f}'
+                | '\u{2060}'..='\u{206f}'
+                | '\u{fe00}'..='\u{fe0f}'
+                | '\u{feff}'
+                | '\u{fff9}'..='\u{fffb}'
+                | '\u{1bca0}'..='\u{1bca3}'
+                | '\u{1d173}'..='\u{1d17a}'
+                | '\u{e0000}'..='\u{e007f}'
+                | '\u{e0100}'..='\u{e01ef}'
         )
 }
 
@@ -599,6 +709,38 @@ fn text_atom(text: &str) -> Cow<'_, str> {
         }
     }
     Cow::Owned(escaped)
+}
+
+/// Quote an exact author-provided identifier so empty names and leading or
+/// trailing whitespace remain visible. The result is also a valid TOML basic
+/// string, so selectors can be copied directly into animsmith recipes.
+fn quoted_text_atom(text: &str) -> String {
+    use std::fmt::Write as _;
+
+    let mut escaped = String::with_capacity(text.len() + 2);
+    escaped.push('"');
+    for ch in text.chars() {
+        match ch {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\u{8}' => escaped.push_str("\\b"),
+            '\t' => escaped.push_str("\\t"),
+            '\n' => escaped.push_str("\\n"),
+            '\u{c}' => escaped.push_str("\\f"),
+            '\r' => escaped.push_str("\\r"),
+            ch if is_presentation_control(ch) => {
+                let scalar = u32::from(ch);
+                if scalar <= u32::from(u16::MAX) {
+                    let _ = write!(escaped, "\\u{scalar:04X}");
+                } else {
+                    let _ = write!(escaped, "\\U{scalar:08X}");
+                }
+            }
+            _ => escaped.push(ch),
+        }
+    }
+    escaped.push('"');
+    escaped
 }
 
 /// The finding-count threshold at or below which a file's list stays
@@ -1124,6 +1266,8 @@ mod tests {
                 "skeleton: 2 bones",
                 "  root\\nname",
                 "    child\\nname [skinned]",
+                "materials: 0",
+                "mesh instances: 0",
                 "clips: 1",
                 "  clip\\nname: 1.000s, 0 tracks, 0 keys max",
             ]
@@ -1176,9 +1320,442 @@ mod tests {
                 "  root",
                 "    hips",
                 "      spine",
+                "materials: 0",
+                "mesh instances: 0",
                 "clips: 0",
             ]
         );
+    }
+
+    #[test]
+    fn inspect_renderer_lists_exact_mesh_instance_and_material_context() {
+        use animsmith_core::model::{
+            MaterialAsset, MeshAsset, MeshInstance, Primitive, SceneAssets,
+        };
+
+        let material = |name: &str| MaterialAsset {
+            name: name.into(),
+            base_color: [1.0; 4],
+            metallic: 0.0,
+            roughness: 1.0,
+            base_color_texture: None,
+            normal_texture: None,
+            metallic_roughness_texture: None,
+            occlusion_texture: None,
+        };
+        let bone = |name: &str| Bone {
+            name: name.into(),
+            parent: None,
+            rest: Transform::IDENTITY,
+            inverse_bind: None,
+        };
+        let doc = Document {
+            skeleton: animsmith_core::Skeleton {
+                bones: vec![
+                    bone("body"),
+                    bone("body"),
+                    bone("body"),
+                    bone("prop"),
+                    bone("empty"),
+                ],
+            },
+            assets: SceneAssets {
+                materials: vec![material("paint"), material("paint"), material("paint")],
+                meshes: vec![
+                    MeshAsset {
+                        name: "character".into(),
+                        source_mesh_index: 7,
+                        primitives: vec![
+                            Primitive {
+                                material: Some(0),
+                                ..Primitive::default()
+                            },
+                            Primitive::default(),
+                            Primitive {
+                                material: Some(1),
+                                ..Primitive::default()
+                            },
+                        ],
+                    },
+                    MeshAsset {
+                        name: "weapon".into(),
+                        source_mesh_index: 9,
+                        primitives: vec![Primitive {
+                            material: Some(2),
+                            ..Primitive::default()
+                        }],
+                    },
+                    MeshAsset {
+                        name: "empty-mesh".into(),
+                        source_mesh_index: 11,
+                        primitives: vec![],
+                    },
+                ],
+                instances: vec![
+                    MeshInstance {
+                        source_node_index: 4,
+                        node: 0,
+                        mesh: 0,
+                        skin_joints: vec![0, 1],
+                        ..MeshInstance::default()
+                    },
+                    MeshInstance {
+                        source_node_index: 5,
+                        node: 1,
+                        mesh: 0,
+                        ..MeshInstance::default()
+                    },
+                    MeshInstance {
+                        source_node_index: 6,
+                        node: 2,
+                        mesh: 0,
+                        ..MeshInstance::default()
+                    },
+                    MeshInstance {
+                        source_node_index: 7,
+                        node: 3,
+                        mesh: 1,
+                        ..MeshInstance::default()
+                    },
+                    MeshInstance {
+                        source_node_index: 8,
+                        node: 4,
+                        mesh: 2,
+                        ..MeshInstance::default()
+                    },
+                ],
+                ..SceneAssets::default()
+            },
+            ..Document::default()
+        };
+
+        let lines = render_inspect(&doc, &ResolvedRoles::default()).collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            [
+                "rig profile: none detected",
+                "skeleton: 5 bones",
+                "  body",
+                "  body",
+                "  body",
+                "  prop",
+                "  empty",
+                "materials: 3",
+                "  #0 \"paint\" [ambiguous: 3 materials share this name]",
+                "  #1 \"paint\" [ambiguous: 3 materials share this name]",
+                "  #2 \"paint\" [ambiguous: 3 materials share this name]",
+                "mesh instances: 5",
+                "  node \"body\" [ambiguous: 3 skeleton nodes share this name]",
+                "    source node: #4",
+                "    mesh: #0 \"character\" (source mesh #7)",
+                "    skin: skinned",
+                "    primitive #0: material #0 \"paint\"",
+                "    primitive #1: no material",
+                "    primitive #2: material #1 \"paint\"",
+                "  node \"body\" [ambiguous: 3 skeleton nodes share this name]",
+                "    source node: #5",
+                "    mesh: #0 \"character\" (source mesh #7)",
+                "    skin: unskinned",
+                "    primitive #0: material #0 \"paint\"",
+                "    primitive #1: no material",
+                "    primitive #2: material #1 \"paint\"",
+                "  node \"body\" [ambiguous: 3 skeleton nodes share this name]",
+                "    source node: #6",
+                "    mesh: #0 \"character\" (source mesh #7)",
+                "    skin: unskinned",
+                "    primitive #0: material #0 \"paint\"",
+                "    primitive #1: no material",
+                "    primitive #2: material #1 \"paint\"",
+                "  node \"prop\"",
+                "    source node: #7",
+                "    mesh: #1 \"weapon\" (source mesh #9)",
+                "    skin: unskinned",
+                "    primitive #0: material #2 \"paint\"",
+                "  node \"empty\"",
+                "    source node: #8",
+                "    mesh: #2 \"empty-mesh\" (source mesh #11)",
+                "    skin: unskinned",
+                "    primitives: none",
+                "clips: 0",
+            ]
+        );
+    }
+
+    #[test]
+    fn quoted_text_atom_keeps_identifier_boundaries_visible_and_safe() {
+        assert_eq!(quoted_text_atom("  spaced  "), "\"  spaced  \"");
+        assert_eq!(quoted_text_atom("\ttabbed\t"), "\"\\ttabbed\\t\"");
+        assert_eq!(
+            quoted_text_atom("quote\"slash\\line\n"),
+            "\"quote\\\"slash\\\\line\\n\""
+        );
+        assert_eq!(quoted_text_atom(""), "\"\"");
+        let raw = "escape\u{1b}bidi\u{202e}zero\u{200b}join\u{200d}word\u{2060}bom\u{feff}astral\u{e0001}";
+        let quoted = quoted_text_atom(raw);
+        assert_eq!(
+            quoted,
+            "\"escape\\u001Bbidi\\u202Ezero\\u200Bjoin\\u200Dword\\u2060bom\\uFEFFastral\\U000E0001\""
+        );
+        let parsed: toml::Value =
+            toml::from_str(&format!("name = {quoted}")).expect("quoted name is valid TOML");
+        assert_eq!(parsed["name"].as_str(), Some(raw));
+    }
+
+    #[test]
+    fn inspect_renderer_does_not_truncate_large_asset_inventories() {
+        use animsmith_core::model::{MaterialAsset, MeshAsset, MeshInstance, SceneAssets};
+
+        const COUNT: usize = 257;
+        let material = |index| MaterialAsset {
+            name: format!("material-{index}"),
+            base_color: [1.0; 4],
+            metallic: 0.0,
+            roughness: 1.0,
+            base_color_texture: None,
+            normal_texture: None,
+            metallic_roughness_texture: None,
+            occlusion_texture: None,
+        };
+        let bones = (0..COUNT)
+            .map(|index| Bone {
+                name: format!("node-{index}"),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            })
+            .collect();
+        let meshes = (0..COUNT)
+            .map(|index| MeshAsset {
+                name: format!("mesh-{index}"),
+                source_mesh_index: 1_000 + index,
+                primitives: vec![],
+            })
+            .collect();
+        let instances = (0..COUNT)
+            .map(|index| MeshInstance {
+                source_node_index: 2_000 + index,
+                node: index,
+                mesh: index,
+                skin_joints: (index == COUNT - 1)
+                    .then_some(vec![0, 1])
+                    .unwrap_or_default(),
+                ..MeshInstance::default()
+            })
+            .collect();
+        let doc = Document {
+            skeleton: animsmith_core::Skeleton { bones },
+            assets: SceneAssets {
+                materials: (0..COUNT).map(material).collect(),
+                meshes,
+                instances,
+                ..SceneAssets::default()
+            },
+            ..Document::default()
+        };
+
+        let lines = render_inspect(&doc, &ResolvedRoles::default()).collect::<Vec<_>>();
+        assert!(lines.contains(&format!("materials: {COUNT}")));
+        assert!(lines.contains(&"  #256 \"material-256\"".to_string()));
+        assert!(lines.contains(&format!("mesh instances: {COUNT}")));
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.starts_with("  node \""))
+                .count(),
+            COUNT
+        );
+        let last = lines
+            .iter()
+            .position(|line| line == "  node \"node-256\"")
+            .expect("last instance is present");
+        assert_eq!(
+            &lines[last..last + 5],
+            [
+                "  node \"node-256\"",
+                "    source node: #2256",
+                "    mesh: #256 \"mesh-256\" (source mesh #1256)",
+                "    skin: skinned",
+                "    primitives: none",
+            ]
+        );
+    }
+
+    #[test]
+    fn inspect_renderer_marks_two_and_four_way_name_ambiguity() {
+        use animsmith_core::model::{MaterialAsset, MeshInstance, SceneAssets};
+
+        let material = |name: &str| MaterialAsset {
+            name: name.into(),
+            base_color: [1.0; 4],
+            metallic: 0.0,
+            roughness: 1.0,
+            base_color_texture: None,
+            normal_texture: None,
+            metallic_roughness_texture: None,
+            occlusion_texture: None,
+        };
+        let names = ["pair", "pair", "quad", "quad", "quad", "quad"];
+        let doc = Document {
+            skeleton: animsmith_core::Skeleton {
+                bones: names
+                    .iter()
+                    .map(|name| Bone {
+                        name: (*name).into(),
+                        parent: None,
+                        rest: Transform::IDENTITY,
+                        inverse_bind: None,
+                    })
+                    .collect(),
+            },
+            assets: SceneAssets {
+                materials: names.iter().map(|name| material(name)).collect(),
+                instances: (0..names.len())
+                    .map(|node| MeshInstance {
+                        node,
+                        ..MeshInstance::default()
+                    })
+                    .collect(),
+                ..SceneAssets::default()
+            },
+            ..Document::default()
+        };
+
+        let lines = render_inspect(&doc, &ResolvedRoles::default()).collect::<Vec<_>>();
+        for (name, count) in [("pair", 2), ("quad", 4)] {
+            assert_eq!(
+                lines
+                    .iter()
+                    .filter(|line| {
+                        *line == &format!(
+                            "  node \"{name}\" [ambiguous: {count} skeleton nodes share this name]"
+                        )
+                    })
+                    .count(),
+                count
+            );
+            assert_eq!(
+                lines
+                    .iter()
+                    .filter(|line| {
+                        line.contains(&format!(
+                            "\"{name}\" [ambiguous: {count} materials share this name]"
+                        ))
+                    })
+                    .count(),
+                count
+            );
+        }
+    }
+
+    #[test]
+    fn inspect_renderer_matches_assembly_node_name_ambiguity() {
+        use animsmith_core::model::{MeshInstance, SceneAssets};
+
+        let bone = |name: &str| Bone {
+            name: name.into(),
+            parent: None,
+            rest: Transform::IDENTITY,
+            inverse_bind: None,
+        };
+        let doc = Document {
+            skeleton: animsmith_core::Skeleton {
+                bones: vec![bone("duplicate"), bone("duplicate"), bone("unique")],
+            },
+            assets: SceneAssets {
+                instances: vec![
+                    MeshInstance {
+                        node: 0,
+                        ..MeshInstance::default()
+                    },
+                    MeshInstance {
+                        source_node_index: 1,
+                        node: 2,
+                        ..MeshInstance::default()
+                    },
+                    MeshInstance {
+                        source_node_index: 2,
+                        node: 2,
+                        ..MeshInstance::default()
+                    },
+                ],
+                ..SceneAssets::default()
+            },
+            ..Document::default()
+        };
+
+        let lines = render_inspect(&doc, &ResolvedRoles::default()).collect::<Vec<_>>();
+        assert!(lines.contains(
+            &"  node \"duplicate\" [ambiguous: 2 skeleton nodes share this name]".to_string()
+        ));
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| *line == "  node \"unique\"")
+                .count(),
+            2,
+            "multiple instances on one unique node remain selectable together"
+        );
+    }
+
+    #[test]
+    fn inspect_renderer_reports_dangling_asset_references_without_panicking() {
+        use animsmith_core::model::{MeshAsset, MeshInstance, Primitive, SceneAssets};
+
+        let doc = Document {
+            skeleton: animsmith_core::Skeleton {
+                bones: vec![Bone {
+                    name: "valid".into(),
+                    parent: None,
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                }],
+            },
+            assets: SceneAssets {
+                meshes: vec![MeshAsset {
+                    name: "mesh".into(),
+                    source_mesh_index: 4,
+                    primitives: vec![Primitive {
+                        material: Some(99),
+                        ..Primitive::default()
+                    }],
+                }],
+                instances: vec![
+                    MeshInstance {
+                        source_node_index: 7,
+                        node: 99,
+                        mesh: 0,
+                        ..MeshInstance::default()
+                    },
+                    MeshInstance {
+                        source_node_index: 8,
+                        node: 0,
+                        mesh: 99,
+                        skin_joints: vec![0],
+                        ..MeshInstance::default()
+                    },
+                ],
+                ..SceneAssets::default()
+            },
+            ..Document::default()
+        };
+
+        let lines = render_inspect(&doc, &ResolvedRoles::default()).collect::<Vec<_>>();
+        for expected in [
+            "  node <missing node #99>",
+            "    source node: #7",
+            "    mesh: #0 \"mesh\" (source mesh #4)",
+            "    primitive #0: missing material #99",
+            "  node \"valid\"",
+            "    source node: #8",
+            "    mesh: <missing mesh #99>",
+            "    skin: skinned",
+            "    primitives: unavailable",
+        ] {
+            assert!(
+                lines.iter().any(|line| line == expected),
+                "missing {expected:?}"
+            );
+        }
     }
 
     #[test]
@@ -1557,8 +2134,31 @@ mod tests {
             .map(char::from)
             .collect();
         raw.extend([
-            '\u{061c}', '\u{200e}', '\u{200f}', '\u{2028}', '\u{2029}', '\u{202a}', '\u{202e}',
-            '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}', '\u{206f}',
+            '\u{00ad}',
+            '\u{034f}',
+            '\u{061c}',
+            '\u{180e}',
+            '\u{200b}',
+            '\u{200d}',
+            '\u{200e}',
+            '\u{200f}',
+            '\u{2028}',
+            '\u{2029}',
+            '\u{202a}',
+            '\u{202e}',
+            '\u{2060}',
+            '\u{2066}',
+            '\u{2067}',
+            '\u{2068}',
+            '\u{2069}',
+            '\u{206f}',
+            '\u{fe0f}',
+            '\u{feff}',
+            '\u{fff9}',
+            '\u{1bca0}',
+            '\u{1d173}',
+            '\u{e0001}',
+            '\u{e0100}',
         ]);
         let escaped = text_atom(&raw);
         assert!(
@@ -1566,18 +2166,31 @@ mod tests {
             "presentation control survived sanitizer: {escaped:?}"
         );
         for visible in [
+            "\\u{ad}",
+            "\\u{34f}",
             "\\u{61c}",
+            "\\u{180e}",
+            "\\u{200b}",
+            "\\u{200d}",
             "\\u{200e}",
             "\\u{200f}",
             "\\u{2028}",
             "\\u{2029}",
             "\\u{202a}",
             "\\u{202e}",
+            "\\u{2060}",
             "\\u{2066}",
             "\\u{2067}",
             "\\u{2068}",
             "\\u{2069}",
             "\\u{206f}",
+            "\\u{fe0f}",
+            "\\u{feff}",
+            "\\u{fff9}",
+            "\\u{1bca0}",
+            "\\u{1d173}",
+            "\\u{e0001}",
+            "\\u{e0100}",
         ] {
             assert!(escaped.contains(visible), "missing {visible}: {escaped:?}");
         }
