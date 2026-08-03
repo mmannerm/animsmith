@@ -73,11 +73,12 @@ Copy the quoted name after `node` in the `mesh instances` section exactly into
 `mesh_instances`. Each entry also shows its source node, referenced mesh,
 skinned status, and the material used by every primitive. The top-level
 `materials` section lists the exact, case-sensitive names required by a
-[material texture recipe](material-texture-recipes.md). Repeated node or
-material names are marked `ambiguous`; assembly and material recipe validation
-reject ambiguous authored names instead of guessing. `inspect` only reports
-the authored scene—it does not rename nodes or materials, merge duplicates, or
-repair the asset.
+[material texture recipe](material-texture-recipes.md). Duplicate skeleton node
+or material names are marked `ambiguous`; assembly and material recipe
+validation reject ambiguous authored names instead of guessing. Multiple mesh
+instances attached to one uniquely named node are not ambiguous and are
+selected together. `inspect` only reports the authored scene—it does not rename
+nodes or materials, merge duplicates, or repair the asset.
 
 The base supplies the authoritative skeleton, rest pose, meshes, skins,
 materials, and textures. `mesh_instances` names the exact base nodes whose

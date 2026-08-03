@@ -262,14 +262,12 @@ pub(crate) fn render_inspect<'a>(
             };
             format!("  #{index} {}{ambiguity}", quoted_text_atom(&material.name))
         });
-    let instance_name_counts =
-        doc.assets
-            .instances
+    let node_name_counts =
+        doc.skeleton
+            .bones
             .iter()
-            .fold(BTreeMap::<&str, usize>::new(), |mut counts, instance| {
-                if let Some(bone) = doc.skeleton.bones.get(instance.node) {
-                    *counts.entry(bone.name.as_str()).or_default() += 1;
-                }
+            .fold(BTreeMap::<&str, usize>::new(), |mut counts, bone| {
+                *counts.entry(bone.name.as_str()).or_default() += 1;
                 counts
             });
     let mesh_instances = std::iter::once(format!("mesh instances: {}", doc.assets.instances.len()));
@@ -277,9 +275,9 @@ pub(crate) fn render_inspect<'a>(
         let (node_name, ambiguity) = doc.skeleton.bones.get(instance.node).map_or_else(
             || (format!("<missing node #{}>", instance.node), String::new()),
             |bone| {
-                let ambiguity = match instance_name_counts.get(bone.name.as_str()) {
+                let ambiguity = match node_name_counts.get(bone.name.as_str()) {
                     Some(count) if *count > 1 => {
-                        format!(" [ambiguous: {count} instances share this node name]")
+                        format!(" [ambiguous: {count} skeleton nodes share this name]")
                     }
                     _ => String::new(),
                 };
@@ -1424,21 +1422,21 @@ mod tests {
                 "  #1 \"paint\" [ambiguous: 3 materials share this name]",
                 "  #2 \"paint\" [ambiguous: 3 materials share this name]",
                 "mesh instances: 5",
-                "  node \"body\" [ambiguous: 3 instances share this node name]",
+                "  node \"body\" [ambiguous: 3 skeleton nodes share this name]",
                 "    source node: #4",
                 "    mesh: #0 \"character\" (source mesh #7)",
                 "    skin: skinned",
                 "    primitive #0: material #0 \"paint\"",
                 "    primitive #1: no material",
                 "    primitive #2: material #1 \"paint\"",
-                "  node \"body\" [ambiguous: 3 instances share this node name]",
+                "  node \"body\" [ambiguous: 3 skeleton nodes share this name]",
                 "    source node: #5",
                 "    mesh: #0 \"character\" (source mesh #7)",
                 "    skin: unskinned",
                 "    primitive #0: material #0 \"paint\"",
                 "    primitive #1: no material",
                 "    primitive #2: material #1 \"paint\"",
-                "  node \"body\" [ambiguous: 3 instances share this node name]",
+                "  node \"body\" [ambiguous: 3 skeleton nodes share this name]",
                 "    source node: #6",
                 "    mesh: #0 \"character\" (source mesh #7)",
                 "    skin: unskinned",
@@ -1597,7 +1595,7 @@ mod tests {
                     .iter()
                     .filter(|line| {
                         *line == &format!(
-                            "  node \"{name}\" [ambiguous: {count} instances share this node name]"
+                            "  node \"{name}\" [ambiguous: {count} skeleton nodes share this name]"
                         )
                     })
                     .count(),
@@ -1615,6 +1613,56 @@ mod tests {
                 count
             );
         }
+    }
+
+    #[test]
+    fn inspect_renderer_matches_assembly_node_name_ambiguity() {
+        use animsmith_core::model::{MeshInstance, SceneAssets};
+
+        let bone = |name: &str| Bone {
+            name: name.into(),
+            parent: None,
+            rest: Transform::IDENTITY,
+            inverse_bind: None,
+        };
+        let doc = Document {
+            skeleton: animsmith_core::Skeleton {
+                bones: vec![bone("duplicate"), bone("duplicate"), bone("unique")],
+            },
+            assets: SceneAssets {
+                instances: vec![
+                    MeshInstance {
+                        node: 0,
+                        ..MeshInstance::default()
+                    },
+                    MeshInstance {
+                        source_node_index: 1,
+                        node: 2,
+                        ..MeshInstance::default()
+                    },
+                    MeshInstance {
+                        source_node_index: 2,
+                        node: 2,
+                        ..MeshInstance::default()
+                    },
+                ],
+                ..SceneAssets::default()
+            },
+            ..Document::default()
+        };
+
+        let lines = render_inspect(&doc, &ResolvedRoles::default()).collect::<Vec<_>>();
+        assert!(lines.contains(
+            &"  node \"duplicate\" [ambiguous: 2 skeleton nodes share this name]".to_string()
+        ));
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| *line == "  node \"unique\"")
+                .count(),
+            2,
+            "multiple instances on one unique node remain selectable together"
+        );
     }
 
     #[test]

@@ -436,7 +436,7 @@ fn duplicate_inspected_mesh_instance_name_fails_closed_without_publication() {
         assert!(inspected.status.success());
         let inspect_text = String::from_utf8_lossy(&inspected.stdout);
         let marker = format!(
-            "  node \"tri_skinned\" [ambiguous: {duplicate_count} instances share this node name]\n"
+            "  node \"tri_skinned\" [ambiguous: {duplicate_count} skeleton nodes share this name]\n"
         );
         assert_eq!(
             inspect_text.matches(&marker).count(),
