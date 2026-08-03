@@ -733,29 +733,34 @@ fn extract_source_skeleton(
     buffers: &[Vec<u8>],
     topo: &Topology,
 ) -> SourceSkeletonAssets {
+    let mut scene_root_indices = vec![Vec::new(); doc.nodes().count()];
+    for scene in doc.scenes() {
+        for root in scene.nodes() {
+            if let Some(indices) = scene_root_indices.get_mut(root.index()) {
+                indices.push(scene.index());
+            }
+        }
+    }
+    for indices in &mut scene_root_indices {
+        indices.sort_unstable();
+        indices.dedup();
+    }
     let mut attachments = vec![Vec::new(); doc.skins().count()];
     for node in doc.nodes() {
         let Some(skin) = node.skin() else {
             continue;
-        };
-        let Some(bone) = topo.bone_of_node.get(node.index()).copied().flatten() else {
-            return SourceSkeletonAssets::default();
         };
         let Some(for_skin) = attachments.get_mut(skin.index()) else {
             return SourceSkeletonAssets::default();
         };
         for_skin.push(SourceSkinAttachment {
             source_node_index: node.index(),
-            bone,
             source_mesh_index: node.mesh().map(|mesh| mesh.index()),
         });
     }
 
     let mut nodes = Vec::with_capacity(doc.nodes().count());
     for node in doc.nodes() {
-        let Some(bone) = topo.bone_of_node.get(node.index()).copied().flatten() else {
-            return SourceSkeletonAssets::default();
-        };
         let local_rest = match node.transform() {
             gltf::scene::Transform::Decomposed {
                 translation,
@@ -774,27 +779,15 @@ fn extract_source_skeleton(
             source_node_index: node.index(),
             name: node.name().map(str::to_owned),
             parent_source_node_index: topo.parent[node.index()],
+            scene_root_indices: std::mem::take(&mut scene_root_indices[node.index()]),
             local_rest,
-            bone,
         });
     }
 
     let mut skins = Vec::with_capacity(doc.skins().count());
     for skin in doc.skins() {
-        let mut joints = Vec::new();
-        for joint in skin.joints() {
-            let Some(bone) = topo.bone_of_node.get(joint.index()).copied().flatten() else {
-                return SourceSkeletonAssets::default();
-            };
-            joints.push(bone);
-        }
-        let skeleton_root = match skin.skeleton() {
-            Some(node) => match topo.bone_of_node.get(node.index()).copied().flatten() {
-                Some(bone) => Some(bone),
-                None => return SourceSkeletonAssets::default(),
-            },
-            None => None,
-        };
+        let joints = skin.joints().map(|joint| joint.index()).collect::<Vec<_>>();
+        let skeleton_root = skin.skeleton().map(|node| node.index());
         let inverse_bind_accessor = match skin.inverse_bind_matrices() {
             None => SourceInverseBindAccessor::default(),
             Some(accessor) if accessor.count() == 0 => SourceInverseBindAccessor {
@@ -831,8 +824,8 @@ fn extract_source_skeleton(
         skins.push(SourceSkinAsset {
             source_skin_index: skin.index(),
             name: skin.name().map(str::to_owned),
-            skeleton_root,
-            joints,
+            skeleton_root_source_node_index: skeleton_root,
+            joint_source_node_indices: joints,
             inverse_bind_accessor,
             attachments: std::mem::take(&mut attachments[skin.index()]),
         });

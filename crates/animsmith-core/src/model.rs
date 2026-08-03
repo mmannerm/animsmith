@@ -369,7 +369,7 @@ pub enum SourceNodeLocalRest {
     Matrix(Mat4),
 }
 
-/// One source-format node and its bridge into the core skeleton.
+/// One source-format node with source-native identity facts.
 #[derive(Debug, Clone)]
 pub struct SourceNodeAsset {
     /// Stable node-array index in the source format.
@@ -378,10 +378,11 @@ pub struct SourceNodeAsset {
     pub name: Option<String>,
     /// Source node-array index of the authored parent, when any.
     pub parent_source_node_index: Option<usize>,
+    /// Declared source scenes that name this node as a root, in source-scene
+    /// index order.
+    pub scene_root_indices: Vec<usize>,
     /// Authored local-rest representation.
     pub local_rest: SourceNodeLocalRest,
-    /// Corresponding parent-before-child core skeleton node.
-    pub bone: BoneId,
 }
 
 /// Read status for a source skin's inverse-bind accessor.
@@ -421,8 +422,6 @@ pub struct SourceInverseBindAccessor {
 pub struct SourceSkinAttachment {
     /// Stable node-array index of the attachment node.
     pub source_node_index: usize,
-    /// Corresponding core skeleton node.
-    pub bone: BoneId,
     /// Stable source mesh-definition index, when the node declares a mesh.
     ///
     /// This remains present even when the current core mesh importer skips the
@@ -438,9 +437,9 @@ pub struct SourceSkinAsset {
     /// Authored skin name, when present.
     pub name: Option<String>,
     /// Explicitly declared skeleton root, when present; never inferred.
-    pub skeleton_root: Option<BoneId>,
+    pub skeleton_root_source_node_index: Option<usize>,
     /// Source joints in declared skin-slot order.
-    pub joints: Vec<BoneId>,
+    pub joint_source_node_indices: Vec<usize>,
     /// Exact inverse-bind accessor evidence for this skin.
     pub inverse_bind_accessor: SourceInverseBindAccessor,
     /// Source nodes that reference this skin, in source-node order.

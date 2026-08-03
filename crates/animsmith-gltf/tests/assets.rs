@@ -1359,27 +1359,26 @@ fn load_preserves_source_node_order_parentage_and_declared_skin_root() {
     );
     assert_eq!(source.nodes[0].parent_source_node_index, Some(3));
     assert_eq!(source.nodes[2].parent_source_node_index, Some(1));
+    assert_eq!(source.nodes[1].scene_root_indices, vec![0]);
     assert!(matches!(
         source.nodes[2].local_rest,
         SourceNodeLocalRest::Matrix(matrix) if matrix.w_axis.x == 1.0
     ));
     assert_eq!(
-        source
-            .nodes
+        doc.skeleton
+            .bones
             .iter()
-            .map(|node| node.bone)
+            .map(|bone| bone.name.as_str())
             .collect::<Vec<_>>(),
-        vec![3, 0, 1, 2, 4]
+        vec!["scene-root", "rig-helper", "root", "tip", "body"],
+        "normalized skeleton keeps its independent parent-before-child order"
     );
 
     let skin = &source.skins[0];
     assert_eq!(skin.source_skin_index, 0);
     assert_eq!(skin.name.as_deref(), Some("body-skin"));
-    assert_eq!(skin.skeleton_root, Some(source.nodes[2].bone));
-    assert_eq!(
-        skin.joints,
-        vec![source.nodes[3].bone, source.nodes[0].bone]
-    );
+    assert_eq!(skin.skeleton_root_source_node_index, Some(2));
+    assert_eq!(skin.joint_source_node_indices, vec![3, 0]);
     assert_eq!(
         skin.inverse_bind_accessor.status,
         SourceInverseBindAccessorStatus::Available
@@ -1431,7 +1430,10 @@ fn load_keeps_multiple_skin_bindings_and_skipped_mesh_attachments_separate() {
     let doc = animsmith_gltf::load(&path).expect("loads");
     let source = &doc.assets.source_skeleton;
     assert_eq!(source.skins.len(), 2);
-    assert_eq!(source.skins[0].joints, source.skins[1].joints);
+    assert_eq!(source.skins[0].joint_source_node_indices, vec![0]);
+    assert_eq!(source.skins[1].joint_source_node_indices, vec![0]);
+    assert_eq!(source.skins[0].skeleton_root_source_node_index, Some(0));
+    assert_eq!(source.skins[1].skeleton_root_source_node_index, None);
     assert_eq!(
         source.skins[0].inverse_bind_accessor.declared_count,
         Some(2)
@@ -1462,9 +1464,9 @@ fn load_keeps_multiple_skin_bindings_and_skipped_mesh_attachments_separate() {
     );
     assert_eq!(doc.assets.instances.len(), 2, "POINTS mesh remains skipped");
     assert_eq!(
-        doc.skeleton.bones[source.nodes[0].bone].inverse_bind,
+        doc.skeleton.bones[0].inverse_bind,
         Some(Mat4::from_translation(Vec3::new(2.0, 0.0, 0.0))),
-        "legacy bone fallback retains its existing last-skin-wins behavior"
+        "legacy bone fallback retains its existing last-skin-wins behavior at its independent topo ordinal"
     );
 }
 

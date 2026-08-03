@@ -735,16 +735,8 @@ fn measure_source_skeleton(
         return (SourceSkeletonCoverage::Unavailable, Vec::new(), Vec::new());
     }
 
-    let mut bone_to_source = BTreeMap::new();
     let mut source_nodes = BTreeMap::new();
     for node in &source.nodes {
-        if node.bone >= doc.skeleton.bones.len()
-            || bone_to_source
-                .insert(node.bone, node.source_node_index)
-                .is_some()
-        {
-            return (SourceSkeletonCoverage::Unavailable, Vec::new(), Vec::new());
-        }
         let (_, local) = source_local_rest_measurement(&node.local_rest);
         if source_nodes
             .insert(node.source_node_index, (node, local))
@@ -755,16 +747,16 @@ fn measure_source_skeleton(
     }
     for skin in &source.skins {
         if skin
-            .joints
+            .joint_source_node_indices
             .iter()
-            .any(|joint| !bone_to_source.contains_key(joint))
+            .any(|joint| !source_nodes.contains_key(joint))
             || skin
-                .skeleton_root
-                .is_some_and(|root| !bone_to_source.contains_key(&root))
-            || skin.attachments.iter().any(|attachment| {
-                !source_nodes.contains_key(&attachment.source_node_index)
-                    || bone_to_source.get(&attachment.bone) != Some(&attachment.source_node_index)
-            })
+                .skeleton_root_source_node_index
+                .is_some_and(|root| !source_nodes.contains_key(&root))
+            || skin
+                .attachments
+                .iter()
+                .any(|attachment| !source_nodes.contains_key(&attachment.source_node_index))
         {
             return (SourceSkeletonCoverage::Unavailable, Vec::new(), Vec::new());
         }
@@ -779,21 +771,6 @@ fn measure_source_skeleton(
             &mut visits,
             &mut worlds,
         );
-    }
-    let mut scene_roots: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-    for scene in &doc.assets.scenes {
-        for root in &scene.roots {
-            if let Some(source_node_index) = bone_to_source.get(root) {
-                scene_roots
-                    .entry(*source_node_index)
-                    .or_default()
-                    .push(scene.source_scene_index);
-            }
-        }
-    }
-    for scene_indices in scene_roots.values_mut() {
-        scene_indices.sort_unstable();
-        scene_indices.dedup();
     }
     let skeleton_nodes = source
         .nodes
@@ -811,9 +788,7 @@ fn measure_source_skeleton(
                 node_index: node.source_node_index,
                 name: node.name.clone(),
                 parent_node_index: node.parent_source_node_index,
-                scene_root_indices: scene_roots
-                    .remove(&node.source_node_index)
-                    .unwrap_or_default(),
+                scene_root_indices: node.scene_root_indices.clone(),
                 local_rest,
                 rest_world_matrix,
                 rest_world_matrix_unavailable_reason,
@@ -851,12 +826,12 @@ fn measure_source_skeleton(
                 matrices: raw_matrices,
             };
             let joints = skin
-                .joints
+                .joint_source_node_indices
                 .iter()
                 .enumerate()
-                .map(|(joint_index, bone)| SkinJointMeasurements {
+                .map(|(joint_index, &node_index)| SkinJointMeasurements {
                     joint_index,
-                    node_index: bone_to_source[bone],
+                    node_index,
                 })
                 .collect::<Vec<_>>();
             let mut joint_bind_to_mesh_matrices = Vec::with_capacity(joints.len());
@@ -940,9 +915,7 @@ fn measure_source_skeleton(
             SkinMeasurements {
                 skin_index: skin.source_skin_index,
                 name: skin.name.clone(),
-                skeleton_root_node_index: skin
-                    .skeleton_root
-                    .and_then(|root| bone_to_source.get(&root).copied()),
+                skeleton_root_node_index: skin.skeleton_root_source_node_index,
                 joints,
                 inverse_bind_accessor,
                 attachments: skin
@@ -1376,37 +1349,37 @@ mod tests {
                             source_node_index: 0,
                             name: Some("joint".into()),
                             parent_source_node_index: Some(1),
+                            scene_root_indices: vec![],
                             local_rest: SourceNodeLocalRest::Trs {
                                 translation: Vec3::new(2.0, 0.0, 0.0),
                                 rotation: Quat::IDENTITY,
                                 scale: Vec3::ONE,
                             },
-                            bone: 1,
                         },
                         SourceNodeAsset {
                             source_node_index: 1,
                             name: Some("root".into()),
                             parent_source_node_index: None,
+                            scene_root_indices: vec![4],
                             local_rest: SourceNodeLocalRest::Trs {
                                 translation: Vec3::new(10.0, 0.0, 0.0),
                                 rotation: Quat::IDENTITY,
                                 scale: Vec3::ONE,
                             },
-                            bone: 0,
                         },
                         SourceNodeAsset {
                             source_node_index: 2,
                             name: Some("mesh".into()),
                             parent_source_node_index: Some(1),
+                            scene_root_indices: vec![],
                             local_rest: SourceNodeLocalRest::Matrix(Mat4::IDENTITY),
-                            bone: 2,
                         },
                     ],
                     skins: vec![SourceSkinAsset {
                         source_skin_index: 0,
                         name: Some("skin".into()),
-                        skeleton_root: Some(0),
-                        joints: vec![1],
+                        skeleton_root_source_node_index: Some(1),
+                        joint_source_node_indices: vec![0],
                         inverse_bind_accessor: SourceInverseBindAccessor {
                             status: SourceInverseBindAccessorStatus::Available,
                             declared_count: Some(2),
@@ -1417,7 +1390,6 @@ mod tests {
                         },
                         attachments: vec![SourceSkinAttachment {
                             source_node_index: 2,
-                            bone: 2,
                             source_mesh_index: Some(7),
                         }],
                     }],
