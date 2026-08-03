@@ -119,8 +119,8 @@ $ animsmith lint --format json examples/assets/clip-dirty.glb | jq \
     ]
   },
   "measurements": {
-    "schema_version": 5,
-    "schema": "urn:animsmith:schema:measurements:5",
+    "schema_version": 6,
+    "schema": "urn:animsmith:schema:measurements:6",
     "clips": {},
     "mesh_definitions": [],
     "node_instances": [],
@@ -306,8 +306,8 @@ $ animsmith measure examples/assets/walk.glb          # --format json
       "rig": { "profile": "ue-mannequin", "resolved_roles": {
         "hips": "pelvis", "left_foot": "foot_l", "right_foot": "foot_r" } },
       "measurements": {
-        "schema_version": 5,
-        "schema": "urn:animsmith:schema:measurements:5",
+        "schema_version": 6,
+        "schema": "urn:animsmith:schema:measurements:6",
         "clips": { "walk": {
           "duration_s": 1.0, "frame_count": 33,
           "animated_bones": ["foot_l", "foot_r"],

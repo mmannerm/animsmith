@@ -40,6 +40,7 @@ That gives one asset several valid axis-aligned bounding boxes (AABBs):
 | animsmith record | Coordinate domain | Question it answers |
 |---|---|---|
 | `mesh_definitions[].geometry_aabb` | Mesh-local source positions | How large is the reusable geometry before any placement? |
+| `mesh_definitions[].geometry_centroid` | Mesh-local finite source positions | Where is the average authored vertex position before any placement? |
 | `node_instances[].static_node_world_aabb` | Default/rest hierarchy | Where and how large is this particular static instance after its parent and local transforms? |
 | `scenes[].static_scene_world_aabb` | One declared source scene | What box encloses the measurable static instances reachable from this scene's roots? |
 
@@ -48,6 +49,19 @@ For example, a unit cube can have a mesh-local box from `(0, 0, 0)` to
 static node-world box from `(10, 0, 0)` to `(12, 2, 2)`. Neither result is
 wrong. Using the first as a placed-world bound, or the second as a reusable
 mesh bound, is the bug.
+
+`geometry_centroid` is a separate mesh-local fact: it is the arithmetic mean
+of finite decoded base `POSITION` rows, not the center of `geometry_aabb`. An
+asymmetric mesh can therefore have a centroid away from its box center. It is
+useful for checking authored pivots or coarse placement assumptions, but it is
+not a center of mass, surface-area-weighted center, collision origin, or a
+runtime placement guarantee.
+
+For indexed geometry, each stored `POSITION` contributes once even when the
+index stream references it repeatedly; for unindexed geometry, each stored
+position contributes once. Empty or wholly non-finite geometry has no
+centroid. animsmith reports this evidence but does not move the pivot, recenter
+the mesh, or bake transforms as part of `measure`.
 
 ```console
 animsmith measure prop.glb

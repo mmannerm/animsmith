@@ -1,11 +1,11 @@
 //! CI-run coverage that `measure` emits per-mesh geometry measurements
-//! (#16) end-to-end through the real CLI on an in-repo glTF — vertex
-//! count, AABB, joints-per-vertex, and weight-sum range.
+//! end-to-end through the real CLI on synthetic glTF: vertex count, AABB,
+//! centroid, skin influences, and weight-sum range.
 
 use animsmith_core::glam::{Mat4, Vec3};
 use animsmith_core::model::*;
 
-const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v5.schema.json");
+const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v6.schema.json");
 
 fn assert_measurements_schema_valid(measurements: &serde_json::Value) {
     let schema = serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid measurement schema JSON");
@@ -16,7 +16,7 @@ fn assert_measurements_schema_valid(measurements: &serde_json::Value) {
         .collect::<Vec<_>>();
     assert!(
         errors.is_empty(),
-        "measurement output must satisfy the published v4 schema:\n{}\ninstance: {measurements:#}",
+        "measurement output must satisfy the published v6 schema:\n{}\ninstance: {measurements:#}",
         errors.join("\n")
     );
 }
@@ -26,7 +26,7 @@ fn assert_measurements_schema_invalid(measurements: &serde_json::Value) {
     let validator = jsonschema::validator_for(&schema).expect("measurement schema compiles");
     assert!(
         !validator.is_valid(measurements),
-        "measurement output must violate the published v4 schema:\n{measurements:#}"
+        "measurement output must violate the published v6 schema:\n{measurements:#}"
     );
 }
 
@@ -191,6 +191,7 @@ fn write_nested_instanced_gltf(path: &std::path::Path) {
     let morph_deltas = [[50.0_f32, 0.0, 0.0]; 3];
     let animation_times = [0.0_f32, 1.0];
     let animated_translations = [[1000.0_f32, 0.0, 0.0]; 2];
+    let indices = [0_u16, 1, 1, 0, 1, 1];
     let mut bytes = Vec::new();
     for value in positions.into_iter().flatten() {
         bytes.extend_from_slice(&value.to_le_bytes());
@@ -207,6 +208,10 @@ fn write_nested_instanced_gltf(path: &std::path::Path) {
     for value in animated_translations.into_iter().flatten() {
         bytes.extend_from_slice(&value.to_le_bytes());
     }
+    let indices_offset = bytes.len();
+    for value in indices {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
     let buffer = path.with_file_name("nested-scene.bin");
     std::fs::write(&buffer, &bytes).expect("writes position buffer");
     let document = serde_json::json!({
@@ -216,7 +221,8 @@ fn write_nested_instanced_gltf(path: &std::path::Path) {
             { "buffer": 0, "byteLength": morph_offset },
             { "buffer": 0, "byteOffset": morph_offset, "byteLength": animation_times_offset - morph_offset },
             { "buffer": 0, "byteOffset": animation_times_offset, "byteLength": animation_values_offset - animation_times_offset },
-            { "buffer": 0, "byteOffset": animation_values_offset, "byteLength": bytes.len() - animation_values_offset }
+            { "buffer": 0, "byteOffset": animation_values_offset, "byteLength": indices_offset - animation_values_offset },
+            { "buffer": 0, "byteOffset": indices_offset, "byteLength": bytes.len() - indices_offset }
         ],
         "accessors": [
             {
@@ -248,6 +254,14 @@ fn write_nested_instanced_gltf(path: &std::path::Path) {
                 "componentType": 5126,
                 "count": 2,
                 "type": "VEC3"
+            },
+            {
+                "bufferView": 4,
+                "componentType": 5123,
+                "count": 6,
+                "type": "SCALAR",
+                "min": [0],
+                "max": [1]
             }
         ],
         "meshes": [
@@ -256,10 +270,11 @@ fn write_nested_instanced_gltf(path: &std::path::Path) {
                 "weights": [1.0],
                 "primitives": [{
                     "attributes": { "POSITION": 0 },
+                    "indices": 4,
                     "targets": [{ "POSITION": 1 }]
                 }]
             },
-            { "name": "duplicate-definition", "primitives": [{ "attributes": { "POSITION": 0 } }] }
+            { "name": "duplicate-definition", "primitives": [{ "attributes": { "POSITION": 0 }, "indices": 4 }] }
         ],
         "nodes": [
             { "name": "root", "translation": [10.0, 0.0, 0.0], "children": [1] },
@@ -297,6 +312,18 @@ fn assert_aabb_close(value: &serde_json::Value, min: [f64; 3], max: [f64; 3]) {
                 expected[axis]
             );
         }
+    }
+}
+
+fn assert_vec3_close(value: &serde_json::Value, expected: [f64; 3]) {
+    let actual = value.as_array().expect("vec3");
+    for axis in 0..3 {
+        let actual = actual[axis].as_f64().expect("finite vec3 component");
+        assert!(
+            (actual - expected[axis]).abs() < 1e-5,
+            "component {axis} = {actual}, expected {}",
+            expected[axis]
+        );
     }
 }
 
@@ -367,6 +394,7 @@ fn assert_body_mesh(mesh: &serde_json::Value) {
         mesh["geometry_aabb"]["max"],
         serde_json::json!([2.0, 4.0, 0.0])
     );
+    assert_vec3_close(&mesh["geometry_centroid"], [2.0 / 3.0, 4.0 / 3.0, 0.0]);
     assert_eq!(mesh["max_joints_per_vertex"], 2);
     let lo = mesh["weight_sum_min"].as_f64().expect("weight_sum_min");
     let hi = mesh["weight_sum_max"].as_f64().expect("weight_sum_max");
@@ -395,12 +423,28 @@ fn cli_measure_emits_mesh_measurements() {
     let measurements = &report["files"][0]["measurements"];
     assert_measurements_schema_valid(measurements);
     assert_body_mesh(&measurements["mesh_definitions"][0]);
+    let mut short_centroid = measurements.clone();
+    short_centroid["mesh_definitions"][0]["geometry_centroid"] = serde_json::json!([0.0, 0.0]);
+    assert_measurements_schema_invalid(&short_centroid);
     assert_eq!(
         measurements["node_instances"][0]["static_node_world_aabb_unavailable_reason"],
         "skinned_deformation_excluded"
     );
     assert_eq!(measurements["scenes"][0]["instance_count"], 1);
     assert_eq!(measurements["scenes"][0]["excluded_instance_count"], 1);
+
+    let text_output = std::process::Command::new(env!("CARGO_BIN_EXE_animsmith"))
+        .arg("measure")
+        .arg(&input)
+        .args(["--format", "text"])
+        .output()
+        .expect("runs text measure");
+    assert!(text_output.status.success());
+    let text = String::from_utf8(text_output.stdout).expect("UTF-8 text output");
+    assert!(
+        text.contains("geometry centroid (0.667, 1.333, 0.000)"),
+        "text output exposes the same centroid shape:\n{text}"
+    );
 }
 
 #[test]
@@ -722,6 +766,18 @@ fn cli_measure_distinguishes_definition_instance_and_scene_domains() {
         definitions[0]["geometry_aabb"],
         serde_json::json!({ "min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0] })
     );
+    assert_eq!(
+        definitions[0]["vertex_count"], 3,
+        "indices do not recount vertices"
+    );
+    assert_vec3_close(
+        &definitions[0]["geometry_centroid"],
+        [1.0 / 3.0, 1.0 / 3.0, 0.0],
+    );
+    assert_eq!(
+        definitions[0]["geometry_centroid"], definitions[1]["geometry_centroid"],
+        "node placement, animation, morphs, and instancing do not alter definition-local centroid"
+    );
 
     let instances = measurements["node_instances"]
         .as_array()
@@ -871,6 +927,10 @@ fn cli_measure_omits_aabb_for_non_finite_geometry() {
     assert!(
         mesh.get("geometry_aabb").is_none(),
         "no bounding box from non-finite geometry"
+    );
+    assert!(
+        mesh.get("geometry_centroid").is_none(),
+        "no centroid from non-finite geometry"
     );
     assert_eq!(
         measurements["node_instances"][0]["static_node_world_aabb_unavailable_reason"],

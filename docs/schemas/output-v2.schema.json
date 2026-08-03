@@ -120,7 +120,7 @@
           "type": "array",
           "items": { "$ref": "#/$defs/check_evaluation" }
         },
-        "measurements": { "$ref": "urn:animsmith:schema:measurements:5" }
+        "measurements": { "$ref": "urn:animsmith:schema:measurements:6" }
       },
       "additionalProperties": false
     },

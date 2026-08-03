@@ -59,6 +59,13 @@ fn render_aabb_size(label: &str, bounds: &animsmith_core::measure::Aabb) -> Stri
     format!(" {label} {:.3}×{:.3}×{:.3}", size[0], size[1], size[2])
 }
 
+fn render_point(label: &str, point: &[f32; 3]) -> String {
+    format!(
+        " {label} ({:.3}, {:.3}, {:.3})",
+        point[0], point[1], point[2]
+    )
+}
+
 /// Yield measurement reports in the presentation-only text format, one
 /// escaped line at a time without retaining the full transcript.
 pub(crate) fn render_measure_text(
@@ -112,6 +119,11 @@ pub(crate) fn render_measure_text(
                     .as_ref()
                     .map(|bounds| render_aabb_size("geometry bbox", bounds))
                     .unwrap_or_else(|| " geometry bbox unavailable".into());
+                let centroid = mesh
+                    .geometry_centroid
+                    .as_ref()
+                    .map(|point| render_point("geometry centroid", point))
+                    .unwrap_or_else(|| " geometry centroid unavailable".into());
                 let skin = match (mesh.weight_sum_min, mesh.weight_sum_max) {
                     (Some(min), Some(max)) => format!(
                         ", ≤{} joints/vtx, weight-sum {min:.3}–{max:.3}",
@@ -150,7 +162,7 @@ pub(crate) fn render_measure_text(
                     format!(", additional influence sets: {sets}")
                 };
                 format!(
-                    "  mesh definition #{} {}: {} verts{bbox}{skin}{additional_influences}",
+                    "  mesh definition #{} {}: {} verts{bbox}{centroid}{skin}{additional_influences}",
                     mesh.mesh_index,
                     text_atom(&mesh.name),
                     mesh.vertex_count
@@ -1113,6 +1125,7 @@ mod tests {
                 "name": "body\nmesh",
                 "vertex_count": 3,
                 "geometry_aabb": { "min": [0.0, 0.0, 0.0], "max": [1.0, 2.0, 3.0] },
+                "geometry_centroid": [0.25, 1.0, -0.5],
                 "max_joints_per_vertex": 4,
                 "weight_sum_min": 0.9,
                 "weight_sum_max": 1.1,
@@ -1151,7 +1164,7 @@ mod tests {
                 "asset\\npath.glb:",
                 "  walk\\nclip: 1.000s, 2 frames, 1 animated bones seam×0.25 gait φ=0.50 (10.0cm)",
                 "  material resources: 1 materials, 1 textures, 1 images (complete)",
-                "  mesh definition #7 body\\nmesh: 3 verts geometry bbox 1.000×2.000×3.000, ≤4 joints/vtx, weight-sum 0.900–1.100, additional influence sets: JOINTS_1 + WEIGHTS_1 (also JOINTS-only and WEIGHTS-only primitives), JOINTS_2 (also JOINTS-only primitives), WEIGHTS_3 (also WEIGHTS-only primitives)",
+                "  mesh definition #7 body\\nmesh: 3 verts geometry bbox 1.000×2.000×3.000 geometry centroid (0.250, 1.000, -0.500), ≤4 joints/vtx, weight-sum 0.900–1.100, additional influence sets: JOINTS_1 + WEIGHTS_1 (also JOINTS-only and WEIGHTS-only primitives), JOINTS_2 (also JOINTS-only primitives), WEIGHTS_3 (also WEIGHTS-only primitives)",
                 "  node instance #9 body\\nnode -> mesh #7: static node-world bbox 1.000×2.000×3.000",
                 "  scene #2 main\\nscene [default]: 1 instances static scene-world bbox 1.000×2.000×3.000",
             ]
@@ -1208,7 +1221,7 @@ mod tests {
                 "first.glb:",
                 "  idle: 2.000s, 1 frames, 0 animated bones",
                 "  material resources: 0 materials, 0 textures, 0 images (unavailable)",
-                "  mesh definition #0 plain: 0 verts geometry bbox unavailable",
+                "  mesh definition #0 plain: 0 verts geometry bbox unavailable geometry centroid unavailable",
                 "second.glb:",
                 "  material resources: 0 materials, 0 textures, 0 images (unavailable)",
             ]

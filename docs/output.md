@@ -13,8 +13,8 @@ identity `urn:animsmith:schema:output:2`. The retrievable schema is
 is a retrieval location, not the protocol identity.
 
 Measurement evidence is nested and independently versioned as
-`urn:animsmith:schema:measurements:5`. Its retrievable schema is
-[`measurements-v5.schema.json`](schemas/measurements-v5.schema.json). A future
+`urn:animsmith:schema:measurements:6`. Its retrievable schema is
+[`measurements-v6.schema.json`](schemas/measurements-v6.schema.json). A future
 measurement-definition change can therefore bump that contract without
 redesigning the outer result envelope.
 
@@ -205,8 +205,8 @@ Both commands put evidence under `files[].measurements`:
 
 ```json
 {
-  "schema_version": 5,
-  "schema": "urn:animsmith:schema:measurements:5",
+  "schema_version": 6,
+  "schema": "urn:animsmith:schema:measurements:6",
   "clips": {},
   "mesh_definitions": [],
   "node_instances": [],
@@ -226,8 +226,20 @@ ranges, and optional role-dependent gait, seam, and speed metrics.
 
 `mesh_definitions` contains one record per source mesh definition. Its
 `geometry_aabb` reduces finite primitive `POSITION` values in the mesh's own
-coordinates; it is independent of every node and scene. Vertex and skin
-influence statistics are properties of that same definition.
+coordinates; it is independent of every node and scene. When finite positions
+exist, optional `geometry_centroid` is their arithmetic mean in that same
+mesh-local coordinate domain. It is not the AABB midpoint and does not weight
+vertices by triangle area, volume, or skin influence. Both fields omit
+non-finite positions and are absent when no finite positions remain. Vertex
+and skin influence statistics are properties of that same definition.
+
+Indexed primitives contribute each base `POSITION` accessor element once,
+regardless of how many times the index stream references it. Unindexed
+primitives contribute each base position-stream element. These are the same
+counting semantics as `vertex_count`. In text output, the value appears as
+`geometry centroid (x, y, z)` beside the geometry bounding-box size, or as
+`geometry centroid unavailable` when no finite position exists. JSON carries
+the optional three-number `geometry_centroid` array.
 
 Each mesh definition has `additional_influence_sets`, an always-present array
 of authored secondary glTF skin-attribute sets discovered across its
@@ -465,7 +477,7 @@ delta count, and structured metric deltas:
 ```
 
 `diff` accepts asset files or one-file v2 `measure`/`lint` reports carrying
-measurement contract v5. Multi-file reports and unsupported contract versions
+measurement contract v6. Multi-file reports and unsupported contract versions
 are rejected as operator errors. Before extracting the clip metrics it uses,
 `diff` validates the complete measurement record, including mesh evidence, and
 rejects malformed or non-finite payload values.

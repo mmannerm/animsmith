@@ -816,6 +816,7 @@ fn valid_mesh_measurements() -> MeshDefinitionMeasurements {
         "name": "mesh",
         "vertex_count": 3,
         "geometry_aabb": { "min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 1.0] },
+        "geometry_centroid": [0.5, 0.5, 0.5],
         "max_joints_per_vertex": 4,
         "weight_sum_min": 0.9,
         "weight_sum_max": 1.1,
@@ -1338,6 +1339,14 @@ fn measurement_contract_rejects_every_non_finite_numeric_branch() {
             mesh.geometry_aabb.as_mut().expect("fixture aabb").max[2] = f32::INFINITY;
         },
         "mesh_definitions[0].geometry_aabb.max[2]",
+    );
+    assert_invalid_mesh(
+        |mesh| mesh.geometry_centroid.as_mut().expect("fixture centroid")[1] = f32::NAN,
+        "mesh_definitions[0].geometry_centroid[1]",
+    );
+    assert_invalid_mesh(
+        |mesh| mesh.geometry_centroid.as_mut().expect("fixture centroid")[2] = f32::INFINITY,
+        "mesh_definitions[0].geometry_centroid[2]",
     );
     assert_invalid_mesh(
         |mesh| mesh.weight_sum_min = Some(f64::NEG_INFINITY),
