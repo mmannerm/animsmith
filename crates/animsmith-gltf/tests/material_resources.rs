@@ -33,6 +33,32 @@ fn jpeg() -> Vec<u8> {
     bytes
 }
 
+fn png_with_dimensions(mut bytes: Vec<u8>, width: u32, height: u32) -> Vec<u8> {
+    // Rewrite the IHDR dimensions and checksum while retaining a tiny encoded
+    // payload. The decoder must reject the declared decoded allocation before
+    // it tries to consume that payload.
+    bytes[16..20].copy_from_slice(&width.to_be_bytes());
+    bytes[20..24].copy_from_slice(&height.to_be_bytes());
+    let crc = crc32(&bytes[12..29]);
+    bytes[29..33].copy_from_slice(&crc.to_be_bytes());
+    bytes
+}
+
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = !0_u32;
+    for byte in bytes {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 {
+            crc = if crc & 1 == 0 {
+                crc >> 1
+            } else {
+                (crc >> 1) ^ 0xedb8_8320
+            };
+        }
+    }
+    !crc
+}
+
 #[test]
 fn load_reports_source_order_bindings_and_bounded_image_inspection() {
     let dir = tempfile::tempdir().unwrap();
@@ -352,10 +378,9 @@ fn load_reports_embedded_png_channel_variants() {
 }
 
 #[test]
-fn load_reports_dimension_limit_without_dropping_the_source_image_row() {
-    // A 4097×1 grayscale PNG is tiny on disk but crosses the strict width
-    // limit, proving that the metadata path does not rely on encoded size
-    // alone to defend decoder resources.
+fn load_reports_wide_image_metadata_without_dimension_policy() {
+    // A 4097×1 grayscale PNG is cheap to decode and must remain evidence;
+    // consumers, not animsmith, choose acceptable dimensions.
     let mut png = Vec::new();
     PngEncoder::new(&mut png)
         .write_image(&vec![0; 4097], 4097, 1, ExtendedColorType::L8)
@@ -374,17 +399,53 @@ fn load_reports_dimension_limit_without_dropping_the_source_image_row() {
     )
     .unwrap();
 
-    let document = animsmith_gltf::load(&path).expect("wide source still loads");
+    let document = animsmith_gltf::load(&path).expect("wide source loads");
     assert_eq!(document.assets.material_resources.images.len(), 1);
     assert_eq!(
         document.assets.material_resources.images[0].inspection,
-        SourceImageInspection::Unavailable {
-            reason: ImageUnavailableReason::ResourceLimit,
+        SourceImageInspection::Available {
+            width: 4097,
+            height: 1,
+            channel_count: 1,
+            color_type: DecodedImageColorType::L8,
         }
     );
     assert_eq!(
         document.assets.material_resources.images[0].detected_container,
         Some(ImageContainerFormat::Png)
+    );
+}
+
+#[test]
+fn load_reports_decoder_allocation_limit_without_large_fixture() {
+    // The encoded PNG is a one-pixel RGBA file, but its valid IHDR advertises a
+    // decoded RGBA allocation far above the 192 MiB decoder budget.
+    let encoded = base64::engine::general_purpose::STANDARD.encode(png_with_dimensions(
+        png(ExtendedColorType::Rgba8, &[0, 0, 0, 255]),
+        16_384,
+        16_384,
+    ));
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("allocation-limit.gltf");
+    std::fs::write(
+        &path,
+        format!(
+            r#"{{
+                "asset": {{ "version": "2.0" }},
+                "images": [{{ "uri": "data:image/png;base64,{encoded}" }}]
+            }}"#
+        ),
+    )
+    .unwrap();
+
+    let document = animsmith_gltf::load(&path).expect("oversized source still loads");
+    let image = &document.assets.material_resources.images[0];
+    assert_eq!(image.detected_container, Some(ImageContainerFormat::Png));
+    assert_eq!(
+        image.inspection,
+        SourceImageInspection::Unavailable {
+            reason: ImageUnavailableReason::ResourceLimit,
+        }
     );
 }
 

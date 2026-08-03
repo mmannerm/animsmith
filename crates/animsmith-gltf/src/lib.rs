@@ -982,8 +982,6 @@ fn extract_scenes(doc: &gltf::Document, bone_of_node: &[Option<usize>]) -> Vec<S
 
 /// Maximum encoded source image size considered for metadata inspection.
 const MAX_IMAGE_ENCODED_BYTES: usize = 64 * 1024 * 1024;
-/// Maximum decoded image width or height considered for metadata inspection.
-const MAX_IMAGE_DIMENSION: u32 = 4096;
 /// Maximum allocation the image decoder may request during inspection.
 const MAX_IMAGE_DECODE_ALLOC_BYTES: u64 = 192 * 1024 * 1024;
 
@@ -1227,10 +1225,9 @@ fn extract_source_textures(doc: &gltf::Document) -> Vec<SourceTextureAsset> {
         .collect()
 }
 
-/// Inspect an image payload under strict encoded-size, dimension, and decoder
-/// allocation bounds. Inspection decodes only long enough to obtain metadata;
-/// the decoded image is immediately dropped and never becomes part of the
-/// core model.
+/// Inspect an image payload under strict encoded-size and decoder-allocation
+/// bounds. Inspection decodes only long enough to obtain metadata; the decoded
+/// image is immediately dropped and never becomes part of the core model.
 fn inspect_source_image(
     texture: Option<&TextureAsset>,
     unavailable_reason: ImageUnavailableReason,
@@ -1262,8 +1259,6 @@ fn inspect_source_image(
     let mut reader = ImageReader::new(Cursor::new(&texture.bytes));
     reader.set_format(format);
     let mut limits = Limits::default();
-    limits.max_image_width = Some(MAX_IMAGE_DIMENSION);
-    limits.max_image_height = Some(MAX_IMAGE_DIMENSION);
     limits.max_alloc = Some(MAX_IMAGE_DECODE_ALLOC_BYTES);
     reader.limits(limits);
     match reader.decode() {
