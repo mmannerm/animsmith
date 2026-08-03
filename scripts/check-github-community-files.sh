@@ -104,14 +104,14 @@ require_workflow_cron() {
   require_literal "$path" "cron: '$cron'" "schedule $cron"
 }
 
-# Markdown link validation (target existence, #anchor resolution, and
-# the absolute-only policy for published READMEs) lives in the
-# markdown-parser-backed workspace test crates/animsmith/tests/
-# docs_links.rs (pulldown-cmark), which runs under `cargo test
-# --workspace`; its sibling docs_index.rs keeps the Document-index
-# completeness gate. This script keeps the assertions that are
-# genuinely string-shaped: required literals, ordering, issue-form and
-# workflow contracts.
+# Markdown link validation (required README routes, target existence,
+# #anchor resolution, and the absolute-only policy for published
+# READMEs) lives in the markdown-parser-backed workspace test
+# crates/animsmith/tests/docs_links.rs (pulldown-cmark), which runs
+# under `cargo test --workspace`; its sibling docs_index.rs keeps the
+# Document-index completeness gate. This script keeps the assertions
+# that are not Markdown-link-shaped: required literals, ordering,
+# issue-form, and workflow contracts.
 
 require_order README.md "cargo install animsmith" "CONTRIBUTING.md"
 require_order README.md "animsmith lint clip.glb" "CONTRIBUTING.md"

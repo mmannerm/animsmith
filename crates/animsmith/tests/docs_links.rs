@@ -388,7 +388,36 @@ fn root_readme_renders_required_routing_links_and_decoys_do_not_count() {
         missing.join("\n")
     );
 
-    for required in required_readme_link_routes() {
+    let required_routes = required_readme_link_routes();
+    assert_eq!(
+        required_routes,
+        [
+            "https://github.com/mmannerm/animsmith/tree/main/docs".to_owned(),
+            "https://github.com/mmannerm/animsmith/blob/main/docs/cli.md".to_owned(),
+            "https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md".to_owned(),
+            "https://github.com/mmannerm/animsmith/blob/main/CONTRIBUTING.md".to_owned(),
+            "https://github.com/mmannerm/animsmith/blob/main/DEVELOPMENT.md".to_owned(),
+        ],
+        "the README routing contract must retain all five routes"
+    );
+
+    let anchored_cli_fixture = required_routes
+        .iter()
+        .map(|route| {
+            if route.ends_with("docs/cli.md") {
+                format!("[rendered]({route}#install)")
+            } else {
+                format!("[rendered]({route})")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    assert!(
+        missing_required_readme_link_routes(&anchored_cli_fixture).is_empty(),
+        "a fragment must not change the required README route"
+    );
+
+    for required in required_routes {
         for decoy in [
             format!("`[inline decoy]({required})`"),
             format!("```text\n[fenced decoy]({required})\n```"),
