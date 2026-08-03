@@ -93,6 +93,19 @@ pub(crate) fn render_measure_text(
                         )
                     }),
             )
+            .chain(std::iter::once({
+                let assets = report.measurements().assets();
+                let coverage = match assets.material_resource_coverage {
+                    animsmith_core::model::MaterialResourceCoverage::Complete => "complete",
+                    animsmith_core::model::MaterialResourceCoverage::Unavailable => "unavailable",
+                };
+                format!(
+                    "  material resources: {} materials, {} textures, {} images ({coverage})",
+                    assets.material_definitions.len(),
+                    assets.textures.len(),
+                    assets.images.len(),
+                )
+            }))
             .chain(report.measurements().assets().mesh_definitions.iter().map(|mesh| {
                 let bbox = mesh
                     .geometry_aabb
@@ -1079,6 +1092,22 @@ mod tests {
         }))
         .expect("clip measurements deserialize");
         let assets = serde_json::from_value(json!({
+            "material_resource_coverage": "complete",
+            "material_definitions": [{
+                "material_index": 0,
+                "name": "body material",
+                "texture_bindings": [{ "slot": "base_color", "texture_index": 0 }]
+            }],
+            "textures": [{ "texture_index": 0, "image_index": 0 }],
+            "images": [{
+                "image_index": 0,
+                "source_kind": "embedded",
+                "detected_container": "png",
+                "width": 1,
+                "height": 1,
+                "channel_count": 4,
+                "decoded_color_type": "rgba8"
+            }],
             "mesh_definitions": [{
                 "mesh_index": 7,
                 "name": "body\nmesh",
@@ -1121,6 +1150,7 @@ mod tests {
             vec![
                 "asset\\npath.glb:",
                 "  walk\\nclip: 1.000s, 2 frames, 1 animated bones seam×0.25 gait φ=0.50 (10.0cm)",
+                "  material resources: 1 materials, 1 textures, 1 images (complete)",
                 "  mesh definition #7 body\\nmesh: 3 verts geometry bbox 1.000×2.000×3.000, ≤4 joints/vtx, weight-sum 0.900–1.100, additional influence sets: JOINTS_1 + WEIGHTS_1 (also JOINTS-only and WEIGHTS-only primitives), JOINTS_2 (also JOINTS-only primitives), WEIGHTS_3 (also WEIGHTS-only primitives)",
                 "  node instance #9 body\\nnode -> mesh #7: static node-world bbox 1.000×2.000×3.000",
                 "  scene #2 main\\nscene [default]: 1 instances static scene-world bbox 1.000×2.000×3.000",
@@ -1140,6 +1170,10 @@ mod tests {
         }))
         .expect("clip measurements deserialize");
         let assets = serde_json::from_value(json!({
+            "material_resource_coverage": "unavailable",
+            "material_definitions": [],
+            "textures": [],
+            "images": [],
             "mesh_definitions": [{
                 "mesh_index": 0,
                 "name": "plain",
@@ -1173,8 +1207,10 @@ mod tests {
             vec![
                 "first.glb:",
                 "  idle: 2.000s, 1 frames, 0 animated bones",
+                "  material resources: 0 materials, 0 textures, 0 images (unavailable)",
                 "  mesh definition #0 plain: 0 verts geometry bbox unavailable",
                 "second.glb:",
+                "  material resources: 0 materials, 0 textures, 0 images (unavailable)",
             ]
         );
     }

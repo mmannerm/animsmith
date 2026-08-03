@@ -2,15 +2,18 @@ use std::collections::BTreeMap;
 
 use animsmith_core::check::{Check, CheckCtx};
 use animsmith_core::config::{CheckSettings, SeveritySetting};
-use animsmith_core::measure::{AssetMeasurements, ClipMeasurements, MeshDefinitionMeasurements};
+use animsmith_core::measure::{
+    AssetMeasurements, ClipMeasurements, ImageMeasurements, MeshDefinitionMeasurements,
+};
 use animsmith_core::{
     Bone, CheckEvaluation, CheckOutput, CheckSelection, Config, CoverageGap, CoverageGapCode,
-    Document, EvaluationScope, EvaluationScopeCode, Finding, LintEnvelope, LintFileReport,
-    MEASUREMENTS_SCHEMA_ID, MEASUREMENTS_SCHEMA_VERSION, MeasureEnvelope, MeasureFileReport,
-    MeasurementContract, MeasurementContractError, MeasurementFileError, MeasurementReportError,
-    MeasurementReportFile, MeasurementReportInput, MetricGrids, OUTPUT_SCHEMA_ID,
-    OUTPUT_SCHEMA_VERSION, ResolvedRoles, RigInfo, RigInfoError, Role, Severity, ToolInfo,
-    ToolSource, Transform, evaluate_checks,
+    Document, EvaluationScope, EvaluationScopeCode, Finding, ImageContainerFormat,
+    ImageUnavailableReason, LintEnvelope, LintFileReport, MEASUREMENTS_SCHEMA_ID,
+    MEASUREMENTS_SCHEMA_VERSION, MaterialResourceCoverage, MaterialTextureSlot, MeasureEnvelope,
+    MeasureFileReport, MeasurementContract, MeasurementContractError, MeasurementFileError,
+    MeasurementReportError, MeasurementReportFile, MeasurementReportInput, MetricGrids,
+    OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, ResolvedRoles, RigInfo, RigInfoError, Role, Severity,
+    ToolInfo, ToolSource, Transform, evaluate_checks,
 };
 
 fn tool() -> ToolInfo {
@@ -168,6 +171,10 @@ fn current_measure_report() -> serde_json::Value {
                 "schema_version": MEASUREMENTS_SCHEMA_VERSION,
                 "schema": MEASUREMENTS_SCHEMA_ID,
                 "clips": {},
+                "material_resource_coverage": "unavailable",
+                "material_definitions": [],
+                "textures": [],
+                "images": [],
                 "mesh_definitions": [],
                 "node_instances": [],
                 "scenes": [],
@@ -404,6 +411,10 @@ fn measurement_report_input_rejects_inconsistent_static_node_and_scene_evidence(
         "schema_version": MEASUREMENTS_SCHEMA_VERSION,
         "schema": MEASUREMENTS_SCHEMA_ID,
         "clips": {},
+        "material_resource_coverage": "unavailable",
+        "material_definitions": [],
+        "textures": [],
+        "images": [],
         "mesh_definitions": [{
             "mesh_index": 0,
             "name": "mesh",
@@ -525,6 +536,10 @@ fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
                 "schema_version": MEASUREMENTS_SCHEMA_VERSION,
                 "schema": MEASUREMENTS_SCHEMA_ID,
                 "clips": { "walk": valid_clip_measurements() },
+                "material_resource_coverage": "unavailable",
+                "material_definitions": [],
+                "textures": [],
+                "images": [],
                 "mesh_definitions": [],
                 "node_instances": [],
                 "scenes": [],
@@ -536,6 +551,10 @@ fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
                 "schema_version": MEASUREMENTS_SCHEMA_VERSION,
                 "schema": MEASUREMENTS_SCHEMA_ID,
                 "clips": { "run": valid_clip_measurements() },
+                "material_resource_coverage": "unavailable",
+                "material_definitions": [],
+                "textures": [],
+                "images": [],
                 "mesh_definitions": [valid_mesh_measurements()],
                 "node_instances": [],
                 "scenes": [],
@@ -547,6 +566,10 @@ fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
                 "schema_version": MEASUREMENTS_SCHEMA_VERSION,
                 "schema": MEASUREMENTS_SCHEMA_ID,
                 "clips": { "idle": valid_clip_measurements() },
+                "material_resource_coverage": "unavailable",
+                "material_definitions": [],
+                "textures": [],
+                "images": [],
                 "mesh_definitions": [],
                 "node_instances": [],
                 "scenes": [],
@@ -773,6 +796,10 @@ fn additional_influence_set(
 
 fn valid_asset_measurements() -> AssetMeasurements {
     serde_json::from_value(serde_json::json!({
+        "material_resource_coverage": "unavailable",
+        "material_definitions": [],
+        "textures": [],
+        "images": [],
         "mesh_definitions": [valid_mesh_measurements()],
         "node_instances": [{
             "node_index": 2,
@@ -795,6 +822,177 @@ fn valid_asset_measurements() -> AssetMeasurements {
         "default_scene_index": 4
     }))
     .expect("valid static asset measurement fixture")
+}
+
+fn complete_resource_assets() -> AssetMeasurements {
+    serde_json::from_value(serde_json::json!({
+        "material_resource_coverage": "complete",
+        "material_definitions": [
+            { "material_index": 0, "name": "body", "texture_bindings": [
+                { "slot": "base_color", "texture_index": 0 },
+                { "slot": "normal", "texture_index": 1 }
+            ] },
+            { "material_index": 1, "texture_bindings": [
+                { "slot": "occlusion", "texture_index": 0 }
+            ] }
+        ],
+        "textures": [
+            { "texture_index": 0, "name": "shared", "image_index": 0 },
+            { "texture_index": 1, "image_index": 1 }
+        ],
+        "images": [
+            { "image_index": 0, "name": "image-0", "source_kind": "embedded", "declared_mime_type": "image/png", "detected_container": "png", "width": 2, "height": 1, "channel_count": 4, "decoded_color_type": "rgba8" },
+            { "image_index": 1, "source_kind": "external", "unavailable_reason": "resource_limit" }
+        ],
+        "mesh_definitions": [], "node_instances": [], "scenes": []
+    }))
+    .expect("complete material resource fixture")
+}
+
+#[test]
+fn measurement_contract_accepts_complete_empty_and_shared_material_resources() {
+    let mut empty_complete = AssetMeasurements::default();
+    empty_complete.material_resource_coverage = MaterialResourceCoverage::Complete;
+    MeasurementContract::new(BTreeMap::new(), empty_complete)
+        .expect("a complete source with no material resources is valid");
+    MeasurementContract::new(BTreeMap::new(), AssetMeasurements::default())
+        .expect("unavailable coverage with empty arrays is valid");
+    let contract = MeasurementContract::new(BTreeMap::new(), complete_resource_assets())
+        .expect("shared texture/image references are valid");
+    let json = serde_json::to_value(contract).expect("resource measurements serialize");
+    assert_eq!(json["images"][0]["decoded_color_type"], "rgba8");
+    assert!(json["images"][0].get("unavailable_reason").is_none());
+    assert_eq!(json["images"][1]["unavailable_reason"], "resource_limit");
+    assert!(json["images"][1].get("width").is_none());
+}
+
+#[test]
+fn measurement_contract_rejects_invalid_material_resource_tables() {
+    let invalid_resource = |mutate: &dyn Fn(&mut AssetMeasurements), path: &str, reason: &str| {
+        let mut assets = complete_resource_assets();
+        mutate(&mut assets);
+        assert_eq!(
+            MeasurementContract::new(BTreeMap::new(), assets).expect_err("invalid resource table"),
+            MeasurementContractError::InvalidStructure {
+                path: path.into(),
+                reason: reason.into()
+            }
+        );
+    };
+    invalid_resource(
+        &|assets| assets.material_resource_coverage = MaterialResourceCoverage::Unavailable,
+        "material_resource_coverage",
+        "unavailable resource coverage requires empty material, texture, and image arrays",
+    );
+    invalid_resource(
+        &|assets| assets.material_definitions[1].material_index = 3,
+        "material_definitions[1].material_index",
+        "material_index must be contiguous and match source order",
+    );
+    invalid_resource(
+        &|assets| assets.textures[1].texture_index = 3,
+        "textures[1].texture_index",
+        "texture_index must be contiguous and match source order",
+    );
+    invalid_resource(
+        &|assets| assets.images[1].image_index = 3,
+        "images[1].image_index",
+        "image_index must be contiguous and match source order",
+    );
+    invalid_resource(
+        &|assets| assets.material_definitions[0].texture_bindings.swap(0, 1),
+        "material_definitions[0].texture_bindings[1].slot",
+        "texture bindings must be strictly ordered by slot and unique",
+    );
+    invalid_resource(
+        &|assets| {
+            assets.material_definitions[0].texture_bindings[1].slot = MaterialTextureSlot::BaseColor
+        },
+        "material_definitions[0].texture_bindings[1].slot",
+        "texture bindings must be strictly ordered by slot and unique",
+    );
+    invalid_resource(
+        &|assets| assets.material_definitions[0].texture_bindings[0].texture_index = 9,
+        "material_definitions[0].texture_bindings[0].texture_index",
+        "texture_index must reference a source texture",
+    );
+    invalid_resource(
+        &|assets| assets.textures[0].image_index = 9,
+        "textures[0].image_index",
+        "image_index must reference a source image",
+    );
+}
+
+#[test]
+fn measurement_contract_rejects_invalid_image_measurement_relationships() {
+    let invalid_image = |mutate: &dyn Fn(&mut ImageMeasurements), path: &str, reason: &str| {
+        let mut assets = complete_resource_assets();
+        mutate(&mut assets.images[0]);
+        assert_eq!(
+            MeasurementContract::new(BTreeMap::new(), assets).expect_err("invalid image evidence"),
+            MeasurementContractError::InvalidStructure {
+                path: path.into(),
+                reason: reason.into()
+            }
+        );
+    };
+    invalid_image(
+        &|image| image.detected_container = None,
+        "images[0].detected_container",
+        "available image metadata requires a detected_container",
+    );
+    invalid_image(
+        &|image| image.channel_count = Some(3),
+        "images[0].channel_count",
+        "channel_count must match decoded_color_type",
+    );
+    invalid_image(
+        &|image| image.width = None,
+        "images[0]",
+        "available image metadata must include width, height, channel_count, and decoded_color_type",
+    );
+    invalid_image(
+        &|image| image.unavailable_reason = Some(ImageUnavailableReason::DecodeFailed),
+        "images[0]",
+        "available image metadata cannot have an unavailable_reason",
+    );
+
+    let unavailable = |reason, detected_container, expected_path: &str, expected_reason: &str| {
+        let mut assets = complete_resource_assets();
+        assets.images[0] = serde_json::from_value(serde_json::json!({
+            "image_index": 0,
+            "source_kind": "data_uri",
+            "detected_container": detected_container,
+            "unavailable_reason": reason,
+        }))
+        .expect("unavailable image fixture");
+        assert_eq!(
+            MeasurementContract::new(BTreeMap::new(), assets)
+                .expect_err("invalid unavailable image"),
+            MeasurementContractError::InvalidStructure {
+                path: expected_path.into(),
+                reason: expected_reason.into()
+            }
+        );
+    };
+    unavailable(
+        ImageUnavailableReason::DecodeFailed,
+        None,
+        "images[0].detected_container",
+        "decode_failed requires a detected_container",
+    );
+    for reason in [
+        ImageUnavailableReason::SourceUnavailable,
+        ImageUnavailableReason::InvalidDataUri,
+        ImageUnavailableReason::UnsupportedContainer,
+    ] {
+        unavailable(
+            reason,
+            Some(ImageContainerFormat::Png),
+            "images[0].detected_container",
+            "this unavailable_reason cannot have a detected_container",
+        );
+    }
 }
 
 fn assert_invalid_assets(

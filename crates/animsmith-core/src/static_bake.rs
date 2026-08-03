@@ -333,6 +333,7 @@ pub fn bake_static_mesh_transforms(doc: &Document) -> Result<StaticMeshBake, Sta
                 meshes,
                 instances,
                 materials: doc.assets.materials.clone(),
+                material_resources: doc.assets.material_resources.clone(),
                 scenes: vec![SceneAsset {
                     source_scene_index: 0,
                     name: None,

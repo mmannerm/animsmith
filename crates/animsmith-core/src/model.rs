@@ -6,6 +6,7 @@
 //! built from it (see [`crate::sample`]).
 
 use glam::{Mat4, Quat, Vec3};
+use serde::{Deserialize, Serialize};
 
 /// Index into [`Skeleton::bones`].
 pub type BoneId = usize;
@@ -391,6 +392,177 @@ pub struct MaterialAsset {
     pub occlusion_texture: Option<OcclusionTextureAsset>,
 }
 
+/// Whether source material-resource inspection covers the whole input.
+///
+/// This sidecar is deliberately separate from writer-facing [`MaterialAsset`]
+/// values. A loader may preserve materials for writing while declining to
+/// inspect resource provenance or decode image metadata.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MaterialResourceCoverage {
+    /// Every source material, texture, and image was inspected.
+    Complete,
+    /// The loader cannot provide source resource evidence.
+    #[default]
+    Unavailable,
+}
+
+/// A material texture slot with stable source-format meaning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MaterialTextureSlot {
+    /// Base-color texture.
+    BaseColor,
+    /// Tangent-space normal texture.
+    Normal,
+    /// Combined metallic-roughness texture.
+    MetallicRoughness,
+    /// Occlusion texture.
+    Occlusion,
+}
+
+/// One source material-to-texture binding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceMaterialTextureBinding {
+    /// Material slot in stable semantic order.
+    pub slot: MaterialTextureSlot,
+    /// Stable source texture index.
+    pub texture_index: usize,
+}
+
+/// One source material definition, independent of writer-facing material data.
+#[derive(Debug, Clone, Default)]
+pub struct SourceMaterialAsset {
+    /// Stable source material index.
+    pub material_index: usize,
+    /// Authored name, when present.
+    pub name: Option<String>,
+    /// Source texture bindings, sorted by [`SourceMaterialTextureBinding::slot`].
+    pub texture_bindings: Vec<SourceMaterialTextureBinding>,
+}
+
+/// One source texture definition.
+#[derive(Debug, Clone, Default)]
+pub struct SourceTextureAsset {
+    /// Stable source texture index.
+    pub texture_index: usize,
+    /// Authored name, when present.
+    pub name: Option<String>,
+    /// Stable source image index referenced by this texture.
+    pub image_index: usize,
+}
+
+/// How an image payload was declared by its source format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageSourceKind {
+    /// Bytes embedded directly in a container record.
+    Embedded,
+    /// Bytes encoded in a data URI.
+    DataUri,
+    /// A relative or otherwise external resource reference.
+    External,
+}
+
+/// Image container format recognized by inspection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageContainerFormat {
+    /// PNG image data.
+    Png,
+    /// JPEG image data.
+    Jpeg,
+}
+
+/// Decoded image color representation reported by inspection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DecodedImageColorType {
+    /// Single-channel, 8-bit luminance.
+    L8,
+    /// Luminance plus alpha, 8-bit channels.
+    La8,
+    /// RGB, 8-bit channels.
+    Rgb8,
+    /// RGBA, 8-bit channels.
+    Rgba8,
+    /// Single-channel, 16-bit luminance.
+    L16,
+    /// Luminance plus alpha, 16-bit channels.
+    La16,
+    /// RGB, 16-bit channels.
+    Rgb16,
+    /// RGBA, 16-bit channels.
+    Rgba16,
+}
+
+/// Why source-image inspection could not produce decoded metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageUnavailableReason {
+    /// The source does not make the image payload available to the loader.
+    SourceUnavailable,
+    /// A data URI could not be parsed or decoded.
+    InvalidDataUri,
+    /// The image container is not supported for inspection.
+    UnsupportedContainer,
+    /// Supported image bytes could not be decoded.
+    DecodeFailed,
+    /// Inspection declined the resource because it exceeded a resource limit.
+    ResourceLimit,
+}
+
+/// Result of bounded source-image inspection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceImageInspection {
+    /// Decoded metadata was available without retaining decoded pixels.
+    Available {
+        /// Pixel width.
+        width: u32,
+        /// Pixel height.
+        height: u32,
+        /// Number of decoded channels.
+        channel_count: u8,
+        /// Decoded color representation.
+        color_type: DecodedImageColorType,
+    },
+    /// Inspection could not provide decoded metadata.
+    Unavailable {
+        /// Stable unavailability reason.
+        reason: ImageUnavailableReason,
+    },
+}
+
+/// One source image definition and bounded inspection result.
+#[derive(Debug, Clone)]
+pub struct SourceImageAsset {
+    /// Stable source image index.
+    pub image_index: usize,
+    /// Authored name, when present.
+    pub name: Option<String>,
+    /// Source declaration kind.
+    pub source_kind: ImageSourceKind,
+    /// MIME type declared by the source, when present.
+    pub declared_mime_type: Option<String>,
+    /// Detected container format, when recognisable.
+    pub detected_container: Option<ImageContainerFormat>,
+    /// Bounded image-inspection result.
+    pub inspection: SourceImageInspection,
+}
+
+/// Read-only source material-resource evidence carried beside scene assets.
+#[derive(Debug, Clone, Default)]
+pub struct MaterialResourceAssets {
+    /// Whether the source resource lists are complete.
+    pub coverage: MaterialResourceCoverage,
+    /// Source materials in source order.
+    pub materials: Vec<SourceMaterialAsset>,
+    /// Source textures in source order.
+    pub textures: Vec<SourceTextureAsset>,
+    /// Source images in source order.
+    pub images: Vec<SourceImageAsset>,
+}
+
 impl Primitive {
     /// Dedupe identical corners into indexed triangles. Exact
     /// bit-equality only — no tolerance welding, so seams authored via
@@ -469,6 +641,9 @@ pub struct SceneAssets {
     pub instances: Vec<MeshInstance>,
     /// Materials referenced by mesh primitives.
     pub materials: Vec<MaterialAsset>,
+    /// Read-only source material, texture, and image evidence for measurement.
+    /// Writer-facing material slots remain in [`Self::materials`].
+    pub material_resources: MaterialResourceAssets,
     /// Declared source scenes in source order.
     pub scenes: Vec<SceneAsset>,
     /// Source scene index selected by default, when one was declared.

@@ -4,7 +4,10 @@
 
 use crate::config::Config;
 use crate::metrics::{MetricGrids, foot_cycle_metrics, root_motion_speed_mps, rotation_range_deg};
-use crate::model::{Document, MeshAsset};
+use crate::model::{
+    DecodedImageColorType, Document, ImageContainerFormat, ImageSourceKind, ImageUnavailableReason,
+    MaterialResourceCoverage, MaterialTextureSlot, MeshAsset, SourceImageInspection,
+};
 use crate::profile::ResolvedRoles;
 use glam::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
@@ -135,10 +138,89 @@ pub struct SceneMeasurements {
     pub excluded_instance_count: usize,
 }
 
+/// One material-to-texture binding in the source resource table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct MaterialTextureBindingMeasurements {
+    /// Stable material slot.
+    pub slot: MaterialTextureSlot,
+    /// Stable source texture index.
+    pub texture_index: usize,
+}
+
+/// One material definition from the source resource table.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct MaterialDefinitionMeasurements {
+    /// Stable source material index.
+    pub material_index: usize,
+    /// Authored name, when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Texture bindings in fixed slot order.
+    pub texture_bindings: Vec<MaterialTextureBindingMeasurements>,
+}
+
+/// One texture definition from the source resource table.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct TextureMeasurements {
+    /// Stable source texture index.
+    pub texture_index: usize,
+    /// Authored name, when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Stable source image index referenced by this texture.
+    pub image_index: usize,
+}
+
+/// Flat source-image measurement. Available image metadata and an unavailable
+/// reason are mutually exclusive by contract.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ImageMeasurements {
+    /// Stable source image index.
+    pub image_index: usize,
+    /// Authored name, when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Source declaration kind.
+    pub source_kind: ImageSourceKind,
+    /// MIME type declared by the source, when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declared_mime_type: Option<String>,
+    /// Container recognized during inspection, when any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detected_container: Option<ImageContainerFormat>,
+    /// Pixel width when decoded metadata is available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    /// Pixel height when decoded metadata is available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    /// Decoded channel count when metadata is available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_count: Option<u8>,
+    /// Decoded color representation when metadata is available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decoded_color_type: Option<DecodedImageColorType>,
+    /// Why decoded metadata could not be provided.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unavailable_reason: Option<ImageUnavailableReason>,
+}
+
 /// Static scene-asset evidence nested beside clip measurements.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct AssetMeasurements {
+    /// Whether material, texture, and image resource tables are complete.
+    pub material_resource_coverage: MaterialResourceCoverage,
+    /// Source material definitions in stable source order.
+    pub material_definitions: Vec<MaterialDefinitionMeasurements>,
+    /// Source texture definitions in stable source order.
+    pub textures: Vec<TextureMeasurements>,
+    /// Source image definitions in stable source order.
+    pub images: Vec<ImageMeasurements>,
     /// Source mesh definitions, including definitions with no node instance.
     pub mesh_definitions: Vec<MeshDefinitionMeasurements>,
     /// Mesh-bearing source nodes, including nodes outside every scene.
@@ -340,6 +422,74 @@ impl NodeAggregate {
 /// Non-finite geometry never reaches JSON; non-finite effective transforms and
 /// skinned instances are represented by typed unavailability reasons.
 pub fn measure_assets(doc: &Document) -> AssetMeasurements {
+    let material_resource_coverage = doc.assets.material_resources.coverage;
+    let material_definitions = doc
+        .assets
+        .material_resources
+        .materials
+        .iter()
+        .map(|material| MaterialDefinitionMeasurements {
+            material_index: material.material_index,
+            name: material.name.clone(),
+            texture_bindings: material
+                .texture_bindings
+                .iter()
+                .map(|binding| MaterialTextureBindingMeasurements {
+                    slot: binding.slot,
+                    texture_index: binding.texture_index,
+                })
+                .collect(),
+        })
+        .collect();
+    let textures = doc
+        .assets
+        .material_resources
+        .textures
+        .iter()
+        .map(|texture| TextureMeasurements {
+            texture_index: texture.texture_index,
+            name: texture.name.clone(),
+            image_index: texture.image_index,
+        })
+        .collect();
+    let images = doc
+        .assets
+        .material_resources
+        .images
+        .iter()
+        .map(|image| {
+            let (width, height, channel_count, decoded_color_type, unavailable_reason) =
+                match image.inspection {
+                    SourceImageInspection::Available {
+                        width,
+                        height,
+                        channel_count,
+                        color_type,
+                    } => (
+                        Some(width),
+                        Some(height),
+                        Some(channel_count),
+                        Some(color_type),
+                        None,
+                    ),
+                    SourceImageInspection::Unavailable { reason } => {
+                        (None, None, None, None, Some(reason))
+                    }
+                };
+            ImageMeasurements {
+                image_index: image.image_index,
+                name: image.name.clone(),
+                source_kind: image.source_kind,
+                declared_mime_type: image.declared_mime_type.clone(),
+                detected_container: image.detected_container,
+                width,
+                height,
+                channel_count,
+                decoded_color_type,
+                unavailable_reason,
+            }
+        })
+        .collect();
     let mesh_definitions = doc
         .assets
         .meshes
@@ -427,6 +577,10 @@ pub fn measure_assets(doc: &Document) -> AssetMeasurements {
         .collect();
 
     AssetMeasurements {
+        material_resource_coverage,
+        material_definitions,
+        textures,
+        images,
         mesh_definitions,
         node_instances,
         scenes,

@@ -72,13 +72,18 @@ pub mod fix;
 pub mod write;
 
 use animsmith_core::model::{
-    AdditionalInfluenceSet, Bone, Clip, Document, Interpolation, MaterialAsset, MeshAsset,
-    MeshInstance, NormalTextureAsset, OcclusionTextureAsset, Primitive, Property, SceneAsset,
-    SceneAssets, Skeleton, SourceInfo, TextureAsset, Track, TrackValues, Transform,
+    AdditionalInfluenceSet, Bone, Clip, DecodedImageColorType, Document, ImageContainerFormat,
+    ImageSourceKind, ImageUnavailableReason, Interpolation, MaterialAsset, MaterialResourceAssets,
+    MaterialResourceCoverage, MaterialTextureSlot, MeshAsset, MeshInstance, NormalTextureAsset,
+    OcclusionTextureAsset, Primitive, Property, SceneAsset, SceneAssets, Skeleton,
+    SourceImageAsset, SourceImageInspection, SourceInfo, SourceMaterialAsset,
+    SourceMaterialTextureBinding, SourceTextureAsset, TextureAsset, Track, TrackValues, Transform,
 };
 use base64::Engine as _;
 use glam::{Mat4, Quat, Vec3};
-use std::collections::BTreeMap;
+use image::{ColorType, ImageError, ImageFormat, ImageReader, Limits};
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::{Cursor, Read};
 use std::path::{Component, Path, PathBuf};
 
 /// Errors returned while loading `.gltf` or `.glb` input.
@@ -675,36 +680,62 @@ fn extract_assets(
 ) -> SceneAssets {
     let mut assets = SceneAssets::default();
 
+    let source_images = extract_source_images(doc, buffers, base);
+    let (raw_images, source_image_records): (Vec<_>, Vec<_>) = source_images
+        .into_iter()
+        .map(|image| (image.texture, image.record))
+        .unzip();
+    assets.material_resources = MaterialResourceAssets {
+        coverage: MaterialResourceCoverage::Complete,
+        materials: Vec::new(),
+        textures: extract_source_textures(doc),
+        images: source_image_records,
+    };
+
     // `doc.materials()` yields defined materials in index order (the
     // synthesized default material has no index and is skipped), so
     // pushing in iteration order keeps `assets.materials[i]` aligned
     // with glTF material index `i`.
     for material in doc.materials() {
-        if material.index().is_none() {
+        let Some(material_index) = material.index() else {
             continue;
-        }
+        };
         let pbr = material.pbr_metallic_roughness();
-        let base_color_texture = pbr
-            .base_color_texture()
-            .and_then(|info| read_image(info.texture().source().source(), buffers, base));
+        assets
+            .material_resources
+            .materials
+            .push(SourceMaterialAsset {
+                material_index,
+                name: material.name().map(str::to_owned),
+                texture_bindings: source_material_texture_bindings(&material),
+            });
+        let base_color_texture = pbr.base_color_texture().and_then(|info| {
+            raw_images
+                .get(info.texture().source().index())
+                .and_then(|image| image.clone())
+        });
         let normal_texture = material.normal_texture().and_then(|info| {
-            read_image(info.texture().source().source(), buffers, base).map(|texture| {
-                NormalTextureAsset {
+            raw_images
+                .get(info.texture().source().index())
+                .and_then(|image| image.clone())
+                .map(|texture| NormalTextureAsset {
                     texture,
                     scale: info.scale(),
-                }
-            })
+                })
         });
-        let metallic_roughness_texture = pbr
-            .metallic_roughness_texture()
-            .and_then(|info| read_image(info.texture().source().source(), buffers, base));
+        let metallic_roughness_texture = pbr.metallic_roughness_texture().and_then(|info| {
+            raw_images
+                .get(info.texture().source().index())
+                .and_then(|image| image.clone())
+        });
         let occlusion_texture = material.occlusion_texture().and_then(|info| {
-            read_image(info.texture().source().source(), buffers, base).map(|texture| {
-                OcclusionTextureAsset {
+            raw_images
+                .get(info.texture().source().index())
+                .and_then(|image| image.clone())
+                .map(|texture| OcclusionTextureAsset {
                     texture,
                     strength: info.strength(),
-                }
-            })
+                })
         });
         assets.materials.push(MaterialAsset {
             name: material.name().unwrap_or("material").to_string(),
@@ -902,51 +933,351 @@ fn extract_scenes(doc: &gltf::Document, bone_of_node: &[Option<usize>]) -> Vec<S
         .collect()
 }
 
-/// Read an embedded glTF image into a [`TextureAsset`] (raw encoded
-/// bytes + MIME; glTF never decodes, so PNG/JPEG pass through
-/// untouched). Buffer-view and `data:` URI sources are supported (what
-/// the writer and typical GLB exports use); an external-file source is
-/// read relative to `base`. A texture whose bytes can't be resolved
-/// yields `None` — an absent texture is missing measurement data, not a
-/// load failure.
-fn read_image(
-    source: gltf::image::Source,
+/// Maximum encoded source image size considered for metadata inspection.
+const MAX_IMAGE_ENCODED_BYTES: usize = 64 * 1024 * 1024;
+/// Maximum decoded image width or height considered for metadata inspection.
+const MAX_IMAGE_DIMENSION: u32 = 4096;
+/// Maximum allocation the image decoder may request during inspection.
+const MAX_IMAGE_DECODE_ALLOC_BYTES: u64 = 192 * 1024 * 1024;
+
+/// One image record plus raw bytes for the legacy writer-facing material
+/// slots. The sidecar reports bounded inspection facts; it never changes
+/// whether a resolvable source image remains writable.
+struct LoadedSourceImage {
+    record: SourceImageAsset,
+    texture: Option<TextureAsset>,
+}
+
+/// Read source-image definitions once, in glTF source order. This retains
+/// independent image rows (including unreferenced images), while later
+/// texture and material records refer to them by their glTF array indices.
+fn extract_source_images(
+    doc: &gltf::Document,
     buffers: &[Vec<u8>],
     base: Option<&Path>,
-) -> Option<TextureAsset> {
-    match source {
-        gltf::image::Source::View { view, mime_type } => {
-            let buffer = buffers.get(view.buffer().index())?;
-            // `offset`/`length` are attacker-controlled `byteOffset`/
-            // `byteLength` JSON fields; add with a checked op so a
-            // near-`usize::MAX` offset fails closed instead of panicking
-            // on overflow in debug builds (invariant: loaders never
-            // panic on hostile input).
-            let end = view.offset().checked_add(view.length())?;
-            let bytes = buffer.get(view.offset()..end)?.to_vec();
-            Some(TextureAsset {
-                bytes,
-                mime: mime_type.to_string(),
-            })
-        }
-        gltf::image::Source::Uri { uri, mime_type } => {
-            if let Some(encoded) = uri.strip_prefix("data:") {
-                let (meta, payload) = encoded.split_once("base64,")?;
-                let bytes = base64::engine::general_purpose::STANDARD
-                    .decode(payload)
-                    .ok()?;
-                let mime = mime_type
-                    .map(str::to_string)
-                    .unwrap_or_else(|| meta.trim_end_matches(';').to_string());
-                Some(TextureAsset { bytes, mime })
-            } else {
-                let path = base?.join(safe_external_buffer_path(uri).ok()?);
-                let bytes = std::fs::read(path).ok()?;
-                Some(TextureAsset {
-                    bytes,
-                    mime: mime_type.unwrap_or_default().to_string(),
-                })
+) -> Vec<LoadedSourceImage> {
+    let writer_images = writer_image_indices(doc);
+    doc.images()
+        .map(|image| {
+            let image_index = image.index();
+            let retain_raw = writer_images.contains(&image_index);
+            let name = image.name().map(str::to_owned);
+            let (source_kind, declared_mime_type, raw, unavailable_reason) = match image.source() {
+                gltf::image::Source::View { view, mime_type } => {
+                    let bytes = buffers.get(view.buffer().index()).and_then(|buffer| {
+                        // `offset`/`length` are file-derived. A checked add
+                        // keeps malformed views from panicking in debug
+                        // builds; failed ranges are explicit source gaps.
+                        view.offset()
+                            .checked_add(view.length())
+                            .and_then(|end| buffer.get(view.offset()..end))
+                    });
+                    let (raw, reason) = match bytes {
+                        Some(bytes) if !retain_raw && bytes.len() > MAX_IMAGE_ENCODED_BYTES => {
+                            (None, ImageUnavailableReason::ResourceLimit)
+                        }
+                        Some(bytes) => (
+                            Some(TextureAsset {
+                                bytes: bytes.to_vec(),
+                                mime: mime_type.to_string(),
+                            }),
+                            ImageUnavailableReason::SourceUnavailable,
+                        ),
+                        None => (None, ImageUnavailableReason::SourceUnavailable),
+                    };
+                    (
+                        ImageSourceKind::Embedded,
+                        Some(mime_type.to_string()),
+                        raw,
+                        reason,
+                    )
+                }
+                gltf::image::Source::Uri { uri, mime_type } => {
+                    if let Some(encoded) = uri.strip_prefix("data:") {
+                        let (mime_from_uri, raw, reason) =
+                            read_data_uri_image(encoded, mime_type, retain_raw);
+                        (
+                            ImageSourceKind::DataUri,
+                            mime_type.map(str::to_owned).or(mime_from_uri),
+                            raw,
+                            reason,
+                        )
+                    } else {
+                        let path = base.and_then(|base| {
+                            safe_external_buffer_path(uri)
+                                .ok()
+                                .map(|path| base.join(path))
+                        });
+                        let (raw, reason) = path
+                            .map_or((None, ImageUnavailableReason::SourceUnavailable), |path| {
+                                read_external_image(&path, mime_type, retain_raw)
+                            });
+                        (
+                            ImageSourceKind::External,
+                            mime_type.map(str::to_owned),
+                            raw,
+                            reason,
+                        )
+                    }
+                }
+            };
+            let (detected_container, inspection) =
+                inspect_source_image(raw.as_ref(), unavailable_reason);
+            LoadedSourceImage {
+                record: SourceImageAsset {
+                    image_index,
+                    name,
+                    source_kind,
+                    declared_mime_type,
+                    detected_container,
+                    inspection,
+                },
+                texture: if retain_raw { raw } else { None },
             }
+        })
+        .collect()
+}
+
+/// Images used by writer-facing material slots retain their full encoded
+/// payload, preserving the loader's established round-trip behavior. Other
+/// source rows need only a bounded payload long enough for inspection.
+fn writer_image_indices(doc: &gltf::Document) -> BTreeSet<usize> {
+    let mut images = BTreeSet::new();
+    for material in doc.materials() {
+        let pbr = material.pbr_metallic_roughness();
+        for texture in [
+            pbr.base_color_texture().map(|info| info.texture()),
+            material.normal_texture().map(|info| info.texture()),
+            pbr.metallic_roughness_texture().map(|info| info.texture()),
+            material.occlusion_texture().map(|info| info.texture()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            images.insert(texture.source().index());
         }
     }
+    images
+}
+
+/// Decode a glTF `data:` image URI without treating malformed URI input as a
+/// load error. The sidecar preserves the stable reason while the legacy
+/// writer slot remains absent, as it was before material-resource evidence.
+fn read_data_uri_image(
+    encoded: &str,
+    mime_type: Option<&str>,
+    retain_raw: bool,
+) -> (Option<String>, Option<TextureAsset>, ImageUnavailableReason) {
+    let Some((metadata, payload)) = encoded.split_once(',') else {
+        return (None, None, ImageUnavailableReason::InvalidDataUri);
+    };
+    if !metadata.ends_with(";base64") {
+        return (None, None, ImageUnavailableReason::InvalidDataUri);
+    }
+    let mime_from_uri = metadata
+        .strip_suffix(";base64")
+        .filter(|mime| !mime.is_empty())
+        .map(str::to_owned);
+    if !retain_raw && estimated_base64_decoded_len(payload.len()) > MAX_IMAGE_ENCODED_BYTES {
+        return (mime_from_uri, None, ImageUnavailableReason::ResourceLimit);
+    }
+    let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(payload) else {
+        return (mime_from_uri, None, ImageUnavailableReason::InvalidDataUri);
+    };
+    if !retain_raw && bytes.len() > MAX_IMAGE_ENCODED_BYTES {
+        return (mime_from_uri, None, ImageUnavailableReason::ResourceLimit);
+    }
+    let mime = mime_type
+        .map(str::to_owned)
+        .or_else(|| mime_from_uri.clone())
+        .unwrap_or_default();
+    (
+        mime_from_uri,
+        Some(TextureAsset { bytes, mime }),
+        ImageUnavailableReason::InvalidDataUri,
+    )
+}
+
+fn estimated_base64_decoded_len(encoded_len: usize) -> usize {
+    encoded_len.saturating_add(3) / 4 * 3
+}
+
+fn read_external_image(
+    path: &Path,
+    mime_type: Option<&str>,
+    retain_raw: bool,
+) -> (Option<TextureAsset>, ImageUnavailableReason) {
+    let bytes = if retain_raw {
+        std::fs::read(path).ok()
+    } else {
+        let file = std::fs::File::open(path).ok();
+        file.and_then(|file| {
+            let mut bytes = Vec::new();
+            file.take((MAX_IMAGE_ENCODED_BYTES + 1) as u64)
+                .read_to_end(&mut bytes)
+                .ok()
+                .map(|_| bytes)
+        })
+    };
+    let Some(bytes) = bytes else {
+        return (None, ImageUnavailableReason::SourceUnavailable);
+    };
+    if !retain_raw && bytes.len() > MAX_IMAGE_ENCODED_BYTES {
+        return (None, ImageUnavailableReason::ResourceLimit);
+    }
+    (
+        Some(TextureAsset {
+            bytes,
+            mime: mime_type.unwrap_or_default().to_owned(),
+        }),
+        ImageUnavailableReason::SourceUnavailable,
+    )
+}
+
+/// Extract one material's bindings in fixed semantic order. This is called
+/// from the single source-material walk that also keeps writer-facing slots.
+fn source_material_texture_bindings(
+    material: &gltf::Material<'_>,
+) -> Vec<SourceMaterialTextureBinding> {
+    let pbr = material.pbr_metallic_roughness();
+    let mut texture_bindings = Vec::with_capacity(4);
+    let mut push = |slot, texture: Option<gltf::Texture>| {
+        if let Some(texture) = texture {
+            texture_bindings.push(SourceMaterialTextureBinding {
+                slot,
+                texture_index: texture.index(),
+            });
+        }
+    };
+    push(
+        MaterialTextureSlot::BaseColor,
+        pbr.base_color_texture().map(|info| info.texture()),
+    );
+    push(
+        MaterialTextureSlot::Normal,
+        material.normal_texture().map(|info| info.texture()),
+    );
+    push(
+        MaterialTextureSlot::MetallicRoughness,
+        pbr.metallic_roughness_texture().map(|info| info.texture()),
+    );
+    push(
+        MaterialTextureSlot::Occlusion,
+        material.occlusion_texture().map(|info| info.texture()),
+    );
+    texture_bindings
+}
+
+/// Project texture definitions in source order, retaining unreferenced rows
+/// and their source image identity.
+fn extract_source_textures(doc: &gltf::Document) -> Vec<SourceTextureAsset> {
+    doc.textures()
+        .map(|texture| SourceTextureAsset {
+            texture_index: texture.index(),
+            name: texture.name().map(str::to_owned),
+            image_index: texture.source().index(),
+        })
+        .collect()
+}
+
+/// Inspect an image payload under strict encoded-size, dimension, and decoder
+/// allocation bounds. Inspection decodes only long enough to obtain metadata;
+/// the decoded image is immediately dropped and never becomes part of the
+/// core model.
+fn inspect_source_image(
+    texture: Option<&TextureAsset>,
+    unavailable_reason: ImageUnavailableReason,
+) -> (Option<ImageContainerFormat>, SourceImageInspection) {
+    let Some(texture) = texture else {
+        return (
+            None,
+            SourceImageInspection::Unavailable {
+                reason: unavailable_reason,
+            },
+        );
+    };
+    if texture.bytes.len() > MAX_IMAGE_ENCODED_BYTES {
+        return (
+            detect_container(&texture.bytes),
+            SourceImageInspection::Unavailable {
+                reason: ImageUnavailableReason::ResourceLimit,
+            },
+        );
+    }
+    let Some((format, detected_container)) = image_format(&texture.bytes) else {
+        return (
+            None,
+            SourceImageInspection::Unavailable {
+                reason: ImageUnavailableReason::UnsupportedContainer,
+            },
+        );
+    };
+    let mut reader = ImageReader::new(Cursor::new(&texture.bytes));
+    reader.set_format(format);
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(MAX_IMAGE_DIMENSION);
+    limits.max_image_height = Some(MAX_IMAGE_DIMENSION);
+    limits.max_alloc = Some(MAX_IMAGE_DECODE_ALLOC_BYTES);
+    reader.limits(limits);
+    match reader.decode() {
+        Ok(decoded) => {
+            let color_type = match decoded.color() {
+                ColorType::L8 => Some(DecodedImageColorType::L8),
+                ColorType::La8 => Some(DecodedImageColorType::La8),
+                ColorType::Rgb8 => Some(DecodedImageColorType::Rgb8),
+                ColorType::Rgba8 => Some(DecodedImageColorType::Rgba8),
+                ColorType::L16 => Some(DecodedImageColorType::L16),
+                ColorType::La16 => Some(DecodedImageColorType::La16),
+                ColorType::Rgb16 => Some(DecodedImageColorType::Rgb16),
+                ColorType::Rgba16 => Some(DecodedImageColorType::Rgba16),
+                _ => None,
+            };
+            let (width, height) = (decoded.width(), decoded.height());
+            match color_type {
+                Some(color_type) => (
+                    Some(detected_container),
+                    SourceImageInspection::Available {
+                        width,
+                        height,
+                        channel_count: decoded.color().channel_count(),
+                        color_type,
+                    },
+                ),
+                None => (
+                    Some(detected_container),
+                    SourceImageInspection::Unavailable {
+                        reason: ImageUnavailableReason::DecodeFailed,
+                    },
+                ),
+            }
+        }
+        Err(ImageError::Limits(_)) => (
+            Some(detected_container),
+            SourceImageInspection::Unavailable {
+                reason: ImageUnavailableReason::ResourceLimit,
+            },
+        ),
+        Err(_) => (
+            Some(detected_container),
+            SourceImageInspection::Unavailable {
+                reason: ImageUnavailableReason::DecodeFailed,
+            },
+        ),
+    }
+}
+
+/// Return the supported container format and its core vocabulary variant.
+fn image_format(bytes: &[u8]) -> Option<(ImageFormat, ImageContainerFormat)> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some((ImageFormat::Png, ImageContainerFormat::Png))
+    } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some((ImageFormat::Jpeg, ImageContainerFormat::Jpeg))
+    } else {
+        None
+    }
+}
+
+/// Detect only the container formats the bounded inspector supports.
+fn detect_container(bytes: &[u8]) -> Option<ImageContainerFormat> {
+    image_format(bytes).map(|(_, container)| container)
 }

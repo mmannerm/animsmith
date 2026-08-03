@@ -190,6 +190,7 @@ fn supported_document() -> Document {
                     occlusion_texture: None,
                 },
             ],
+            material_resources: Default::default(),
             scenes: vec![SceneAsset {
                 source_scene_index: 0,
                 name: Some("source".into()),
