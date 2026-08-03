@@ -86,7 +86,7 @@ animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hol
 animsmith fix     <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
 animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb> [--material-texture-recipe recipe.toml] [--animation-only|--bake-static-mesh-transforms] [--format text|json]
 animsmith assemble <recipe.toml> -o <out.glb> --evidence <out.json>
-animsmith diff    <A> <B> [--format text|json]     # A/B: assets or single-file v2 measure/lint JSON
+animsmith diff    <A> <B> [--format text|json]     # A/B: assets or single-file v3 measure/lint JSON
 ```
 
 - `lint` = measure + judge against config. `measure` is lint minus
@@ -427,8 +427,8 @@ learns an embedder's contract schema.
 
 - **Text** (default): findings grouped per clip, measured-vs-expected on
   one line, colored; `--quiet` for CI summaries.
-- **JSON** (`--format json`): final output v2, identified by
-  `urn:animsmith:schema:output:2`. Lint emits one result per catalog check and
+- **JSON** (`--format json`): final output v3, identified by
+  `urn:animsmith:schema:output:3`. Lint emits one result per catalog check and
   represents selection, configuration, applicability, evaluation coverage,
   content findings, completed scopes, and typed gaps independently. Measure
   and lint share a nested, independently versioned measurement contract. The
@@ -447,7 +447,7 @@ learns an embedder's contract schema.
   the current CLI emits v2 exclusively.
   CLI exit status derives only from content severity (warnings block only
   with `--deny-warnings`); coverage gaps are nonblocking evidence.
-  The output-v2 envelope types and immutable identities live in
+  The output-v3 envelope types and immutable identities live in
   `animsmith-core` so CLI and embedded producers serialize the same reporting
   contract. Static-bake evidence is also a public core type; the conversion
   envelope remains a CLI producer contract.
@@ -627,7 +627,7 @@ sufficient for a real bake pipeline.
 
 ## Appendix C — result-contract ownership decisions
 
-These decisions record result-contract ownership after output v2 finalization:
+These decisions record result-contract ownership after output v3 finalization:
 
 1. **The versioned envelope belongs to `animsmith-core`, not the CLI binary.**
    The CLI still supplies its build identity and frontend policy, but
@@ -641,7 +641,7 @@ These decisions record result-contract ownership after output v2 finalization:
    embedded result and the record consumed by text, Markdown, and HTML
    presentations. Keeping it self-describing avoids a second wire-only finding
    projection and supports extracting findings without retaining their parent
-   check record. Output v2 therefore accepts the small nested redundancy, and
+   check record. Output v3 therefore accepts the small nested redundancy, and
    `evaluate_checks` rejects a child id that disagrees with its parent rather
    than serializing ambiguous ownership.
 

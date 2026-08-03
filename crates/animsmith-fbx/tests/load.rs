@@ -1,6 +1,7 @@
 use animsmith_core::glam::{Mat4, Vec3};
 use animsmith_core::measure::measure_assets;
 use animsmith_core::model::Property;
+use animsmith_core::{Document, TrackValues};
 use std::path::PathBuf;
 
 /// A valid 1x1 PNG used as an externally referenced FBX normal map.
@@ -47,6 +48,48 @@ enum NormalImage {
 
 fn fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/rigged_triangle.fbx")
+}
+
+fn assert_same_loaded_shape(left: &Document, right: &Document) {
+    assert_eq!(left.source.path, right.source.path);
+    assert_eq!(left.source.format, right.source.format);
+    assert_eq!(left.skeleton.bones.len(), right.skeleton.bones.len());
+    for (left, right) in left.skeleton.bones.iter().zip(&right.skeleton.bones) {
+        assert_eq!(left.name, right.name);
+        assert_eq!(left.parent, right.parent);
+        assert_eq!(left.rest, right.rest);
+        assert_eq!(left.inverse_bind, right.inverse_bind);
+    }
+    assert_eq!(left.clips.len(), right.clips.len());
+    for (left, right) in left.clips.iter().zip(&right.clips) {
+        assert_eq!(left.name, right.name);
+        assert_eq!(left.duration_s, right.duration_s);
+        assert_eq!(left.tracks.len(), right.tracks.len());
+        for (left, right) in left.tracks.iter().zip(&right.tracks) {
+            assert_eq!(left.bone, right.bone);
+            assert_eq!(left.property, right.property);
+            assert_eq!(left.interpolation, right.interpolation);
+            assert_eq!(left.times, right.times);
+            match (&left.values, &right.values) {
+                (TrackValues::Vec3s(left), TrackValues::Vec3s(right)) => {
+                    assert_eq!(left, right);
+                }
+                (TrackValues::Quats(left), TrackValues::Quats(right)) => {
+                    assert_eq!(left, right);
+                }
+                _ => panic!("track value kinds differ"),
+            }
+        }
+    }
+    assert_eq!(left.assets.meshes.len(), right.assets.meshes.len());
+    assert_eq!(left.assets.instances.len(), right.assets.instances.len());
+    assert_eq!(left.assets.materials.len(), right.assets.materials.len());
+    assert_eq!(
+        left.assets.material_resources.textures.len(),
+        right.assets.material_resources.textures.len()
+    );
+    assert_eq!(left.assets.scenes.len(), right.assets.scenes.len());
+    assert_eq!(left.assets.default_scene, right.assets.default_scene);
 }
 
 fn assert_vec3_near(got: Vec3, want: Vec3) {
@@ -117,8 +160,35 @@ fn loads_self_authored_rigged_triangle_fixture() {
     assert_eq!(doc.assets.materials.len(), 0);
 }
 
-fn load_normal_material(image: NormalImage) -> animsmith_core::Document {
+#[test]
+fn load_path_and_captured_bytes_are_equivalent() {
+    let path = fixture();
+    let bytes = std::fs::read(&path).expect("capture fixture");
+
+    let from_path = animsmith_fbx::load(&path).expect("fixture loads by path");
+    let from_bytes = animsmith_fbx::load_bytes(&path, &bytes).expect("fixture loads by bytes");
+
+    assert_same_loaded_shape(&from_path, &from_bytes);
+}
+
+#[test]
+fn captured_bytes_survive_primary_path_removal() {
     let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("captured.fbx");
+    let bytes = std::fs::read(fixture()).expect("capture fixture");
+    std::fs::write(&path, &bytes).expect("write primary input");
+    std::fs::remove_file(&path).expect("remove primary input after capture");
+
+    let doc = animsmith_fbx::load_bytes(&path, &bytes).expect("captured bytes still load");
+
+    assert_eq!(
+        doc.source.path.as_deref(),
+        Some(path.to_str().expect("UTF-8 path"))
+    );
+    assert_eq!(doc.clips[0].name, "take");
+}
+
+fn write_normal_material(dir: &tempfile::TempDir, image: NormalImage) -> PathBuf {
     let source_dir = dir.path().join("scene");
     std::fs::create_dir(&source_dir).expect("create source directory");
     let source = std::fs::read_to_string(fixture())
@@ -189,6 +259,12 @@ Connections: {{"#
         }
     }
 
+    path
+}
+
+fn load_normal_material(image: NormalImage) -> animsmith_core::Document {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = write_normal_material(&dir, image);
     animsmith_fbx::load(&path).expect("normal-map FBX loads")
 }
 
@@ -207,6 +283,18 @@ fn assert_normal_texture(doc: &animsmith_core::Document) {
 #[test]
 fn loads_linked_fbx_normal_texture() {
     assert_normal_texture(&load_normal_material(NormalImage::Linked(TINY_PNG)));
+}
+
+#[test]
+fn byte_loader_resolves_external_texture_relative_to_supplied_path() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = write_normal_material(&dir, NormalImage::Linked(TINY_PNG));
+    let bytes = std::fs::read(&path).expect("capture FBX");
+    std::fs::remove_file(&path).expect("remove primary input after capture");
+
+    let doc = animsmith_fbx::load_bytes(&path, &bytes).expect("captured FBX loads");
+
+    assert_normal_texture(&doc);
 }
 
 #[test]

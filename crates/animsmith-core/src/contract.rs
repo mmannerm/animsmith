@@ -7,6 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::diff::MetricDelta;
 use crate::evaluation::{
@@ -25,9 +26,9 @@ use crate::profile::ResolvedRoles;
 use crate::{Document, Severity};
 
 /// Current outer result-envelope version.
-pub const OUTPUT_SCHEMA_VERSION: u32 = 2;
+pub const OUTPUT_SCHEMA_VERSION: u32 = 3;
 /// Immutable identity of the current outer result envelope.
-pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:2";
+pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:3";
 /// Current nested measurement-contract version.
 pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 8;
 /// Immutable identity of the current nested measurement contract.
@@ -46,7 +47,7 @@ impl ToolSource {
     /// Packaged or otherwise provenance-free builds use `None` for fields they
     /// cannot establish rather than claiming a clean checkout. Revisions that
     /// are not full 40-character hexadecimal Git object ids are dropped so an
-    /// envelope constructed through this API remains within output v2.
+    /// envelope constructed through this API remains within output v3.
     pub fn new(revision: Option<String>, dirty: Option<bool>) -> Self {
         let revision = revision.filter(|revision| {
             revision.len() == 40 && revision.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -72,6 +73,36 @@ impl ToolInfo {
             version: env!("CARGO_PKG_VERSION"),
             source,
         }
+    }
+}
+
+/// Immutable identity of the bytes used to produce one file report.
+///
+/// The digest is lowercase hexadecimal SHA-256 so consumers can compare
+/// identities without retaining the source bytes themselves.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct InputIdentity {
+    sha256: String,
+    bytes: u64,
+}
+
+impl InputIdentity {
+    /// Calculate the identity for source bytes.
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        Self {
+            sha256: format!("{:x}", Sha256::digest(bytes)),
+            bytes: bytes.len() as u64,
+        }
+    }
+
+    /// Lowercase hexadecimal SHA-256 digest of the source bytes.
+    pub fn sha256(&self) -> &str {
+        &self.sha256
+    }
+
+    /// Number of source bytes represented by this identity.
+    pub fn bytes(&self) -> u64 {
+        self.bytes
     }
 }
 
@@ -1186,7 +1217,14 @@ pub struct MeasurementReportInput {
 #[derive(Debug, Deserialize)]
 struct MeasurementFileInput {
     path: Option<String>,
+    input: Option<InputIdentityInput>,
     measurements: Option<MeasurementPayloadInput>,
+}
+
+#[derive(Debug, Deserialize)]
+struct InputIdentityInput {
+    sha256: Option<String>,
+    bytes: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1215,6 +1253,7 @@ struct MeasurementPayloadInput {
 #[derive(Debug, Clone)]
 pub struct MeasurementReportFile {
     path: String,
+    input: InputIdentity,
     measurements: MeasurementContract,
 }
 
@@ -1222,6 +1261,11 @@ impl MeasurementReportFile {
     /// Source path recorded by the producing report.
     pub fn path(&self) -> &str {
         &self.path
+    }
+
+    /// Immutable identity of the source bytes used to produce this record.
+    pub fn input(&self) -> &InputIdentity {
+        &self.input
     }
 
     /// Validated nested measurement contract.
@@ -1248,7 +1292,7 @@ pub enum MeasurementReportError {
         /// Version found in the input.
         found: u32,
     },
-    /// The outer envelope does not carry the immutable v2 identity.
+    /// The outer envelope does not carry the immutable current identity.
     #[error("report envelope does not identify output contract {OUTPUT_SCHEMA_ID}")]
     WrongOutputIdentity,
     /// The outer envelope omitted its command.
@@ -1281,6 +1325,18 @@ pub enum MeasurementFileError {
     /// The file record omitted its source path.
     #[error("has no `path`")]
     MissingPath,
+    /// The file record omitted its source-byte identity.
+    #[error("has no `input`")]
+    MissingInput,
+    /// The source-byte identity omitted its SHA-256 digest.
+    #[error("input has no `sha256`")]
+    MissingSha256,
+    /// The source-byte identity uses a malformed SHA-256 digest.
+    #[error("input `sha256` must be 64 lowercase hexadecimal characters")]
+    InvalidSha256,
+    /// The source-byte identity omitted its byte count.
+    #[error("input has no `bytes`")]
+    MissingBytes,
     /// The file record omitted its nested measurement contract.
     #[error("has no measurements")]
     MissingMeasurements,
@@ -1404,6 +1460,25 @@ impl MeasurementReportInput {
                 let path = file.path.ok_or_else(|| {
                     MeasurementReportError::file(file_index, MeasurementFileError::MissingPath)
                 })?;
+                let input = file.input.ok_or_else(|| {
+                    MeasurementReportError::file(file_index, MeasurementFileError::MissingInput)
+                })?;
+                let sha256 = input.sha256.ok_or_else(|| {
+                    MeasurementReportError::file(file_index, MeasurementFileError::MissingSha256)
+                })?;
+                if sha256.len() != 64
+                    || !sha256
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+                {
+                    return Err(MeasurementReportError::file(
+                        file_index,
+                        MeasurementFileError::InvalidSha256,
+                    ));
+                }
+                let bytes = input.bytes.ok_or_else(|| {
+                    MeasurementReportError::file(file_index, MeasurementFileError::MissingBytes)
+                })?;
                 let measurements = file.measurements.ok_or_else(|| {
                     MeasurementReportError::file(
                         file_index,
@@ -1503,7 +1578,11 @@ impl MeasurementReportInput {
                         MeasurementFileError::InvalidMeasurements { source },
                     )
                 })?;
-                Ok(MeasurementReportFile { path, measurements })
+                Ok(MeasurementReportFile {
+                    path,
+                    input: InputIdentity { sha256, bytes },
+                    measurements,
+                })
             })
             .collect()
     }
@@ -1526,6 +1605,10 @@ mod measurement_report_input_tests {
              mesh_definitions: Vec<crate::measure::MeshDefinitionMeasurements>| {
                 MeasurementFileInput {
                     path: Some(path.into()),
+                    input: Some(InputIdentityInput {
+                        sha256: Some("0".repeat(64)),
+                        bytes: Some(0),
+                    }),
                     measurements: Some(MeasurementPayloadInput {
                         schema_version: Some(MEASUREMENTS_SCHEMA_VERSION),
                         schema: Some(MEASUREMENTS_SCHEMA_ID.into()),
@@ -1659,14 +1742,21 @@ mod measurement_report_input_tests {
 #[derive(Debug, Clone, Serialize)]
 struct FileEvidence {
     path: String,
+    input: InputIdentity,
     rig: RigInfo,
     measurements: MeasurementContract,
 }
 
 impl FileEvidence {
-    fn new(path: impl Into<String>, rig: RigInfo, measurements: MeasurementContract) -> Self {
+    fn new(
+        path: impl Into<String>,
+        input: InputIdentity,
+        rig: RigInfo,
+        measurements: MeasurementContract,
+    ) -> Self {
         Self {
             path: path.into(),
+            input,
             rig,
             measurements,
         }
@@ -1682,15 +1772,25 @@ pub struct MeasureFileReport {
 
 impl MeasureFileReport {
     /// Construct a measurement-command file report.
-    pub fn new(path: impl Into<String>, rig: RigInfo, measurements: MeasurementContract) -> Self {
+    pub fn new(
+        path: impl Into<String>,
+        input: InputIdentity,
+        rig: RigInfo,
+        measurements: MeasurementContract,
+    ) -> Self {
         Self {
-            evidence: FileEvidence::new(path, rig, measurements),
+            evidence: FileEvidence::new(path, input, rig, measurements),
         }
     }
 
     /// Display path supplied by the producer.
     pub fn path(&self) -> &str {
         &self.evidence.path
+    }
+
+    /// Immutable identity of the source bytes used to produce this record.
+    pub fn input(&self) -> &InputIdentity {
+        &self.evidence.input
     }
 
     /// Nested measurement evidence.
@@ -1711,12 +1811,13 @@ impl LintFileReport {
     /// Construct a lint file report with one record per catalog check.
     pub fn new(
         path: impl Into<String>,
+        input: InputIdentity,
         rig: RigInfo,
         checks: Vec<CheckEvaluation>,
         measurements: MeasurementContract,
     ) -> Self {
         Self {
-            evidence: FileEvidence::new(path, rig, measurements),
+            evidence: FileEvidence::new(path, input, rig, measurements),
             checks,
         }
     }
@@ -1724,6 +1825,11 @@ impl LintFileReport {
     /// Display path supplied by the producer.
     pub fn path(&self) -> &str {
         &self.evidence.path
+    }
+
+    /// Immutable identity of the source bytes used to produce this record.
+    pub fn input(&self) -> &InputIdentity {
+        &self.evidence.input
     }
 
     /// Check records in catalog order.

@@ -32,7 +32,8 @@ check_schema() {
   done
 }
 
-check_schema docs/schemas/output-v2.schema.json urn:animsmith:schema:output:2 crates/animsmith-core/src/contract.rs docs/output.md
+check_schema docs/schemas/output-v2.schema.json urn:animsmith:schema:output:2
+check_schema docs/schemas/output-v3.schema.json urn:animsmith:schema:output:3 crates/animsmith-core/src/contract.rs docs/output.md
 check_schema docs/schemas/measurements-v8.schema.json urn:animsmith:schema:measurements:8 crates/animsmith-core/src/contract.rs docs/output.md
 check_schema docs/schemas/conversion-evidence-v1.schema.json urn:animsmith:schema:conversion-evidence:1 docs/output.md
 check_schema docs/schemas/conversion-evidence-v2.schema.json urn:animsmith:schema:conversion-evidence:2 docs/output.md docs/cli.md
@@ -45,9 +46,8 @@ for removed_schema in \
   fi
 done
 
-# Cutover-only #204 guard: scan every tracked file until output v2 has its first
-# public release, then remove this name tombstone. Behavioural tests separately
-# prove that old report inputs are rejected.
+# Legacy API/name tombstone retained from the output-v2 cutover. Behavioural
+# tests separately prove that non-current report inputs are rejected.
 legacy=$(git grep -nE \
   'JsonV2Preview|json-v2-preview|run_checks|as_diagnostic|legacy_diagnostic|enum Readiness|Finding::diagnostic|output-v2-preview|presentation_findings|assert_required_properties|CheckOutput::complete|CheckOutput::partial|CheckOutput::not_evaluated|CheckOutput::complete_scoped' \
   -- ':!scripts/check-schema-id.sh' || true)
@@ -202,7 +202,7 @@ legacy_candidate_pattern='"schema_version"'
 
 # Pin the scanner against a normal outer envelope whose schema/tool fields sit
 # between its version and command. Also prove that current nested measurements in a
-# current output-v2 envelope are not mistaken for an outer legacy contract.
+# current output-v3 envelope are not mistaken for an outer legacy contract.
 legacy_scanner_regression=$(
   printf '%s\n' \
     '{' \

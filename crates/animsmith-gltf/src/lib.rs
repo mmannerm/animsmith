@@ -1,4 +1,4 @@
-//! [`load`] reads `.gltf`/`.glb` files into an
+//! [`load`] and [`load_bytes`] read `.gltf`/`.glb` input into an
 //! [`animsmith_core::Document`], [`write::write`] emits a document as
 //! glTF/GLB, and the [`fix`] module provides byte-surgical quaternion
 //! repairs. Malformed inputs report [`LoadError`]; output failures
@@ -373,19 +373,34 @@ fn validate_track_lengths(
 /// animation channels, or node graphs that cannot be represented as a
 /// skeleton forest.
 pub fn load(path: &Path) -> Result<Document, LoadError> {
-    // Read the whole file, then parse from the slice rather than via
-    // `Gltf::open`: the reader path (`Glb::from_reader`) trusts the GLB
-    // header's declared length and pre-allocates `vec![0; declared_len]`
-    // before reading a byte, so a spoofed length OOMs on tiny input. The
-    // slice path validates the declared length against the bytes actually
-    // present, keeping malformed containers within invariant-1 (LoadError,
-    // never an unbounded allocation). This mirrors what `fix` already does.
     let bytes = std::fs::read(path).map_err(|source| LoadError::Io {
         path: path.display().to_string(),
         source,
     })?;
-    validate_glb_framing(&bytes)?;
-    let gltf = gltf::Gltf::from_slice(&bytes)?;
+    load_bytes(path, &bytes)
+}
+
+/// Load a `.glb` or `.gltf` byte slice into a core [`Document`].
+///
+/// `bytes` supplies the top-level container exactly as captured by the
+/// caller. `path` is retained for source provenance, diagnostics, and
+/// resolving external buffers and images relative to its parent directory.
+///
+/// # Errors
+///
+/// Returns [`LoadError`] for unsafe or missing external buffers, malformed
+/// GLB framing, parser rejection, structurally invalid animation channels,
+/// or node graphs that cannot be represented as a skeleton forest.
+pub fn load_bytes(path: &Path, bytes: &[u8]) -> Result<Document, LoadError> {
+    // Parse from the supplied slice rather than via `Gltf::open`: the reader
+    // path (`Glb::from_reader`) trusts the GLB header's declared length and
+    // pre-allocates `vec![0; declared_len]` before reading a byte, so a
+    // spoofed length OOMs on tiny input. The slice path validates the declared
+    // length against the bytes actually present, keeping malformed containers
+    // within invariant-1 (LoadError, never an unbounded allocation). This
+    // mirrors what `fix` already does.
+    validate_glb_framing(bytes)?;
+    let gltf = gltf::Gltf::from_slice(bytes)?;
     validate_animation_channels(gltf.document.as_json())?;
     let buffers = resolve_buffers(&gltf, path.parent())?;
     // Derive the node topology once and share it: the skeleton build and

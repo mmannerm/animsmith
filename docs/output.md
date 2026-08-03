@@ -7,9 +7,9 @@ future machine serializers should project the JSON contract.
 
 ## Contract identities
 
-Validation and comparison JSON commands emit output contract v2 with the immutable protocol
-identity `urn:animsmith:schema:output:2`. The retrievable schema is
-[`output-v2.schema.json`](schemas/output-v2.schema.json); its repository URL
+Validation and comparison JSON commands emit output contract v3 with the immutable protocol
+identity `urn:animsmith:schema:output:3`. The retrievable schema is
+[`output-v3.schema.json`](schemas/output-v3.schema.json); its repository URL
 is a retrieval location, not the protocol identity.
 
 Measurement evidence is nested and independently versioned as
@@ -20,7 +20,7 @@ measurement-definition change can therefore bump that contract without
 redesigning the outer result envelope.
 
 `convert --format json` is deliberately a separate conversion-evidence
-contract, not another command in the output-v2 envelope. Its immutable
+contract, not another command in the output-v3 envelope. Its immutable
 identity is `urn:animsmith:schema:conversion-evidence:2`; its retrievable
 schema is
 [`conversion-evidence-v2.schema.json`](schemas/conversion-evidence-v2.schema.json).
@@ -38,16 +38,17 @@ Conversion evidence v1 remains a historical immutable contract at
 `urn:animsmith:schema:conversion-evidence:1`. The current CLI emits v2
 exclusively; regenerate v1 evidence when a v2 consumer is required.
 
-The project is alpha, so the final v2 cutover intentionally does not read or
-emit earlier v1 or preview reports. Regenerate old reports with the current
-`animsmith measure --format json` before passing them to `diff`.
+[`Output-v2`](schemas/output-v2.schema.json) remains a historical immutable
+contract. The current CLI emits and
+`diff` reads output-v3; regenerate a v2 report with the current
+`animsmith measure --format json` before passing it to `diff`.
 
 ## Common envelope
 
 ```json
 {
-  "schema_version": 2,
-  "schema": "urn:animsmith:schema:output:2",
+  "schema_version": 3,
+  "schema": "urn:animsmith:schema:output:3",
   "tool": {
     "name": "animsmith",
     "version": "0.1.0",
@@ -67,6 +68,18 @@ dirty state are separate fields so automation never has to parse a decorated
 version string. Packaged source records its Cargo VCS revision and leaves
 `dirty` as `null`; builds without trustworthy VCS metadata may leave both
 fields `null`.
+
+Every `measure` and `lint` file record also includes `input`, with the exact
+primary-file byte count and lowercase SHA-256 digest of the bytes parsed for
+that row. Retain this identity with the JSON evidence when a pipeline promotes
+or publishes an asset: it proves which primary payload the recorded result
+describes. For multi-file invocations, rows stay in argument order and each
+has its own independently calculated identity.
+
+The identity covers only the named primary input file. In particular, for a
+text `.gltf`, external buffers and images loaded beside it are not included in
+the digest or byte count. Pipelines that need complete dependency provenance
+must retain and identify those resources separately.
 
 Operator failures do not emit a JSON envelope. They exit 2, write a diagnostic
 to stderr, and leave stdout empty. Content findings exit 1 at the configured
@@ -488,13 +501,13 @@ the same numeric value to a conforming adapter.
 
 ## `diff`
 
-`diff --format json` uses the same output v2 header and emits `inputs`, a
+`diff --format json` uses the same output v3 header and emits `inputs`, a
 delta count, and structured metric deltas:
 
 ```json
 {
-  "schema_version": 2,
-  "schema": "urn:animsmith:schema:output:2",
+  "schema_version": 3,
+  "schema": "urn:animsmith:schema:output:3",
   "tool": {
     "name": "animsmith",
     "version": "0.1.0",
@@ -509,7 +522,7 @@ delta count, and structured metric deltas:
 }
 ```
 
-`diff` accepts asset files or one-file v2 `measure`/`lint` reports carrying
+`diff` accepts asset files or one-file v3 `measure`/`lint` reports carrying
 measurement contract v8. Multi-file reports and unsupported contract versions
 are rejected as operator errors. Before extracting the clip metrics it uses,
 `diff` validates the complete measurement record, including mesh evidence, and

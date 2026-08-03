@@ -9,15 +9,19 @@ use animsmith_core::config::{ClipExpectations, Pinned};
 use animsmith_core::measure::measure_document;
 use animsmith_core::profile::{ResolvedRoles, Role, detect_profile};
 use animsmith_core::{
-    CheckCtx, CheckSelection, Config, LintEnvelope, LintFileReport, MeasurementContract,
-    MetricGrids, RigInfo, Severity, ToolInfo, ToolSource, all_checks, evaluate_checks,
+    CheckCtx, CheckSelection, Config, InputIdentity, LintEnvelope, LintFileReport,
+    MeasurementContract, MetricGrids, RigInfo, Severity, ToolInfo, ToolSource, all_checks,
+    evaluate_checks,
 };
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Load: values arrive exactly as authored.
+    // 1. Read and load: retain primary-file bytes so reported identity covers
+    // the exact payload this embedding judged.
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/rig.gltf");
-    let doc = animsmith_gltf::load(&path)?;
+    let bytes = std::fs::read(&path)?;
+    let input = InputIdentity::from_bytes(&bytes);
+    let doc = animsmith_gltf::load_bytes(&path, &bytes)?;
     println!(
         "loaded {} bones, {} clip(s)",
         doc.skeleton.bones.len(),
@@ -111,6 +115,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ToolInfo::animsmith(ToolSource::new(None, None)),
         vec![LintFileReport::new(
             path.display().to_string(),
+            input,
             RigInfo::from_resolved(&doc, &roles)?,
             evaluations,
             MeasurementContract::new(measurements, animsmith_core::measure::measure_assets(&doc))?,

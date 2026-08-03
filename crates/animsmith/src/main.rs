@@ -19,13 +19,13 @@
 
 #![warn(missing_docs)]
 
-use animsmith_core::Document;
 use animsmith_core::{
     CheckCtx, CheckSelection, Config, DiffEnvelope, LintEnvelope, LintFileReport, MeasureEnvelope,
     MeasureFileReport, MeasurementContract, MeasurementFileError, MeasurementReportError,
     MeasurementReportInput, MetricGrids, RigInfo, Severity, ToolInfo, ToolSource, all_checks,
     evaluate_checks, resolve_configured_roles,
 };
+use animsmith_core::{Document, InputIdentity};
 use animsmith_gltf::fix::Repair;
 use clap::builder::{PossibleValue, PossibleValuesParser, TypedValueParser};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -210,9 +210,9 @@ enum Cmd {
         long_about = "Compare the measurements of two inputs (asset files or prior single-file `measure` or `lint` JSON) and report movement beyond significance thresholds. Exits 1 on significant movement."
     )]
     Diff {
-        /// Before input: asset file or single-file v2 `measure`/`lint` JSON report.
+        /// Before input: asset file or single-file v3 `measure`/`lint` JSON report.
         a: PathBuf,
-        /// After input: asset file or single-file v2 `measure`/`lint` JSON report.
+        /// After input: asset file or single-file v3 `measure`/`lint` JSON report.
         b: PathBuf,
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
@@ -416,11 +416,12 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             require_files(&files)?;
             let mut reports = Vec::new();
             for file in &files {
-                let doc = load(file)?;
+                let (doc, input) = load_with_identity(file)?;
                 let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
                 let grids = MetricGrids::new(&doc);
                 reports.push(MeasureFileReport::new(
                     file.display().to_string(),
+                    input,
                     RigInfo::from_resolved(&doc, &roles).map_err(|error| error.to_string())?,
                     MeasurementContract::new(
                         animsmith_core::measure::measure_document(&grids, &roles, &config),
@@ -468,7 +469,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let mut reports = Vec::new();
             let mut worst = Severity::Note;
             for file in &files {
-                let doc = load(file)?;
+                let (doc, input) = load_with_identity(file)?;
                 let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
                 let grids = MetricGrids::new(&doc);
                 let ctx = CheckCtx::new(&grids, &roles, &config);
@@ -483,6 +484,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 }
                 reports.push(LintFileReport::new(
                     file.display().to_string(),
+                    input,
                     RigInfo::from_resolved(&doc, &roles).map_err(|error| error.to_string())?,
                     evaluations,
                     MeasurementContract::new(
@@ -844,7 +846,7 @@ fn load_measurements(
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         let report: MeasurementReportInput = serde_json::from_str(&text)
             .map_err(|e| format!("bad JSON in {}: {e}", path.display()))?;
-        // Only the current output-v2 envelope with measurement contract v7 is
+        // Only the current output-v3 envelope with measurement contract v8 is
         // accepted. Older report shapes are intentionally not retained while
         // the project is alpha.
         let file_count = report.file_count();
@@ -935,16 +937,27 @@ fn require_files(files: &[PathBuf]) -> Result<(), String> {
     }
 }
 
-fn load(path: &Path) -> Result<Document, String> {
+#[derive(Clone, Copy)]
+enum InputFormat {
+    Gltf,
+    #[cfg(feature = "fbx")]
+    Fbx,
+}
+
+fn input_format(path: &Path) -> Result<InputFormat, String> {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
         .map(str::to_ascii_lowercase)
         .unwrap_or_default();
     match ext.as_str() {
-        "glb" | "gltf" => animsmith_gltf::load(path).map_err(|e| e.to_string()),
+        "glb" | "gltf" => Ok(InputFormat::Gltf),
         #[cfg(feature = "fbx")]
-        "fbx" => animsmith_fbx::load(path).map_err(|e| e.to_string()),
+        "fbx" => {
+            path.to_str()
+                .ok_or_else(|| format!("path is not valid UTF-8: {}", path.display()))?;
+            Ok(InputFormat::Fbx)
+        }
         #[cfg(not(feature = "fbx"))]
         "fbx" => Err(format!(
             "{}: this animsmith build has no FBX support (rebuild with the default `fbx` feature)",
@@ -955,6 +968,43 @@ fn load(path: &Path) -> Result<Document, String> {
             path.display()
         )),
     }
+}
+
+fn capture_input(path: &Path) -> Result<(InputFormat, Vec<u8>), String> {
+    let format = input_format(path)?;
+    let bytes = std::fs::read(path).map_err(|error| match format {
+        InputFormat::Gltf => format!("failed to read {}: {error}", path.display()),
+        #[cfg(feature = "fbx")]
+        InputFormat::Fbx => format!("FBX parse error: {error}"),
+    })?;
+    Ok((format, bytes))
+}
+
+fn load_bytes(path: &Path, format: InputFormat, bytes: &[u8]) -> Result<Document, String> {
+    match format {
+        InputFormat::Gltf => {
+            animsmith_gltf::load_bytes(path, bytes).map_err(|error| error.to_string())
+        }
+        #[cfg(feature = "fbx")]
+        InputFormat::Fbx => {
+            animsmith_fbx::load_bytes(path, bytes).map_err(|error| error.to_string())
+        }
+    }
+}
+
+fn load(path: &Path) -> Result<Document, String> {
+    let (format, bytes) = capture_input(path)?;
+    load_bytes(path, format, &bytes)
+}
+
+/// Read one primary input once, derive its retained-evidence identity from
+/// those exact bytes, and parse that same byte slice. This deliberately does
+/// not identify a reopened path: a report must describe the bytes judged.
+fn load_with_identity(path: &Path) -> Result<(Document, InputIdentity), String> {
+    let (format, bytes) = capture_input(path)?;
+    let input = InputIdentity::from_bytes(&bytes);
+    let doc = load_bytes(path, format, &bytes)?;
+    Ok((doc, input))
 }
 
 #[cfg(test)]
