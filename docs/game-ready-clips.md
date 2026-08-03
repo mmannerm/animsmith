@@ -73,9 +73,9 @@ plainly what it did not evaluate — not to stamp the whole ladder.
 
 2. **Clip-ready** — the clip honors what you declared about it: loop
    closure, duration and frame grid, in-place vs root-motion policy,
-   required bone motion, bind-pose consistency. Strong, config-backed
+   required bone motion, structural rig presence, bind-pose consistency. Strong, config-backed
    coverage where a check exists: `fps`, `loop-seam`, `in-place`,
-   `root-motion-speed`, `foot-slide`, `missing-bones`, `frozen-bone`,
+   `root-motion-speed`, `foot-slide`, `missing-bones`, `required-bones`, `frozen-bone`,
    and `bind-pose` judge exactly the expectations you declare — and
    the checks that need rig roles report a typed coverage gap instead
    of guessing when a role cannot be resolved. One member is heuristic:
@@ -90,9 +90,9 @@ plainly what it did not evaluate — not to stamp the whole ladder.
    compatibility beyond the implemented checks is yours to review.
 
 4. **Rig and use prerequisites** — which bones play which roles on
-   the target rig, which bones a clip must animate, and what each
+   the target rig, which bones must exist, which bones a clip must animate, and what each
    clip is for. A shared boundary: you supply the meaning (a rig
-   profile or `[rig.roles]`, `animates_bones`, per-clip
+   profile or `[rig.roles]`, `[rig] required_bones`, `animates_bones`, per-clip
    expectations), and animsmith resolves roles against the skeleton,
    checks the declarations, and reports the resolved roles it used.
    Nothing at this level can be inferred from the file alone.
@@ -407,7 +407,18 @@ defaults, and is judged only on clips that declare `speed_mps`.
 
 ## A limb is T-posed, or a bone never moves
 
-Three related rig-integrity failures, in increasing subtlety:
+Four related rig-integrity failures, in increasing subtlety:
+
+- **A structural rig bone is absent or ambiguous.** Runtime sockets, IK
+  targets, mask bones, and attachment points can be intentionally static, so
+  they do not belong in a per-clip motion rule. Put their exact names in
+  `[rig] required_bones = ["weapon_socket", "ik_hand_l"]`.
+  `required-bones` passes a present static bone, errors for a missing name,
+  and refuses to guess if duplicate skeleton names make the declaration
+  ambiguous. It also reports an empty or absent skeleton as unable to meet a
+  nonempty structural contract. This check does not create bones, rename an
+  export, retarget a rig, or validate engine-side socket use: repair the source
+  rig in the DCC and re-export.
 
 - **A declared bone is missing entirely.** Bones the clip is declared
   to animate (via `animates_bones` in the config) must exist in the
@@ -530,6 +541,7 @@ scale repair.
 | Glides or runs in place | `in-place`, `root-motion-speed` | re-export; `measure` for ground truth | `[clips.<name>] in_place`, `speed_mps` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Feet skate across blends | `gait-group` | `transform --gait-anchor` | `[gait_groups.<name>]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Feet slide within a clip | `foot-slide` | re-author in DCC | `[clips.<name>] speed_mps` | [Contract config](../examples/README.md#4-a-project-contract-config) |
+| Missing runtime socket or IK target | `required-bones` | repair source rig / re-export | `[rig] required_bones` | [Structural rig contract](../examples/README.md#keeping-the-exported-rig-shape-stable) |
 | T-posed limb, static bone, wrong bind | `missing-bones`, `frozen-bone`, `bind-pose` | re-export | `[clips.<name>] animates_bones`, `[rig]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Bloat, retargeter breakage | `constant-track`, `scale-keys`, `non-uniform-scale`, opt-in `constant-nonunit-scale` | re-export with baked/clean channels | `[checks.<id>]` severity | [First gate](../examples/README.md#1-a-first-cli-gate) |
 

@@ -425,6 +425,7 @@ Built-in gap codes are:
 |---|---|---|
 | `roles_unresolved` | Required semantic rig roles were not resolved. | `loop-seam`, `root-motion-speed`, `in-place`, `foot-slide`, `gait-group` |
 | `measurement_unavailable` | A required numeric measurement could not be produced or did not meet its evidence floor. | `loop-closure`, `duplicate-loop-endpoint`, `loop-seam`, `loop-seam-vel`, `loop-seam-rot`, `root-motion-speed`, `in-place`, `foot-slide`, `gait-group` |
+| `skeleton_unavailable` | Required skeleton presence work could not run because the file has no usable skeleton. | `required-bones` |
 | `insufficient_measurable_members` | Fewer than two gait-group members produced usable phases. | `gait-group` |
 | `members_not_evaluated` | Some configured gait-group members did not produce usable phases. | `gait-group` |
 | `invalid_declared_fps` | A declared frame rate was zero, negative, or non-finite. | `fps` |
@@ -442,6 +443,7 @@ Built-in completed/gap scope codes are:
 | `loop_seam` | One named clip's positional loop seam was measured. | `loop-seam` |
 | `loop_seam_velocity` | One named clip's per-bone model-space seam velocity continuity was measured. | `loop-seam-vel` |
 | `loop_seam_rotation` | One named clip's per-bone model-space angular seam velocity continuity was measured. | `loop-seam-rot` |
+| `required_bone_presence` | Configured structural skeleton-bone presence requirements were evaluated. | `required-bones` |
 | `root_motion_speed` | One named clip's root-motion speed was measured. | `root-motion-speed` |
 | `travel_mode` | One named clip's in-place/root-motion declaration was judged. | `in-place` |
 | `foot_stance` | Whole-clip prerequisites for stance analysis were evaluated. | `foot-slide` |

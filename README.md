@@ -159,6 +159,7 @@ Contract-aware checks use declared expectations and, where needed, rig roles:
 | `root-motion-speed` | error | measured horizontal root travel vs a declared speed pin |
 | `foot-slide` | warning | stance feet must move consistently with declared travel |
 | `missing-bones` | error | declared animated bones missing from the skeleton or carrying no keys |
+| `required-bones` | error | declared rig bones missing from the skeleton, even when no clip is expected to animate them |
 | `frozen-bone` | error | required bones whose rotation never exceeds the configured floor |
 | `bind-pose` | warning | first frame deviating too far from the skeleton rest pose |
 
@@ -185,6 +186,8 @@ with `--config`:
 ```toml
 [rig]
 profile = "auto"            # or mixamo / ue-mannequin / humanoid, or inline [rig.roles]
+# Structural rig contract: sockets, IK targets, and mask bones may be static.
+required_bones = ["root", "weapon_socket", "ik_hand_l"]
 
 [checks.loop-seam]
 max_ratio = 1.6

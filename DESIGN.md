@@ -347,6 +347,7 @@ golden-test against.
 | `loop-seam-rot` | maximum per-bone shortest-path model-space angular-velocity difference between the in-clip steps entering and leaving the wrap | grid + loop declaration | `max_angular_velocity_delta_degps` | consumer-neutral authoring-loop requirement |
 | `root-motion-speed` | horizontal root/hips displacement ÷ duration vs declared `speed_mps`; flags stray speed pins on non-locomotion clips | grid + Root/Hips | pinned speed + tolerance (reference gate: 15%) | reference bake |
 | `missing-bones` | declared-required animated bones absent; tracks targeting nodes outside the skeleton | raw + meta | bone/role list | reference contract `animates_bones` |
+| `required-bones` | declared required rig bones absent from the skeleton; static sockets and IK targets are valid | skeleton + rig config | `[rig] required_bones` | consumer-neutral structural rig contract |
 | `naming` | clip names vs convention pattern | meta | regex/glob | new |
 | `units-sanity` | hips rest height wildly outside human scale (the cm-vs-m export classic) | skeleton + profile | height band | new |
 
@@ -376,6 +377,8 @@ diff-friendly in asset repos:
 ```toml
 [rig]
 profile = "mixamo"                 # or "auto", or an inline role map:
+# A presence-only structural contract; these do not need animation tracks.
+required_bones = ["root", "weapon_socket", "ik_hand_l"]
 # [rig.roles]
 # hips = "humanoid_ Pelvis"
 # left_foot = "humanoid_ L Foot"

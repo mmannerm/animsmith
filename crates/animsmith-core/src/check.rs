@@ -135,6 +135,7 @@ pub fn mechanical_checks() -> Vec<Box<dyn Check>> {
 /// The full built-in catalog: mechanical + semantic checks.
 pub fn all_checks() -> Vec<Box<dyn Check>> {
     let mut checks = mechanical_checks();
+    checks.push(Box::new(crate::checks::required_bones::RequiredBones));
     checks.push(Box::new(crate::checks::missing_bones::MissingBones));
     checks.push(Box::new(crate::checks::frozen_bone::FrozenBone));
     checks.push(Box::new(

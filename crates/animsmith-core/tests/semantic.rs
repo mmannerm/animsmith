@@ -12,7 +12,8 @@ use animsmith_core::model::*;
 use animsmith_core::profile::{ResolvedRoles, Role};
 use animsmith_core::{
     CheckCtx, CheckEvaluation, CheckSelection, Config, ConfigurationState, CoverageGapCode,
-    EvaluationScopeCode, EvaluationState, MetricGrids, Severity, all_checks, evaluate_checks,
+    EvaluationScopeCode, EvaluationState, MetricGrids, Severity, Value, all_checks,
+    evaluate_checks,
 };
 use glam::Vec3;
 use std::f64::consts::TAU;
@@ -756,6 +757,119 @@ fn missing_required_bone_is_flagged() {
             .any(|f| f.check_id == "missing-bones" && f.bone.as_deref() == Some("no_such_bone")),
         "got: {findings:#?}"
     );
+}
+
+#[test]
+fn required_bones_is_non_work_without_a_nonempty_rig_declaration() {
+    for config in [
+        Config::default(),
+        json_config(serde_json::json!({ "rig": { "required_bones": [] } })),
+    ] {
+        let doc = walk_doc();
+        let records = evaluate_with(&doc, &config);
+        let required = check(&records, "required-bones");
+        assert_eq!(
+            required.applicability(),
+            animsmith_core::Applicability::NotApplicable
+        );
+        assert_eq!(required.evaluation(), EvaluationState::NotEvaluated);
+        assert!(required.findings().is_empty());
+        assert!(required.gaps().is_empty());
+    }
+}
+
+#[test]
+fn required_bones_reports_an_empty_skeleton_as_typed_unavailable_work() {
+    let doc = Document::default();
+    let config = json_config(serde_json::json!({
+        "rig": { "required_bones": ["socket"] }
+    }));
+    let records = evaluate_with(&doc, &config);
+    let required = check(&records, "required-bones");
+
+    assert_eq!(required.evaluation(), EvaluationState::NotEvaluated);
+    assert!(required.findings().is_empty());
+    assert_eq!(required.gaps().len(), 1);
+    let gap = &required.gaps()[0];
+    assert_eq!(gap.code.as_str(), "skeleton_unavailable");
+    assert_eq!(
+        gap.scope.as_ref().map(|scope| scope.code),
+        Some(EvaluationScopeCode::REQUIRED_BONE_PRESENCE)
+    );
+}
+
+#[test]
+fn required_bones_accepts_static_bones_and_deduplicates_declarations() {
+    let mut doc = walk_doc();
+    doc.skeleton.bones.push(Bone {
+        name: "ik_target".into(),
+        parent: None,
+        rest: Transform::IDENTITY,
+        inverse_bind: None,
+    });
+    let config = json_config(serde_json::json!({
+        "rig": { "required_bones": ["ik_target", "missing", "missing"] }
+    }));
+    let records = evaluate_with(&doc, &config);
+    let required = check(&records, "required-bones");
+
+    assert_eq!(required.evaluation(), EvaluationState::Complete);
+    assert_eq!(required.evaluated_scopes().len(), 1);
+    assert_eq!(
+        required.evaluated_scopes()[0].code,
+        EvaluationScopeCode::REQUIRED_BONE_PRESENCE
+    );
+    let missing: Vec<_> = required
+        .findings()
+        .iter()
+        .filter(|finding| finding.bone.as_deref() == Some("missing"))
+        .collect();
+    assert_eq!(
+        missing.len(),
+        1,
+        "repeated declarations are one requirement"
+    );
+    assert_eq!(missing[0].check_id, "required-bones");
+    assert!(matches!(missing[0].measured, Some(Value::Number(0.0))));
+    assert!(matches!(missing[0].expected, Some(Value::Number(1.0))));
+    assert!(
+        required
+            .findings()
+            .iter()
+            .all(|finding| finding.bone.as_deref() != Some("ik_target")),
+        "a present static/unkeyed bone must pass: {required:#?}"
+    );
+}
+
+#[test]
+fn required_bones_rejects_ambiguous_skeleton_names_once_per_declaration() {
+    let mut doc = walk_doc();
+    doc.skeleton.bones.push(Bone {
+        name: "socket".into(),
+        parent: None,
+        rest: Transform::IDENTITY,
+        inverse_bind: None,
+    });
+    doc.skeleton.bones.push(Bone {
+        name: "socket".into(),
+        parent: None,
+        rest: Transform::IDENTITY,
+        inverse_bind: None,
+    });
+    let config = json_config(serde_json::json!({
+        "rig": { "required_bones": ["socket", "socket"] }
+    }));
+    let records = evaluate_with(&doc, &config);
+    let required = check(&records, "required-bones");
+
+    assert_eq!(required.evaluation(), EvaluationState::Complete);
+    assert_eq!(required.findings().len(), 1);
+    let finding = &required.findings()[0];
+    assert_eq!(finding.bone.as_deref(), Some("socket"));
+    assert!(matches!(finding.measured, Some(Value::Number(2.0))));
+    assert!(matches!(finding.expected, Some(Value::Number(1.0))));
+    assert!(finding.message.contains("ambiguous"));
+    assert!(finding.message.contains("2 skeleton bones"));
 }
 
 #[test]
