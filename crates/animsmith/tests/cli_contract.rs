@@ -12,7 +12,7 @@ const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:7";
 const HOSTILE_PRESENTATION_TEXT: &str = "forged\nline\u{1b}[31m\u{2028}\u{2029}\u{202e}";
 const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v2.schema.json");
 const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v7.schema.json");
-const EXPECTED_CHECK_IDS: [&str; 20] = [
+const EXPECTED_CHECK_IDS: [&str; 21] = [
     "nan",
     "time-monotonic",
     "quat-norm",
@@ -24,6 +24,7 @@ const EXPECTED_CHECK_IDS: [&str; 20] = [
     "constant-track",
     "missing-bones",
     "frozen-bone",
+    "duplicate-loop-endpoint",
     "loop-closure",
     "loop-seam",
     "loop-seam-vel",
@@ -185,6 +186,26 @@ fn write_two_clip_clean_glb(path: &std::path::Path) {
     second.name = "sway_b".into();
     doc.clips.push(second);
     animsmith_gltf::write::write(&doc, path).expect("writes two-clip fixture");
+}
+
+fn write_duplicate_loop_endpoint_glb(path: &std::path::Path) {
+    let mut doc = sway_doc(false);
+    doc.clips[0].name = "guard".into();
+    doc.clips[0].duration_s = 1.0;
+    doc.clips[0].tracks = vec![Track {
+        bone: 0,
+        property: Property::Translation,
+        interpolation: Interpolation::Linear,
+        times: vec![0.0, 0.25, 0.5, 0.75, 1.0],
+        values: TrackValues::Vec3s(vec![
+            Vec3::ZERO,
+            Vec3::X,
+            2.0 * Vec3::X,
+            Vec3::X,
+            Vec3::ZERO,
+        ]),
+    }];
+    animsmith_gltf::write::write(&doc, path).expect("writes duplicate endpoint fixture");
 }
 
 fn write_hostile_glb(path: &std::path::Path, hostile: &str, flipped: bool) {
@@ -423,6 +444,157 @@ fn transform_summary_reports_a_loaded_clip_omitted_from_the_artifact() {
             "wrote {} (1 node(s), 0 clip(s), 0 mesh(es) / 0 position(s), 0 material(s)); dropped 1 clip(s) with no writable tracks\n",
             output_path.display()
         )
+    );
+}
+
+#[test]
+fn duplicate_loop_endpoint_cli_detects_trims_and_exposes_changed_contracts() {
+    let dir = unique_temp_dir("duplicate-loop-endpoint");
+    let input = dir.path().join("input.glb");
+    let output_path = dir.path().join("open-cycle.glb");
+    let second_output = dir.path().join("open-cycle-again.glb");
+    let undeclared_output = dir.path().join("undeclared.glb");
+    let config = dir.path().join("animsmith.toml");
+    write_duplicate_loop_endpoint_glb(&input);
+    std::fs::write(
+        &config,
+        "[clips.guard]\nloop = true\nduration_s = { value = 1.0, tolerance = 0.0 }\n",
+    )
+    .expect("writes loop contract");
+
+    let undeclared = animsmith()
+        .arg("transform")
+        .arg(&input)
+        .arg("-o")
+        .arg(&undeclared_output)
+        .arg("--drop-duplicate-loop-endpoint")
+        .output()
+        .expect("runs transform without a loop declaration");
+    assert_eq!(undeclared.status.code(), Some(0));
+    assert!(
+        stdout(&undeclared).contains(
+            "duplicate-loop-endpoint skipped 'guard': clip is not declared `loop = true` in config"
+        ),
+        "stdout:\n{}",
+        stdout(&undeclared)
+    );
+    let undeclared_written =
+        animsmith_gltf::load(&undeclared_output).expect("loads unchanged undeclared output");
+    assert_eq!(undeclared_written.clips[0].duration_s, 1.0);
+    assert_eq!(undeclared_written.clips[0].tracks[0].key_count(), 5);
+
+    let lint = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args([
+            "lint",
+            input.to_str().unwrap(),
+            "--select",
+            "duplicate-loop-endpoint",
+        ])
+        .output()
+        .expect("runs duplicate endpoint check");
+    assert_eq!(lint.status.code(), Some(0), "stderr:\n{}", stderr(&lint));
+    assert!(
+        stdout(&lint).contains("warning[duplicate-loop-endpoint]"),
+        "stdout:\n{}",
+        stdout(&lint)
+    );
+
+    let transformed = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .arg("transform")
+        .arg(&input)
+        .arg("-o")
+        .arg(&output_path)
+        .arg("--drop-duplicate-loop-endpoint")
+        .output()
+        .expect("runs duplicate endpoint transform");
+    assert_eq!(
+        transformed.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&transformed)
+    );
+    assert!(
+        stdout(&transformed).contains(
+            "dropped duplicate loop endpoint 'guard': 1 key(s) per track, duration 1.000000s -> 0.750000s (open cycle)"
+        ),
+        "stdout:\n{}",
+        stdout(&transformed)
+    );
+    let written = animsmith_gltf::load(&output_path).expect("loads open-cycle output");
+    assert_eq!(written.clips[0].duration_s, 0.75);
+    assert_eq!(written.clips[0].tracks[0].times, vec![0.0, 0.25, 0.5, 0.75]);
+
+    let duplicate_recheck = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args([
+            "lint",
+            output_path.to_str().unwrap(),
+            "--select",
+            "duplicate-loop-endpoint",
+        ])
+        .output()
+        .expect("reruns duplicate endpoint check");
+    assert_eq!(
+        duplicate_recheck.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&duplicate_recheck)
+    );
+    assert!(
+        !stdout(&duplicate_recheck).contains("warning[duplicate-loop-endpoint]"),
+        "stdout:\n{}",
+        stdout(&duplicate_recheck)
+    );
+
+    // The transform intentionally changes the clip to #22's future
+    // open/unique-cycle representation. The inclusive #14 closure contract
+    // and the old #15 duration pin must therefore be rerun and reconciled.
+    let contract_recheck = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args([
+            "lint",
+            output_path.to_str().unwrap(),
+            "--select",
+            "loop-closure,duration-sanity",
+        ])
+        .output()
+        .expect("reruns changed contracts");
+    assert_eq!(contract_recheck.status.code(), Some(1));
+    let contract_text = stdout(&contract_recheck);
+    assert!(
+        contract_text.contains("error[loop-closure]"),
+        "stdout:\n{contract_text}\nstderr:\n{}",
+        stderr(&contract_recheck)
+    );
+    assert!(
+        contract_text.contains("error[duration-sanity]"),
+        "stdout:\n{contract_text}\nstderr:\n{}",
+        stderr(&contract_recheck)
+    );
+
+    let idempotent = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .arg("transform")
+        .arg(&output_path)
+        .arg("-o")
+        .arg(&second_output)
+        .arg("--drop-duplicate-loop-endpoint")
+        .output()
+        .expect("reruns transform");
+    assert_eq!(idempotent.status.code(), Some(0));
+    assert!(
+        stdout(&idempotent).contains(
+            "duplicate-loop-endpoint skipped 'guard': no mechanically removable repeated endpoint"
+        ),
+        "stdout:\n{}",
+        stdout(&idempotent)
     );
 }
 

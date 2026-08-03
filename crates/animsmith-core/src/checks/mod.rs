@@ -4,6 +4,7 @@
 pub mod bind_pose;
 pub mod constant_nonunit_scale;
 pub mod constant_track;
+pub mod duplicate_loop_endpoint;
 pub mod duration_sanity;
 pub mod foot_slide;
 pub mod fps;

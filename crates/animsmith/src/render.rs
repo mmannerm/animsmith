@@ -476,6 +476,31 @@ pub(crate) fn render_transform_hold_extend(clip: &Clip, hold_s: f64) -> String {
     format!("  hold-extended '{}' by {hold_s}s\n", text_atom(&clip.name))
 }
 
+/// Render a successful duplicate-loop-endpoint removal.
+pub(crate) fn render_transform_duplicate_loop_endpoint(
+    clip_name: &str,
+    removed_keys_per_track: usize,
+    duration_before_s: f64,
+    duration_after_s: f64,
+) -> String {
+    format!(
+        "  dropped duplicate loop endpoint '{}': {removed_keys_per_track} key(s) per track, duration {duration_before_s:.6}s -> {duration_after_s:.6}s (open cycle)\n",
+        text_atom(clip_name),
+    )
+}
+
+/// Render a duplicate-loop-endpoint transform that safely declined to edit.
+pub(crate) fn render_transform_duplicate_loop_endpoint_skipped(
+    clip_name: &str,
+    reason: &str,
+) -> String {
+    format!(
+        "  duplicate-loop-endpoint skipped '{}': {}\n",
+        text_atom(clip_name),
+        text_atom(reason),
+    )
+}
+
 /// Render the message emitted after successful gait-anchor alignment.
 pub(crate) fn render_transform_gait_anchor(
     clip_name: &str,
@@ -1933,6 +1958,14 @@ mod tests {
         assert_eq!(
             render_transform_hold_extend(&clip, 0.5),
             "  hold-extended 'walk\\nclip' by 0.5s\n"
+        );
+        assert_eq!(
+            render_transform_duplicate_loop_endpoint("walk\nclip", 2, 1.0, 0.75),
+            "  dropped duplicate loop endpoint 'walk\\nclip': 2 key(s) per track, duration 1.000000s -> 0.750000s (open cycle)\n"
+        );
+        assert_eq!(
+            render_transform_duplicate_loop_endpoint_skipped("walk\nclip", "bad\nreason"),
+            "  duplicate-loop-endpoint skipped 'walk\\nclip': bad\\nreason\n"
         );
         assert_eq!(
             render_transform_gait_anchor("walk\nclip", 0.25, 0.0, -1, Some(1.234)),

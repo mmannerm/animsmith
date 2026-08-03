@@ -112,7 +112,7 @@ enum Cmd {
     },
     /// Apply mechanical clip transforms.
     #[command(
-        long_about = "Apply pipeline-mechanical clip transforms and write the result as glTF, carrying through any scene assets the input brought (FBX or glTF meshes, skins, materials, and embedded base-color and normal textures). Operations apply to every clip, or one clip via --clip."
+        long_about = "Apply pipeline-mechanical clip transforms and write the result as glTF, carrying through any scene assets the input brought (FBX or glTF meshes, skins, materials, and embedded base-color and normal textures). Operations apply to every clip, or one clip via --clip. Dropping a duplicate loop endpoint requires the clip to be declared loop = true in config and produces an open-cycle representation."
     )]
     Transform {
         /// Input .glb, .gltf, or .fbx file.
@@ -131,6 +131,10 @@ enum Cmd {
         /// holds).
         #[arg(long, value_name = "SECONDS")]
         hold_extend: Option<f64>,
+        /// Drop repeated closing keys from a declared loop when every
+        /// authored track proves the endpoint is mechanically redundant.
+        #[arg(long, conflicts_with = "hold_extend")]
+        drop_duplicate_loop_endpoint: bool,
         /// Rotate cyclic clips so the measured stride anchor lands at
         /// t=0 (needs hips+feet rig roles).
         #[arg(long)]
@@ -534,6 +538,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             clip,
             slice,
             hold_extend,
+            drop_duplicate_loop_endpoint,
             gait_anchor,
             fps,
         } => {
@@ -568,6 +573,43 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 if let Some(hold) = hold_extend {
                     animsmith_core::transform::hold_extend(c, hold);
                     print!("{}", render::render_transform_hold_extend(c, hold));
+                }
+                if drop_duplicate_loop_endpoint {
+                    if config.expectations_for(&c.name).looping != Some(true) {
+                        print!(
+                            "{}",
+                            render::render_transform_duplicate_loop_endpoint_skipped(
+                                &c.name,
+                                "clip is not declared `loop = true` in config",
+                            )
+                        );
+                    } else {
+                        match animsmith_core::transform::drop_duplicate_loop_endpoint(c) {
+                            Ok(Some(outcome)) => print!(
+                                "{}",
+                                render::render_transform_duplicate_loop_endpoint(
+                                    &c.name,
+                                    outcome.removed_keys_per_track,
+                                    outcome.duration_before_s,
+                                    outcome.duration_after_s,
+                                )
+                            ),
+                            Ok(None) => print!(
+                                "{}",
+                                render::render_transform_duplicate_loop_endpoint_skipped(
+                                    &c.name,
+                                    "no mechanically removable repeated endpoint",
+                                )
+                            ),
+                            Err(reason) => print!(
+                                "{}",
+                                render::render_transform_duplicate_loop_endpoint_skipped(
+                                    &c.name,
+                                    &reason.to_string(),
+                                )
+                            ),
+                        }
+                    }
                 }
                 if gait_anchor {
                     match animsmith_core::transform::align_gait_anchor(&skeleton, c, &roles, fps) {

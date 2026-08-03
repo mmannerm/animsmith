@@ -254,6 +254,35 @@ Animsmith separates three questions:
   to hips and normalizes by the neighbouring stride step, so it needs resolved
   hips/foot roles and deliberately has no result for a stationary clip.
 
+There is a fourth, narrower warning for an export-mode problem rather than a
+pose-continuity judgment: `duplicate-loop-endpoint`. Many DCC workflows export
+an inclusive range or bake a cycle by copying frame 0 again at the final frame.
+For a declared loop, animsmith recognizes only the mechanically certain subset:
+every authored channel has one common finite, strictly increasing timeline and
+valid cardinality; first and final vector components match within `1e-5` and
+quaternions match within a sign-invariant `1e-4` radians; and the clip has real
+interior motion. A
+stationary hold is therefore not mistaken for a cycle. The warning is
+default-on, needs no rig roles, and is otherwise not applicable unless
+`loop = true` is declared.
+
+That duplicate can matter to an engine that loops by advancing over the clip
+duration: it evaluates or holds the same pose twice before wrapping, which can
+look like a one-frame hitch. `transform --drop-duplicate-loop-endpoint` turns
+only an eligible candidate into an open cycle: it atomically removes the same
+complete terminal key count from every channel (and cubic-spline key triplets),
+preserves retained authored data, and re-pins duration. It does not repair a
+nonclosing/root-travel clip, mismatched timelines, a C1 tangent problem,
+retargeting damage, or a runtime loop blend. Blender's [Cycles F-curve
+modifier](https://docs.blender.org/manual/en/latest/editors/graph_editor/fcurves/modifiers.html#cycles-modifier)
+and Unity's [looping-clip guide](https://docs.unity3d.com/Manual/LoopingAnimationClips.html)
+are useful places to inspect the authored range and engine import behavior.
+
+An open cycle intentionally does not keep `loop-closure` green: that existing
+inclusive check compares a repeated final sample with frame 0. It is not a
+general endpoint-mode classifier; [#22](https://github.com/mmannerm/animsmith/issues/22)
+continues to own the complete endpoint-mode measurement and sync-group policy.
+
 The first two checks are per-bone and role independent, so idle, guard, block,
 aim-offset, facial, and prop loops remain testable without a humanoid profile
 or detectable stride. Model-space is intentional: a parent mismatch can move
@@ -297,7 +326,7 @@ arbitrary bone endpoint poses or tangents. Angular-velocity C1 continuity,
 acceleration/jerk continuity, root-motion extraction policy, and runtime blend
 settings remain out of scope.
 
-All three checks are judged only on clips declared `loop = true` — whether a
+All four checks are judged only on clips declared `loop = true` — whether a
 clip is intended to loop is project knowledge — while raw measurements are
 always available for measurable clips through `animsmith measure`. Workflow:
 [a project contract config](../examples/README.md#4-a-project-contract-config)
@@ -487,7 +516,7 @@ scale repair.
 |---|---|---|---|---|
 | Pose flickers, spins, or explodes | `nan`, `quat-norm`, `quat-flip`, `time-monotonic` | `fix` (quat repairs, lossless) | — | [First gate](../examples/README.md#1-a-first-cli-gate), [Repair](../examples/README.md#2-repairing-an-asset) |
 | Wrong length, freezes at the end | `duration-sanity`, `fps` | `transform --slice`, `--hold-extend` | `[clips.<name>] duration_s`, `fps` | [Editing a clip](../examples/README.md#3-editing-a-clip) |
-| The loop pops or pulses at the wrap | `loop-closure`, `loop-seam-vel`, `loop-seam` | re-author endpoint pose/tangents; `transform --gait-anchor` only for locomotion phase | `[clips.<name>] loop = true`, `[checks.loop-closure]`, `[checks.loop-seam-vel]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
+| The loop pops or pulses at the wrap | `duplicate-loop-endpoint`, `loop-closure`, `loop-seam-vel`, `loop-seam` | drop a strict duplicated endpoint with `transform --drop-duplicate-loop-endpoint`; otherwise re-author endpoint pose/tangents; `transform --gait-anchor` only for locomotion phase | `[clips.<name>] loop = true`, `[checks.loop-closure]`, `[checks.loop-seam-vel]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Glides or runs in place | `in-place`, `root-motion-speed` | re-export; `measure` for ground truth | `[clips.<name>] in_place`, `speed_mps` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Feet skate across blends | `gait-group` | `transform --gait-anchor` | `[gait_groups.<name>]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Feet slide within a clip | `foot-slide` | re-author in DCC | `[clips.<name>] speed_mps` | [Contract config](../examples/README.md#4-a-project-contract-config) |
@@ -497,7 +526,7 @@ scale repair.
 Where the repair column says *re-export*, that is deliberate: animsmith
 rewrites a clip only in ways whose correctness its own checks can
 verify. Lossless quaternion repairs and mechanical edits (slice,
-hold-extend, gait-anchor, FBX→glTF conversion) qualify; artistic
+hold-extend, gait-anchor, duplicate-loop-endpoint removal, FBX→glTF conversion) qualify; artistic
 transformation — retargeting, motion editing — is DCC work and stays
 out of scope.
 

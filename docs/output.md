@@ -420,7 +420,7 @@ Built-in gap codes are:
 | Gap code | Meaning | Emitted by |
 |---|---|---|
 | `roles_unresolved` | Required semantic rig roles were not resolved. | `loop-seam`, `root-motion-speed`, `in-place`, `foot-slide`, `gait-group` |
-| `measurement_unavailable` | A required numeric measurement could not be produced or did not meet its evidence floor. | `loop-closure`, `loop-seam`, `loop-seam-vel`, `root-motion-speed`, `in-place`, `foot-slide`, `gait-group` |
+| `measurement_unavailable` | A required numeric measurement could not be produced or did not meet its evidence floor. | `loop-closure`, `duplicate-loop-endpoint`, `loop-seam`, `loop-seam-vel`, `root-motion-speed`, `in-place`, `foot-slide`, `gait-group` |
 | `insufficient_measurable_members` | Fewer than two gait-group members produced usable phases. | `gait-group` |
 | `members_not_evaluated` | Some configured gait-group members did not produce usable phases. | `gait-group` |
 | `invalid_declared_fps` | A declared frame rate was zero, negative, or non-finite. | `fps` |
@@ -431,6 +431,7 @@ Built-in completed/gap scope codes are:
 | Scope code | Work unit | Emitted by |
 |---|---|---|
 | `loop_closure` | One named clip's per-bone model-space pose closure was measured. | `loop-closure` |
+| `duplicate_loop_endpoint` | One named clip's authored tracks were analyzed for redundant closing endpoint keys. | `duplicate-loop-endpoint` |
 | `member_existence` | Configured gait-group members were checked for existence. | `gait-group` |
 | `phase_measurement` | One named clip's gait phase was measured or lacked usable evidence. | `gait-group` |
 | `phase_coherence` | One named gait group's measurable phases were compared. | `gait-group` |

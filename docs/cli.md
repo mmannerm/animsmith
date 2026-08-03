@@ -50,7 +50,7 @@ animsmith inspect <file>
 animsmith measure <file...> [--format text|json]
 animsmith lint <file...> [--format text|json|markdown] [--select id[,id]] [--allow id[,id]] [--deny-warnings]
 animsmith report <file> -o <report.html> [--clip name]
-animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor] [--fps N]
+animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor] [--drop-duplicate-loop-endpoint] [--fps N]
 animsmith fix <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
 animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb|out.gltf> [--material-texture-recipe recipe.toml] [--animation-only|--bake-static-mesh-transforms] [--format text|json]
 animsmith assemble <recipe.toml> -o <out.glb> --evidence <out.json>
@@ -64,6 +64,20 @@ when authoring `assemble` or material texture recipes.
 
 `--config animsmith.toml` is global. Without it, the CLI auto-loads
 `./animsmith.toml` when present and otherwise uses built-in defaults.
+
+`transform --drop-duplicate-loop-endpoint` is the narrow mechanical transform
+for an inclusive DCC cycle export that copied frame 0 to the final frame. It
+accepts only a strict authored-key candidate: all channels must have one common
+finite, strictly increasing timeline; valid key cardinality; matching first and
+last values (vector components within `1e-5`, sign-invariant quaternion angle
+within `1e-4` radians);
+and actual interior motion. It atomically removes the same complete terminal
+key count from every channel (including each cubic-spline key triplet), leaves
+retained data unchanged, and re-pins duration to the last retained key. Other
+clips are not generalized, retimed, or repaired by this flag. The resulting
+open-cycle representation no longer satisfies inclusive `loop-closure`, which
+expects a repeated final sample; the complete endpoint-mode classifier remains
+[#22](https://github.com/mmannerm/animsmith/issues/22).
 
 ## Exit Codes
 

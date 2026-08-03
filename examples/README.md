@@ -215,8 +215,8 @@ mechanical transform can make the clip conform without touching
 geometry.
 
 `transform` applies mechanical pipeline edits — slice a window, hold the
-final pose, re-anchor a gait cycle, or resample the frame rate. Geometry
-passes through unchanged.
+final pose, re-anchor a gait cycle, or remove an eligible duplicate loop
+endpoint. Geometry passes through unchanged.
 
 Slice a sub-window (retimed to start at 0):
 
@@ -245,6 +245,20 @@ anchor lands at t=0 (needs resolvable hips + feet roles), and `--fps N`
 sets the grid used for retiming. See
 [cli.md](../docs/cli.md#commands) for the full flag list.
 
+For a loop exported with frame 0 copied again at the inclusive final frame,
+use `--drop-duplicate-loop-endpoint` only after the default warning identifies
+the strict authored-key case:
+
+```console
+$ animsmith transform cycle.glb -o cycle-open.glb --drop-duplicate-loop-endpoint
+```
+
+The transform removes the same closing key count from every channel and re-pins
+the duration; it does not repair a stationary hold, root-travel/nonclosing
+clip, mismatched timelines, endpoint tangents, or retargeting damage. The open
+cycle is for engines that wrap over duration, so its inclusive
+`loop-closure` result is expected to change.
+
 ---
 
 ## 4. A project contract config
@@ -258,12 +272,13 @@ clip](../docs/game-ready-clips.md#feet-slide-within-one-clip) all need
 declared locomotion or blend assumptions before animsmith can judge
 them.
 
-Mechanical checks run with no config. The semantic checks —
-`loop-seam`, `gait-group`, `root-motion-speed`, `frozen-bone`,
-`in-place`, `foot-slide` — need declared expectations *and* resolvable
-rig roles. Without a resolved rig they report a typed coverage gap rather
-than guess, so a config that pins a `[rig] profile` (or inline `[rig.roles]`)
-is what makes them fire.
+Mechanical checks run with no config. Contract-aware checks run only for the
+expectations you declare. `duplicate-loop-endpoint`, `loop-closure`, and
+`loop-seam-vel` need only `loop = true`; role-dependent checks such as
+`loop-seam`, `gait-group`, `root-motion-speed`, `in-place`, and `foot-slide`
+also need resolvable rig roles. Without those roles they report a typed coverage
+gap rather than guess, so a config that pins a `[rig] profile` (or inline
+`[rig.roles]`) is what makes them fire.
 
 `examples/assets/walk.glb` is a committed rig for this: a hips + two-foot
 skeleton with a one-second walk cycle. Its bone names resolve a built-in
