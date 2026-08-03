@@ -309,6 +309,7 @@ fn duplicate_loop_endpoint_analysis_and_drop_are_lossless_and_idempotent() {
         tracks: vec![
             duplicate_endpoint_track(0, Property::Translation, Interpolation::CubicSpline),
             duplicate_endpoint_track(1, Property::Rotation, Interpolation::Linear),
+            duplicate_endpoint_track(2, Property::Rotation, Interpolation::CubicSpline),
         ],
     };
     let before = clip.clone();
@@ -327,11 +328,16 @@ fn duplicate_loop_endpoint_analysis_and_drop_are_lossless_and_idempotent() {
     for (after, original) in clip.tracks.iter().zip(&before.tracks) {
         assert_eq!(after.times, original.times[..2]);
         match (&after.values, &original.values) {
-            (TrackValues::Vec3s(after), TrackValues::Vec3s(original)) => {
-                assert_eq!(after, &original[..6]);
+            (TrackValues::Vec3s(after_values), TrackValues::Vec3s(original_values)) => {
+                assert_eq!(after_values, &original_values[..6]);
             }
-            (TrackValues::Quats(after), TrackValues::Quats(original)) => {
-                assert_eq!(after, &original[..2]);
+            (TrackValues::Quats(after_values), TrackValues::Quats(original_values)) => {
+                let retained = if after.interpolation == Interpolation::CubicSpline {
+                    6
+                } else {
+                    2
+                };
+                assert_eq!(after_values, &original_values[..retained]);
             }
             _ => unreachable!(),
         }
@@ -354,6 +360,7 @@ fn duplicate_loop_endpoint_refuses_stationary_holds_but_accepts_cubic_motion() {
         duration_s: 1.0,
         tracks: vec![stationary],
     };
+    let stationary_before = format!("{stationary_clip:?}");
     assert_eq!(
         analyze_duplicate_loop_endpoint(&stationary_clip).unwrap(),
         None
@@ -361,6 +368,11 @@ fn duplicate_loop_endpoint_refuses_stationary_holds_but_accepts_cubic_motion() {
     assert_eq!(
         drop_duplicate_loop_endpoint(&mut stationary_clip).unwrap(),
         None
+    );
+    assert_eq!(
+        format!("{stationary_clip:?}"),
+        stationary_before,
+        "a valid non-candidate is not mutated while probing"
     );
 
     let mut cubic_clip = Clip {
@@ -439,4 +451,32 @@ fn duplicate_loop_endpoint_rejects_invalid_timeline_without_mutating() {
         Err(DuplicateLoopEndpointError::TimelineMismatch { .. })
     ));
     assert_eq!(format!("{clip:?}"), before, "refusal is atomic");
+
+    for (label, times, expected) in [
+        (
+            "non-finite",
+            vec![0.0, f32::NAN, 1.0],
+            DuplicateLoopEndpointError::NonFinite { track: Some(0) },
+        ),
+        (
+            "non-increasing",
+            vec![0.0, 0.0, 1.0],
+            DuplicateLoopEndpointError::NonIncreasingTime { track: 0 },
+        ),
+    ] {
+        let mut invalid = Clip {
+            name: label.into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 0,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times,
+                values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::X, Vec3::ZERO]),
+            }],
+        };
+        let before = format!("{invalid:?}");
+        assert_eq!(drop_duplicate_loop_endpoint(&mut invalid), Err(expected));
+        assert_eq!(format!("{invalid:?}"), before, "{label} refusal is atomic");
+    }
 }

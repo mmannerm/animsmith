@@ -142,6 +142,11 @@ fn fixed_endpoint_tolerances_and_quaternion_sign_equivalence_are_enforced() {
     let mut clip = document(&[0.0, 1.0, 0.9 * DUPLICATE_ENDPOINT_VEC3_TOLERANCE])
         .clips
         .remove(0);
+    clip.tracks[0].values = TrackValues::Vec3s(vec![
+        Vec3::ZERO,
+        Vec3::X,
+        Vec3::splat(0.9 * DUPLICATE_ENDPOINT_VEC3_TOLERANCE),
+    ]);
     let vector_outcome = analyze_duplicate_loop_endpoint(&clip)
         .unwrap()
         .expect("vector just inside the documented tolerance is removable");
@@ -153,7 +158,7 @@ fn fixed_endpoint_tolerances_and_quaternion_sign_equivalence_are_enforced() {
     let TrackValues::Vec3s(values) = &mut clip.tracks[0].values else {
         unreachable!()
     };
-    values[2].x = 1.1 * DUPLICATE_ENDPOINT_VEC3_TOLERANCE;
+    values[2] = Vec3::splat(1.1 * DUPLICATE_ENDPOINT_VEC3_TOLERANCE);
     assert_eq!(analyze_duplicate_loop_endpoint(&clip).unwrap(), None);
 
     clip.tracks[0] = Track {

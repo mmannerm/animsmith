@@ -501,6 +501,60 @@ fn duplicate_loop_endpoint_cli_detects_trims_and_exposes_changed_contracts() {
         stdout(&lint)
     );
 
+    let lint_json = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args([
+            "lint",
+            input.to_str().unwrap(),
+            "--select",
+            "duplicate-loop-endpoint",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("serializes duplicate endpoint evidence");
+    assert_eq!(lint_json.status.code(), Some(0));
+    let lint_json: Value = serde_json::from_slice(&lint_json.stdout).expect("valid lint JSON");
+    assert_output_schema_valid(&lint_json);
+    assert_eq!(lint_json["schema_version"], 2);
+    assert_eq!(lint_json["schema"], OUTPUT_SCHEMA_ID);
+    assert_eq!(lint_json["files"][0]["measurements"]["schema_version"], 7);
+    assert_eq!(
+        lint_json["files"][0]["measurements"]["schema"],
+        MEASUREMENTS_SCHEMA_ID
+    );
+    let duplicate_record = lint_json["files"][0]["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|record| record["check_id"] == "duplicate-loop-endpoint")
+        .expect("duplicate endpoint check record");
+    assert_eq!(duplicate_record["evaluation"], "complete");
+    assert_eq!(
+        duplicate_record["evaluated_scopes"][0]["code"],
+        "duplicate_loop_endpoint"
+    );
+    assert_eq!(duplicate_record["findings"][0]["severity"], "warning");
+
+    let contract_before = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args([
+            "lint",
+            input.to_str().unwrap(),
+            "--select",
+            "loop-closure,duration-sanity",
+        ])
+        .output()
+        .expect("checks contracts before trimming");
+    assert_eq!(
+        contract_before.status.code(),
+        Some(0),
+        "the candidate starts with clean #14/#15 evidence:\n{}",
+        stdout(&contract_before)
+    );
+
     let transformed = animsmith()
         .arg("--config")
         .arg(&config)
@@ -568,12 +622,16 @@ fn duplicate_loop_endpoint_cli_detects_trims_and_exposes_changed_contracts() {
     assert_eq!(contract_recheck.status.code(), Some(1));
     let contract_text = stdout(&contract_recheck);
     assert!(
-        contract_text.contains("error[loop-closure]"),
+        contract_text.contains(
+            "error[loop-closure] clip 'guard' bone 'spine' @0.750s: loop does not close in position"
+        ),
         "stdout:\n{contract_text}\nstderr:\n{}",
         stderr(&contract_recheck)
     );
     assert!(
-        contract_text.contains("error[duration-sanity]"),
+        contract_text.contains(
+            "error[duration-sanity] clip 'guard': measured duration 0.7500s disagrees with the declared 1.0000"
+        ),
         "stdout:\n{contract_text}\nstderr:\n{}",
         stderr(&contract_recheck)
     );
