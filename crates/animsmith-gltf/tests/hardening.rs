@@ -445,6 +445,13 @@ fn loader_rejects_unsafe_external_buffer_uris() {
         ("absolute", "/etc/passwd"),
         ("backslash", "..\\\\escape.bin"),
         ("bare-dotdot", ".."),
+        ("encoded-parent", "%2e%2e/escape.bin"),
+        ("encoded-absolute", "%2Fetc%2Fpasswd"),
+        ("encoded-separator", "nested%2Fescape.bin"),
+        ("encoded-backslash", "nested%5Cescape.bin"),
+        ("encoded-nul", "escape%00.bin"),
+        ("malformed-escape", "escape%2.bin"),
+        ("non-hex-escape", "escape%GG.bin"),
     ] {
         let path = dir.path().join(format!("{label}.gltf"));
         std::fs::write(&path, gltf_with_buffer_uri(uri)).unwrap();
@@ -458,6 +465,16 @@ fn loader_rejects_unsafe_external_buffer_uris() {
             "{label}: {err}"
         );
     }
+}
+
+#[test]
+fn loader_resolves_percent_encoded_external_buffer_uri() {
+    let dir = unique_temp_dir("load-encoded-buffer-uri");
+    std::fs::write(dir.path().join("clip data.bin"), [0_u8]).unwrap();
+    let path = dir.path().join("encoded-buffer.gltf");
+    std::fs::write(&path, gltf_with_buffer_uri("clip%20data.bin")).unwrap();
+
+    animsmith_gltf::load(&path).expect("percent-encoded sibling buffer loads");
 }
 
 #[test]

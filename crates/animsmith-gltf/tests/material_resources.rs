@@ -387,3 +387,42 @@ fn load_reports_dimension_limit_without_dropping_the_source_image_row() {
         Some(ImageContainerFormat::Png)
     );
 }
+
+#[test]
+fn load_marks_percent_escaped_unsafe_external_image_uris_unavailable() {
+    let root = tempfile::tempdir().unwrap();
+    let input_dir = root.path().join("input");
+    std::fs::create_dir(&input_dir).unwrap();
+    std::fs::write(root.path().join("escape.png"), rgba_png()).unwrap();
+    std::fs::create_dir(input_dir.join("nested")).unwrap();
+    std::fs::write(input_dir.join("nested/albedo.png"), rgba_png()).unwrap();
+    let path = input_dir.join("unsafe-image-uri.gltf");
+    std::fs::write(
+        &path,
+        r#"{
+            "asset": { "version": "2.0" },
+            "images": [
+                { "uri": "%2e%2e/escape.png" },
+                { "uri": "%2Fetc%2Fpasswd" },
+                { "uri": "nested%2Falbedo.png" },
+                { "uri": "nested%5Calbedo.png" },
+                { "uri": "nested%00albedo.png" },
+                { "uri": "nested%2albedo.png" },
+                { "uri": "nested%GGalbedo.png" }
+            ]
+        }"#,
+    )
+    .unwrap();
+
+    let document = animsmith_gltf::load(&path).expect("unsafe image URIs stay measurable");
+    for image in &document.assets.material_resources.images {
+        assert_eq!(image.source_kind, ImageSourceKind::External);
+        assert_eq!(
+            image.inspection,
+            SourceImageInspection::Unavailable {
+                reason: ImageUnavailableReason::SourceUnavailable,
+            },
+            "unsafe external URI must not read a resource"
+        );
+    }
+}

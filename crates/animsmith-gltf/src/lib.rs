@@ -159,17 +159,18 @@ pub enum WriteError {
     },
 }
 
-/// Contain an external-buffer URI to a relative child path: absolute
-/// paths, `..`, backslashes, and non-normal components are rejected.
-/// URIs are used verbatim (no percent-decoding), so encoded traversal
-/// sequences stay literal path characters and cannot escape either.
+/// Contain an external-resource URI to a relative child path: absolute
+/// paths, `..`, backslashes, and non-normal components are rejected after
+/// percent-decoding. Encoded path separators are rejected rather than treated
+/// as hierarchy, so every accepted separator was present in the source URI.
 pub(crate) fn safe_external_buffer_path(uri: &str) -> Result<PathBuf, LoadError> {
-    if uri.is_empty() || uri.contains('\\') {
+    let decoded = decode_external_uri_path(uri)?;
+    if decoded.is_empty() || decoded.contains('\\') {
         return Err(LoadError::Buffer(format!(
             "unsafe external buffer URI {uri:?}: expected a relative child path"
         )));
     }
-    let path = Path::new(uri);
+    let path = Path::new(&decoded);
     if path.is_absolute() {
         return Err(LoadError::Buffer(format!(
             "unsafe external buffer URI {uri:?}: absolute paths are not supported"
@@ -192,6 +193,52 @@ pub(crate) fn safe_external_buffer_path(uri: &str) -> Result<PathBuf, LoadError>
         )));
     }
     Ok(out)
+}
+
+/// Decode percent-encoded bytes in a URI path without permitting an escape to
+/// introduce a path separator. glTF URIs are Unicode strings, so decoded bytes
+/// must form UTF-8 before they become an OS path.
+fn decode_external_uri_path(uri: &str) -> Result<String, LoadError> {
+    let bytes = uri.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            decoded.push(bytes[index]);
+            index += 1;
+            continue;
+        }
+        let Some((&high, &low)) = bytes.get(index + 1).zip(bytes.get(index + 2)) else {
+            return Err(unsafe_external_uri(uri));
+        };
+        let Some(value) = hex_value(high)
+            .zip(hex_value(low))
+            .map(|(high, low)| high << 4 | low)
+        else {
+            return Err(unsafe_external_uri(uri));
+        };
+        if matches!(value, b'/' | b'\\' | 0) {
+            return Err(unsafe_external_uri(uri));
+        }
+        decoded.push(value);
+        index += 3;
+    }
+    String::from_utf8(decoded).map_err(|_| unsafe_external_uri(uri))
+}
+
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn unsafe_external_uri(uri: &str) -> LoadError {
+    LoadError::Buffer(format!(
+        "unsafe external buffer URI {uri:?}: expected a relative child path"
+    ))
 }
 
 /// Reject a GLB whose 12-byte header declares a total length the file

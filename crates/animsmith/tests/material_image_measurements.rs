@@ -41,7 +41,7 @@ fn write_image(path: &Path, bytes: &[u8]) {
 
 fn write_fixture(path: &Path) {
     write_image(
-        &path.with_file_name("l.png"),
+        &path.with_file_name("luminance map.png"),
         &png(ExtendedColorType::L8, &[7]),
     );
     write_image(
@@ -73,7 +73,7 @@ fn write_fixture(path: &Path) {
     let document = json!({
         "asset": { "version": "2.0" },
         "images": [
-            { "name": "luminance", "uri": "l.png" },
+            { "name": "luminance", "uri": "luminance%20map.png" },
             { "name": "luminance-alpha", "uri": "la.png" },
             { "name": "rgb", "uri": "rgb.png" },
             { "name": "rgba", "uri": "rgba.png" },
