@@ -32,6 +32,7 @@ loop = true
 max_loop_position_delta_m = 0.04
 max_loop_rotation_delta_deg = 2.0
 max_loop_velocity_delta_mps = 0.2
+max_loop_angular_velocity_delta_degps = 200.0
 
 [clips."walk_*"]
 loop = true

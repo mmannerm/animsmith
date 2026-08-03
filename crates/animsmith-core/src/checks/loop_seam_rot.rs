@@ -39,16 +39,20 @@ impl Check for LoopSeamRotation {
         let mut findings = Vec::new();
         let mut evaluated_scopes = Vec::new();
         let mut gaps = Vec::new();
-        let max_angular_velocity_delta_degps = ctx
+        let global_max_angular_velocity_delta_degps = ctx
             .config
             .check_settings(self.id())
             .max_angular_velocity_delta_degps
             .unwrap_or(DEFAULT_MAX_ANGULAR_VELOCITY_DELTA_DEGPS);
 
         for (clip_index, clip) in ctx.doc.clips.iter().enumerate() {
-            if ctx.expectations(clip_index).looping != Some(true) {
+            let expectations = ctx.expectations(clip_index);
+            if expectations.looping != Some(true) {
                 continue;
             }
+            let max_angular_velocity_delta_degps = expectations
+                .max_loop_angular_velocity_delta_degps
+                .unwrap_or(global_max_angular_velocity_delta_degps);
             let scope =
                 EvaluationScope::new(EvaluationScopeCode::LOOP_SEAM_ROTATION).subject(&clip.name);
             let Some(metrics) = ctx

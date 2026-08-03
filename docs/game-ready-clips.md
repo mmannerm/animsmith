@@ -332,14 +332,15 @@ locomotion. `loop-seam-vel` and `loop-seam-rot` can still validate constant
 inherited linear and angular motion respectively.
 
 When one project contains both stationary idles and root-motion locomotion,
-keep the global `[checks.loop-closure]` and `[checks.loop-seam-vel]` caps
-strict, then put a finite, non-negative `max_loop_position_delta_m`,
-`max_loop_rotation_delta_deg`, or `max_loop_velocity_delta_mps` on the relevant
-`[clips."run_*"]` family. A `[clips.run_forward]` entry wins over matching
-globs for only the fields it supplies, so a one-off authored clip need not
-copy every inherited value. This is a contract choice, not a repair: it does
-not make a discontinuous source clip smooth. Angular seam velocity is also
-not controlled by these three overrides.
+keep the global `[checks.loop-closure]`, `[checks.loop-seam-vel]`, and
+`[checks.loop-seam-rot]` caps strict, then put a finite, non-negative
+`max_loop_position_delta_m`, `max_loop_rotation_delta_deg`,
+`max_loop_velocity_delta_mps`, or
+`max_loop_angular_velocity_delta_degps` on the relevant `[clips."run_*"]`
+family. A `[clips.run_forward]` entry wins over matching globs for only the
+fields it supplies, so a one-off authored clip need not copy every inherited
+value. This is a contract choice, not a repair: it does not make a
+discontinuous source clip smooth.
 
 There is no general automatic repair. `transform --gait-anchor` can rotate a
 locomotion cycle in time to choose a better stride cut, but it does not rewrite
