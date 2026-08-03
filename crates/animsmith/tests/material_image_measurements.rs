@@ -278,10 +278,82 @@ fn cli_measure_reports_embedded_image_metadata() {
     glb.extend_from_slice(&image);
     std::fs::write(&input, glb).expect("writes GLB fixture");
     let image = &measure(&input, "measure")["files"][0]["measurements"]["images"][0];
-    assert_eq!(image["source_kind"], "embedded");
-    assert_eq!(image["declared_mime_type"], "image/png");
-    assert_eq!(image["detected_container"], "png");
-    assert_eq!(image["decoded_color_type"], "rgba8");
+    assert_eq!(
+        image,
+        &json!({
+            "image_index": 0,
+            "name": "packed",
+            "source_kind": "embedded",
+            "declared_mime_type": "image/png",
+            "detected_container": "png",
+            "width": 1,
+            "height": 1,
+            "channel_count": 4,
+            "decoded_color_type": "rgba8",
+        })
+    );
+}
+
+#[test]
+fn cli_measure_reports_16_bit_png_color_types_and_channel_counts() {
+    let directory = tempfile::tempdir().expect("temporary fixture directory");
+    let input = directory.path().join("sixteen-bit.gltf");
+    let fixtures = [
+        ("l16", ExtendedColorType::L16, vec![0, 1], "l16", 1),
+        ("la16", ExtendedColorType::La16, vec![0, 1, 0, 2], "la16", 2),
+        (
+            "rgb16",
+            ExtendedColorType::Rgb16,
+            vec![0, 1, 0, 2, 0, 3],
+            "rgb16",
+            3,
+        ),
+        (
+            "rgba16",
+            ExtendedColorType::Rgba16,
+            vec![0, 1, 0, 2, 0, 3, 0, 4],
+            "rgba16",
+            4,
+        ),
+    ];
+    for (name, color_type, pixels, _, _) in &fixtures {
+        write_image(
+            &input.with_file_name(format!("{name}.png")),
+            &png(*color_type, pixels),
+        );
+    }
+    let document = json!({
+        "asset": { "version": "2.0" },
+        "images": fixtures.iter().map(|(name, _, _, _, _)| {
+            json!({ "name": name, "uri": format!("{name}.png") })
+        }).collect::<Vec<_>>(),
+    });
+    std::fs::write(
+        &input,
+        serde_json::to_vec_pretty(&document).expect("serializes glTF"),
+    )
+    .expect("writes glTF fixture");
+
+    let measurements = &measure(&input, "measure")["files"][0]["measurements"];
+    assert_valid_measurements(measurements);
+    let images = measurements["images"]
+        .as_array()
+        .expect("image measurements");
+    for (index, (name, _, _, color_type, channel_count)) in fixtures.iter().enumerate() {
+        assert_eq!(
+            images[index],
+            json!({
+                "image_index": index,
+                "name": name,
+                "source_kind": "external",
+                "detected_container": "png",
+                "width": 1,
+                "height": 1,
+                "channel_count": channel_count,
+                "decoded_color_type": color_type,
+            })
+        );
+    }
 }
 
 /// Non-glTF loaders retain their explicit unavailable boundary instead of
