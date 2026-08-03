@@ -40,8 +40,8 @@ exclusively; regenerate v1 evidence when a v2 consumer is required.
 
 [`Output-v2`](schemas/output-v2.schema.json) remains a historical immutable
 contract. The current CLI emits and
-`diff` reads output-v3; regenerate a v2 report with the current
-`animsmith measure --format json` before passing it to `diff`.
+`diff` reads output-v3; regenerate a current output-v3 report from the original
+asset with `animsmith measure --format json` before passing it to `diff`.
 
 ## Common envelope
 
