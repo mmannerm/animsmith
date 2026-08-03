@@ -157,7 +157,7 @@ fn git_source_info_rejects_sha256_repository_revision() {
     assert_eq!(
         build_script::git_source_info(temp.path()),
         None,
-        "output v2 accepts only a full SHA-1 revision"
+        "output v3 accepts only a full SHA-1 revision"
     );
 }
 

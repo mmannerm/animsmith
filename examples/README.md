@@ -92,20 +92,24 @@ should fail on warnings too:
 $ animsmith lint --deny-warnings examples/assets/clip-dirty.glb   # exits 1
 ```
 
-For machine consumption, `--format json` emits the v2 result envelope
+For machine consumption, `--format json` emits the v3 result envelope
 (see [output.md](../docs/output.md)). This `jq` projection keeps the example
-short while showing where content findings and independently versioned
-measurement evidence live:
+short while showing where retained/promotion evidence, content findings, and
+independently versioned measurement evidence live:
 
 ```console
 $ animsmith lint --format json examples/assets/clip-dirty.glb | jq \
-    '{schema_version, schema, command,
+    '{schema_version, schema, command, input: .files[0].input,
       check: (.files[0].checks[] | select(.check_id == "quat-norm")),
       measurements: (.files[0].measurements | {schema_version, schema})}'
 {
-  "schema_version": 2,
-  "schema": "urn:animsmith:schema:output:2",
+  "schema_version": 3,
+  "schema": "urn:animsmith:schema:output:3",
   "command": "lint",
+  "input": {
+    "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "bytes": 123456
+  },
   "check": {
     "check_id": "quat-norm",
     "selection": "selected",
@@ -308,8 +312,8 @@ since this cycle returns its feet exactly), gait phase, and L/R foot amplitude:
 ```console
 $ animsmith measure examples/assets/walk.glb          # --format json
 {
-  "schema_version": 2,
-  "schema": "urn:animsmith:schema:output:2",
+  "schema_version": 3,
+  "schema": "urn:animsmith:schema:output:3",
   "tool": { "name": "animsmith", "version": "0.1.0",
             "source": { "revision": null, "dirty": null } },
   "command": "measure",
@@ -317,6 +321,10 @@ $ animsmith measure examples/assets/walk.glb          # --format json
   "files": [
     {
       "path": "examples/assets/walk.glb",
+      "input": {
+        "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "bytes": 123456
+      },
       "rig": { "profile": "ue-mannequin", "resolved_roles": {
         "hips": "pelvis", "left_foot": "foot_l", "right_foot": "foot_r" } },
       "measurements": {

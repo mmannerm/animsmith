@@ -6,10 +6,117 @@ use animsmith_core::{
     CheckCtx, CheckSelection, Config, MetricGrids, Severity, evaluate_checks, mechanical_checks,
     sample_clip,
 };
+use animsmith_core::{Document, TrackValues};
 use std::path::PathBuf;
 
 fn fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/rig.gltf")
+}
+
+fn assert_same_loaded_shape(left: &Document, right: &Document) {
+    assert_eq!(left.source.path, right.source.path);
+    assert_eq!(left.source.format, right.source.format);
+    assert_eq!(left.skeleton.bones.len(), right.skeleton.bones.len());
+    for (left, right) in left.skeleton.bones.iter().zip(&right.skeleton.bones) {
+        assert_eq!(left.name, right.name);
+        assert_eq!(left.parent, right.parent);
+        assert_eq!(left.rest, right.rest);
+        assert_eq!(left.inverse_bind, right.inverse_bind);
+    }
+    assert_eq!(left.clips.len(), right.clips.len());
+    for (left, right) in left.clips.iter().zip(&right.clips) {
+        assert_eq!(left.name, right.name);
+        assert_eq!(left.duration_s, right.duration_s);
+        assert_eq!(left.tracks.len(), right.tracks.len());
+        for (left, right) in left.tracks.iter().zip(&right.tracks) {
+            assert_eq!(left.bone, right.bone);
+            assert_eq!(left.property, right.property);
+            assert_eq!(left.interpolation, right.interpolation);
+            assert_eq!(left.times, right.times);
+            match (&left.values, &right.values) {
+                (TrackValues::Vec3s(left), TrackValues::Vec3s(right)) => {
+                    assert_eq!(left, right);
+                }
+                (TrackValues::Quats(left), TrackValues::Quats(right)) => {
+                    assert_eq!(left, right);
+                }
+                _ => panic!("track value kinds differ"),
+            }
+        }
+    }
+    assert_eq!(left.assets.meshes.len(), right.assets.meshes.len());
+    assert_eq!(left.assets.instances.len(), right.assets.instances.len());
+    assert_eq!(left.assets.materials.len(), right.assets.materials.len());
+    assert_eq!(
+        left.assets.material_resources.textures.len(),
+        right.assets.material_resources.textures.len()
+    );
+    assert_eq!(left.assets.scenes.len(), right.assets.scenes.len());
+    assert_eq!(left.assets.default_scene, right.assets.default_scene);
+}
+
+#[test]
+fn load_path_and_captured_bytes_are_equivalent() {
+    let path = fixture();
+    let bytes = std::fs::read(&path).expect("capture fixture");
+
+    let from_path = animsmith_gltf::load(&path).expect("fixture loads by path");
+    let from_bytes = animsmith_gltf::load_bytes(&path, &bytes).expect("fixture loads by bytes");
+
+    assert_same_loaded_shape(&from_path, &from_bytes);
+}
+
+#[test]
+fn glb_path_and_captured_bytes_are_equivalent() {
+    let source = animsmith_gltf::load(&fixture()).expect("source fixture loads");
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("captured.glb");
+    animsmith_gltf::write::write(&source, &path).expect("write synthetic GLB");
+    let bytes = std::fs::read(&path).expect("capture GLB");
+
+    let from_path = animsmith_gltf::load(&path).expect("GLB loads by path");
+    let from_bytes = animsmith_gltf::load_bytes(&path, &bytes).expect("GLB loads by bytes");
+
+    assert_same_loaded_shape(&from_path, &from_bytes);
+}
+
+#[test]
+fn captured_self_contained_bytes_survive_primary_path_removal() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("captured.gltf");
+    let bytes = std::fs::read(fixture()).expect("capture self-contained fixture");
+    std::fs::write(&path, &bytes).expect("write primary input");
+    std::fs::remove_file(&path).expect("remove primary input after capture");
+
+    let doc = animsmith_gltf::load_bytes(&path, &bytes).expect("captured bytes still load");
+
+    assert_eq!(
+        doc.source.path.as_deref(),
+        Some(path.to_str().expect("UTF-8 path"))
+    );
+    assert_eq!(doc.clips[0].name, "walk");
+}
+
+#[test]
+fn byte_loader_resolves_external_buffers_relative_to_supplied_path() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("scene.gltf");
+    let positions: [u8; 36] = [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 128, 63, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 128, 63, 0, 0, 0, 0,
+    ];
+    std::fs::write(dir.path().join("positions.bin"), positions).expect("write external buffer");
+    let bytes = br#"{
+        "asset": { "version": "2.0" },
+        "buffers": [{ "uri": "positions.bin", "byteLength": 36 }],
+        "bufferViews": [{ "buffer": 0, "byteOffset": 0, "byteLength": 36 }],
+        "accessors": [{ "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0, 0, 0], "max": [1, 1, 0] }],
+        "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 } }] }]
+    }"#;
+
+    let doc = animsmith_gltf::load_bytes(&path, bytes).expect("resolves sibling buffer");
+
+    assert_eq!(doc.assets.meshes[0].primitives[0].positions.len(), 3);
 }
 
 #[test]

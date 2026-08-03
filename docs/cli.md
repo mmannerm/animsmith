@@ -189,11 +189,11 @@ animsmith fix clip.glb --repair quat-norm,quat-flip -o fixed.glb
 `measure`, `lint`, and `diff` support `--format json`. The native JSON
 contract is the source of truth and is versioned with `schema_version`.
 See [output.md](output.md) and
-[`output-v2.schema.json`](schemas/output-v2.schema.json). Nested measurement
+[`output-v3.schema.json`](schemas/output-v3.schema.json). Nested measurement
 evidence has its own
 [`measurements-v8.schema.json`](schemas/measurements-v8.schema.json) contract.
-Alpha-era v1 and preview reports are not retained; regenerate them before
-using `diff`.
+Output-v2 and earlier reports are historical contracts; regenerate them with
+the current CLI before using `diff`.
 
 `convert --format json` emits conversion evidence v2, with immutable identity
 `urn:animsmith:schema:conversion-evidence:2`; see [output.md](output.md) and
@@ -213,6 +213,13 @@ Native JSON is deliberately shaped so serializers can be added later
 without redesigning the checks: SARIF for code scanning, GitLab Code
 Quality/CodeClimate for MR widgets, JUnit XML for CI dashboards, and CSV
 for ad-hoc analysis.
+
+Each JSON `measure` and `lint` file row records an `input` SHA-256 and byte
+count for the exact primary file bytes parsed. Keep that row with retained
+review, promotion, or publication evidence; multi-file runs calculate one
+identity per argument in order. For `.gltf`, the identity deliberately does
+not cover external buffer or image files, so retain dependency provenance
+separately when that scope matters.
 
 Human-readable command output keeps asset-derived names, messages, and paths
 on visibly ordered lines: terminal controls, Unicode line separators, and

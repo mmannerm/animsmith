@@ -7,10 +7,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
-const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:2";
+const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:3";
 const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:8";
 const HOSTILE_PRESENTATION_TEXT: &str = "forged\nline\u{1b}[31m\u{2028}\u{2029}\u{202e}";
-const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v2.schema.json");
+const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v3.schema.json");
 const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v8.schema.json");
 const EXPECTED_CHECK_IDS: [&str; 23] = [
     "nan",
@@ -61,7 +61,7 @@ fn assert_output_schema_valid(instance: &Value) {
         .collect();
     assert!(
         errors.is_empty(),
-        "output must satisfy the published v2 schemas:\n{}\ninstance: {instance:#}",
+        "output must satisfy the published v3 schemas:\n{}\ninstance: {instance:#}",
         errors.join("\n")
     );
 }
@@ -141,6 +141,17 @@ fn unique_temp_dir(name: &str) -> tempfile::TempDir {
         .prefix(&format!("animsmith-cli-{name}-"))
         .tempdir()
         .expect("creates temp dir")
+}
+
+fn embedded_input_identity() -> animsmith_core::InputIdentity {
+    animsmith_core::InputIdentity::from_bytes(b"embedded primary-file bytes")
+}
+
+fn input_identity_json(path: &std::path::Path) -> Value {
+    serde_json::to_value(animsmith_core::InputIdentity::from_bytes(
+        &std::fs::read(path).expect("reads fixture bytes"),
+    ))
+    .expect("input identity serializes")
 }
 
 /// Analytic rotation sequence: consecutive y-rotations 0.4 rad apart,
@@ -410,11 +421,15 @@ fn write_json(path: &std::path::Path, value: &Value) {
 
 fn measurement_report(duration_s: f64) -> Value {
     json!({
-        "schema_version": 2,
+        "schema_version": 3,
         "schema": OUTPUT_SCHEMA_ID,
         "command": "measure",
         "files": [{
             "path": "fixture.gltf",
+            "input": {
+                "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+                "bytes": 3
+            },
             "rig": { "profile": "unknown" },
             "measurements": {
                 "schema_version": 8,
@@ -560,7 +575,7 @@ fn duplicate_loop_endpoint_cli_detects_trims_and_exposes_changed_contracts() {
     assert_eq!(lint_json.status.code(), Some(0));
     let lint_json: Value = serde_json::from_slice(&lint_json.stdout).expect("valid lint JSON");
     assert_output_schema_valid(&lint_json);
-    assert_eq!(lint_json["schema_version"], 2);
+    assert_eq!(lint_json["schema_version"], 3);
     assert_eq!(lint_json["schema"], OUTPUT_SCHEMA_ID);
     assert_eq!(lint_json["files"][0]["measurements"]["schema_version"], 8);
     assert_eq!(
@@ -1316,7 +1331,7 @@ fn measure_json_uses_versioned_envelope() {
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_output_schema_valid(&json);
-    assert_eq!(json["schema_version"], 2);
+    assert_eq!(json["schema_version"], 3);
     assert_eq!(json["schema"], OUTPUT_SCHEMA_ID);
     assert_eq!(json["tool"]["name"], "animsmith");
     assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
@@ -1683,7 +1698,7 @@ fn report_text_escapes_its_output_path() {
 }
 
 #[test]
-fn embedded_contract_types_emit_the_published_v2_envelope() {
+fn embedded_contract_types_emit_the_published_v3_envelope() {
     let doc = Document::default();
     let config = animsmith_core::Config::default();
     let roles = animsmith_core::ResolvedRoles::default();
@@ -1697,6 +1712,7 @@ fn embedded_contract_types_emit_the_published_v2_envelope() {
     .expect("built-in catalog evaluates");
     let file = animsmith_core::LintFileReport::new(
         "embedded.glb",
+        embedded_input_identity(),
         animsmith_core::RigInfo::from_resolved(&doc, &roles)
             .expect("roles were resolved from this document"),
         checks,
@@ -1747,6 +1763,7 @@ fn output_schema_rejects_every_empty_custom_check_identifier() {
         animsmith_core::ToolInfo::animsmith(animsmith_core::ToolSource::new(None, None)),
         vec![animsmith_core::LintFileReport::new(
             "embedded.glb",
+            embedded_input_identity(),
             animsmith_core::RigInfo::from_resolved(&doc, &roles)
                 .expect("empty roles match an empty document"),
             vec![check],
@@ -1789,7 +1806,7 @@ fn lint_json_uses_versioned_envelope() {
 
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
-    assert_eq!(json["schema_version"], 2);
+    assert_eq!(json["schema_version"], 3);
     assert_eq!(json["schema"], OUTPUT_SCHEMA_ID);
     assert_eq!(json["tool"]["name"], "animsmith");
     assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
@@ -1838,6 +1855,55 @@ fn lint_json_uses_versioned_envelope() {
     );
     assert_evaluation_summary_matches_checks(&json);
     assert_output_schema_valid(&json);
+}
+
+#[test]
+fn measure_and_lint_json_retain_each_primary_file_identity_in_argument_order() {
+    let dir = unique_temp_dir("input-identities");
+    let first = dir.path().join("first.glb");
+    let second = dir.path().join("second.glb");
+    write_clean_glb(&first);
+    write_flipped_glb(&second);
+    let expected = [input_identity_json(&first), input_identity_json(&second)];
+
+    for command in ["measure", "lint"] {
+        let output = animsmith()
+            .args([
+                command,
+                first.to_str().expect("utf-8 fixture path"),
+                second.to_str().expect("utf-8 fixture path"),
+                "--format",
+                "json",
+            ])
+            .output()
+            .expect("runs JSON command");
+        assert!(
+            matches!(output.status.code(), Some(0 | 1)),
+            "{command}: {}",
+            stderr(&output)
+        );
+        let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+        let files = json["files"].as_array().expect("file records");
+        assert_eq!(files.len(), 2);
+        for (index, expected_input) in expected.iter().enumerate() {
+            assert_eq!(
+                files[index]["path"],
+                [first.as_path(), second.as_path()][index]
+                    .display()
+                    .to_string()
+            );
+            assert_eq!(
+                files[index]["input"], *expected_input,
+                "{command} row {index}"
+            );
+            assert_eq!(
+                files[index]["input"]["sha256"].as_str().map(str::len),
+                Some(64)
+            );
+            assert_eq!(files[index]["input"]["bytes"], expected_input["bytes"]);
+        }
+        assert_ne!(files[0]["input"], files[1]["input"]);
+    }
 }
 
 #[test]
@@ -1911,7 +1977,7 @@ fn lint_json_exposes_complete_clean_and_unselected_checks() {
 
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
-    assert_eq!(json["schema_version"], 2);
+    assert_eq!(json["schema_version"], 3);
     assert_eq!(json["schema"], OUTPUT_SCHEMA_ID);
     let checks = json["files"][0]["checks"].as_array().expect("checks");
     let nan = checks
@@ -2218,7 +2284,7 @@ fn diff_json_uses_versioned_envelope() {
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_output_schema_valid(&json);
-    assert_eq!(json["schema_version"], 2);
+    assert_eq!(json["schema_version"], 3);
     assert_eq!(json["schema"], OUTPUT_SCHEMA_ID);
     assert_eq!(json["tool"]["name"], "animsmith");
     assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
@@ -2252,6 +2318,21 @@ fn output_schema_rejects_cross_command_and_nested_contract_drift() {
     let mut nested_version = measure.clone();
     nested_version["files"][0]["measurements"]["schema_version"] = json!(7);
     assert!(!validator.is_valid(&nested_version));
+
+    let mut missing_input = measure.clone();
+    missing_input["files"][0]
+        .as_object_mut()
+        .expect("file record")
+        .remove("input");
+    assert!(!validator.is_valid(&missing_input));
+
+    let mut uppercase_digest = measure.clone();
+    uppercase_digest["files"][0]["input"]["sha256"] = json!("A".repeat(64));
+    assert!(!validator.is_valid(&uppercase_digest));
+
+    let mut negative_byte_count = measure.clone();
+    negative_byte_count["files"][0]["input"]["bytes"] = json!(-1);
+    assert!(!validator.is_valid(&negative_byte_count));
 
     let mut lint_without_checks = measure;
     lint_without_checks["command"] = json!("lint");
@@ -2528,7 +2609,7 @@ fn diff_preserves_tailored_report_errors_and_remediation() {
         report
     };
     let mut unsupported_output_version = base.clone();
-    unsupported_output_version["schema_version"] = json!(3);
+    unsupported_output_version["schema_version"] = json!(2);
     let mut wrong_output_identity = base.clone();
     wrong_output_identity["schema"] = json!("urn:other:output");
     let mut unsupported_command = base.clone();
@@ -2554,7 +2635,7 @@ fn diff_preserves_tailored_report_errors_and_remediation() {
         (
             "unsupported output version",
             unsupported_output_version,
-            "has schema_version 3; this build reads schema_version 2".to_owned(),
+            "has schema_version 2; this build reads schema_version 3".to_owned(),
         ),
         (
             "missing command",
@@ -2900,7 +2981,7 @@ fn diff_rejects_json_without_schema_version_with_measure_remediation() {
 fn diff_rejects_unsupported_schema_versions() {
     let dir = unique_temp_dir("diff-future-schema");
     let future = dir.path().join("future.json");
-    for version in [3, 99] {
+    for version in [2, 99] {
         let mut report = measurement_report(1.0);
         report["schema_version"] = json!(version);
         write_json(&future, &report);
@@ -2964,7 +3045,7 @@ fn diff_rejects_envelope_without_files() {
     let report = dir.path().join("no-files.json");
     std::fs::write(
         &report,
-        r#"{"schema_version":2,"schema":"urn:animsmith:schema:output:2","command":"measure"}"#,
+        r#"{"schema_version":3,"schema":"urn:animsmith:schema:output:3","command":"measure"}"#,
     )
     .expect("writes report");
 

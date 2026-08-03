@@ -111,7 +111,7 @@ pub use config::{
     ClipExpectations, Config, ConfigValidationError, GaitGroup, Pinned, SeveritySetting,
 };
 pub use contract::{
-    DiffEnvelope, LintEnvelope, LintFileReport, MEASUREMENTS_SCHEMA_ID,
+    DiffEnvelope, InputIdentity, LintEnvelope, LintFileReport, MEASUREMENTS_SCHEMA_ID,
     MEASUREMENTS_SCHEMA_VERSION, MeasureEnvelope, MeasureFileReport, MeasurementContract,
     MeasurementContractError, MeasurementFileError, MeasurementReportError, MeasurementReportFile,
     MeasurementReportInput, OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, RigInfo, RigInfoError,

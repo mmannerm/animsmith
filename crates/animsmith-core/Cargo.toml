@@ -20,12 +20,13 @@ targets = ["aarch64-apple-darwin", "x86_64-pc-windows-msvc"]
 # Exposes `fixtures`: the analytic walk-cycle builder shared with
 # animsmith-testkit. Off by default so published builds carry no fixture
 # code. The builder takes its sine as a parameter, so enabling this adds
-# no dependency (core stays glam + serde + thiserror only).
+# no dependency (core stays glam + serde + sha2 + thiserror only).
 fixtures = []
 
 [dependencies]
 glam = { workspace = true }
 serde = { workspace = true }
+sha2 = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

@@ -1,4 +1,4 @@
-//! [`load`] reads FBX files into an
+//! [`load`] and [`load_bytes`] read FBX input into an
 //! [`animsmith_core::Document`], normalizing parser errors into
 //! [`LoadError`]. The resulting document carries skeletons, animation
 //! clips, and scene assets in the same core model used by the glTF
@@ -132,6 +132,25 @@ fn mat4(m: &ufbx::Matrix) -> Mat4 {
 /// [`LoadError::Bake`] when an animation stack cannot be baked into the
 /// linear TRS tracks that animsmith's checks consume.
 pub fn load(path: &Path) -> Result<Document, LoadError> {
+    path.to_str()
+        .ok_or_else(|| LoadError::Path(path.display().to_string()))?;
+    let bytes = std::fs::read(path).map_err(|error| LoadError::Fbx(error.to_string()))?;
+    load_bytes(path, &bytes)
+}
+
+/// Load an FBX byte slice into a core [`Document`].
+///
+/// `bytes` supplies the top-level container exactly as captured by the
+/// caller. `path` is retained for source provenance, diagnostics, and
+/// resolving external resources relative to its parent directory.
+///
+/// # Errors
+///
+/// Returns [`LoadError::Path`] when `path` cannot be passed to `ufbx`,
+/// [`LoadError::Fbx`] when the FBX container cannot be parsed, and
+/// [`LoadError::Bake`] when an animation stack cannot be baked into the
+/// linear TRS tracks that animsmith's checks consume.
+pub fn load_bytes(path: &Path, bytes: &[u8]) -> Result<Document, LoadError> {
     let filename = path
         .to_str()
         .ok_or_else(|| LoadError::Path(path.display().to_string()))?;
@@ -147,9 +166,10 @@ pub fn load(path: &Path) -> Result<Document, LoadError> {
         // so standard composition is correct.
         inherit_mode_handling: ufbx::InheritModeHandling::Compensate,
         generate_missing_normals: true,
+        filename: filename.into(),
         ..Default::default()
     };
-    let scene = ufbx::load_file(filename, opts).map_err(|e| LoadError::Fbx(format!("{e:?}")))?;
+    let scene = ufbx::load_memory(bytes, opts).map_err(|e| LoadError::Fbx(format!("{e:?}")))?;
 
     // Every node becomes a bone (the ufbx root included — it carries
     // the axis/unit adjustment). scene.nodes is ordered parents-first,

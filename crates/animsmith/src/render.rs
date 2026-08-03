@@ -1081,13 +1081,17 @@ mod tests {
     use super::*;
     use animsmith_core::{
         Bone, CheckEvaluation, CheckOutput, Clip, CoverageGap, CoverageGapCode, Document,
-        EvaluationScope, EvaluationScopeCode, Finding, LintFileReport, MeasureFileReport,
-        MeasurementContract, ResolvedRoles, RigInfo, Role, SourceInfo, Track, TrackValues,
-        Transform,
+        EvaluationScope, EvaluationScopeCode, Finding, InputIdentity, LintFileReport,
+        MeasureFileReport, MeasurementContract, ResolvedRoles, RigInfo, Role, SourceInfo, Track,
+        TrackValues, Transform,
     };
     use animsmith_core::{Interpolation, Property};
     use serde_json::json;
     use std::collections::BTreeMap;
+
+    fn input_identity(path: &str) -> InputIdentity {
+        InputIdentity::from_bytes(path.as_bytes())
+    }
 
     fn evaluation(
         check_id: &'static str,
@@ -1122,6 +1126,7 @@ mod tests {
         let doc = Document::default();
         LintFileReport::new(
             path,
+            input_identity(path),
             RigInfo::from_resolved(&doc, &ResolvedRoles::default())
                 .expect("empty roles match an empty document"),
             checks,
@@ -1221,6 +1226,7 @@ mod tests {
         let measurements = MeasurementContract::new(clips, assets).expect("finite measurements");
         let reports = [MeasureFileReport::new(
             "asset\npath.glb",
+            input_identity("asset\npath.glb"),
             empty_rig(),
             measurements,
         )];
@@ -1268,11 +1274,13 @@ mod tests {
         let reports = [
             MeasureFileReport::new(
                 "first.glb",
+                input_identity("first.glb"),
                 empty_rig(),
                 MeasurementContract::new(clips, assets).expect("finite measurements"),
             ),
             MeasureFileReport::new(
                 "second.glb",
+                input_identity("second.glb"),
                 empty_rig(),
                 MeasurementContract::new(
                     BTreeMap::new(),

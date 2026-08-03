@@ -10,7 +10,7 @@ use animsmith_core::measure::{
 use animsmith_core::{
     Bone, CheckEvaluation, CheckOutput, CheckSelection, Config, CoverageGap, CoverageGapCode,
     Document, EvaluationScope, EvaluationScopeCode, Finding, ImageContainerFormat,
-    ImageUnavailableReason, LintEnvelope, LintFileReport, MEASUREMENTS_SCHEMA_ID,
+    ImageUnavailableReason, InputIdentity, LintEnvelope, LintFileReport, MEASUREMENTS_SCHEMA_ID,
     MEASUREMENTS_SCHEMA_VERSION, MaterialResourceCoverage, MaterialTextureSlot, MeasureEnvelope,
     MeasureFileReport, MeasurementContract, MeasurementContractError, MeasurementFileError,
     MeasurementReportError, MeasurementReportFile, MeasurementReportInput, MetricGrids,
@@ -34,16 +34,43 @@ fn measurements() -> MeasurementContract {
         .expect("empty measurements are valid")
 }
 
+fn input(bytes: &[u8]) -> InputIdentity {
+    InputIdentity::from_bytes(bytes)
+}
+
+#[test]
+fn input_identity_serializes_sha256_and_byte_count() {
+    let identity = input(b"abc");
+    assert_eq!(
+        identity.sha256(),
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    );
+    assert_eq!(identity.bytes(), 3);
+    assert_eq!(
+        serde_json::to_value(identity).expect("identity serializes"),
+        serde_json::json!({
+            "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            "bytes": 3,
+        })
+    );
+}
+
 #[test]
 fn command_specific_file_types_serialize_only_their_valid_shape() {
     let measure = MeasureEnvelope::new(
         tool(),
-        vec![MeasureFileReport::new("measure.glb", rig(), measurements())],
+        vec![MeasureFileReport::new(
+            "measure.glb",
+            input(b"measure input"),
+            rig(),
+            measurements(),
+        )],
     );
     let lint = LintEnvelope::new(
         tool(),
         vec![LintFileReport::new(
             "lint.glb",
+            input(b"lint input"),
             rig(),
             Vec::new(),
             measurements(),
@@ -53,6 +80,7 @@ fn command_specific_file_types_serialize_only_their_valid_shape() {
     let lint = serde_json::to_value(lint).expect("lint envelope serializes");
     assert!(measure["files"][0].get("checks").is_none());
     assert_eq!(lint["files"][0]["checks"], serde_json::json!([]));
+    assert_eq!(measure["files"][0]["input"]["bytes"], 13);
 
     let input: MeasurementReportInput =
         serde_json::from_value(measure).expect("current measure envelope deserializes");
@@ -137,11 +165,18 @@ fn lint_summary_aggregates_every_axis_and_finding_bucket_across_files() {
         vec![
             LintFileReport::new(
                 "first.glb",
+                input(b"first input"),
                 rig(),
                 vec![partial, disabled_evaluation()],
                 measurements(),
             ),
-            LintFileReport::new("second.glb", rig(), vec![complete], measurements()),
+            LintFileReport::new(
+                "second.glb",
+                input(b"second input"),
+                rig(),
+                vec![complete],
+                measurements(),
+            ),
         ],
     );
     let report = serde_json::to_value(report).expect("lint envelope serializes");
@@ -170,6 +205,10 @@ fn current_measure_report() -> serde_json::Value {
         "command": "measure",
         "files": [{
             "path": "clip.glb",
+            "input": {
+                "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+                "bytes": 0,
+            },
             "measurements": {
                 "schema_version": MEASUREMENTS_SCHEMA_VERSION,
                 "schema": MEASUREMENTS_SCHEMA_ID,
@@ -218,6 +257,9 @@ fn measurement_report_input_rejects_every_invalid_contract_branch() {
 
     let mut future_output = base.clone();
     future_output["schema_version"] = serde_json::json!(OUTPUT_SCHEMA_VERSION + 1);
+    let mut v2_output = base.clone();
+    v2_output["schema_version"] = serde_json::json!(2);
+    v2_output["schema"] = serde_json::json!("urn:animsmith:schema:output:2");
     let mut wrong_output_identity = base.clone();
     wrong_output_identity["schema"] = serde_json::json!("urn:other:output");
     let mut unsupported_command = base.clone();
@@ -228,6 +270,8 @@ fn measurement_report_input_rejects_every_invalid_contract_branch() {
     let mut wrong_measurement_identity = base.clone();
     wrong_measurement_identity["files"][0]["measurements"]["schema"] =
         serde_json::json!("urn:other:measurements");
+    let mut invalid_input_sha256 = base.clone();
+    invalid_input_sha256["files"][0]["input"]["sha256"] = serde_json::json!("ABCDEF");
     let input_without_files: MeasurementReportInput = serde_json::from_value(without("/files"))
         .expect("report without files remains structurally deserializable");
     assert_eq!(input_without_files.file_count(), None);
@@ -248,6 +292,14 @@ fn measurement_report_input_rejects_every_invalid_contract_branch() {
             format!(
                 "has schema_version {}; this build reads schema_version {OUTPUT_SCHEMA_VERSION}",
                 OUTPUT_SCHEMA_VERSION + 1
+            ),
+        ),
+        (
+            "retired v2 output",
+            v2_output,
+            MeasurementReportError::UnsupportedOutputVersion { found: 2 },
+            format!(
+                "has schema_version 2; this build reads schema_version {OUTPUT_SCHEMA_VERSION}"
             ),
         ),
         (
@@ -284,6 +336,42 @@ fn measurement_report_input_rejects_every_invalid_contract_branch() {
                 source: MeasurementFileError::MissingPath,
             },
             "files[0] has no `path`".to_owned(),
+        ),
+        (
+            "missing input",
+            without("/files/0/input"),
+            MeasurementReportError::File {
+                file_index: 0,
+                source: MeasurementFileError::MissingInput,
+            },
+            "files[0] has no `input`".to_owned(),
+        ),
+        (
+            "missing input sha256",
+            without("/files/0/input/sha256"),
+            MeasurementReportError::File {
+                file_index: 0,
+                source: MeasurementFileError::MissingSha256,
+            },
+            "files[0] input has no `sha256`".to_owned(),
+        ),
+        (
+            "missing input bytes",
+            without("/files/0/input/bytes"),
+            MeasurementReportError::File {
+                file_index: 0,
+                source: MeasurementFileError::MissingBytes,
+            },
+            "files[0] input has no `bytes`".to_owned(),
+        ),
+        (
+            "invalid input sha256",
+            invalid_input_sha256,
+            MeasurementReportError::File {
+                file_index: 0,
+                source: MeasurementFileError::InvalidSha256,
+            },
+            "files[0] input `sha256` must be 64 lowercase hexadecimal characters".to_owned(),
         ),
         (
             "missing measurements",
@@ -568,6 +656,10 @@ fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
     report["files"] = serde_json::json!([
         {
             "path": ".\\Walk Assets\\..\\WALK.GLB",
+            "input": {
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+                "bytes": 1,
+            },
             "measurements": {
                 "schema_version": MEASUREMENTS_SCHEMA_VERSION,
                 "schema": MEASUREMENTS_SCHEMA_ID,
@@ -586,6 +678,10 @@ fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
         },
         {
             "path": "run.glb",
+            "input": {
+                "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+                "bytes": 2,
+            },
             "measurements": {
                 "schema_version": MEASUREMENTS_SCHEMA_VERSION,
                 "schema": MEASUREMENTS_SCHEMA_ID,
@@ -604,6 +700,10 @@ fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
         },
         {
             "path": "middle.glb",
+            "input": {
+                "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+                "bytes": 3,
+            },
             "measurements": {
                 "schema_version": MEASUREMENTS_SCHEMA_VERSION,
                 "schema": MEASUREMENTS_SCHEMA_ID,
@@ -642,6 +742,26 @@ fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
             .map(MeasurementReportFile::path)
             .collect::<Vec<_>>(),
         [".\\Walk Assets\\..\\WALK.GLB", "run.glb", "middle.glb"]
+    );
+    assert_eq!(
+        files
+            .iter()
+            .map(|file| (file.input().sha256(), file.input().bytes()))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                "1111111111111111111111111111111111111111111111111111111111111111",
+                1
+            ),
+            (
+                "2222222222222222222222222222222222222222222222222222222222222222",
+                2
+            ),
+            (
+                "3333333333333333333333333333333333333333333333333333333333333333",
+                3
+            ),
+        ]
     );
     assert_eq!(
         files
@@ -773,7 +893,7 @@ fn measurement_report_input_identifies_invalid_file_without_cli_remediation() {
 }
 
 #[test]
-fn tool_source_drops_revision_text_outside_the_v2_schema() {
+fn tool_source_drops_revision_text_outside_the_v3_schema() {
     for invalid in ["f".repeat(39), "z".repeat(40), "f".repeat(41)] {
         let source = ToolSource::new(Some(invalid), Some(true));
         let json =
