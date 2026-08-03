@@ -208,6 +208,21 @@ fn zero_duration_is_flagged() {
     );
 }
 
+#[test]
+fn degenerate_duration_with_a_pin_reports_measured_and_expected_seconds() {
+    let mut doc = clean_doc();
+    doc.clips[0].duration_s = 0.0;
+    let findings = lint_with_config(&doc, &duration_pin(1.0, 0.02));
+    let finding = findings
+        .iter()
+        .find(|finding| finding.check_id == "duration-sanity")
+        .expect("degenerate duration finding");
+    let value = serde_json::to_value(finding).expect("serializes finding");
+    assert_eq!(finding.severity, Severity::Error);
+    assert_eq!(value["measured"], 0.0);
+    assert_eq!(value["expected"], 1.0);
+}
+
 fn duration_pin(value: f64, tolerance: f64) -> Config {
     let mut config = Config::default();
     config.clips.insert(

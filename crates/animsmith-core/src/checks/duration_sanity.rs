@@ -22,6 +22,7 @@ impl Check for DurationSanity {
         let mut findings = Vec::new();
         let doc = ctx.doc;
         for (index, clip) in doc.clips.iter().enumerate() {
+            let duration_pin = ctx.expectations(index).duration_s;
             if clip.tracks.is_empty() {
                 findings.push(
                     Finding::new(self.id(), Severity::Warning, "clip has no tracks")
@@ -29,18 +30,20 @@ impl Check for DurationSanity {
                 );
             }
             if clip.duration_s <= 0.0 || !clip.duration_s.is_finite() {
-                findings.push(
-                    Finding::new(
-                        self.id(),
-                        Severity::Error,
-                        format!("degenerate clip duration ({}s)", clip.duration_s),
-                    )
-                    .clip(&clip.name)
-                    .measured(clip.duration_s),
-                );
+                let mut finding = Finding::new(
+                    self.id(),
+                    Severity::Error,
+                    format!("degenerate clip duration ({}s)", clip.duration_s),
+                )
+                .clip(&clip.name)
+                .measured(clip.duration_s);
+                if let Some(pin) = duration_pin {
+                    finding = finding.expected(pin.value);
+                }
+                findings.push(finding);
                 continue;
             }
-            if let Some(pin) = ctx.expectations(index).duration_s
+            if let Some(pin) = duration_pin
                 && (clip.duration_s - pin.value).abs() > pin.tolerance
             {
                 findings.push(
