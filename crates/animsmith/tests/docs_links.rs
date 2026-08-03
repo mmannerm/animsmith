@@ -342,6 +342,53 @@ fn validate_repo(root: &Path) -> Result<(Vec<String>, Vec<String>), String> {
 fn gated_markdown_links_resolve() {
     let root = repo_root();
     let (files, errors) = validate_repo(&root).expect("enumerates tracked Markdown with Git");
+    assert_eq!(
+        EXCLUDED_MARKDOWN_PREFIXES,
+        [".claude/", "docs/research/"],
+        "only the two stated non-project-doc trees may be excluded"
+    );
+
+    let inventory_output = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["ls-files", "-z", "--", "*.md"])
+        .output()
+        .expect("independently enumerates the repository Markdown inventory");
+    assert!(
+        inventory_output.status.success(),
+        "independent Markdown inventory failed: {}",
+        String::from_utf8_lossy(&inventory_output.stderr)
+    );
+    let inventory = String::from_utf8(inventory_output.stdout).expect("tracked paths are UTF-8");
+    let mut expected_files: Vec<String> = inventory
+        .split_terminator('\0')
+        .filter(|rel| !rel.starts_with(".claude/") && !rel.starts_with("docs/research/"))
+        .map(str::to_owned)
+        .collect();
+    expected_files.sort();
+    assert_eq!(
+        files, expected_files,
+        "the gate must contain every tracked Markdown path except the two stated exclusions"
+    );
+
+    for newly_gated in [
+        "CHANGELOG.md",
+        "DESIGN.md",
+        "RELEASING.md",
+        "THIRD-PARTY.md",
+        "crates/animsmith-core/THIRD-PARTY.md",
+        "crates/animsmith-fbx/THIRD-PARTY.md",
+        "crates/animsmith-gltf/THIRD-PARTY.md",
+        "crates/animsmith-report/THIRD-PARTY.md",
+        "crates/animsmith/THIRD-PARTY.md",
+        "examples/assets/README.md",
+        "fuzz/README.md",
+    ] {
+        assert!(
+            files.iter().any(|rel| rel == newly_gated),
+            "the widened gate must include {newly_gated}"
+        );
+    }
     assert!(
         !files.is_empty(),
         "the tracked Markdown gate must not be empty"
