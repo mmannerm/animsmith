@@ -12,8 +12,8 @@
 profile = "auto"
 
 [clips.walk]
-# Declaring the clip as a loop is what arms loop-seam: it measures
-# whether the feet return to their first-frame pose relative to the hips.
+# Declaring the clip as a loop arms role-free per-bone C0/C1 checks plus the
+# locomotion-specific feet-relative-to-hips loop-seam check.
 loop = true
 # The clip animates in place (no net root travel), so in-place passes.
 in_place = true
@@ -21,3 +21,13 @@ in_place = true
 [checks.loop-seam]
 # Fail a wrap discontinuity more than 1.6× the in-clip stride step.
 max_ratio = 1.6
+
+[checks.loop-closure]
+# Model-space endpoint pose caps. Inherited root travel may require a larger
+# position cap (or disabling this check) for extracted root-motion clips.
+max_position_delta_m = 0.01
+max_rotation_delta_deg = 1.0
+
+[checks.loop-seam-vel]
+# Fail when incoming/outgoing model-space linear velocity differs by >0.1 m/s.
+max_velocity_delta_mps = 0.1

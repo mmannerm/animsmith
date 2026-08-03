@@ -3,7 +3,10 @@
 //! bake's measured sidecar) can pin their own contracts to the numbers.
 
 use crate::config::Config;
-use crate::metrics::{MetricGrids, foot_cycle_metrics, root_motion_speed_mps, rotation_range_deg};
+use crate::metrics::{
+    MetricGrids, foot_cycle_metrics, loop_continuity_metrics, root_motion_speed_mps,
+    rotation_range_deg,
+};
 use crate::model::{
     DecodedImageColorType, Document, ImageContainerFormat, ImageSourceKind, ImageUnavailableReason,
     MaterialResourceCoverage, MaterialTextureSlot, MeshAsset, SourceImageInspection,
@@ -1206,6 +1209,32 @@ pub struct GaitMeasurement {
     pub lr_amplitude_m: f64,
 }
 
+/// Model-space loop-continuity measurements for one skeleton bone.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct BoneLoopContinuityMeasurement {
+    /// Stable zero-based bone index in skeleton order.
+    pub bone_index: u32,
+    /// Human-readable bone name. Consumers should use `bone_index` as the
+    /// identity because display names are not required to be unique.
+    pub bone_name: String,
+    /// Last-sample to first-sample model-space position distance (metres).
+    pub position_delta_m: f64,
+    /// Shortest-path model-space rotation difference (degrees).
+    pub rotation_delta_deg: f64,
+    /// Difference between the model-space linear velocities immediately
+    /// before and after the wrap (metres per second).
+    pub seam_velocity_delta_mps: f64,
+}
+
+/// Per-bone C0 pose closure and C1 linear-velocity continuity for one clip.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct LoopContinuityMeasurement {
+    /// Measurements in skeleton order.
+    pub bones: Vec<BoneLoopContinuityMeasurement>,
+}
+
 /// Measurements for one clip in the `measure` output map.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -1221,6 +1250,10 @@ pub struct ClipMeasurements {
     /// keyed rotation. Bones under [`MIN_RECORDED_ROTATION_DEG`] are
     /// omitted.
     pub bone_rotation_range_deg: BTreeMap<String, f64>,
+    /// Model-space pose closure and seam-adjacent linear-velocity continuity
+    /// for every skeleton bone. Available without rig-role resolution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loop_continuity: Option<LoopContinuityMeasurement>,
     /// Loop wrap discontinuity ratio; needs hips + foot roles and a
     /// real stride. See [`crate::metrics::FootCycleMetrics`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1279,6 +1312,22 @@ pub fn measure_document(
             let cycle = grid
                 .as_ref()
                 .and_then(|g| foot_cycle_metrics(g, roles, min_stride_step_m));
+            let loop_continuity = grid.as_ref().and_then(|grid| {
+                let metrics = loop_continuity_metrics(grid)?;
+                Some(LoopContinuityMeasurement {
+                    bones: metrics
+                        .into_iter()
+                        .enumerate()
+                        .map(|(bone_index, metrics)| BoneLoopContinuityMeasurement {
+                            bone_index: bone_index as u32,
+                            bone_name: doc.skeleton.bones[bone_index].name.clone(),
+                            position_delta_m: metrics.position_delta_m,
+                            rotation_delta_deg: metrics.rotation_delta_deg,
+                            seam_velocity_delta_mps: metrics.seam_velocity_delta_mps,
+                        })
+                        .collect(),
+                })
+            });
             let speed_mps = grid.as_ref().and_then(|g| root_motion_speed_mps(g, roles));
             let duration_s = if clip.duration_s.is_finite() {
                 clip.duration_s
@@ -1298,6 +1347,7 @@ pub fn measure_document(
                     frame_count: frame_count as u32,
                     animated_bones: animated.into_iter().collect(),
                     bone_rotation_range_deg: rotation_range,
+                    loop_continuity,
                     loop_seam_ratio: cycle.as_ref().and_then(|c| c.loop_seam_ratio),
                     gait: cycle.map(|c| GaitMeasurement {
                         phase: c.gait_phase,

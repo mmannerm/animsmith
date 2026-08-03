@@ -340,7 +340,9 @@ golden-test against.
 | `constant-nonunit-scale` | constant non-unit scale channel or single-key pin | raw trajectory | opt-in severity (off by default) | new |
 | `constant-track` | redundant multi-key representation whose interpolation-aware trajectory never moves | raw trajectory | eps | new |
 | `frozen-bone` | required bone's max angular deviation from first frame below floor | grid + roles/meta | `min_rotation_deg` | reference contract rotation floor + measured rotation ranges |
+| `loop-closure` | maximum per-bone model-space last→first position and shortest-path rotation delta | grid + loop declaration | `max_position_delta_m`, `max_rotation_delta_deg` | consumer-neutral authoring-loop requirement |
 | `loop-seam` | last→first position wrap discontinuity of feet-relative-to-hips, normalized by the *local neighbour* per-frame step, with a stride floor so stationary clips skip | grid + Hips/feet/toe roles | `max_ratio`, `min_stride_step_m` | `locomotion_metrics.py` — port verbatim |
+| `loop-seam-vel` | maximum per-bone model-space difference between the in-clip velocities entering and leaving the wrap | grid + loop declaration | `max_velocity_delta_mps` | consumer-neutral authoring-loop requirement |
 | `root-motion-speed` | horizontal root/hips displacement ÷ duration vs declared `speed_mps`; flags stray speed pins on non-locomotion clips | grid + Root/Hips | pinned speed + tolerance (reference gate: 15%) | reference bake |
 | `missing-bones` | declared-required animated bones absent; tracks targeting nodes outside the skeleton | raw + meta | bone/role list | reference contract `animates_bones` |
 | `naming` | clip names vs convention pattern | meta | regex/glob | new |
@@ -355,7 +357,7 @@ golden-test against.
 | `foot-slide` | detect stance (foot height + near-zero vertical velocity), measure horizontal foot velocity during stance in the travel-cancelled frame | new; hardest check — ships opt-in until corpus-tuned |
 | `bind-pose` | rest pose vs first frame delta (clip authored against wrong bind); T-pose/A-pose classification; node-TRS rest disagreeing with IBM-derived rest (the disagreement is itself a finding) | reference sidecar already derives rest from IBMs |
 | `axis-conventions` | character forward/up at rest vs declared axes; root orientation drift over a loop | reference contract axis vocabulary |
-| `loop-seam-rot` / `loop-seam-vel` | rotational C0 and velocity C1 seam continuity | flagged in the incubating project, unimplemented |
+| `loop-seam-rot` | rotational C1 seam continuity (angular-velocity derivative matching) | unimplemented; rotational C0 ships in `loop-closure` |
 | `key-density` | keys/sec far above the clip fps (unbaked-curve bloat) or far below (starved track) | new |
 
 ### P2 — corpus/cross-clip
@@ -380,6 +382,13 @@ profile = "mixamo"                 # or "auto", or an inline role map:
 [checks.loop-seam]
 severity = "error"                 # off | note | warn | error
 max_ratio = 1.5
+
+[checks.loop-closure]
+max_position_delta_m = 0.01
+max_rotation_delta_deg = 1.0
+
+[checks.loop-seam-vel]
+max_velocity_delta_mps = 0.1
 
 [checks.quat-flip]
 severity = "warn"

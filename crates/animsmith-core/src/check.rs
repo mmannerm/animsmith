@@ -137,7 +137,9 @@ pub fn all_checks() -> Vec<Box<dyn Check>> {
     let mut checks = mechanical_checks();
     checks.push(Box::new(crate::checks::missing_bones::MissingBones));
     checks.push(Box::new(crate::checks::frozen_bone::FrozenBone));
+    checks.push(Box::new(crate::checks::loop_closure::LoopClosure));
     checks.push(Box::new(crate::checks::loop_seam::LoopSeam));
+    checks.push(Box::new(crate::checks::loop_seam_vel::LoopSeamVelocity));
     checks.push(Box::new(crate::checks::root_motion_speed::RootMotionSpeed));
     checks.push(Box::new(crate::checks::gait_group::GaitGroup));
     checks.push(Box::new(crate::checks::in_place::InPlace));

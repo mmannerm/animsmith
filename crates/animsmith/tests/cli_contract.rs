@@ -8,11 +8,11 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 
 const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:2";
-const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:6";
+const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:7";
 const HOSTILE_PRESENTATION_TEXT: &str = "forged\nline\u{1b}[31m\u{2028}\u{2029}\u{202e}";
 const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v2.schema.json");
-const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v6.schema.json");
-const EXPECTED_CHECK_IDS: [&str; 18] = [
+const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v7.schema.json");
+const EXPECTED_CHECK_IDS: [&str; 20] = [
     "nan",
     "time-monotonic",
     "quat-norm",
@@ -24,7 +24,9 @@ const EXPECTED_CHECK_IDS: [&str; 18] = [
     "constant-track",
     "missing-bones",
     "frozen-bone",
+    "loop-closure",
     "loop-seam",
+    "loop-seam-vel",
     "root-motion-speed",
     "gait-group",
     "in-place",
@@ -351,7 +353,7 @@ fn measurement_report(duration_s: f64) -> Value {
             "path": "fixture.gltf",
             "rig": { "profile": "unknown" },
             "measurements": {
-                "schema_version": 6,
+                "schema_version": 7,
                 "schema": MEASUREMENTS_SCHEMA_ID,
                 "clips": {
                     "walk": {
@@ -1065,9 +1067,23 @@ fn measure_json_uses_versioned_envelope() {
     assert_eq!(files.len(), 1);
     assert_eq!(files[0]["rig"]["profile"], "unknown");
     assert!(files[0]["checks"].is_null());
-    assert_eq!(files[0]["measurements"]["schema_version"], 6);
+    assert_eq!(files[0]["measurements"]["schema_version"], 7);
     assert_eq!(files[0]["measurements"]["schema"], MEASUREMENTS_SCHEMA_ID);
     assert!(files[0]["measurements"]["clips"]["walk"]["duration_s"].is_number());
+    let loop_bones = files[0]["measurements"]["clips"]["walk"]["loop_continuity"]["bones"]
+        .as_array()
+        .expect("measurable clip exposes per-bone loop continuity");
+    assert_eq!(loop_bones.len(), 3);
+    for (bone, (index, name)) in loop_bones
+        .iter()
+        .zip([(0, "root"), (1, "hips"), (2, "foot")])
+    {
+        assert_eq!(bone["bone_index"], index);
+        assert_eq!(bone["bone_name"], name);
+        assert!(bone["position_delta_m"].is_number());
+        assert!(bone["rotation_delta_deg"].is_number());
+        assert!(bone["seam_velocity_delta_mps"].is_number());
+    }
 }
 
 #[test]
@@ -1398,7 +1414,7 @@ fn lint_json_uses_versioned_envelope() {
     assert_eq!(json["command"], "lint");
     assert_eq!(json["summary"]["files"], 1);
     assert!(json["files"][0]["checks"].is_array());
-    assert_eq!(json["files"][0]["measurements"]["schema_version"], 6);
+    assert_eq!(json["files"][0]["measurements"]["schema_version"], 7);
     assert_eq!(
         json["files"][0]["measurements"]["schema"],
         MEASUREMENTS_SCHEMA_ID
@@ -1852,7 +1868,7 @@ fn output_schema_rejects_cross_command_and_nested_contract_drift() {
     assert!(!validator.is_valid(&foreign_field));
 
     let mut nested_version = measure.clone();
-    nested_version["files"][0]["measurements"]["schema_version"] = json!(7);
+    nested_version["files"][0]["measurements"]["schema_version"] = json!(8);
     assert!(!validator.is_valid(&nested_version));
 
     let mut lint_without_checks = measure;
@@ -2136,7 +2152,7 @@ fn diff_preserves_tailored_report_errors_and_remediation() {
     let mut unsupported_command = base.clone();
     unsupported_command["command"] = json!("diff");
     let mut unsupported_measurement_version = base.clone();
-    unsupported_measurement_version["files"][0]["measurements"]["schema_version"] = json!(7);
+    unsupported_measurement_version["files"][0]["measurements"]["schema_version"] = json!(8);
     let mut wrong_measurement_identity = base.clone();
     wrong_measurement_identity["files"][0]["measurements"]["schema"] =
         json!("urn:other:measurements");
@@ -2191,7 +2207,7 @@ fn diff_preserves_tailored_report_errors_and_remediation() {
         (
             "unsupported measurement version",
             unsupported_measurement_version,
-            "has measurement schema_version 7; this build reads measurement schema_version 6"
+            "has measurement schema_version 8; this build reads measurement schema_version 7"
                 .to_owned(),
         ),
         (
@@ -2306,10 +2322,10 @@ fn diff_rejects_outer_and_nested_contract_identity_drift() {
         (
             {
                 let mut report = measurement_report(1.0);
-                report["files"][0]["measurements"]["schema_version"] = json!(7);
+                report["files"][0]["measurements"]["schema_version"] = json!(8);
                 report
             },
-            "has measurement schema_version 7; this build reads measurement schema_version 6",
+            "has measurement schema_version 8; this build reads measurement schema_version 7",
         ),
         (
             {
@@ -2532,7 +2548,7 @@ fn diff_rejects_unsupported_schema_versions() {
 fn diff_rejects_all_unsupported_nested_measurement_schema_versions() {
     let dir = unique_temp_dir("diff-unsupported-nested-schema");
     let report_path = dir.path().join("report.json");
-    for version in [0, 1, 2, 3, 4, 5, 7, 99] {
+    for version in [0, 1, 2, 3, 4, 5, 6, 8, 99] {
         let mut report = measurement_report(1.0);
         report["files"][0]["measurements"]["schema_version"] = json!(version);
         write_json(&report_path, &report);
@@ -2552,7 +2568,7 @@ fn diff_rejects_all_unsupported_nested_measurement_schema_versions() {
         );
         assert!(
             stderr(&output).contains(&format!(
-                "has measurement schema_version {version}; this build reads measurement schema_version 6"
+                "has measurement schema_version {version}; this build reads measurement schema_version 7"
             )),
             "version {version}: stderr:\n{}",
             stderr(&output)
@@ -3009,7 +3025,11 @@ fn lint_unresolved_roles_serialize_as_a_gap_and_exit_zero() {
     let input = dir.path().join("sway.glb");
     write_clean_glb(&input); // root->spine rig: no hips/foot roles resolve
     let config = dir.path().join("animsmith.toml");
-    std::fs::write(&config, "[clips.sway]\nloop = true\n").expect("writes config");
+    std::fs::write(
+        &config,
+        "[clips.sway]\nloop = true\n\n[checks.loop-closure]\nseverity = \"off\"\n\n[checks.loop-seam-vel]\nseverity = \"off\"\n",
+    )
+    .expect("writes config");
 
     for deny in [false, true] {
         let mut args = vec![

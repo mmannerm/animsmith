@@ -250,12 +250,23 @@ $ animsmith measure --format json walking.glb
         "hips": "mixamorig:Hips", "spine": "mixamorig:Spine",
         "left_foot": "mixamorig:LeftFoot", "right_foot": "mixamorig:RightFoot" } },
       "measurements": {
-        "schema_version": 6,
-        "schema": "urn:animsmith:schema:measurements:6",
+        "schema_version": 7,
+        "schema": "urn:animsmith:schema:measurements:7",
         "clips": { "mixamo.com": {
           "duration_s": 1.0, "frame_count": 33,
           "animated_bones": ["mixamorig:Hips", "mixamorig:LeftFoot", "mixamorig:RightFoot"],
           "bone_rotation_range_deg": { "mixamorig:Hips": 3.2 },
+          "loop_continuity": { "bones": [
+            { "bone_index": 0, "bone_name": "mixamorig:Hips",
+              "position_delta_m": 0.0, "rotation_delta_deg": 0.0,
+              "seam_velocity_delta_mps": 0.0 },
+            { "bone_index": 1, "bone_name": "mixamorig:LeftFoot",
+              "position_delta_m": 3.7e-17, "rotation_delta_deg": 0.0,
+              "seam_velocity_delta_mps": 0.0 },
+            { "bone_index": 2, "bone_name": "mixamorig:RightFoot",
+              "position_delta_m": 3.7e-17, "rotation_delta_deg": 0.0,
+              "seam_velocity_delta_mps": 0.0 }
+          ] },
           "loop_seam_ratio": 1.2e-15,
           "gait": { "phase": 0.75, "lr_amplitude_m": 0.2 },
           "speed_mps": 0.0
@@ -278,8 +289,9 @@ $ animsmith measure --format json walking.glb
 
 (Abridged — all nine roles resolve; head, toes, and hands are elided
 here.) The numbers become the contract:
-`loop_seam_ratio` near zero says the cycle closes, `speed_mps` of zero
-confirms the In Place download, and the gait numbers seed a
+near-zero per-bone loop deltas and `loop_seam_ratio` say the cycle closes in
+pose, velocity, and locomotion phase; `speed_mps` of zero confirms the In Place
+download, and the gait numbers seed a
 [blend-ring group](game-ready-clips.md#feet-skate-when-clips-blend)
 once you have more than one direction. Declare what must stay true by
 saving this as `animsmith.toml` next to your clip — animsmith
@@ -295,6 +307,13 @@ in_place = true
 
 [checks.loop-seam]
 max_ratio = 1.6
+
+[checks.loop-closure]
+max_position_delta_m = 0.01
+max_rotation_delta_deg = 1.0
+
+[checks.loop-seam-vel]
+max_velocity_delta_mps = 0.1
 ```
 
 The same contract is committed as
@@ -302,7 +321,7 @@ The same contract is committed as
 for reference (from a repo checkout, pass it with
 `--config examples/mixamo.animsmith.toml` instead of saving a local
 copy). It pins the profile rather than trusting auto-detection, declares
-the clip a loop (arming `loop-seam`) and in-place (arming `in-place`,
+the clip a loop (arming all three loop checks) and in-place (arming `in-place`,
 judged on the Hips track per the callout above). Every key, glob
 pattern, and severity override is documented in the
 [configuration reference](../README.md#configuration).
@@ -323,10 +342,14 @@ copy whose cycle was cut short, the classic
 ```console
 $ animsmith lint walking-popped.glb
 walking-popped.glb:
+  error[loop-closure] clip 'mixamo.com' bone 'mixamorig:RightFoot' @1.000s:
+    loop does not close in position (measured 0.1581, expected 0.0100)
   error[loop-seam] clip 'mixamo.com' @1.000s: loop seam pops: wrap discontinuity
     is 6.82× the neighbouring in-clip step (cap 1.60) — the clip does not
     close its cycle (measured 6.8152, expected 1.6000)
-1 error(s), 0 warning(s), 0 note(s), 1 coverage gap(s)   # exits 1
+  error[loop-seam-vel] clip 'mixamo.com' bone 'mixamorig:RightFoot' @1.000s:
+    loop velocity changes at the seam (measured 0.7972, expected 0.1000)
+3 error(s), 0 warning(s), 0 note(s), 1 coverage gap(s)   # exits 1
 ```
 
 The contract also catches downloading the wrong variant. The real

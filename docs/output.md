@@ -13,8 +13,8 @@ identity `urn:animsmith:schema:output:2`. The retrievable schema is
 is a retrieval location, not the protocol identity.
 
 Measurement evidence is nested and independently versioned as
-`urn:animsmith:schema:measurements:6`. Its retrievable schema is
-[`measurements-v6.schema.json`](schemas/measurements-v6.schema.json). A future
+`urn:animsmith:schema:measurements:7`. Its retrievable schema is
+[`measurements-v7.schema.json`](schemas/measurements-v7.schema.json). A future
 measurement-definition change can therefore bump that contract without
 redesigning the outer result envelope.
 
@@ -205,8 +205,8 @@ Both commands put evidence under `files[].measurements`:
 
 ```json
 {
-  "schema_version": 6,
-  "schema": "urn:animsmith:schema:measurements:6",
+  "schema_version": 7,
+  "schema": "urn:animsmith:schema:measurements:7",
   "clips": {},
   "mesh_definitions": [],
   "node_instances": [],
@@ -222,7 +222,29 @@ Both commands put evidence under `files[].measurements`:
 ```
 
 `clips` maps clip names to duration, frame count, animated bones, rotation
-ranges, and optional role-dependent gait, seam, and speed metrics.
+ranges, optional per-bone loop continuity, and optional role-dependent gait,
+foot-seam, and speed metrics.
+
+`loop_continuity.bones[]` is present when a clip has at least three samples and
+the seam-adjacent model-space evidence is finite. Rows stay in skeleton order
+and carry both `bone_index` and `bone_name`; the numeric index is identity,
+while the name is display context and need not be unique. Each row reports:
+
+- `position_delta_m`: last-to-first model-space position distance (C0);
+- `rotation_delta_deg`: last-to-first shortest-path model-space rotation
+  difference (C0);
+- `seam_velocity_delta_mps`: difference between the model-space linear
+  velocities entering the last sample and leaving frame 0 (C1).
+
+The velocity comparison deliberately uses the two in-clip steps adjacent to
+the wrap. The uniform grid contains both `t=0` and `t=duration`, so treating
+the duplicate last-to-first endpoint chord as a velocity would report zero on
+a perfectly closed loop. Model-space values include ancestor motion; the
+rotation chain is composed independently of scale rather than decomposed from
+a potentially sheared matrix. These measurements need no rig profile and are
+emitted for measurable clips whether or not project configuration declares
+them as loops. The `loop-closure` and `loop-seam-vel` checks judge them only
+where `[clips.<name>] loop = true`.
 
 `mesh_definitions` contains one record per source mesh definition. Its
 `geometry_aabb` reduces finite primitive `POSITION` values in the mesh's own
@@ -398,7 +420,7 @@ Built-in gap codes are:
 | Gap code | Meaning | Emitted by |
 |---|---|---|
 | `roles_unresolved` | Required semantic rig roles were not resolved. | `loop-seam`, `root-motion-speed`, `in-place`, `foot-slide`, `gait-group` |
-| `measurement_unavailable` | A required numeric measurement could not be produced or did not meet its evidence floor. | `loop-seam`, `root-motion-speed`, `in-place`, `foot-slide`, `gait-group` |
+| `measurement_unavailable` | A required numeric measurement could not be produced or did not meet its evidence floor. | `loop-closure`, `loop-seam`, `loop-seam-vel`, `root-motion-speed`, `in-place`, `foot-slide`, `gait-group` |
 | `insufficient_measurable_members` | Fewer than two gait-group members produced usable phases. | `gait-group` |
 | `members_not_evaluated` | Some configured gait-group members did not produce usable phases. | `gait-group` |
 | `invalid_declared_fps` | A declared frame rate was zero, negative, or non-finite. | `fps` |
@@ -408,10 +430,12 @@ Built-in completed/gap scope codes are:
 
 | Scope code | Work unit | Emitted by |
 |---|---|---|
+| `loop_closure` | One named clip's per-bone model-space pose closure was measured. | `loop-closure` |
 | `member_existence` | Configured gait-group members were checked for existence. | `gait-group` |
 | `phase_measurement` | One named clip's gait phase was measured or lacked usable evidence. | `gait-group` |
 | `phase_coherence` | One named gait group's measurable phases were compared. | `gait-group` |
 | `loop_seam` | One named clip's positional loop seam was measured. | `loop-seam` |
+| `loop_seam_velocity` | One named clip's per-bone model-space seam velocity continuity was measured. | `loop-seam-vel` |
 | `root_motion_speed` | One named clip's root-motion speed was measured. | `root-motion-speed` |
 | `travel_mode` | One named clip's in-place/root-motion declaration was judged. | `in-place` |
 | `foot_stance` | Whole-clip prerequisites for stance analysis were evaluated. | `foot-slide` |
@@ -477,7 +501,14 @@ delta count, and structured metric deltas:
 ```
 
 `diff` accepts asset files or one-file v2 `measure`/`lint` reports carrying
-measurement contract v6. Multi-file reports and unsupported contract versions
+measurement contract v7. Multi-file reports and unsupported contract versions
 are rejected as operator errors. Before extracting the clip metrics it uses,
 `diff` validates the complete measurement record, including mesh evidence, and
 rejects malformed or non-finite payload values.
+
+Loop-continuity rows compare by `bone_index`. Re-export noise at or below
+0.001 m for `position_delta_m`, 0.1 degree for `rotation_delta_deg`, and
+0.01 m/s for `seam_velocity_delta_mps` is silent; larger changes produce
+metric paths such as `loop_continuity.bones[12].rotation_delta_deg`. These are
+diff significance floors, not the lint caps configured under
+`[checks.loop-closure]` and `[checks.loop-seam-vel]`.

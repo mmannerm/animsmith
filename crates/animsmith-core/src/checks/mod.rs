@@ -10,7 +10,9 @@ pub mod fps;
 pub mod frozen_bone;
 pub mod gait_group;
 pub mod in_place;
+pub mod loop_closure;
 pub mod loop_seam;
+pub mod loop_seam_vel;
 pub mod missing_bones;
 pub mod nan;
 pub mod non_uniform_scale;
@@ -25,6 +27,16 @@ mod vec3_trajectory;
 use crate::evaluation::{CoverageGap, CoverageGapCode};
 use crate::model::{Document, Track};
 use crate::profile::{ResolvedRoles, Role};
+
+/// Whether an `f32`-derived metric exceeds a user-facing `f64` cap.
+///
+/// Source transforms and sampled poses are `f32`, so decimal values such as
+/// `0.1` can round slightly upward when promoted into measurement output. The
+/// comparison quantizes both sides to the evidence precision so a value
+/// authored exactly at an inclusive cap does not become a false positive.
+pub(crate) fn exceeds_f32_cap(measured: f64, cap: f64) -> bool {
+    (measured as f32) > (cap as f32)
+}
 
 /// Return the typed prerequisite gap for root-motion work, if any.
 pub(crate) fn root_motion_gap(roles: &ResolvedRoles) -> Option<CoverageGap> {
