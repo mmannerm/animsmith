@@ -281,15 +281,35 @@
       "allOf": [
         {
           "if": { "properties": { "status": { "const": "absent" } }, "required": ["status"] },
-          "then": { "not": { "required": ["declared_count"] } }
+          "then": {
+            "properties": { "matrices": { "maxItems": 0 } },
+            "not": { "required": ["declared_count"] }
+          }
         },
         {
           "if": { "properties": { "status": { "const": "available" } }, "required": ["status"] },
           "then": { "required": ["declared_count", "matrices"] }
         },
         {
-          "if": { "properties": { "status": { "enum": ["empty_accessor", "count_mismatch", "unreadable"] } }, "required": ["status"] },
+          "if": { "properties": { "status": { "const": "empty_accessor" } }, "required": ["status"] },
+          "then": {
+            "required": ["declared_count"],
+            "properties": {
+              "declared_count": { "const": 0 },
+              "matrices": { "maxItems": 0 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "status": { "const": "count_mismatch" } }, "required": ["status"] },
           "then": { "required": ["declared_count"] }
+        },
+        {
+          "if": { "properties": { "status": { "const": "unreadable" } }, "required": ["status"] },
+          "then": {
+            "required": ["declared_count"],
+            "properties": { "matrices": { "maxItems": 0 } }
+          }
         }
       ],
       "additionalProperties": false

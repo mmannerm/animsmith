@@ -111,6 +111,7 @@ fn write_source_skin_gltf(path: &std::path::Path, case: InverseBindCase, multipl
     };
 
     let mut skins = vec![json!({ "name": "skin_a", "joints": [2] })];
+    skins[0]["skeleton"] = json!(1);
     if let Some(accessor) = first_ibm_accessor {
         skins[0]["inverseBindMatrices"] = json!(accessor);
     }
@@ -297,6 +298,15 @@ fn assert_measurements_schema(value: &Value) {
     );
 }
 
+fn assert_measurements_schema_rejected(value: &Value, case: &str) {
+    let schema: Value = serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid v5 schema JSON");
+    let validator = jsonschema::validator_for(&schema).expect("v5 schema compiles");
+    assert!(
+        !validator.is_valid(value),
+        "v5 schema must reject {case}:\n{value:#}"
+    );
+}
+
 fn json_container_end(bytes: &[u8], start: usize, opening: u8, closing: u8) -> usize {
     assert_eq!(
         bytes[start], opening,
@@ -404,6 +414,7 @@ fn assert_skeleton_serializer_order(stdout: &[u8]) {
         &[
             "skin_index",
             "name",
+            "skeleton_root_node_index",
             "joints",
             "inverse_bind_accessor",
             "attachments",
@@ -508,6 +519,8 @@ fn cli_measure_preserves_source_skin_identity_and_coordinate_domains() {
     assert_eq!(skins[1]["skin_index"], 1);
     assert_eq!(skins[0]["name"], "skin_a");
     assert_eq!(skins[1]["name"], "skin_b");
+    assert_eq!(skins[0]["skeleton_root_node_index"], 1);
+    assert!(skins[1].get("skeleton_root_node_index").is_none());
     for skin in skins {
         assert_eq!(skin["joints"][0]["joint_index"], 0);
         assert_eq!(skin["joints"][0]["node_index"], 2);
@@ -706,6 +719,40 @@ fn cli_measure_preserves_each_inverse_bind_accessor_state() {
         "a finite VEC4 inverse-bind accessor is parser-valid but unreadable as matrices"
     );
     assert_derived_unavailable(wrong_type, "inverse_bind_accessor_unreadable");
+}
+
+#[test]
+fn published_schema_rejects_impossible_inverse_bind_states() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let input = dir.path().join("schema-state-base.gltf");
+    write_source_skin_gltf(&input, InverseBindCase::Available, false);
+    let (document, _) = measure(&input);
+    let base = &document["files"][0]["measurements"];
+    assert_measurements_schema(base);
+    let matrix = base["skins"][0]["inverse_bind_accessor"]["matrices"][0].clone();
+
+    for (case, accessor) in [
+        (
+            "absent accessor with matrices",
+            json!({ "status": "absent", "matrices": [matrix.clone()] }),
+        ),
+        (
+            "empty accessor with nonzero declared count",
+            json!({ "status": "empty_accessor", "declared_count": 1, "matrices": [] }),
+        ),
+        (
+            "empty accessor with matrices",
+            json!({ "status": "empty_accessor", "declared_count": 0, "matrices": [matrix.clone()] }),
+        ),
+        (
+            "unreadable accessor with matrices",
+            json!({ "status": "unreadable", "declared_count": 1, "matrices": [matrix.clone()] }),
+        ),
+    ] {
+        let mut invalid = base.clone();
+        invalid["skins"][0]["inverse_bind_accessor"] = accessor;
+        assert_measurements_schema_rejected(&invalid, case);
+    }
 }
 
 fn assert_derived_unavailable(skin: &Value, reason: &str) {
