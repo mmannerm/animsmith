@@ -328,23 +328,24 @@ transformed node selected as a scene root retains its own local rest record,
 and its ancestors determine the derived world matrix.
 
 `skins` is a source-skin table in ascending `skin_index` order. Its `joints`
-are in declared skin-slot order, and `skeleton_root_node_index` is present
-only when the source explicitly declares one. `inverse_bind_accessor` reports
+are in declared skin-slot order; each joint row owns its `joint_index`,
+`node_index`, `joint_bind_to_mesh`, and `mesh_bind_world` observations.
+`skeleton_root_node_index` is present only when the source explicitly declares
+one. `inverse_bind_accessor` reports
 whether the inverse-bind accessor was absent, readable, empty, count-mismatched,
 or unreadable. A readable finite accessor retains its raw column-major matrices
 in slot order. Absent, malformed, and non-finite inverse-bind evidence is not
 inferred from node-local rest data.
 
 Each skin's `attachments` names every source node that declares use of that
-skin, in source-node order. The skin-level joint-parallel arrays make domains
-explicit: `joint_bind_to_mesh_matrices` is `inverse(inverse_bind_matrix)`, so
-it maps joint bind-local coordinates into the mesh-local bind domain declared
-by that skin; `mesh_bind_world_matrices` is `joint_rest_world *
-inverse_bind_matrix`, mapping that mesh-local bind domain into world bind
-coordinates when the authored rest and bind poses agree. It remains a
-per-joint observation rather than a claim that all rows agree. Attachments are
-identity evidence, not an extra transform folded into either calculation. Each
-row is either a finite matrix or a typed unavailable reason.
+skin, in source-node order. In each joint row, `joint_bind_to_mesh` is
+`inverse(inverse_bind_matrix)`, so it maps joint bind-local coordinates into
+the mesh-local bind domain declared by that skin; `mesh_bind_world` is
+`joint_rest_world * inverse_bind_matrix`, mapping that mesh-local bind domain
+into world bind coordinates when the authored rest and bind poses agree. These
+remain per-joint observations rather than claims that rows agree. Attachments
+are identity evidence, not an extra transform folded into either calculation.
+Each derived field is either a finite matrix or a typed unavailable reason.
 These are descriptive calculations only. animsmith does not decide whether a
 consumer requires a joint, whether a skin/rest comparison is close enough,
 which root is canonical, or whether an unavailable matrix is acceptable.

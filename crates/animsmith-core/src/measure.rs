@@ -322,6 +322,12 @@ pub struct SkinJointMeasurements {
     pub joint_index: usize,
     /// Stable source node index for this joint.
     pub node_index: usize,
+    /// Inverse of the usable raw IBM: joint bind space to mesh bind space.
+    pub joint_bind_to_mesh: SkinDerivedMatrixMeasurements,
+    /// `joint_rest_world * raw_inverse_bind` for this joint slot. This is a
+    /// per-joint observation of mesh bind world, not a policy judgment that
+    /// all slots must agree.
+    pub mesh_bind_world: SkinDerivedMatrixMeasurements,
 }
 
 /// One node that attaches a source skin.
@@ -365,8 +371,6 @@ pub enum SkinDerivedMatrixUnavailableReason {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct SkinDerivedMatrixMeasurements {
-    /// Zero-based source skin joint slot.
-    pub joint_index: usize,
     /// Matrix in the documented coordinate domain, in column-major order.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub matrix: Option<[f32; 16]>,
@@ -393,13 +397,6 @@ pub struct SkinMeasurements {
     pub inverse_bind_accessor: SkinInverseBindAccessorMeasurements,
     /// Source nodes that reference this skin, in source-node order.
     pub attachments: Vec<SkinAttachmentMeasurements>,
-    /// Inverse of each usable raw IBM: joint bind space to mesh bind space.
-    /// There is exactly one record for every entry in [`Self::joints`].
-    pub joint_bind_to_mesh_matrices: Vec<SkinDerivedMatrixMeasurements>,
-    /// `joint_rest_world * raw_inverse_bind` for every joint slot. This is a
-    /// per-joint observation of mesh bind world, not a policy judgment that
-    /// all slots must agree. There is exactly one record per joint.
-    pub mesh_bind_world_matrices: Vec<SkinDerivedMatrixMeasurements>,
 }
 
 /// Static scene-asset evidence nested beside clip measurements.
@@ -644,33 +641,54 @@ fn source_rest_world(
     if let Some(result) = worlds.get(&node_index) {
         return *result;
     }
-    if visits.get(&node_index) == Some(&RestWorldVisit::Visiting) {
-        return Err(SkeletonRestWorldMatrixUnavailableReason::ParentCycle);
-    }
-    let Some((node, local)) = source_nodes.get(&node_index) else {
-        return Err(SkeletonRestWorldMatrixUnavailableReason::MissingParentNode);
+    let mut path = Vec::new();
+    let mut current = node_index;
+    let mut parent_result = loop {
+        if let Some(result) = worlds.get(&current) {
+            break *result;
+        }
+        if visits.get(&current) == Some(&RestWorldVisit::Visiting) {
+            break Err(SkeletonRestWorldMatrixUnavailableReason::ParentCycle);
+        }
+        let Some((node, local)) = source_nodes.get(&current) else {
+            if path.is_empty() {
+                return Err(SkeletonRestWorldMatrixUnavailableReason::MissingParentNode);
+            }
+            break Err(SkeletonRestWorldMatrixUnavailableReason::MissingParentNode);
+        };
+        let Some(local) = *local else {
+            let result = Err(SkeletonRestWorldMatrixUnavailableReason::NonFiniteLocalRest);
+            worlds.insert(current, result);
+            visits.insert(current, RestWorldVisit::Done);
+            break result;
+        };
+        visits.insert(current, RestWorldVisit::Visiting);
+        path.push((current, local));
+        match node.parent_source_node_index {
+            Some(parent) => current = parent,
+            None => {
+                let result = Ok(local);
+                worlds.insert(current, result);
+                visits.insert(current, RestWorldVisit::Done);
+                path.pop();
+                break result;
+            }
+        }
     };
-    let Some(local) = *local else {
-        let result = Err(SkeletonRestWorldMatrixUnavailableReason::NonFiniteLocalRest);
-        worlds.insert(node_index, result);
-        visits.insert(node_index, RestWorldVisit::Done);
-        return result;
-    };
-    visits.insert(node_index, RestWorldVisit::Visiting);
-    let result = match node.parent_source_node_index {
-        None => Ok(local),
-        Some(parent) => source_rest_world(parent, source_nodes, visits, worlds)
+
+    for (current, local) in path.into_iter().rev() {
+        parent_result = parent_result
             .map_err(|_| SkeletonRestWorldMatrixUnavailableReason::ParentRestWorldUnavailable)
-            .map(|parent_world| parent_world * local),
+            .map(|parent_world| parent_world * local)
+            .and_then(|world| {
+                matrix_is_finite(world)
+                    .then_some(world)
+                    .ok_or(SkeletonRestWorldMatrixUnavailableReason::NonFiniteWorldMatrix)
+            });
+        visits.insert(current, RestWorldVisit::Done);
+        worlds.insert(current, parent_result);
     }
-    .and_then(|world| {
-        matrix_is_finite(world)
-            .then_some(world)
-            .ok_or(SkeletonRestWorldMatrixUnavailableReason::NonFiniteWorldMatrix)
-    });
-    visits.insert(node_index, RestWorldVisit::Done);
-    worlds.insert(node_index, result);
-    result
+    parent_result
 }
 
 fn derived_accessor_unavailable_reason(
@@ -705,19 +723,16 @@ fn invertible_matrix(matrix: Mat4) -> Option<Mat4> {
 }
 
 fn unavailable_derived_matrix(
-    joint_index: usize,
     reason: SkinDerivedMatrixUnavailableReason,
 ) -> SkinDerivedMatrixMeasurements {
     SkinDerivedMatrixMeasurements {
-        joint_index,
         matrix: None,
         unavailable_reason: Some(reason),
     }
 }
 
-fn available_derived_matrix(joint_index: usize, matrix: Mat4) -> SkinDerivedMatrixMeasurements {
+fn available_derived_matrix(matrix: Mat4) -> SkinDerivedMatrixMeasurements {
     SkinDerivedMatrixMeasurements {
-        joint_index,
         matrix: Some(matrix_to_columns(matrix)),
         unavailable_reason: None,
     }
@@ -829,89 +844,68 @@ fn measure_source_skeleton(
                 .joint_source_node_indices
                 .iter()
                 .enumerate()
-                .map(|(joint_index, &node_index)| SkinJointMeasurements {
-                    joint_index,
-                    node_index,
-                })
-                .collect::<Vec<_>>();
-            let mut joint_bind_to_mesh_matrices = Vec::with_capacity(joints.len());
-            let mut mesh_bind_world_matrices = Vec::with_capacity(joints.len());
-            for (joint_index, joint) in joints.iter().enumerate() {
-                let unavailable = match status {
-                    SourceInverseBindAccessorStatus::Available
-                    | SourceInverseBindAccessorStatus::CountMismatch => None,
-                    other => Some(derived_accessor_unavailable_reason(other)),
-                };
-                let Some(raw) = unavailable.map_or_else(
-                    || {
-                        skin.inverse_bind_accessor
-                            .matrices
-                            .get(joint_index)
-                            .copied()
-                    },
-                    |_| None,
-                ) else {
-                    let reason = unavailable.unwrap_or_else(|| {
-                        derived_accessor_unavailable_reason(
-                            SourceInverseBindAccessorStatus::CountMismatch,
-                        )
-                    });
-                    joint_bind_to_mesh_matrices
-                        .push(unavailable_derived_matrix(joint_index, reason));
-                    mesh_bind_world_matrices.push(unavailable_derived_matrix(joint_index, reason));
-                    continue;
-                };
-                let Some(inverse) = invertible_matrix(raw) else {
-                    joint_bind_to_mesh_matrices.push(unavailable_derived_matrix(
-                        joint_index,
-                        SkinDerivedMatrixUnavailableReason::InverseBindMatrixNonInvertible,
-                    ));
-                    let world = worlds.get(&joint.node_index).copied().unwrap_or(Err(
+                .map(|(joint_index, &node_index)| {
+                    let unavailable = match status {
+                        SourceInverseBindAccessorStatus::Available
+                        | SourceInverseBindAccessorStatus::CountMismatch => None,
+                        other => Some(derived_accessor_unavailable_reason(other)),
+                    };
+                    let Some(raw) = unavailable.map_or_else(
+                        || {
+                            skin.inverse_bind_accessor
+                                .matrices
+                                .get(joint_index)
+                                .copied()
+                        },
+                        |_| None,
+                    ) else {
+                        let reason = unavailable.unwrap_or_else(|| {
+                            derived_accessor_unavailable_reason(
+                                SourceInverseBindAccessorStatus::CountMismatch,
+                            )
+                        });
+                        return SkinJointMeasurements {
+                            joint_index,
+                            node_index,
+                            joint_bind_to_mesh: unavailable_derived_matrix(reason),
+                            mesh_bind_world: unavailable_derived_matrix(reason),
+                        };
+                    };
+                    let joint_bind_to_mesh = invertible_matrix(raw).map_or_else(
+                        || {
+                            unavailable_derived_matrix(
+                                SkinDerivedMatrixUnavailableReason::InverseBindMatrixNonInvertible,
+                            )
+                        },
+                        available_derived_matrix,
+                    );
+                    let world = worlds.get(&node_index).copied().unwrap_or(Err(
                         SkeletonRestWorldMatrixUnavailableReason::MissingParentNode,
                     ));
-                    mesh_bind_world_matrices.push(match world {
+                    let mesh_bind_world = match world {
                         Ok(world) => {
                             let matrix = world * raw;
                             matrix_is_finite(matrix).then_some(()).map_or_else(
                                 || {
                                     unavailable_derived_matrix(
-                                        joint_index,
                                         SkinDerivedMatrixUnavailableReason::NonFiniteDerivedMatrix,
                                     )
                                 },
-                                |_| available_derived_matrix(joint_index, matrix),
+                                |_| available_derived_matrix(matrix),
                             )
                         }
                         Err(_) => unavailable_derived_matrix(
-                            joint_index,
                             SkinDerivedMatrixUnavailableReason::JointRestWorldUnavailable,
                         ),
-                    });
-                    continue;
-                };
-                joint_bind_to_mesh_matrices.push(available_derived_matrix(joint_index, inverse));
-                let world = worlds.get(&joint.node_index).copied().unwrap_or(Err(
-                    SkeletonRestWorldMatrixUnavailableReason::MissingParentNode,
-                ));
-                mesh_bind_world_matrices.push(match world {
-                    Ok(world) => {
-                        let matrix = world * raw;
-                        matrix_is_finite(matrix).then_some(()).map_or_else(
-                            || {
-                                unavailable_derived_matrix(
-                                    joint_index,
-                                    SkinDerivedMatrixUnavailableReason::NonFiniteDerivedMatrix,
-                                )
-                            },
-                            |_| available_derived_matrix(joint_index, matrix),
-                        )
-                    }
-                    Err(_) => unavailable_derived_matrix(
+                    };
+                    SkinJointMeasurements {
                         joint_index,
-                        SkinDerivedMatrixUnavailableReason::JointRestWorldUnavailable,
-                    ),
-                });
-            }
+                        node_index,
+                        joint_bind_to_mesh,
+                        mesh_bind_world,
+                    }
+                })
+                .collect();
             SkinMeasurements {
                 skin_index: skin.source_skin_index,
                 name: skin.name.clone(),
@@ -926,8 +920,6 @@ fn measure_source_skeleton(
                         mesh_index: attachment.source_mesh_index,
                     })
                     .collect(),
-                joint_bind_to_mesh_matrices,
-                mesh_bind_world_matrices,
             }
         })
         .collect();
@@ -1429,14 +1421,48 @@ mod tests {
         );
         assert_eq!(skin.attachments[0].node_index, 2);
         assert_eq!(skin.attachments[0].mesh_index, Some(7));
-        assert_eq!(skin.joint_bind_to_mesh_matrices.len(), 1);
+        assert_eq!(skin.joints[0].joint_bind_to_mesh.matrix.unwrap()[12], 12.0);
         assert_eq!(
-            skin.joint_bind_to_mesh_matrices[0].matrix.unwrap()[12],
-            12.0
-        );
-        assert_eq!(
-            skin.mesh_bind_world_matrices[0].matrix.unwrap(),
+            skin.joints[0].mesh_bind_world.matrix.unwrap(),
             Mat4::IDENTITY.to_cols_array()
+        );
+    }
+
+    #[test]
+    fn source_skeleton_measurement_handles_a_deep_leaf_first_hierarchy() {
+        const NODE_COUNT: usize = 16_384;
+        let nodes = (0..NODE_COUNT)
+            .map(|node_index| SourceNodeAsset {
+                source_node_index: node_index,
+                name: None,
+                parent_source_node_index: (node_index + 1 < NODE_COUNT).then_some(node_index + 1),
+                scene_root_indices: Vec::new(),
+                local_rest: SourceNodeLocalRest::Matrix(if node_index + 1 == NODE_COUNT {
+                    Mat4::from_translation(Vec3::X)
+                } else {
+                    Mat4::IDENTITY
+                }),
+            })
+            .collect();
+        let doc = Document {
+            assets: SceneAssets {
+                source_skeleton: SourceSkeletonAssets {
+                    coverage: SourceSkeletonCoverage::Complete,
+                    nodes,
+                    skins: Vec::new(),
+                },
+                ..SceneAssets::default()
+            },
+            ..Document::default()
+        };
+
+        let measured = measure_assets(&doc);
+        assert_eq!(measured.skeleton_nodes.len(), NODE_COUNT);
+        assert_eq!(
+            measured.skeleton_nodes[0]
+                .rest_world_matrix
+                .expect("deep leaf rest world")[12],
+            1.0
         );
     }
 

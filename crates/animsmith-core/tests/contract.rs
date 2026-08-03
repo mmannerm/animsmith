@@ -884,14 +884,16 @@ fn complete_skeleton_assets() -> AssetMeasurements {
         }],
         "skins": [{
             "skin_index": 0,
-            "joints": [{ "joint_index": 0, "node_index": 0 }],
+            "joints": [{
+                "joint_index": 0, "node_index": 0,
+                "joint_bind_to_mesh": { "matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0] },
+                "mesh_bind_world": { "matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0] }
+            }],
             "inverse_bind_accessor": {
                 "status": "available", "declared_count": 1,
                 "matrices": [[1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]]
             },
-            "attachments": [{ "node_index": 0 }],
-            "joint_bind_to_mesh_matrices": [{ "joint_index": 0, "matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0] }],
-            "mesh_bind_world_matrices": [{ "joint_index": 0, "matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0] }]
+            "attachments": [{ "node_index": 0 }]
         }],
         "mesh_definitions": [], "node_instances": [], "scenes": []
     }))
@@ -932,19 +934,22 @@ fn measurement_contract_rejects_inconsistent_skeleton_source_evidence() {
     );
     invalid(
         &|assets| {
-            assets.skins[0].joint_bind_to_mesh_matrices[0].matrix = None;
-            assets.skins[0].joint_bind_to_mesh_matrices[0].unavailable_reason =
+            assets.skins[0].joints[0].joint_bind_to_mesh.matrix = None;
+            assets.skins[0].joints[0]
+                .joint_bind_to_mesh
+                .unavailable_reason =
                 Some(SkinDerivedMatrixUnavailableReason::InverseBindAccessorAbsent);
         },
-        "skins[0].joint_bind_to_mesh_matrices[0].unavailable_reason",
+        "skins[0].joints[0].joint_bind_to_mesh.unavailable_reason",
         "a usable inverse-bind matrix cannot be reported as accessor-unavailable",
     );
     invalid(
         &|assets| {
-            assets.skins[0].mesh_bind_world_matrices.clear();
+            assets.skins[0].joints[0].mesh_bind_world.unavailable_reason =
+                Some(SkinDerivedMatrixUnavailableReason::JointRestWorldUnavailable);
         },
-        "skins[0].mesh_bind_world_matrices",
-        "derived bind-domain matrices must have exactly one row per joint",
+        "skins[0].joints[0].mesh_bind_world",
+        "an available derived matrix cannot have an unavailable reason",
     );
     invalid(
         &|assets| {

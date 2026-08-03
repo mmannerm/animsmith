@@ -248,25 +248,25 @@
     },
     "skin": {
       "type": "object",
-      "required": ["skin_index", "joints", "inverse_bind_accessor", "attachments", "joint_bind_to_mesh_matrices", "mesh_bind_world_matrices"],
+      "required": ["skin_index", "joints", "inverse_bind_accessor", "attachments"],
       "properties": {
         "skin_index": { "type": "integer", "minimum": 0 },
         "name": { "type": "string" },
         "skeleton_root_node_index": { "type": "integer", "minimum": 0 },
         "joints": { "type": "array", "items": { "$ref": "#/$defs/skin_joint" } },
         "inverse_bind_accessor": { "$ref": "#/$defs/inverse_bind_accessor" },
-        "attachments": { "type": "array", "items": { "$ref": "#/$defs/skin_attachment" } },
-        "joint_bind_to_mesh_matrices": { "type": "array", "items": { "$ref": "#/$defs/derived_bind_matrix" } },
-        "mesh_bind_world_matrices": { "type": "array", "items": { "$ref": "#/$defs/derived_bind_matrix" } }
+        "attachments": { "type": "array", "items": { "$ref": "#/$defs/skin_attachment" } }
       },
       "additionalProperties": false
     },
     "skin_joint": {
       "type": "object",
-      "required": ["joint_index", "node_index"],
+      "required": ["joint_index", "node_index", "joint_bind_to_mesh", "mesh_bind_world"],
       "properties": {
         "joint_index": { "type": "integer", "minimum": 0 },
-        "node_index": { "type": "integer", "minimum": 0 }
+        "node_index": { "type": "integer", "minimum": 0 },
+        "joint_bind_to_mesh": { "$ref": "#/$defs/derived_bind_matrix" },
+        "mesh_bind_world": { "$ref": "#/$defs/derived_bind_matrix" }
       },
       "additionalProperties": false
     },
@@ -305,9 +305,7 @@
     },
     "derived_bind_matrix": {
       "type": "object",
-      "required": ["joint_index"],
       "properties": {
-        "joint_index": { "type": "integer", "minimum": 0 },
         "matrix": { "$ref": "#/$defs/mat4" },
         "unavailable_reason": { "enum": ["inverse_bind_accessor_absent", "inverse_bind_accessor_empty", "inverse_bind_accessor_count_mismatch", "inverse_bind_accessor_unreadable", "missing_joint_node", "joint_rest_world_unavailable", "inverse_bind_matrix_non_invertible", "non_finite_derived_matrix"] }
       },

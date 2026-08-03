@@ -654,6 +654,23 @@ fn validate_skeleton_measurements(
                 &format!("skins[{offset}].inverse_bind_accessor.matrices[{matrix_offset}]"),
             )?;
         }
+        for (joint_offset, joint) in skin.joints.iter().enumerate() {
+            for (field, matrix) in [
+                ("joint_bind_to_mesh", &joint.joint_bind_to_mesh),
+                ("mesh_bind_world", &joint.mesh_bind_world),
+            ] {
+                let path = format!("skins[{offset}].joints[{joint_offset}].{field}");
+                validate_derived_matrix(matrix, &path, &finite_matrix, invalid)?;
+                validate_derived_reason_compatibility(
+                    matrix,
+                    skin.inverse_bind_accessor.status,
+                    skin.inverse_bind_accessor.matrices.len(),
+                    joint_offset,
+                    &path,
+                    invalid,
+                )?;
+            }
+        }
         let mut previous_attachment_node = None;
         for (attachment_offset, attachment) in skin.attachments.iter().enumerate() {
             if !node_indices.contains(&attachment.node_index) {
@@ -670,118 +687,78 @@ fn validate_skeleton_measurements(
             }
             previous_attachment_node = Some(attachment.node_index);
         }
-        validate_skin_derived_matrices(
-            &skin.joint_bind_to_mesh_matrices,
-            skin.joints.len(),
-            &format!("skins[{offset}].joint_bind_to_mesh_matrices"),
-            &finite_matrix,
-            invalid,
-        )?;
-        validate_skin_derived_matrices(
-            &skin.mesh_bind_world_matrices,
-            skin.joints.len(),
-            &format!("skins[{offset}].mesh_bind_world_matrices"),
-            &finite_matrix,
-            invalid,
-        )?;
-        validate_derived_reason_compatibility(skin, offset, invalid)?;
     }
     Ok(())
 }
 
 fn validate_derived_reason_compatibility(
-    skin: &crate::measure::SkinMeasurements,
-    skin_offset: usize,
+    matrix: &SkinDerivedMatrixMeasurements,
+    status: SourceInverseBindAccessorStatus,
+    readable_matrix_count: usize,
+    joint_index: usize,
+    path: &str,
     invalid: &impl Fn(String, &str) -> MeasurementContractError,
 ) -> Result<(), MeasurementContractError> {
-    for joint_index in 0..skin.joints.len() {
-        let requires_accessor_reason = match skin.inverse_bind_accessor.status {
-            SourceInverseBindAccessorStatus::Absent => {
-                Some(SkinDerivedMatrixUnavailableReason::InverseBindAccessorAbsent)
-            }
-            SourceInverseBindAccessorStatus::EmptyAccessor => {
-                Some(SkinDerivedMatrixUnavailableReason::InverseBindAccessorEmpty)
-            }
-            SourceInverseBindAccessorStatus::Unreadable => {
-                Some(SkinDerivedMatrixUnavailableReason::InverseBindAccessorUnreadable)
-            }
-            SourceInverseBindAccessorStatus::CountMismatch
-                if joint_index >= skin.inverse_bind_accessor.matrices.len() =>
-            {
-                Some(SkinDerivedMatrixUnavailableReason::InverseBindAccessorCountMismatch)
-            }
-            SourceInverseBindAccessorStatus::Available
-            | SourceInverseBindAccessorStatus::CountMismatch => None,
-        };
-        for (field, rows) in [
-            (
-                "joint_bind_to_mesh_matrices",
-                &skin.joint_bind_to_mesh_matrices,
-            ),
-            ("mesh_bind_world_matrices", &skin.mesh_bind_world_matrices),
-        ] {
-            let row = &rows[joint_index];
-            if let Some(expected) = requires_accessor_reason {
-                if row.matrix.is_some() || row.unavailable_reason != Some(expected) {
-                    return Err(invalid(
-                        format!("skins[{skin_offset}].{field}[{joint_index}]"),
-                        "derived rows without a usable inverse bind must carry the matching accessor reason",
-                    ));
-                }
-            } else if matches!(
-                row.unavailable_reason,
-                Some(
-                    SkinDerivedMatrixUnavailableReason::InverseBindAccessorAbsent
-                        | SkinDerivedMatrixUnavailableReason::InverseBindAccessorEmpty
-                        | SkinDerivedMatrixUnavailableReason::InverseBindAccessorCountMismatch
-                        | SkinDerivedMatrixUnavailableReason::InverseBindAccessorUnreadable
-                )
-            ) {
-                return Err(invalid(
-                    format!("skins[{skin_offset}].{field}[{joint_index}].unavailable_reason"),
-                    "a usable inverse-bind matrix cannot be reported as accessor-unavailable",
-                ));
-            }
+    let requires_accessor_reason = match status {
+        SourceInverseBindAccessorStatus::Absent => {
+            Some(SkinDerivedMatrixUnavailableReason::InverseBindAccessorAbsent)
         }
+        SourceInverseBindAccessorStatus::EmptyAccessor => {
+            Some(SkinDerivedMatrixUnavailableReason::InverseBindAccessorEmpty)
+        }
+        SourceInverseBindAccessorStatus::Unreadable => {
+            Some(SkinDerivedMatrixUnavailableReason::InverseBindAccessorUnreadable)
+        }
+        SourceInverseBindAccessorStatus::CountMismatch if joint_index >= readable_matrix_count => {
+            Some(SkinDerivedMatrixUnavailableReason::InverseBindAccessorCountMismatch)
+        }
+        SourceInverseBindAccessorStatus::Available
+        | SourceInverseBindAccessorStatus::CountMismatch => None,
+    };
+    if let Some(expected) = requires_accessor_reason {
+        if matrix.matrix.is_some() || matrix.unavailable_reason != Some(expected) {
+            return Err(invalid(
+                path.into(),
+                "derived matrices without a usable inverse bind must carry the matching accessor reason",
+            ));
+        }
+    } else if matches!(
+        matrix.unavailable_reason,
+        Some(
+            SkinDerivedMatrixUnavailableReason::InverseBindAccessorAbsent
+                | SkinDerivedMatrixUnavailableReason::InverseBindAccessorEmpty
+                | SkinDerivedMatrixUnavailableReason::InverseBindAccessorCountMismatch
+                | SkinDerivedMatrixUnavailableReason::InverseBindAccessorUnreadable
+        )
+    ) {
+        return Err(invalid(
+            format!("{path}.unavailable_reason"),
+            "a usable inverse-bind matrix cannot be reported as accessor-unavailable",
+        ));
     }
     Ok(())
 }
 
-fn validate_skin_derived_matrices(
-    matrices: &[SkinDerivedMatrixMeasurements],
-    joint_count: usize,
+fn validate_derived_matrix(
+    matrix: &SkinDerivedMatrixMeasurements,
     path: &str,
     finite_matrix: &impl Fn(&[f32; 16], &str) -> Result<(), MeasurementContractError>,
     invalid: &impl Fn(String, &str) -> MeasurementContractError,
 ) -> Result<(), MeasurementContractError> {
-    if matrices.len() != joint_count {
-        return Err(invalid(
-            path.into(),
-            "derived bind-domain matrices must have exactly one row per joint",
-        ));
-    }
-    for (offset, matrix) in matrices.iter().enumerate() {
-        if matrix.joint_index != offset {
+    match (&matrix.matrix, matrix.unavailable_reason) {
+        (Some(matrix), None) => finite_matrix(matrix, &format!("{path}.matrix"))?,
+        (None, Some(_)) => {}
+        (Some(_), Some(_)) => {
             return Err(invalid(
-                format!("{path}[{offset}].joint_index"),
-                "joint_index must be contiguous and match declared skin order",
+                path.into(),
+                "an available derived matrix cannot have an unavailable reason",
             ));
         }
-        match (&matrix.matrix, matrix.unavailable_reason) {
-            (Some(matrix), None) => finite_matrix(matrix, &format!("{path}[{offset}].matrix"))?,
-            (None, Some(_)) => {}
-            (Some(_), Some(_)) => {
-                return Err(invalid(
-                    format!("{path}[{offset}]"),
-                    "an available derived matrix cannot have an unavailable reason",
-                ));
-            }
-            (None, None) => {
-                return Err(invalid(
-                    format!("{path}[{offset}]"),
-                    "a missing derived matrix requires an unavailable reason",
-                ));
-            }
+        (None, None) => {
+            return Err(invalid(
+                path.into(),
+                "a missing derived matrix requires an unavailable reason",
+            ));
         }
     }
     Ok(())

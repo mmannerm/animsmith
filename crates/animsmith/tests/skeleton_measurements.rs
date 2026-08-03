@@ -5,6 +5,7 @@
 use serde_json::{Value, json};
 
 const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v5.schema.json");
+const DEEP_HIERARCHY_DEPTH: usize = 4_096;
 
 #[derive(Clone, Copy)]
 enum InverseBindCase {
@@ -200,6 +201,33 @@ fn write_inverse_bind_state_gltf(path: &std::path::Path) {
     .expect("writes synthetic glTF");
 }
 
+fn write_deep_leaf_first_hierarchy_gltf(path: &std::path::Path) {
+    let nodes = (0..DEEP_HIERARCHY_DEPTH)
+        .map(|node_index| {
+            let mut node = json!({
+                "name": if node_index == 0 { "leaf" } else if node_index + 1 == DEEP_HIERARCHY_DEPTH { "root" } else { "link" },
+                "translation": [1.0, 0.0, 0.0]
+            });
+            if node_index > 0 {
+                node["children"] = json!([node_index - 1]);
+            }
+            node
+        })
+        .collect::<Vec<_>>();
+    let document = json!({
+        "asset": { "version": "2.0" },
+        "nodes": nodes,
+        "skins": [{ "name": "deep-skin", "joints": [0] }],
+        "scenes": [{ "nodes": [DEEP_HIERARCHY_DEPTH - 1] }],
+        "scene": 0
+    });
+    std::fs::write(
+        path,
+        serde_json::to_vec(&document).expect("serializes deep synthetic glTF"),
+    )
+    .expect("writes deep synthetic glTF");
+}
+
 fn measure(path: &std::path::Path) -> (Value, Vec<u8>) {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_animsmith"))
         .arg("measure")
@@ -309,14 +337,10 @@ fn cli_measure_preserves_source_skin_identity_and_coordinate_domains() {
     assert_eq!(skins[1]["skin_index"], 1);
     assert_eq!(skins[0]["name"], "skin_a");
     assert_eq!(skins[1]["name"], "skin_b");
-    assert_eq!(
-        skins[0]["joints"],
-        json!([{ "joint_index": 0, "node_index": 2 }])
-    );
-    assert_eq!(
-        skins[1]["joints"],
-        json!([{ "joint_index": 0, "node_index": 2 }])
-    );
+    for skin in skins {
+        assert_eq!(skin["joints"][0]["joint_index"], 0);
+        assert_eq!(skin["joints"][0]["node_index"], 2);
+    }
     assert_eq!(
         skins[0]["attachments"],
         json!([{ "node_index": 3, "mesh_index": 0 }])
@@ -328,15 +352,15 @@ fn cli_measure_preserves_source_skin_identity_and_coordinate_domains() {
     assert_eq!(skins[0]["inverse_bind_accessor"]["status"], "available");
     assert_eq!(skins[1]["inverse_bind_accessor"]["status"], "available");
     assert_eq!(
-        skins[0]["joint_bind_to_mesh_matrices"][0]["matrix"][13],
+        skins[0]["joints"][0]["joint_bind_to_mesh"]["matrix"][13],
         3.0
     );
     assert_eq!(
-        skins[1]["joint_bind_to_mesh_matrices"][0]["matrix"][12],
+        skins[1]["joints"][0]["joint_bind_to_mesh"]["matrix"][12],
         1.0
     );
-    assert_eq!(skins[0]["mesh_bind_world_matrices"][0]["matrix"][12], 10.0);
-    assert_eq!(skins[0]["mesh_bind_world_matrices"][0]["matrix"][13], 0.0);
+    assert_eq!(skins[0]["joints"][0]["mesh_bind_world"]["matrix"][12], 10.0);
+    assert_eq!(skins[0]["joints"][0]["mesh_bind_world"]["matrix"][13], 0.0);
 }
 
 #[test]
@@ -352,12 +376,12 @@ fn cli_measure_marks_absent_and_singular_inverse_binds_without_substitution() {
         absent_skin["inverse_bind_accessor"],
         json!({ "status": "absent", "matrices": [] })
     );
-    for field in ["joint_bind_to_mesh_matrices", "mesh_bind_world_matrices"] {
+    for field in ["joint_bind_to_mesh", "mesh_bind_world"] {
         assert_eq!(
-            absent_skin[field][0]["unavailable_reason"], "inverse_bind_accessor_absent",
+            absent_skin["joints"][0][field]["unavailable_reason"], "inverse_bind_accessor_absent",
             "{field} must not fall back to node-rest data"
         );
-        assert!(absent_skin[field][0].get("matrix").is_none());
+        assert!(absent_skin["joints"][0][field].get("matrix").is_none());
     }
 
     let singular = dir.path().join("singular.gltf");
@@ -371,16 +395,16 @@ fn cli_measure_marks_absent_and_singular_inverse_binds_without_substitution() {
         "available"
     );
     assert_eq!(
-        singular_skin["joint_bind_to_mesh_matrices"][0]["unavailable_reason"],
+        singular_skin["joints"][0]["joint_bind_to_mesh"]["unavailable_reason"],
         "inverse_bind_matrix_non_invertible"
     );
     assert!(
-        singular_skin["joint_bind_to_mesh_matrices"][0]
+        singular_skin["joints"][0]["joint_bind_to_mesh"]
             .get("matrix")
             .is_none()
     );
     assert_eq!(
-        singular_skin["mesh_bind_world_matrices"][0]["matrix"],
+        singular_skin["joints"][0]["mesh_bind_world"]["matrix"],
         json!(vec![0.0; 16])
     );
 }
@@ -435,16 +459,16 @@ fn cli_measure_preserves_each_inverse_bind_accessor_state() {
         Some(1)
     );
     assert_eq!(short["inverse_bind_accessor"]["matrices"][0][13], -3.0);
-    for field in ["joint_bind_to_mesh_matrices", "mesh_bind_world_matrices"] {
+    for field in ["joint_bind_to_mesh", "mesh_bind_world"] {
         assert!(
-            short[field][0].get("matrix").is_some(),
+            short["joints"][0][field].get("matrix").is_some(),
             "readable prefix in {field}"
         );
         assert_eq!(
-            short[field][1]["unavailable_reason"], "inverse_bind_accessor_count_mismatch",
+            short["joints"][1][field]["unavailable_reason"], "inverse_bind_accessor_count_mismatch",
             "missing joint row in {field}"
         );
-        assert!(short[field][1].get("matrix").is_none());
+        assert!(short["joints"][1][field].get("matrix").is_none());
     }
 
     let non_finite = &skins[3];
@@ -458,8 +482,53 @@ fn cli_measure_preserves_each_inverse_bind_accessor_state() {
 }
 
 fn assert_derived_unavailable(skin: &Value, reason: &str) {
-    for field in ["joint_bind_to_mesh_matrices", "mesh_bind_world_matrices"] {
-        assert_eq!(skin[field][0]["unavailable_reason"], reason, "{field}");
-        assert!(skin[field][0].get("matrix").is_none(), "{field}");
+    for field in ["joint_bind_to_mesh", "mesh_bind_world"] {
+        assert_eq!(
+            skin["joints"][0][field]["unavailable_reason"], reason,
+            "{field}"
+        );
+        assert!(skin["joints"][0][field].get("matrix").is_none(), "{field}");
     }
+}
+
+#[test]
+fn cli_measure_handles_a_deep_leaf_first_source_hierarchy() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let input = dir.path().join("deep-leaf-first-hierarchy.gltf");
+    write_deep_leaf_first_hierarchy_gltf(&input);
+
+    let (document, _) = measure(&input);
+    let measurements = &document["files"][0]["measurements"];
+    let nodes = measurements["skeleton_nodes"]
+        .as_array()
+        .expect("source nodes");
+    assert_eq!(nodes.len(), DEEP_HIERARCHY_DEPTH);
+
+    let leaf = &nodes[0];
+    assert_eq!(leaf["node_index"], 0, "leaf keeps source node identity");
+    assert_eq!(leaf["name"], "leaf");
+    assert_eq!(leaf["parent_node_index"], 1);
+
+    let root = nodes.last().expect("root node");
+    assert_eq!(
+        root["node_index"],
+        DEEP_HIERARCHY_DEPTH - 1,
+        "source nodes remain in source-array order"
+    );
+    assert_eq!(root["name"], "root");
+    assert!(root.get("parent_node_index").is_none());
+    assert_eq!(root["scene_root_indices"], json!([0]));
+
+    let leaf_world = leaf["rest_world_matrix"].as_array().expect("leaf world");
+    assert!(
+        leaf_world
+            .iter()
+            .all(|entry| entry.as_f64().is_some_and(f64::is_finite)),
+        "leaf rest-world matrix is finite"
+    );
+    assert_eq!(
+        leaf_world[12].as_f64(),
+        Some(DEEP_HIERARCHY_DEPTH as f64),
+        "leaf rest-world translation accumulates every ancestor"
+    );
 }
