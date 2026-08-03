@@ -13,8 +13,8 @@ identity `urn:animsmith:schema:output:2`. The retrievable schema is
 is a retrieval location, not the protocol identity.
 
 Measurement evidence is nested and independently versioned as
-`urn:animsmith:schema:measurements:3`. Its retrievable schema is
-[`measurements-v3.schema.json`](schemas/measurements-v3.schema.json). A future
+`urn:animsmith:schema:measurements:4`. Its retrievable schema is
+[`measurements-v4.schema.json`](schemas/measurements-v4.schema.json). A future
 measurement-definition change can therefore bump that contract without
 redesigning the outer result envelope.
 
@@ -205,12 +205,16 @@ Both commands put evidence under `files[].measurements`:
 
 ```json
 {
-  "schema_version": 3,
-  "schema": "urn:animsmith:schema:measurements:3",
+  "schema_version": 4,
+  "schema": "urn:animsmith:schema:measurements:4",
   "clips": {},
   "mesh_definitions": [],
   "node_instances": [],
-  "scenes": []
+  "scenes": [],
+  "material_resource_coverage": "complete",
+  "material_definitions": [],
+  "textures": [],
+  "images": []
 }
 ```
 
@@ -241,6 +245,43 @@ include them in weight statistics, repair unpaired sets, or preserve their
 payloads when writing a converted asset. Keep the raw source when this evidence
 matters; a consuming pipeline decides whether a non-empty or unpaired set is
 acceptable.
+
+Material and image evidence is deliberately separate from mesh definitions.
+`material_resource_coverage` is `"complete"` for glTF/GLB input and
+`"unavailable"` when the loader cannot provide the source-resource sidecar.
+When coverage is complete, `material_definitions`, `textures`, and `images`
+are source-indexed records in ascending source order. A material definition
+has its optional display `name` and zero or more bindings
+`{ "slot", "texture_index" }`. The supported slot vocabulary, in stable
+semantic order, is `base_color`, `normal`, `metallic_roughness`, and
+`occlusion`. A texture record has `texture_index`, optional `name`, and its
+`image_index`. This preserves shared images and textures without duplicating
+metadata per material slot.
+
+An image record has `image_index`, optional `name`, a `source_kind` of
+`"embedded"`, `"data_uri"`, or `"external"`, and optional declared and
+decoded metadata. `declared_mime_type` is the source's declared MIME type;
+it is source-authored text, not proof of the payload. `detected_container` is
+the byte-detected `png` or `jpeg` container. `decoded_color_type` is one of
+`l8`, `la8`, `rgb8`, `rgba8`, `l16`, `la16`, `rgb16`, or `rgba16`; its
+`channel_count` is respectively 1, 2, 3, or 4, while `width` and `height` are
+decoded pixel dimensions. Thus MIME describes a declared media label,
+container describes encoded bytes, and color type/channel count describe the
+decoded pixel representation. These facts can differ without contradiction.
+Available images always have decoded metadata and no `unavailable_reason`.
+An unavailable image has a stable `unavailable_reason` and no decoded
+dimensions, color type, or channel count; a recognizable corrupt PNG/JPEG may
+still report its detected container. Reasons are `source_unavailable`,
+`invalid_data_uri`, `unsupported_container`, `decode_failed`, and
+`resource_limit`. This is inventory evidence, not an image
+acceptance decision: animsmith does not repair, resize, transcode, or judge
+color-space, normal-map, engine-import, or artistic suitability here.
+
+The records describe what the loader observed, not authority for later writes
+or conversion recipes. A source-resource sidecar is not a promise that a
+writer preserves every image payload, and a material-texture recipe remains a
+separate explicit conversion input. Preserve the raw source if those source
+details must be retained.
 
 `node_instances` contains one record per mesh-bearing node. `node_index` and
 `mesh_index` are stable source indices, so names need not be unique. Its

@@ -99,6 +99,16 @@ records expose secondary glTF skin-attribute presence only. Mesh records also
 preserve whether either side was unpaired on an individual primitive; they do
 not retain or evaluate secondary per-vertex payloads.
 
+For glTF/GLB, asset measurements additionally provide source-order material,
+texture, and image inventory records plus explicit
+`material_resource_coverage`. These are loader observations, not a portable
+image-management API: a host must handle `"unavailable"` coverage from other
+loaders and must not infer writer preservation, image acceptance, repair,
+resizing, transcode, color-space policy, or engine-import behavior from them.
+Use the typed image metadata to inspect declared MIME separately from the
+byte-detected container and decoded color/channel data; unavailable images
+carry a reason instead of decoded metadata.
+
 When the host needs to exchange the same JSON as the CLI, construct
 `MeasurementContract`, `MeasureFileReport`/`LintFileReport`, and
 `MeasureEnvelope`/`LintEnvelope` from `animsmith-core::contract`. That module

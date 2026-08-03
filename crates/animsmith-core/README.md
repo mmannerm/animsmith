@@ -36,6 +36,18 @@ different primitives are not reported as a clean pair. It intentionally does
 not retain secondary per-vertex payloads or change the primary four-influence
 skinning semantics.
 
+## Material and Image Measurement Evidence
+
+`AssetMeasurements` records source-order material definitions, semantic
+texture bindings, texture-to-image identities, and bounded image inspection
+metadata when a loader supplies a source-resource sidecar. Its explicit
+`material_resource_coverage` distinguishes complete glTF/GLB evidence from an
+unavailable source-resource view in another loader. Image records preserve
+declared MIME separately from a detected container and decoded dimensions,
+channel count, and color type; unavailable images instead carry a reason.
+This is descriptive source evidence, not an image acceptance, repair, resize,
+transcode, writer-preservation, or material-recipe policy.
+
 ## Static Mesh Transform Baking
 
 Embedders can opt into

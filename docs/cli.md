@@ -177,7 +177,7 @@ contract is the source of truth and is versioned with `schema_version`.
 See [output.md](output.md) and
 [`output-v2.schema.json`](schemas/output-v2.schema.json). Nested measurement
 evidence has its own
-[`measurements-v3.schema.json`](schemas/measurements-v3.schema.json) contract.
+[`measurements-v4.schema.json`](schemas/measurements-v4.schema.json) contract.
 Alpha-era v1 and preview reports are not retained; regenerate them before
 using `diff`.
 
@@ -206,6 +206,17 @@ bidirectional formatting characters are rendered as visible escapes. Markdown
 also flattens line separators and neutralizes table/code-span delimiters before
 the text is pasted into a trusted review comment. JSON retains the original
 strings as machine data.
+
+`measure --format json` also inventories glTF/GLB material definitions,
+texture-to-image links, and image metadata. This lets a pipeline distinguish a
+normal slot from a BaseColor slot and identify shared source resources without
+parsing the asset a second time. The nested measurement contract reports
+`material_resource_coverage: "complete"` for glTF/GLB and `"unavailable"`
+when a loader has no equivalent source-resource view. This is descriptive
+evidence only: it does not accept, repair, resize, transcode, or otherwise fix
+an image, and it does not promise that subsequent conversion or writing keeps
+every source payload. See [machine-readable output](output.md#measure-and-lint)
+for MIME, detected-container, decoded-color, and unavailable-image semantics.
 
 ## CI Comments (`lint --format markdown`)
 
