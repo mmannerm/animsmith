@@ -210,6 +210,11 @@ pub struct RigConfig {
     /// explicit overrides by callers that merge them with a profile.
     #[serde(default)]
     pub roles: BTreeMap<Role, String>,
+    /// Bone names that must be present in the file's skeleton, regardless of
+    /// whether any clip keys them. This is for static runtime sockets, IK
+    /// targets, and mask bones; use [`ClipExpectations::animates_bones`] when
+    /// a bone must carry animation data in a particular clip.
+    pub required_bones: Option<Vec<String>>,
 }
 
 fn default_profile() -> String {
@@ -221,6 +226,7 @@ impl Default for RigConfig {
         Self {
             profile: default_profile(),
             roles: BTreeMap::new(),
+            required_bones: None,
         }
     }
 }

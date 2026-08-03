@@ -12,7 +12,7 @@ const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:8";
 const HOSTILE_PRESENTATION_TEXT: &str = "forged\nline\u{1b}[31m\u{2028}\u{2029}\u{202e}";
 const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v2.schema.json");
 const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v8.schema.json");
-const EXPECTED_CHECK_IDS: [&str; 22] = [
+const EXPECTED_CHECK_IDS: [&str; 23] = [
     "nan",
     "time-monotonic",
     "quat-norm",
@@ -23,6 +23,7 @@ const EXPECTED_CHECK_IDS: [&str; 22] = [
     "constant-nonunit-scale",
     "constant-track",
     "missing-bones",
+    "required-bones",
     "frozen-bone",
     "duplicate-loop-endpoint",
     "loop-closure",
@@ -179,6 +180,35 @@ fn write_distinct_repair_glb(path: &std::path::Path) {
 
 fn write_clean_glb(path: &std::path::Path) {
     animsmith_gltf::write::write(&sway_doc(false), path).expect("writes clean fixture");
+}
+
+/// A static skeleton with one deliberately ambiguous display name. It has no
+/// clips, which proves the required-bones contract is structural rather than
+/// a disguised per-clip keyframe requirement.
+fn write_required_bones_glb(path: &std::path::Path) {
+    let bone = |name: &str| Bone {
+        name: name.into(),
+        parent: None,
+        rest: Transform::IDENTITY,
+        inverse_bind: None,
+    };
+    let doc = Document {
+        skeleton: Skeleton {
+            bones: vec![
+                bone("root"),
+                bone("weapon_socket"),
+                bone("duplicate"),
+                bone("duplicate"),
+            ],
+        },
+        ..Document::default()
+    };
+    animsmith_gltf::write::write(&doc, path).expect("writes required-bones fixture");
+}
+
+fn write_empty_skeleton_glb(path: &std::path::Path) {
+    animsmith_gltf::write::write(&Document::default(), path)
+        .expect("writes empty-skeleton fixture");
 }
 
 /// A closed rotational loop with a C1 cusp at the wrap: it leaves at 2 rad/s
@@ -3204,6 +3234,185 @@ fn write_config(dir: &std::path::Path, name: &str, toml: &str) -> PathBuf {
 
 fn example_config() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/character.animsmith.toml")
+}
+
+#[test]
+fn required_bones_cli_distinguishes_static_presence_missing_ambiguity_and_empty_skeletons() {
+    let dir = unique_temp_dir("required-bones");
+    let input = dir.path().join("static-rig.glb");
+    let empty = dir.path().join("empty.glb");
+    write_required_bones_glb(&input);
+    write_empty_skeleton_glb(&empty);
+
+    let clean = write_config(
+        dir.path(),
+        "clean.toml",
+        "[rig]\nrequired_bones = [\"root\", \"weapon_socket\"]\n",
+    );
+    let clean_output = animsmith()
+        .arg("--config")
+        .arg(&clean)
+        .args([
+            "lint",
+            input.to_str().expect("utf-8 input"),
+            "--select",
+            "required-bones",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("runs required-bones against static glTF");
+    assert!(
+        clean_output.status.success(),
+        "stderr:\n{}",
+        stderr(&clean_output)
+    );
+    let clean_json: Value = serde_json::from_slice(&clean_output.stdout).expect("valid JSON");
+    let clean_check = clean_json["files"][0]["checks"]
+        .as_array()
+        .expect("checks")
+        .iter()
+        .find(|check| check["check_id"] == "required-bones")
+        .expect("required-bones record");
+    assert_eq!(clean_check["applicability"], "applicable");
+    assert_eq!(clean_check["evaluation"], "complete");
+    assert_eq!(clean_check["findings"], json!([]));
+    assert_eq!(
+        clean_check["evaluated_scopes"],
+        json!([{ "code": "required_bone_presence" }])
+    );
+    assert_output_schema_valid(&clean_json);
+
+    let failing = write_config(
+        dir.path(),
+        "failing.toml",
+        "[rig]\nrequired_bones = [\"weapon_socket\", \"weapon_socket\", \"missing_socket\", \"duplicate\"]\n",
+    );
+    let failing_output = animsmith()
+        .arg("--config")
+        .arg(&failing)
+        .args([
+            "lint",
+            input.to_str().expect("utf-8 input"),
+            "--select",
+            "required-bones",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("runs required-bones failure cases");
+    assert_eq!(
+        failing_output.status.code(),
+        Some(1),
+        "stderr:\n{}",
+        stderr(&failing_output)
+    );
+    let failing_json: Value = serde_json::from_slice(&failing_output.stdout).expect("valid JSON");
+    let findings = failing_json["files"][0]["checks"]
+        .as_array()
+        .expect("checks")
+        .iter()
+        .find(|check| check["check_id"] == "required-bones")
+        .expect("required-bones record")["findings"]
+        .as_array()
+        .expect("findings");
+    assert_eq!(findings.len(), 2, "duplicate declarations must deduplicate");
+    assert!(findings.iter().any(|finding| {
+        finding["bone"] == "missing_socket"
+            && finding["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("does not exist"))
+    }));
+    assert!(findings.iter().any(|finding| {
+        finding["bone"] == "duplicate"
+            && finding["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("ambiguous"))
+    }));
+    assert_output_schema_valid(&failing_json);
+
+    let empty_output = animsmith()
+        .arg("--config")
+        .arg(&clean)
+        .args([
+            "lint",
+            empty.to_str().expect("utf-8 empty input"),
+            "--select",
+            "required-bones",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("runs required-bones against empty skeleton");
+    assert!(
+        empty_output.status.success(),
+        "stderr:\n{}",
+        stderr(&empty_output)
+    );
+    let empty_json: Value = serde_json::from_slice(&empty_output.stdout).expect("valid JSON");
+    let empty_check = empty_json["files"][0]["checks"]
+        .as_array()
+        .expect("checks")
+        .iter()
+        .find(|check| check["check_id"] == "required-bones")
+        .expect("required-bones record");
+    assert_eq!(
+        empty_check["evaluation"], "not_evaluated",
+        "a skeleton-unavailable gap completes no structural work: {empty_json:#}"
+    );
+    assert_eq!(empty_check["findings"], json!([]));
+    let gaps = empty_check["gaps"].as_array().expect("coverage gaps");
+    assert_eq!(gaps.len(), 1);
+    assert_eq!(gaps[0]["code"], "skeleton_unavailable");
+    assert_eq!(
+        gaps[0]["scope"],
+        json!({ "code": "required_bone_presence" })
+    );
+    assert_output_schema_valid(&empty_json);
+}
+
+#[cfg(feature = "fbx")]
+#[test]
+fn required_bones_cli_lints_direct_fbx_input() {
+    let dir = unique_temp_dir("required-bones-fbx");
+    let config = write_config(
+        dir.path(),
+        "fbx.toml",
+        "[rig]\nrequired_bones = [\"tri\", \"missing_socket\"]\n",
+    );
+    let input = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../animsmith-fbx/testdata/rigged_triangle.fbx");
+    let output = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args([
+            "lint",
+            input.to_str().expect("utf-8 FBX fixture"),
+            "--select",
+            "required-bones",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("lints direct FBX input");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    let findings = json["files"][0]["checks"]
+        .as_array()
+        .expect("checks")
+        .iter()
+        .find(|check| check["check_id"] == "required-bones")
+        .expect("required-bones record")["findings"]
+        .as_array()
+        .expect("findings");
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0]["bone"], "missing_socket");
+    assert_output_schema_valid(&json);
 }
 
 #[test]

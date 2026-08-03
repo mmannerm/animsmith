@@ -173,6 +173,9 @@ builtin_codes!(
     FRAME_GRID => "frame_grid",
         meaning = "The named clip's declared frame grid was evaluated.",
         emitted_by = ["fps"],
+    REQUIRED_BONE_PRESENCE => "required_bone_presence",
+        meaning = "Configured structural skeleton-bone presence requirements were evaluated.",
+        emitted_by = ["required-bones"],
 );
 
 impl EvaluationScopeCode {
@@ -242,6 +245,9 @@ builtin_codes!(
     MEASUREMENT_UNAVAILABLE => "measurement_unavailable",
         meaning = "A required numeric measurement could not be produced or did not meet its evidence floor.",
         emitted_by = ["loop-closure", "duplicate-loop-endpoint", "loop-seam", "loop-seam-vel", "loop-seam-rot", "root-motion-speed", "in-place", "foot-slide", "gait-group"],
+    SKELETON_UNAVAILABLE => "skeleton_unavailable",
+        meaning = "Required skeleton presence work could not run because the file has no usable skeleton.",
+        emitted_by = ["required-bones"],
     INSUFFICIENT_MEASURABLE_MEMBERS => "insufficient_measurable_members",
         meaning = "Fewer than two gait-group members produced usable phases.",
         emitted_by = ["gait-group"],

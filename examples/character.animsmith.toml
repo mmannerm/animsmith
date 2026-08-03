@@ -6,6 +6,9 @@
 
 [rig]
 profile = "auto" # or a named profile / inline [rig.roles]
+# Presence-only rig contract: static sockets, IK targets, and mask bones still
+# have to exist. Keep names aligned with this character's exported skeleton.
+# required_bones = ["root", "weapon_socket", "ik_hand_l"]
 
 [checks.loop-seam]
 max_ratio = 1.6

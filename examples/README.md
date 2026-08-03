@@ -396,6 +396,34 @@ The contract is load-bearing: a bare `animsmith lint examples/assets/walk-dirty.
 loop checks are explicitly not applicable. Semantic checks
 enforce *your* declared expectations, not a guess.
 
+### Keeping the exported rig shape stable
+
+`animates_bones` is deliberately per clip: it says that a named bone must
+exist **and carry animation keys** in that take. That is the right contract
+for a swinging arm or a locomotion root, but it is too strict for a static
+weapon socket, an IK target, a retargeting mask bone, or another runtime
+attachment point. Put those structural requirements on the rig instead:
+
+```toml
+[rig]
+profile = "auto"
+required_bones = ["root", "weapon_socket", "ik_hand_l"]
+```
+
+`required-bones` checks only that each declared name identifies exactly one
+bone in the input skeleton. A present-but-static bone is clean; a missing name
+is an error. Duplicate skeleton names are ambiguous rather than silently
+matched, and an export with no skeleton cannot satisfy the contract. This is
+also useful for a static mesh or a take with no clips: the structural check
+does not need animation data to run.
+
+It is not a repair tool. AnimSmith does not add sockets, rename a duplicate,
+retarget a rig, or decide which bones your engine needs; fix the source rig or
+its export in the DCC, then lint it again. Use `[clips.<name>]
+animates_bones = [...]` when the same bones must move in a particular clip,
+and `frozen-bone` when keyed rotation is required to exceed a meaningful
+motion floor.
+
 ### Scaling up to a full character
 
 [`examples/character.animsmith.toml`](character.animsmith.toml)
