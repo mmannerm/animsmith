@@ -696,6 +696,8 @@ fn fixture_repo_gates_all_tracked_markdown_minus_exact_exclusions() {
         ".agent-instructions",
         ".claude",
         "crates/example",
+        "crates/example/docs",
+        "crates/second",
         "docs/research",
         "docs/research_extra",
         "nested/deep",
@@ -762,6 +764,16 @@ fn fixture_repo_gates_all_tracked_markdown_minus_exact_exclusions() {
     )
     .expect("writes crate README");
     std::fs::write(
+        root.join("crates/second/README.md"),
+        "# Second crate\n\n[relative](../../target.txt)\n",
+    )
+    .expect("writes second crate README");
+    std::fs::write(
+        root.join("crates/example/docs/README.md"),
+        "# Nested crate docs\n\n[relative](../../../target.txt)\n",
+    )
+    .expect("writes non-published nested crate README");
+    std::fs::write(
         root.join("nested/README.md"),
         "# Ordinary README\n\n[relative](../target.txt)\n",
     )
@@ -785,6 +797,8 @@ fn fixture_repo_gates_all_tracked_markdown_minus_exact_exclusions() {
         ".claude-notes.md",
         "README.md",
         "crates/example/README.md",
+        "crates/example/docs/README.md",
+        "crates/second/README.md",
         "docs/research/raw.md",
         "docs/research-notes.md",
         "docs/research_extra/page.md",
@@ -802,6 +816,8 @@ fn fixture_repo_gates_all_tracked_markdown_minus_exact_exclusions() {
             ".claude-notes.md",
             "README.md",
             "crates/example/README.md",
+            "crates/example/docs/README.md",
+            "crates/second/README.md",
             "docs/research-notes.md",
             "docs/research_extra/page.md",
             "nested/README.md",
@@ -816,6 +832,7 @@ fn fixture_repo_gates_all_tracked_markdown_minus_exact_exclusions() {
             ".claude-notes.md: links to missing local target missing-adjacent.md",
             "README.md: published file must use absolute links, found target.txt",
             "crates/example/README.md: published file must use absolute links, found ../../target.txt",
+            "crates/second/README.md: published file must use absolute links, found ../../target.txt",
             "docs/research-notes.md: links to missing local target missing-research-notes.md",
             "docs/research_extra/page.md: links to missing local target missing-research-extra.md",
             "nested/deep/page.md: links to missing local target missing-deep.md",
