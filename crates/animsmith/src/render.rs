@@ -1375,7 +1375,7 @@ mod tests {
                         source_node_index: 4,
                         node: 0,
                         mesh: 0,
-                        skin_joints: vec![0],
+                        skin_joints: vec![0, 1],
                         ..MeshInstance::default()
                     },
                     MeshInstance {
@@ -1463,11 +1463,158 @@ mod tests {
     #[test]
     fn quoted_text_atom_keeps_identifier_boundaries_visible_and_safe() {
         assert_eq!(quoted_text_atom("  spaced  "), "\"  spaced  \"");
+        assert_eq!(quoted_text_atom("\ttabbed\t"), "\"\\ttabbed\\t\"");
         assert_eq!(
             quoted_text_atom("quote\"slash\\line\n"),
             "\"quote\\\"slash\\\\line\\n\""
         );
         assert_eq!(quoted_text_atom(""), "\"\"");
+    }
+
+    #[test]
+    fn inspect_renderer_does_not_truncate_large_asset_inventories() {
+        use animsmith_core::model::{MaterialAsset, MeshAsset, MeshInstance, SceneAssets};
+
+        const COUNT: usize = 257;
+        let material = |index| MaterialAsset {
+            name: format!("material-{index}"),
+            base_color: [1.0; 4],
+            metallic: 0.0,
+            roughness: 1.0,
+            base_color_texture: None,
+            normal_texture: None,
+            metallic_roughness_texture: None,
+            occlusion_texture: None,
+        };
+        let bones = (0..COUNT)
+            .map(|index| Bone {
+                name: format!("node-{index}"),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            })
+            .collect();
+        let meshes = (0..COUNT)
+            .map(|index| MeshAsset {
+                name: format!("mesh-{index}"),
+                source_mesh_index: 1_000 + index,
+                primitives: vec![],
+            })
+            .collect();
+        let instances = (0..COUNT)
+            .map(|index| MeshInstance {
+                source_node_index: 2_000 + index,
+                node: index,
+                mesh: index,
+                skin_joints: (index == COUNT - 1)
+                    .then_some(vec![0, 1])
+                    .unwrap_or_default(),
+                ..MeshInstance::default()
+            })
+            .collect();
+        let doc = Document {
+            skeleton: animsmith_core::Skeleton { bones },
+            assets: SceneAssets {
+                materials: (0..COUNT).map(material).collect(),
+                meshes,
+                instances,
+                ..SceneAssets::default()
+            },
+            ..Document::default()
+        };
+
+        let lines = render_inspect(&doc, &ResolvedRoles::default()).collect::<Vec<_>>();
+        assert!(lines.contains(&format!("materials: {COUNT}")));
+        assert!(lines.contains(&"  #256 \"material-256\"".to_string()));
+        assert!(lines.contains(&format!("mesh instances: {COUNT}")));
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.starts_with("  node \""))
+                .count(),
+            COUNT
+        );
+        let last = lines
+            .iter()
+            .position(|line| line == "  node \"node-256\"")
+            .expect("last instance is present");
+        assert_eq!(
+            &lines[last..last + 5],
+            [
+                "  node \"node-256\"",
+                "    source node: #2256",
+                "    mesh: #256 \"mesh-256\" (source mesh #1256)",
+                "    skin: skinned",
+                "    primitives: none",
+            ]
+        );
+    }
+
+    #[test]
+    fn inspect_renderer_marks_two_and_four_way_name_ambiguity() {
+        use animsmith_core::model::{MaterialAsset, MeshInstance, SceneAssets};
+
+        let material = |name: &str| MaterialAsset {
+            name: name.into(),
+            base_color: [1.0; 4],
+            metallic: 0.0,
+            roughness: 1.0,
+            base_color_texture: None,
+            normal_texture: None,
+            metallic_roughness_texture: None,
+            occlusion_texture: None,
+        };
+        let names = ["pair", "pair", "quad", "quad", "quad", "quad"];
+        let doc = Document {
+            skeleton: animsmith_core::Skeleton {
+                bones: names
+                    .iter()
+                    .map(|name| Bone {
+                        name: (*name).into(),
+                        parent: None,
+                        rest: Transform::IDENTITY,
+                        inverse_bind: None,
+                    })
+                    .collect(),
+            },
+            assets: SceneAssets {
+                materials: names.iter().map(|name| material(name)).collect(),
+                instances: (0..names.len())
+                    .map(|node| MeshInstance {
+                        node,
+                        ..MeshInstance::default()
+                    })
+                    .collect(),
+                ..SceneAssets::default()
+            },
+            ..Document::default()
+        };
+
+        let lines = render_inspect(&doc, &ResolvedRoles::default()).collect::<Vec<_>>();
+        for (name, count) in [("pair", 2), ("quad", 4)] {
+            assert_eq!(
+                lines
+                    .iter()
+                    .filter(|line| {
+                        *line == &format!(
+                            "  node \"{name}\" [ambiguous: {count} instances share this node name]"
+                        )
+                    })
+                    .count(),
+                count
+            );
+            assert_eq!(
+                lines
+                    .iter()
+                    .filter(|line| {
+                        line.contains(&format!(
+                            "\"{name}\" [ambiguous: {count} materials share this name]"
+                        ))
+                    })
+                    .count(),
+                count
+            );
+        }
     }
 
     #[test]

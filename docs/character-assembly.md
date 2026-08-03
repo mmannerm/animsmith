@@ -74,16 +74,16 @@ Copy the quoted name after `node` in the `mesh instances` section exactly into
 skinned status, and the material used by every primitive. The top-level
 `materials` section lists the exact, case-sensitive names required by a
 [material texture recipe](material-texture-recipes.md). Repeated node or
-material names are marked `ambiguous`; an explicit recipe selection using an
-ambiguous name fails instead of guessing. `inspect` only reports the authored
-scene—it does not rename nodes or materials, merge duplicates, or repair the
-asset.
+material names are marked `ambiguous`; assembly and material recipe validation
+reject ambiguous authored names instead of guessing. `inspect` only reports
+the authored scene—it does not rename nodes or materials, merge duplicates, or
+repair the asset.
 
 The base supplies the authoritative skeleton, rest pose, meshes, skins,
 materials, and textures. `mesh_instances` names the exact base nodes whose
-mesh instances survive; omitting it retains every instance. An explicit name
-must identify exactly one instance. Unreferenced mesh and material definitions
-are pruned.
+mesh instances survive; omitting it retains every instance. An explicit node
+name must be unique; every mesh instance attached to that selected node
+survives. Unreferenced mesh and material definitions are pruned.
 
 Each `[[clips]]` entry selects one exact source `take`, renames it, and remaps
 its tracks to the base skeleton by exact unique bone name. Missing referenced
