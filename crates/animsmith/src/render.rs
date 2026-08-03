@@ -675,12 +675,20 @@ fn is_presentation_control(ch: char) -> bool {
     ch.is_control()
         || matches!(
             ch,
-            '\u{061c}'
-                | '\u{200e}'
-                | '\u{200f}'
+            '\u{00ad}'
+                | '\u{034f}'
+                | '\u{061c}'
+                | '\u{180b}'..='\u{180e}'
+                | '\u{200b}'..='\u{200f}'
                 | '\u{2028}'..='\u{202e}'
-                | '\u{2066}'..='\u{206f}'
+                | '\u{2060}'..='\u{206f}'
+                | '\u{fe00}'..='\u{fe0f}'
+                | '\u{feff}'
+                | '\u{fff9}'..='\u{fffb}'
+                | '\u{1bca0}'..='\u{1bca3}'
+                | '\u{1d173}'..='\u{1d17a}'
                 | '\u{e0000}'..='\u{e007f}'
+                | '\u{e0100}'..='\u{e01ef}'
         )
 }
 
@@ -1482,14 +1490,15 @@ mod tests {
             "\"quote\\\"slash\\\\line\\n\""
         );
         assert_eq!(quoted_text_atom(""), "\"\"");
-        let quoted = quoted_text_atom("escape\u{1b}bidi\u{202e}astral\u{e0001}");
-        assert_eq!(quoted, "\"escape\\u001Bbidi\\u202Eastral\\U000E0001\"");
+        let raw = "escape\u{1b}bidi\u{202e}zero\u{200b}join\u{200d}word\u{2060}bom\u{feff}astral\u{e0001}";
+        let quoted = quoted_text_atom(raw);
+        assert_eq!(
+            quoted,
+            "\"escape\\u001Bbidi\\u202Ezero\\u200Bjoin\\u200Dword\\u2060bom\\uFEFFastral\\U000E0001\""
+        );
         let parsed: toml::Value =
             toml::from_str(&format!("name = {quoted}")).expect("quoted name is valid TOML");
-        assert_eq!(
-            parsed["name"].as_str(),
-            Some("escape\u{1b}bidi\u{202e}astral\u{e0001}")
-        );
+        assert_eq!(parsed["name"].as_str(), Some(raw));
     }
 
     #[test]
@@ -1686,6 +1695,67 @@ mod tests {
             2,
             "multiple instances on one unique node remain selectable together"
         );
+    }
+
+    #[test]
+    fn inspect_renderer_reports_dangling_asset_references_without_panicking() {
+        use animsmith_core::model::{MeshAsset, MeshInstance, Primitive, SceneAssets};
+
+        let doc = Document {
+            skeleton: animsmith_core::Skeleton {
+                bones: vec![Bone {
+                    name: "valid".into(),
+                    parent: None,
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                }],
+            },
+            assets: SceneAssets {
+                meshes: vec![MeshAsset {
+                    name: "mesh".into(),
+                    source_mesh_index: 4,
+                    primitives: vec![Primitive {
+                        material: Some(99),
+                        ..Primitive::default()
+                    }],
+                }],
+                instances: vec![
+                    MeshInstance {
+                        source_node_index: 7,
+                        node: 99,
+                        mesh: 0,
+                        ..MeshInstance::default()
+                    },
+                    MeshInstance {
+                        source_node_index: 8,
+                        node: 0,
+                        mesh: 99,
+                        skin_joints: vec![0],
+                        ..MeshInstance::default()
+                    },
+                ],
+                ..SceneAssets::default()
+            },
+            ..Document::default()
+        };
+
+        let lines = render_inspect(&doc, &ResolvedRoles::default()).collect::<Vec<_>>();
+        for expected in [
+            "  node <missing node #99>",
+            "    source node: #7",
+            "    mesh: #0 \"mesh\" (source mesh #4)",
+            "    primitive #0: missing material #99",
+            "  node \"valid\"",
+            "    source node: #8",
+            "    mesh: <missing mesh #99>",
+            "    skin: skinned",
+            "    primitives: unavailable",
+        ] {
+            assert!(
+                lines.iter().any(|line| line == expected),
+                "missing {expected:?}"
+            );
+        }
     }
 
     #[test]
@@ -2064,8 +2134,31 @@ mod tests {
             .map(char::from)
             .collect();
         raw.extend([
-            '\u{061c}', '\u{200e}', '\u{200f}', '\u{2028}', '\u{2029}', '\u{202a}', '\u{202e}',
-            '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}', '\u{206f}',
+            '\u{00ad}',
+            '\u{034f}',
+            '\u{061c}',
+            '\u{180e}',
+            '\u{200b}',
+            '\u{200d}',
+            '\u{200e}',
+            '\u{200f}',
+            '\u{2028}',
+            '\u{2029}',
+            '\u{202a}',
+            '\u{202e}',
+            '\u{2060}',
+            '\u{2066}',
+            '\u{2067}',
+            '\u{2068}',
+            '\u{2069}',
+            '\u{206f}',
+            '\u{fe0f}',
+            '\u{feff}',
+            '\u{fff9}',
+            '\u{1bca0}',
+            '\u{1d173}',
+            '\u{e0001}',
+            '\u{e0100}',
         ]);
         let escaped = text_atom(&raw);
         assert!(
@@ -2073,18 +2166,31 @@ mod tests {
             "presentation control survived sanitizer: {escaped:?}"
         );
         for visible in [
+            "\\u{ad}",
+            "\\u{34f}",
             "\\u{61c}",
+            "\\u{180e}",
+            "\\u{200b}",
+            "\\u{200d}",
             "\\u{200e}",
             "\\u{200f}",
             "\\u{2028}",
             "\\u{2029}",
             "\\u{202a}",
             "\\u{202e}",
+            "\\u{2060}",
             "\\u{2066}",
             "\\u{2067}",
             "\\u{2068}",
             "\\u{2069}",
             "\\u{206f}",
+            "\\u{fe0f}",
+            "\\u{feff}",
+            "\\u{fff9}",
+            "\\u{1bca0}",
+            "\\u{1d173}",
+            "\\u{e0001}",
+            "\\u{e0100}",
         ] {
             assert!(escaped.contains(visible), "missing {visible}: {escaped:?}");
         }
