@@ -1330,10 +1330,16 @@ mod tests {
         };
         let doc = Document {
             skeleton: animsmith_core::Skeleton {
-                bones: vec![bone("body"), bone("body"), bone("prop")],
+                bones: vec![
+                    bone("body"),
+                    bone("body"),
+                    bone("body"),
+                    bone("prop"),
+                    bone("empty"),
+                ],
             },
             assets: SceneAssets {
-                materials: vec![material("paint"), material("paint")],
+                materials: vec![material("paint"), material("paint"), material("paint")],
                 meshes: vec![
                     MeshAsset {
                         name: "character".into(),
@@ -1344,15 +1350,24 @@ mod tests {
                                 ..Primitive::default()
                             },
                             Primitive::default(),
+                            Primitive {
+                                material: Some(1),
+                                ..Primitive::default()
+                            },
                         ],
                     },
                     MeshAsset {
                         name: "weapon".into(),
                         source_mesh_index: 9,
                         primitives: vec![Primitive {
-                            material: Some(1),
+                            material: Some(2),
                             ..Primitive::default()
                         }],
+                    },
+                    MeshAsset {
+                        name: "empty-mesh".into(),
+                        source_mesh_index: 11,
+                        primitives: vec![],
                     },
                 ],
                 instances: vec![
@@ -1372,7 +1387,19 @@ mod tests {
                     MeshInstance {
                         source_node_index: 6,
                         node: 2,
+                        mesh: 0,
+                        ..MeshInstance::default()
+                    },
+                    MeshInstance {
+                        source_node_index: 7,
+                        node: 3,
                         mesh: 1,
+                        ..MeshInstance::default()
+                    },
+                    MeshInstance {
+                        source_node_index: 8,
+                        node: 4,
+                        mesh: 2,
                         ..MeshInstance::default()
                     },
                 ],
@@ -1383,30 +1410,51 @@ mod tests {
 
         let lines = render_inspect(&doc, &ResolvedRoles::default()).collect::<Vec<_>>();
         assert_eq!(
-            &lines[4..],
+            lines,
             [
+                "rig profile: none detected",
+                "skeleton: 5 bones",
+                "  body",
+                "  body",
+                "  body",
                 "  prop",
-                "materials: 2",
-                "  #0 \"paint\" [ambiguous: 2 materials share this name]",
-                "  #1 \"paint\" [ambiguous: 2 materials share this name]",
-                "mesh instances: 3",
-                "  node \"body\" [ambiguous: 2 instances share this node name]",
+                "  empty",
+                "materials: 3",
+                "  #0 \"paint\" [ambiguous: 3 materials share this name]",
+                "  #1 \"paint\" [ambiguous: 3 materials share this name]",
+                "  #2 \"paint\" [ambiguous: 3 materials share this name]",
+                "mesh instances: 5",
+                "  node \"body\" [ambiguous: 3 instances share this node name]",
                 "    source node: #4",
                 "    mesh: #0 \"character\" (source mesh #7)",
                 "    skin: skinned",
                 "    primitive #0: material #0 \"paint\"",
                 "    primitive #1: no material",
-                "  node \"body\" [ambiguous: 2 instances share this node name]",
+                "    primitive #2: material #1 \"paint\"",
+                "  node \"body\" [ambiguous: 3 instances share this node name]",
                 "    source node: #5",
                 "    mesh: #0 \"character\" (source mesh #7)",
                 "    skin: unskinned",
                 "    primitive #0: material #0 \"paint\"",
                 "    primitive #1: no material",
-                "  node \"prop\"",
+                "    primitive #2: material #1 \"paint\"",
+                "  node \"body\" [ambiguous: 3 instances share this node name]",
                 "    source node: #6",
+                "    mesh: #0 \"character\" (source mesh #7)",
+                "    skin: unskinned",
+                "    primitive #0: material #0 \"paint\"",
+                "    primitive #1: no material",
+                "    primitive #2: material #1 \"paint\"",
+                "  node \"prop\"",
+                "    source node: #7",
                 "    mesh: #1 \"weapon\" (source mesh #9)",
                 "    skin: unskinned",
-                "    primitive #0: material #1 \"paint\"",
+                "    primitive #0: material #2 \"paint\"",
+                "  node \"empty\"",
+                "    source node: #8",
+                "    mesh: #2 \"empty-mesh\" (source mesh #11)",
+                "    skin: unskinned",
+                "    primitives: none",
                 "clips: 0",
             ]
         );

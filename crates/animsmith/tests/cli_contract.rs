@@ -240,7 +240,13 @@ fn write_multi_mesh_glb(path: &std::path::Path) {
     };
     let doc = Document {
         skeleton: Skeleton {
-            bones: vec![bone("body-node"), bone("prop-node")],
+            bones: vec![
+                bone("body-node"),
+                bone("prop-node"),
+                bone(" duplicate-node "),
+                bone(" duplicate-node "),
+                bone(" duplicate-node "),
+            ],
         },
         assets: SceneAssets {
             meshes: vec![
@@ -268,8 +274,32 @@ fn write_multi_mesh_glb(path: &std::path::Path) {
                     mesh: 1,
                     ..MeshInstance::default()
                 },
+                MeshInstance {
+                    source_node_index: 2,
+                    node: 2,
+                    mesh: 0,
+                    ..MeshInstance::default()
+                },
+                MeshInstance {
+                    source_node_index: 3,
+                    node: 3,
+                    mesh: 0,
+                    ..MeshInstance::default()
+                },
+                MeshInstance {
+                    source_node_index: 4,
+                    node: 4,
+                    mesh: 0,
+                    ..MeshInstance::default()
+                },
             ],
-            materials: vec![material("body-material"), material("prop-material")],
+            materials: vec![
+                material("body-material"),
+                material("prop-material"),
+                material(" duplicate-material "),
+                material(" duplicate-material "),
+                material(" duplicate-material "),
+            ],
             ..SceneAssets::default()
         },
         ..Document::default()
@@ -3288,44 +3318,43 @@ fn inspect_reports_every_selectable_mesh_instance_and_material() {
         stderr(&output)
     );
     let out = stdout(&output);
-    assert!(
-        out.contains("materials: 2\n"),
-        "material count missing:\n{out}"
-    );
-    assert!(
-        out.contains("  #0 \"body-material\"\n"),
-        "body material missing:\n{out}"
-    );
-    assert!(
-        out.contains("  #1 \"prop-material\"\n"),
-        "prop material missing:\n{out}"
-    );
-    assert!(
-        out.contains("mesh instances: 2\n"),
-        "instance count missing:\n{out}"
-    );
-    assert!(
-        out.contains("  node \"body-node\"\n"),
-        "body node missing:\n{out}"
-    );
-    assert!(
-        out.contains("    mesh: #0 \"body-mesh\" (source mesh #0)\n"),
-        "body mesh missing:\n{out}"
-    );
-    assert!(
-        out.contains("    primitive #0: material #0 \"body-material\"\n"),
-        "body primitive context missing:\n{out}"
-    );
-    assert!(
-        out.contains("  node \"prop-node\"\n"),
-        "prop node missing:\n{out}"
-    );
-    assert!(
-        out.contains("    mesh: #1 \"prop-mesh\" (source mesh #1)\n"),
-        "prop mesh missing:\n{out}"
-    );
-    assert!(
-        out.contains("    primitive #0: material #1 \"prop-material\"\n"),
-        "prop primitive context missing:\n{out}"
+    let inventory = &out[out.find("materials:").expect("material inventory")..];
+    assert_eq!(
+        inventory,
+        concat!(
+            "materials: 5\n",
+            "  #0 \"body-material\"\n",
+            "  #1 \"prop-material\"\n",
+            "  #2 \" duplicate-material \" [ambiguous: 3 materials share this name]\n",
+            "  #3 \" duplicate-material \" [ambiguous: 3 materials share this name]\n",
+            "  #4 \" duplicate-material \" [ambiguous: 3 materials share this name]\n",
+            "mesh instances: 5\n",
+            "  node \"body-node\"\n",
+            "    source node: #0\n",
+            "    mesh: #0 \"body-mesh\" (source mesh #0)\n",
+            "    skin: unskinned\n",
+            "    primitive #0: material #0 \"body-material\"\n",
+            "  node \"prop-node\"\n",
+            "    source node: #1\n",
+            "    mesh: #1 \"prop-mesh\" (source mesh #1)\n",
+            "    skin: unskinned\n",
+            "    primitive #0: material #1 \"prop-material\"\n",
+            "  node \" duplicate-node \" [ambiguous: 3 instances share this node name]\n",
+            "    source node: #2\n",
+            "    mesh: #0 \"body-mesh\" (source mesh #0)\n",
+            "    skin: unskinned\n",
+            "    primitive #0: material #0 \"body-material\"\n",
+            "  node \" duplicate-node \" [ambiguous: 3 instances share this node name]\n",
+            "    source node: #3\n",
+            "    mesh: #0 \"body-mesh\" (source mesh #0)\n",
+            "    skin: unskinned\n",
+            "    primitive #0: material #0 \"body-material\"\n",
+            "  node \" duplicate-node \" [ambiguous: 3 instances share this node name]\n",
+            "    source node: #4\n",
+            "    mesh: #0 \"body-mesh\" (source mesh #0)\n",
+            "    skin: unskinned\n",
+            "    primitive #0: material #0 \"body-material\"\n",
+            "clips: 0\n",
+        )
     );
 }

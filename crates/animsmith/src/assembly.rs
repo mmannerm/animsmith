@@ -1296,10 +1296,21 @@ mod tests {
 
     #[test]
     fn explicit_mesh_selection_rejects_ambiguous_node_names_before_mutation() {
-        use animsmith_core::model::{MeshAsset, MeshInstance, SceneAssets};
+        use animsmith_core::model::{MaterialAsset, MeshAsset, MeshInstance, SceneAssets};
+
+        let material = MaterialAsset {
+            name: "unchanged".into(),
+            base_color: [1.0; 4],
+            metallic: 0.0,
+            roughness: 1.0,
+            base_color_texture: None,
+            normal_texture: None,
+            metallic_roughness_texture: None,
+            occlusion_texture: None,
+        };
 
         let mut document = Document {
-            skeleton: skeleton(&["body", "body", "prop"]),
+            skeleton: skeleton(&["body", "body", "body", "prop"]),
             assets: SceneAssets {
                 meshes: vec![MeshAsset::default(), MeshAsset::default()],
                 instances: vec![
@@ -1315,10 +1326,16 @@ mod tests {
                     },
                     MeshInstance {
                         node: 2,
+                        mesh: 0,
+                        ..MeshInstance::default()
+                    },
+                    MeshInstance {
+                        node: 3,
                         mesh: 1,
                         ..MeshInstance::default()
                     },
                 ],
+                materials: vec![material],
                 ..SceneAssets::default()
             },
             ..Document::default()
@@ -1327,10 +1344,12 @@ mod tests {
         let error = select_mesh_instances(&mut document, &["body".into()]).unwrap_err();
         assert_eq!(
             error,
-            "mesh_instances entry \"body\" is ambiguous: 2 base mesh instances share that node name"
+            "mesh_instances entry \"body\" is ambiguous: 3 base mesh instances share that node name"
         );
-        assert_eq!(document.assets.instances.len(), 3);
+        assert_eq!(document.assets.instances.len(), 4);
         assert_eq!(document.assets.meshes.len(), 2);
+        assert_eq!(document.assets.materials.len(), 1);
+        assert_eq!(document.assets.materials[0].name, "unchanged");
     }
 
     #[test]
