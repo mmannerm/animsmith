@@ -31,6 +31,23 @@ fn matrix_translation(x: f32, y: f32, z: f32) -> [f32; 16] {
     ]
 }
 
+fn write_matrix_node_gltf(path: &std::path::Path) {
+    let matrix = [
+        2.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 0.0, 4.0, 0.0, 10.0, 20.0, 30.0, 1.0,
+    ];
+    let document = json!({
+        "asset": { "version": "2.0" },
+        "nodes": [{ "name": "matrix-node", "matrix": matrix }],
+        "scenes": [{ "nodes": [0] }],
+        "scene": 0
+    });
+    std::fs::write(
+        path,
+        serde_json::to_vec_pretty(&document).expect("serializes matrix-node glTF"),
+    )
+    .expect("writes matrix-node glTF");
+}
+
 fn write_source_skin_gltf(path: &std::path::Path, case: InverseBindCase, multiple_skins: bool) {
     let mut bytes = Vec::new();
     let (positions_offset, positions_length) = append_f32s(
@@ -142,7 +159,8 @@ fn write_inverse_bind_state_gltf(path: &std::path::Path) {
         &mut bytes,
         matrix_translation(4.0, 0.0, 0.0)
             .into_iter()
-            .chain(matrix_translation(5.0, 0.0, 0.0)),
+            .chain(matrix_translation(5.0, 0.0, 0.0))
+            .chain(matrix_translation(6.0, 0.0, 0.0)),
     );
     let (short_offset, short_length) = append_f32s(&mut bytes, matrix_translation(0.0, -3.0, 0.0));
     let (non_finite_offset, non_finite_length) = append_f32s(&mut bytes, [f32::NAN; 16]);
@@ -176,7 +194,7 @@ fn write_inverse_bind_state_gltf(path: &std::path::Path) {
                 "min": [0.0, 0.0, 0.0],
                 "max": [1.0, 1.0, 0.0]
             },
-            { "bufferView": 1, "componentType": 5126, "count": 2, "type": "MAT4" },
+            { "bufferView": 1, "componentType": 5126, "count": 3, "type": "MAT4" },
             { "bufferView": 0, "componentType": 5126, "count": 0, "type": "MAT4" },
             { "bufferView": 2, "componentType": 5126, "count": 1, "type": "MAT4" },
             { "bufferView": 3, "componentType": 5126, "count": 1, "type": "MAT4" },
@@ -203,7 +221,7 @@ fn write_inverse_bind_state_gltf(path: &std::path::Path) {
             { "name": "wrong-type", "mesh": 0, "skin": 4 }
         ],
         "skins": [
-            { "name": "extra", "joints": [1], "inverseBindMatrices": 1 },
+            { "name": "extra", "joints": [1, 2], "inverseBindMatrices": 1 },
             { "name": "empty", "joints": [1], "inverseBindMatrices": 2 },
             { "name": "short", "joints": [1, 2], "inverseBindMatrices": 3 },
             { "name": "non-finite", "joints": [1], "inverseBindMatrices": 4 },
@@ -507,6 +525,29 @@ fn cli_measure_preserves_source_skin_identity_and_coordinate_domains() {
 }
 
 #[test]
+fn cli_measure_preserves_authored_matrix_local_rest() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let input = dir.path().join("matrix-node.gltf");
+    write_matrix_node_gltf(&input);
+
+    let (document, _) = measure(&input);
+    let measurements = &document["files"][0]["measurements"];
+    assert_measurements_schema(measurements);
+    let expected = json!([
+        2.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 0.0, 4.0, 0.0, 10.0, 20.0, 30.0, 1.0
+    ]);
+    assert_eq!(
+        measurements["skeleton_nodes"][0]["local_rest"],
+        json!({ "kind": "matrix", "matrix": expected }),
+        "an authored matrix remains a matrix instead of being decomposed to TRS"
+    );
+    assert_eq!(
+        measurements["skeleton_nodes"][0]["rest_world_matrix"], expected,
+        "the scene-root world domain retains every column-major component"
+    );
+}
+
+#[test]
 fn cli_measure_marks_absent_and_singular_inverse_binds_without_substitution() {
     let dir = tempfile::tempdir().expect("temp dir");
     let absent = dir.path().join("absent.gltf");
@@ -573,15 +614,24 @@ fn cli_measure_preserves_each_inverse_bind_accessor_state() {
 
     let extra = &skins[0];
     assert_eq!(extra["inverse_bind_accessor"]["status"], "available");
-    assert_eq!(extra["inverse_bind_accessor"]["declared_count"], 2);
+    assert_eq!(extra["inverse_bind_accessor"]["declared_count"], 3);
     assert_eq!(
         extra["inverse_bind_accessor"]["matrices"]
             .as_array()
             .map(Vec::len),
-        Some(2)
+        Some(3)
     );
     assert_eq!(extra["inverse_bind_accessor"]["matrices"][0][12], 4.0);
     assert_eq!(extra["inverse_bind_accessor"]["matrices"][1][12], 5.0);
+    assert_eq!(extra["inverse_bind_accessor"]["matrices"][2][12], 6.0);
+    assert_eq!(extra["joints"][0]["joint_index"], 0);
+    assert_eq!(extra["joints"][0]["node_index"], 1);
+    assert_eq!(extra["joints"][0]["joint_bind_to_mesh"]["matrix"][12], -4.0);
+    assert_eq!(extra["joints"][0]["mesh_bind_world"]["matrix"][12], 4.0);
+    assert_eq!(extra["joints"][1]["joint_index"], 1);
+    assert_eq!(extra["joints"][1]["node_index"], 2);
+    assert_eq!(extra["joints"][1]["joint_bind_to_mesh"]["matrix"][12], -5.0);
+    assert_eq!(extra["joints"][1]["mesh_bind_world"]["matrix"][12], 5.0);
 
     let empty = &skins[1];
     assert_eq!(
