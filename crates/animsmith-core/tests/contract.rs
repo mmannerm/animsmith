@@ -4,7 +4,8 @@ use animsmith_core::check::{Check, CheckCtx};
 use animsmith_core::config::{CheckSettings, SeveritySetting};
 use animsmith_core::measure::{
     AssetMeasurements, ClipMeasurements, ImageMeasurements, MeshDefinitionMeasurements,
-    SkinDerivedMatrixUnavailableReason,
+    SkeletonNodeLocalRestMeasurements, SkeletonNodeLocalRestUnavailableReason,
+    SkeletonRestWorldMatrixUnavailableReason, SkinDerivedMatrixUnavailableReason,
 };
 use animsmith_core::{
     Bone, CheckEvaluation, CheckOutput, CheckSelection, Config, CoverageGap, CoverageGapCode,
@@ -953,11 +954,129 @@ fn measurement_contract_rejects_inconsistent_skeleton_source_evidence() {
     );
     invalid(
         &|assets| {
+            assets.skeleton_nodes[0].local_rest = SkeletonNodeLocalRestMeasurements::Unavailable {
+                reason: SkeletonNodeLocalRestUnavailableReason::NonFiniteTransform,
+            };
+        },
+        "skeleton_nodes[0]",
+        "an unavailable local_rest requires a non_finite_local_rest rest-world result",
+    );
+    invalid(
+        &|assets| {
+            assets.skeleton_nodes[0].rest_world_matrix = None;
+            assets.skeleton_nodes[0].rest_world_matrix_unavailable_reason =
+                Some(SkeletonRestWorldMatrixUnavailableReason::NonFiniteLocalRest);
+        },
+        "skeleton_nodes[0]",
+        "rest-world availability must agree with local rest and parent rest-world evidence",
+    );
+    invalid(
+        &|assets| assets.skeleton_nodes[0].parent_node_index = Some(1),
+        "skeleton_nodes[0].parent_node_index",
+        "parent_node_index must reference a skeleton node",
+    );
+    invalid(
+        &|assets| {
+            let mut child = assets.skeleton_nodes[0].clone();
+            child.node_index = 1;
+            child.parent_node_index = Some(0);
+            assets.skeleton_nodes[0].parent_node_index = Some(1);
+            assets.skeleton_nodes.push(child);
+        },
+        "skeleton_nodes[0].parent_node_index",
+        "source node parent graph must be acyclic",
+    );
+    invalid(
+        &|assets| {
+            let mut child = assets.skeleton_nodes[0].clone();
+            child.node_index = 1;
+            child.parent_node_index = Some(0);
+            child.rest_world_matrix = None;
+            child.rest_world_matrix_unavailable_reason =
+                Some(SkeletonRestWorldMatrixUnavailableReason::ParentRestWorldUnavailable);
+            assets.skeleton_nodes.push(child);
+        },
+        "skeleton_nodes[1]",
+        "rest-world availability must agree with local rest and parent rest-world evidence",
+    );
+    invalid(
+        &|assets| {
+            assets.skins[0].joints[0].joint_bind_to_mesh.matrix = None;
+            assets.skins[0].joints[0]
+                .joint_bind_to_mesh
+                .unavailable_reason =
+                Some(SkinDerivedMatrixUnavailableReason::JointRestWorldUnavailable);
+        },
+        "skins[0].joints[0].joint_bind_to_mesh.unavailable_reason",
+        "joint_bind_to_mesh cannot use a joint-rest-world unavailable reason",
+    );
+    invalid(
+        &|assets| {
+            assets.skins[0].joints[0].mesh_bind_world.matrix = None;
+            assets.skins[0].joints[0].mesh_bind_world.unavailable_reason =
+                Some(SkinDerivedMatrixUnavailableReason::JointRestWorldUnavailable);
+        },
+        "skins[0].joints[0].mesh_bind_world.unavailable_reason",
+        "an available joint rest-world matrix cannot be reported as unavailable",
+    );
+    invalid(
+        &|assets| {
+            assets.skeleton_nodes[0].local_rest = SkeletonNodeLocalRestMeasurements::Unavailable {
+                reason: SkeletonNodeLocalRestUnavailableReason::NonFiniteTransform,
+            };
+            assets.skeleton_nodes[0].rest_world_matrix = None;
+            assets.skeleton_nodes[0].rest_world_matrix_unavailable_reason =
+                Some(SkeletonRestWorldMatrixUnavailableReason::NonFiniteLocalRest);
+            assets.skins[0].joints[0].mesh_bind_world.matrix = None;
+            assets.skins[0].joints[0].mesh_bind_world.unavailable_reason =
+                Some(SkinDerivedMatrixUnavailableReason::NonFiniteDerivedMatrix);
+        },
+        "skins[0].joints[0].mesh_bind_world.unavailable_reason",
+        "a non-finite mesh-bind-world result requires an available joint rest-world matrix",
+    );
+    invalid(
+        &|assets| {
+            assets.skins[0].joints[0].mesh_bind_world.matrix = None;
+            assets.skins[0].joints[0].mesh_bind_world.unavailable_reason =
+                Some(SkinDerivedMatrixUnavailableReason::InverseBindMatrixNonInvertible);
+        },
+        "skins[0].joints[0].mesh_bind_world.unavailable_reason",
+        "mesh_bind_world does not require an invertible inverse-bind matrix",
+    );
+    invalid(
+        &|assets| {
             assets.skeleton_source_coverage = SourceSkeletonCoverage::Unavailable;
         },
         "skeleton_source_coverage",
         "unavailable skeleton source coverage requires empty skeleton_nodes and skins arrays",
     );
+}
+
+#[test]
+fn measurement_contract_accepts_deep_parent_chains_and_singular_raw_inverse_binds() {
+    let mut assets = complete_skeleton_assets();
+    let root = assets.skeleton_nodes[0].clone();
+    assets.skeleton_nodes = (0..20_000)
+        .map(|node_index| {
+            let mut node = root.clone();
+            node.node_index = node_index;
+            node.parent_node_index = node_index.checked_sub(1);
+            node
+        })
+        .collect();
+    MeasurementContract::new(BTreeMap::new(), assets)
+        .expect("a deep acyclic source hierarchy is valid without recursive traversal");
+
+    let mut assets = complete_skeleton_assets();
+    assets.skins[0].inverse_bind_accessor.matrices[0] = [0.0; 16];
+    assets.skins[0].joints[0].joint_bind_to_mesh.matrix = None;
+    assets.skins[0].joints[0]
+        .joint_bind_to_mesh
+        .unavailable_reason =
+        Some(SkinDerivedMatrixUnavailableReason::InverseBindMatrixNonInvertible);
+    assets.skins[0].joints[0].mesh_bind_world.matrix = Some([0.0; 16]);
+    MeasurementContract::new(BTreeMap::new(), assets)
+        .expect("a singular raw inverse-bind remains usable for mesh-bind-world multiplication");
 }
 
 #[test]

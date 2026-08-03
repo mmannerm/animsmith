@@ -14,8 +14,8 @@ use crate::evaluation::{
 };
 use crate::measure::{
     Aabb, AssetMeasurements, ClipMeasurements, ImageMeasurements, MaterialDefinitionMeasurements,
-    SkeletonNodeLocalRestMeasurements, SkinDerivedMatrixMeasurements,
-    SkinDerivedMatrixUnavailableReason, TextureMeasurements,
+    SkeletonNodeLocalRestMeasurements, SkeletonRestWorldMatrixUnavailableReason,
+    SkinDerivedMatrixMeasurements, SkinDerivedMatrixUnavailableReason, TextureMeasurements,
 };
 use crate::model::{
     DecodedImageColorType, MaterialResourceCoverage, SourceInverseBindAccessorStatus,
@@ -458,7 +458,6 @@ fn validate_skeleton_measurements(
         }
         Ok(())
     };
-    let mut node_indices = BTreeSet::new();
     for (offset, node) in assets.skeleton_nodes.iter().enumerate() {
         if node.node_index != offset {
             return Err(invalid(
@@ -466,7 +465,6 @@ fn validate_skeleton_measurements(
                 "node_index must be contiguous and match source order",
             ));
         }
-        node_indices.insert(node.node_index);
         match &node.local_rest {
             SkeletonNodeLocalRestMeasurements::Trs {
                 translation_m,
@@ -520,7 +518,7 @@ fn validate_skeleton_measurements(
     }
     for (offset, node) in assets.skeleton_nodes.iter().enumerate() {
         if let Some(parent) = node.parent_node_index
-            && !node_indices.contains(&parent)
+            && parent >= assets.skeleton_nodes.len()
         {
             return Err(invalid(
                 format!("skeleton_nodes[{offset}].parent_node_index"),
@@ -548,20 +546,110 @@ fn validate_skeleton_measurements(
             previous_scene = Some(*scene_index);
         }
     }
-    for node in &assets.skeleton_nodes {
-        let mut ancestors = BTreeSet::new();
-        let mut current = Some(node.node_index);
-        while let Some(node_index) = current {
-            if !ancestors.insert(node_index) {
+    let mut visits = vec![ParentVisit::Unvisited; assets.skeleton_nodes.len()];
+    for start in 0..assets.skeleton_nodes.len() {
+        if visits.get(start) != Some(&ParentVisit::Unvisited) {
+            continue;
+        }
+        let mut path = Vec::new();
+        let mut current = start;
+        loop {
+            match visits.get(current).copied().ok_or_else(|| {
+                invalid(
+                    format!("skeleton_nodes[{current}].parent_node_index"),
+                    "parent_node_index must reference a skeleton node",
+                )
+            })? {
+                ParentVisit::Done => break,
+                ParentVisit::Visiting => {
+                    return Err(invalid(
+                        format!("skeleton_nodes[{current}].parent_node_index"),
+                        "source node parent graph must be acyclic",
+                    ));
+                }
+                ParentVisit::Unvisited => {
+                    *visits.get_mut(current).ok_or_else(|| {
+                        invalid(
+                            format!("skeleton_nodes[{current}].parent_node_index"),
+                            "parent_node_index must reference a skeleton node",
+                        )
+                    })? = ParentVisit::Visiting;
+                    path.push(current);
+                    match assets
+                        .skeleton_nodes
+                        .get(current)
+                        .ok_or_else(|| {
+                            invalid(
+                                format!("skeleton_nodes[{current}].parent_node_index"),
+                                "parent_node_index must reference a skeleton node",
+                            )
+                        })?
+                        .parent_node_index
+                    {
+                        Some(parent) => current = parent,
+                        None => break,
+                    }
+                }
+            }
+        }
+        for node_index in path {
+            *visits.get_mut(node_index).ok_or_else(|| {
+                invalid(
+                    format!("skeleton_nodes[{node_index}].parent_node_index"),
+                    "parent_node_index must reference a skeleton node",
+                )
+            })? = ParentVisit::Done;
+        }
+    }
+
+    for (offset, node) in assets.skeleton_nodes.iter().enumerate() {
+        let local_rest_available = !matches!(
+            node.local_rest,
+            SkeletonNodeLocalRestMeasurements::Unavailable { .. }
+        );
+        let path = format!("skeleton_nodes[{offset}]");
+        if !local_rest_available {
+            if node.rest_world_matrix.is_some()
+                || node.rest_world_matrix_unavailable_reason
+                    != Some(SkeletonRestWorldMatrixUnavailableReason::NonFiniteLocalRest)
+            {
                 return Err(invalid(
-                    format!("skeleton_nodes[{}].parent_node_index", node.node_index),
-                    "source node parent graph must be acyclic",
+                    path,
+                    "an unavailable local_rest requires a non_finite_local_rest rest-world result",
                 ));
             }
-            current = assets
-                .skeleton_nodes
-                .get(node_index)
-                .and_then(|ancestor| ancestor.parent_node_index);
+            continue;
+        }
+
+        let expected_unavailable_reason = if let Some(parent_index) = node.parent_node_index {
+            let parent = assets.skeleton_nodes.get(parent_index).ok_or_else(|| {
+                invalid(
+                    format!("skeleton_nodes[{offset}].parent_node_index"),
+                    "parent_node_index must reference a skeleton node",
+                )
+            })?;
+            if parent.rest_world_matrix.is_none() {
+                Some(SkeletonRestWorldMatrixUnavailableReason::ParentRestWorldUnavailable)
+            } else {
+                Some(SkeletonRestWorldMatrixUnavailableReason::NonFiniteWorldMatrix)
+            }
+        } else {
+            None
+        };
+        match (
+            node.rest_world_matrix.is_some(),
+            expected_unavailable_reason,
+        ) {
+            (true, None | Some(SkeletonRestWorldMatrixUnavailableReason::NonFiniteWorldMatrix)) => {
+            }
+            (false, Some(expected))
+                if node.rest_world_matrix_unavailable_reason == Some(expected) => {}
+            _ => {
+                return Err(invalid(
+                    path,
+                    "rest-world availability must agree with local rest and parent rest-world evidence",
+                ));
+            }
         }
     }
 
@@ -573,7 +661,7 @@ fn validate_skeleton_measurements(
             ));
         }
         if let Some(root) = skin.skeleton_root_node_index
-            && !node_indices.contains(&root)
+            && root >= assets.skeleton_nodes.len()
         {
             return Err(invalid(
                 format!("skins[{offset}].skeleton_root_node_index"),
@@ -587,7 +675,7 @@ fn validate_skeleton_measurements(
                     "joint_index must be contiguous and match declared skin order",
                 ));
             }
-            if !node_indices.contains(&joint.node_index) {
+            if joint.node_index >= assets.skeleton_nodes.len() {
                 return Err(invalid(
                     format!("skins[{offset}].joints[{joint_offset}].node_index"),
                     "joint node_index must reference a skeleton node",
@@ -655,25 +743,61 @@ fn validate_skeleton_measurements(
             )?;
         }
         for (joint_offset, joint) in skin.joints.iter().enumerate() {
-            for (field, matrix) in [
-                ("joint_bind_to_mesh", &joint.joint_bind_to_mesh),
-                ("mesh_bind_world", &joint.mesh_bind_world),
-            ] {
-                let path = format!("skins[{offset}].joints[{joint_offset}].{field}");
-                validate_derived_matrix(matrix, &path, &finite_matrix, invalid)?;
-                validate_derived_reason_compatibility(
-                    matrix,
-                    skin.inverse_bind_accessor.status,
-                    skin.inverse_bind_accessor.matrices.len(),
-                    joint_offset,
-                    &path,
-                    invalid,
-                )?;
-            }
+            let joint_bind_path =
+                format!("skins[{offset}].joints[{joint_offset}].joint_bind_to_mesh");
+            validate_derived_matrix(
+                &joint.joint_bind_to_mesh,
+                &joint_bind_path,
+                &finite_matrix,
+                invalid,
+            )?;
+            validate_derived_reason_compatibility(
+                &joint.joint_bind_to_mesh,
+                skin.inverse_bind_accessor.status,
+                skin.inverse_bind_accessor.matrices.len(),
+                joint_offset,
+                &joint_bind_path,
+                DerivedMatrixDomain::JointBindToMesh,
+                invalid,
+            )?;
+
+            let mesh_bind_path = format!("skins[{offset}].joints[{joint_offset}].mesh_bind_world");
+            validate_derived_matrix(
+                &joint.mesh_bind_world,
+                &mesh_bind_path,
+                &finite_matrix,
+                invalid,
+            )?;
+            validate_derived_reason_compatibility(
+                &joint.mesh_bind_world,
+                skin.inverse_bind_accessor.status,
+                skin.inverse_bind_accessor.matrices.len(),
+                joint_offset,
+                &mesh_bind_path,
+                DerivedMatrixDomain::MeshBindWorld,
+                invalid,
+            )?;
+            let joint_rest_world_available = assets
+                .skeleton_nodes
+                .get(joint.node_index)
+                .ok_or_else(|| {
+                    invalid(
+                        format!("skins[{offset}].joints[{joint_offset}].node_index"),
+                        "joint node_index must reference a skeleton node",
+                    )
+                })?
+                .rest_world_matrix
+                .is_some();
+            validate_mesh_bind_world_reason_compatibility(
+                &joint.mesh_bind_world,
+                joint_rest_world_available,
+                &mesh_bind_path,
+                invalid,
+            )?;
         }
         let mut previous_attachment_node = None;
         for (attachment_offset, attachment) in skin.attachments.iter().enumerate() {
-            if !node_indices.contains(&attachment.node_index) {
+            if attachment.node_index >= assets.skeleton_nodes.len() {
                 return Err(invalid(
                     format!("skins[{offset}].attachments[{attachment_offset}].node_index"),
                     "attachment node_index must reference a skeleton node",
@@ -697,6 +821,7 @@ fn validate_derived_reason_compatibility(
     readable_matrix_count: usize,
     joint_index: usize,
     path: &str,
+    domain: DerivedMatrixDomain,
     invalid: &impl Fn(String, &str) -> MeasurementContractError,
 ) -> Result<(), MeasurementContractError> {
     let requires_accessor_reason = match status {
@@ -722,21 +847,87 @@ fn validate_derived_reason_compatibility(
                 "derived matrices without a usable inverse bind must carry the matching accessor reason",
             ));
         }
-    } else if matches!(
-        matrix.unavailable_reason,
-        Some(
-            SkinDerivedMatrixUnavailableReason::InverseBindAccessorAbsent
-                | SkinDerivedMatrixUnavailableReason::InverseBindAccessorEmpty
-                | SkinDerivedMatrixUnavailableReason::InverseBindAccessorCountMismatch
-                | SkinDerivedMatrixUnavailableReason::InverseBindAccessorUnreadable
-        )
-    ) {
-        return Err(invalid(
-            format!("{path}.unavailable_reason"),
-            "a usable inverse-bind matrix cannot be reported as accessor-unavailable",
-        ));
+    } else {
+        match (domain, matrix.unavailable_reason) {
+            (
+                _,
+                Some(
+                    SkinDerivedMatrixUnavailableReason::InverseBindAccessorAbsent
+                    | SkinDerivedMatrixUnavailableReason::InverseBindAccessorEmpty
+                    | SkinDerivedMatrixUnavailableReason::InverseBindAccessorCountMismatch
+                    | SkinDerivedMatrixUnavailableReason::InverseBindAccessorUnreadable,
+                ),
+            ) => {
+                return Err(invalid(
+                    format!("{path}.unavailable_reason"),
+                    "a usable inverse-bind matrix cannot be reported as accessor-unavailable",
+                ));
+            }
+            (
+                DerivedMatrixDomain::JointBindToMesh,
+                Some(
+                    SkinDerivedMatrixUnavailableReason::JointRestWorldUnavailable
+                    | SkinDerivedMatrixUnavailableReason::NonFiniteDerivedMatrix,
+                ),
+            ) => {
+                return Err(invalid(
+                    format!("{path}.unavailable_reason"),
+                    "joint_bind_to_mesh cannot use a joint-rest-world unavailable reason",
+                ));
+            }
+            (
+                DerivedMatrixDomain::MeshBindWorld,
+                Some(SkinDerivedMatrixUnavailableReason::InverseBindMatrixNonInvertible),
+            ) => {
+                return Err(invalid(
+                    format!("{path}.unavailable_reason"),
+                    "mesh_bind_world does not require an invertible inverse-bind matrix",
+                ));
+            }
+            _ => {}
+        }
     }
     Ok(())
+}
+
+fn validate_mesh_bind_world_reason_compatibility(
+    matrix: &SkinDerivedMatrixMeasurements,
+    joint_rest_world_available: bool,
+    path: &str,
+    invalid: &impl Fn(String, &str) -> MeasurementContractError,
+) -> Result<(), MeasurementContractError> {
+    match matrix.unavailable_reason {
+        Some(SkinDerivedMatrixUnavailableReason::JointRestWorldUnavailable)
+            if joint_rest_world_available =>
+        {
+            Err(invalid(
+                format!("{path}.unavailable_reason"),
+                "an available joint rest-world matrix cannot be reported as unavailable",
+            ))
+        }
+        Some(SkinDerivedMatrixUnavailableReason::NonFiniteDerivedMatrix)
+            if !joint_rest_world_available =>
+        {
+            Err(invalid(
+                format!("{path}.unavailable_reason"),
+                "a non-finite mesh-bind-world result requires an available joint rest-world matrix",
+            ))
+        }
+        _ => Ok(()),
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ParentVisit {
+    Unvisited,
+    Visiting,
+    Done,
+}
+
+#[derive(Clone, Copy)]
+enum DerivedMatrixDomain {
+    JointBindToMesh,
+    MeshBindWorld,
 }
 
 fn validate_derived_matrix(

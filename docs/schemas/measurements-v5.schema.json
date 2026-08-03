@@ -265,8 +265,8 @@
       "properties": {
         "joint_index": { "type": "integer", "minimum": 0 },
         "node_index": { "type": "integer", "minimum": 0 },
-        "joint_bind_to_mesh": { "$ref": "#/$defs/derived_bind_matrix" },
-        "mesh_bind_world": { "$ref": "#/$defs/derived_bind_matrix" }
+        "joint_bind_to_mesh": { "$ref": "#/$defs/joint_bind_to_mesh_matrix" },
+        "mesh_bind_world": { "$ref": "#/$defs/mesh_bind_world_matrix" }
       },
       "additionalProperties": false
     },
@@ -307,13 +307,25 @@
       "type": "object",
       "properties": {
         "matrix": { "$ref": "#/$defs/mat4" },
-        "unavailable_reason": { "enum": ["inverse_bind_accessor_absent", "inverse_bind_accessor_empty", "inverse_bind_accessor_count_mismatch", "inverse_bind_accessor_unreadable", "missing_joint_node", "joint_rest_world_unavailable", "inverse_bind_matrix_non_invertible", "non_finite_derived_matrix"] }
+        "unavailable_reason": { "enum": ["inverse_bind_accessor_absent", "inverse_bind_accessor_empty", "inverse_bind_accessor_count_mismatch", "inverse_bind_accessor_unreadable", "joint_rest_world_unavailable", "inverse_bind_matrix_non_invertible", "non_finite_derived_matrix"] }
       },
       "oneOf": [
         { "required": ["matrix"], "not": { "required": ["unavailable_reason"] } },
         { "required": ["unavailable_reason"], "not": { "required": ["matrix"] } }
       ],
       "additionalProperties": false
+    },
+    "joint_bind_to_mesh_matrix": {
+      "allOf": [
+        { "$ref": "#/$defs/derived_bind_matrix" },
+        { "properties": { "unavailable_reason": { "enum": ["inverse_bind_accessor_absent", "inverse_bind_accessor_empty", "inverse_bind_accessor_count_mismatch", "inverse_bind_accessor_unreadable", "inverse_bind_matrix_non_invertible"] } } }
+      ]
+    },
+    "mesh_bind_world_matrix": {
+      "allOf": [
+        { "$ref": "#/$defs/derived_bind_matrix" },
+        { "properties": { "unavailable_reason": { "enum": ["inverse_bind_accessor_absent", "inverse_bind_accessor_empty", "inverse_bind_accessor_count_mismatch", "inverse_bind_accessor_unreadable", "joint_rest_world_unavailable", "non_finite_derived_matrix"] } } }
+      ]
     },
     "mat4": { "type": "array", "items": { "type": "number" }, "minItems": 16, "maxItems": 16 },
     "aabb": { "type": "object", "required": ["min", "max"], "properties": { "min": { "$ref": "#/$defs/vec3" }, "max": { "$ref": "#/$defs/vec3" } }, "additionalProperties": false },

@@ -355,8 +355,6 @@ pub enum SkinDerivedMatrixUnavailableReason {
     /// The declared accessor could not be read safely, including non-finite
     /// raw matrix data that JSON cannot represent.
     InverseBindAccessorUnreadable,
-    /// The joint has no source-node identity in the complete source table.
-    MissingJointNode,
     /// The joint's accumulated rest-world matrix is unavailable.
     JointRestWorldUnavailable,
     /// The raw inverse-bind matrix cannot itself be inverted.
@@ -691,25 +689,21 @@ fn source_rest_world(
     parent_result
 }
 
-fn derived_accessor_unavailable_reason(
+fn derived_accessor_global_unavailable_reason(
     status: SourceInverseBindAccessorStatus,
-) -> SkinDerivedMatrixUnavailableReason {
+) -> Option<SkinDerivedMatrixUnavailableReason> {
     match status {
         SourceInverseBindAccessorStatus::Absent => {
-            SkinDerivedMatrixUnavailableReason::InverseBindAccessorAbsent
+            Some(SkinDerivedMatrixUnavailableReason::InverseBindAccessorAbsent)
         }
         SourceInverseBindAccessorStatus::EmptyAccessor => {
-            SkinDerivedMatrixUnavailableReason::InverseBindAccessorEmpty
-        }
-        SourceInverseBindAccessorStatus::CountMismatch => {
-            SkinDerivedMatrixUnavailableReason::InverseBindAccessorCountMismatch
+            Some(SkinDerivedMatrixUnavailableReason::InverseBindAccessorEmpty)
         }
         SourceInverseBindAccessorStatus::Unreadable => {
-            SkinDerivedMatrixUnavailableReason::InverseBindAccessorUnreadable
+            Some(SkinDerivedMatrixUnavailableReason::InverseBindAccessorUnreadable)
         }
-        SourceInverseBindAccessorStatus::Available => {
-            SkinDerivedMatrixUnavailableReason::InverseBindAccessorCountMismatch
-        }
+        SourceInverseBindAccessorStatus::Available
+        | SourceInverseBindAccessorStatus::CountMismatch => None,
     }
 }
 
@@ -845,31 +839,22 @@ fn measure_source_skeleton(
                 .iter()
                 .enumerate()
                 .map(|(joint_index, &node_index)| {
-                    let unavailable = match status {
-                        SourceInverseBindAccessorStatus::Available
-                        | SourceInverseBindAccessorStatus::CountMismatch => None,
-                        other => Some(derived_accessor_unavailable_reason(other)),
+                    let unavailable_joint = |reason| SkinJointMeasurements {
+                        joint_index,
+                        node_index,
+                        joint_bind_to_mesh: unavailable_derived_matrix(reason),
+                        mesh_bind_world: unavailable_derived_matrix(reason),
                     };
-                    let Some(raw) = unavailable.map_or_else(
-                        || {
-                            skin.inverse_bind_accessor
-                                .matrices
-                                .get(joint_index)
-                                .copied()
+                    let raw = match derived_accessor_global_unavailable_reason(status) {
+                        Some(reason) => return unavailable_joint(reason),
+                        None => match skin.inverse_bind_accessor.matrices.get(joint_index).copied() {
+                            Some(raw) => raw,
+                            None => {
+                                let reason =
+                                    SkinDerivedMatrixUnavailableReason::InverseBindAccessorCountMismatch;
+                                return unavailable_joint(reason);
+                            }
                         },
-                        |_| None,
-                    ) else {
-                        let reason = unavailable.unwrap_or_else(|| {
-                            derived_accessor_unavailable_reason(
-                                SourceInverseBindAccessorStatus::CountMismatch,
-                            )
-                        });
-                        return SkinJointMeasurements {
-                            joint_index,
-                            node_index,
-                            joint_bind_to_mesh: unavailable_derived_matrix(reason),
-                            mesh_bind_world: unavailable_derived_matrix(reason),
-                        };
                     };
                     let joint_bind_to_mesh = invertible_matrix(raw).map_or_else(
                         || {
@@ -1294,6 +1279,35 @@ mod tests {
     }
 
     #[test]
+    fn only_globally_unavailable_inverse_bind_accessors_have_a_derived_reason() {
+        assert_eq!(
+            derived_accessor_global_unavailable_reason(SourceInverseBindAccessorStatus::Absent),
+            Some(SkinDerivedMatrixUnavailableReason::InverseBindAccessorAbsent)
+        );
+        assert_eq!(
+            derived_accessor_global_unavailable_reason(
+                SourceInverseBindAccessorStatus::EmptyAccessor
+            ),
+            Some(SkinDerivedMatrixUnavailableReason::InverseBindAccessorEmpty)
+        );
+        assert_eq!(
+            derived_accessor_global_unavailable_reason(SourceInverseBindAccessorStatus::Unreadable),
+            Some(SkinDerivedMatrixUnavailableReason::InverseBindAccessorUnreadable)
+        );
+        assert_eq!(
+            derived_accessor_global_unavailable_reason(SourceInverseBindAccessorStatus::Available),
+            None
+        );
+        assert_eq!(
+            derived_accessor_global_unavailable_reason(
+                SourceInverseBindAccessorStatus::CountMismatch
+            ),
+            None,
+            "a readable count-mismatched accessor can still supply earlier slots"
+        );
+    }
+
+    #[test]
     fn source_skeleton_measurement_preserves_source_order_and_bind_domains() {
         // Source order deliberately puts the child before its parent. Core FK
         // order remains parent-before-child, so rest-world composition must
@@ -1425,6 +1439,106 @@ mod tests {
         assert_eq!(
             skin.joints[0].mesh_bind_world.matrix.unwrap(),
             Mat4::IDENTITY.to_cols_array()
+        );
+    }
+
+    #[test]
+    fn count_mismatched_inverse_bind_accessor_keeps_present_slots_and_marks_missing_ones() {
+        let doc = Document {
+            assets: SceneAssets {
+                source_skeleton: SourceSkeletonAssets {
+                    coverage: SourceSkeletonCoverage::Complete,
+                    nodes: vec![SourceNodeAsset {
+                        source_node_index: 0,
+                        name: None,
+                        parent_source_node_index: None,
+                        scene_root_indices: vec![],
+                        local_rest: SourceNodeLocalRest::Matrix(Mat4::IDENTITY),
+                    }],
+                    skins: vec![SourceSkinAsset {
+                        source_skin_index: 0,
+                        name: None,
+                        skeleton_root_source_node_index: None,
+                        joint_source_node_indices: vec![0, 0],
+                        inverse_bind_accessor: SourceInverseBindAccessor {
+                            status: SourceInverseBindAccessorStatus::CountMismatch,
+                            declared_count: Some(1),
+                            matrices: vec![Mat4::IDENTITY],
+                        },
+                        attachments: vec![],
+                    }],
+                },
+                ..SceneAssets::default()
+            },
+            ..Document::default()
+        };
+
+        let skin = &measure_assets(&doc).skins[0];
+        assert_eq!(
+            skin.joints[0].joint_bind_to_mesh.matrix,
+            Some(Mat4::IDENTITY.to_cols_array())
+        );
+        assert_eq!(
+            skin.joints[1].joint_bind_to_mesh.unavailable_reason,
+            Some(SkinDerivedMatrixUnavailableReason::InverseBindAccessorCountMismatch)
+        );
+        assert_eq!(
+            skin.joints[1].mesh_bind_world.unavailable_reason,
+            Some(SkinDerivedMatrixUnavailableReason::InverseBindAccessorCountMismatch)
+        );
+    }
+
+    #[test]
+    fn source_skeleton_measurement_preserves_full_matrix_domains() {
+        // Literal column-major matrices make this an independent analytic
+        // oracle for all diagonal and translation components.
+        let doc = Document {
+            assets: SceneAssets {
+                source_skeleton: SourceSkeletonAssets {
+                    coverage: SourceSkeletonCoverage::Complete,
+                    nodes: vec![SourceNodeAsset {
+                        source_node_index: 0,
+                        name: None,
+                        parent_source_node_index: None,
+                        scene_root_indices: vec![],
+                        local_rest: SourceNodeLocalRest::Matrix(Mat4::from_cols_array(&[
+                            2.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 0.0, 4.0, 0.0, 10.0, 20.0,
+                            30.0, 1.0,
+                        ])),
+                    }],
+                    skins: vec![SourceSkinAsset {
+                        source_skin_index: 0,
+                        name: None,
+                        skeleton_root_source_node_index: Some(0),
+                        joint_source_node_indices: vec![0],
+                        inverse_bind_accessor: SourceInverseBindAccessor {
+                            status: SourceInverseBindAccessorStatus::Available,
+                            declared_count: Some(1),
+                            matrices: vec![Mat4::from_cols_array(&[
+                                0.5, 0.0, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0, 0.0, 0.0, 2.0, 0.0, 1.0,
+                                2.0, 3.0, 1.0,
+                            ])],
+                        },
+                        attachments: vec![],
+                    }],
+                },
+                ..SceneAssets::default()
+            },
+            ..Document::default()
+        };
+
+        let joint = &measure_assets(&doc).skins[0].joints[0];
+        assert_eq!(
+            joint.joint_bind_to_mesh.matrix,
+            Some([
+                2.0, 0.0, 0.0, 0.0, 0.0, 4.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, -2.0, -8.0, -1.5, 1.0,
+            ])
+        );
+        assert_eq!(
+            joint.mesh_bind_world.matrix,
+            Some([
+                1.0, 0.0, 0.0, 0.0, 0.0, 0.75, 0.0, 0.0, 0.0, 0.0, 8.0, 0.0, 12.0, 26.0, 42.0, 1.0,
+            ])
         );
     }
 

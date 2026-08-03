@@ -146,6 +146,10 @@ fn write_inverse_bind_state_gltf(path: &std::path::Path) {
     );
     let (short_offset, short_length) = append_f32s(&mut bytes, matrix_translation(0.0, -3.0, 0.0));
     let (non_finite_offset, non_finite_length) = append_f32s(&mut bytes, [f32::NAN; 16]);
+    let wrong_type_indices_offset = bytes.len();
+    bytes.push(0);
+    let (wrong_type_values_offset, wrong_type_values_length) =
+        append_f32s(&mut bytes, [0.0_f32, -3.0, 0.0, 1.0]);
     let buffer = path.with_extension("bin");
     std::fs::write(&buffer, &bytes).expect("writes synthetic buffer");
 
@@ -159,7 +163,9 @@ fn write_inverse_bind_state_gltf(path: &std::path::Path) {
             { "buffer": 0, "byteOffset": positions_offset, "byteLength": positions_length },
             { "buffer": 0, "byteOffset": extra_offset, "byteLength": extra_length },
             { "buffer": 0, "byteOffset": short_offset, "byteLength": short_length },
-            { "buffer": 0, "byteOffset": non_finite_offset, "byteLength": non_finite_length }
+            { "buffer": 0, "byteOffset": non_finite_offset, "byteLength": non_finite_length },
+            { "buffer": 0, "byteOffset": wrong_type_indices_offset, "byteLength": 1 },
+            { "buffer": 0, "byteOffset": wrong_type_values_offset, "byteLength": wrong_type_values_length }
         ],
         "accessors": [
             {
@@ -173,23 +179,35 @@ fn write_inverse_bind_state_gltf(path: &std::path::Path) {
             { "bufferView": 1, "componentType": 5126, "count": 2, "type": "MAT4" },
             { "bufferView": 0, "componentType": 5126, "count": 0, "type": "MAT4" },
             { "bufferView": 2, "componentType": 5126, "count": 1, "type": "MAT4" },
-            { "bufferView": 3, "componentType": 5126, "count": 1, "type": "MAT4" }
+            { "bufferView": 3, "componentType": 5126, "count": 1, "type": "MAT4" },
+            {
+                "componentType": 5126,
+                "count": 1,
+                "type": "VEC4",
+                "sparse": {
+                    "count": 1,
+                    "indices": { "bufferView": 4, "componentType": 5121 },
+                    "values": { "bufferView": 5 }
+                }
+            }
         ],
         "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 } }] }],
         "nodes": [
-            { "name": "scene-root", "children": [1, 2, 3, 4, 5, 6] },
+            { "name": "scene-root", "children": [1, 2, 3, 4, 5, 6, 7] },
             { "name": "joint-a" },
             { "name": "joint-b" },
             { "name": "extra", "mesh": 0, "skin": 0 },
             { "name": "empty", "mesh": 0, "skin": 1 },
             { "name": "short", "mesh": 0, "skin": 2 },
-            { "name": "non-finite", "mesh": 0, "skin": 3 }
+            { "name": "non-finite", "mesh": 0, "skin": 3 },
+            { "name": "wrong-type", "mesh": 0, "skin": 4 }
         ],
         "skins": [
             { "name": "extra", "joints": [1], "inverseBindMatrices": 1 },
             { "name": "empty", "joints": [1], "inverseBindMatrices": 2 },
             { "name": "short", "joints": [1, 2], "inverseBindMatrices": 3 },
-            { "name": "non-finite", "joints": [1], "inverseBindMatrices": 4 }
+            { "name": "non-finite", "joints": [1], "inverseBindMatrices": 4 },
+            { "name": "wrong-type", "joints": [1], "inverseBindMatrices": 5 }
         ],
         "scenes": [{ "nodes": [0] }],
         "scene": 0
@@ -204,10 +222,14 @@ fn write_inverse_bind_state_gltf(path: &std::path::Path) {
 fn write_deep_leaf_first_hierarchy_gltf(path: &std::path::Path) {
     let nodes = (0..DEEP_HIERARCHY_DEPTH)
         .map(|node_index| {
-            let mut node = json!({
-                "name": if node_index == 0 { "leaf" } else if node_index + 1 == DEEP_HIERARCHY_DEPTH { "root" } else { "link" },
-                "translation": [1.0, 0.0, 0.0]
-            });
+            let mut node = json!({ "translation": [1.0, 0.0, 0.0] });
+            if node_index != 0 {
+                node["name"] = json!(if node_index + 1 == DEEP_HIERARCHY_DEPTH {
+                    "root"
+                } else {
+                    "link"
+                });
+            }
             if node_index > 0 {
                 node["children"] = json!([node_index - 1]);
             }
@@ -257,6 +279,126 @@ fn assert_measurements_schema(value: &Value) {
     );
 }
 
+fn json_container_end(bytes: &[u8], start: usize, opening: u8, closing: u8) -> usize {
+    assert_eq!(
+        bytes[start], opening,
+        "container starts at the expected delimiter"
+    );
+    let mut depth = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (index, byte) in bytes.iter().copied().enumerate().skip(start) {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+        } else if byte == b'"' {
+            in_string = true;
+        } else if byte == opening {
+            depth += 1;
+        } else if byte == closing {
+            depth -= 1;
+            if depth == 0 {
+                return index;
+            }
+        }
+    }
+    panic!("unterminated JSON container");
+}
+
+fn json_container_after_key<'a>(bytes: &'a [u8], key: &str, opening: u8, closing: u8) -> &'a [u8] {
+    let marker = format!("\"{key}\":").into_bytes();
+    let key_start = bytes
+        .windows(marker.len())
+        .position(|window| window == marker)
+        .unwrap_or_else(|| panic!("JSON key {key:?} is present"));
+    let start = bytes[key_start + marker.len()..]
+        .iter()
+        .position(|byte| !byte.is_ascii_whitespace())
+        .map(|offset| key_start + marker.len() + offset)
+        .expect("JSON value follows key");
+    let end = json_container_end(bytes, start, opening, closing);
+    &bytes[start..=end]
+}
+
+fn json_object_in_array_after_key<'a>(bytes: &'a [u8], key: &str, index: usize) -> &'a [u8] {
+    let array = json_container_after_key(bytes, key, b'[', b']');
+    let mut search_from = 0;
+    for current_index in 0..=index {
+        let start = array[search_from..]
+            .iter()
+            .position(|byte| *byte == b'{')
+            .map(|offset| search_from + offset)
+            .unwrap_or_else(|| panic!("array contains object {current_index}"));
+        let end = json_container_end(array, start, b'{', b'}');
+        if current_index == index {
+            return &array[start..=end];
+        }
+        search_from = end + 1;
+    }
+    unreachable!("the loop returns when it reaches the requested index")
+}
+
+fn assert_ordered_key_markers(object: &[u8], keys: &[&str]) {
+    let mut search_from = 0;
+    for key in keys {
+        let marker = format!("\"{key}\":").into_bytes();
+        let offset = object[search_from..]
+            .windows(marker.len())
+            .position(|window| window == marker)
+            .unwrap_or_else(|| panic!("JSON object contains key {key:?}"));
+        search_from += offset + marker.len();
+    }
+}
+
+fn assert_skeleton_serializer_order(stdout: &[u8]) {
+    let measurements = json_container_after_key(stdout, "measurements", b'{', b'}');
+    assert_ordered_key_markers(
+        measurements,
+        &["skeleton_source_coverage", "skeleton_nodes", "skins"],
+    );
+
+    let node = json_object_in_array_after_key(measurements, "skeleton_nodes", 1);
+    assert_ordered_key_markers(
+        node,
+        &[
+            "node_index",
+            "name",
+            "parent_node_index",
+            "scene_root_indices",
+            "local_rest",
+            "rest_world_matrix",
+        ],
+    );
+
+    let skin = json_object_in_array_after_key(measurements, "skins", 0);
+    assert_ordered_key_markers(
+        skin,
+        &[
+            "skin_index",
+            "name",
+            "joints",
+            "inverse_bind_accessor",
+            "attachments",
+        ],
+    );
+
+    let joint = json_object_in_array_after_key(skin, "joints", 0);
+    assert_ordered_key_markers(
+        joint,
+        &[
+            "joint_index",
+            "node_index",
+            "joint_bind_to_mesh",
+            "mesh_bind_world",
+        ],
+    );
+}
+
 #[test]
 fn cli_measure_preserves_source_skin_identity_and_coordinate_domains() {
     let dir = tempfile::tempdir().expect("temp dir");
@@ -271,6 +413,7 @@ fn cli_measure_preserves_source_skin_identity_and_coordinate_domains() {
         first_bytes, second_bytes,
         "deterministic JSON field and array order"
     );
+    assert_skeleton_serializer_order(&first_bytes);
     assert_eq!(
         measurements, &second["files"][0]["measurements"],
         "deterministic measurements"
@@ -426,7 +569,7 @@ fn cli_measure_preserves_each_inverse_bind_accessor_state() {
     assert_eq!(measurements, &second["files"][0]["measurements"]);
 
     let skins = measurements["skins"].as_array().expect("skins");
-    assert_eq!(skins.len(), 4);
+    assert_eq!(skins.len(), 5);
 
     let extra = &skins[0];
     assert_eq!(extra["inverse_bind_accessor"]["status"], "available");
@@ -479,6 +622,16 @@ fn cli_measure_preserves_each_inverse_bind_accessor_state() {
         })
     );
     assert_derived_unavailable(non_finite, "inverse_bind_accessor_unreadable");
+
+    let wrong_type = &skins[4];
+    assert_eq!(
+        wrong_type["inverse_bind_accessor"],
+        json!({
+            "status": "unreadable", "declared_count": 1, "matrices": []
+        }),
+        "a finite VEC4 inverse-bind accessor is parser-valid but unreadable as matrices"
+    );
+    assert_derived_unavailable(wrong_type, "inverse_bind_accessor_unreadable");
 }
 
 fn assert_derived_unavailable(skin: &Value, reason: &str) {
@@ -499,6 +652,7 @@ fn cli_measure_handles_a_deep_leaf_first_source_hierarchy() {
 
     let (document, _) = measure(&input);
     let measurements = &document["files"][0]["measurements"];
+    assert_measurements_schema(measurements);
     let nodes = measurements["skeleton_nodes"]
         .as_array()
         .expect("source nodes");
@@ -506,7 +660,10 @@ fn cli_measure_handles_a_deep_leaf_first_source_hierarchy() {
 
     let leaf = &nodes[0];
     assert_eq!(leaf["node_index"], 0, "leaf keeps source node identity");
-    assert_eq!(leaf["name"], "leaf");
+    assert!(
+        leaf.get("name").is_none(),
+        "unnamed leaf omits display data"
+    );
     assert_eq!(leaf["parent_node_index"], 1);
 
     let root = nodes.last().expect("root node");
@@ -531,4 +688,12 @@ fn cli_measure_handles_a_deep_leaf_first_source_hierarchy() {
         Some(DEEP_HIERARCHY_DEPTH as f64),
         "leaf rest-world translation accumulates every ancestor"
     );
+
+    let skins = measurements["skins"].as_array().expect("source skins");
+    assert_eq!(skins.len(), 1, "unattached source skin is retained");
+    assert_eq!(skins[0]["skin_index"], 0);
+    assert_eq!(skins[0]["name"], "deep-skin");
+    assert_eq!(skins[0]["joints"][0]["joint_index"], 0);
+    assert_eq!(skins[0]["joints"][0]["node_index"], 0);
+    assert_eq!(skins[0]["attachments"], json!([]));
 }
