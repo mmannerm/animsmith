@@ -913,13 +913,13 @@ fn load_reads_normal_texture_and_scale() {
 #[test]
 fn load_reads_external_file_texture() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("tex.png"), TINY_PNG).unwrap();
+    std::fs::write(dir.path().join("tex map.png"), TINY_PNG).unwrap();
     let path = dir.path().join("external-image.gltf");
     std::fs::write(
         &path,
         r#"{
             "asset": { "version": "2.0" },
-            "images": [{ "uri": "tex.png", "mimeType": "image/png" }],
+            "images": [{ "uri": "tex%20map.png", "mimeType": "image/png" }],
             "textures": [{ "source": 0 }],
             "materials": [{
                 "name": "mat",

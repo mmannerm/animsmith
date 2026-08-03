@@ -127,8 +127,11 @@ pub use finding::{Finding, Severity, Value};
 pub use glam;
 pub use metrics::MetricGrids;
 pub use model::{
-    AdditionalInfluenceSet, Bone, BoneId, Clip, Document, Interpolation, Property, Skeleton,
-    SourceInfo, Track, TrackValues, Transform,
+    AdditionalInfluenceSet, Bone, BoneId, Clip, DecodedImageColorType, Document,
+    ImageContainerFormat, ImageSourceKind, ImageUnavailableReason, Interpolation,
+    MaterialResourceAssets, MaterialResourceCoverage, MaterialTextureSlot, Property, Skeleton,
+    SourceImageAsset, SourceImageInspection, SourceInfo, SourceMaterialAsset,
+    SourceMaterialTextureBinding, SourceTextureAsset, Track, TrackValues, Transform,
 };
 pub use profile::{
     ResolvedRoles, RigProfile, Role, builtin_profiles, detect_profile, resolve_configured_roles,

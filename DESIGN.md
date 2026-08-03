@@ -412,7 +412,14 @@ learns an embedder's contract schema.
   `urn:animsmith:schema:output:2`. Lint emits one result per catalog check and
   represents selection, configuration, applicability, evaluation coverage,
   content findings, completed scopes, and typed gaps independently. Measure
-  and lint share a nested, independently versioned measurement contract.
+  and lint share a nested, independently versioned measurement contract. The
+  current contract inventories glTF material definitions, material slots,
+  texture-to-image identity, and decoded image metadata in source order. It
+  makes absent loader support explicit as unavailable coverage and separates a
+  source-declared MIME type from byte-detected container and decoded image
+  facts. This remains measurement evidence, not an image acceptance, repair,
+  resize, transcode, color-space, writer-preservation, or recipe-authority
+  policy.
   `convert --format json` instead emits the separately versioned
   `urn:animsmith:schema:conversion-evidence:2` producer-evidence contract:
   requested options, written-artifact counts, optional static mesh bake entries

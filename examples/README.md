@@ -119,12 +119,16 @@ $ animsmith lint --format json examples/assets/clip-dirty.glb | jq \
     ]
   },
   "measurements": {
-    "schema_version": 3,
-    "schema": "urn:animsmith:schema:measurements:3",
+    "schema_version": 4,
+    "schema": "urn:animsmith:schema:measurements:4",
     "clips": {},
     "mesh_definitions": [],
     "node_instances": [],
-    "scenes": []
+    "scenes": [],
+    "material_resource_coverage": "complete",
+    "material_definitions": [],
+    "textures": [],
+    "images": []
   }
 }
 ```
@@ -299,8 +303,8 @@ $ animsmith measure examples/assets/walk.glb          # --format json
       "rig": { "profile": "ue-mannequin", "resolved_roles": {
         "hips": "pelvis", "left_foot": "foot_l", "right_foot": "foot_r" } },
       "measurements": {
-        "schema_version": 3,
-        "schema": "urn:animsmith:schema:measurements:3",
+        "schema_version": 4,
+        "schema": "urn:animsmith:schema:measurements:4",
         "clips": { "walk": {
           "duration_s": 1.0, "frame_count": 33,
           "animated_bones": ["foot_l", "foot_r"],
@@ -311,7 +315,11 @@ $ animsmith measure examples/assets/walk.glb          # --format json
         } },
         "mesh_definitions": [],
         "node_instances": [],
-        "scenes": []
+        "scenes": [],
+        "material_resource_coverage": "complete",
+        "material_definitions": [],
+        "textures": [],
+        "images": []
       }
     }
   ]

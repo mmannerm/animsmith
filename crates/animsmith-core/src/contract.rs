@@ -12,7 +12,11 @@ use crate::diff::MetricDelta;
 use crate::evaluation::{
     Applicability, CheckEvaluation, ConfigurationState, EvaluationState, SelectionState,
 };
-use crate::measure::{Aabb, AssetMeasurements, ClipMeasurements};
+use crate::measure::{
+    Aabb, AssetMeasurements, ClipMeasurements, ImageMeasurements, MaterialDefinitionMeasurements,
+    TextureMeasurements,
+};
+use crate::model::{DecodedImageColorType, MaterialResourceCoverage};
 use crate::profile::ResolvedRoles;
 use crate::{Document, Severity};
 
@@ -21,9 +25,9 @@ pub const OUTPUT_SCHEMA_VERSION: u32 = 2;
 /// Immutable identity of the current outer result envelope.
 pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:2";
 /// Current nested measurement-contract version.
-pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 3;
+pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 4;
 /// Immutable identity of the current nested measurement contract.
-pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:3";
+pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:4";
 
 /// Source checkout identity for the producing animsmith build.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -421,7 +425,175 @@ fn validate_measurements(
             "default_scene_index must reference a declared scene",
         ));
     }
+    validate_material_resources(assets, &invalid)?;
     Ok(())
+}
+
+fn validate_material_resources(
+    assets: &AssetMeasurements,
+    invalid: &impl Fn(String, &str) -> MeasurementContractError,
+) -> Result<(), MeasurementContractError> {
+    let absent = assets.material_definitions.is_empty()
+        && assets.textures.is_empty()
+        && assets.images.is_empty();
+    if assets.material_resource_coverage == MaterialResourceCoverage::Unavailable && !absent {
+        return Err(invalid(
+            "material_resource_coverage".into(),
+            "unavailable resource coverage requires empty material, texture, and image arrays",
+        ));
+    }
+
+    for (offset, material) in assets.material_definitions.iter().enumerate() {
+        if material.material_index != offset {
+            return Err(invalid(
+                format!("material_definitions[{offset}].material_index"),
+                "material_index must be contiguous and match source order",
+            ));
+        }
+        let mut previous_slot = None;
+        for (binding_offset, binding) in material.texture_bindings.iter().enumerate() {
+            if binding.texture_index >= assets.textures.len() {
+                return Err(invalid(
+                    format!(
+                        "material_definitions[{offset}].texture_bindings[{binding_offset}].texture_index"
+                    ),
+                    "texture_index must reference a source texture",
+                ));
+            }
+            if previous_slot.is_some_and(|previous| previous >= binding.slot) {
+                return Err(invalid(
+                    format!(
+                        "material_definitions[{offset}].texture_bindings[{binding_offset}].slot"
+                    ),
+                    "texture bindings must be strictly ordered by slot and unique",
+                ));
+            }
+            previous_slot = Some(binding.slot);
+        }
+    }
+    for (offset, texture) in assets.textures.iter().enumerate() {
+        if texture.texture_index != offset {
+            return Err(invalid(
+                format!("textures[{offset}].texture_index"),
+                "texture_index must be contiguous and match source order",
+            ));
+        }
+        if texture.image_index >= assets.images.len() {
+            return Err(invalid(
+                format!("textures[{offset}].image_index"),
+                "image_index must reference a source image",
+            ));
+        }
+    }
+    for (offset, image) in assets.images.iter().enumerate() {
+        validate_image_measurement(image, offset, invalid)?;
+    }
+    Ok(())
+}
+
+fn validate_image_measurement(
+    image: &ImageMeasurements,
+    offset: usize,
+    invalid: &impl Fn(String, &str) -> MeasurementContractError,
+) -> Result<(), MeasurementContractError> {
+    if image.image_index != offset {
+        return Err(invalid(
+            format!("images[{offset}].image_index"),
+            "image_index must be contiguous and match source order",
+        ));
+    }
+    let available = [
+        image.width.is_some(),
+        image.height.is_some(),
+        image.channel_count.is_some(),
+        image.decoded_color_type.is_some(),
+    ];
+    match (
+        available.into_iter().all(|value| value),
+        image.unavailable_reason,
+    ) {
+        (true, None) => {
+            let (Some(width), Some(height), Some(channel_count), Some(decoded_color_type)) = (
+                image.width,
+                image.height,
+                image.channel_count,
+                image.decoded_color_type,
+            ) else {
+                return Err(invalid(
+                    format!("images[{offset}]"),
+                    "available image metadata must include width, height, channel_count, and decoded_color_type",
+                ));
+            };
+            if width == 0 || height == 0 {
+                return Err(invalid(
+                    format!("images[{offset}]"),
+                    "available image dimensions must be greater than zero",
+                ));
+            }
+            if channel_count != color_type_channel_count(decoded_color_type) {
+                return Err(invalid(
+                    format!("images[{offset}].channel_count"),
+                    "channel_count must match decoded_color_type",
+                ));
+            }
+            if image.detected_container.is_none() {
+                return Err(invalid(
+                    format!("images[{offset}].detected_container"),
+                    "available image metadata requires a detected_container",
+                ));
+            }
+        }
+        (false, Some(_)) if available.into_iter().all(|value| !value) => {}
+        (true, Some(_)) => {
+            return Err(invalid(
+                format!("images[{offset}]"),
+                "available image metadata cannot have an unavailable_reason",
+            ));
+        }
+        (false, None) if available.into_iter().all(|value| !value) => {
+            return Err(invalid(
+                format!("images[{offset}]"),
+                "missing image metadata requires an unavailable_reason",
+            ));
+        }
+        (false, _) => {
+            return Err(invalid(
+                format!("images[{offset}]"),
+                "available image metadata must include width, height, channel_count, and decoded_color_type",
+            ));
+        }
+    }
+    match image.unavailable_reason {
+        Some(crate::model::ImageUnavailableReason::DecodeFailed)
+            if image.detected_container.is_none() =>
+        {
+            return Err(invalid(
+                format!("images[{offset}].detected_container"),
+                "decode_failed requires a detected_container",
+            ));
+        }
+        Some(
+            crate::model::ImageUnavailableReason::SourceUnavailable
+            | crate::model::ImageUnavailableReason::InvalidDataUri
+            | crate::model::ImageUnavailableReason::UnsupportedContainer,
+        ) if image.detected_container.is_some() => {
+            return Err(invalid(
+                format!("images[{offset}].detected_container"),
+                "this unavailable_reason cannot have a detected_container",
+            ));
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn color_type_channel_count(color_type: DecodedImageColorType) -> u8 {
+    match color_type {
+        DecodedImageColorType::L8 | DecodedImageColorType::L16 => 1,
+        DecodedImageColorType::La8 | DecodedImageColorType::La16 => 2,
+        DecodedImageColorType::Rgb8 | DecodedImageColorType::Rgb16 => 3,
+        DecodedImageColorType::Rgba8 | DecodedImageColorType::Rgba16 => 4,
+    }
 }
 
 /// Typed read-side subset accepted when a consumer needs measurements from a
@@ -450,6 +622,10 @@ struct MeasurementPayloadInput {
     schema_version: Option<u32>,
     schema: Option<String>,
     clips: Option<BTreeMap<String, ClipMeasurements>>,
+    material_resource_coverage: Option<MaterialResourceCoverage>,
+    material_definitions: Option<Vec<MaterialDefinitionMeasurements>>,
+    textures: Option<Vec<TextureMeasurements>>,
+    images: Option<Vec<ImageMeasurements>>,
     mesh_definitions: Option<Vec<crate::measure::MeshDefinitionMeasurements>>,
     node_instances: Option<Vec<crate::measure::NodeInstanceMeasurements>>,
     scenes: Option<Vec<crate::measure::SceneMeasurements>>,
@@ -550,6 +726,18 @@ pub enum MeasurementFileError {
     /// The nested contract omitted its clip-measurement map.
     #[error("measurement contract has no `clips` map")]
     MissingClips,
+    /// The nested contract omitted material resource coverage.
+    #[error("measurement contract has no `material_resource_coverage`")]
+    MissingMaterialResourceCoverage,
+    /// The nested contract omitted its material definition array.
+    #[error("measurement contract has no `material_definitions` array")]
+    MissingMaterialDefinitions,
+    /// The nested contract omitted its texture array.
+    #[error("measurement contract has no `textures` array")]
+    MissingTextures,
+    /// The nested contract omitted its image array.
+    #[error("measurement contract has no `images` array")]
+    MissingImages,
     /// The nested contract omitted its mesh-definition array.
     #[error("measurement contract has no `mesh_definitions` array")]
     MissingMeshDefinitions,
@@ -662,6 +850,25 @@ impl MeasurementReportInput {
                 let clips = measurements.clips.ok_or_else(|| {
                     MeasurementReportError::file(file_index, MeasurementFileError::MissingClips)
                 })?;
+                let material_resource_coverage =
+                    measurements.material_resource_coverage.ok_or_else(|| {
+                        MeasurementReportError::file(
+                            file_index,
+                            MeasurementFileError::MissingMaterialResourceCoverage,
+                        )
+                    })?;
+                let material_definitions = measurements.material_definitions.ok_or_else(|| {
+                    MeasurementReportError::file(
+                        file_index,
+                        MeasurementFileError::MissingMaterialDefinitions,
+                    )
+                })?;
+                let textures = measurements.textures.ok_or_else(|| {
+                    MeasurementReportError::file(file_index, MeasurementFileError::MissingTextures)
+                })?;
+                let images = measurements.images.ok_or_else(|| {
+                    MeasurementReportError::file(file_index, MeasurementFileError::MissingImages)
+                })?;
                 let mesh_definitions = measurements.mesh_definitions.ok_or_else(|| {
                     MeasurementReportError::file(
                         file_index,
@@ -678,6 +885,10 @@ impl MeasurementReportInput {
                     MeasurementReportError::file(file_index, MeasurementFileError::MissingScenes)
                 })?;
                 let assets = AssetMeasurements {
+                    material_resource_coverage,
+                    material_definitions,
+                    textures,
+                    images,
                     mesh_definitions,
                     node_instances,
                     scenes,
@@ -716,6 +927,10 @@ mod measurement_report_input_tests {
                         schema_version: Some(MEASUREMENTS_SCHEMA_VERSION),
                         schema: Some(MEASUREMENTS_SCHEMA_ID.into()),
                         clips: Some(clips),
+                        material_resource_coverage: Some(MaterialResourceCoverage::Unavailable),
+                        material_definitions: Some(Vec::new()),
+                        textures: Some(Vec::new()),
+                        images: Some(Vec::new()),
                         mesh_definitions: Some(mesh_definitions),
                         node_instances: Some(Vec::new()),
                         scenes: Some(Vec::new()),

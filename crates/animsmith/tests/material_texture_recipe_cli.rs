@@ -60,6 +60,7 @@ fn fixture() -> Document {
                 metallic_roughness_texture: None,
                 occlusion_texture: None,
             }],
+            material_resources: Default::default(),
             scenes: vec![SceneAsset {
                 source_scene_index: 0,
                 name: Some("scene".into()),

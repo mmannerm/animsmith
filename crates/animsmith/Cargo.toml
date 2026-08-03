@@ -49,6 +49,7 @@ toml = { workspace = true }
 
 [dev-dependencies]
 gltf = { workspace = true }
+image = { workspace = true }
 animsmith-testkit = { path = "../animsmith-testkit" }
 pulldown-cmark = { workspace = true }
 jsonschema = { workspace = true }

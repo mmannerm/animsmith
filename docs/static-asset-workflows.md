@@ -23,6 +23,7 @@ runtime smoke test.
 | Culling, framing, or placement code sees a different box than the DCC viewport. | The code and artist are discussing different coordinate domains. | `animsmith measure --format json`. |
 | The surface silhouette is right but grooves and bevels look flat. | The normal image or material slot was lost, or the engine imported it as color data. | Ordinary `convert`, then inspect the material in the engine. |
 | The model is gray or flat because exported material links are incomplete. | External image paths were not portable or the exporter omitted them. | `convert --material-texture-recipe`. |
+| You need to know which material slot uses which source image before an engine import. | A mesh view alone hides material-to-texture-to-image sharing and image encoding facts. | `animsmith measure --format json`. |
 | A consumer requires identity transforms and mesh-local final geometry. | The consumer does not retain or intentionally does not evaluate the source node hierarchy. | `convert --bake-static-mesh-transforms`. |
 
 ## Which bounding box do you mean?
@@ -71,6 +72,34 @@ These are default/rest source-asset measurements. They deliberately exclude
 animation, skin and morph deformation, runtime component transforms,
 engine-generated collision, and camera- or frame-dependent bounds. Validate
 those in the consuming engine.
+
+## Inventory material and image handoffs
+
+Before treating a missing detail as an engine-shader problem, inspect the
+source material graph:
+
+```console
+animsmith measure prop.glb --format json > prop.measure.json
+```
+
+For glTF/GLB, the nested measurement data records source-order material
+definitions and their semantic bindings, then texture-to-image references and
+image metadata. That exposes, for example, a normal slot that points to the
+same image as BaseColor, a texture shared by several materials, a linked
+external image, or an image whose declared MIME disagrees with the container
+found in its bytes. Successful image inspection reports decoded width, height,
+channel count, and color type. It does not decide whether a BaseColor texture
+is authored well, whether a normal map has the intended convention, or whether
+an engine importer will choose the right settings.
+
+An unavailable image is explicit rather than silently omitted: it has an
+unavailability reason and no decoded metadata. A malformed PNG/JPEG may still
+identify its container, but is not repaired. Other loaders can report
+`material_resource_coverage: "unavailable"`; do not equate that with an empty
+material table. This inventory is source evidence only. It neither resizes or
+transcodes images nor makes a later writer or conversion recipe authoritative
+for every original resource. Keep the raw handoff asset when byte-level source
+provenance matters.
 
 ## Preserve normal maps as data, not color
 

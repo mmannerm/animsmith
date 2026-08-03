@@ -294,6 +294,7 @@ pub fn canonicalize_skinned_bind_pose(
                 meshes,
                 instances,
                 materials: doc.assets.materials.clone(),
+                material_resources: doc.assets.material_resources.clone(),
                 scenes: vec![SceneAsset {
                     source_scene_index: 0,
                     name: None,

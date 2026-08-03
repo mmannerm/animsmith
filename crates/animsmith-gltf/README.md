@@ -21,6 +21,14 @@ single call, matching `animsmith-fbx`. Consumers that judge only
 animation ignore `assets`; `measure` reports mesh-level measurements
 from it and `convert` carries it through.
 
+For glTF/GLB measurement, the loader also provides a source-resource sidecar:
+source-order material definitions, semantic texture bindings, texture-to-image
+identity, and bounded image metadata. It distinguishes declared MIME from the
+container detected in source bytes and decoded color/channel data; malformed
+or unsupported image data remains explicit unavailable evidence rather than a
+repair request. This sidecar is descriptive only and is not a writer
+preservation, image acceptance, resize/transcode, or recipe-authority promise.
+
 For measurement, the loader also records whether each primitive declares
 secondary `JOINTS_n` or `WEIGHTS_n` attributes. Mesh measurements retain an
 individual-primitive mismatch signal when complementary sides occur on
