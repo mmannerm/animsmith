@@ -225,9 +225,12 @@ influence statistics are properties of that same definition.
 Each mesh definition has `additional_influence_sets`, an always-present array
 of authored secondary glTF skin-attribute sets discovered across its
 primitives. Each entry has a numeric `set_index` of at least 1 plus independent
-`joints_present` and `weights_present` booleans, so an unpaired `JOINTS_n` or
-`WEIGHTS_n` remains observable. Entries are strictly ascending by `set_index`
-and appear at most once. The array is empty when no secondary set was authored.
+`joints_present` and `weights_present` booleans. The accompanying
+`joints_without_weights_present` and `weights_without_joints_present` booleans
+preserve unpaired declarations on individual primitives, even when the mesh
+also has the complementary side on another primitive. Entries are strictly
+ascending by `set_index` and appear at most once. The array is empty when no
+secondary set was authored.
 It excludes set 0: `max_joints_per_vertex` and the weight-sum extrema retain
 their paired primary `JOINTS_0` / `WEIGHTS_0` semantics and do not incorporate
 additional sets.

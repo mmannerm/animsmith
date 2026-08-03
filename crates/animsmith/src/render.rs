@@ -112,13 +112,25 @@ pub(crate) fn render_measure_text(
                     let sets = mesh
                         .additional_influence_sets
                         .iter()
-                        .map(|set| match (set.joints_present, set.weights_present) {
-                            (true, true) => {
-                                format!("JOINTS_{} + WEIGHTS_{}", set.set_index, set.set_index)
-                            }
-                            (true, false) => format!("JOINTS_{}", set.set_index),
-                            (false, true) => format!("WEIGHTS_{}", set.set_index),
-                            (false, false) => format!("set {}", set.set_index),
+                        .map(|set| {
+                            let presence = match (set.joints_present, set.weights_present) {
+                                (true, true) => {
+                                    format!("JOINTS_{} + WEIGHTS_{}", set.set_index, set.set_index)
+                                }
+                                (true, false) => format!("JOINTS_{}", set.set_index),
+                                (false, true) => format!("WEIGHTS_{}", set.set_index),
+                                (false, false) => format!("set {}", set.set_index),
+                            };
+                            let mismatch = match (
+                                set.joints_without_weights_present,
+                                set.weights_without_joints_present,
+                            ) {
+                                (true, true) => " (also JOINTS-only and WEIGHTS-only primitives)",
+                                (true, false) => " (also JOINTS-only primitives)",
+                                (false, true) => " (also WEIGHTS-only primitives)",
+                                (false, false) => "",
+                            };
+                            format!("{presence}{mismatch}")
                         })
                         .collect::<Vec<_>>()
                         .join(", ");
@@ -1076,9 +1088,9 @@ mod tests {
                 "weight_sum_min": 0.9,
                 "weight_sum_max": 1.1,
                 "additional_influence_sets": [
-                    { "set_index": 1, "joints_present": true, "weights_present": true },
-                    { "set_index": 2, "joints_present": true, "weights_present": false },
-                    { "set_index": 3, "joints_present": false, "weights_present": true }
+                    { "set_index": 1, "joints_present": true, "weights_present": true, "joints_without_weights_present": true, "weights_without_joints_present": true },
+                    { "set_index": 2, "joints_present": true, "weights_present": false, "joints_without_weights_present": true, "weights_without_joints_present": false },
+                    { "set_index": 3, "joints_present": false, "weights_present": true, "joints_without_weights_present": false, "weights_without_joints_present": true }
                 ]
             }],
             "node_instances": [{
@@ -1109,7 +1121,7 @@ mod tests {
             vec![
                 "asset\\npath.glb:",
                 "  walk\\nclip: 1.000s, 2 frames, 1 animated bones seam×0.25 gait φ=0.50 (10.0cm)",
-                "  mesh definition #7 body\\nmesh: 3 verts geometry bbox 1.000×2.000×3.000, ≤4 joints/vtx, weight-sum 0.900–1.100, additional influence sets: JOINTS_1 + WEIGHTS_1, JOINTS_2, WEIGHTS_3",
+                "  mesh definition #7 body\\nmesh: 3 verts geometry bbox 1.000×2.000×3.000, ≤4 joints/vtx, weight-sum 0.900–1.100, additional influence sets: JOINTS_1 + WEIGHTS_1 (also JOINTS-only and WEIGHTS-only primitives), JOINTS_2 (also JOINTS-only primitives), WEIGHTS_3 (also WEIGHTS-only primitives)",
                 "  node instance #9 body\\nnode -> mesh #7: static node-world bbox 1.000×2.000×3.000",
                 "  scene #2 main\\nscene [default]: 1 instances static scene-world bbox 1.000×2.000×3.000",
             ]

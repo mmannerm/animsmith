@@ -765,6 +765,8 @@ fn additional_influence_set(
         "set_index": set_index,
         "joints_present": joints_present,
         "weights_present": weights_present,
+        "joints_without_weights_present": joints_present && !weights_present,
+        "weights_without_joints_present": weights_present && !joints_present,
     }))
     .expect("valid additional influence-set fixture")
 }
@@ -1029,6 +1031,50 @@ fn measurement_contract_rejects_invalid_additional_influence_set_ordering() {
         "mesh_definitions[0].additional_influence_sets[0]",
         "an additional influence set must declare joints, weights, or both",
     );
+    assert_invalid_assets(
+        |assets| {
+            let set = &mut assets.mesh_definitions[0].additional_influence_sets;
+            *set = vec![additional_influence_set(1, true, false)];
+            set[0].joints_without_weights_present = false;
+        },
+        "mesh_definitions[0].additional_influence_sets[0].joints_without_weights_present",
+        "joints_without_weights_present is required when weights_present is false",
+    );
+    assert_invalid_assets(
+        |assets| {
+            let set = &mut assets.mesh_definitions[0].additional_influence_sets;
+            *set = vec![additional_influence_set(1, false, true)];
+            set[0].weights_without_joints_present = false;
+        },
+        "mesh_definitions[0].additional_influence_sets[0].weights_without_joints_present",
+        "weights_without_joints_present is required when joints_present is false",
+    );
+    assert_invalid_assets(
+        |assets| {
+            let set = &mut assets.mesh_definitions[0].additional_influence_sets;
+            *set = vec![additional_influence_set(1, false, true)];
+            set[0].joints_without_weights_present = true;
+        },
+        "mesh_definitions[0].additional_influence_sets[0].joints_without_weights_present",
+        "joints_without_weights_present requires joints_present",
+    );
+    assert_invalid_assets(
+        |assets| {
+            let set = &mut assets.mesh_definitions[0].additional_influence_sets;
+            *set = vec![additional_influence_set(1, true, false)];
+            set[0].weights_without_joints_present = true;
+        },
+        "mesh_definitions[0].additional_influence_sets[0].weights_without_joints_present",
+        "weights_without_joints_present requires weights_present",
+    );
+
+    let mut assets = valid_asset_measurements();
+    let mut complementary = additional_influence_set(1, true, true);
+    complementary.joints_without_weights_present = true;
+    complementary.weights_without_joints_present = true;
+    assets.mesh_definitions[0].additional_influence_sets = vec![complementary];
+    MeasurementContract::new(BTreeMap::new(), assets)
+        .expect("complementary mismatches on different primitives remain valid evidence");
 }
 
 #[test]

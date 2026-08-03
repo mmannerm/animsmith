@@ -63,6 +63,8 @@ pub struct MeshDefinitionMeasurements {
 ///
 /// The two sides are reported independently so malformed or partial source
 /// declarations remain observable without assigning them skinning semantics.
+/// The mismatch flags preserve that evidence when independent primitive
+/// declarations make the aggregate sides appear paired.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct AdditionalInfluenceSetMeasurements {
@@ -72,6 +74,12 @@ pub struct AdditionalInfluenceSetMeasurements {
     pub joints_present: bool,
     /// Whether any primitive declares `WEIGHTS_n`.
     pub weights_present: bool,
+    /// Whether any primitive declares `JOINTS_n` without `WEIGHTS_n` on that
+    /// same primitive.
+    pub joints_without_weights_present: bool,
+    /// Whether any primitive declares `WEIGHTS_n` without `JOINTS_n` on that
+    /// same primitive.
+    pub weights_without_joints_present: bool,
 }
 
 /// Why a static node-instance AABB could not be emitted.
@@ -227,11 +235,17 @@ fn measure_mesh_definition(mesh: &MeshAsset) -> MeshDefinitionMeasurements {
                 .and_modify(|entry| {
                     entry.joints_present |= set.joints_present;
                     entry.weights_present |= set.weights_present;
+                    entry.joints_without_weights_present |=
+                        set.joints_present && !set.weights_present;
+                    entry.weights_without_joints_present |=
+                        set.weights_present && !set.joints_present;
                 })
                 .or_insert(AdditionalInfluenceSetMeasurements {
                     set_index: set.set_index,
                     joints_present: set.joints_present,
                     weights_present: set.weights_present,
+                    joints_without_weights_present: set.joints_present && !set.weights_present,
+                    weights_without_joints_present: set.weights_present && !set.joints_present,
                 });
         }
     }
@@ -596,7 +610,8 @@ mod tests {
     }
 
     #[test]
-    fn mesh_measurements_merge_secondary_influence_set_presence_without_affecting_primary_stats() {
+    fn mesh_measurements_preserve_secondary_influence_set_mismatches_without_affecting_primary_stats()
+     {
         let primary = Primitive {
             positions: vec![Vec3::ZERO],
             joints: vec![[0, 1, 0, 0]],
@@ -637,11 +652,15 @@ mod tests {
                     set_index: 1,
                     joints_present: false,
                     weights_present: true,
+                    joints_without_weights_present: false,
+                    weights_without_joints_present: true,
                 },
                 AdditionalInfluenceSetMeasurements {
                     set_index: 2,
                     joints_present: true,
                     weights_present: true,
+                    joints_without_weights_present: true,
+                    weights_without_joints_present: true,
                 },
             ]
         );

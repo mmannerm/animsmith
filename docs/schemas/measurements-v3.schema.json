@@ -41,15 +41,35 @@
     },
     "additional_influence_set": {
       "type": "object",
-      "required": ["set_index", "joints_present", "weights_present"],
+      "required": ["set_index", "joints_present", "weights_present", "joints_without_weights_present", "weights_without_joints_present"],
       "properties": {
         "set_index": { "type": "integer", "minimum": 1 },
         "joints_present": { "type": "boolean" },
-        "weights_present": { "type": "boolean" }
+        "weights_present": { "type": "boolean" },
+        "joints_without_weights_present": { "type": "boolean" },
+        "weights_without_joints_present": { "type": "boolean" }
       },
       "anyOf": [
         { "properties": { "joints_present": { "const": true } } },
         { "properties": { "weights_present": { "const": true } } }
+      ],
+      "allOf": [
+        {
+          "if": { "properties": { "joints_without_weights_present": { "const": true } } },
+          "then": { "properties": { "joints_present": { "const": true } } }
+        },
+        {
+          "if": { "properties": { "weights_without_joints_present": { "const": true } } },
+          "then": { "properties": { "weights_present": { "const": true } } }
+        },
+        {
+          "if": { "properties": { "joints_present": { "const": true }, "weights_present": { "const": false } } },
+          "then": { "properties": { "joints_without_weights_present": { "const": true } } }
+        },
+        {
+          "if": { "properties": { "weights_present": { "const": true }, "joints_present": { "const": false } } },
+          "then": { "properties": { "weights_without_joints_present": { "const": true } } }
+        }
       ],
       "additionalProperties": false
     },

@@ -299,6 +299,38 @@ fn validate_measurements(
                     "an additional influence set must declare joints, weights, or both",
                 ));
             }
+            if set.joints_without_weights_present && !set.joints_present {
+                return Err(invalid(
+                    format!(
+                        "mesh_definitions[{index}].additional_influence_sets[{set_offset}].joints_without_weights_present"
+                    ),
+                    "joints_without_weights_present requires joints_present",
+                ));
+            }
+            if set.weights_without_joints_present && !set.weights_present {
+                return Err(invalid(
+                    format!(
+                        "mesh_definitions[{index}].additional_influence_sets[{set_offset}].weights_without_joints_present"
+                    ),
+                    "weights_without_joints_present requires weights_present",
+                ));
+            }
+            if set.joints_present && !set.weights_present && !set.joints_without_weights_present {
+                return Err(invalid(
+                    format!(
+                        "mesh_definitions[{index}].additional_influence_sets[{set_offset}].joints_without_weights_present"
+                    ),
+                    "joints_without_weights_present is required when weights_present is false",
+                ));
+            }
+            if set.weights_present && !set.joints_present && !set.weights_without_joints_present {
+                return Err(invalid(
+                    format!(
+                        "mesh_definitions[{index}].additional_influence_sets[{set_offset}].weights_without_joints_present"
+                    ),
+                    "weights_without_joints_present is required when joints_present is false",
+                ));
+            }
             if previous_set_index.is_some_and(|previous| previous >= set.set_index) {
                 return Err(invalid(
                     path,

@@ -95,8 +95,9 @@ sampled representation.
 The `MetricGrids`, `measure_document`, and `measure_assets` rustdocs own cache
 thread-safety, sampling, static-domain scope, and identity details.
 `Primitive::additional_influence_sets` and the corresponding mesh measurement
-records expose secondary glTF skin-attribute presence only; they do not retain
-or evaluate secondary per-vertex payloads.
+records expose secondary glTF skin-attribute presence only. Mesh records also
+preserve whether either side was unpaired on an individual primitive; they do
+not retain or evaluate secondary per-vertex payloads.
 
 When the host needs to exchange the same JSON as the CLI, construct
 `MeasurementContract`, `MeasureFileReport`/`LintFileReport`, and

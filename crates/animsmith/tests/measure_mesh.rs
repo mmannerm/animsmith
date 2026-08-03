@@ -21,6 +21,15 @@ fn assert_measurements_schema_valid(measurements: &serde_json::Value) {
     );
 }
 
+fn assert_measurements_schema_invalid(measurements: &serde_json::Value) {
+    let schema = serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid measurement schema JSON");
+    let validator = jsonschema::validator_for(&schema).expect("measurement schema compiles");
+    assert!(
+        !validator.is_valid(measurements),
+        "measurement output must violate the published v3 schema:\n{measurements:#}"
+    );
+}
+
 #[derive(Clone, Copy)]
 enum SecondaryInfluenceSet {
     None,
@@ -410,6 +419,8 @@ fn cli_measure_reports_secondary_influence_set_presence_without_changing_primary
                 "set_index": 1,
                 "joints_present": true,
                 "weights_present": true,
+                "joints_without_weights_present": false,
+                "weights_without_joints_present": false,
             }]),
             vec![(true, true)],
         ),
@@ -420,6 +431,8 @@ fn cli_measure_reports_secondary_influence_set_presence_without_changing_primary
                 "set_index": 1,
                 "joints_present": true,
                 "weights_present": false,
+                "joints_without_weights_present": true,
+                "weights_without_joints_present": false,
             }]),
             vec![(true, false)],
         ),
@@ -430,6 +443,8 @@ fn cli_measure_reports_secondary_influence_set_presence_without_changing_primary
                 "set_index": 1,
                 "joints_present": false,
                 "weights_present": true,
+                "joints_without_weights_present": false,
+                "weights_without_joints_present": true,
             }]),
             vec![(false, true)],
         ),
@@ -440,8 +455,25 @@ fn cli_measure_reports_secondary_influence_set_presence_without_changing_primary
                 "set_index": 1,
                 "joints_present": true,
                 "weights_present": true,
+                "joints_without_weights_present": false,
+                "weights_without_joints_present": false,
             }]),
             vec![(false, false), (true, true)],
+        ),
+        (
+            "cross-primitive-complementary-mismatch",
+            vec![
+                SecondaryInfluenceSet::JointsOnly,
+                SecondaryInfluenceSet::WeightsOnly,
+            ],
+            serde_json::json!([{
+                "set_index": 1,
+                "joints_present": true,
+                "weights_present": true,
+                "joints_without_weights_present": true,
+                "weights_without_joints_present": true,
+            }]),
+            vec![(true, false), (false, true)],
         ),
     ];
 
@@ -497,6 +529,23 @@ fn cli_measure_reports_secondary_influence_set_presence_without_changing_primary
         assert_measurements_schema_valid(measurements);
         let mesh = &measurements["mesh_definitions"][0];
         assert_eq!(mesh["additional_influence_sets"], expected_sets, "{name}");
+        if name == "cross-primitive-complementary-mismatch" {
+            let mut missing_mismatch_field = measurements.clone();
+            missing_mismatch_field["mesh_definitions"][0]["additional_influence_sets"][0]
+                .as_object_mut()
+                .expect("influence set object")
+                .remove("weights_without_joints_present");
+            assert_measurements_schema_invalid(&missing_mismatch_field);
+
+            let mut inconsistent_mismatch = measurements.clone();
+            inconsistent_mismatch["mesh_definitions"][0]["additional_influence_sets"][0]["weights_present"] =
+                serde_json::json!(false);
+            inconsistent_mismatch["mesh_definitions"][0]["additional_influence_sets"][0]["joints_without_weights_present"] =
+                serde_json::json!(false);
+            inconsistent_mismatch["mesh_definitions"][0]["additional_influence_sets"][0]["weights_without_joints_present"] =
+                serde_json::json!(false);
+            assert_measurements_schema_invalid(&inconsistent_mismatch);
+        }
         assert_eq!(mesh["max_joints_per_vertex"], 2, "{name}: primary only");
         assert_eq!(mesh["weight_sum_min"], 1.0, "{name}: primary only");
         assert_eq!(mesh["weight_sum_max"], 1.0, "{name}: primary only");
@@ -541,8 +590,8 @@ fn cli_measure_reports_higher_independent_influence_sets_in_ascending_order() {
     assert_eq!(
         mesh["additional_influence_sets"],
         serde_json::json!([
-            { "set_index": 2, "joints_present": false, "weights_present": true },
-            { "set_index": 3, "joints_present": true, "weights_present": false },
+            { "set_index": 2, "joints_present": false, "weights_present": true, "joints_without_weights_present": false, "weights_without_joints_present": true },
+            { "set_index": 3, "joints_present": true, "weights_present": false, "joints_without_weights_present": true, "weights_without_joints_present": false },
         ])
     );
 }
