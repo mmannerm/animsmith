@@ -38,6 +38,14 @@ check_schema docs/schemas/measurements-v8.schema.json urn:animsmith:schema:measu
 check_schema docs/schemas/conversion-evidence-v1.schema.json urn:animsmith:schema:conversion-evidence:1 docs/output.md
 check_schema docs/schemas/conversion-evidence-v2.schema.json urn:animsmith:schema:conversion-evidence:2 docs/output.md docs/cli.md
 
+# Current-contract descriptions must not send readers back to the immutable
+# output-v2 schema. Keep these exact statements aligned with the current outer
+# contract when it advances.
+grep -Fq 'Final output-v3 record for one catalog check.' crates/animsmith-core/src/evaluation.rs \
+  || fail 'CheckEvaluation documentation does not identify output v3'
+grep -Fq 'regenerate a current output-v3 report from the original' docs/output.md \
+  || fail 'report migration documentation does not identify output v3'
+
 for removed_schema in \
   docs/schemas/output-v1.schema.json \
   docs/schemas/output-v2-preview.schema.json; do

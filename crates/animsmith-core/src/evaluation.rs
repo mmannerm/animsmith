@@ -357,7 +357,7 @@ impl CheckOutput {
     }
 }
 
-/// Final v2 record for one catalog check.
+/// Final output-v3 record for one catalog check.
 #[derive(Debug, Clone)]
 pub struct CheckEvaluation {
     check_id: &'static str,
