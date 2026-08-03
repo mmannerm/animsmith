@@ -333,6 +333,131 @@ pub struct SceneAsset {
     pub roots: Vec<BoneId>,
 }
 
+/// Whether a loader supplied source-node and source-skin identity evidence.
+///
+/// The skeleton used by sampling is deliberately format-neutral and is ordered
+/// for parent-before-child FK. Source formats can use a different stable node
+/// order, so this coverage flag keeps an empty source table from being
+/// mistaken for a source file with no nodes or skins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceSkeletonCoverage {
+    /// The loader cannot provide source-node and source-skin identity facts.
+    #[default]
+    Unavailable,
+    /// The source-node and source-skin tables describe the loaded input.
+    Complete,
+}
+
+/// The authored local-rest representation of one source node.
+///
+/// glTF permits either decomposed TRS properties or a matrix. Keeping this
+/// representation separate from [`Bone::rest`] avoids presenting a lossy
+/// matrix decomposition as though it were authored TRS evidence.
+#[derive(Debug, Clone)]
+pub enum SourceNodeLocalRest {
+    /// Source node declared translation, rotation, and scale properties.
+    Trs {
+        /// Local translation in scene units.
+        translation: Vec3,
+        /// Local orientation relative to the parent node.
+        rotation: Quat,
+        /// Local non-uniform scale.
+        scale: Vec3,
+    },
+    /// Source node declared a column-major 4×4 local transform matrix.
+    Matrix(Mat4),
+}
+
+/// One source-format node and its bridge into the core skeleton.
+#[derive(Debug, Clone)]
+pub struct SourceNodeAsset {
+    /// Stable node-array index in the source format.
+    pub source_node_index: usize,
+    /// Authored node name, when present.
+    pub name: Option<String>,
+    /// Source node-array index of the authored parent, when any.
+    pub parent_source_node_index: Option<usize>,
+    /// Authored local-rest representation.
+    pub local_rest: SourceNodeLocalRest,
+    /// Corresponding parent-before-child core skeleton node.
+    pub bone: BoneId,
+}
+
+/// Read status for a source skin's inverse-bind accessor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceInverseBindAccessorStatus {
+    /// The skin did not declare an inverse-bind accessor.
+    #[default]
+    Absent,
+    /// The accessor was readable and had at least one matrix per declared joint.
+    Available,
+    /// The source declared a count-zero inverse-bind accessor.
+    EmptyAccessor,
+    /// The accessor was readable but has fewer matrices than declared joints.
+    CountMismatch,
+    /// The source declared an accessor that the loader could not read.
+    Unreadable,
+}
+
+/// Read-side evidence for one source skin inverse-bind accessor.
+#[derive(Debug, Clone, Default)]
+pub struct SourceInverseBindAccessor {
+    /// Whether the accessor was absent, complete, or malformed.
+    pub status: SourceInverseBindAccessorStatus,
+    /// Declared source accessor count, or `None` when no accessor was declared.
+    pub declared_count: Option<usize>,
+    /// Raw matrices in accessor order when they were readable.
+    ///
+    /// This may contain non-finite values from a parseable binary accessor.
+    /// Measurement serialization must classify those values rather than emit
+    /// non-finite JSON numbers.
+    pub matrices: Vec<Mat4>,
+}
+
+/// One source node that declares use of a source skin.
+#[derive(Debug, Clone)]
+pub struct SourceSkinAttachment {
+    /// Stable node-array index of the attachment node.
+    pub source_node_index: usize,
+    /// Corresponding core skeleton node.
+    pub bone: BoneId,
+    /// Stable source mesh-definition index, when the node declares a mesh.
+    ///
+    /// This remains present even when the current core mesh importer skips the
+    /// definition (for example, because it has no triangle-list primitive).
+    pub source_mesh_index: Option<usize>,
+}
+
+/// One source skin definition, kept separate from bone-level convenience data.
+#[derive(Debug, Clone, Default)]
+pub struct SourceSkinAsset {
+    /// Stable skin-array index in the source format.
+    pub source_skin_index: usize,
+    /// Authored skin name, when present.
+    pub name: Option<String>,
+    /// Explicitly declared skeleton root, when present; never inferred.
+    pub skeleton_root: Option<BoneId>,
+    /// Source joints in declared skin-slot order.
+    pub joints: Vec<BoneId>,
+    /// Exact inverse-bind accessor evidence for this skin.
+    pub inverse_bind_accessor: SourceInverseBindAccessor,
+    /// Source nodes that reference this skin, in source-node order.
+    pub attachments: Vec<SourceSkinAttachment>,
+}
+
+/// Source-node and source-skin evidence carried beside normalized scene assets.
+#[derive(Debug, Clone, Default)]
+pub struct SourceSkeletonAssets {
+    /// Whether these source tables are complete for the loaded input.
+    pub coverage: SourceSkeletonCoverage,
+    /// Source nodes in stable source-node order.
+    pub nodes: Vec<SourceNodeAsset>,
+    /// Source skins in stable source-skin order.
+    pub skins: Vec<SourceSkinAsset>,
+}
+
 /// An embedded texture: raw encoded image bytes (glTF embeds the file
 /// as-is, no decoding).
 #[derive(Debug, Clone)]
@@ -648,6 +773,13 @@ pub struct SceneAssets {
     pub scenes: Vec<SceneAsset>,
     /// Source scene index selected by default, when one was declared.
     pub default_scene: Option<usize>,
+    /// Source-node and source-skin identity evidence for skeleton measurements.
+    ///
+    /// This is intentionally separate from the normalized [`Skeleton`] and
+    /// from [`MeshInstance::skin_ibms`]: a source node order need not match
+    /// FK order, and one joint can have different inverse binds in different
+    /// source skins.
+    pub source_skeleton: SourceSkeletonAssets,
 }
 
 #[cfg(test)]

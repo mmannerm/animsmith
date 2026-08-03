@@ -7,6 +7,7 @@ use crate::metrics::{MetricGrids, foot_cycle_metrics, root_motion_speed_mps, rot
 use crate::model::{
     DecodedImageColorType, Document, ImageContainerFormat, ImageSourceKind, ImageUnavailableReason,
     MaterialResourceCoverage, MaterialTextureSlot, MeshAsset, SourceImageInspection,
+    SourceInverseBindAccessorStatus, SourceNodeLocalRest, SourceSkeletonCoverage,
 };
 use crate::profile::ResolvedRoles;
 use glam::{Mat4, Vec3};
@@ -209,6 +210,198 @@ pub struct ImageMeasurements {
     pub unavailable_reason: Option<ImageUnavailableReason>,
 }
 
+/// The source-preservation coverage for skeleton and skin measurements.
+///
+/// A source loader that cannot retain stable node and skin identities reports
+/// [`SourceSkeletonCoverage::Unavailable`] with empty node and skin arrays,
+/// rather than treating normalized skeleton ordinals as source indices.
+pub type SkeletonSourceCoverage = SourceSkeletonCoverage;
+
+/// One finite authored node-local rest representation.
+///
+/// The tagged representation preserves a source matrix as a matrix instead of
+/// presenting a decomposition as authored TRS evidence.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SkeletonNodeLocalRestMeasurements {
+    /// Authored local translation, rotation, and scale.
+    Trs {
+        /// Translation in scene units.
+        translation_m: [f32; 3],
+        /// Quaternion components in XYZW order.
+        rotation_xyzw: [f32; 4],
+        /// Non-uniform local scale.
+        scale: [f32; 3],
+    },
+    /// Authored 4×4 local matrix in column-major order.
+    Matrix {
+        /// Column-major matrix components.
+        matrix: [f32; 16],
+    },
+    /// The authored transform could not be represented in JSON safely.
+    Unavailable {
+        /// Stable reason for the unavailable local transform.
+        reason: SkeletonNodeLocalRestUnavailableReason,
+    },
+}
+
+/// Why a node-local rest representation is unavailable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SkeletonNodeLocalRestUnavailableReason {
+    /// The source transform has a non-finite component.
+    NonFiniteTransform,
+}
+
+/// Why a node's accumulated rest-world matrix is unavailable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SkeletonRestWorldMatrixUnavailableReason {
+    /// The node-local rest transform is unavailable.
+    NonFiniteLocalRest,
+    /// The declared parent does not occur in the source node table.
+    MissingParentNode,
+    /// The parent rest-world matrix is unavailable.
+    ParentRestWorldUnavailable,
+    /// The source parent graph has a cycle.
+    ParentCycle,
+    /// Matrix composition produced a non-finite result.
+    NonFiniteWorldMatrix,
+}
+
+/// One source node in stable source-node order.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct SkeletonNodeMeasurements {
+    /// Stable source node-array index.
+    pub node_index: usize,
+    /// Authored node name, when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Direct source parent, when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_node_index: Option<usize>,
+    /// Source scenes that explicitly name this node as a scene root, in
+    /// ascending source-scene order. Scene membership does not alter the
+    /// node's local or accumulated rest transform.
+    pub scene_root_indices: Vec<usize>,
+    /// Authored node-local rest representation.
+    pub local_rest: SkeletonNodeLocalRestMeasurements,
+    /// Accumulated rest transform from this source root to this node, in
+    /// column-major order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rest_world_matrix: Option<[f32; 16]>,
+    /// Present exactly when [`Self::rest_world_matrix`] is unavailable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rest_world_matrix_unavailable_reason: Option<SkeletonRestWorldMatrixUnavailableReason>,
+}
+
+/// Source-level read state for one inverse-bind accessor.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct SkinInverseBindAccessorMeasurements {
+    /// Whether the source accessor was absent, readable, empty, short, or
+    /// unreadable.
+    pub status: SourceInverseBindAccessorStatus,
+    /// Declared source accessor count, when an accessor was declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declared_count: Option<usize>,
+    /// Every readable finite raw matrix in accessor order, including entries
+    /// beyond the skin's joint count.
+    pub matrices: Vec<[f32; 16]>,
+}
+
+/// One joint slot in a source skin.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct SkinJointMeasurements {
+    /// Zero-based source skin joint slot.
+    pub joint_index: usize,
+    /// Stable source node index for this joint.
+    pub node_index: usize,
+}
+
+/// One node that attaches a source skin.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct SkinAttachmentMeasurements {
+    /// Stable source node index of the attachment.
+    pub node_index: usize,
+    /// Stable source mesh-definition index when declared on the node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mesh_index: Option<usize>,
+}
+
+/// Why one derived per-joint bind-domain matrix is unavailable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SkinDerivedMatrixUnavailableReason {
+    /// The skin did not declare an inverse-bind accessor.
+    InverseBindAccessorAbsent,
+    /// The skin declared a count-zero inverse-bind accessor.
+    InverseBindAccessorEmpty,
+    /// The readable accessor has fewer matrices than declared joint slots.
+    InverseBindAccessorCountMismatch,
+    /// The declared accessor could not be read safely, including non-finite
+    /// raw matrix data that JSON cannot represent.
+    InverseBindAccessorUnreadable,
+    /// The joint has no source-node identity in the complete source table.
+    MissingJointNode,
+    /// The joint's accumulated rest-world matrix is unavailable.
+    JointRestWorldUnavailable,
+    /// The raw inverse-bind matrix cannot itself be inverted.
+    InverseBindMatrixNonInvertible,
+    /// Multiplication produced a non-finite derived matrix.
+    NonFiniteDerivedMatrix,
+}
+
+/// One per-joint derived bind-domain matrix.
+///
+/// A matrix and its unavailable reason are mutually exclusive.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct SkinDerivedMatrixMeasurements {
+    /// Zero-based source skin joint slot.
+    pub joint_index: usize,
+    /// Matrix in the documented coordinate domain, in column-major order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matrix: Option<[f32; 16]>,
+    /// Present exactly when [`Self::matrix`] is unavailable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unavailable_reason: Option<SkinDerivedMatrixUnavailableReason>,
+}
+
+/// One source skin in stable source-skin order.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct SkinMeasurements {
+    /// Stable source skin-array index.
+    pub skin_index: usize,
+    /// Authored skin name, when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Explicitly declared source skeleton root, when any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skeleton_root_node_index: Option<usize>,
+    /// Source joint slots in their declared order.
+    pub joints: Vec<SkinJointMeasurements>,
+    /// Exact source accessor state and finite readable raw matrices.
+    pub inverse_bind_accessor: SkinInverseBindAccessorMeasurements,
+    /// Source nodes that reference this skin, in source-node order.
+    pub attachments: Vec<SkinAttachmentMeasurements>,
+    /// Inverse of each usable raw IBM: joint bind space to mesh bind space.
+    /// There is exactly one record for every entry in [`Self::joints`].
+    pub joint_bind_to_mesh_matrices: Vec<SkinDerivedMatrixMeasurements>,
+    /// `joint_rest_world * raw_inverse_bind` for every joint slot. This is a
+    /// per-joint observation of mesh bind world, not a policy judgment that
+    /// all slots must agree. There is exactly one record per joint.
+    pub mesh_bind_world_matrices: Vec<SkinDerivedMatrixMeasurements>,
+}
+
 /// Static scene-asset evidence nested beside clip measurements.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -221,6 +414,15 @@ pub struct AssetMeasurements {
     pub textures: Vec<TextureMeasurements>,
     /// Source image definitions in stable source order.
     pub images: Vec<ImageMeasurements>,
+    /// Whether source skeleton identity facts are available.
+    #[serde(default)]
+    pub skeleton_source_coverage: SkeletonSourceCoverage,
+    /// Source nodes in source-node order when skeleton coverage is complete.
+    #[serde(default)]
+    pub skeleton_nodes: Vec<SkeletonNodeMeasurements>,
+    /// Source skins in source-skin order when skeleton coverage is complete.
+    #[serde(default)]
+    pub skins: Vec<SkinMeasurements>,
     /// Source mesh definitions, including definitions with no node instance.
     pub mesh_definitions: Vec<MeshDefinitionMeasurements>,
     /// Mesh-bearing source nodes, including nodes outside every scene.
@@ -369,6 +571,396 @@ fn static_world_matrices(doc: &Document) -> Vec<Option<Mat4>> {
     worlds
 }
 
+fn matrix_to_columns(matrix: Mat4) -> [f32; 16] {
+    matrix.to_cols_array()
+}
+
+fn vec3_is_finite(value: Vec3) -> bool {
+    value.to_array().into_iter().all(f32::is_finite)
+}
+
+fn quat_is_finite(value: glam::Quat) -> bool {
+    value.to_array().into_iter().all(f32::is_finite)
+}
+
+fn source_local_rest_measurement(
+    local_rest: &SourceNodeLocalRest,
+) -> (SkeletonNodeLocalRestMeasurements, Option<Mat4>) {
+    match local_rest {
+        SourceNodeLocalRest::Trs {
+            translation,
+            rotation,
+            scale,
+        } if vec3_is_finite(*translation)
+            && quat_is_finite(*rotation)
+            && vec3_is_finite(*scale) =>
+        {
+            let matrix = Mat4::from_scale_rotation_translation(*scale, *rotation, *translation);
+            if matrix_is_finite(matrix) {
+                (
+                    SkeletonNodeLocalRestMeasurements::Trs {
+                        translation_m: translation.to_array(),
+                        rotation_xyzw: rotation.to_array(),
+                        scale: scale.to_array(),
+                    },
+                    Some(matrix),
+                )
+            } else {
+                (
+                    SkeletonNodeLocalRestMeasurements::Unavailable {
+                        reason: SkeletonNodeLocalRestUnavailableReason::NonFiniteTransform,
+                    },
+                    None,
+                )
+            }
+        }
+        SourceNodeLocalRest::Matrix(matrix) if matrix_is_finite(*matrix) => (
+            SkeletonNodeLocalRestMeasurements::Matrix {
+                matrix: matrix_to_columns(*matrix),
+            },
+            Some(*matrix),
+        ),
+        _ => (
+            SkeletonNodeLocalRestMeasurements::Unavailable {
+                reason: SkeletonNodeLocalRestUnavailableReason::NonFiniteTransform,
+            },
+            None,
+        ),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RestWorldVisit {
+    Visiting,
+    Done,
+}
+
+fn source_rest_world(
+    node_index: usize,
+    source_nodes: &BTreeMap<usize, (&crate::model::SourceNodeAsset, Option<Mat4>)>,
+    visits: &mut BTreeMap<usize, RestWorldVisit>,
+    worlds: &mut BTreeMap<usize, Result<Mat4, SkeletonRestWorldMatrixUnavailableReason>>,
+) -> Result<Mat4, SkeletonRestWorldMatrixUnavailableReason> {
+    if let Some(result) = worlds.get(&node_index) {
+        return *result;
+    }
+    if visits.get(&node_index) == Some(&RestWorldVisit::Visiting) {
+        return Err(SkeletonRestWorldMatrixUnavailableReason::ParentCycle);
+    }
+    let Some((node, local)) = source_nodes.get(&node_index) else {
+        return Err(SkeletonRestWorldMatrixUnavailableReason::MissingParentNode);
+    };
+    let Some(local) = *local else {
+        let result = Err(SkeletonRestWorldMatrixUnavailableReason::NonFiniteLocalRest);
+        worlds.insert(node_index, result);
+        visits.insert(node_index, RestWorldVisit::Done);
+        return result;
+    };
+    visits.insert(node_index, RestWorldVisit::Visiting);
+    let result = match node.parent_source_node_index {
+        None => Ok(local),
+        Some(parent) => source_rest_world(parent, source_nodes, visits, worlds)
+            .map_err(|_| SkeletonRestWorldMatrixUnavailableReason::ParentRestWorldUnavailable)
+            .map(|parent_world| parent_world * local),
+    }
+    .and_then(|world| {
+        matrix_is_finite(world)
+            .then_some(world)
+            .ok_or(SkeletonRestWorldMatrixUnavailableReason::NonFiniteWorldMatrix)
+    });
+    visits.insert(node_index, RestWorldVisit::Done);
+    worlds.insert(node_index, result);
+    result
+}
+
+fn derived_accessor_unavailable_reason(
+    status: SourceInverseBindAccessorStatus,
+) -> SkinDerivedMatrixUnavailableReason {
+    match status {
+        SourceInverseBindAccessorStatus::Absent => {
+            SkinDerivedMatrixUnavailableReason::InverseBindAccessorAbsent
+        }
+        SourceInverseBindAccessorStatus::EmptyAccessor => {
+            SkinDerivedMatrixUnavailableReason::InverseBindAccessorEmpty
+        }
+        SourceInverseBindAccessorStatus::CountMismatch => {
+            SkinDerivedMatrixUnavailableReason::InverseBindAccessorCountMismatch
+        }
+        SourceInverseBindAccessorStatus::Unreadable => {
+            SkinDerivedMatrixUnavailableReason::InverseBindAccessorUnreadable
+        }
+        SourceInverseBindAccessorStatus::Available => {
+            SkinDerivedMatrixUnavailableReason::InverseBindAccessorCountMismatch
+        }
+    }
+}
+
+fn invertible_matrix(matrix: Mat4) -> Option<Mat4> {
+    let determinant = matrix.determinant();
+    if !determinant.is_finite() || determinant == 0.0 {
+        return None;
+    }
+    let inverse = matrix.inverse();
+    matrix_is_finite(inverse).then_some(inverse)
+}
+
+fn unavailable_derived_matrix(
+    joint_index: usize,
+    reason: SkinDerivedMatrixUnavailableReason,
+) -> SkinDerivedMatrixMeasurements {
+    SkinDerivedMatrixMeasurements {
+        joint_index,
+        matrix: None,
+        unavailable_reason: Some(reason),
+    }
+}
+
+fn available_derived_matrix(joint_index: usize, matrix: Mat4) -> SkinDerivedMatrixMeasurements {
+    SkinDerivedMatrixMeasurements {
+        joint_index,
+        matrix: Some(matrix_to_columns(matrix)),
+        unavailable_reason: None,
+    }
+}
+
+fn measure_source_skeleton(
+    doc: &Document,
+) -> (
+    SkeletonSourceCoverage,
+    Vec<SkeletonNodeMeasurements>,
+    Vec<SkinMeasurements>,
+) {
+    let source = &doc.assets.source_skeleton;
+    if source.coverage == SourceSkeletonCoverage::Unavailable {
+        return (SourceSkeletonCoverage::Unavailable, Vec::new(), Vec::new());
+    }
+
+    let mut bone_to_source = BTreeMap::new();
+    let mut source_nodes = BTreeMap::new();
+    for node in &source.nodes {
+        if node.bone >= doc.skeleton.bones.len()
+            || bone_to_source
+                .insert(node.bone, node.source_node_index)
+                .is_some()
+        {
+            return (SourceSkeletonCoverage::Unavailable, Vec::new(), Vec::new());
+        }
+        let (_, local) = source_local_rest_measurement(&node.local_rest);
+        if source_nodes
+            .insert(node.source_node_index, (node, local))
+            .is_some()
+        {
+            return (SourceSkeletonCoverage::Unavailable, Vec::new(), Vec::new());
+        }
+    }
+    for skin in &source.skins {
+        if skin
+            .joints
+            .iter()
+            .any(|joint| !bone_to_source.contains_key(joint))
+            || skin
+                .skeleton_root
+                .is_some_and(|root| !bone_to_source.contains_key(&root))
+            || skin.attachments.iter().any(|attachment| {
+                !source_nodes.contains_key(&attachment.source_node_index)
+                    || bone_to_source.get(&attachment.bone) != Some(&attachment.source_node_index)
+            })
+        {
+            return (SourceSkeletonCoverage::Unavailable, Vec::new(), Vec::new());
+        }
+    }
+
+    let mut visits = BTreeMap::new();
+    let mut worlds = BTreeMap::new();
+    for node in &source.nodes {
+        let _ = source_rest_world(
+            node.source_node_index,
+            &source_nodes,
+            &mut visits,
+            &mut worlds,
+        );
+    }
+    let mut scene_roots: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for scene in &doc.assets.scenes {
+        for root in &scene.roots {
+            if let Some(source_node_index) = bone_to_source.get(root) {
+                scene_roots
+                    .entry(*source_node_index)
+                    .or_default()
+                    .push(scene.source_scene_index);
+            }
+        }
+    }
+    for scene_indices in scene_roots.values_mut() {
+        scene_indices.sort_unstable();
+        scene_indices.dedup();
+    }
+    let skeleton_nodes = source
+        .nodes
+        .iter()
+        .map(|node| {
+            let (local_rest, _) = source_local_rest_measurement(&node.local_rest);
+            let world = worlds.get(&node.source_node_index).copied().unwrap_or(Err(
+                SkeletonRestWorldMatrixUnavailableReason::MissingParentNode,
+            ));
+            let (rest_world_matrix, rest_world_matrix_unavailable_reason) = match world {
+                Ok(matrix) => (Some(matrix_to_columns(matrix)), None),
+                Err(reason) => (None, Some(reason)),
+            };
+            SkeletonNodeMeasurements {
+                node_index: node.source_node_index,
+                name: node.name.clone(),
+                parent_node_index: node.parent_source_node_index,
+                scene_root_indices: scene_roots
+                    .remove(&node.source_node_index)
+                    .unwrap_or_default(),
+                local_rest,
+                rest_world_matrix,
+                rest_world_matrix_unavailable_reason,
+            }
+        })
+        .collect();
+
+    let skins = source
+        .skins
+        .iter()
+        .map(|skin| {
+            let all_raw_finite = skin
+                .inverse_bind_accessor
+                .matrices
+                .iter()
+                .all(|matrix| matrix_is_finite(*matrix));
+            let status = if all_raw_finite {
+                skin.inverse_bind_accessor.status
+            } else {
+                SourceInverseBindAccessorStatus::Unreadable
+            };
+            let raw_matrices = if all_raw_finite {
+                skin.inverse_bind_accessor
+                    .matrices
+                    .iter()
+                    .copied()
+                    .map(matrix_to_columns)
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let inverse_bind_accessor = SkinInverseBindAccessorMeasurements {
+                status,
+                declared_count: skin.inverse_bind_accessor.declared_count,
+                matrices: raw_matrices,
+            };
+            let joints = skin
+                .joints
+                .iter()
+                .enumerate()
+                .map(|(joint_index, bone)| SkinJointMeasurements {
+                    joint_index,
+                    node_index: bone_to_source[bone],
+                })
+                .collect::<Vec<_>>();
+            let mut joint_bind_to_mesh_matrices = Vec::with_capacity(joints.len());
+            let mut mesh_bind_world_matrices = Vec::with_capacity(joints.len());
+            for (joint_index, joint) in joints.iter().enumerate() {
+                let unavailable = match status {
+                    SourceInverseBindAccessorStatus::Available
+                    | SourceInverseBindAccessorStatus::CountMismatch => None,
+                    other => Some(derived_accessor_unavailable_reason(other)),
+                };
+                let Some(raw) = unavailable.map_or_else(
+                    || {
+                        skin.inverse_bind_accessor
+                            .matrices
+                            .get(joint_index)
+                            .copied()
+                    },
+                    |_| None,
+                ) else {
+                    let reason = unavailable.unwrap_or_else(|| {
+                        derived_accessor_unavailable_reason(
+                            SourceInverseBindAccessorStatus::CountMismatch,
+                        )
+                    });
+                    joint_bind_to_mesh_matrices
+                        .push(unavailable_derived_matrix(joint_index, reason));
+                    mesh_bind_world_matrices.push(unavailable_derived_matrix(joint_index, reason));
+                    continue;
+                };
+                let Some(inverse) = invertible_matrix(raw) else {
+                    joint_bind_to_mesh_matrices.push(unavailable_derived_matrix(
+                        joint_index,
+                        SkinDerivedMatrixUnavailableReason::InverseBindMatrixNonInvertible,
+                    ));
+                    let world = worlds.get(&joint.node_index).copied().unwrap_or(Err(
+                        SkeletonRestWorldMatrixUnavailableReason::MissingParentNode,
+                    ));
+                    mesh_bind_world_matrices.push(match world {
+                        Ok(world) => {
+                            let matrix = world * raw;
+                            matrix_is_finite(matrix).then_some(()).map_or_else(
+                                || {
+                                    unavailable_derived_matrix(
+                                        joint_index,
+                                        SkinDerivedMatrixUnavailableReason::NonFiniteDerivedMatrix,
+                                    )
+                                },
+                                |_| available_derived_matrix(joint_index, matrix),
+                            )
+                        }
+                        Err(_) => unavailable_derived_matrix(
+                            joint_index,
+                            SkinDerivedMatrixUnavailableReason::JointRestWorldUnavailable,
+                        ),
+                    });
+                    continue;
+                };
+                joint_bind_to_mesh_matrices.push(available_derived_matrix(joint_index, inverse));
+                let world = worlds.get(&joint.node_index).copied().unwrap_or(Err(
+                    SkeletonRestWorldMatrixUnavailableReason::MissingParentNode,
+                ));
+                mesh_bind_world_matrices.push(match world {
+                    Ok(world) => {
+                        let matrix = world * raw;
+                        matrix_is_finite(matrix).then_some(()).map_or_else(
+                            || {
+                                unavailable_derived_matrix(
+                                    joint_index,
+                                    SkinDerivedMatrixUnavailableReason::NonFiniteDerivedMatrix,
+                                )
+                            },
+                            |_| available_derived_matrix(joint_index, matrix),
+                        )
+                    }
+                    Err(_) => unavailable_derived_matrix(
+                        joint_index,
+                        SkinDerivedMatrixUnavailableReason::JointRestWorldUnavailable,
+                    ),
+                });
+            }
+            SkinMeasurements {
+                skin_index: skin.source_skin_index,
+                name: skin.name.clone(),
+                skeleton_root_node_index: skin
+                    .skeleton_root
+                    .and_then(|root| bone_to_source.get(&root).copied()),
+                joints,
+                inverse_bind_accessor,
+                attachments: skin
+                    .attachments
+                    .iter()
+                    .map(|attachment| SkinAttachmentMeasurements {
+                        node_index: attachment.source_node_index,
+                        mesh_index: attachment.source_mesh_index,
+                    })
+                    .collect(),
+                joint_bind_to_mesh_matrices,
+                mesh_bind_world_matrices,
+            }
+        })
+        .collect();
+    (SourceSkeletonCoverage::Complete, skeleton_nodes, skins)
+}
+
 fn transformed_definition_aabb(
     mesh: &MeshAsset,
     world: Mat4,
@@ -422,6 +1014,7 @@ impl NodeAggregate {
 /// Non-finite geometry never reaches JSON; non-finite effective transforms and
 /// skinned instances are represented by typed unavailability reasons.
 pub fn measure_assets(doc: &Document) -> AssetMeasurements {
+    let (skeleton_source_coverage, skeleton_nodes, skins) = measure_source_skeleton(doc);
     let material_resource_coverage = doc.assets.material_resources.coverage;
     let material_definitions = doc
         .assets
@@ -581,6 +1174,9 @@ pub fn measure_assets(doc: &Document) -> AssetMeasurements {
         material_definitions,
         textures,
         images,
+        skeleton_source_coverage,
+        skeleton_nodes,
+        skins,
         mesh_definitions,
         node_instances,
         scenes,
@@ -709,10 +1305,13 @@ mod tests {
     use super::*;
     use crate::model::{
         AdditionalInfluenceSet, Bone, Clip, Document, Interpolation, MeshAsset, Primitive,
-        Property, SceneAssets, Skeleton, Track, TrackValues, Transform,
+        Property, SceneAsset, SceneAssets, Skeleton, SourceInverseBindAccessor,
+        SourceInverseBindAccessorStatus, SourceNodeAsset, SourceNodeLocalRest,
+        SourceSkeletonAssets, SourceSkeletonCoverage, SourceSkinAsset, SourceSkinAttachment, Track,
+        TrackValues, Transform,
     };
     use crate::profile::Role;
-    use glam::{Quat, Vec3};
+    use glam::{Mat4, Quat, Vec3};
 
     fn mesh(name: &str, primitives: Vec<Primitive>) -> MeshDefinitionMeasurements {
         let doc = Document {
@@ -727,6 +1326,146 @@ mod tests {
             ..Document::default()
         };
         measure_assets(&doc).mesh_definitions.remove(0)
+    }
+
+    #[test]
+    fn source_skeleton_measurement_preserves_source_order_and_bind_domains() {
+        // Source order deliberately puts the child before its parent. Core FK
+        // order remains parent-before-child, so rest-world composition must
+        // follow source parent identities rather than array position.
+        let skeleton = Skeleton {
+            bones: vec![
+                Bone {
+                    name: "root".into(),
+                    parent: None,
+                    rest: Transform {
+                        translation: Vec3::new(10.0, 0.0, 0.0),
+                        ..Transform::IDENTITY
+                    },
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "joint".into(),
+                    parent: Some(0),
+                    rest: Transform {
+                        translation: Vec3::new(2.0, 0.0, 0.0),
+                        ..Transform::IDENTITY
+                    },
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "mesh".into(),
+                    parent: Some(0),
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+            ],
+        };
+        let doc = Document {
+            skeleton,
+            assets: SceneAssets {
+                scenes: vec![SceneAsset {
+                    source_scene_index: 4,
+                    name: None,
+                    roots: vec![0],
+                }],
+                source_skeleton: SourceSkeletonAssets {
+                    coverage: SourceSkeletonCoverage::Complete,
+                    nodes: vec![
+                        SourceNodeAsset {
+                            source_node_index: 0,
+                            name: Some("joint".into()),
+                            parent_source_node_index: Some(1),
+                            local_rest: SourceNodeLocalRest::Trs {
+                                translation: Vec3::new(2.0, 0.0, 0.0),
+                                rotation: Quat::IDENTITY,
+                                scale: Vec3::ONE,
+                            },
+                            bone: 1,
+                        },
+                        SourceNodeAsset {
+                            source_node_index: 1,
+                            name: Some("root".into()),
+                            parent_source_node_index: None,
+                            local_rest: SourceNodeLocalRest::Trs {
+                                translation: Vec3::new(10.0, 0.0, 0.0),
+                                rotation: Quat::IDENTITY,
+                                scale: Vec3::ONE,
+                            },
+                            bone: 0,
+                        },
+                        SourceNodeAsset {
+                            source_node_index: 2,
+                            name: Some("mesh".into()),
+                            parent_source_node_index: Some(1),
+                            local_rest: SourceNodeLocalRest::Matrix(Mat4::IDENTITY),
+                            bone: 2,
+                        },
+                    ],
+                    skins: vec![SourceSkinAsset {
+                        source_skin_index: 0,
+                        name: Some("skin".into()),
+                        skeleton_root: Some(0),
+                        joints: vec![1],
+                        inverse_bind_accessor: SourceInverseBindAccessor {
+                            status: SourceInverseBindAccessorStatus::Available,
+                            declared_count: Some(2),
+                            matrices: vec![
+                                Mat4::from_translation(Vec3::new(-12.0, 0.0, 0.0)),
+                                Mat4::IDENTITY,
+                            ],
+                        },
+                        attachments: vec![SourceSkinAttachment {
+                            source_node_index: 2,
+                            bone: 2,
+                            source_mesh_index: Some(7),
+                        }],
+                    }],
+                },
+                ..SceneAssets::default()
+            },
+            ..Document::default()
+        };
+
+        let measured = measure_assets(&doc);
+        assert_eq!(
+            measured.skeleton_source_coverage,
+            SourceSkeletonCoverage::Complete
+        );
+        assert_eq!(
+            measured
+                .skeleton_nodes
+                .iter()
+                .map(|node| node.node_index)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+        assert_eq!(measured.skeleton_nodes[0].parent_node_index, Some(1));
+        assert_eq!(measured.skeleton_nodes[1].scene_root_indices, vec![4]);
+        assert_eq!(
+            measured.skeleton_nodes[0]
+                .rest_world_matrix
+                .expect("finite child rest world")[12],
+            12.0
+        );
+        let skin = &measured.skins[0];
+        assert_eq!(skin.skeleton_root_node_index, Some(1));
+        assert_eq!(
+            skin.inverse_bind_accessor.matrices.len(),
+            2,
+            "extra raw IBM survives"
+        );
+        assert_eq!(skin.attachments[0].node_index, 2);
+        assert_eq!(skin.attachments[0].mesh_index, Some(7));
+        assert_eq!(skin.joint_bind_to_mesh_matrices.len(), 1);
+        assert_eq!(
+            skin.joint_bind_to_mesh_matrices[0].matrix.unwrap()[12],
+            12.0
+        );
+        assert_eq!(
+            skin.mesh_bind_world_matrices[0].matrix.unwrap(),
+            Mat4::IDENTITY.to_cols_array()
+        );
     }
 
     #[test]

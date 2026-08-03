@@ -4,6 +4,7 @@ use animsmith_core::check::{Check, CheckCtx};
 use animsmith_core::config::{CheckSettings, SeveritySetting};
 use animsmith_core::measure::{
     AssetMeasurements, ClipMeasurements, ImageMeasurements, MeshDefinitionMeasurements,
+    SkinDerivedMatrixUnavailableReason,
 };
 use animsmith_core::{
     Bone, CheckEvaluation, CheckOutput, CheckSelection, Config, CoverageGap, CoverageGapCode,
@@ -13,7 +14,8 @@ use animsmith_core::{
     MeasureFileReport, MeasurementContract, MeasurementContractError, MeasurementFileError,
     MeasurementReportError, MeasurementReportFile, MeasurementReportInput, MetricGrids,
     OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, ResolvedRoles, RigInfo, RigInfoError, Role, Severity,
-    ToolInfo, ToolSource, Transform, evaluate_checks,
+    SourceInverseBindAccessorStatus, SourceSkeletonCoverage, ToolInfo, ToolSource, Transform,
+    evaluate_checks,
 };
 
 fn tool() -> ToolInfo {
@@ -175,6 +177,9 @@ fn current_measure_report() -> serde_json::Value {
                 "material_definitions": [],
                 "textures": [],
                 "images": [],
+                "skeleton_source_coverage": "unavailable",
+                "skeleton_nodes": [],
+                "skins": [],
                 "mesh_definitions": [],
                 "node_instances": [],
                 "scenes": [],
@@ -415,6 +420,9 @@ fn measurement_report_input_rejects_inconsistent_static_node_and_scene_evidence(
         "material_definitions": [],
         "textures": [],
         "images": [],
+        "skeleton_source_coverage": "unavailable",
+        "skeleton_nodes": [],
+        "skins": [],
         "mesh_definitions": [{
             "mesh_index": 0,
             "name": "mesh",
@@ -540,6 +548,9 @@ fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
                 "material_definitions": [],
                 "textures": [],
                 "images": [],
+                "skeleton_source_coverage": "unavailable",
+                "skeleton_nodes": [],
+                "skins": [],
                 "mesh_definitions": [],
                 "node_instances": [],
                 "scenes": [],
@@ -555,6 +566,9 @@ fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
                 "material_definitions": [],
                 "textures": [],
                 "images": [],
+                "skeleton_source_coverage": "unavailable",
+                "skeleton_nodes": [],
+                "skins": [],
                 "mesh_definitions": [valid_mesh_measurements()],
                 "node_instances": [],
                 "scenes": [],
@@ -570,6 +584,9 @@ fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
                 "material_definitions": [],
                 "textures": [],
                 "images": [],
+                "skeleton_source_coverage": "unavailable",
+                "skeleton_nodes": [],
+                "skins": [],
                 "mesh_definitions": [],
                 "node_instances": [],
                 "scenes": [],
@@ -847,6 +864,95 @@ fn complete_resource_assets() -> AssetMeasurements {
         "mesh_definitions": [], "node_instances": [], "scenes": []
     }))
     .expect("complete material resource fixture")
+}
+
+fn complete_skeleton_assets() -> AssetMeasurements {
+    serde_json::from_value(serde_json::json!({
+        "material_resource_coverage": "unavailable",
+        "material_definitions": [], "textures": [], "images": [],
+        "skeleton_source_coverage": "complete",
+        "skeleton_nodes": [{
+            "node_index": 0,
+            "scene_root_indices": [],
+            "local_rest": {
+                "kind": "trs",
+                "translation_m": [0.0, 0.0, 0.0],
+                "rotation_xyzw": [0.0, 0.0, 0.0, 1.0],
+                "scale": [1.0, 1.0, 1.0]
+            },
+            "rest_world_matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+        }],
+        "skins": [{
+            "skin_index": 0,
+            "joints": [{ "joint_index": 0, "node_index": 0 }],
+            "inverse_bind_accessor": {
+                "status": "available", "declared_count": 1,
+                "matrices": [[1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]]
+            },
+            "attachments": [{ "node_index": 0 }],
+            "joint_bind_to_mesh_matrices": [{ "joint_index": 0, "matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0] }],
+            "mesh_bind_world_matrices": [{ "joint_index": 0, "matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0] }]
+        }],
+        "mesh_definitions": [], "node_instances": [], "scenes": []
+    }))
+    .expect("complete skeleton fixture")
+}
+
+#[test]
+fn measurement_contract_rejects_inconsistent_skeleton_source_evidence() {
+    let invalid = |mutate: &dyn Fn(&mut AssetMeasurements), path: &str, reason: &str| {
+        let mut assets = complete_skeleton_assets();
+        mutate(&mut assets);
+        assert_eq!(
+            MeasurementContract::new(BTreeMap::new(), assets)
+                .expect_err("invalid skeleton evidence"),
+            MeasurementContractError::InvalidStructure {
+                path: path.into(),
+                reason: reason.into(),
+            }
+        );
+    };
+    invalid(
+        &|assets| {
+            let duplicate = assets.skins[0].attachments[0].clone();
+            assets.skins[0].attachments.push(duplicate);
+        },
+        "skins[0].attachments[1].node_index",
+        "attachment node_index values must be strictly increasing and unique",
+    );
+    invalid(
+        &|assets| {
+            assets.skins[0].inverse_bind_accessor.status =
+                SourceInverseBindAccessorStatus::Unreadable;
+            assets.skins[0].inverse_bind_accessor.declared_count = None;
+            assets.skins[0].inverse_bind_accessor.matrices.clear();
+        },
+        "skins[0].inverse_bind_accessor",
+        "an unreadable declared inverse-bind accessor retains its count but cannot serialize raw matrices",
+    );
+    invalid(
+        &|assets| {
+            assets.skins[0].joint_bind_to_mesh_matrices[0].matrix = None;
+            assets.skins[0].joint_bind_to_mesh_matrices[0].unavailable_reason =
+                Some(SkinDerivedMatrixUnavailableReason::InverseBindAccessorAbsent);
+        },
+        "skins[0].joint_bind_to_mesh_matrices[0].unavailable_reason",
+        "a usable inverse-bind matrix cannot be reported as accessor-unavailable",
+    );
+    invalid(
+        &|assets| {
+            assets.skins[0].mesh_bind_world_matrices.clear();
+        },
+        "skins[0].mesh_bind_world_matrices",
+        "derived bind-domain matrices must have exactly one row per joint",
+    );
+    invalid(
+        &|assets| {
+            assets.skeleton_source_coverage = SourceSkeletonCoverage::Unavailable;
+        },
+        "skeleton_source_coverage",
+        "unavailable skeleton source coverage requires empty skeleton_nodes and skins arrays",
+    );
 }
 
 #[test]

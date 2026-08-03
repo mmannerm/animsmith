@@ -14,9 +14,13 @@ use crate::evaluation::{
 };
 use crate::measure::{
     Aabb, AssetMeasurements, ClipMeasurements, ImageMeasurements, MaterialDefinitionMeasurements,
-    TextureMeasurements,
+    SkeletonNodeLocalRestMeasurements, SkinDerivedMatrixMeasurements,
+    SkinDerivedMatrixUnavailableReason, TextureMeasurements,
 };
-use crate::model::{DecodedImageColorType, MaterialResourceCoverage};
+use crate::model::{
+    DecodedImageColorType, MaterialResourceCoverage, SourceInverseBindAccessorStatus,
+    SourceSkeletonCoverage,
+};
 use crate::profile::ResolvedRoles;
 use crate::{Document, Severity};
 
@@ -25,9 +29,9 @@ pub const OUTPUT_SCHEMA_VERSION: u32 = 2;
 /// Immutable identity of the current outer result envelope.
 pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:2";
 /// Current nested measurement-contract version.
-pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 4;
+pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 5;
 /// Immutable identity of the current nested measurement contract.
-pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:4";
+pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:5";
 
 /// Source checkout identity for the producing animsmith build.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -425,7 +429,361 @@ fn validate_measurements(
             "default_scene_index must reference a declared scene",
         ));
     }
+    validate_skeleton_measurements(assets, &invalid)?;
     validate_material_resources(assets, &invalid)?;
+    Ok(())
+}
+
+fn validate_skeleton_measurements(
+    assets: &AssetMeasurements,
+    invalid: &impl Fn(String, &str) -> MeasurementContractError,
+) -> Result<(), MeasurementContractError> {
+    if assets.skeleton_source_coverage == SourceSkeletonCoverage::Unavailable {
+        if !assets.skeleton_nodes.is_empty() || !assets.skins.is_empty() {
+            return Err(invalid(
+                "skeleton_source_coverage".into(),
+                "unavailable skeleton source coverage requires empty skeleton_nodes and skins arrays",
+            ));
+        }
+        return Ok(());
+    }
+
+    let finite_matrix = |matrix: &[f32; 16], path: &str| {
+        for (component, value) in matrix.iter().enumerate() {
+            if !value.is_finite() {
+                return Err(MeasurementContractError::NonFiniteValue {
+                    path: format!("{path}[{component}]"),
+                });
+            }
+        }
+        Ok(())
+    };
+    let mut node_indices = BTreeSet::new();
+    for (offset, node) in assets.skeleton_nodes.iter().enumerate() {
+        if node.node_index != offset {
+            return Err(invalid(
+                format!("skeleton_nodes[{offset}].node_index"),
+                "node_index must be contiguous and match source order",
+            ));
+        }
+        node_indices.insert(node.node_index);
+        match &node.local_rest {
+            SkeletonNodeLocalRestMeasurements::Trs {
+                translation_m,
+                rotation_xyzw,
+                scale,
+            } => {
+                for (field, values) in [
+                    ("translation_m", translation_m.as_slice()),
+                    ("rotation_xyzw", rotation_xyzw.as_slice()),
+                    ("scale", scale.as_slice()),
+                ] {
+                    for (component, value) in values.iter().enumerate() {
+                        if !value.is_finite() {
+                            return Err(MeasurementContractError::NonFiniteValue {
+                                path: format!(
+                                    "skeleton_nodes[{offset}].local_rest.{field}[{component}]"
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
+            SkeletonNodeLocalRestMeasurements::Matrix { matrix } => finite_matrix(
+                matrix,
+                &format!("skeleton_nodes[{offset}].local_rest.matrix"),
+            )?,
+            SkeletonNodeLocalRestMeasurements::Unavailable { .. } => {}
+        }
+        match (
+            node.rest_world_matrix.as_ref(),
+            node.rest_world_matrix_unavailable_reason,
+        ) {
+            (Some(matrix), None) => finite_matrix(
+                matrix,
+                &format!("skeleton_nodes[{offset}].rest_world_matrix"),
+            )?,
+            (None, Some(_)) => {}
+            (Some(_), Some(_)) => {
+                return Err(invalid(
+                    format!("skeleton_nodes[{offset}]"),
+                    "an available rest_world_matrix cannot have an unavailable reason",
+                ));
+            }
+            (None, None) => {
+                return Err(invalid(
+                    format!("skeleton_nodes[{offset}]"),
+                    "a missing rest_world_matrix requires an unavailable reason",
+                ));
+            }
+        }
+    }
+    for (offset, node) in assets.skeleton_nodes.iter().enumerate() {
+        if let Some(parent) = node.parent_node_index
+            && !node_indices.contains(&parent)
+        {
+            return Err(invalid(
+                format!("skeleton_nodes[{offset}].parent_node_index"),
+                "parent_node_index must reference a skeleton node",
+            ));
+        }
+        let mut previous_scene = None;
+        for (scene_offset, scene_index) in node.scene_root_indices.iter().enumerate() {
+            if !assets
+                .scenes
+                .iter()
+                .any(|scene| scene.scene_index == *scene_index)
+            {
+                return Err(invalid(
+                    format!("skeleton_nodes[{offset}].scene_root_indices[{scene_offset}]"),
+                    "scene_root_indices values must reference declared scenes",
+                ));
+            }
+            if previous_scene.is_some_and(|previous| previous >= *scene_index) {
+                return Err(invalid(
+                    format!("skeleton_nodes[{offset}].scene_root_indices[{scene_offset}]"),
+                    "scene_root_indices values must be strictly increasing and unique",
+                ));
+            }
+            previous_scene = Some(*scene_index);
+        }
+    }
+    for node in &assets.skeleton_nodes {
+        let mut ancestors = BTreeSet::new();
+        let mut current = Some(node.node_index);
+        while let Some(node_index) = current {
+            if !ancestors.insert(node_index) {
+                return Err(invalid(
+                    format!("skeleton_nodes[{}].parent_node_index", node.node_index),
+                    "source node parent graph must be acyclic",
+                ));
+            }
+            current = assets
+                .skeleton_nodes
+                .get(node_index)
+                .and_then(|ancestor| ancestor.parent_node_index);
+        }
+    }
+
+    for (offset, skin) in assets.skins.iter().enumerate() {
+        if skin.skin_index != offset {
+            return Err(invalid(
+                format!("skins[{offset}].skin_index"),
+                "skin_index must be contiguous and match source order",
+            ));
+        }
+        if let Some(root) = skin.skeleton_root_node_index
+            && !node_indices.contains(&root)
+        {
+            return Err(invalid(
+                format!("skins[{offset}].skeleton_root_node_index"),
+                "skeleton_root_node_index must reference a skeleton node",
+            ));
+        }
+        for (joint_offset, joint) in skin.joints.iter().enumerate() {
+            if joint.joint_index != joint_offset {
+                return Err(invalid(
+                    format!("skins[{offset}].joints[{joint_offset}].joint_index"),
+                    "joint_index must be contiguous and match declared skin order",
+                ));
+            }
+            if !node_indices.contains(&joint.node_index) {
+                return Err(invalid(
+                    format!("skins[{offset}].joints[{joint_offset}].node_index"),
+                    "joint node_index must reference a skeleton node",
+                ));
+            }
+        }
+        match skin.inverse_bind_accessor.status {
+            SourceInverseBindAccessorStatus::Absent => {
+                if skin.inverse_bind_accessor.declared_count.is_some()
+                    || !skin.inverse_bind_accessor.matrices.is_empty()
+                {
+                    return Err(invalid(
+                        format!("skins[{offset}].inverse_bind_accessor"),
+                        "an absent inverse-bind accessor has no declared count or matrices",
+                    ));
+                }
+            }
+            SourceInverseBindAccessorStatus::EmptyAccessor => {
+                if skin.inverse_bind_accessor.declared_count != Some(0)
+                    || !skin.inverse_bind_accessor.matrices.is_empty()
+                {
+                    return Err(invalid(
+                        format!("skins[{offset}].inverse_bind_accessor"),
+                        "an empty inverse-bind accessor has declared_count 0 and no matrices",
+                    ));
+                }
+            }
+            SourceInverseBindAccessorStatus::Available => {
+                if skin.inverse_bind_accessor.declared_count
+                    != Some(skin.inverse_bind_accessor.matrices.len())
+                    || skin.inverse_bind_accessor.matrices.len() < skin.joints.len()
+                {
+                    return Err(invalid(
+                        format!("skins[{offset}].inverse_bind_accessor"),
+                        "an available inverse-bind accessor must retain its declared finite matrices and cover every joint",
+                    ));
+                }
+            }
+            SourceInverseBindAccessorStatus::CountMismatch => {
+                if skin.inverse_bind_accessor.declared_count
+                    != Some(skin.inverse_bind_accessor.matrices.len())
+                    || skin.inverse_bind_accessor.matrices.len() >= skin.joints.len()
+                {
+                    return Err(invalid(
+                        format!("skins[{offset}].inverse_bind_accessor"),
+                        "a count-mismatched inverse-bind accessor retains fewer matrices than joints",
+                    ));
+                }
+            }
+            SourceInverseBindAccessorStatus::Unreadable => {
+                if skin.inverse_bind_accessor.declared_count.is_none()
+                    || !skin.inverse_bind_accessor.matrices.is_empty()
+                {
+                    return Err(invalid(
+                        format!("skins[{offset}].inverse_bind_accessor"),
+                        "an unreadable declared inverse-bind accessor retains its count but cannot serialize raw matrices",
+                    ));
+                }
+            }
+        }
+        for (matrix_offset, matrix) in skin.inverse_bind_accessor.matrices.iter().enumerate() {
+            finite_matrix(
+                matrix,
+                &format!("skins[{offset}].inverse_bind_accessor.matrices[{matrix_offset}]"),
+            )?;
+        }
+        let mut previous_attachment_node = None;
+        for (attachment_offset, attachment) in skin.attachments.iter().enumerate() {
+            if !node_indices.contains(&attachment.node_index) {
+                return Err(invalid(
+                    format!("skins[{offset}].attachments[{attachment_offset}].node_index"),
+                    "attachment node_index must reference a skeleton node",
+                ));
+            }
+            if previous_attachment_node.is_some_and(|previous| previous >= attachment.node_index) {
+                return Err(invalid(
+                    format!("skins[{offset}].attachments[{attachment_offset}].node_index"),
+                    "attachment node_index values must be strictly increasing and unique",
+                ));
+            }
+            previous_attachment_node = Some(attachment.node_index);
+        }
+        validate_skin_derived_matrices(
+            &skin.joint_bind_to_mesh_matrices,
+            skin.joints.len(),
+            &format!("skins[{offset}].joint_bind_to_mesh_matrices"),
+            &finite_matrix,
+            invalid,
+        )?;
+        validate_skin_derived_matrices(
+            &skin.mesh_bind_world_matrices,
+            skin.joints.len(),
+            &format!("skins[{offset}].mesh_bind_world_matrices"),
+            &finite_matrix,
+            invalid,
+        )?;
+        validate_derived_reason_compatibility(skin, offset, invalid)?;
+    }
+    Ok(())
+}
+
+fn validate_derived_reason_compatibility(
+    skin: &crate::measure::SkinMeasurements,
+    skin_offset: usize,
+    invalid: &impl Fn(String, &str) -> MeasurementContractError,
+) -> Result<(), MeasurementContractError> {
+    for joint_index in 0..skin.joints.len() {
+        let requires_accessor_reason = match skin.inverse_bind_accessor.status {
+            SourceInverseBindAccessorStatus::Absent => {
+                Some(SkinDerivedMatrixUnavailableReason::InverseBindAccessorAbsent)
+            }
+            SourceInverseBindAccessorStatus::EmptyAccessor => {
+                Some(SkinDerivedMatrixUnavailableReason::InverseBindAccessorEmpty)
+            }
+            SourceInverseBindAccessorStatus::Unreadable => {
+                Some(SkinDerivedMatrixUnavailableReason::InverseBindAccessorUnreadable)
+            }
+            SourceInverseBindAccessorStatus::CountMismatch
+                if joint_index >= skin.inverse_bind_accessor.matrices.len() =>
+            {
+                Some(SkinDerivedMatrixUnavailableReason::InverseBindAccessorCountMismatch)
+            }
+            SourceInverseBindAccessorStatus::Available
+            | SourceInverseBindAccessorStatus::CountMismatch => None,
+        };
+        for (field, rows) in [
+            (
+                "joint_bind_to_mesh_matrices",
+                &skin.joint_bind_to_mesh_matrices,
+            ),
+            ("mesh_bind_world_matrices", &skin.mesh_bind_world_matrices),
+        ] {
+            let row = &rows[joint_index];
+            if let Some(expected) = requires_accessor_reason {
+                if row.matrix.is_some() || row.unavailable_reason != Some(expected) {
+                    return Err(invalid(
+                        format!("skins[{skin_offset}].{field}[{joint_index}]"),
+                        "derived rows without a usable inverse bind must carry the matching accessor reason",
+                    ));
+                }
+            } else if matches!(
+                row.unavailable_reason,
+                Some(
+                    SkinDerivedMatrixUnavailableReason::InverseBindAccessorAbsent
+                        | SkinDerivedMatrixUnavailableReason::InverseBindAccessorEmpty
+                        | SkinDerivedMatrixUnavailableReason::InverseBindAccessorCountMismatch
+                        | SkinDerivedMatrixUnavailableReason::InverseBindAccessorUnreadable
+                )
+            ) {
+                return Err(invalid(
+                    format!("skins[{skin_offset}].{field}[{joint_index}].unavailable_reason"),
+                    "a usable inverse-bind matrix cannot be reported as accessor-unavailable",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_skin_derived_matrices(
+    matrices: &[SkinDerivedMatrixMeasurements],
+    joint_count: usize,
+    path: &str,
+    finite_matrix: &impl Fn(&[f32; 16], &str) -> Result<(), MeasurementContractError>,
+    invalid: &impl Fn(String, &str) -> MeasurementContractError,
+) -> Result<(), MeasurementContractError> {
+    if matrices.len() != joint_count {
+        return Err(invalid(
+            path.into(),
+            "derived bind-domain matrices must have exactly one row per joint",
+        ));
+    }
+    for (offset, matrix) in matrices.iter().enumerate() {
+        if matrix.joint_index != offset {
+            return Err(invalid(
+                format!("{path}[{offset}].joint_index"),
+                "joint_index must be contiguous and match declared skin order",
+            ));
+        }
+        match (&matrix.matrix, matrix.unavailable_reason) {
+            (Some(matrix), None) => finite_matrix(matrix, &format!("{path}[{offset}].matrix"))?,
+            (None, Some(_)) => {}
+            (Some(_), Some(_)) => {
+                return Err(invalid(
+                    format!("{path}[{offset}]"),
+                    "an available derived matrix cannot have an unavailable reason",
+                ));
+            }
+            (None, None) => {
+                return Err(invalid(
+                    format!("{path}[{offset}]"),
+                    "a missing derived matrix requires an unavailable reason",
+                ));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -626,6 +984,9 @@ struct MeasurementPayloadInput {
     material_definitions: Option<Vec<MaterialDefinitionMeasurements>>,
     textures: Option<Vec<TextureMeasurements>>,
     images: Option<Vec<ImageMeasurements>>,
+    skeleton_source_coverage: Option<SourceSkeletonCoverage>,
+    skeleton_nodes: Option<Vec<crate::measure::SkeletonNodeMeasurements>>,
+    skins: Option<Vec<crate::measure::SkinMeasurements>>,
     mesh_definitions: Option<Vec<crate::measure::MeshDefinitionMeasurements>>,
     node_instances: Option<Vec<crate::measure::NodeInstanceMeasurements>>,
     scenes: Option<Vec<crate::measure::SceneMeasurements>>,
@@ -738,6 +1099,15 @@ pub enum MeasurementFileError {
     /// The nested contract omitted its image array.
     #[error("measurement contract has no `images` array")]
     MissingImages,
+    /// The nested contract omitted skeleton source coverage.
+    #[error("measurement contract has no `skeleton_source_coverage`")]
+    MissingSkeletonSourceCoverage,
+    /// The nested contract omitted its source skeleton-node array.
+    #[error("measurement contract has no `skeleton_nodes` array")]
+    MissingSkeletonNodes,
+    /// The nested contract omitted its source skin array.
+    #[error("measurement contract has no `skins` array")]
+    MissingSkins,
     /// The nested contract omitted its mesh-definition array.
     #[error("measurement contract has no `mesh_definitions` array")]
     MissingMeshDefinitions,
@@ -869,6 +1239,22 @@ impl MeasurementReportInput {
                 let images = measurements.images.ok_or_else(|| {
                     MeasurementReportError::file(file_index, MeasurementFileError::MissingImages)
                 })?;
+                let skeleton_source_coverage =
+                    measurements.skeleton_source_coverage.ok_or_else(|| {
+                        MeasurementReportError::file(
+                            file_index,
+                            MeasurementFileError::MissingSkeletonSourceCoverage,
+                        )
+                    })?;
+                let skeleton_nodes = measurements.skeleton_nodes.ok_or_else(|| {
+                    MeasurementReportError::file(
+                        file_index,
+                        MeasurementFileError::MissingSkeletonNodes,
+                    )
+                })?;
+                let skins = measurements.skins.ok_or_else(|| {
+                    MeasurementReportError::file(file_index, MeasurementFileError::MissingSkins)
+                })?;
                 let mesh_definitions = measurements.mesh_definitions.ok_or_else(|| {
                     MeasurementReportError::file(
                         file_index,
@@ -889,6 +1275,9 @@ impl MeasurementReportInput {
                     material_definitions,
                     textures,
                     images,
+                    skeleton_source_coverage,
+                    skeleton_nodes,
+                    skins,
                     mesh_definitions,
                     node_instances,
                     scenes,
@@ -931,6 +1320,9 @@ mod measurement_report_input_tests {
                         material_definitions: Some(Vec::new()),
                         textures: Some(Vec::new()),
                         images: Some(Vec::new()),
+                        skeleton_source_coverage: Some(SourceSkeletonCoverage::Unavailable),
+                        skeleton_nodes: Some(Vec::new()),
+                        skins: Some(Vec::new()),
                         mesh_definitions: Some(mesh_definitions),
                         node_instances: Some(Vec::new()),
                         scenes: Some(Vec::new()),

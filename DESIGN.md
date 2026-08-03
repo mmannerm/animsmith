@@ -237,7 +237,7 @@ excluded. The output contract records unavailable static node bounds and scene
 partial coverage rather than serializing non-finite values.
 
 The glTF loader also retains metadata-only presence for secondary
-`JOINTS_n`/`WEIGHTS_n` attributes. Measurement contract v3 aggregates those
+`JOINTS_n`/`WEIGHTS_n` attributes. The measurement contract aggregates those
 independent sides per mesh definition so unsupported or unpaired sets are
 observable without changing the primary four-influence semantics. Secondary
 per-vertex payloads, repair, and writer preservation remain outside the core

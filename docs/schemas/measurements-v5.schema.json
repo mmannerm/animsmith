@@ -1,0 +1,326 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:animsmith:schema:measurements:5",
+  "title": "animsmith measurements v5",
+  "description": "Animation, static scene-bound, source material-resource, and source skeleton/rest-pose measurements shared by measure and lint output.",
+  "type": "object",
+  "required": ["schema_version", "schema", "clips", "material_resource_coverage", "material_definitions", "textures", "images", "mesh_definitions", "node_instances", "scenes", "skeleton_source_coverage", "skeleton_nodes", "skins"],
+  "properties": {
+    "schema_version": { "const": 5 },
+    "schema": { "const": "urn:animsmith:schema:measurements:5" },
+    "clips": { "type": "object", "additionalProperties": { "$ref": "#/$defs/clip_measurements" } },
+    "material_resource_coverage": { "enum": ["complete", "unavailable"] },
+    "material_definitions": { "type": "array", "items": { "$ref": "#/$defs/material_definition" } },
+    "textures": { "type": "array", "items": { "$ref": "#/$defs/texture" } },
+    "images": { "type": "array", "items": { "$ref": "#/$defs/image" } },
+    "mesh_definitions": { "type": "array", "items": { "$ref": "#/$defs/mesh_definition" } },
+    "node_instances": { "type": "array", "items": { "$ref": "#/$defs/node_instance" } },
+    "scenes": { "type": "array", "items": { "$ref": "#/$defs/scene" } },
+    "default_scene_index": { "type": "integer", "minimum": 0 },
+    "skeleton_source_coverage": { "enum": ["complete", "unavailable"] },
+    "skeleton_nodes": { "type": "array", "items": { "$ref": "#/$defs/skeleton_node" } },
+    "skins": { "type": "array", "items": { "$ref": "#/$defs/skin" } }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "material_resource_coverage": { "const": "unavailable" } }, "required": ["material_resource_coverage"] },
+      "then": {
+        "properties": {
+          "material_definitions": { "maxItems": 0 },
+          "textures": { "maxItems": 0 },
+          "images": { "maxItems": 0 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "skeleton_source_coverage": { "const": "unavailable" } }, "required": ["skeleton_source_coverage"] },
+      "then": {
+        "properties": {
+          "skeleton_nodes": { "maxItems": 0 },
+          "skins": { "maxItems": 0 }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "clip_measurements": {
+      "type": "object",
+      "required": ["duration_s", "frame_count", "animated_bones", "bone_rotation_range_deg"],
+      "properties": {
+        "duration_s": { "type": "number" }, "frame_count": { "type": "integer", "minimum": 0 },
+        "animated_bones": { "type": "array", "items": { "type": "string" } },
+        "bone_rotation_range_deg": { "type": "object", "additionalProperties": { "type": "number" } },
+        "loop_seam_ratio": { "type": "number" },
+        "gait": { "type": "object", "required": ["lr_amplitude_m"], "properties": { "phase": { "type": "number" }, "lr_amplitude_m": { "type": "number" } }, "additionalProperties": false },
+        "speed_mps": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "mesh_definition": {
+      "type": "object",
+      "required": ["mesh_index", "name", "vertex_count", "max_joints_per_vertex", "additional_influence_sets"],
+      "properties": {
+        "mesh_index": { "type": "integer", "minimum": 0 }, "name": { "type": "string" },
+        "vertex_count": { "type": "integer", "minimum": 0 }, "geometry_aabb": { "$ref": "#/$defs/aabb" },
+        "max_joints_per_vertex": { "type": "integer", "minimum": 0 }, "weight_sum_min": { "type": "number" }, "weight_sum_max": { "type": "number" },
+        "additional_influence_sets": { "type": "array", "items": { "$ref": "#/$defs/additional_influence_set" } }
+      },
+      "additionalProperties": false
+    },
+    "additional_influence_set": {
+      "type": "object",
+      "required": ["set_index", "joints_present", "weights_present", "joints_without_weights_present", "weights_without_joints_present"],
+      "properties": {
+        "set_index": { "type": "integer", "minimum": 1 },
+        "joints_present": { "type": "boolean" },
+        "weights_present": { "type": "boolean" },
+        "joints_without_weights_present": { "type": "boolean" },
+        "weights_without_joints_present": { "type": "boolean" }
+      },
+      "anyOf": [
+        { "properties": { "joints_present": { "const": true } } },
+        { "properties": { "weights_present": { "const": true } } }
+      ],
+      "allOf": [
+        {
+          "if": { "properties": { "joints_without_weights_present": { "const": true } } },
+          "then": { "properties": { "joints_present": { "const": true } } }
+        },
+        {
+          "if": { "properties": { "weights_without_joints_present": { "const": true } } },
+          "then": { "properties": { "weights_present": { "const": true } } }
+        },
+        {
+          "if": { "properties": { "joints_present": { "const": true }, "weights_present": { "const": false } } },
+          "then": { "properties": { "joints_without_weights_present": { "const": true } } }
+        },
+        {
+          "if": { "properties": { "weights_present": { "const": true }, "joints_present": { "const": false } } },
+          "then": { "properties": { "weights_without_joints_present": { "const": true } } }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "node_instance": {
+      "type": "object",
+      "required": ["node_index", "node_name", "mesh_index"],
+      "properties": {
+        "node_index": { "type": "integer", "minimum": 0 }, "node_name": { "type": "string" }, "mesh_index": { "type": "integer", "minimum": 0 },
+        "static_node_world_aabb": { "$ref": "#/$defs/aabb" },
+        "static_node_world_aabb_unavailable_reason": { "enum": ["no_finite_positions", "skinned_deformation_excluded", "non_finite_transform"] }
+      },
+      "oneOf": [
+        { "required": ["static_node_world_aabb"], "not": { "required": ["static_node_world_aabb_unavailable_reason"] } },
+        { "required": ["static_node_world_aabb_unavailable_reason"], "not": { "required": ["static_node_world_aabb"] } }
+      ],
+      "additionalProperties": false
+    },
+    "scene": {
+      "type": "object",
+      "required": ["scene_index", "instance_count", "excluded_instance_count"],
+      "properties": {
+        "scene_index": { "type": "integer", "minimum": 0 }, "name": { "type": "string" },
+        "instance_count": { "type": "integer", "minimum": 0 },
+        "static_scene_world_aabb": { "$ref": "#/$defs/aabb" }, "excluded_instance_count": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "material_definition": {
+      "type": "object",
+      "required": ["material_index", "texture_bindings"],
+      "properties": {
+        "material_index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "texture_bindings": { "type": "array", "items": { "$ref": "#/$defs/material_texture_binding" } }
+      },
+      "additionalProperties": false
+    },
+    "material_texture_binding": {
+      "type": "object",
+      "required": ["slot", "texture_index"],
+      "properties": {
+        "slot": { "enum": ["base_color", "normal", "metallic_roughness", "occlusion"] },
+        "texture_index": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "texture": {
+      "type": "object",
+      "required": ["texture_index", "image_index"],
+      "properties": {
+        "texture_index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "image_index": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "image": {
+      "type": "object",
+      "required": ["image_index", "source_kind"],
+      "properties": {
+        "image_index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "source_kind": { "enum": ["embedded", "data_uri", "external"] },
+        "declared_mime_type": { "type": "string" },
+        "detected_container": { "enum": ["png", "jpeg"] },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "channel_count": { "type": "integer", "minimum": 1, "maximum": 4 },
+        "decoded_color_type": { "enum": ["l8", "la8", "rgb8", "rgba8", "l16", "la16", "rgb16", "rgba16"] },
+        "unavailable_reason": { "enum": ["source_unavailable", "invalid_data_uri", "unsupported_container", "decode_failed", "resource_limit"] }
+      },
+      "oneOf": [
+        {
+          "required": ["detected_container", "width", "height", "channel_count", "decoded_color_type"],
+          "not": { "required": ["unavailable_reason"] }
+        },
+        {
+          "required": ["unavailable_reason"],
+          "not": { "anyOf": [
+            { "required": ["width"] }, { "required": ["height"] },
+            { "required": ["channel_count"] }, { "required": ["decoded_color_type"] }
+          ] }
+        }
+      ],
+      "allOf": [
+        {
+          "if": { "properties": { "unavailable_reason": { "const": "decode_failed" } }, "required": ["unavailable_reason"] },
+          "then": { "required": ["detected_container"] }
+        },
+        {
+          "if": { "properties": { "unavailable_reason": { "enum": ["source_unavailable", "invalid_data_uri", "unsupported_container"] } }, "required": ["unavailable_reason"] },
+          "then": { "not": { "required": ["detected_container"] } }
+        },
+        {
+          "if": { "properties": { "decoded_color_type": { "enum": ["l8", "l16"] } }, "required": ["decoded_color_type"] },
+          "then": { "properties": { "channel_count": { "const": 1 } } }
+        },
+        {
+          "if": { "properties": { "decoded_color_type": { "enum": ["la8", "la16"] } }, "required": ["decoded_color_type"] },
+          "then": { "properties": { "channel_count": { "const": 2 } } }
+        },
+        {
+          "if": { "properties": { "decoded_color_type": { "enum": ["rgb8", "rgb16"] } }, "required": ["decoded_color_type"] },
+          "then": { "properties": { "channel_count": { "const": 3 } } }
+        },
+        {
+          "if": { "properties": { "decoded_color_type": { "enum": ["rgba8", "rgba16"] } }, "required": ["decoded_color_type"] },
+          "then": { "properties": { "channel_count": { "const": 4 } } }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "skeleton_node": {
+      "type": "object",
+      "required": ["node_index", "local_rest", "scene_root_indices"],
+      "properties": {
+        "node_index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "parent_node_index": { "type": ["integer", "null"], "minimum": 0 },
+        "scene_root_indices": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+        "local_rest": { "$ref": "#/$defs/local_rest" },
+        "rest_world_matrix": { "$ref": "#/$defs/mat4" },
+        "rest_world_matrix_unavailable_reason": { "enum": ["non_finite_local_rest", "missing_parent_node", "parent_rest_world_unavailable", "parent_cycle", "non_finite_world_matrix"] }
+      },
+      "oneOf": [
+        { "required": ["rest_world_matrix"], "not": { "required": ["rest_world_matrix_unavailable_reason"] } },
+        { "required": ["rest_world_matrix_unavailable_reason"], "not": { "required": ["rest_world_matrix"] } }
+      ],
+      "additionalProperties": false
+    },
+    "local_rest": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["trs", "matrix", "unavailable"] },
+        "translation_m": { "$ref": "#/$defs/vec3" },
+        "rotation_xyzw": { "$ref": "#/$defs/vec4" },
+        "scale": { "$ref": "#/$defs/vec3" },
+        "matrix": { "$ref": "#/$defs/mat4" },
+        "reason": { "const": "non_finite_transform" }
+      },
+      "oneOf": [
+        { "properties": { "kind": { "const": "trs" } }, "required": ["translation_m", "rotation_xyzw", "scale"], "not": { "anyOf": [{ "required": ["matrix"] }, { "required": ["reason"] }] } },
+        { "properties": { "kind": { "const": "matrix" } }, "required": ["matrix"], "not": { "anyOf": [{ "required": ["translation_m"] }, { "required": ["rotation_xyzw"] }, { "required": ["scale"] }, { "required": ["reason"] }] } },
+        { "properties": { "kind": { "const": "unavailable" } }, "required": ["reason"], "not": { "anyOf": [{ "required": ["translation_m"] }, { "required": ["rotation_xyzw"] }, { "required": ["scale"] }, { "required": ["matrix"] }] } }
+      ],
+      "additionalProperties": false
+    },
+    "skin": {
+      "type": "object",
+      "required": ["skin_index", "joints", "inverse_bind_accessor", "attachments", "joint_bind_to_mesh_matrices", "mesh_bind_world_matrices"],
+      "properties": {
+        "skin_index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "skeleton_root_node_index": { "type": "integer", "minimum": 0 },
+        "joints": { "type": "array", "items": { "$ref": "#/$defs/skin_joint" } },
+        "inverse_bind_accessor": { "$ref": "#/$defs/inverse_bind_accessor" },
+        "attachments": { "type": "array", "items": { "$ref": "#/$defs/skin_attachment" } },
+        "joint_bind_to_mesh_matrices": { "type": "array", "items": { "$ref": "#/$defs/derived_bind_matrix" } },
+        "mesh_bind_world_matrices": { "type": "array", "items": { "$ref": "#/$defs/derived_bind_matrix" } }
+      },
+      "additionalProperties": false
+    },
+    "skin_joint": {
+      "type": "object",
+      "required": ["joint_index", "node_index"],
+      "properties": {
+        "joint_index": { "type": "integer", "minimum": 0 },
+        "node_index": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "inverse_bind_accessor": {
+      "type": "object",
+      "required": ["status", "matrices"],
+      "properties": {
+        "status": { "enum": ["absent", "available", "empty_accessor", "count_mismatch", "unreadable"] },
+        "declared_count": { "type": "integer", "minimum": 0 },
+        "matrices": { "type": "array", "items": { "$ref": "#/$defs/mat4" } }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "absent" } }, "required": ["status"] },
+          "then": { "not": { "required": ["declared_count"] } }
+        },
+        {
+          "if": { "properties": { "status": { "const": "available" } }, "required": ["status"] },
+          "then": { "required": ["declared_count", "matrices"] }
+        },
+        {
+          "if": { "properties": { "status": { "enum": ["empty_accessor", "count_mismatch", "unreadable"] } }, "required": ["status"] },
+          "then": { "required": ["declared_count"] }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "skin_attachment": {
+      "type": "object",
+      "required": ["node_index"],
+      "properties": {
+        "node_index": { "type": "integer", "minimum": 0 },
+        "mesh_index": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "derived_bind_matrix": {
+      "type": "object",
+      "required": ["joint_index"],
+      "properties": {
+        "joint_index": { "type": "integer", "minimum": 0 },
+        "matrix": { "$ref": "#/$defs/mat4" },
+        "unavailable_reason": { "enum": ["inverse_bind_accessor_absent", "inverse_bind_accessor_empty", "inverse_bind_accessor_count_mismatch", "inverse_bind_accessor_unreadable", "missing_joint_node", "joint_rest_world_unavailable", "inverse_bind_matrix_non_invertible", "non_finite_derived_matrix"] }
+      },
+      "oneOf": [
+        { "required": ["matrix"], "not": { "required": ["unavailable_reason"] } },
+        { "required": ["unavailable_reason"], "not": { "required": ["matrix"] } }
+      ],
+      "additionalProperties": false
+    },
+    "mat4": { "type": "array", "items": { "type": "number" }, "minItems": 16, "maxItems": 16 },
+    "aabb": { "type": "object", "required": ["min", "max"], "properties": { "min": { "$ref": "#/$defs/vec3" }, "max": { "$ref": "#/$defs/vec3" } }, "additionalProperties": false },
+    "vec3": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+    "vec4": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4 }
+  },
+  "additionalProperties": false
+}

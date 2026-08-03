@@ -7,7 +7,7 @@
 
 use crate::model::{
     Bone, Document, MeshAsset, MeshInstance, Primitive, SceneAsset, SceneAssets, Skeleton,
-    Transform,
+    SourceSkeletonAssets, Transform,
 };
 use glam::{Mat3, Mat4};
 use serde::Serialize;
@@ -340,6 +340,7 @@ pub fn bake_static_mesh_transforms(doc: &Document) -> Result<StaticMeshBake, Sta
                     roots: vec![0],
                 }],
                 default_scene: Some(0),
+                source_skeleton: SourceSkeletonAssets::default(),
             },
             source: doc.source.clone(),
         },

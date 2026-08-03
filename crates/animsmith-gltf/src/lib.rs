@@ -76,8 +76,11 @@ use animsmith_core::model::{
     ImageSourceKind, ImageUnavailableReason, Interpolation, MaterialAsset, MaterialResourceAssets,
     MaterialResourceCoverage, MaterialTextureSlot, MeshAsset, MeshInstance, NormalTextureAsset,
     OcclusionTextureAsset, Primitive, Property, SceneAsset, SceneAssets, Skeleton,
-    SourceImageAsset, SourceImageInspection, SourceInfo, SourceMaterialAsset,
-    SourceMaterialTextureBinding, SourceTextureAsset, TextureAsset, Track, TrackValues, Transform,
+    SourceImageAsset, SourceImageInspection, SourceInfo, SourceInverseBindAccessor,
+    SourceInverseBindAccessorStatus, SourceMaterialAsset, SourceMaterialTextureBinding,
+    SourceNodeAsset, SourceNodeLocalRest, SourceSkeletonAssets, SourceSkeletonCoverage,
+    SourceSkinAsset, SourceSkinAttachment, SourceTextureAsset, TextureAsset, Track, TrackValues,
+    Transform,
 };
 use base64::Engine as _;
 use glam::{Mat4, Quat, Vec3};
@@ -389,10 +392,12 @@ pub fn load(path: &Path) -> Result<Document, LoadError> {
     // asset extraction must agree on which bone each node became, and it is
     // also where malformed graphs are rejected (so that runs once too).
     let topo = topology(&gltf.document)?;
+    let source_skeleton = extract_source_skeleton(&gltf.document, &buffers, &topo);
     let mut doc = build_document(&gltf, &buffers, path, &topo)?;
     doc.assets = extract_assets(&gltf.document, &buffers, path.parent(), &topo.bone_of_node);
     doc.assets.scenes = extract_scenes(&gltf.document, &topo.bone_of_node);
     doc.assets.default_scene = gltf.document.default_scene().map(|scene| scene.index());
+    doc.assets.source_skeleton = source_skeleton;
     Ok(doc)
 }
 
@@ -471,11 +476,16 @@ fn build_document(
         });
     }
 
-    // Inverse bind matrices from skins (last skin wins on conflict).
+    // Existing compatibility representation: one bone can carry only one
+    // inverse bind, so the last source skin wins here. `source_skeleton`
+    // retains the complete per-skin source evidence for measurements.
     for skin in doc.skins() {
         // Skip a count-0 IBM accessor: gltf 1.4's reader underflows and
         // panics iterating one (the same guard the asset path uses).
-        if skin.inverse_bind_matrices().is_none_or(|a| a.count() == 0) {
+        if skin
+            .inverse_bind_matrices()
+            .is_none_or(|accessor| accessor.count() == 0)
+        {
             continue;
         }
         let reader = skin.reader(|buffer| buffers.get(buffer.index()).map(Vec::as_slice));
@@ -708,6 +718,131 @@ fn topology(doc: &gltf::Document) -> Result<Topology, LoadError> {
         parent,
         bone_of_node,
     })
+}
+
+/// Extract source-order skeleton evidence without conflating it with the
+/// parent-before-child core skeleton used for sampling.
+///
+/// This reads every source node and skin, including skin attachments whose
+/// mesh definition is later skipped by the triangle-only asset importer.
+/// Inverse-bind accessor failures are source evidence rather than load errors:
+/// callers can measure a parseable file's incomplete or malformed binding
+/// declaration without silently falling back to a bone-level matrix.
+fn extract_source_skeleton(
+    doc: &gltf::Document,
+    buffers: &[Vec<u8>],
+    topo: &Topology,
+) -> SourceSkeletonAssets {
+    let mut attachments = vec![Vec::new(); doc.skins().count()];
+    for node in doc.nodes() {
+        let Some(skin) = node.skin() else {
+            continue;
+        };
+        let Some(bone) = topo.bone_of_node.get(node.index()).copied().flatten() else {
+            return SourceSkeletonAssets::default();
+        };
+        let Some(for_skin) = attachments.get_mut(skin.index()) else {
+            return SourceSkeletonAssets::default();
+        };
+        for_skin.push(SourceSkinAttachment {
+            source_node_index: node.index(),
+            bone,
+            source_mesh_index: node.mesh().map(|mesh| mesh.index()),
+        });
+    }
+
+    let mut nodes = Vec::with_capacity(doc.nodes().count());
+    for node in doc.nodes() {
+        let Some(bone) = topo.bone_of_node.get(node.index()).copied().flatten() else {
+            return SourceSkeletonAssets::default();
+        };
+        let local_rest = match node.transform() {
+            gltf::scene::Transform::Decomposed {
+                translation,
+                rotation,
+                scale,
+            } => SourceNodeLocalRest::Trs {
+                translation: Vec3::from_array(translation),
+                rotation: Quat::from_array(rotation),
+                scale: Vec3::from_array(scale),
+            },
+            gltf::scene::Transform::Matrix { matrix } => {
+                SourceNodeLocalRest::Matrix(Mat4::from_cols_array_2d(&matrix))
+            }
+        };
+        nodes.push(SourceNodeAsset {
+            source_node_index: node.index(),
+            name: node.name().map(str::to_owned),
+            parent_source_node_index: topo.parent[node.index()],
+            local_rest,
+            bone,
+        });
+    }
+
+    let mut skins = Vec::with_capacity(doc.skins().count());
+    for skin in doc.skins() {
+        let mut joints = Vec::new();
+        for joint in skin.joints() {
+            let Some(bone) = topo.bone_of_node.get(joint.index()).copied().flatten() else {
+                return SourceSkeletonAssets::default();
+            };
+            joints.push(bone);
+        }
+        let skeleton_root = match skin.skeleton() {
+            Some(node) => match topo.bone_of_node.get(node.index()).copied().flatten() {
+                Some(bone) => Some(bone),
+                None => return SourceSkeletonAssets::default(),
+            },
+            None => None,
+        };
+        let inverse_bind_accessor = match skin.inverse_bind_matrices() {
+            None => SourceInverseBindAccessor::default(),
+            Some(accessor) if accessor.count() == 0 => SourceInverseBindAccessor {
+                status: SourceInverseBindAccessorStatus::EmptyAccessor,
+                declared_count: Some(0),
+                matrices: Vec::new(),
+            },
+            Some(accessor) => {
+                let declared_count = accessor.count();
+                let reader = skin.reader(|buffer| buffers.get(buffer.index()).map(Vec::as_slice));
+                match reader.read_inverse_bind_matrices() {
+                    Some(matrices) => {
+                        let matrices = matrices
+                            .map(|matrix| Mat4::from_cols_array_2d(&matrix))
+                            .collect::<Vec<_>>();
+                        SourceInverseBindAccessor {
+                            status: if matrices.len() >= joints.len() {
+                                SourceInverseBindAccessorStatus::Available
+                            } else {
+                                SourceInverseBindAccessorStatus::CountMismatch
+                            },
+                            declared_count: Some(declared_count),
+                            matrices,
+                        }
+                    }
+                    None => SourceInverseBindAccessor {
+                        status: SourceInverseBindAccessorStatus::Unreadable,
+                        declared_count: Some(declared_count),
+                        matrices: Vec::new(),
+                    },
+                }
+            }
+        };
+        skins.push(SourceSkinAsset {
+            source_skin_index: skin.index(),
+            name: skin.name().map(str::to_owned),
+            skeleton_root,
+            joints,
+            inverse_bind_accessor,
+            attachments: std::mem::take(&mut attachments[skin.index()]),
+        });
+    }
+
+    SourceSkeletonAssets {
+        coverage: SourceSkeletonCoverage::Complete,
+        nodes,
+        skins,
+    }
 }
 
 /// Parse meshes (indexed or unindexed), skins (joints + inverse bind

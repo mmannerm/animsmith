@@ -197,6 +197,7 @@ fn supported_document() -> Document {
                 roots: vec![0],
             }],
             default_scene: Some(0),
+            source_skeleton: SourceSkeletonAssets::default(),
         },
         source: SourceInfo::default(),
     }

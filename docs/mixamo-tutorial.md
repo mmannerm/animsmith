@@ -250,8 +250,8 @@ $ animsmith measure --format json walking.glb
         "hips": "mixamorig:Hips", "spine": "mixamorig:Spine",
         "left_foot": "mixamorig:LeftFoot", "right_foot": "mixamorig:RightFoot" } },
       "measurements": {
-        "schema_version": 4,
-        "schema": "urn:animsmith:schema:measurements:4",
+        "schema_version": 5,
+        "schema": "urn:animsmith:schema:measurements:5",
         "clips": { "mixamo.com": {
           "duration_s": 1.0, "frame_count": 33,
           "animated_bones": ["mixamorig:Hips", "mixamorig:LeftFoot", "mixamorig:RightFoot"],
@@ -263,6 +263,9 @@ $ animsmith measure --format json walking.glb
         "mesh_definitions": [],
         "node_instances": [],
         "scenes": [],
+        "skeleton_source_coverage": "unavailable",
+        "skeleton_nodes": [],
+        "skins": [],
         "material_resource_coverage": "complete",
         "material_definitions": [],
         "textures": [],

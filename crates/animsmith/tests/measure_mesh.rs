@@ -5,7 +5,7 @@
 use animsmith_core::glam::{Mat4, Vec3};
 use animsmith_core::model::*;
 
-const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v4.schema.json");
+const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v5.schema.json");
 
 fn assert_measurements_schema_valid(measurements: &serde_json::Value) {
     let schema = serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid measurement schema JSON");

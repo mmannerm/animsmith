@@ -5,7 +5,8 @@
 //! same declared coordinate transform, and regenerates inverse bind matrices.
 
 use crate::model::{
-    Bone, Document, MeshAsset, MeshInstance, SceneAsset, SceneAssets, Skeleton, Transform,
+    Bone, Document, MeshAsset, MeshInstance, SceneAsset, SceneAssets, Skeleton,
+    SourceSkeletonAssets, Transform,
 };
 use glam::{Mat3, Mat4, Vec3};
 use std::collections::BTreeSet;
@@ -301,6 +302,7 @@ pub fn canonicalize_skinned_bind_pose(
                     roots: vec![0],
                 }],
                 default_scene: Some(0),
+                source_skeleton: SourceSkeletonAssets::default(),
             },
             source: doc.source.clone(),
         },

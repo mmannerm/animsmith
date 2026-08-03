@@ -48,6 +48,16 @@ channel count, and color type; unavailable images instead carry a reason.
 This is descriptive source evidence, not an image acceptance, repair, resize,
 transcode, writer-preservation, or material-recipe policy.
 
+## Skeleton Rest-Pose Evidence
+
+When a loader supplies source skeleton identity, `AssetMeasurements` also
+records source-order nodes, per-skin joint lists and inverse-bind accessor
+state, and finite derived bind-domain matrices with typed unavailability.
+Node-local TRS/matrix data, rest-world transforms, and mesh-local bind data
+remain distinct coordinate domains. This is generic evidence only: embedders
+choose required joints, comparison tolerances, canonical roots, and any
+retargeting or delivery policy.
+
 ## Static Mesh Transform Baking
 
 Embedders can opt into
