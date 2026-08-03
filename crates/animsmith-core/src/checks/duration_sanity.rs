@@ -52,6 +52,9 @@ impl Check for DurationSanity {
                     Finding::new(self.id(), Severity::Warning, "clip has no tracks")
                         .clip(&clip.name),
                 );
+                if valid_duration_pin.is_none() {
+                    continue;
+                }
             }
             if clip.duration_s <= 0.0 || !clip.duration_s.is_finite() {
                 let mut finding = Finding::new(

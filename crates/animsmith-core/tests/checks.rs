@@ -353,6 +353,18 @@ fn duration_pin_is_still_judged_for_an_empty_clip() {
 }
 
 #[test]
+fn empty_zero_duration_without_a_pin_remains_warning_only() {
+    let mut doc = clean_doc();
+    doc.clips[0].tracks.clear();
+    doc.clips[0].duration_s = 0.0;
+    let findings = lint(&doc);
+    assert_eq!(findings.len(), 1, "got: {findings:#?}");
+    assert_eq!(findings[0].check_id, "duration-sanity");
+    assert_eq!(findings[0].severity, Severity::Warning);
+    assert_eq!(findings[0].message, "clip has no tracks");
+}
+
+#[test]
 fn mismatched_channel_ends_are_flagged() {
     let mut doc = clean_doc();
     doc.clips[0].tracks[1].times = vec![0.0, 0.3, 0.6]; // rotation still ends at 1.0
