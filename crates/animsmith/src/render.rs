@@ -680,6 +680,7 @@ fn is_presentation_control(ch: char) -> bool {
                 | '\u{200f}'
                 | '\u{2028}'..='\u{202e}'
                 | '\u{2066}'..='\u{206f}'
+                | '\u{e0000}'..='\u{e007f}'
         )
 }
 
@@ -703,16 +704,30 @@ fn text_atom(text: &str) -> Cow<'_, str> {
 }
 
 /// Quote an exact author-provided identifier so empty names and leading or
-/// trailing whitespace remain visible. This extends [`text_atom`] with
-/// delimiter escaping while retaining readable ordinary Unicode.
+/// trailing whitespace remain visible. The result is also a valid TOML basic
+/// string, so selectors can be copied directly into animsmith recipes.
 fn quoted_text_atom(text: &str) -> String {
+    use std::fmt::Write as _;
+
     let mut escaped = String::with_capacity(text.len() + 2);
     escaped.push('"');
     for ch in text.chars() {
         match ch {
             '"' => escaped.push_str("\\\""),
             '\\' => escaped.push_str("\\\\"),
-            ch if is_presentation_control(ch) => escaped.extend(ch.escape_default()),
+            '\u{8}' => escaped.push_str("\\b"),
+            '\t' => escaped.push_str("\\t"),
+            '\n' => escaped.push_str("\\n"),
+            '\u{c}' => escaped.push_str("\\f"),
+            '\r' => escaped.push_str("\\r"),
+            ch if is_presentation_control(ch) => {
+                let scalar = u32::from(ch);
+                if scalar <= u32::from(u16::MAX) {
+                    let _ = write!(escaped, "\\u{scalar:04X}");
+                } else {
+                    let _ = write!(escaped, "\\U{scalar:08X}");
+                }
+            }
             _ => escaped.push(ch),
         }
     }
@@ -1467,6 +1482,14 @@ mod tests {
             "\"quote\\\"slash\\\\line\\n\""
         );
         assert_eq!(quoted_text_atom(""), "\"\"");
+        let quoted = quoted_text_atom("escape\u{1b}bidi\u{202e}astral\u{e0001}");
+        assert_eq!(quoted, "\"escape\\u001Bbidi\\u202Eastral\\U000E0001\"");
+        let parsed: toml::Value =
+            toml::from_str(&format!("name = {quoted}")).expect("quoted name is valid TOML");
+        assert_eq!(
+            parsed["name"].as_str(),
+            Some("escape\u{1b}bidi\u{202e}astral\u{e0001}")
+        );
     }
 
     #[test]

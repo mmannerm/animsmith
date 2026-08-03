@@ -39,7 +39,8 @@ Every declared entry must be used; a recipe cannot partially apply and succeed.
 Unknown recipe fields are rejected instead of ignored.
 
 Run `animsmith inspect <input>` first and copy names from its top-level
-`materials` section. The `mesh instances` section shows which material each
+`materials` section; its quoted names use TOML-compatible escapes and can be
+copied directly into a recipe. The `mesh instances` section shows which material each
 primitive references. Ambiguous source names are marked and must be corrected
 in the authoring tool before a recipe can target them; `inspect` does not rename
 or merge materials.

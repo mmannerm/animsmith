@@ -304,6 +304,54 @@ fn recipe_conversion_is_schema_valid_byte_stable_and_semantically_ordered() {
 }
 
 #[test]
+fn inspected_control_bearing_material_name_copies_directly_into_recipe() {
+    let dir = tempfile::tempdir().expect("creates temp directory");
+    write_success_fixture(dir.path());
+    let material_name = "paint\u{1b}\u{202e}ed";
+    let mut source = fixture();
+    source.assets.materials[0].name = material_name.into();
+    animsmith_gltf::write::write(&source, &dir.path().join("input.glb"))
+        .expect("writes control-bearing material name");
+
+    let inspected = Command::new(env!("CARGO_BIN_EXE_animsmith"))
+        .current_dir(dir.path())
+        .args(["inspect", "input.glb"])
+        .output()
+        .expect("inspects material name");
+    assert!(
+        inspected.status.success(),
+        "inspect failed: {}",
+        String::from_utf8_lossy(&inspected.stderr)
+    );
+    let inspect_text = String::from_utf8(inspected.stdout).expect("inspect output is UTF-8");
+    let discovered_selector = inspect_text
+        .lines()
+        .find_map(|line| line.strip_prefix("  #0 "))
+        .expect("inspect exposes first material selector");
+    assert_eq!(discovered_selector, "\"paint\\u001B\\u202Eed\"");
+
+    let recipe_path = dir.path().join("recipes/materials.toml");
+    let recipe = std::fs::read_to_string(&recipe_path)
+        .expect("reads recipe")
+        .replacen(
+            "name = \"painted\"",
+            &format!("name = {discovered_selector}"),
+            1,
+        );
+    std::fs::write(&recipe_path, recipe).expect("writes copied material selector");
+
+    let output = run_convert(dir.path(), "recipes/materials.toml");
+    assert!(
+        output.status.success(),
+        "convert failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let converted =
+        animsmith_gltf::load(&dir.path().join("output.glb")).expect("loads converted output");
+    assert_eq!(converted.assets.materials[0].name, material_name);
+}
+
+#[test]
 fn recipe_mapping_failure_is_stderr_only_and_leaves_no_output() {
     let dir = tempfile::tempdir().expect("creates temp directory");
     write_success_fixture(dir.path());

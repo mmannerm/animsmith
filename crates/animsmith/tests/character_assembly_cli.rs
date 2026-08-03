@@ -280,6 +280,8 @@ fn accepts_time_window_and_gltf_clip_input_while_pruning_unselected_assets() {
     let mut base =
         animsmith_fbx::load(&dir.path().join("inputs/base.fbx")).expect("loads base FBX");
     base.clips.clear();
+    let selected_name = "selected\u{1b}\u{202e}mesh_skinned";
+    base.assets.meshes[0].name = "selected\u{1b}\u{202e}mesh".into();
     let base_root = base
         .skeleton
         .bones
@@ -339,11 +341,22 @@ fn accepts_time_window_and_gltf_clip_input_while_pruning_unselected_assets() {
         .expect("inspects assembly base");
     assert!(inspected.status.success());
     let inspect_text = String::from_utf8(inspected.stdout).expect("inspect output is UTF-8");
-    let discovered_name = inspect_text
+    let discovered_selector = inspect_text
         .lines()
-        .find_map(|line| line.strip_prefix("  node \"")?.strip_suffix('"'))
+        .find_map(|line| line.strip_prefix("  node "))
         .expect("inspect exposes a quoted mesh-instance name")
         .to_owned();
+    assert_eq!(
+        discovered_selector,
+        "\"selected\\u001B\\u202Emesh_skinned\""
+    );
+    let parsed_selector: toml::Value =
+        toml::from_str(&format!("mesh_instances = [{discovered_selector}]"))
+            .expect("copied inspect selector is valid TOML");
+    assert_eq!(
+        parsed_selector["mesh_instances"][0].as_str(),
+        Some(selected_name)
+    );
 
     let mut motion =
         animsmith_fbx::load(&dir.path().join("inputs/motion.fbx")).expect("loads motion FBX");
@@ -360,7 +373,7 @@ fn accepts_time_window_and_gltf_clip_input_while_pruning_unselected_assets() {
         .replacen("base_input = \"base.fbx\"", "base_input = \"base.glb\"", 1)
         .replacen(
             "mesh_instances = [\"tri\"]",
-            &format!("mesh_instances = [{discovered_name:?}]"),
+            &format!("mesh_instances = [{discovered_selector}]"),
             1,
         )
         .replacen("input = \"motion.fbx\"", "input = \"motion.glb\"", 1)
@@ -400,7 +413,7 @@ fn accepts_time_window_and_gltf_clip_input_while_pruning_unselected_assets() {
     .expect("evidence JSON");
     assert_eq!(
         evidence["transforms"]["retained_mesh_instances"],
-        serde_json::json!([discovered_name.as_str()]),
+        serde_json::json!([selected_name]),
         "the exact name copied from inspect is accepted and retained"
     );
     assert_eq!(evidence["transforms"]["removed_mesh_instances"], 1);

@@ -70,7 +70,8 @@ animsmith inspect inputs/base-character.fbx
 ```
 
 Copy the quoted name after `node` in the `mesh instances` section exactly into
-`mesh_instances`. Each entry also shows its source node, referenced mesh,
+`mesh_instances`; quoted names use TOML-compatible escapes. Each entry also
+shows its source node, referenced mesh,
 skinned status, and the material used by every primitive. The top-level
 `materials` section lists the exact, case-sensitive names required by a
 [material texture recipe](material-texture-recipes.md). Duplicate skeleton node
