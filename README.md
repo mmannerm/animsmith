@@ -156,6 +156,7 @@ Contract-aware checks use declared expectations and, where needed, rig roles:
 | `loop-seam-rot` | error | maximum per-bone model-space angular-velocity change across a declared loop wrap |
 | `in-place` | error | declared in-place vs root-motion mode must match measured travel |
 | `gait-group` | error | stride-phase spread across a declared directional blend ring |
+| `sync-group` | error | same-time blend members must share duration, frame grid, and endpoint convention |
 | `root-motion-speed` | error | measured horizontal root travel vs a declared speed pin |
 | `foot-slide` | warning | stance feet must move consistently with declared travel |
 | `missing-bones` | error | declared animated bones missing from the skeleton or carrying no keys |
@@ -219,6 +220,14 @@ speed_mps = { value = 3.1, tolerance = 0.25 }
 clips = ["run_forward", "run_backward", "run_left", "run_right"]
 max_gait_phase_spread = 0.15
 min_lr_amplitude_m = 0.03
+
+[sync_groups.run-ring]
+clips = ["run_forward", "run_backward", "run_left", "run_right"]
+# Same-time runtime sampling needs compatible duration, declared FPS grid, and
+# loop endpoint convention; tune the declared timing tolerance for your engine.
+max_duration_delta_s = 0.001
+max_frame_count_delta = 0
+max_fps_delta = 0.01
 ```
 
 Duration-pin values must be finite and positive; their tolerances must be

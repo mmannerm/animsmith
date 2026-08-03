@@ -26,13 +26,13 @@ use crate::profile::ResolvedRoles;
 use crate::{Document, Severity};
 
 /// Current outer result-envelope version.
-pub const OUTPUT_SCHEMA_VERSION: u32 = 3;
+pub const OUTPUT_SCHEMA_VERSION: u32 = 4;
 /// Immutable identity of the current outer result envelope.
-pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:3";
+pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:4";
 /// Current nested measurement-contract version.
-pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 8;
+pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 9;
 /// Immutable identity of the current nested measurement contract.
-pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:8";
+pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:9";
 
 /// Source checkout identity for the producing animsmith build.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -47,7 +47,7 @@ impl ToolSource {
     /// Packaged or otherwise provenance-free builds use `None` for fields they
     /// cannot establish rather than claiming a clean checkout. Revisions that
     /// are not full 40-character hexadecimal Git object ids are dropped so an
-    /// envelope constructed through this API remains within output v3.
+    /// envelope constructed through this API remains within output v4.
     pub fn new(revision: Option<String>, dirty: Option<bool>) -> Self {
         let revision = revision.filter(|revision| {
             revision.len() == 40 && revision.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -306,6 +306,23 @@ fn validate_measurements(
                         });
                     }
                 }
+            }
+        }
+        if let Some(frame_grid) = clip.frame_grid {
+            let path = format!("clips[{clip_name:?}].frame_grid");
+            finite(frame_grid.fps, format!("{path}.fps"))?;
+            if frame_grid.fps <= 0.0 {
+                return Err(MeasurementContractError::InvalidStructure {
+                    path: format!("{path}.fps"),
+                    reason: "declared frame-grid FPS must be positive".into(),
+                });
+            }
+            if frame_grid.frame_intervals == 0 {
+                return Err(MeasurementContractError::InvalidStructure {
+                    path: format!("{path}.frame_intervals"),
+                    reason: "declared frame-grid evidence must contain at least one interval"
+                        .into(),
+                });
             }
         }
         if let Some(value) = clip.loop_seam_ratio {
@@ -1639,6 +1656,8 @@ mod measurement_report_input_tests {
             animated_bones: Vec::new(),
             bone_rotation_range_deg: BTreeMap::new(),
             loop_continuity: None,
+            loop_endpoint_mode: None,
+            frame_grid: None,
             loop_seam_ratio: None,
             gait: None,
             speed_mps: None,

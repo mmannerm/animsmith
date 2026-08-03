@@ -2,6 +2,9 @@
 //! `lint` judges. Kept separate from findings so pipelines (e.g. a
 //! bake's measured sidecar) can pin their own contracts to the numbers.
 
+use crate::checks::exceeds_f32_cap;
+use crate::checks::fps::GRID_TOLERANCE_FRAMES;
+use crate::checks::loop_closure::effective_caps;
 use crate::config::Config;
 use crate::metrics::{
     MetricGrids, foot_cycle_metrics, loop_continuity_metrics, root_motion_speed_mps,
@@ -13,6 +16,8 @@ use crate::model::{
     SourceInverseBindAccessorStatus, SourceNodeLocalRest, SourceSkeletonCoverage,
 };
 use crate::profile::ResolvedRoles;
+use crate::sample::PoseGrid;
+use crate::transform::analyze_duplicate_loop_endpoint;
 use glam::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1239,6 +1244,48 @@ pub struct LoopContinuityMeasurement {
     pub bones: Vec<BoneLoopContinuityMeasurement>,
 }
 
+/// The observed endpoint convention of a declared looping clip.
+///
+/// This is emitted only when enough authored or sampled evidence exists. In
+/// particular, it intentionally does not infer a mode for clips not declared
+/// as loops, malformed authored tracks, or clips without usable continuity
+/// samples.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum LoopEndpointMode {
+    /// A non-duplicate declared loop whose inclusive pose closure is within
+    /// the effective loop-closure caps.
+    UniqueCycle,
+    /// The strict, mechanically removable duplicate-endpoint predicate from
+    /// `duplicate-loop-endpoint` succeeded.
+    DuplicateEndpoint,
+    /// A declared loop whose inclusive pose closure exceeds an effective
+    /// loop-closure cap.
+    NonClosing,
+}
+
+impl LoopEndpointMode {
+    /// Stable machine-readable spelling used in serialized endpoint evidence.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::UniqueCycle => "unique_cycle",
+            Self::DuplicateEndpoint => "duplicate_endpoint",
+            Self::NonClosing => "non_closing",
+        }
+    }
+}
+
+/// Valid declared frame-grid evidence for a clip.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct FrameGridMeasurement {
+    /// Declared frames per second used to validate the authored grid.
+    pub fps: f64,
+    /// Rounded number of duration intervals at [`Self::fps`].
+    pub frame_intervals: u32,
+}
+
 /// Measurements for one clip in the `measure` output map.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -1259,6 +1306,14 @@ pub struct ClipMeasurements {
     /// resolution.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loop_continuity: Option<LoopContinuityMeasurement>,
+    /// Endpoint convention measured for a declared looping clip when enough
+    /// authored or model-space continuity evidence is available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loop_endpoint_mode: Option<LoopEndpointMode>,
+    /// Declared FPS-grid evidence when the duration and every authored key
+    /// land within the established frame-grid tolerance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_grid: Option<FrameGridMeasurement>,
     /// Loop wrap discontinuity ratio; needs hips + foot roles and a
     /// real stride. See [`crate::metrics::FootCycleMetrics`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1335,6 +1390,14 @@ pub fn measure_document(
                         .collect(),
                 })
             });
+            let expectations = config.expectations_for(&clip.name);
+            let (position_cap, rotation_cap) = effective_caps(config, &expectations);
+            let loop_endpoint_mode = (expectations.looping == Some(true))
+                .then(|| {
+                    measure_loop_endpoint_mode(clip, grid.as_deref(), position_cap, rotation_cap)
+                })
+                .flatten();
+            let frame_grid = measure_frame_grid(clip, expectations.fps);
             let speed_mps = grid.as_ref().and_then(|g| root_motion_speed_mps(g, roles));
             let duration_s = if clip.duration_s.is_finite() {
                 clip.duration_s
@@ -1355,6 +1418,8 @@ pub fn measure_document(
                     animated_bones: animated.into_iter().collect(),
                     bone_rotation_range_deg: rotation_range,
                     loop_continuity,
+                    loop_endpoint_mode,
+                    frame_grid,
                     loop_seam_ratio: cycle.as_ref().and_then(|c| c.loop_seam_ratio),
                     gait: cycle.map(|c| GaitMeasurement {
                         phase: c.gait_phase,
@@ -1365,6 +1430,65 @@ pub fn measure_document(
             )
         })
         .collect()
+}
+
+/// Measure endpoint evidence for a looping clip. Callers own the declaration
+/// policy; [`measure_document`] invokes this only for `loop = true` clips.
+pub(crate) fn measure_loop_endpoint_mode(
+    clip: &crate::model::Clip,
+    grid: Option<&PoseGrid>,
+    max_position_delta_m: f64,
+    max_rotation_delta_deg: f64,
+) -> Option<LoopEndpointMode> {
+    match analyze_duplicate_loop_endpoint(clip) {
+        Ok(Some(_)) => return Some(LoopEndpointMode::DuplicateEndpoint),
+        Ok(None) => {}
+        Err(_) => return None,
+    }
+    let continuity = loop_continuity_metrics(grid?)?;
+    let closes = continuity.iter().all(|bone| {
+        !exceeds_f32_cap(bone.position_delta_m, max_position_delta_m)
+            && !exceeds_f32_cap(bone.rotation_delta_deg, max_rotation_delta_deg)
+    });
+    Some(if closes {
+        LoopEndpointMode::UniqueCycle
+    } else {
+        LoopEndpointMode::NonClosing
+    })
+}
+
+/// Measure valid declared FPS-grid evidence for one clip.
+pub(crate) fn measure_frame_grid(
+    clip: &crate::model::Clip,
+    declared_fps: Option<f64>,
+) -> Option<FrameGridMeasurement> {
+    let fps = declared_fps?;
+    if !fps.is_finite() || fps <= 0.0 || !clip.duration_s.is_finite() || clip.duration_s <= 0.0 {
+        return None;
+    }
+    let intervals = clip.duration_s * fps;
+    if !intervals.is_finite() || (intervals - intervals.round()).abs() > GRID_TOLERANCE_FRAMES {
+        return None;
+    }
+    let rounded = intervals.round();
+    if !(0.0..=f64::from(u32::MAX)).contains(&rounded) {
+        return None;
+    }
+    if clip
+        .tracks
+        .iter()
+        .flat_map(|track| &track.times)
+        .any(|&time| {
+            let frames = f64::from(time) * fps;
+            !frames.is_finite() || (frames - frames.round()).abs() > GRID_TOLERANCE_FRAMES
+        })
+    {
+        return None;
+    }
+    Some(FrameGridMeasurement {
+        fps,
+        frame_intervals: rounded as u32,
+    })
 }
 
 #[cfg(test)]

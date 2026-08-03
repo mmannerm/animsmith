@@ -197,6 +197,23 @@ pub struct GaitGroup {
     pub min_lr_amplitude_m: f64,
 }
 
+/// A set of clips sampled together by a same-time / absolute-sync runtime.
+///
+/// The group compares timing representations; it does not prescribe a runtime
+/// retiming or repair strategy.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyncGroup {
+    /// Clip names that must be compatible when sampled at the same time.
+    pub clips: Vec<String>,
+    /// Largest permitted duration range across members, in seconds.
+    pub max_duration_delta_s: f64,
+    /// Largest permitted longest-channel key-count range across members.
+    pub max_frame_count_delta: u32,
+    /// Largest permitted declared frame-rate range across members.
+    pub max_fps_delta: f64,
+}
+
 /// Rig selection: a named profile ("auto" to detect) and/or an inline
 /// role map (which wins over the profile for the roles it names).
 #[derive(Debug, Clone, Deserialize)]
@@ -246,6 +263,14 @@ pub enum ConfigValidationError {
         /// Stable public [`ClipExpectations`] field name.
         field: &'static str,
     },
+    /// A sync-group tolerance was negative or non-finite.
+    #[error("sync group {group:?} field {field:?} must be a finite non-negative number")]
+    InvalidSyncGroupTolerance {
+        /// Configured group name.
+        group: String,
+        /// Stable public field name.
+        field: &'static str,
+    },
 }
 
 /// The whole configuration. Field names match the `animsmith.toml`
@@ -269,6 +294,9 @@ pub struct Config {
     /// Named gait groups consumed by the `gait-group` check.
     #[serde(default)]
     pub gait_groups: BTreeMap<String, GaitGroup>,
+    /// Named same-time / absolute-sync groups consumed by `sync-group`.
+    #[serde(default)]
+    pub sync_groups: BTreeMap<String, SyncGroup>,
 }
 
 impl Config {
@@ -303,6 +331,19 @@ impl Config {
                 if value.is_some_and(|value| !is_valid_loop_cap(value)) {
                     return Err(ConfigValidationError::InvalidClipLoopCap {
                         selector: selector.clone(),
+                        field,
+                    });
+                }
+            }
+        }
+        for (group, sync) in &self.sync_groups {
+            for (field, value) in [
+                ("max_duration_delta_s", sync.max_duration_delta_s),
+                ("max_fps_delta", sync.max_fps_delta),
+            ] {
+                if !is_valid_loop_cap(value) {
+                    return Err(ConfigValidationError::InvalidSyncGroupTolerance {
+                        group: group.clone(),
                         field,
                     });
                 }

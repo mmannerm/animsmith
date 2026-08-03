@@ -237,8 +237,8 @@ The semantic checks need *your* expectations declared. Start from what
 ```console
 $ animsmith measure --format json walking.glb
 {
-  "schema_version": 3,
-  "schema": "urn:animsmith:schema:output:3",
+  "schema_version": 4,
+  "schema": "urn:animsmith:schema:output:4",
   "tool": { "name": "animsmith", "version": "0.1.0",
             "source": { "revision": null, "dirty": null } },
   "command": "measure",
@@ -254,8 +254,8 @@ $ animsmith measure --format json walking.glb
         "hips": "mixamorig:Hips", "spine": "mixamorig:Spine",
         "left_foot": "mixamorig:LeftFoot", "right_foot": "mixamorig:RightFoot" } },
       "measurements": {
-        "schema_version": 8,
-        "schema": "urn:animsmith:schema:measurements:8",
+        "schema_version": 9,
+        "schema": "urn:animsmith:schema:measurements:9",
         "clips": { "mixamo.com": {
           "duration_s": 1.0, "frame_count": 33,
           "animated_bones": ["mixamorig:Hips", "mixamorig:LeftFoot", "mixamorig:RightFoot"],

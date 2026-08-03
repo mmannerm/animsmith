@@ -23,6 +23,7 @@ pub mod quat_norm;
 pub mod required_bones;
 pub mod root_motion_speed;
 pub mod scale_keys;
+pub mod sync_group;
 pub mod time_monotonic;
 
 mod vec3_trajectory;

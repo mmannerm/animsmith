@@ -147,6 +147,7 @@ pub fn all_checks() -> Vec<Box<dyn Check>> {
     checks.push(Box::new(crate::checks::loop_seam_rot::LoopSeamRotation));
     checks.push(Box::new(crate::checks::root_motion_speed::RootMotionSpeed));
     checks.push(Box::new(crate::checks::gait_group::GaitGroup));
+    checks.push(Box::new(crate::checks::sync_group::SyncGroupCheck));
     checks.push(Box::new(crate::checks::in_place::InPlace));
     checks.push(Box::new(crate::checks::fps::Fps));
     checks.push(Box::new(crate::checks::bind_pose::BindPose));

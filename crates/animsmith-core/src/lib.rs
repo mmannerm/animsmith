@@ -108,7 +108,7 @@ pub mod transform;
 
 pub use check::{Check, CheckCtx, all_checks, mechanical_checks};
 pub use config::{
-    ClipExpectations, Config, ConfigValidationError, GaitGroup, Pinned, SeveritySetting,
+    ClipExpectations, Config, ConfigValidationError, GaitGroup, Pinned, SeveritySetting, SyncGroup,
 };
 pub use contract::{
     DiffEnvelope, InputIdentity, LintEnvelope, LintFileReport, MEASUREMENTS_SCHEMA_ID,
@@ -122,7 +122,7 @@ pub use evaluation::{
     CheckOutput, CheckSelection, ConfigurationState, CoverageGap, CoverageGapCode, EvaluationError,
     EvaluationScope, EvaluationScopeCode, EvaluationState, SelectionState, evaluate_checks,
 };
-pub use finding::{Finding, Severity, Value};
+pub use finding::{Finding, MemberMeasurement, Severity, Value};
 /// Re-export of the exact `glam` version used by animsmith's public math
 /// types, so embedders can construct [`Transform`] values without a
 /// cross-version type mismatch.

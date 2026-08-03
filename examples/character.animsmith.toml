@@ -60,3 +60,10 @@ clips = [
 ]
 max_gait_phase_spread = 0.15
 min_lr_amplitude_m = 0.03
+
+[sync_groups.run-ring]
+# Same-time / absolute-sync runtime blending needs matching timing surfaces.
+clips = ["run_forward_1h", "run_backward_1h", "run_left_1h", "run_right_1h"]
+max_duration_delta_s = 0.001
+max_frame_count_delta = 0
+max_fps_delta = 0.01

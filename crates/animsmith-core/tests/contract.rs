@@ -3,9 +3,10 @@ use std::collections::BTreeMap;
 use animsmith_core::check::{Check, CheckCtx};
 use animsmith_core::config::{CheckSettings, SeveritySetting};
 use animsmith_core::measure::{
-    AssetMeasurements, ClipMeasurements, ImageMeasurements, MeshDefinitionMeasurements,
-    SkeletonNodeLocalRestMeasurements, SkeletonNodeLocalRestUnavailableReason,
-    SkeletonRestWorldMatrixUnavailableReason, SkinDerivedMatrixUnavailableReason,
+    AssetMeasurements, ClipMeasurements, FrameGridMeasurement, ImageMeasurements,
+    MeshDefinitionMeasurements, SkeletonNodeLocalRestMeasurements,
+    SkeletonNodeLocalRestUnavailableReason, SkeletonRestWorldMatrixUnavailableReason,
+    SkinDerivedMatrixUnavailableReason,
 };
 use animsmith_core::{
     Bone, CheckEvaluation, CheckOutput, CheckSelection, Config, CoverageGap, CoverageGapCode,
@@ -893,7 +894,7 @@ fn measurement_report_input_identifies_invalid_file_without_cli_remediation() {
 }
 
 #[test]
-fn tool_source_drops_revision_text_outside_the_v3_schema() {
+fn tool_source_drops_revision_text_outside_the_v4_schema() {
     for invalid in ["f".repeat(39), "z".repeat(40), "f".repeat(41)] {
         let source = ToolSource::new(Some(invalid), Some(true));
         let json =
@@ -936,6 +937,13 @@ fn valid_clip_measurements() -> ClipMeasurements {
         "speed_mps": 1.0,
     }))
     .expect("valid clip measurement fixture")
+}
+
+fn frame_grid(fps: &str, frame_intervals: u32) -> FrameGridMeasurement {
+    toml::from_str(&format!(
+        "fps = {fps}\nframe_intervals = {frame_intervals}\n"
+    ))
+    .expect("frame-grid fixture deserializes")
 }
 
 fn valid_mesh_measurements() -> MeshDefinitionMeasurements {
@@ -1482,6 +1490,12 @@ fn measurement_contract_rejects_every_non_finite_numeric_branch() {
         |clip| clip.speed_mps = Some(f64::NAN),
         "clips[\"walk\"].speed_mps",
     );
+    assert_invalid_clip(
+        |clip| {
+            clip.frame_grid = Some(frame_grid("nan", 30));
+        },
+        "clips[\"walk\"].frame_grid.fps",
+    );
     assert_invalid_mesh(
         |mesh| {
             mesh.geometry_aabb.as_mut().expect("fixture aabb").min[1] = f32::NAN;
@@ -1510,6 +1524,36 @@ fn measurement_contract_rejects_every_non_finite_numeric_branch() {
         |mesh| mesh.weight_sum_max = Some(f64::NAN),
         "mesh_definitions[0].weight_sum_max",
     );
+}
+
+#[test]
+fn measurement_contract_rejects_invalid_frame_grid_structure() {
+    for (grid, path, reason) in [
+        (
+            frame_grid("0.0", 30),
+            "clips[\"walk\"].frame_grid.fps",
+            "declared frame-grid FPS must be positive",
+        ),
+        (
+            frame_grid("30.0", 0),
+            "clips[\"walk\"].frame_grid.frame_intervals",
+            "declared frame-grid evidence must contain at least one interval",
+        ),
+    ] {
+        let mut clip = valid_clip_measurements();
+        clip.frame_grid = Some(grid);
+        assert_eq!(
+            MeasurementContract::new(
+                BTreeMap::from([("walk".into(), clip)]),
+                AssetMeasurements::default(),
+            )
+            .expect_err("invalid frame-grid structure must fail"),
+            MeasurementContractError::InvalidStructure {
+                path: path.into(),
+                reason: reason.into(),
+            }
+        );
+    }
 }
 
 #[test]

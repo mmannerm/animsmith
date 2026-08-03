@@ -115,8 +115,16 @@ pub(crate) fn render_measure_text(
                                 format!(" gait φ={phase:.2} ({:.1}cm)", amplitude * 100.0)
                             })
                             .unwrap_or_default();
+                        let endpoint = measurement
+                            .loop_endpoint_mode
+                            .map(|mode| format!(" endpoint={}", mode.as_str()))
+                            .unwrap_or_default();
+                        let frame_grid = measurement
+                            .frame_grid
+                            .map(|grid| format!(" grid={:.3}fps/{} intervals", grid.fps, grid.frame_intervals))
+                            .unwrap_or_default();
                         format!(
-                            "  {}: {:.3}s, {} frames, {} animated bones{continuity}{seam}{gait}",
+                            "  {}: {:.3}s, {} frames, {} animated bones{endpoint}{frame_grid}{continuity}{seam}{gait}",
                             text_atom(clip),
                             measurement.duration_s,
                             measurement.frame_count,
@@ -659,6 +667,24 @@ pub(crate) fn render_text(reports: &[LintFileReport], suppressed: &[String]) -> 
                 text_atom(&f.message),
                 detail
             );
+            if let Some(members) = &f.members {
+                for member in members {
+                    let measurements = member
+                        .measurements
+                        .iter()
+                        .map(|(name, value)| {
+                            format!("{}={}", text_atom(name), text_atom(&value.to_string()))
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let _ = writeln!(
+                        out,
+                        "    member {}: {}",
+                        text_atom(&member.member),
+                        measurements
+                    );
+                }
+            }
         }
         gaps += file_gap_count;
         for group in coverage_groups {
@@ -953,6 +979,26 @@ pub(crate) fn render_markdown(reports: &[LintFileReport], suppressed: &[String])
                     md_value_cell(f.expected.as_ref()),
                     md_cell(&f.message),
                 );
+                if let Some(members) = &f.members {
+                    let _ = writeln!(out, "\n| Member | Measurements |");
+                    let _ = writeln!(out, "| --- | --- |");
+                    for member in members {
+                        let measurements = member
+                            .measurements
+                            .iter()
+                            .map(|(name, value)| {
+                                format!("{}={}", md_cell(name), md_cell(&value.to_string()))
+                            })
+                            .collect::<Vec<_>>()
+                            .join("; ");
+                        let _ = writeln!(
+                            out,
+                            "| `{}` | `{}` |",
+                            md_cell(&member.member),
+                            measurements
+                        );
+                    }
+                }
             }
             let _ = writeln!(out, "\n</details>\n");
         }
@@ -2112,6 +2158,35 @@ mod tests {
         assert!(
             md.contains("| `1.0500` | `1.0000` | `non-unit key` |"),
             "{md}"
+        );
+    }
+
+    #[test]
+    fn group_member_tables_preserve_member_and_measurement_order() {
+        let finding = Finding::new("sync-group", Severity::Error, "timing mismatch").members(vec![
+            animsmith_core::MemberMeasurement::new("walk")
+                .measurement("fps", 30.0)
+                .measurement("availability", "present"),
+            animsmith_core::MemberMeasurement::new("run").measurement("availability", "missing"),
+        ]);
+        let report = report("a.glb", vec![finding]);
+
+        let text = render_text(std::slice::from_ref(&report), &[]);
+        let walk = text.find("member walk:").expect("walk text row");
+        let run = text.find("member run:").expect("run text row");
+        assert!(walk < run, "configured member order:\n{text}");
+        assert!(
+            text.contains("availability=present, fps=30.0000"),
+            "key-sorted measurements:\n{text}"
+        );
+
+        let markdown = render_markdown(&[report], &[]);
+        let walk = markdown.find("| `walk` |").expect("walk Markdown row");
+        let run = markdown.find("| `run` |").expect("run Markdown row");
+        assert!(walk < run, "configured member order:\n{markdown}");
+        assert!(
+            markdown.contains("`availability=present; fps=30.0000`"),
+            "key-sorted measurements:\n{markdown}"
         );
     }
 

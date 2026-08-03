@@ -3,6 +3,7 @@
 //! cheap downstream.
 
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::fmt;
 
 /// Severity of a lint finding.
@@ -38,6 +39,41 @@ pub enum Value {
     Number(f64),
     /// Textual measured or expected value.
     Text(String),
+}
+
+/// One configured member's machine-readable evidence attached to a group
+/// finding.
+///
+/// The member order is the configuration order, while the measurement map is
+/// key-sorted for stable JSON. Values are deliberately scalar so consumers do
+/// not need to parse presentation text to recover a group comparison table.
+#[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
+pub struct MemberMeasurement {
+    /// Configured member name, including a name absent from the input file.
+    pub member: String,
+    /// Named scalar measurements for this member. Non-finite numeric values
+    /// are excluded by [`Self::measurement`] and [`Finding::members`].
+    pub measurements: BTreeMap<String, Value>,
+}
+
+impl MemberMeasurement {
+    /// Construct an empty evidence row for `member`.
+    pub fn new(member: impl Into<String>) -> Self {
+        Self {
+            member: member.into(),
+            measurements: BTreeMap::new(),
+        }
+    }
+
+    /// Attach a finite numeric or textual measurement.
+    pub fn measurement(mut self, name: impl Into<String>, value: impl Into<Value>) -> Self {
+        let value = value.into();
+        if value.is_finite() {
+            self.measurements.insert(name.into(), value);
+        }
+        self
+    }
 }
 
 impl fmt::Display for Value {
@@ -80,6 +116,9 @@ pub struct Finding {
     /// are omitted from serialized output.
     #[serde(skip_serializing_if = "non_finite_value_or_none")]
     pub expected: Option<Value>,
+    /// Per-member evidence for a group-level finding, in configured order.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub members: Option<Vec<MemberMeasurement>>,
     /// Human-readable explanation.
     pub message: String,
 }
@@ -95,6 +134,7 @@ impl Finding {
             time_s: None,
             measured: None,
             expected: None,
+            members: None,
             message: message.into(),
         }
     }
@@ -128,6 +168,18 @@ impl Finding {
     pub fn expected(mut self, v: impl Into<Value>) -> Self {
         let value = v.into();
         self.expected = value.is_finite().then_some(value);
+        self
+    }
+
+    /// Attach a configured-order group member table.
+    ///
+    /// Any non-finite numeric values supplied through a directly constructed
+    /// row are removed before serialization, matching scalar finding values.
+    pub fn members(mut self, mut members: Vec<MemberMeasurement>) -> Self {
+        for member in &mut members {
+            member.measurements.retain(|_, value| value.is_finite());
+        }
+        self.members = Some(members);
         self
     }
 }
