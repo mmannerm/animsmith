@@ -1,7 +1,7 @@
-//! `duration-sanity` — degenerate clip durations and channels within
-//! one clip that end at different times (an engine clamp-holds the
-//! shorter channels, which usually means a partial export). fps
-//! expectations from config arrive with M1.
+//! `duration-sanity` — degenerate clip durations, misses against a
+//! declared duration pin, and channels within one clip that end at
+//! different times (an engine clamp-holds the shorter channels, which
+//! usually means a partial export).
 
 use crate::check::{Check, CheckCtx};
 use crate::evaluation::CheckOutput;
@@ -21,25 +21,73 @@ impl Check for DurationSanity {
     fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
         let mut findings = Vec::new();
         let doc = ctx.doc;
-        for clip in &doc.clips {
+        for (index, clip) in doc.clips.iter().enumerate() {
+            let duration_pin = ctx.expectations(index).duration_s;
+            let valid_duration_pin = duration_pin.filter(|pin| {
+                pin.value.is_finite()
+                    && pin.value > 0.0
+                    && pin.tolerance.is_finite()
+                    && pin.tolerance >= 0.0
+            });
+            if let Some(pin) = duration_pin
+                && valid_duration_pin.is_none()
+            {
+                findings.push(
+                    Finding::new(
+                        self.id(),
+                        Severity::Error,
+                        format!(
+                            "invalid declared duration pin (value {}s, tolerance {}s) — \
+                             value must be finite and positive, and tolerance must be \
+                             finite and non-negative",
+                            pin.value, pin.tolerance
+                        ),
+                    )
+                    .clip(&clip.name)
+                    .measured(clip.duration_s),
+                );
+            }
             if clip.tracks.is_empty() {
                 findings.push(
                     Finding::new(self.id(), Severity::Warning, "clip has no tracks")
                         .clip(&clip.name),
                 );
-                continue;
+                if valid_duration_pin.is_none() {
+                    continue;
+                }
             }
             if clip.duration_s <= 0.0 || !clip.duration_s.is_finite() {
+                let mut finding = Finding::new(
+                    self.id(),
+                    Severity::Error,
+                    format!("degenerate clip duration ({}s)", clip.duration_s),
+                )
+                .clip(&clip.name)
+                .measured(clip.duration_s);
+                if let Some(pin) = valid_duration_pin {
+                    finding = finding.expected(pin.value);
+                }
+                findings.push(finding);
+                continue;
+            }
+            if let Some(pin) = valid_duration_pin
+                && (clip.duration_s - pin.value).abs() > pin.tolerance
+            {
                 findings.push(
                     Finding::new(
                         self.id(),
                         Severity::Error,
-                        format!("degenerate clip duration ({}s)", clip.duration_s),
+                        format!(
+                            "measured duration {:.4}s disagrees with the declared \
+                             {:.4} ± {:.4}s — the clip may have been sliced or \
+                             exported with a dropped frame",
+                            clip.duration_s, pin.value, pin.tolerance
+                        ),
                     )
                     .clip(&clip.name)
-                    .measured(clip.duration_s),
+                    .measured(clip.duration_s)
+                    .expected(pin.value),
                 );
-                continue;
             }
             // Single-key tracks are pinned values, not truncated
             // channels — a common bake idiom — so they don't count

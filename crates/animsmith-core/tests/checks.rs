@@ -2,7 +2,7 @@
 //! discipline: start from a clean document (zero findings), corrupt
 //! exactly one thing, and assert exactly the expected check fires.
 
-use animsmith_core::config::CheckSettings;
+use animsmith_core::config::{CheckSettings, ClipExpectations, Pinned};
 use animsmith_core::model::*;
 use animsmith_core::profile::ResolvedRoles;
 use animsmith_core::{
@@ -206,6 +206,162 @@ fn zero_duration_is_flagged() {
             .any(|f| f.check_id == "duration-sanity" && f.severity == Severity::Error),
         "got: {findings:#?}"
     );
+}
+
+#[test]
+fn degenerate_duration_with_a_pin_reports_measured_and_expected_seconds() {
+    let mut doc = clean_doc();
+    doc.clips[0].duration_s = 0.0;
+    let findings = lint_with_config(&doc, &duration_pin(1.0, 0.02));
+    let finding = findings
+        .iter()
+        .find(|finding| finding.check_id == "duration-sanity")
+        .expect("degenerate duration finding");
+    let value = serde_json::to_value(finding).expect("serializes finding");
+    assert_eq!(finding.severity, Severity::Error);
+    assert_eq!(value["measured"], 0.0);
+    assert_eq!(value["expected"], 1.0);
+}
+
+fn duration_pin(value: f64, tolerance: f64) -> Config {
+    let mut config = Config::default();
+    config.clips.insert(
+        "walk".into(),
+        ClipExpectations {
+            duration_s: Some(Pinned { value, tolerance }),
+            ..Default::default()
+        },
+    );
+    config
+}
+
+#[test]
+fn duration_pin_tolerance_is_inclusive_in_both_directions() {
+    let config = duration_pin(1.0, 0.25);
+    for duration_s in [0.75, 1.25] {
+        let mut doc = clean_doc();
+        doc.clips[0].duration_s = duration_s;
+        let findings = lint_with_config(&doc, &config);
+        assert!(
+            !findings
+                .iter()
+                .any(|finding| finding.check_id == "duration-sanity"),
+            "boundary duration {duration_s} was rejected: {findings:#?}"
+        );
+    }
+
+    for duration_s in [
+        f64::from_bits(0.75f64.to_bits() - 1),
+        f64::from_bits(1.25f64.to_bits() + 1),
+    ] {
+        let mut doc = clean_doc();
+        doc.clips[0].duration_s = duration_s;
+        let findings = lint_with_config(&doc, &config);
+        let duration_findings: Vec<_> = findings
+            .iter()
+            .filter(|finding| finding.check_id == "duration-sanity")
+            .collect();
+        assert_eq!(
+            duration_findings.len(),
+            1,
+            "next representable duration outside the boundary must fail: {findings:#?}"
+        );
+        assert_eq!(duration_findings[0].severity, Severity::Error);
+        let value = serde_json::to_value(duration_findings[0]).expect("serializes finding");
+        assert_eq!(value["measured"], duration_s);
+        assert_eq!(value["expected"], 1.0);
+    }
+}
+
+#[test]
+fn invalid_duration_pins_are_explicit_errors() {
+    for pin in [
+        Pinned {
+            value: f64::NAN,
+            tolerance: 0.02,
+        },
+        Pinned {
+            value: 0.0,
+            tolerance: 0.02,
+        },
+        Pinned {
+            value: 1.0,
+            tolerance: f64::NAN,
+        },
+        Pinned {
+            value: 1.0,
+            tolerance: -0.02,
+        },
+    ] {
+        let mut config = Config::default();
+        config.clips.insert(
+            "walk".into(),
+            ClipExpectations {
+                duration_s: Some(pin),
+                ..Default::default()
+            },
+        );
+        let findings = lint_with_config(&clean_doc(), &config);
+        let finding = findings
+            .iter()
+            .find(|finding| finding.check_id == "duration-sanity")
+            .expect("invalid duration pin finding");
+        assert_eq!(finding.severity, Severity::Error);
+        assert!(finding.message.contains("invalid declared duration pin"));
+    }
+}
+
+#[test]
+fn duration_pin_miss_reports_structured_measured_and_expected_seconds() {
+    let doc = clean_doc();
+    let findings = lint_with_config(&doc, &duration_pin(1.033, 0.02));
+    let finding = findings
+        .iter()
+        .find(|finding| finding.check_id == "duration-sanity")
+        .expect("duration pin finding");
+    let value = serde_json::to_value(finding).expect("serializes finding");
+    assert_eq!(finding.severity, Severity::Error);
+    assert_eq!(value["clip"], "walk");
+    assert_eq!(value["measured"], 1.0);
+    assert_eq!(value["expected"], 1.033);
+}
+
+#[test]
+fn duration_pin_is_still_judged_for_an_empty_clip() {
+    let mut doc = clean_doc();
+    doc.clips[0].tracks.clear();
+    let findings = lint_with_config(&doc, &duration_pin(1.033, 0.02));
+    let duration_findings: Vec<_> = findings
+        .iter()
+        .filter(|finding| finding.check_id == "duration-sanity")
+        .collect();
+    assert_eq!(
+        duration_findings.len(),
+        2,
+        "empty-track and duration-contract failures should both remain visible: {findings:#?}"
+    );
+    assert!(duration_findings.iter().any(|finding| {
+        finding.severity == Severity::Warning && finding.message == "clip has no tracks"
+    }));
+    let pin_miss = duration_findings
+        .iter()
+        .find(|finding| finding.severity == Severity::Error)
+        .expect("duration pin error");
+    let value = serde_json::to_value(pin_miss).expect("serializes finding");
+    assert_eq!(value["measured"], 1.0);
+    assert_eq!(value["expected"], 1.033);
+}
+
+#[test]
+fn empty_zero_duration_without_a_pin_remains_warning_only() {
+    let mut doc = clean_doc();
+    doc.clips[0].tracks.clear();
+    doc.clips[0].duration_s = 0.0;
+    let findings = lint(&doc);
+    assert_eq!(findings.len(), 1, "got: {findings:#?}");
+    assert_eq!(findings[0].check_id, "duration-sanity");
+    assert_eq!(findings[0].severity, Severity::Warning);
+    assert_eq!(findings[0].message, "clip has no tracks");
 }
 
 #[test]
