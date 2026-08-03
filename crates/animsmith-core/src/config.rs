@@ -87,7 +87,8 @@ pub struct ClipExpectations {
     #[serde(rename = "loop")]
     pub looping: Option<bool>,
     /// Expected clip duration in seconds; consumed by the
-    /// `duration-sanity` check.
+    /// `duration-sanity` check. Its value must be finite and positive,
+    /// and its tolerance must be finite and non-negative.
     pub duration_s: Option<Pinned>,
     /// Declared locomotion speed (m/s) carried by the clip's root
     /// motion.

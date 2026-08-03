@@ -186,6 +186,10 @@ max_gait_phase_spread = 0.15
 min_lr_amplitude_m = 0.03
 ```
 
+Duration-pin values must be finite and positive; their tolerances must be
+finite and non-negative. Invalid pins are explicit `duration-sanity` errors,
+not silently ignored contracts.
+
 `--select`, `--allow`, and `[checks.*] severity` including `"off"`
 control what runs and how hard it fails. Assigning "note", "warn", or "error"
 also enables an opt-in check such as `constant-nonunit-scale`. See the

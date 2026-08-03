@@ -3252,16 +3252,64 @@ fn config_toml_path_drives_check_behaviour() {
 }
 
 #[test]
-fn duration_glob_pin_from_toml_reports_structured_evidence() {
+fn duration_toml_pins_report_structured_evidence() {
     let dir = unique_temp_dir("duration-pin");
+    let input = dir.path().join("sway.glb");
+    write_clean_glb(&input);
+    for (name, text) in [
+        (
+            "glob.toml",
+            "[clips.\"sway*\"]\nduration_s = { value = 1.25, tolerance = 0.125 }\n",
+        ),
+        (
+            "exact.toml",
+            "[clips.\"sway*\"]\nduration_s = { value = 1.0, tolerance = 0.0 }\n\
+             [clips.sway]\nduration_s = { value = 1.25, tolerance = 0.125 }\n",
+        ),
+    ] {
+        let config = write_config(dir.path(), name, text);
+        let output = animsmith()
+            .args(["--config"])
+            .arg(&config)
+            .args(["lint"])
+            .arg(&input)
+            .args(["--select", "duration-sanity", "--format", "json"])
+            .output()
+            .expect("runs animsmith");
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "stdout:\n{}\nstderr:\n{}",
+            stdout(&output),
+            stderr(&output)
+        );
+        let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+        let duration = json["files"][0]["checks"]
+            .as_array()
+            .expect("checks array")
+            .iter()
+            .find(|check| check["check_id"] == "duration-sanity")
+            .expect("duration-sanity record");
+        let findings = duration["findings"].as_array().expect("findings array");
+        assert_eq!(findings.len(), 1, "{json:#}");
+        assert_eq!(findings[0]["check_id"], "duration-sanity");
+        assert_eq!(findings[0]["severity"], "error");
+        assert_eq!(findings[0]["clip"], "sway");
+        assert_eq!(findings[0]["measured"], 1.0);
+        assert_eq!(findings[0]["expected"], 1.25);
+    }
+}
+
+#[test]
+fn invalid_duration_pin_from_toml_is_an_explicit_error() {
+    let dir = unique_temp_dir("invalid-duration-pin");
     let input = dir.path().join("sway.glb");
     write_clean_glb(&input);
     let config = write_config(
         dir.path(),
         "animsmith.toml",
-        "[clips.\"sway*\"]\nduration_s = { value = 1.25, tolerance = 0.125 }\n",
+        "[clips.sway]\nduration_s = { value = nan, tolerance = 0.125 }\n",
     );
-
     let output = animsmith()
         .args(["--config"])
         .arg(&config)
@@ -3270,27 +3318,22 @@ fn duration_glob_pin_from_toml_reports_structured_evidence() {
         .args(["--select", "duration-sanity", "--format", "json"])
         .output()
         .expect("runs animsmith");
-    assert_eq!(
-        output.status.code(),
-        Some(1),
-        "stdout:\n{}\nstderr:\n{}",
-        stdout(&output),
-        stderr(&output)
-    );
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
-    let duration = json["files"][0]["checks"]
+    let finding = json["files"][0]["checks"]
         .as_array()
         .expect("checks array")
         .iter()
         .find(|check| check["check_id"] == "duration-sanity")
-        .expect("duration-sanity record");
-    let findings = duration["findings"].as_array().expect("findings array");
-    assert_eq!(findings.len(), 1, "{json:#}");
-    assert_eq!(findings[0]["check_id"], "duration-sanity");
-    assert_eq!(findings[0]["severity"], "error");
-    assert_eq!(findings[0]["clip"], "sway");
-    assert_eq!(findings[0]["measured"], 1.0);
-    assert_eq!(findings[0]["expected"], 1.25);
+        .expect("duration-sanity record")["findings"][0]
+        .clone();
+    assert_eq!(finding["severity"], "error");
+    assert!(
+        finding["message"]
+            .as_str()
+            .expect("message")
+            .contains("invalid declared duration pin")
+    );
 }
 
 /// The shipped example config must parse verbatim — otherwise it drifts

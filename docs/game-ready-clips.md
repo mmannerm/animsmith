@@ -206,7 +206,9 @@ meshes, skins, materials, and textures pass through byte-identical.
   gameplay or animation manifest. Declare
   `duration_s = { value = 1.033, tolerance = 0.02 }` for the clip and
   `duration-sanity` reports the measured and expected seconds when that pin
-  is missed. The tolerance absorbs harmless exporter rounding. Linting only
+  is missed. The value must be finite and positive, and the tolerance finite
+  and non-negative; invalid pins are errors instead of silently disabling the
+  contract. The tolerance absorbs harmless exporter rounding. Linting only
   reports the mismatch; it does not repair or resample the clip. Re-export
   when the authored range is wrong, or use the explicit slice/hold transforms
   below when the source is intentionally being edited.

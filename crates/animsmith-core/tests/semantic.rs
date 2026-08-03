@@ -868,6 +868,9 @@ fn glob_expectations_merge_with_exact_winning() {
             "walk_fast": {
                 "duration_s": { "value": 0.5, "tolerance": 0.01 },
                 "fps": 60.0
+            },
+            "walk_medium": {
+                "fps": 48.0
             }
         }
     }));
@@ -877,8 +880,14 @@ fn glob_expectations_merge_with_exact_winning() {
     assert_eq!(duration.value, 0.5);
     assert_eq!(duration.tolerance, 0.01);
     assert_eq!(exp.fps, Some(60.0)); // exact wins
+    let inherited = config.expectations_for("walk_medium");
+    let duration = inherited.duration_s.expect("inherited glob duration pin");
+    assert_eq!(duration.value, 1.0);
+    assert_eq!(duration.tolerance, 0.02);
+    assert_eq!(inherited.fps, Some(48.0));
     let other = config.expectations_for("run_fast");
     assert_eq!(other.looping, None);
+    assert!(other.duration_s.is_none());
 }
 
 #[test]

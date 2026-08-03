@@ -23,6 +23,30 @@ impl Check for DurationSanity {
         let doc = ctx.doc;
         for (index, clip) in doc.clips.iter().enumerate() {
             let duration_pin = ctx.expectations(index).duration_s;
+            let valid_duration_pin = duration_pin.filter(|pin| {
+                pin.value.is_finite()
+                    && pin.value > 0.0
+                    && pin.tolerance.is_finite()
+                    && pin.tolerance >= 0.0
+            });
+            if let Some(pin) = duration_pin
+                && valid_duration_pin.is_none()
+            {
+                findings.push(
+                    Finding::new(
+                        self.id(),
+                        Severity::Error,
+                        format!(
+                            "invalid declared duration pin (value {}s, tolerance {}s) — \
+                             value must be finite and positive, and tolerance must be \
+                             finite and non-negative",
+                            pin.value, pin.tolerance
+                        ),
+                    )
+                    .clip(&clip.name)
+                    .measured(clip.duration_s),
+                );
+            }
             if clip.tracks.is_empty() {
                 findings.push(
                     Finding::new(self.id(), Severity::Warning, "clip has no tracks")
@@ -37,13 +61,13 @@ impl Check for DurationSanity {
                 )
                 .clip(&clip.name)
                 .measured(clip.duration_s);
-                if let Some(pin) = duration_pin {
+                if let Some(pin) = valid_duration_pin {
                     finding = finding.expected(pin.value);
                 }
                 findings.push(finding);
                 continue;
             }
-            if let Some(pin) = duration_pin
+            if let Some(pin) = valid_duration_pin
                 && (clip.duration_s - pin.value).abs() > pin.tolerance
             {
                 findings.push(

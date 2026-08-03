@@ -267,6 +267,47 @@ fn duration_pin_tolerance_is_inclusive_in_both_directions() {
             "next representable duration outside the boundary must fail: {findings:#?}"
         );
         assert_eq!(duration_findings[0].severity, Severity::Error);
+        let value = serde_json::to_value(duration_findings[0]).expect("serializes finding");
+        assert_eq!(value["measured"], duration_s);
+        assert_eq!(value["expected"], 1.0);
+    }
+}
+
+#[test]
+fn invalid_duration_pins_are_explicit_errors() {
+    for pin in [
+        Pinned {
+            value: f64::NAN,
+            tolerance: 0.02,
+        },
+        Pinned {
+            value: 0.0,
+            tolerance: 0.02,
+        },
+        Pinned {
+            value: 1.0,
+            tolerance: f64::NAN,
+        },
+        Pinned {
+            value: 1.0,
+            tolerance: -0.02,
+        },
+    ] {
+        let mut config = Config::default();
+        config.clips.insert(
+            "walk".into(),
+            ClipExpectations {
+                duration_s: Some(pin),
+                ..Default::default()
+            },
+        );
+        let findings = lint_with_config(&clean_doc(), &config);
+        let finding = findings
+            .iter()
+            .find(|finding| finding.check_id == "duration-sanity")
+            .expect("invalid duration pin finding");
+        assert_eq!(finding.severity, Severity::Error);
+        assert!(finding.message.contains("invalid declared duration pin"));
     }
 }
 
