@@ -1358,6 +1358,20 @@ fn angular_loop_seam_is_versioned_and_configurable_at_the_cli_boundary() {
     let baseline: Value = serde_json::from_slice(&baseline.stdout).expect("valid lint JSON");
     assert_output_schema_valid(&baseline);
     assert_eq!(baseline["files"][0]["measurements"]["schema_version"], 8);
+    assert_eq!(
+        baseline["files"][0]["measurements"]["schema"],
+        MEASUREMENTS_SCHEMA_ID
+    );
+    let mut missing_angular_evidence = baseline.clone();
+    missing_angular_evidence["files"][0]["measurements"]["clips"]["angular_cusp"]
+        ["loop_continuity"]["bones"][0]
+        .as_object_mut()
+        .expect("bone measurement object")
+        .remove("seam_angular_velocity_delta_degps");
+    assert!(
+        !output_validator().is_valid(&missing_angular_evidence),
+        "measurements-v8 requires angular seam evidence in every loop-continuity row"
+    );
     let bones =
         baseline["files"][0]["measurements"]["clips"]["angular_cusp"]["loop_continuity"]["bones"]
             .as_array()

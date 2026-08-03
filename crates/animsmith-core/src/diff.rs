@@ -529,11 +529,11 @@ mod tests {
                 metric: "loop_continuity.bones[0].seam_angular_velocity_delta_degps", // threshold 0.5 deg/s
                 over: |m| {
                     m.loop_continuity.as_mut().unwrap().bones[0]
-                        .seam_angular_velocity_delta_degps = 10.6;
+                        .seam_angular_velocity_delta_degps = 10.5001;
                 },
                 under: |m| {
                     m.loop_continuity.as_mut().unwrap().bones[0]
-                        .seam_angular_velocity_delta_degps = 10.2;
+                        .seam_angular_velocity_delta_degps = 10.4999;
                 },
             },
         ];

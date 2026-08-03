@@ -1162,7 +1162,7 @@ mod tests {
                         "position_delta_m": 0.008,
                         "rotation_delta_deg": 3.5,
                         "seam_velocity_delta_mps": 0.123,
-                        "seam_angular_velocity_delta_degps": 12.3
+                        "seam_angular_velocity_delta_degps": 67.891
                     }
                 ] },
                 "loop_seam_ratio": 0.25,
@@ -1229,7 +1229,7 @@ mod tests {
             render_measure_text(&reports).collect::<Vec<_>>(),
             vec![
                 "asset\\npath.glb:",
-                "  walk\\nclip: 1.000s, 2 frames, 1 animated bones loop Δp=1.20cm Δr=3.50° Δv=0.346m/s Δω=45.68°/s seam×0.25 gait φ=0.50 (10.0cm)",
+                "  walk\\nclip: 1.000s, 2 frames, 1 animated bones loop Δp=1.20cm Δr=3.50° Δv=0.346m/s Δω=67.89°/s seam×0.25 gait φ=0.50 (10.0cm)",
                 "  material resources: 1 materials, 1 textures, 1 images (complete)",
                 "  mesh definition #7 body\\nmesh: 3 verts geometry bbox 1.000×2.000×3.000 geometry centroid (0.250, 1.000, -0.500), ≤4 joints/vtx, weight-sum 0.900–1.100, additional influence sets: JOINTS_1 + WEIGHTS_1 (also JOINTS-only and WEIGHTS-only primitives), JOINTS_2 (also JOINTS-only primitives), WEIGHTS_3 (also WEIGHTS-only primitives)",
                 "  node instance #9 body\\nnode -> mesh #7: static node-world bbox 1.000×2.000×3.000",
