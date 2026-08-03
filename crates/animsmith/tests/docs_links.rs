@@ -75,17 +75,30 @@ fn gfm_options() -> Options {
         | Options::ENABLE_TASKLISTS
 }
 
-/// Destinations of every link and image GitHub would render. Text that
-/// merely looks like a link (code blocks, code spans) never produces a
-/// `Tag::Link`/`Tag::Image` event.
-fn rendered_link_destinations(markdown: &str) -> Vec<String> {
+fn rendered_destinations(markdown: &str, include_images: bool) -> Vec<String> {
     Parser::new_ext(markdown, gfm_options())
         .filter_map(|event| match event {
-            Event::Start(Tag::Link { dest_url, .. })
-            | Event::Start(Tag::Image { dest_url, .. }) => Some(dest_url.into_string()),
+            Event::Start(Tag::Link { dest_url, .. }) => Some(dest_url.into_string()),
+            Event::Start(Tag::Image { dest_url, .. }) if include_images => {
+                Some(dest_url.into_string())
+            }
             _ => None,
         })
         .collect()
+}
+
+/// Destinations of every link GitHub would render. Text that merely
+/// looks like a link (code blocks, code spans, images) never produces
+/// a `Tag::Link` event.
+fn rendered_link_destinations(markdown: &str) -> Vec<String> {
+    rendered_destinations(markdown, false)
+}
+
+/// Destinations of every rendered link and image. General validation
+/// resolves both; README routing completeness deliberately accepts
+/// links only through `rendered_link_destinations`.
+fn rendered_link_or_image_destinations(markdown: &str) -> Vec<String> {
+    rendered_destinations(markdown, true)
 }
 
 /// GitHub's heading-anchor slug: lowercase, drop everything but
@@ -235,7 +248,7 @@ fn validate_file(
         }
     };
 
-    for url in rendered_link_destinations(&content) {
+    for url in rendered_link_or_image_destinations(&content) {
         if url.is_empty() {
             errors.push(format!("{rel}: rendered link has an empty destination"));
             continue;
@@ -357,7 +370,9 @@ fn oracle_sees_all_rendered_link_forms_and_only_those() {
         Inline `[code span](span.md)` link.\n\n\
         \x20   [indented](indented.md)\n";
 
-    let destinations: BTreeSet<String> = rendered_link_destinations(fixture).into_iter().collect();
+    let destinations: BTreeSet<String> = rendered_link_or_image_destinations(fixture)
+        .into_iter()
+        .collect();
     let expected: BTreeSet<String> = [
         "rendered.md",
         "image.png",
@@ -401,26 +416,27 @@ fn root_readme_renders_required_routing_links_and_decoys_do_not_count() {
         "the README routing contract must retain all five routes"
     );
 
-    let anchored_cli_fixture = required_routes
+    let anchored_routes_fixture = required_routes
         .iter()
         .map(|route| {
             if route.ends_with("docs/cli.md") {
                 format!("[rendered]({route}#install)")
             } else {
-                format!("[rendered]({route})")
+                format!("[rendered]({route}#section)")
             }
         })
         .collect::<Vec<_>>()
         .join("\n\n");
     assert!(
-        missing_required_readme_link_routes(&anchored_cli_fixture).is_empty(),
-        "a fragment must not change the required README route"
+        missing_required_readme_link_routes(&anchored_routes_fixture).is_empty(),
+        "a fragment on any required link must not change its README route"
     );
 
     for required in required_routes {
         for decoy in [
             format!("`[inline decoy]({required})`"),
             format!("```text\n[fenced decoy]({required})\n```"),
+            format!("![image decoy]({required})"),
         ] {
             let mut fixture = required_readme_link_routes()
                 .into_iter()
@@ -438,6 +454,27 @@ fn root_readme_renders_required_routing_links_and_decoys_do_not_count() {
             );
         }
     }
+}
+
+/// README rendered-link presence belongs exclusively to this parser
+/// gate. The shell gate may retain ordering checks over README text,
+/// but must not regain literal or regex presence checks for links.
+#[test]
+fn shell_gate_does_not_own_readme_link_presence() {
+    let script =
+        std::fs::read_to_string(repo_root().join("scripts/check-github-community-files.sh"))
+            .expect("reads community-file gate");
+
+    for forbidden in ["require_literal README.md", "require_match README.md"] {
+        assert!(
+            !script.contains(forbidden),
+            "README rendered-link presence belongs in docs_links.rs, found {forbidden}"
+        );
+    }
+    assert!(
+        script.contains("require_order README.md"),
+        "the shell gate must retain its non-Markdown README ordering contract"
+    );
 }
 
 /// The anchor forms the docs actually link, matched against GitHub's
