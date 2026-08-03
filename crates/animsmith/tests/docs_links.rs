@@ -1,5 +1,6 @@
-//! Drift gate for rendered Markdown links across the user-facing doc
-//! set: every rendered link and image in a gated file must resolve.
+//! Drift gate for rendered Markdown links across tracked project docs:
+//! every tracked `.md` file outside the explicit agent/research
+//! exclusions is gated, and every rendered link and image must resolve.
 //! Relative targets must exist in the repo, `#fragment`s — intra-file
 //! and cross-file — must match a GitHub-slugged heading in the target,
 //! repo `blob/main`/`tree/main` URLs must point at real paths, and
@@ -20,46 +21,72 @@
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 const REPO_BLOB_URL: &str = "https://github.com/mmannerm/animsmith/blob/main/";
 const REPO_TREE_URL: &str = "https://github.com/mmannerm/animsmith/tree/main/";
 
-/// Gated files where relative in-repo links are the norm. The
-/// top-level `docs/*.md` pages join this set by directory listing in
-/// `validate_repo`, so a new page is gated without editing this list.
-const RELATIVE_LINK_FILES: &[&str] = &[
-    "CONTRIBUTING.md",
-    "DEVELOPMENT.md",
-    "SUPPORT.md",
-    "SECURITY.md",
-    "AGENTS.md",
-    "CLAUDE.md",
-    ".agent-instructions/shared.md",
-    ".github/PULL_REQUEST_TEMPLATE.md",
-    "examples/README.md",
-];
+/// Tracked Markdown outside the maintained project-facing document set.
+/// `.claude/` contains agent-runner procedures; `docs/research/` keeps
+/// archival source notes rather than product documentation.
+const EXCLUDED_MARKDOWN_PREFIXES: &[&str] = &[".claude/", "docs/research/"];
+
+/// The Git index is the sole inclusion authority: staged additions join
+/// the gate immediately, while untracked Markdown does not. NUL-delimited
+/// output keeps whitespace in tracked paths unambiguous.
+fn tracked_markdown_files(root: &Path) -> Result<Vec<String>, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["ls-files", "--cached", "-z", "--", "*.md"])
+        .output()
+        .map_err(|error| format!("runs git ls-files for Markdown inventory: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git ls-files for Markdown inventory failed with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|error| format!("tracked Markdown paths must be UTF-8: {error}"))?;
+    let mut files: Vec<String> = stdout
+        .split_terminator('\0')
+        .filter(|rel| {
+            !EXCLUDED_MARKDOWN_PREFIXES
+                .iter()
+                .any(|prefix| rel.starts_with(prefix))
+        })
+        .map(str::to_owned)
+        .collect();
+    files.sort();
+    Ok(files)
+}
 
 /// READMEs bundled into published crates render off-repo (crates.io),
-/// so relative links would break there: absolute repo URLs only. The
-/// root README is the crates.io front page for the `animsmith` CLI
-/// crate; crate READMEs join by directory listing, so a new crate
-/// README is gated without editing any list.
-fn absolute_only_files(root: &Path) -> Vec<String> {
-    let mut files = vec!["README.md".to_owned()];
-    if let Ok(entries) = std::fs::read_dir(root.join("crates")) {
-        for entry in entries {
-            let entry = entry.expect("directory entry");
-            if entry.path().join("README.md").is_file() {
-                let name = entry.file_name();
-                files.push(format!(
-                    "crates/{}/README.md",
-                    name.to_str().expect("utf-8 crate dir")
-                ));
-            }
-        }
+/// so relative links would break there. This classifies files already
+/// selected by Git; it is not another inclusion source.
+fn is_published_readme(rel: &str) -> bool {
+    if rel == "README.md" {
+        return true;
     }
-    files.sort();
-    files
+
+    let mut components = Path::new(rel).components();
+    matches!(
+        (
+            components.next(),
+            components.next(),
+            components.next(),
+            components.next()
+        ),
+        (
+            Some(std::path::Component::Normal(first)),
+            Some(std::path::Component::Normal(_)),
+            Some(std::path::Component::Normal(last)),
+            None
+        ) if first == "crates" && last == "README.md"
+    )
 }
 
 fn repo_root() -> PathBuf {
@@ -299,53 +326,73 @@ fn validate_file(
     }
 }
 
-/// Walk the full gated set under `root`: the published (absolute-only)
-/// READMEs, the curated relative-link files, and every top-level
-/// `docs/*.md` by directory listing. Returns the docs-page count so
-/// callers can assert the enumeration saw a non-empty docs set.
-fn validate_repo(root: &Path) -> (usize, Vec<String>) {
+/// Validate every tracked Markdown file except the explicit exclusions.
+fn validate_repo(root: &Path) -> Result<(Vec<String>, Vec<String>), String> {
     let mut cache = BTreeMap::new();
     let mut errors = Vec::new();
+    let files = tracked_markdown_files(root)?;
 
-    for rel in absolute_only_files(root) {
-        validate_file(root, &rel, true, &mut cache, &mut errors);
+    for rel in &files {
+        validate_file(root, rel, is_published_readme(rel), &mut cache, &mut errors);
     }
-    for rel in RELATIVE_LINK_FILES {
-        validate_file(root, rel, false, &mut cache, &mut errors);
-    }
-
-    let mut docs_pages = 0usize;
-    for entry in std::fs::read_dir(root.join("docs")).expect("lists docs/") {
-        let path = entry.expect("directory entry").path();
-        if path.extension().and_then(|e| e.to_str()) != Some("md") {
-            continue;
-        }
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .expect("utf-8 doc name");
-        docs_pages += 1;
-        validate_file(
-            root,
-            &format!("docs/{name}"),
-            false,
-            &mut cache,
-            &mut errors,
-        );
-    }
-    (docs_pages, errors)
+    Ok((files, errors))
 }
 
 #[test]
 fn gated_markdown_links_resolve() {
     let root = repo_root();
-    assert!(
-        absolute_only_files(&root).len() > 1,
-        "crates/ must carry published-crate READMEs"
+    let (files, errors) = validate_repo(&root).expect("enumerates tracked Markdown with Git");
+    assert_eq!(
+        EXCLUDED_MARKDOWN_PREFIXES,
+        [".claude/", "docs/research/"],
+        "only the two stated non-project-doc trees may be excluded"
     );
 
-    let (docs_pages, errors) = validate_repo(&root);
-    assert!(docs_pages > 0, "docs/ must carry gated markdown pages");
+    let inventory_output = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["ls-files", "-z", "--", "*.md"])
+        .output()
+        .expect("independently enumerates the repository Markdown inventory");
+    assert!(
+        inventory_output.status.success(),
+        "independent Markdown inventory failed: {}",
+        String::from_utf8_lossy(&inventory_output.stderr)
+    );
+    let inventory = String::from_utf8(inventory_output.stdout).expect("tracked paths are UTF-8");
+    let mut expected_files: Vec<String> = inventory
+        .split_terminator('\0')
+        .filter(|rel| !rel.starts_with(".claude/") && !rel.starts_with("docs/research/"))
+        .map(str::to_owned)
+        .collect();
+    expected_files.sort();
+    assert_eq!(
+        files, expected_files,
+        "the gate must contain every tracked Markdown path except the two stated exclusions"
+    );
+
+    for newly_gated in [
+        "CHANGELOG.md",
+        "DESIGN.md",
+        "RELEASING.md",
+        "THIRD-PARTY.md",
+        "crates/animsmith-core/THIRD-PARTY.md",
+        "crates/animsmith-fbx/THIRD-PARTY.md",
+        "crates/animsmith-gltf/THIRD-PARTY.md",
+        "crates/animsmith-report/THIRD-PARTY.md",
+        "crates/animsmith/THIRD-PARTY.md",
+        "examples/assets/README.md",
+        "fuzz/README.md",
+    ] {
+        assert!(
+            files.iter().any(|rel| rel == newly_gated),
+            "the widened gate must include {newly_gated}"
+        );
+    }
+    assert!(
+        !files.is_empty(),
+        "the tracked Markdown gate must not be empty"
+    );
     assert!(
         errors.is_empty(),
         "broken documentation links:\n{}",
@@ -638,98 +685,194 @@ fn fixture_repo_valid_links_pass_and_each_mutation_fails() {
     );
 }
 
-/// The enumeration wiring itself, pinned on a fixture with a fully
-/// independent oracle: every expected diagnostic below is a literal
-/// string, never derived from the implementation's own lists, so
-/// dropping any member from the gated set — a community file from
-/// `RELATIVE_LINK_FILES`, the docs directory listing, the crate-README
-/// discovery, or the root README — fails a fixed assertion here.
-/// Every fixture docs page carries its own named diagnostic (an
-/// implementation that merely counts a page without validating it
-/// fails), `docs/extra.md` is an arbitrary, non-mandated name (an
-/// implementation hard-coding the well-known docs page names fails),
-/// and the root README's relative link points at an existing target,
-/// so its diagnostic appears only under the absolute-only policy (an
-/// implementation validating it in relative mode fails).
+/// The Git index is the only inclusion source: arbitrary tracked files
+/// join anywhere, untracked/non-Markdown files do not, exclusions match
+/// exact directory prefixes, and published README policy is an overlay.
 #[test]
-fn fixture_repo_enumeration_gates_mandated_members_and_missing_files() {
+fn fixture_repo_gates_all_tracked_markdown_minus_exact_exclusions() {
     let dir = tempfile::tempdir().expect("creates fixture repo");
     let root = dir.path();
-    std::fs::create_dir_all(root.join("docs")).expect("creates docs/");
-    std::fs::create_dir_all(root.join("examples")).expect("creates examples/");
-    std::fs::create_dir_all(root.join("crates/mycrate")).expect("creates crates/mycrate/");
-    std::fs::write(
-        root.join("docs/README.md"),
-        "# Documentation\n\nThe index links [broken](missing-index.md).\n",
-    )
-    .expect("writes docs index");
-    std::fs::write(
-        root.join("docs/game-ready-clips.md"),
-        "# Game-ready clips\n\nA symptom links [broken](missing-symptom.md).\n",
-    )
-    .expect("writes symptom guide");
-    std::fs::write(
-        root.join("docs/extra.md"),
-        "# Extra\n\nA new page links [broken](missing-extra.md).\n",
-    )
-    .expect("writes extra page");
-    std::fs::write(
-        root.join("examples/README.md"),
-        "# Examples\n\nA cookbook links [broken](missing-example.md).\n",
-    )
-    .expect("writes examples readme");
-    std::fs::write(
-        root.join("crates/mycrate/README.md"),
-        "# mycrate\n\nA published README links [relative](../../docs/README.md).\n",
-    )
-    .expect("writes crate readme");
-    // The relative target exists, so this diagnostic appears only when
-    // the root README really runs in absolute-only mode.
-    std::fs::write(
-        root.join("README.md"),
-        "# Root\n\nThe front page links [relative](docs/README.md).\n",
-    )
-    .expect("writes root readme");
+    for directory in [
+        ".agent-instructions",
+        ".claude",
+        "crates/example",
+        "crates/example/docs",
+        "crates/second",
+        "docs/research",
+        "docs/research_extra",
+        "nested/deep",
+    ] {
+        std::fs::create_dir_all(root.join(directory)).expect("creates fixture directory");
+    }
 
-    let (docs_pages, errors) = validate_repo(root);
-    assert_eq!(docs_pages, 3, "directory listing must see all docs pages");
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .expect("runs fixture git");
+        assert!(
+            output.status.success(),
+            "fixture git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["init", "--quiet"]);
 
-    let expected_diagnostics = [
-        "docs/README.md: links to missing local target missing-index.md",
-        "docs/game-ready-clips.md: links to missing local target missing-symptom.md",
-        "docs/extra.md: links to missing local target missing-extra.md",
-        "examples/README.md: links to missing local target missing-example.md",
-        "crates/mycrate/README.md: published file must use absolute links, \
-         found ../../docs/README.md",
-        "README.md: published file must use absolute links, found docs/README.md",
-    ];
-    let expected_missing = [
-        "CONTRIBUTING.md",
-        "DEVELOPMENT.md",
-        "SUPPORT.md",
-        "SECURITY.md",
-        "AGENTS.md",
-        "CLAUDE.md",
+    std::fs::write(
+        root.join("nested/deep/page.md"),
+        "# Deep\n\n[broken](missing-deep.md)\n",
+    )
+    .expect("writes arbitrary nested Markdown");
+    std::fs::write(
+        root.join(".agent-instructions/shared.md"),
+        "# Shared\n\n[broken](missing-agent.md)\n",
+    )
+    .expect("writes non-excluded dot directory Markdown");
+    std::fs::write(
+        root.join(".claude/audit.md"),
+        "# Internal\n\n[excluded](missing-internal.md)\n",
+    )
+    .expect("writes excluded agent Markdown");
+    std::fs::write(
+        root.join(".claude-notes.md"),
+        "# Adjacent\n\n[broken](missing-adjacent.md)\n",
+    )
+    .expect("writes adjacent dotfile Markdown");
+    std::fs::write(
+        root.join("docs/research/raw.md"),
+        "# Research\n\n[excluded](missing-research.md)\n",
+    )
+    .expect("writes excluded research Markdown");
+    std::fs::write(
+        root.join("docs/research-notes.md"),
+        "# Adjacent\n\n[broken](missing-research-notes.md)\n",
+    )
+    .expect("writes adjacent research Markdown");
+    std::fs::write(
+        root.join("docs/research_extra/page.md"),
+        "# Adjacent directory\n\n[broken](missing-research-extra.md)\n",
+    )
+    .expect("writes adjacent research directory Markdown");
+    std::fs::write(root.join("target.txt"), "target\n").expect("writes valid link target");
+    std::fs::write(root.join("README.md"), "# Root\n\n[relative](target.txt)\n")
+        .expect("writes root README");
+    std::fs::write(
+        root.join("crates/example/README.md"),
+        "# Crate\n\n[relative](../../target.txt)\n",
+    )
+    .expect("writes crate README");
+    std::fs::write(
+        root.join("crates/second/README.md"),
+        "# Second crate\n\n[relative](../../target.txt)\n",
+    )
+    .expect("writes second crate README");
+    std::fs::write(
+        root.join("crates/example/docs/README.md"),
+        "# Nested crate docs\n\n[relative](../../../target.txt)\n",
+    )
+    .expect("writes non-published nested crate README");
+    std::fs::write(
+        root.join("nested/README.md"),
+        "# Ordinary README\n\n[relative](../target.txt)\n",
+    )
+    .expect("writes ordinary README");
+    std::fs::write(
+        root.join("untracked.md"),
+        "# Untracked\n\n[ignored](missing-untracked.md)\n",
+    )
+    .expect("writes untracked Markdown");
+    std::fs::write(
+        root.join("notes.txt"),
+        "[not Markdown inventory](missing-notes.md)\n",
+    )
+    .expect("writes tracked non-Markdown");
+
+    git(&[
+        "add",
+        "--",
         ".agent-instructions/shared.md",
-        ".github/PULL_REQUEST_TEMPLATE.md",
-    ];
-    for required in expected_diagnostics {
-        assert!(
-            errors.iter().any(|e| e == required),
-            "mandated gated member must be validated: {required:?}; got {errors:#?}"
-        );
-    }
-    for rel in expected_missing {
-        assert!(
-            errors
-                .iter()
-                .any(|e| e == &format!("{rel}: gated file is missing")),
-            "absent gated file {rel} must be an error; got {errors:#?}"
-        );
-    }
+        ".claude/audit.md",
+        ".claude-notes.md",
+        "README.md",
+        "crates/example/README.md",
+        "crates/example/docs/README.md",
+        "crates/second/README.md",
+        "docs/research/raw.md",
+        "docs/research-notes.md",
+        "docs/research_extra/page.md",
+        "nested/README.md",
+        "nested/deep/page.md",
+        "notes.txt",
+        "target.txt",
+    ]);
+
+    let (files, errors) = validate_repo(root).expect("enumerates fixture Git index");
     assert_eq!(
-        errors.len(),
-        expected_diagnostics.len() + expected_missing.len(),
-        "exactly the member diagnostics plus the missing gated files: {errors:#?}"
+        files,
+        [
+            ".agent-instructions/shared.md",
+            ".claude-notes.md",
+            "README.md",
+            "crates/example/README.md",
+            "crates/example/docs/README.md",
+            "crates/second/README.md",
+            "docs/research-notes.md",
+            "docs/research_extra/page.md",
+            "nested/README.md",
+            "nested/deep/page.md",
+        ],
+        "only tracked Markdown outside the exact exclusions is gated"
+    );
+    assert_eq!(
+        errors,
+        [
+            ".agent-instructions/shared.md: links to missing local target missing-agent.md",
+            ".claude-notes.md: links to missing local target missing-adjacent.md",
+            "README.md: published file must use absolute links, found target.txt",
+            "crates/example/README.md: published file must use absolute links, found ../../target.txt",
+            "crates/second/README.md: published file must use absolute links, found ../../target.txt",
+            "docs/research-notes.md: links to missing local target missing-research-notes.md",
+            "docs/research_extra/page.md: links to missing local target missing-research-extra.md",
+            "nested/deep/page.md: links to missing local target missing-deep.md",
+        ],
+        "each newly gated path and both published overlays must have an exact diagnostic"
+    );
+
+    std::fs::create_dir_all(root.join("renamed")).expect("creates renamed fixture directory");
+    git(&["mv", "nested/deep/page.md", "renamed/page.md"]);
+    let (renamed_files, renamed_errors) =
+        validate_repo(root).expect("enumerates staged Markdown rename");
+    assert!(
+        !renamed_files.iter().any(|rel| rel == "nested/deep/page.md")
+            && renamed_files.iter().any(|rel| rel == "renamed/page.md"),
+        "a staged rename must replace the old gated path with the new path"
+    );
+    assert!(
+        renamed_errors
+            .iter()
+            .any(|error| error == "renamed/page.md: links to missing local target missing-deep.md")
+            && !renamed_errors
+                .iter()
+                .any(|error| error.starts_with("nested/deep/page.md:")),
+        "diagnostics must follow the staged Markdown rename: {renamed_errors:#?}"
+    );
+
+    git(&["rm", "--quiet", "--force", "renamed/page.md"]);
+    let (deleted_files, deleted_errors) =
+        validate_repo(root).expect("enumerates staged Markdown deletion");
+    assert!(
+        !deleted_files
+            .iter()
+            .any(|rel| rel == "nested/deep/page.md" || rel == "renamed/page.md"),
+        "a staged deletion must leave no stale gated path"
+    );
+    assert!(
+        !deleted_errors
+            .iter()
+            .any(|error| error.starts_with("nested/deep/page.md:")
+                || error.starts_with("renamed/page.md:")),
+        "a staged deletion must leave no stale missing-file diagnostic: {deleted_errors:#?}"
     );
 }
