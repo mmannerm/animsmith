@@ -375,6 +375,7 @@ fn measurement_report_input_rejects_finite_value_that_overflows_mesh_f32() {
             "max": [1e39, 0.0, 0.0],
         },
         "max_joints_per_vertex": 0,
+        "additional_influence_sets": [],
     }]);
 
     let error = measurement_report_error(report);
@@ -411,7 +412,8 @@ fn measurement_report_input_rejects_inconsistent_static_node_and_scene_evidence(
                 "min": [0.0, 0.0, 0.0],
                 "max": [1.0, 1.0, 1.0]
             },
-            "max_joints_per_vertex": 0
+            "max_joints_per_vertex": 0,
+            "additional_influence_sets": []
         }],
         "node_instances": [{
             "node_index": 2,
@@ -749,8 +751,22 @@ fn valid_mesh_measurements() -> MeshDefinitionMeasurements {
         "max_joints_per_vertex": 4,
         "weight_sum_min": 0.9,
         "weight_sum_max": 1.1,
+        "additional_influence_sets": [],
     }))
     .expect("valid mesh measurement fixture")
+}
+
+fn additional_influence_set(
+    set_index: u32,
+    joints_present: bool,
+    weights_present: bool,
+) -> animsmith_core::measure::AdditionalInfluenceSetMeasurements {
+    serde_json::from_value(serde_json::json!({
+        "set_index": set_index,
+        "joints_present": joints_present,
+        "weights_present": weights_present,
+    }))
+    .expect("valid additional influence-set fixture")
 }
 
 fn valid_asset_measurements() -> AssetMeasurements {
@@ -951,6 +967,48 @@ fn measurement_contract_rejects_inconsistent_static_asset_relationships() {
         |assets| assets.default_scene_index = Some(99),
         "default_scene_index",
         "default_scene_index must reference a declared scene",
+    );
+}
+
+#[test]
+fn measurement_contract_rejects_invalid_additional_influence_set_ordering() {
+    assert_invalid_assets(
+        |assets| {
+            assets.mesh_definitions[0].additional_influence_sets = vec![
+                additional_influence_set(1, true, false),
+                additional_influence_set(0, false, true),
+            ];
+        },
+        "mesh_definitions[0].additional_influence_sets[1].set_index",
+        "set_index must be at least 1",
+    );
+    assert_invalid_assets(
+        |assets| {
+            assets.mesh_definitions[0].additional_influence_sets = vec![
+                additional_influence_set(2, true, true),
+                additional_influence_set(1, false, true),
+            ];
+        },
+        "mesh_definitions[0].additional_influence_sets[1].set_index",
+        "set_index values must be strictly increasing and unique",
+    );
+    assert_invalid_assets(
+        |assets| {
+            assets.mesh_definitions[0].additional_influence_sets = vec![
+                additional_influence_set(1, true, true),
+                additional_influence_set(1, false, true),
+            ];
+        },
+        "mesh_definitions[0].additional_influence_sets[1].set_index",
+        "set_index values must be strictly increasing and unique",
+    );
+    assert_invalid_assets(
+        |assets| {
+            assets.mesh_definitions[0].additional_influence_sets =
+                vec![additional_influence_set(1, false, false)];
+        },
+        "mesh_definitions[0].additional_influence_sets[0]",
+        "an additional influence set must declare joints, weights, or both",
     );
 }
 

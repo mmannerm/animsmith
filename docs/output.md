@@ -13,8 +13,8 @@ identity `urn:animsmith:schema:output:2`. The retrievable schema is
 is a retrieval location, not the protocol identity.
 
 Measurement evidence is nested and independently versioned as
-`urn:animsmith:schema:measurements:2`. Its retrievable schema is
-[`measurements-v2.schema.json`](schemas/measurements-v2.schema.json). A future
+`urn:animsmith:schema:measurements:3`. Its retrievable schema is
+[`measurements-v3.schema.json`](schemas/measurements-v3.schema.json). A future
 measurement-definition change can therefore bump that contract without
 redesigning the outer result envelope.
 
@@ -205,8 +205,8 @@ Both commands put evidence under `files[].measurements`:
 
 ```json
 {
-  "schema_version": 2,
-  "schema": "urn:animsmith:schema:measurements:2",
+  "schema_version": 3,
+  "schema": "urn:animsmith:schema:measurements:3",
   "clips": {},
   "mesh_definitions": [],
   "node_instances": [],
@@ -221,6 +221,23 @@ ranges, and optional role-dependent gait, seam, and speed metrics.
 `geometry_aabb` reduces finite primitive `POSITION` values in the mesh's own
 coordinates; it is independent of every node and scene. Vertex and skin
 influence statistics are properties of that same definition.
+
+Each mesh definition has `additional_influence_sets`, an always-present array
+of authored secondary glTF skin-attribute sets discovered across its
+primitives. Each entry has a numeric `set_index` of at least 1 plus independent
+`joints_present` and `weights_present` booleans, so an unpaired `JOINTS_n` or
+`WEIGHTS_n` remains observable. Entries are strictly ascending by `set_index`
+and appear at most once. The array is empty when no secondary set was authored.
+It excludes set 0: `max_joints_per_vertex` and the weight-sum extrema retain
+their paired primary `JOINTS_0` / `WEIGHTS_0` semantics and do not incorporate
+additional sets.
+
+This is source-presence evidence, not secondary-skinning evaluation. animsmith
+does not decode the additional per-vertex values into the core skinning model,
+include them in weight statistics, repair unpaired sets, or preserve their
+payloads when writing a converted asset. Keep the raw source when this evidence
+matters; a consuming pipeline decides whether a non-empty or unpaired set is
+acceptable.
 
 `node_instances` contains one record per mesh-bearing node. `node_index` and
 `mesh_index` are stable source indices, so names need not be unique. Its
@@ -344,7 +361,7 @@ delta count, and structured metric deltas:
 ```
 
 `diff` accepts asset files or one-file v2 `measure`/`lint` reports carrying
-measurement contract v2. Multi-file reports and unsupported contract versions
+measurement contract v3. Multi-file reports and unsupported contract versions
 are rejected as operator errors. Before extracting the clip metrics it uses,
 `diff` validates the complete measurement record, including mesh evidence, and
 rejects malformed or non-finite payload values.

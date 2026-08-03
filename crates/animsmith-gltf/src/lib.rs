@@ -72,9 +72,9 @@ pub mod fix;
 pub mod write;
 
 use animsmith_core::model::{
-    Bone, Clip, Document, Interpolation, MaterialAsset, MeshAsset, MeshInstance,
-    NormalTextureAsset, OcclusionTextureAsset, Primitive, Property, SceneAsset, SceneAssets,
-    Skeleton, SourceInfo, TextureAsset, Track, TrackValues, Transform,
+    AdditionalInfluenceSet, Bone, Clip, Document, Interpolation, MaterialAsset, MeshAsset,
+    MeshInstance, NormalTextureAsset, OcclusionTextureAsset, Primitive, Property, SceneAsset,
+    SceneAssets, Skeleton, SourceInfo, TextureAsset, Track, TrackValues, Transform,
 };
 use base64::Engine as _;
 use glam::{Mat4, Quat, Vec3};
@@ -774,6 +774,41 @@ fn extract_assets(
                 } else {
                     (Vec::new(), Vec::new())
                 };
+            // Secondary influence attributes do not change the core's
+            // primary-set semantics, but their independent presence matters
+            // to consumers that must reject or report unsupported influence
+            // sets. Only retain nonzero accessors, matching the loader's
+            // count-zero-as-absent hardening policy above.
+            let mut additional_influence_sets: BTreeMap<u32, AdditionalInfluenceSet> =
+                BTreeMap::new();
+            for (semantic, accessor) in prim.attributes() {
+                if accessor.count() == 0 {
+                    continue;
+                }
+                match semantic {
+                    gltf::Semantic::Joints(set) if set >= 1 => {
+                        additional_influence_sets
+                            .entry(set)
+                            .and_modify(|entry| entry.joints_present = true)
+                            .or_insert(AdditionalInfluenceSet {
+                                set_index: set,
+                                joints_present: true,
+                                weights_present: false,
+                            });
+                    }
+                    gltf::Semantic::Weights(set) if set >= 1 => {
+                        additional_influence_sets
+                            .entry(set)
+                            .and_modify(|entry| entry.weights_present = true)
+                            .or_insert(AdditionalInfluenceSet {
+                                set_index: set,
+                                joints_present: false,
+                                weights_present: true,
+                            });
+                    }
+                    _ => {}
+                }
+            }
             let indices = if prim.indices().is_some_and(|a| a.count() > 0) {
                 reader
                     .read_indices()
@@ -790,6 +825,7 @@ fn extract_assets(
                 uvs,
                 joints,
                 weights,
+                additional_influence_sets: additional_influence_sets.into_values().collect(),
             });
         }
         if primitives.is_empty() {

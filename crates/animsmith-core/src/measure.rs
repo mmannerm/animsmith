@@ -54,6 +54,24 @@ pub struct MeshDefinitionMeasurements {
     /// unskinned mesh.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub weight_sum_max: Option<f64>,
+    /// Declared non-primary skin-influence sets, merged across every
+    /// primitive in this mesh definition and sorted by set number.
+    pub additional_influence_sets: Vec<AdditionalInfluenceSetMeasurements>,
+}
+
+/// Presence of one non-primary skin-influence attribute set in a mesh definition.
+///
+/// The two sides are reported independently so malformed or partial source
+/// declarations remain observable without assigning them skinning semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct AdditionalInfluenceSetMeasurements {
+    /// glTF attribute-set number (`n >= 1`).
+    pub set_index: u32,
+    /// Whether any primitive declares `JOINTS_n`.
+    pub joints_present: bool,
+    /// Whether any primitive declares `WEIGHTS_n`.
+    pub weights_present: bool,
 }
 
 /// Why a static node-instance AABB could not be emitted.
@@ -183,6 +201,8 @@ fn measure_mesh_definition(mesh: &MeshAsset) -> MeshDefinitionMeasurements {
     let mut weight_sum_min = f64::INFINITY;
     let mut weight_sum_max = f64::NEG_INFINITY;
     let mut any_finite_weight = false;
+    let mut additional_influence_sets: BTreeMap<u32, AdditionalInfluenceSetMeasurements> =
+        BTreeMap::new();
 
     for primitive in &mesh.primitives {
         vertex_count = vertex_count.saturating_add(primitive.positions.len() as u32);
@@ -201,6 +221,19 @@ fn measure_mesh_definition(mesh: &MeshAsset) -> MeshDefinitionMeasurements {
                 weight_sum_max = weight_sum_max.max(sum);
             }
         }
+        for set in &primitive.additional_influence_sets {
+            additional_influence_sets
+                .entry(set.set_index)
+                .and_modify(|entry| {
+                    entry.joints_present |= set.joints_present;
+                    entry.weights_present |= set.weights_present;
+                })
+                .or_insert(AdditionalInfluenceSetMeasurements {
+                    set_index: set.set_index,
+                    joints_present: set.joints_present,
+                    weights_present: set.weights_present,
+                });
+        }
     }
 
     MeshDefinitionMeasurements {
@@ -211,6 +244,7 @@ fn measure_mesh_definition(mesh: &MeshAsset) -> MeshDefinitionMeasurements {
         max_joints_per_vertex,
         weight_sum_min: any_finite_weight.then_some(weight_sum_min),
         weight_sum_max: any_finite_weight.then_some(weight_sum_max),
+        additional_influence_sets: additional_influence_sets.into_values().collect(),
     }
 }
 
@@ -506,8 +540,8 @@ pub fn measure_document(
 mod tests {
     use super::*;
     use crate::model::{
-        Bone, Clip, Document, Interpolation, MeshAsset, Primitive, Property, SceneAssets, Skeleton,
-        Track, TrackValues, Transform,
+        AdditionalInfluenceSet, Bone, Clip, Document, Interpolation, MeshAsset, Primitive,
+        Property, SceneAssets, Skeleton, Track, TrackValues, Transform,
     };
     use crate::profile::Role;
     use glam::{Quat, Vec3};
@@ -559,6 +593,58 @@ mod tests {
         // f32 weights summed in f64 carry rounding; compare with tolerance.
         assert!((m.weight_sum_min.unwrap() - 0.9).abs() < 1e-6);
         assert!((m.weight_sum_max.unwrap() - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn mesh_measurements_merge_secondary_influence_set_presence_without_affecting_primary_stats() {
+        let primary = Primitive {
+            positions: vec![Vec3::ZERO],
+            joints: vec![[0, 1, 0, 0]],
+            weights: vec![[0.75, 0.25, 0.0, 0.0]],
+            additional_influence_sets: vec![AdditionalInfluenceSet {
+                set_index: 2,
+                joints_present: true,
+                weights_present: false,
+            }],
+            ..Primitive::default()
+        };
+        let secondary = Primitive {
+            positions: vec![Vec3::ONE],
+            additional_influence_sets: vec![
+                AdditionalInfluenceSet {
+                    set_index: 1,
+                    joints_present: false,
+                    weights_present: true,
+                },
+                AdditionalInfluenceSet {
+                    set_index: 2,
+                    joints_present: false,
+                    weights_present: true,
+                },
+            ],
+            ..Primitive::default()
+        };
+
+        let measured = mesh("body", vec![primary, secondary]);
+
+        assert_eq!(measured.max_joints_per_vertex, 2);
+        assert_eq!(measured.weight_sum_min, Some(1.0));
+        assert_eq!(measured.weight_sum_max, Some(1.0));
+        assert_eq!(
+            measured.additional_influence_sets,
+            vec![
+                AdditionalInfluenceSetMeasurements {
+                    set_index: 1,
+                    joints_present: false,
+                    weights_present: true,
+                },
+                AdditionalInfluenceSetMeasurements {
+                    set_index: 2,
+                    joints_present: true,
+                    weights_present: true,
+                },
+            ]
+        );
     }
 
     #[test]

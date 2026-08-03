@@ -5,7 +5,7 @@
 use animsmith_core::glam::{Mat4, Vec3};
 use animsmith_core::model::*;
 
-const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v2.schema.json");
+const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v3.schema.json");
 
 fn assert_measurements_schema_valid(measurements: &serde_json::Value) {
     let schema = serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid measurement schema JSON");
@@ -16,9 +16,156 @@ fn assert_measurements_schema_valid(measurements: &serde_json::Value) {
         .collect::<Vec<_>>();
     assert!(
         errors.is_empty(),
-        "measurement output must satisfy the published v2 schema:\n{}\ninstance: {measurements:#}",
+        "measurement output must satisfy the published v3 schema:\n{}\ninstance: {measurements:#}",
         errors.join("\n")
     );
+}
+
+#[derive(Clone, Copy)]
+enum SecondaryInfluenceSet {
+    None,
+    Paired,
+    JointsOnly,
+    WeightsOnly,
+}
+
+fn append_accessor(
+    bytes: &mut Vec<u8>,
+    buffer_views: &mut Vec<serde_json::Value>,
+    accessors: &mut Vec<serde_json::Value>,
+    data: &[u8],
+    component_type: u32,
+) -> usize {
+    while !bytes.len().is_multiple_of(4) {
+        bytes.push(0);
+    }
+    let offset = bytes.len();
+    bytes.extend_from_slice(data);
+    let view = buffer_views.len();
+    buffer_views.push(serde_json::json!({
+        "buffer": 0,
+        "byteOffset": offset,
+        "byteLength": data.len(),
+    }));
+    let accessor = accessors.len();
+    accessors.push(serde_json::json!({
+        "bufferView": view,
+        "componentType": component_type,
+        "count": 3,
+        "type": "VEC4",
+    }));
+    accessor
+}
+
+fn vec3_accessor(
+    bytes: &mut Vec<u8>,
+    buffer_views: &mut Vec<serde_json::Value>,
+    accessors: &mut Vec<serde_json::Value>,
+) -> usize {
+    let mut data = Vec::new();
+    for value in [[0.0_f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+        .into_iter()
+        .flatten()
+    {
+        data.extend_from_slice(&value.to_le_bytes());
+    }
+    let accessor = append_accessor(bytes, buffer_views, accessors, &data, 5126);
+    accessors[accessor]["type"] = serde_json::json!("VEC3");
+    accessors[accessor]["min"] = serde_json::json!([0.0, 0.0, 0.0]);
+    accessors[accessor]["max"] = serde_json::json!([1.0, 1.0, 0.0]);
+    accessor
+}
+
+fn joints_accessor(
+    bytes: &mut Vec<u8>,
+    buffer_views: &mut Vec<serde_json::Value>,
+    accessors: &mut Vec<serde_json::Value>,
+) -> usize {
+    let mut data = Vec::new();
+    for value in [[0_u16, 1, 0, 0]; 3].into_iter().flatten() {
+        data.extend_from_slice(&value.to_le_bytes());
+    }
+    append_accessor(bytes, buffer_views, accessors, &data, 5123)
+}
+
+fn weights_accessor(
+    bytes: &mut Vec<u8>,
+    buffer_views: &mut Vec<serde_json::Value>,
+    accessors: &mut Vec<serde_json::Value>,
+    weights: [f32; 4],
+) -> usize {
+    let mut data = Vec::new();
+    for value in [weights; 3].into_iter().flatten() {
+        data.extend_from_slice(&value.to_le_bytes());
+    }
+    append_accessor(bytes, buffer_views, accessors, &data, 5126)
+}
+
+/// Writes a deliberately raw glTF because the core writer carries only
+/// `JOINTS_0`/`WEIGHTS_0`; secondary influence attributes must reach the
+/// loader directly from source.
+fn write_secondary_influence_gltf(path: &std::path::Path, sets: &[SecondaryInfluenceSet]) {
+    let mut bytes = Vec::new();
+    let mut buffer_views = Vec::new();
+    let mut accessors = Vec::new();
+    let mut primitives = Vec::new();
+    for set in sets {
+        let position = vec3_accessor(&mut bytes, &mut buffer_views, &mut accessors);
+        let joints = joints_accessor(&mut bytes, &mut buffer_views, &mut accessors);
+        let weights = weights_accessor(
+            &mut bytes,
+            &mut buffer_views,
+            &mut accessors,
+            [0.5, 0.5, 0.0, 0.0],
+        );
+        let mut attributes = serde_json::Map::from_iter([
+            ("POSITION".into(), serde_json::json!(position)),
+            ("JOINTS_0".into(), serde_json::json!(joints)),
+            ("WEIGHTS_0".into(), serde_json::json!(weights)),
+        ]);
+        if matches!(
+            set,
+            SecondaryInfluenceSet::Paired | SecondaryInfluenceSet::JointsOnly
+        ) {
+            attributes.insert(
+                "JOINTS_1".into(),
+                serde_json::json!(joints_accessor(
+                    &mut bytes,
+                    &mut buffer_views,
+                    &mut accessors
+                )),
+            );
+        }
+        if matches!(
+            set,
+            SecondaryInfluenceSet::Paired | SecondaryInfluenceSet::WeightsOnly
+        ) {
+            attributes.insert(
+                "WEIGHTS_1".into(),
+                serde_json::json!(weights_accessor(
+                    &mut bytes,
+                    &mut buffer_views,
+                    &mut accessors,
+                    [0.8, 0.8, 0.8, 0.8],
+                )),
+            );
+        }
+        primitives.push(serde_json::json!({ "attributes": attributes }));
+    }
+    let buffer = path.with_file_name("secondary-influences.bin");
+    std::fs::write(&buffer, &bytes).expect("writes influence buffer");
+    let document = serde_json::json!({
+        "asset": { "version": "2.0" },
+        "buffers": [{ "uri": "secondary-influences.bin", "byteLength": bytes.len() }],
+        "bufferViews": buffer_views,
+        "accessors": accessors,
+        "meshes": [{ "name": "influences", "primitives": primitives }],
+    });
+    std::fs::write(
+        path,
+        serde_json::to_vec_pretty(&document).expect("serializes glTF"),
+    )
+    .expect("writes influence glTF");
 }
 
 fn write_nested_instanced_gltf(path: &std::path::Path) {
@@ -240,6 +387,115 @@ fn cli_measure_emits_mesh_measurements() {
     );
     assert_eq!(measurements["scenes"][0]["instance_count"], 1);
     assert_eq!(measurements["scenes"][0]["excluded_instance_count"], 1);
+}
+
+#[test]
+fn cli_measure_reports_secondary_influence_set_presence_without_changing_primary_metrics() {
+    let cases = [
+        (
+            "primary-only",
+            vec![SecondaryInfluenceSet::None],
+            serde_json::json!([]),
+            vec![(false, false)],
+        ),
+        (
+            "paired",
+            vec![SecondaryInfluenceSet::Paired],
+            serde_json::json!([{
+                "set_index": 1,
+                "joints_present": true,
+                "weights_present": true,
+            }]),
+            vec![(true, true)],
+        ),
+        (
+            "joints-only",
+            vec![SecondaryInfluenceSet::JointsOnly],
+            serde_json::json!([{
+                "set_index": 1,
+                "joints_present": true,
+                "weights_present": false,
+            }]),
+            vec![(true, false)],
+        ),
+        (
+            "weights-only",
+            vec![SecondaryInfluenceSet::WeightsOnly],
+            serde_json::json!([{
+                "set_index": 1,
+                "joints_present": false,
+                "weights_present": true,
+            }]),
+            vec![(false, true)],
+        ),
+        (
+            "second-primitive-only",
+            vec![SecondaryInfluenceSet::None, SecondaryInfluenceSet::Paired],
+            serde_json::json!([{
+                "set_index": 1,
+                "joints_present": true,
+                "weights_present": true,
+            }]),
+            vec![(false, false), (true, true)],
+        ),
+    ];
+
+    for (name, sets, expected_sets, expected_source_presence) in cases {
+        let dir = tempfile::tempdir().expect("creates temp directory");
+        let input = dir.path().join(format!("{name}.gltf"));
+        write_secondary_influence_gltf(&input, &sets);
+
+        let source = gltf::Gltf::open(&input).expect("fixture is valid glTF");
+        let source_primitives = source
+            .meshes()
+            .next()
+            .expect("fixture mesh")
+            .primitives()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            source_primitives.len(),
+            expected_source_presence.len(),
+            "{name}"
+        );
+        for (primitive, (has_joints, has_weights)) in
+            source_primitives.iter().zip(expected_source_presence)
+        {
+            assert_eq!(
+                primitive.get(&gltf::Semantic::Joints(1)).is_some(),
+                has_joints,
+                "{name}: JOINTS_1 fixture preflight"
+            );
+            assert_eq!(
+                primitive.get(&gltf::Semantic::Weights(1)).is_some(),
+                has_weights,
+                "{name}: WEIGHTS_1 fixture preflight"
+            );
+        }
+
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_animsmith"))
+            .args([
+                "measure",
+                input.to_str().expect("utf-8 fixture path"),
+                "--format",
+                "json",
+            ])
+            .output()
+            .expect("runs animsmith");
+        assert!(
+            out.status.success(),
+            "{name}: measure exited {}; stderr:\n{}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid JSON");
+        let measurements = &report["files"][0]["measurements"];
+        assert_measurements_schema_valid(measurements);
+        let mesh = &measurements["mesh_definitions"][0];
+        assert_eq!(mesh["additional_influence_sets"], expected_sets, "{name}");
+        assert_eq!(mesh["max_joints_per_vertex"], 2, "{name}: primary only");
+        assert_eq!(mesh["weight_sum_min"], 1.0, "{name}: primary only");
+        assert_eq!(mesh["weight_sum_max"], 1.0, "{name}: primary only");
+    }
 }
 
 /// Final lint JSON carries the same nested measurement evidence as measure.

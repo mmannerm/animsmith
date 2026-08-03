@@ -106,8 +106,26 @@ pub(crate) fn render_measure_text(
                     ),
                     _ => String::new(),
                 };
+                let additional_influences = if mesh.additional_influence_sets.is_empty() {
+                    String::new()
+                } else {
+                    let sets = mesh
+                        .additional_influence_sets
+                        .iter()
+                        .map(|set| match (set.joints_present, set.weights_present) {
+                            (true, true) => {
+                                format!("JOINTS_{} + WEIGHTS_{}", set.set_index, set.set_index)
+                            }
+                            (true, false) => format!("JOINTS_{}", set.set_index),
+                            (false, true) => format!("WEIGHTS_{}", set.set_index),
+                            (false, false) => format!("set {}", set.set_index),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!(", additional influence sets: {sets}")
+                };
                 format!(
-                    "  mesh definition #{} {}: {} verts{bbox}{skin}",
+                    "  mesh definition #{} {}: {} verts{bbox}{skin}{additional_influences}",
                     mesh.mesh_index,
                     text_atom(&mesh.name),
                     mesh.vertex_count
@@ -1056,7 +1074,12 @@ mod tests {
                 "geometry_aabb": { "min": [0.0, 0.0, 0.0], "max": [1.0, 2.0, 3.0] },
                 "max_joints_per_vertex": 4,
                 "weight_sum_min": 0.9,
-                "weight_sum_max": 1.1
+                "weight_sum_max": 1.1,
+                "additional_influence_sets": [
+                    { "set_index": 1, "joints_present": true, "weights_present": true },
+                    { "set_index": 2, "joints_present": true, "weights_present": false },
+                    { "set_index": 3, "joints_present": false, "weights_present": true }
+                ]
             }],
             "node_instances": [{
                 "node_index": 9,
@@ -1086,7 +1109,7 @@ mod tests {
             vec![
                 "asset\\npath.glb:",
                 "  walk\\nclip: 1.000s, 2 frames, 1 animated bones seam×0.25 gait φ=0.50 (10.0cm)",
-                "  mesh definition #7 body\\nmesh: 3 verts geometry bbox 1.000×2.000×3.000, ≤4 joints/vtx, weight-sum 0.900–1.100",
+                "  mesh definition #7 body\\nmesh: 3 verts geometry bbox 1.000×2.000×3.000, ≤4 joints/vtx, weight-sum 0.900–1.100, additional influence sets: JOINTS_1 + WEIGHTS_1, JOINTS_2, WEIGHTS_3",
                 "  node instance #9 body\\nnode -> mesh #7: static node-world bbox 1.000×2.000×3.000",
                 "  scene #2 main\\nscene [default]: 1 instances static scene-world bbox 1.000×2.000×3.000",
             ]
@@ -1109,7 +1132,8 @@ mod tests {
                 "mesh_index": 0,
                 "name": "plain",
                 "vertex_count": 0,
-                "max_joints_per_vertex": 0
+                "max_joints_per_vertex": 0,
+                "additional_influence_sets": []
             }],
             "node_instances": [],
             "scenes": []

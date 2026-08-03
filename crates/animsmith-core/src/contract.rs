@@ -21,9 +21,9 @@ pub const OUTPUT_SCHEMA_VERSION: u32 = 2;
 /// Immutable identity of the current outer result envelope.
 pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:2";
 /// Current nested measurement-contract version.
-pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 2;
+pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 3;
 /// Immutable identity of the current nested measurement contract.
-pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:2";
+pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:3";
 
 /// Source checkout identity for the producing animsmith build.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -284,6 +284,28 @@ fn validate_measurements(
         }
         if let Some(value) = mesh.weight_sum_max {
             finite(value, format!("mesh_definitions[{index}].weight_sum_max"))?;
+        }
+        let mut previous_set_index = None;
+        for (set_offset, set) in mesh.additional_influence_sets.iter().enumerate() {
+            let path = format!(
+                "mesh_definitions[{index}].additional_influence_sets[{set_offset}].set_index"
+            );
+            if set.set_index == 0 {
+                return Err(invalid(path, "set_index must be at least 1"));
+            }
+            if !set.joints_present && !set.weights_present {
+                return Err(invalid(
+                    format!("mesh_definitions[{index}].additional_influence_sets[{set_offset}]"),
+                    "an additional influence set must declare joints, weights, or both",
+                ));
+            }
+            if previous_set_index.is_some_and(|previous| previous >= set.set_index) {
+                return Err(invalid(
+                    path,
+                    "set_index values must be strictly increasing and unique",
+                ));
+            }
+            previous_set_index = Some(set.set_index);
         }
     }
 
@@ -692,6 +714,7 @@ mod measurement_report_input_tests {
             max_joints_per_vertex: 1,
             weight_sum_min: Some(f64::NAN),
             weight_sum_max: Some(1.0),
+            additional_influence_sets: Vec::new(),
         };
         let valid = || file("valid.glb", BTreeMap::new(), Vec::new());
         let cases = [

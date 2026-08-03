@@ -8,10 +8,10 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 
 const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:2";
-const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:2";
+const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:3";
 const HOSTILE_PRESENTATION_TEXT: &str = "forged\nline\u{1b}[31m\u{2028}\u{2029}\u{202e}";
 const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v2.schema.json");
-const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v2.schema.json");
+const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v3.schema.json");
 const EXPECTED_CHECK_IDS: [&str; 18] = [
     "nan",
     "time-monotonic",
@@ -351,7 +351,7 @@ fn measurement_report(duration_s: f64) -> Value {
             "path": "fixture.gltf",
             "rig": { "profile": "unknown" },
             "measurements": {
-                "schema_version": 2,
+                "schema_version": 3,
                 "schema": MEASUREMENTS_SCHEMA_ID,
                 "clips": {
                     "walk": {
@@ -1058,7 +1058,7 @@ fn measure_json_uses_versioned_envelope() {
     assert_eq!(files.len(), 1);
     assert_eq!(files[0]["rig"]["profile"], "unknown");
     assert!(files[0]["checks"].is_null());
-    assert_eq!(files[0]["measurements"]["schema_version"], 2);
+    assert_eq!(files[0]["measurements"]["schema_version"], 3);
     assert_eq!(files[0]["measurements"]["schema"], MEASUREMENTS_SCHEMA_ID);
     assert!(files[0]["measurements"]["clips"]["walk"]["duration_s"].is_number());
 }
@@ -1391,7 +1391,7 @@ fn lint_json_uses_versioned_envelope() {
     assert_eq!(json["command"], "lint");
     assert_eq!(json["summary"]["files"], 1);
     assert!(json["files"][0]["checks"].is_array());
-    assert_eq!(json["files"][0]["measurements"]["schema_version"], 2);
+    assert_eq!(json["files"][0]["measurements"]["schema_version"], 3);
     assert_eq!(
         json["files"][0]["measurements"]["schema"],
         MEASUREMENTS_SCHEMA_ID
@@ -1845,7 +1845,7 @@ fn output_schema_rejects_cross_command_and_nested_contract_drift() {
     assert!(!validator.is_valid(&foreign_field));
 
     let mut nested_version = measure.clone();
-    nested_version["files"][0]["measurements"]["schema_version"] = json!(3);
+    nested_version["files"][0]["measurements"]["schema_version"] = json!(4);
     assert!(!validator.is_valid(&nested_version));
 
     let mut lint_without_checks = measure;
@@ -2129,7 +2129,7 @@ fn diff_preserves_tailored_report_errors_and_remediation() {
     let mut unsupported_command = base.clone();
     unsupported_command["command"] = json!("diff");
     let mut unsupported_measurement_version = base.clone();
-    unsupported_measurement_version["files"][0]["measurements"]["schema_version"] = json!(3);
+    unsupported_measurement_version["files"][0]["measurements"]["schema_version"] = json!(4);
     let mut wrong_measurement_identity = base.clone();
     wrong_measurement_identity["files"][0]["measurements"]["schema"] =
         json!("urn:other:measurements");
@@ -2184,7 +2184,7 @@ fn diff_preserves_tailored_report_errors_and_remediation() {
         (
             "unsupported measurement version",
             unsupported_measurement_version,
-            "has measurement schema_version 3; this build reads measurement schema_version 2"
+            "has measurement schema_version 4; this build reads measurement schema_version 3"
                 .to_owned(),
         ),
         (
@@ -2299,10 +2299,10 @@ fn diff_rejects_outer_and_nested_contract_identity_drift() {
         (
             {
                 let mut report = measurement_report(1.0);
-                report["files"][0]["measurements"]["schema_version"] = json!(3);
+                report["files"][0]["measurements"]["schema_version"] = json!(4);
                 report
             },
-            "measurement schema_version 3",
+            "has measurement schema_version 4; this build reads measurement schema_version 3",
         ),
         (
             {

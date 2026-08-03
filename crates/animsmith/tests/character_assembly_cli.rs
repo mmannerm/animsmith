@@ -668,6 +668,7 @@ fn assembles_synthetic_skinned_recipe_with_complete_public_provenance() {
         uvs: vec![[0.0, 0.0], [1.0, 0.0], [0.5, 1.0]],
         joints: vec![[0, 1, 2, 0]; 3],
         weights: vec![[0.5, 0.25, 0.25, 0.0]; 3],
+        additional_influence_sets: Vec::new(),
     };
     let base = Document {
         skeleton: base_skeleton,
