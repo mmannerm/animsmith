@@ -12,7 +12,7 @@ use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 
 use crate::check::{Check, CheckCtx};
-use crate::config::SeveritySetting;
+use crate::config::{ConfigValidationError, SeveritySetting};
 use crate::finding::Finding;
 
 /// One authoritative built-in evidence-code definition.
@@ -556,6 +556,9 @@ impl CheckSelection<'_> {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum EvaluationError {
+    /// The supplied programmatic configuration contains an invalid value.
+    #[error("invalid configuration: {0}")]
+    InvalidConfiguration(#[from] ConfigValidationError),
     /// A catalog or directly constructed check record used an empty id.
     #[error("check id cannot be empty")]
     InvalidCheckId(&'static str),
@@ -610,15 +613,18 @@ pub enum EvaluationError {
 ///
 /// # Errors
 ///
-/// Returns an error for empty or duplicate catalog ids, unknown explicitly
-/// selected ids, malformed coverage evidence, built-in evidence emitted by an
-/// undeclared check, or a nested finding whose id disagrees with its parent
-/// check.
+/// Returns an error for invalid directly constructed configuration, empty or
+/// duplicate catalog ids, unknown explicitly selected ids, malformed coverage
+/// evidence, built-in evidence emitted by an undeclared check, or a nested
+/// finding whose id disagrees with its parent check. Configuration validation
+/// runs before catalog inspection or check evaluation.
 pub fn evaluate_checks(
     ctx: &CheckCtx<'_>,
     checks: &[Box<dyn Check>],
     selection: CheckSelection<'_>,
 ) -> Result<Vec<CheckEvaluation>, EvaluationError> {
+    ctx.config.validate()?;
+
     let mut catalog_ids = BTreeSet::new();
     for check in checks {
         if check.id().is_empty() {

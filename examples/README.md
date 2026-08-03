@@ -421,7 +421,11 @@ severity = "note"           # demote while an upstream fix lands
 
 [clips."run_*"]             # glob: every run clip loops
 loop = true
+max_loop_position_delta_m = 0.04  # per-family pose/velocity seam caps
+max_loop_rotation_delta_deg = 2.0
+max_loop_velocity_delta_mps = 0.2
 [clips.run_forward]
+max_loop_rotation_delta_deg = 0.5 # exact entry wins for this dimension
 duration_s = { value = 1.033, tolerance = 0.02 } # authored clip-length contract
 speed_mps = { value = 3.1, tolerance = 0.25 }   # root-motion contract
 
@@ -436,6 +440,15 @@ clip in a directional blend ring to the same stride phase, so runtime
 blends between them don't skate. `animsmith.toml` is auto-loaded from the
 working directory, so committing one next to your assets makes every bare
 `animsmith lint` enforce the contract.
+
+The three role-free loop-continuity caps (`max_loop_position_delta_m`,
+`max_loop_rotation_delta_deg`, and `max_loop_velocity_delta_mps`) refine the
+corresponding global check caps in a `[clips.<exact-name>]` entry or
+`[clips."glob_*"]` family. An exact name wins over matching globs and an
+omitted field keeps its inherited cap. This is useful when root-motion runs
+need a different position allowance but idles must stay tightly closed. All
+three values must be finite and non-negative. Angular seam velocity is not
+part of these overrides.
 
 ### Steering a run without a config
 

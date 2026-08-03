@@ -2,9 +2,9 @@ use animsmith_core::model::{
     Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
 };
 use animsmith_core::{
-    Applicability, CheckCtx, CheckEvaluation, CheckSelection, Config, CoverageGapCode,
-    EvaluationScopeCode, EvaluationState, MetricGrids, ResolvedRoles, Value, all_checks,
-    evaluate_checks,
+    Applicability, CheckCtx, CheckEvaluation, CheckSelection, ClipExpectations, Config,
+    ConfigValidationError, CoverageGapCode, EvaluationError, EvaluationScopeCode, EvaluationState,
+    MetricGrids, ResolvedRoles, Value, all_checks, evaluate_checks,
 };
 use glam::{Quat, Vec3};
 
@@ -575,6 +575,264 @@ fn configurable_caps_control_each_check() {
             .findings()
             .is_empty()
     );
+}
+
+#[test]
+fn exact_clip_loop_caps_report_effective_values_and_global_velocity_fallback() {
+    let mut doc = translation_doc([0.0, 0.005, 0.01, 0.015, 0.02]);
+    doc.clips[0].name = "position_exact".into();
+
+    let mut rotation_exact = rotation_doc(5.0).clips.remove(0);
+    rotation_exact.name = "rotation_exact".into();
+    doc.clips.push(rotation_exact);
+
+    let mut velocity_exact = translation_doc([0.0, 0.25, 0.5, 0.25, 0.0]).clips.remove(0);
+    velocity_exact.name = "velocity_exact".into();
+    doc.clips.push(velocity_exact);
+
+    let mut velocity_global = translation_doc([0.0, 0.25, 0.5, 0.25, 0.0]).clips.remove(0);
+    velocity_global.name = "velocity_global".into();
+    doc.clips.push(velocity_global);
+
+    let config: Config = serde_json::from_value(serde_json::json!({
+        "checks": {
+            "loop-closure": {
+                "max_position_delta_m": 0.1,
+                "max_rotation_delta_deg": 10.0
+            },
+            "loop-seam-vel": { "max_velocity_delta_mps": 1.8 }
+        },
+        "clips": {
+            "position_exact": { "loop": true, "max_loop_position_delta_m": 0.015 },
+            "rotation_exact": { "loop": true, "max_loop_rotation_delta_deg": 4.0 },
+            "velocity_exact": { "loop": true, "max_loop_velocity_delta_mps": 1.9 },
+            "velocity_global": { "loop": true }
+        }
+    }))
+    .expect("clip-scoped loop caps config");
+
+    let records = evaluate(&doc, &config);
+    let closure = check(&records, "loop-closure");
+    assert_eq!(closure.findings().len(), 2, "{closure:#?}");
+    assert!(closure.findings().iter().any(|finding| {
+        finding.clip.as_deref() == Some("position_exact") && number(&finding.expected) == 0.015
+    }));
+    assert!(closure.findings().iter().any(|finding| {
+        finding.clip.as_deref() == Some("rotation_exact") && number(&finding.expected) == 4.0
+    }));
+
+    let velocity = check(&records, "loop-seam-vel");
+    assert_eq!(velocity.findings().len(), 2, "{velocity:#?}");
+    assert!(velocity.findings().iter().any(|finding| {
+        finding.clip.as_deref() == Some("velocity_exact") && number(&finding.expected) == 1.9
+    }));
+    assert!(velocity.findings().iter().any(|finding| {
+        finding.clip.as_deref() == Some("velocity_global") && number(&finding.expected) == 1.8
+    }));
+}
+
+#[test]
+fn every_clip_loop_cap_accepts_zero_and_rejects_negative_or_non_finite_values() {
+    for field in [
+        "max_loop_position_delta_m",
+        "max_loop_rotation_delta_deg",
+        "max_loop_velocity_delta_mps",
+    ] {
+        for value in ["-0.01", "nan", "inf", "-inf"] {
+            let config = format!("[clips.guard]\n{field} = {value}\n");
+            assert!(
+                toml::from_str::<Config>(&config).is_err(),
+                "accepted invalid {field}={value}"
+            );
+        }
+
+        let config: Config = toml::from_str(&format!("[clips.guard]\n{field} = 0.0\n"))
+            .unwrap_or_else(|error| panic!("rejected zero {field}: {error}"));
+        let expectations = config.expectations_for("guard");
+        let value = match field {
+            "max_loop_position_delta_m" => expectations.max_loop_position_delta_m,
+            "max_loop_rotation_delta_deg" => expectations.max_loop_rotation_delta_deg,
+            "max_loop_velocity_delta_mps" => expectations.max_loop_velocity_delta_mps,
+            _ => unreachable!(),
+        };
+        assert_eq!(value, Some(0.0), "did not preserve zero {field}");
+    }
+}
+
+#[test]
+fn programmatic_clip_loop_caps_fail_closed_in_validation_and_evaluation() {
+    let doc = translation_doc([0.0; 5]);
+    let roles = ResolvedRoles::default();
+    let grids = MetricGrids::new(&doc);
+
+    for field in [
+        "max_loop_position_delta_m",
+        "max_loop_rotation_delta_deg",
+        "max_loop_velocity_delta_mps",
+    ] {
+        for value in [-0.01, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let mut expectations = ClipExpectations::default();
+            match field {
+                "max_loop_position_delta_m" => expectations.max_loop_position_delta_m = Some(value),
+                "max_loop_rotation_delta_deg" => {
+                    expectations.max_loop_rotation_delta_deg = Some(value)
+                }
+                "max_loop_velocity_delta_mps" => {
+                    expectations.max_loop_velocity_delta_mps = Some(value)
+                }
+                _ => unreachable!(),
+            }
+            let mut config = Config::default();
+            config.clips.insert("guard_*".into(), expectations);
+            let expected = ConfigValidationError::InvalidClipLoopCap {
+                selector: "guard_*".into(),
+                field,
+            };
+            assert_eq!(config.validate().unwrap_err(), expected, "{field}={value}");
+
+            let ctx = CheckCtx::new(&grids, &roles, &config);
+            assert_eq!(
+                evaluate_checks(&ctx, &all_checks(), CheckSelection::All).unwrap_err(),
+                EvaluationError::InvalidConfiguration(expected),
+                "{field}={value}"
+            );
+        }
+    }
+
+    let mut config = Config::default();
+    config.clips.insert(
+        "guard".into(),
+        ClipExpectations {
+            looping: Some(true),
+            max_loop_position_delta_m: Some(0.0),
+            max_loop_rotation_delta_deg: Some(0.0),
+            max_loop_velocity_delta_mps: Some(0.0),
+            ..ClipExpectations::default()
+        },
+    );
+    config.validate().expect("zero caps are valid");
+    let ctx = CheckCtx::new(&grids, &roles, &config);
+    evaluate_checks(&ctx, &all_checks(), CheckSelection::All)
+        .expect("zero caps pass evaluation validation");
+}
+
+#[test]
+fn loop_caps_merge_later_globs_then_exact_entries_fieldwise() {
+    let config: Config = serde_json::from_value(serde_json::json!({
+        "clips": {
+            "walk*": {
+                "max_loop_position_delta_m": 0.01,
+                "max_loop_rotation_delta_deg": 1.0
+            },
+            "walk_*": {
+                "max_loop_position_delta_m": 0.02,
+                "max_loop_velocity_delta_mps": 0.2
+            },
+            "walk_position": { "max_loop_position_delta_m": 0.03 },
+            "walk_rotation": { "max_loop_rotation_delta_deg": 2.0 },
+            "walk_velocity": { "max_loop_velocity_delta_mps": 0.3 }
+        }
+    }))
+    .expect("glob and exact cap config");
+
+    let position = config.expectations_for("walk_position");
+    assert_eq!(position.max_loop_position_delta_m, Some(0.03));
+    assert_eq!(position.max_loop_rotation_delta_deg, Some(1.0));
+    assert_eq!(position.max_loop_velocity_delta_mps, Some(0.2));
+
+    let rotation = config.expectations_for("walk_rotation");
+    assert_eq!(rotation.max_loop_position_delta_m, Some(0.02));
+    assert_eq!(rotation.max_loop_rotation_delta_deg, Some(2.0));
+    assert_eq!(rotation.max_loop_velocity_delta_mps, Some(0.2));
+
+    let velocity = config.expectations_for("walk_velocity");
+    assert_eq!(velocity.max_loop_position_delta_m, Some(0.02));
+    assert_eq!(velocity.max_loop_rotation_delta_deg, Some(1.0));
+    assert_eq!(velocity.max_loop_velocity_delta_mps, Some(0.3));
+}
+
+#[test]
+fn cap_only_clip_expectations_do_not_declare_a_loop() {
+    let config: Config = serde_json::from_value(serde_json::json!({
+        "clips": { "guard": {
+            "max_loop_position_delta_m": 0.0,
+            "max_loop_rotation_delta_deg": 0.0,
+            "max_loop_velocity_delta_mps": 0.0
+        } }
+    }))
+    .expect("cap-only clip config");
+    let records = evaluate(&translation_doc([0.0; 5]), &config);
+    for id in ["loop-closure", "loop-seam-vel", "loop-seam-rot"] {
+        let result = check(&records, id);
+        assert_eq!(result.applicability(), Applicability::NotApplicable, "{id}");
+        assert_eq!(result.evaluation(), EvaluationState::NotEvaluated, "{id}");
+        assert!(result.findings().is_empty(), "{id}: {result:#?}");
+        assert!(result.gaps().is_empty(), "{id}: {result:#?}");
+    }
+}
+
+#[test]
+fn exact_clip_position_cap_is_inclusive_at_the_f32_evidence_boundary() {
+    let cap = 0.02f32;
+    let mut config = Config::default();
+    config.clips.insert(
+        "guard".into(),
+        ClipExpectations {
+            looping: Some(true),
+            max_loop_position_delta_m: Some(f64::from(cap)),
+            ..ClipExpectations::default()
+        },
+    );
+
+    let at = translation_doc([0.0, 0.005, 0.01, 0.015, cap]);
+    let at_records = evaluate(&at, &config);
+    assert!(
+        check(&at_records, "loop-closure").findings().is_empty(),
+        "equal evidence must satisfy the inclusive clip cap"
+    );
+
+    let just_over = f32::from_bits(cap.to_bits() + 1);
+    let over = translation_doc([0.0, 0.005, 0.01, 0.015, just_over]);
+    let over_records = evaluate(&over, &config);
+    let closure = check(&over_records, "loop-closure");
+    assert_eq!(closure.findings().len(), 1, "{closure:#?}");
+    assert_eq!(number(&closure.findings()[0].expected), f64::from(cap));
+}
+
+#[test]
+fn linear_and_pose_clip_caps_do_not_change_angular_seam_expected_values() {
+    let doc = rotation_steps_doc([0.0, 10.0, 20.0, 10.0, 0.0]);
+    let clip_caps = serde_json::json!({
+        "loop": true,
+        "max_loop_position_delta_m": 0.0,
+        "max_loop_rotation_delta_deg": 0.0,
+        "max_loop_velocity_delta_mps": 0.0
+    });
+
+    let default_config: Config = serde_json::from_value(serde_json::json!({
+        "clips": { "guard": clip_caps.clone() }
+    }))
+    .expect("default angular cap config");
+    let default_records = evaluate(&doc, &default_config);
+    let default_angular = check(&default_records, "loop-seam-rot");
+    assert_eq!(default_angular.findings().len(), 1, "{default_angular:#?}");
+    assert_eq!(number(&default_angular.findings()[0].expected), 5.0);
+
+    let configured: Config = serde_json::from_value(serde_json::json!({
+        "checks": {
+            "loop-seam-rot": { "max_angular_velocity_delta_degps": 70.0 }
+        },
+        "clips": { "guard": clip_caps }
+    }))
+    .expect("configured angular cap config");
+    let configured_records = evaluate(&doc, &configured);
+    let configured_angular = check(&configured_records, "loop-seam-rot");
+    assert_eq!(
+        configured_angular.findings().len(),
+        1,
+        "{configured_angular:#?}"
+    );
+    assert_eq!(number(&configured_angular.findings()[0].expected), 70.0);
 }
 
 #[test]

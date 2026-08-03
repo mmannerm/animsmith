@@ -17,6 +17,9 @@ profile = "auto"
 loop = true
 # The clip animates in place (no net root travel), so in-place passes.
 in_place = true
+# A per-clip cap can be stricter than a project-wide loop default. Omitted
+# dimensions continue to inherit their global caps.
+max_loop_rotation_delta_deg = 0.5
 
 [checks.loop-seam]
 # Fail a wrap discontinuity more than 1.6× the in-clip stride step.
@@ -35,3 +38,6 @@ max_velocity_delta_mps = 0.1
 [checks.loop-seam-rot]
 # Fail when shortest-path model-space angular velocity differs by >5 deg/s.
 max_angular_velocity_delta_degps = 5.0
+
+# The same three caps can live in a `[clips."name_*"]` glob. They do not
+# configure angular seam velocity, which is outside these overrides.

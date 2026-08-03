@@ -64,7 +64,12 @@ cargo run -p animsmith --example embed
    owns a different policy. Checks consume roles, never project-specific bone
    names.
 3. **Build `Config`.** The CLI's TOML is only one constructor. Deserialize
-   the types from your schema or build them programmatically.
+   the types from your schema or build them programmatically. Deserialization
+   validates per-clip loop caps immediately; `evaluate_checks` also validates
+   directly constructed `Config` values before inspecting or running the check
+   catalog, so an invalid negative or non-finite cap fails closed as a typed
+   `EvaluationError::InvalidConfiguration`. Call `Config::validate` directly
+   only when the host wants that same error before it reaches evaluation.
 4. **Create one `MetricGrids`.** Share it by reference with
    `measure_document`, `CheckCtx::new`, `evaluate_checks`, and optional report
    rendering so each clip is sampled once.

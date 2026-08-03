@@ -3747,6 +3747,84 @@ fn invalid_duration_pin_from_toml_is_an_explicit_error() {
     );
 }
 
+#[test]
+fn loop_continuity_clip_caps_layer_global_glob_and_exact_contracts() {
+    let dir = unique_temp_dir("clip-loop-caps");
+    let input = fixture("rig.gltf");
+    for (name, text, expected_position, expected_rotation) in [
+        (
+            "global.toml",
+            "[checks.loop-closure]\nmax_position_delta_m = 0.5\nmax_rotation_delta_deg = 80.0\n\n[clips.walk]\nloop = true\n",
+            0.5,
+            80.0,
+        ),
+        (
+            "glob.toml",
+            "[checks.loop-closure]\nmax_position_delta_m = 0.5\nmax_rotation_delta_deg = 80.0\n\n[clips.\"wa*\"]\nloop = true\nmax_loop_position_delta_m = 0.75\nmax_loop_rotation_delta_deg = 85.0\n",
+            0.75,
+            85.0,
+        ),
+        (
+            "exact.toml",
+            "[checks.loop-closure]\nmax_position_delta_m = 0.5\nmax_rotation_delta_deg = 80.0\n\n[clips.\"wa*\"]\nloop = true\nmax_loop_position_delta_m = 0.75\nmax_loop_rotation_delta_deg = 85.0\n\n[clips.walk]\nmax_loop_rotation_delta_deg = 87.0\n",
+            0.75,
+            87.0,
+        ),
+    ] {
+        let config = write_config(dir.path(), name, text);
+        let output = animsmith()
+            .args(["--config"])
+            .arg(&config)
+            .args(["lint"])
+            .arg(&input)
+            .args(["--select", "loop-closure", "--format", "json"])
+            .output()
+            .expect("runs animsmith");
+        assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+        let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+        let closure = json["files"][0]["checks"]
+            .as_array()
+            .expect("checks array")
+            .iter()
+            .find(|check| check["check_id"] == "loop-closure")
+            .expect("loop-closure record");
+        let findings = closure["findings"].as_array().expect("findings array");
+        assert_eq!(findings.len(), 2, "{json:#}");
+        assert_eq!(findings[0]["expected"], expected_position, "{json:#}");
+        assert_eq!(findings[1]["expected"], expected_rotation, "{json:#}");
+    }
+}
+
+#[test]
+fn invalid_clip_loop_caps_are_operator_errors() {
+    let dir = unique_temp_dir("invalid-clip-loop-cap");
+    let input = fixture("rig.gltf");
+    for (name, key, value) in [
+        ("negative", "max_loop_position_delta_m", "-0.01"),
+        ("nan", "max_loop_rotation_delta_deg", "nan"),
+        ("infinite", "max_loop_velocity_delta_mps", "inf"),
+    ] {
+        let config = write_config(
+            dir.path(),
+            &format!("{name}.toml"),
+            &format!("[clips.walk]\nloop = true\n{key} = {value}\n"),
+        );
+        let output = animsmith()
+            .args(["--config"])
+            .arg(&config)
+            .args(["lint"])
+            .arg(&input)
+            .output()
+            .expect("runs animsmith");
+        assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+        assert!(
+            stderr(&output).contains("must be a finite non-negative number"),
+            "{name}: {}",
+            stderr(&output)
+        );
+    }
+}
+
 /// The shipped example config must parse verbatim — otherwise it drifts
 /// from the schema and fails users at runtime while CI stays green.
 #[test]

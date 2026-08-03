@@ -325,10 +325,21 @@ small mismatch at runtime; it does not make the source measurement close.
 
 Root-motion locomotion is the important exception. Intentional horizontal root
 travel does not return to its starting model-space position, and every child
-inherits that travel. Tune `max_position_delta_m` to the contract or disable
-`loop-closure` for such a pipeline; keep using `loop-seam` for feet-relative
+inherits that travel. Tune the global `max_position_delta_m`, or the clip-level
+`max_loop_position_delta_m`, to the contract; alternatively disable
+`loop-closure` for such a pipeline. Keep using `loop-seam` for feet-relative
 locomotion. `loop-seam-vel` and `loop-seam-rot` can still validate constant
 inherited linear and angular motion respectively.
+
+When one project contains both stationary idles and root-motion locomotion,
+keep the global `[checks.loop-closure]` and `[checks.loop-seam-vel]` caps
+strict, then put a finite, non-negative `max_loop_position_delta_m`,
+`max_loop_rotation_delta_deg`, or `max_loop_velocity_delta_mps` on the relevant
+`[clips."run_*"]` family. A `[clips.run_forward]` entry wins over matching
+globs for only the fields it supplies, so a one-off authored clip need not
+copy every inherited value. This is a contract choice, not a repair: it does
+not make a discontinuous source clip smooth. Angular seam velocity is also
+not controlled by these three overrides.
 
 There is no general automatic repair. `transform --gait-anchor` can rotate a
 locomotion cycle in time to choose a better stride cut, but it does not rewrite

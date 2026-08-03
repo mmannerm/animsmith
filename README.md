@@ -201,8 +201,14 @@ max_angular_velocity_delta_degps = 5.0
 
 [clips."run_*"]
 loop = true
+# Clip/glob caps override these global defaults only for matching clips.
+max_loop_position_delta_m = 0.04
+max_loop_rotation_delta_deg = 2.0
+max_loop_velocity_delta_mps = 0.2
 
 [clips.run_forward]
+# Exact entries win over matching globs, field by field.
+max_loop_rotation_delta_deg = 0.5
 duration_s = { value = 1.033, tolerance = 0.02 }
 speed_mps = { value = 3.1, tolerance = 0.25 }
 
@@ -215,6 +221,16 @@ min_lr_amplitude_m = 0.03
 Duration-pin values must be finite and positive; their tolerances must be
 finite and non-negative. Invalid pins are explicit `duration-sanity` errors,
 not silently ignored contracts.
+
+The three loop-continuity caps may also be declared under a clip name or
+`*`-glob: `max_loop_position_delta_m`, `max_loop_rotation_delta_deg`, and
+`max_loop_velocity_delta_mps`. Each is a finite, non-negative cap that overrides
+only its corresponding global `[checks.loop-closure]` or
+`[checks.loop-seam-vel]` default. Matching globs layer in lexical key order;
+an exact clip entry wins field by field. This lets an idle family remain strict
+without forcing root-motion locomotion to use the same position budget. These
+overrides do not configure angular seam velocity, which remains outside this
+setting.
 
 `--select`, `--allow`, and `[checks.*] severity` including `"off"`
 control what runs and how hard it fails. Assigning "note", "warn", or "error"

@@ -24,12 +24,21 @@ severity = "note"
 
 [clips."run_*"]
 loop = true
+# Locomotion has intentional root travel and a different seam budget than
+# stationary loops. These replace only matching inherited loop caps.
+max_loop_position_delta_m = 0.04
+max_loop_rotation_delta_deg = 2.0
+max_loop_velocity_delta_mps = 0.2
 
 [clips."walk_*"]
 loop = true
 
 [clips.idle_1h]
 loop = true
+
+# Exact names override matching glob-derived caps one field at a time.
+[clips.run_forward_1h]
+max_loop_rotation_delta_deg = 0.5
 
 [gait_groups.run-ring]
 clips = [
