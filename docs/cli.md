@@ -57,6 +57,11 @@ animsmith assemble <recipe.toml> -o <out.glb> --evidence <out.json>
 animsmith diff <before> <after> [--format text|json]
 ```
 
+`inspect` is the human-readable discovery view for exact asset-authored names.
+It inventories clips, bones, materials, and mesh-instance nodes, including each
+instance's mesh, skin status, and primitive/material context. Use those names
+when authoring `assemble` or material texture recipes.
+
 `--config animsmith.toml` is global. Without it, the CLI auto-loads
 `./animsmith.toml` when present and otherwise uses built-in defaults.
 

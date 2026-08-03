@@ -65,7 +65,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Summarize a file: skeleton, clips, tracks, detected rig profile.
+    /// Summarize a file: skeleton, clips, mesh instances, materials, and rig profile.
     Inspect {
         /// Input .glb, .gltf, or .fbx file.
         file: PathBuf,

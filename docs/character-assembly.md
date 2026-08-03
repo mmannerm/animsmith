@@ -61,10 +61,29 @@ entries concurrently with assembly. Symlink checks and reads are separate
 portable filesystem operations, so the command does not claim to defend
 against an actor racing the input tree while it runs.
 
+### Discover exact recipe names
+
+Inspect the base before writing the recipe:
+
+```console
+animsmith inspect inputs/base-character.fbx
+```
+
+Copy the quoted name after `node` in the `mesh instances` section exactly into
+`mesh_instances`. Each entry also shows its source node, referenced mesh,
+skinned status, and the material used by every primitive. The top-level
+`materials` section lists the exact, case-sensitive names required by a
+[material texture recipe](material-texture-recipes.md). Repeated node or
+material names are marked `ambiguous`; an explicit recipe selection using an
+ambiguous name fails instead of guessing. `inspect` only reports the authored
+scene—it does not rename nodes or materials, merge duplicates, or repair the
+asset.
+
 The base supplies the authoritative skeleton, rest pose, meshes, skins,
 materials, and textures. `mesh_instances` names the exact base nodes whose
-mesh instances survive; omitting it retains every instance. Unreferenced mesh
-and material definitions are pruned.
+mesh instances survive; omitting it retains every instance. An explicit name
+must identify exactly one instance. Unreferenced mesh and material definitions
+are pruned.
 
 Each `[[clips]]` entry selects one exact source `take`, renames it, and remaps
 its tracks to the base skeleton by exact unique bone name. Missing referenced

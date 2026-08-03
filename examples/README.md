@@ -64,6 +64,8 @@ rig profile: none detected
 skeleton: 2 bones
   root
     spine
+materials: 0
+mesh instances: 0
 clips: 1
   swing: 1.000s, 1 tracks, 5 keys max
 
@@ -271,6 +273,8 @@ skeleton: 3 bones
   pelvis
     foot_l
     foot_r
+materials: 0
+mesh instances: 0
 clips: 1
   walk: 1.000s, 2 tracks, 33 keys max
 ```

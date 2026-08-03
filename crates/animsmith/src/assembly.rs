@@ -931,29 +931,41 @@ fn select_mesh_instances(
         .iter()
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
-    let mut matched = BTreeSet::new();
-    let before = doc.assets.instances.len();
-    doc.assets.instances.retain(|instance| {
-        let keep = doc
-            .skeleton
-            .bones
-            .get(instance.node)
-            .is_some_and(|bone| requested.contains(bone.name.as_str()));
-        if keep {
-            matched.insert(doc.skeleton.bone_name(instance.node).to_owned());
-        }
-        keep
-    });
+    let available =
+        doc.assets
+            .instances
+            .iter()
+            .fold(BTreeMap::<&str, usize>::new(), |mut counts, instance| {
+                if let Some(bone) = doc.skeleton.bones.get(instance.node) {
+                    *counts.entry(bone.name.as_str()).or_default() += 1;
+                }
+                counts
+            });
     for name in &requested {
-        if !matched.contains(*name) {
-            return Err(format!(
-                "mesh_instances entry {name:?} matches no base mesh instance node"
-            ));
+        match available.get(*name).copied().unwrap_or(0) {
+            0 => {
+                return Err(format!(
+                    "mesh_instances entry {name:?} matches no base mesh instance node"
+                ));
+            }
+            count @ 2.. => {
+                return Err(format!(
+                    "mesh_instances entry {name:?} is ambiguous: {count} base mesh instances share that node name"
+                ));
+            }
+            1 => {}
         }
     }
+    let before = doc.assets.instances.len();
+    doc.assets.instances.retain(|instance| {
+        doc.skeleton
+            .bones
+            .get(instance.node)
+            .is_some_and(|bone| requested.contains(bone.name.as_str()))
+    });
     prune_assets(doc)?;
     Ok((
-        matched.into_iter().collect(),
+        requested.into_iter().map(str::to_owned).collect(),
         before - doc.assets.instances.len(),
     ))
 }
@@ -1280,6 +1292,45 @@ mod tests {
         assert_eq!(document.assets.materials[0].name, "body-material");
         assert_eq!(document.assets.instances[0].mesh, 0);
         assert_eq!(document.assets.meshes[0].primitives[0].material, Some(0));
+    }
+
+    #[test]
+    fn explicit_mesh_selection_rejects_ambiguous_node_names_before_mutation() {
+        use animsmith_core::model::{MeshAsset, MeshInstance, SceneAssets};
+
+        let mut document = Document {
+            skeleton: skeleton(&["body", "body", "prop"]),
+            assets: SceneAssets {
+                meshes: vec![MeshAsset::default(), MeshAsset::default()],
+                instances: vec![
+                    MeshInstance {
+                        node: 0,
+                        mesh: 0,
+                        ..MeshInstance::default()
+                    },
+                    MeshInstance {
+                        node: 1,
+                        mesh: 0,
+                        ..MeshInstance::default()
+                    },
+                    MeshInstance {
+                        node: 2,
+                        mesh: 1,
+                        ..MeshInstance::default()
+                    },
+                ],
+                ..SceneAssets::default()
+            },
+            ..Document::default()
+        };
+
+        let error = select_mesh_instances(&mut document, &["body".into()]).unwrap_err();
+        assert_eq!(
+            error,
+            "mesh_instances entry \"body\" is ambiguous: 2 base mesh instances share that node name"
+        );
+        assert_eq!(document.assets.instances.len(), 3);
+        assert_eq!(document.assets.meshes.len(), 2);
     }
 
     #[test]

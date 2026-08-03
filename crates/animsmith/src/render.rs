@@ -239,6 +239,105 @@ pub(crate) fn render_inspect<'a>(
             ))
         },
     );
+    let material_name_counts =
+        doc.assets
+            .materials
+            .iter()
+            .fold(BTreeMap::<&str, usize>::new(), |mut counts, material| {
+                *counts.entry(material.name.as_str()).or_default() += 1;
+                counts
+            });
+    let materials = std::iter::once(format!("materials: {}", doc.assets.materials.len()));
+    let material_lines = doc
+        .assets
+        .materials
+        .iter()
+        .enumerate()
+        .map(move |(index, material)| {
+            let ambiguity = match material_name_counts.get(material.name.as_str()) {
+                Some(count) if *count > 1 => {
+                    format!(" [ambiguous: {count} materials share this name]")
+                }
+                _ => String::new(),
+            };
+            format!("  #{index} {}{ambiguity}", quoted_text_atom(&material.name))
+        });
+    let instance_name_counts =
+        doc.assets
+            .instances
+            .iter()
+            .fold(BTreeMap::<&str, usize>::new(), |mut counts, instance| {
+                if let Some(bone) = doc.skeleton.bones.get(instance.node) {
+                    *counts.entry(bone.name.as_str()).or_default() += 1;
+                }
+                counts
+            });
+    let mesh_instances = std::iter::once(format!("mesh instances: {}", doc.assets.instances.len()));
+    let mesh_instance_lines = doc.assets.instances.iter().flat_map(move |instance| {
+        let (node_name, ambiguity) = doc.skeleton.bones.get(instance.node).map_or_else(
+            || (format!("<missing node #{}>", instance.node), String::new()),
+            |bone| {
+                let ambiguity = match instance_name_counts.get(bone.name.as_str()) {
+                    Some(count) if *count > 1 => {
+                        format!(" [ambiguous: {count} instances share this node name]")
+                    }
+                    _ => String::new(),
+                };
+                (quoted_text_atom(&bone.name), ambiguity)
+            },
+        );
+        let mut lines = vec![format!("  node {node_name}{ambiguity}")];
+        lines.push(format!("    source node: #{}", instance.source_node_index));
+        if let Some(mesh) = doc.assets.meshes.get(instance.mesh) {
+            lines.push(format!(
+                "    mesh: #{} {} (source mesh #{})",
+                instance.mesh,
+                quoted_text_atom(&mesh.name),
+                mesh.source_mesh_index
+            ));
+            lines.push(format!(
+                "    skin: {}",
+                if instance.skin_joints.is_empty() {
+                    "unskinned"
+                } else {
+                    "skinned"
+                }
+            ));
+            if mesh.primitives.is_empty() {
+                lines.push("    primitives: none".to_string());
+            } else {
+                for (primitive_index, primitive) in mesh.primitives.iter().enumerate() {
+                    let material = primitive.material.map_or_else(
+                        || "no material".to_string(),
+                        |material_index| {
+                            doc.assets.materials.get(material_index).map_or_else(
+                                || format!("missing material #{material_index}"),
+                                |material| {
+                                    format!(
+                                        "material #{material_index} {}",
+                                        quoted_text_atom(&material.name)
+                                    )
+                                },
+                            )
+                        },
+                    );
+                    lines.push(format!("    primitive #{primitive_index}: {material}"));
+                }
+            }
+        } else {
+            lines.push(format!("    mesh: <missing mesh #{}>", instance.mesh));
+            lines.push(format!(
+                "    skin: {}",
+                if instance.skin_joints.is_empty() {
+                    "unskinned"
+                } else {
+                    "skinned"
+                }
+            ));
+            lines.push("    primitives: unavailable".to_string());
+        }
+        lines
+    });
     let clips = std::iter::once(format!("clips: {}", doc.clips.len()));
     let clip_lines = doc.clips.iter().map(|clip| {
         let keys = clip
@@ -261,6 +360,10 @@ pub(crate) fn render_inspect<'a>(
         .chain(role_lines)
         .chain(skeleton)
         .chain(bone_lines)
+        .chain(materials)
+        .chain(material_lines)
+        .chain(mesh_instances)
+        .chain(mesh_instance_lines)
         .chain(clips)
         .chain(clip_lines)
 }
@@ -599,6 +702,24 @@ fn text_atom(text: &str) -> Cow<'_, str> {
         }
     }
     Cow::Owned(escaped)
+}
+
+/// Quote an exact author-provided identifier so empty names and leading or
+/// trailing whitespace remain visible. This extends [`text_atom`] with
+/// delimiter escaping while retaining readable ordinary Unicode.
+fn quoted_text_atom(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len() + 2);
+    escaped.push('"');
+    for ch in text.chars() {
+        match ch {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            ch if is_presentation_control(ch) => escaped.extend(ch.escape_default()),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped.push('"');
+    escaped
 }
 
 /// The finding-count threshold at or below which a file's list stays
@@ -1124,6 +1245,8 @@ mod tests {
                 "skeleton: 2 bones",
                 "  root\\nname",
                 "    child\\nname [skinned]",
+                "materials: 0",
+                "mesh instances: 0",
                 "clips: 1",
                 "  clip\\nname: 1.000s, 0 tracks, 0 keys max",
             ]
@@ -1176,9 +1299,127 @@ mod tests {
                 "  root",
                 "    hips",
                 "      spine",
+                "materials: 0",
+                "mesh instances: 0",
                 "clips: 0",
             ]
         );
+    }
+
+    #[test]
+    fn inspect_renderer_lists_exact_mesh_instance_and_material_context() {
+        use animsmith_core::model::{
+            MaterialAsset, MeshAsset, MeshInstance, Primitive, SceneAssets,
+        };
+
+        let material = |name: &str| MaterialAsset {
+            name: name.into(),
+            base_color: [1.0; 4],
+            metallic: 0.0,
+            roughness: 1.0,
+            base_color_texture: None,
+            normal_texture: None,
+            metallic_roughness_texture: None,
+            occlusion_texture: None,
+        };
+        let bone = |name: &str| Bone {
+            name: name.into(),
+            parent: None,
+            rest: Transform::IDENTITY,
+            inverse_bind: None,
+        };
+        let doc = Document {
+            skeleton: animsmith_core::Skeleton {
+                bones: vec![bone("body"), bone("body"), bone("prop")],
+            },
+            assets: SceneAssets {
+                materials: vec![material("paint"), material("paint")],
+                meshes: vec![
+                    MeshAsset {
+                        name: "character".into(),
+                        source_mesh_index: 7,
+                        primitives: vec![
+                            Primitive {
+                                material: Some(0),
+                                ..Primitive::default()
+                            },
+                            Primitive::default(),
+                        ],
+                    },
+                    MeshAsset {
+                        name: "weapon".into(),
+                        source_mesh_index: 9,
+                        primitives: vec![Primitive {
+                            material: Some(1),
+                            ..Primitive::default()
+                        }],
+                    },
+                ],
+                instances: vec![
+                    MeshInstance {
+                        source_node_index: 4,
+                        node: 0,
+                        mesh: 0,
+                        skin_joints: vec![0],
+                        ..MeshInstance::default()
+                    },
+                    MeshInstance {
+                        source_node_index: 5,
+                        node: 1,
+                        mesh: 0,
+                        ..MeshInstance::default()
+                    },
+                    MeshInstance {
+                        source_node_index: 6,
+                        node: 2,
+                        mesh: 1,
+                        ..MeshInstance::default()
+                    },
+                ],
+                ..SceneAssets::default()
+            },
+            ..Document::default()
+        };
+
+        let lines = render_inspect(&doc, &ResolvedRoles::default()).collect::<Vec<_>>();
+        assert_eq!(
+            &lines[4..],
+            [
+                "  prop",
+                "materials: 2",
+                "  #0 \"paint\" [ambiguous: 2 materials share this name]",
+                "  #1 \"paint\" [ambiguous: 2 materials share this name]",
+                "mesh instances: 3",
+                "  node \"body\" [ambiguous: 2 instances share this node name]",
+                "    source node: #4",
+                "    mesh: #0 \"character\" (source mesh #7)",
+                "    skin: skinned",
+                "    primitive #0: material #0 \"paint\"",
+                "    primitive #1: no material",
+                "  node \"body\" [ambiguous: 2 instances share this node name]",
+                "    source node: #5",
+                "    mesh: #0 \"character\" (source mesh #7)",
+                "    skin: unskinned",
+                "    primitive #0: material #0 \"paint\"",
+                "    primitive #1: no material",
+                "  node \"prop\"",
+                "    source node: #6",
+                "    mesh: #1 \"weapon\" (source mesh #9)",
+                "    skin: unskinned",
+                "    primitive #0: material #1 \"paint\"",
+                "clips: 0",
+            ]
+        );
+    }
+
+    #[test]
+    fn quoted_text_atom_keeps_identifier_boundaries_visible_and_safe() {
+        assert_eq!(quoted_text_atom("  spaced  "), "\"  spaced  \"");
+        assert_eq!(
+            quoted_text_atom("quote\"slash\\line\n"),
+            "\"quote\\\"slash\\\\line\\n\""
+        );
+        assert_eq!(quoted_text_atom(""), "\"\"");
     }
 
     #[test]
