@@ -3252,14 +3252,14 @@ fn config_toml_path_drives_check_behaviour() {
 }
 
 #[test]
-fn duration_pin_from_toml_reports_structured_evidence() {
+fn duration_glob_pin_from_toml_reports_structured_evidence() {
     let dir = unique_temp_dir("duration-pin");
     let input = dir.path().join("sway.glb");
     write_clean_glb(&input);
     let config = write_config(
         dir.path(),
         "animsmith.toml",
-        "[clips.sway]\nduration_s = { value = 1.25, tolerance = 0.125 }\n",
+        "[clips.\"sway*\"]\nduration_s = { value = 1.25, tolerance = 0.125 }\n",
     );
 
     let output = animsmith()

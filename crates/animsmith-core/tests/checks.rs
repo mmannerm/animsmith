@@ -242,14 +242,16 @@ fn duration_pin_tolerance_is_inclusive_in_both_directions() {
         let mut doc = clean_doc();
         doc.clips[0].duration_s = duration_s;
         let findings = lint_with_config(&doc, &config);
+        let duration_findings: Vec<_> = findings
+            .iter()
+            .filter(|finding| finding.check_id == "duration-sanity")
+            .collect();
         assert_eq!(
-            findings
-                .iter()
-                .filter(|finding| finding.check_id == "duration-sanity")
-                .count(),
+            duration_findings.len(),
             1,
             "next representable duration outside the boundary must fail: {findings:#?}"
         );
+        assert_eq!(duration_findings[0].severity, Severity::Error);
     }
 }
 
@@ -273,14 +275,25 @@ fn duration_pin_is_still_judged_for_an_empty_clip() {
     let mut doc = clean_doc();
     doc.clips[0].tracks.clear();
     let findings = lint_with_config(&doc, &duration_pin(1.033, 0.02));
+    let duration_findings: Vec<_> = findings
+        .iter()
+        .filter(|finding| finding.check_id == "duration-sanity")
+        .collect();
     assert_eq!(
-        findings
-            .iter()
-            .filter(|finding| finding.check_id == "duration-sanity")
-            .count(),
+        duration_findings.len(),
         2,
         "empty-track and duration-contract failures should both remain visible: {findings:#?}"
     );
+    assert!(duration_findings.iter().any(|finding| {
+        finding.severity == Severity::Warning && finding.message == "clip has no tracks"
+    }));
+    let pin_miss = duration_findings
+        .iter()
+        .find(|finding| finding.severity == Severity::Error)
+        .expect("duration pin error");
+    let value = serde_json::to_value(pin_miss).expect("serializes finding");
+    assert_eq!(value["measured"], 1.0);
+    assert_eq!(value["expected"], 1.033);
 }
 
 #[test]
