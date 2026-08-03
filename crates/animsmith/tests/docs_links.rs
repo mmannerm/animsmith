@@ -464,16 +464,19 @@ fn shell_gate_does_not_own_readme_link_presence() {
     let script =
         std::fs::read_to_string(repo_root().join("scripts/check-github-community-files.sh"))
             .expect("reads community-file gate");
+    let readme_assertions: Vec<&str> = script
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.starts_with('#') && line.contains("README.md"))
+        .collect();
 
-    for forbidden in ["require_literal README.md", "require_match README.md"] {
-        assert!(
-            !script.contains(forbidden),
-            "README rendered-link presence belongs in docs_links.rs, found {forbidden}"
-        );
-    }
-    assert!(
-        script.contains("require_order README.md"),
-        "the shell gate must retain its non-Markdown README ordering contract"
+    assert_eq!(
+        readme_assertions,
+        [
+            "require_order README.md \"cargo install animsmith\" \"CONTRIBUTING.md\"",
+            "require_order README.md \"animsmith lint clip.glb\" \"CONTRIBUTING.md\"",
+        ],
+        "the shell gate may retain only its two non-Markdown README ordering contracts"
     );
 }
 
