@@ -29,9 +29,9 @@ pub const OUTPUT_SCHEMA_VERSION: u32 = 2;
 /// Immutable identity of the current outer result envelope.
 pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:2";
 /// Current nested measurement-contract version.
-pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 5;
+pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 6;
 /// Immutable identity of the current nested measurement contract.
-pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:5";
+pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:6";
 
 /// Source checkout identity for the producing animsmith build.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -286,6 +286,14 @@ fn validate_measurements(
         }
         if let Some(aabb) = &mesh.geometry_aabb {
             finite_aabb(aabb, &format!("mesh_definitions[{index}].geometry_aabb"))?;
+        }
+        if let Some(centroid) = mesh.geometry_centroid {
+            for (axis, value) in centroid.into_iter().enumerate() {
+                finite(
+                    f64::from(value),
+                    format!("mesh_definitions[{index}].geometry_centroid[{axis}]"),
+                )?;
+            }
         }
         if let Some(value) = mesh.weight_sum_min {
             finite(value, format!("mesh_definitions[{index}].weight_sum_min"))?;
@@ -1518,6 +1526,7 @@ mod measurement_report_input_tests {
             name: "mesh".into(),
             vertex_count: 1,
             geometry_aabb: None,
+            geometry_centroid: None,
             max_joints_per_vertex: 1,
             weight_sum_min: Some(f64::NAN),
             weight_sum_max: Some(1.0),

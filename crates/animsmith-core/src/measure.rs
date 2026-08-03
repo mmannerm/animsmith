@@ -18,8 +18,8 @@ use std::collections::{BTreeMap, BTreeSet};
 /// pipeline's convention).
 pub const MIN_RECORDED_ROTATION_DEG: f64 = 0.1;
 
-/// Axis-aligned bounding box of a mesh's positions, in scene units
-/// (metres, Y-up — the converted space every loader hands over).
+/// Axis-aligned bounding box whose coordinates use the owning measurement's
+/// documented definition-local, node-world, or scene-world domain.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Aabb {
@@ -31,10 +31,11 @@ pub struct Aabb {
 
 /// Static base-geometry measurements of one source mesh definition.
 ///
-/// Vertex data is read as authored: indexed meshes count their unique
-/// vertices, while unindexed meshes count every triangle corner. The geometry
-/// AABB is in the definition's primitive coordinate system and excludes node
-/// transforms, morph targets, skinning, animation, and runtime placement.
+/// Vertex data is measured from loader-decoded base geometry: indexed meshes
+/// count each stored position once, while unindexed meshes count every stored
+/// triangle corner. The geometry AABB and centroid are in the definition's
+/// primitive coordinate system and exclude node transforms, morph targets,
+/// skinning, animation, and runtime placement.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct MeshDefinitionMeasurements {
@@ -47,6 +48,12 @@ pub struct MeshDefinitionMeasurements {
     /// Bounding box over every finite base `POSITION`; `None` when none exist.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub geometry_aabb: Option<Aabb>,
+    /// Arithmetic mean of every finite base `POSITION`; `None` when none
+    /// exist. Like [`Self::geometry_aabb`], this is in mesh-definition local
+    /// coordinates and excludes node transforms, morph targets, skinning,
+    /// animation, and runtime placement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry_centroid: Option<[f32; 3]>,
     /// Highest number of non-zero skin influences on any single vertex
     /// (`0` for an unskinned mesh).
     pub max_joints_per_vertex: u32,
@@ -477,9 +484,37 @@ impl Bounds {
     }
 }
 
+/// Arithmetic-mean reducer for finite mesh-definition positions.
+///
+/// Keep the sum in f64 so a large finite f32 mesh cannot overflow before its
+/// final mean is narrowed back to the wire format's f32 coordinate type.
+#[derive(Default)]
+struct Centroid {
+    sum: [f64; 3],
+    count: u64,
+}
+
+impl Centroid {
+    fn include(&mut self, point: Vec3) {
+        let point = point.to_array();
+        for (sum, value) in self.sum.iter_mut().zip(point) {
+            *sum += f64::from(value);
+        }
+        self.count += 1;
+    }
+
+    fn finish(self) -> Option<[f32; 3]> {
+        (self.count != 0).then(|| {
+            let count = self.count as f64;
+            self.sum.map(|sum| (sum / count) as f32)
+        })
+    }
+}
+
 fn measure_mesh_definition(mesh: &MeshAsset) -> MeshDefinitionMeasurements {
     let mut vertex_count = 0u32;
     let mut bounds = Bounds::default();
+    let mut centroid = Centroid::default();
     let mut max_joints_per_vertex = 0u32;
     let mut weight_sum_min = f64::INFINITY;
     let mut weight_sum_max = f64::NEG_INFINITY;
@@ -492,7 +527,9 @@ fn measure_mesh_definition(mesh: &MeshAsset) -> MeshDefinitionMeasurements {
         for &position in &primitive.positions {
             // Non-finite geometry remains visible to the `nan` check but must
             // never leak a JSON-invalid bound.
-            bounds.include(position);
+            if bounds.include(position) {
+                centroid.include(position);
+            }
         }
         for weights in &primitive.weights {
             let influences = weights.iter().filter(|&&weight| weight > 0.0).count() as u32;
@@ -530,6 +567,7 @@ fn measure_mesh_definition(mesh: &MeshAsset) -> MeshDefinitionMeasurements {
         name: mesh.name.clone(),
         vertex_count,
         geometry_aabb: bounds.finish(),
+        geometry_centroid: centroid.finish(),
         max_joints_per_vertex,
         weight_sum_min: any_finite_weight.then_some(weight_sum_min),
         weight_sum_max: any_finite_weight.then_some(weight_sum_max),
@@ -1661,6 +1699,7 @@ mod tests {
         let aabb = m.geometry_aabb.as_ref().expect("positions present");
         assert_eq!(aabb.min, [0.0, 0.0, 0.0]);
         assert_eq!(aabb.max, [2.0, 3.0, 4.0]);
+        assert_eq!(m.geometry_centroid, Some([0.5, 0.75, 1.0]));
         assert_eq!(m.max_joints_per_vertex, 3);
         // f32 weights summed in f64 carry rounding; compare with tolerance.
         assert!((m.weight_sum_min.unwrap() - 0.9).abs() < 1e-6);
@@ -1734,6 +1773,7 @@ mod tests {
 
         assert_eq!(m.vertex_count, 2);
         assert_eq!(m.geometry_aabb.as_ref().unwrap().min, [-1.0, -2.0, -3.0]);
+        assert_eq!(m.geometry_centroid, Some([0.0, 0.0, 0.0]));
         assert_eq!(m.max_joints_per_vertex, 0);
         assert_eq!(m.weight_sum_min, None, "no skin ⇒ no weight-sum");
         assert_eq!(m.weight_sum_max, None);
@@ -1744,6 +1784,7 @@ mod tests {
         let m = mesh("hollow", vec![Primitive::default()]);
         assert_eq!(m.vertex_count, 0);
         assert!(m.geometry_aabb.is_none(), "no positions ⇒ no bounding box");
+        assert!(m.geometry_centroid.is_none(), "no positions ⇒ no centroid");
     }
 
     #[test]
@@ -1766,6 +1807,7 @@ mod tests {
         // out, so their 5.0 / 9.0 do NOT reach the box.
         assert_eq!(aabb.min, [0.0, 0.0, 0.0]);
         assert_eq!(aabb.max, [2.0, 3.0, 0.0]);
+        assert_eq!(m.geometry_centroid, Some([1.0, 1.5, 0.0]));
         assert!(
             aabb.min.iter().chain(&aabb.max).all(|c| c.is_finite()),
             "no non-finite bound is ever emitted"
@@ -1785,6 +1827,10 @@ mod tests {
         assert!(
             m.geometry_aabb.is_none(),
             "no finite vertex ⇒ no box (never null bounds)"
+        );
+        assert!(
+            m.geometry_centroid.is_none(),
+            "no finite vertex ⇒ no centroid"
         );
     }
 
@@ -1831,6 +1877,35 @@ mod tests {
         };
         let m = mesh("multi", vec![a, b]);
         assert_eq!(m.vertex_count, 8, "3 + 5 corners across two primitives");
+    }
+
+    #[test]
+    fn geometry_centroid_is_the_finite_position_mean_across_primitives() {
+        // The centroid is intentionally not the centre of the AABB: the third
+        // finite vertex is duplicated in a separate primitive. Positions, not
+        // triangle indices, are the existing vertex_count/AABB domain.
+        let indexed = Primitive {
+            positions: vec![
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(6.0, 0.0, 0.0),
+                Vec3::new(0.0, 3.0, 0.0),
+            ],
+            indices: vec![0, 1, 2, 0, 1, 2],
+            ..Primitive::default()
+        };
+        let unindexed = Primitive {
+            positions: vec![Vec3::new(0.0, 3.0, 0.0), Vec3::splat(f32::NAN)],
+            ..Primitive::default()
+        };
+        let m = mesh("asymmetric", vec![indexed, unindexed]);
+
+        assert_eq!(m.vertex_count, 5, "all authored position rows count");
+        assert_eq!(m.geometry_aabb.unwrap().max, [6.0, 3.0, 0.0]);
+        assert_eq!(
+            m.geometry_centroid,
+            Some([1.5, 1.5, 0.0]),
+            "four finite position rows, independent of six index references"
+        );
     }
 
     #[test]

@@ -7,15 +7,15 @@ use serde_json::{Value, json};
 use std::path::Path;
 use std::process::Command;
 
-const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v5.schema.json");
+const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v6.schema.json");
 
 fn assert_valid_measurements(value: &Value) {
-    let schema = serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid v4 schema JSON");
+    let schema = serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid v6 schema JSON");
     let validator = jsonschema::validator_for(&schema).expect("measurement schema compiles");
     let errors = validator.iter_errors(value).collect::<Vec<_>>();
     assert!(
         errors.is_empty(),
-        "v4 measurement schema errors: {errors:#?}"
+        "v6 measurement schema errors: {errors:#?}"
     );
 }
 

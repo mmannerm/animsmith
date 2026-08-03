@@ -48,6 +48,10 @@ channel count, and color type; unavailable images instead carry a reason.
 This is descriptive source evidence, not an image acceptance, repair, resize,
 transcode, writer-preservation, or material-recipe policy.
 
+Mesh-definition evidence also includes optional mesh-local finite-position
+bounds and an arithmetic vertex centroid. The centroid is descriptive source
+geometry evidence, not a center of mass, placement policy, or repaired pivot.
+
 ## Skeleton Rest-Pose Evidence
 
 When a loader supplies source skeleton identity, `AssetMeasurements` also

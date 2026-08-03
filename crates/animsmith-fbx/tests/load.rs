@@ -1,4 +1,5 @@
 use animsmith_core::glam::{Mat4, Vec3};
+use animsmith_core::measure::measure_assets;
 use animsmith_core::model::Property;
 use std::path::PathBuf;
 
@@ -314,5 +315,27 @@ fn normalizes_centimetre_z_up_scene_to_metre_y_up() {
             .key_vec3(translation.key_count() - 1)
             .expect("final translation key"),
         Vec3::Y,
+    );
+
+    // Geometry measurements describe the mesh definition's finite POSITION
+    // stream. They deliberately do not bake this instance's converted world
+    // transform into the result: the transform carries the centimetre-to-metre
+    // and Z-up-to-Y-up conversion for this fixture.
+    let finite_positions = primitive
+        .positions
+        .iter()
+        .copied()
+        .filter(|position| position.is_finite())
+        .collect::<Vec<_>>();
+    assert!(!finite_positions.is_empty(), "fixture has finite positions");
+    let local_centroid =
+        finite_positions.iter().copied().sum::<Vec3>() / finite_positions.len() as f32;
+    let measured_centroid = measure_assets(&doc).mesh_definitions[0]
+        .geometry_centroid
+        .expect("finite FBX geometry has a centroid");
+    assert_vec3_near(Vec3::from_array(measured_centroid), local_centroid);
+    assert!(
+        (model.transform_point3(local_centroid) - local_centroid).length() > 1e-5,
+        "fixture node transform must make the world centroid observably different"
     );
 }
