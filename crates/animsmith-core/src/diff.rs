@@ -360,6 +360,39 @@ mod tests {
     }
 
     #[test]
+    fn compares_nonzero_loop_bone_indices_even_when_names_repeat() {
+        let mut before = clip_measurements();
+        before
+            .loop_continuity
+            .as_mut()
+            .unwrap()
+            .bones
+            .push(BoneLoopContinuityMeasurement {
+                bone_index: 1,
+                bone_name: "hips".into(),
+                position_delta_m: 0.03,
+                rotation_delta_deg: 3.0,
+                seam_velocity_delta_mps: 0.3,
+            });
+        let mut after = before.clone();
+        let changed = &mut after.loop_continuity.as_mut().unwrap().bones[1];
+        changed.position_delta_m = 0.032;
+        changed.rotation_delta_deg = 3.2;
+        changed.seam_velocity_delta_mps = 0.32;
+
+        let deltas = diff_measurements(
+            &measurement_map("walk", before),
+            &measurement_map("walk", after),
+        );
+        assert_eq!(deltas.len(), 3, "{:?}", delta_metrics(&deltas));
+        assert!(
+            deltas
+                .iter()
+                .all(|delta| delta.metric.starts_with("loop_continuity.bones[1]."))
+        );
+    }
+
+    #[test]
     fn reports_clip_added_and_removed() {
         let deltas = diff_measurements(
             &measurement_map("removed", clip_measurements()),

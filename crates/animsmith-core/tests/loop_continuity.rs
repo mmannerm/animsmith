@@ -75,6 +75,55 @@ fn check<'a>(records: &'a [CheckEvaluation], check_id: &str) -> &'a CheckEvaluat
 }
 
 #[test]
+fn default_loop_caps_are_applied_at_the_boundary() {
+    let position_under = translation_doc([0.0, 0.00225, 0.0045, 0.00675, 0.009]);
+    assert!(
+        check(&evaluate(&position_under, &loop_config()), "loop-closure")
+            .findings()
+            .is_empty()
+    );
+    let position_over = translation_doc([0.0, 0.00275, 0.0055, 0.00825, 0.011]);
+    assert_eq!(
+        check(&evaluate(&position_over, &loop_config()), "loop-closure")
+            .findings()
+            .len(),
+        1
+    );
+
+    assert!(
+        check(
+            &evaluate(&rotation_doc(0.9), &loop_config()),
+            "loop-closure"
+        )
+        .findings()
+        .is_empty()
+    );
+    assert_eq!(
+        check(
+            &evaluate(&rotation_doc(1.1), &loop_config()),
+            "loop-closure"
+        )
+        .findings()
+        .len(),
+        1
+    );
+
+    let velocity_under = translation_doc([0.0, 0.01125, 0.02, 0.01125, 0.0]);
+    assert!(
+        check(&evaluate(&velocity_under, &loop_config()), "loop-seam-vel")
+            .findings()
+            .is_empty()
+    );
+    let velocity_over = translation_doc([0.0, 0.01375, 0.02, 0.01375, 0.0]);
+    assert_eq!(
+        check(&evaluate(&velocity_over, &loop_config()), "loop-seam-vel")
+            .findings()
+            .len(),
+        1
+    );
+}
+
+#[test]
 fn clean_stationary_loop_is_measured_without_roles_or_stride() {
     let doc = translation_doc([0.0; 5]);
     let roles = ResolvedRoles::default();
@@ -251,6 +300,22 @@ fn undeclared_and_too_short_clips_keep_typed_coverage_semantics() {
 }
 
 #[test]
+fn non_finite_model_evidence_is_a_typed_gap_not_a_loop_finding() {
+    let doc = translation_doc([0.0, f32::NAN, 0.0, 0.0, 0.0]);
+    let records = evaluate(&doc, &loop_config());
+    for id in ["loop-closure", "loop-seam-vel"] {
+        let result = check(&records, id);
+        assert_eq!(result.evaluation(), EvaluationState::NotEvaluated);
+        assert!(result.findings().is_empty(), "{result:#?}");
+        assert_eq!(result.gaps().len(), 1);
+        assert_eq!(
+            result.gaps()[0].code,
+            CoverageGapCode::MEASUREMENT_UNAVAILABLE
+        );
+    }
+}
+
+#[test]
 fn measurements_keep_indices_when_bone_names_repeat() {
     let mut doc = translation_doc([0.0; 5]);
     doc.skeleton.bones.push(Bone {
@@ -258,6 +323,15 @@ fn measurements_keep_indices_when_bone_names_repeat() {
         parent: Some(0),
         rest: Transform {
             translation: Vec3::Y,
+            ..Transform::IDENTITY
+        },
+        inverse_bind: None,
+    });
+    doc.skeleton.bones.push(Bone {
+        name: "root".into(),
+        parent: Some(1),
+        rest: Transform {
+            translation: Vec3::Z,
             ..Transform::IDENTITY
         },
         inverse_bind: None,
@@ -271,7 +345,7 @@ fn measurements_keep_indices_when_bone_names_repeat() {
         .as_ref()
         .expect("continuity")
         .bones;
-    assert_eq!(bones.len(), 2);
+    assert_eq!(bones.len(), 3);
     assert_eq!(
         (bones[0].bone_index, bones[0].bone_name.as_str()),
         (0, "root")
@@ -279,6 +353,10 @@ fn measurements_keep_indices_when_bone_names_repeat() {
     assert_eq!(
         (bones[1].bone_index, bones[1].bone_name.as_str()),
         (1, "root")
+    );
+    assert_eq!(
+        (bones[2].bone_index, bones[2].bone_name.as_str()),
+        (2, "root")
     );
 }
 
@@ -292,7 +370,6 @@ fn model_rotation_is_composed_independently_of_non_uniform_scale() {
         rest: Transform::IDENTITY,
         inverse_bind: None,
     });
-    doc.clips[0].tracks[1].bone = 1;
 
     let roles = ResolvedRoles::default();
     let grids = MetricGrids::new(&doc);
@@ -307,4 +384,65 @@ fn model_rotation_is_composed_independently_of_non_uniform_scale() {
         (bones[1].rotation_delta_deg - 10.0).abs() < 1e-3,
         "{bones:#?}"
     );
+}
+
+#[test]
+fn child_metrics_include_parent_driven_model_space_c0_and_c1_motion() {
+    let mut closure_doc = rotation_doc(10.0);
+    closure_doc.skeleton.bones.push(Bone {
+        name: "child".into(),
+        parent: Some(0),
+        rest: Transform {
+            translation: Vec3::X,
+            ..Transform::IDENTITY
+        },
+        inverse_bind: None,
+    });
+    let closure_records = evaluate(&closure_doc, &loop_config());
+    let closure = check(&closure_records, "loop-closure");
+    let inherited_position = closure
+        .findings()
+        .iter()
+        .find(|finding| finding.message.contains("does not close in position"))
+        .expect("parent rotation moves the locally static child in model space");
+    assert_eq!(inherited_position.bone.as_deref(), Some("child"));
+
+    let mut cusp_doc = translation_doc([0.0; 5]);
+    cusp_doc.skeleton.bones.push(Bone {
+        name: "child".into(),
+        parent: Some(0),
+        rest: Transform {
+            translation: Vec3::X,
+            ..Transform::IDENTITY
+        },
+        inverse_bind: None,
+    });
+    cusp_doc.clips[0].tracks.push(Track {
+        bone: 0,
+        property: Property::Rotation,
+        interpolation: Interpolation::Linear,
+        times: TIMES.into(),
+        values: TrackValues::Quats(
+            [0.0f32, 0.1, 0.2, 0.1, 0.0]
+                .into_iter()
+                .map(Quat::from_rotation_z)
+                .collect(),
+        ),
+    });
+    let cusp_records = evaluate(&cusp_doc, &loop_config());
+    let velocity = check(&cusp_records, "loop-seam-vel");
+    assert_eq!(velocity.findings().len(), 1, "{velocity:#?}");
+    assert_eq!(velocity.findings()[0].bone.as_deref(), Some("child"));
+
+    let roles = ResolvedRoles::default();
+    let grids = MetricGrids::new(&cusp_doc);
+    let measurements =
+        animsmith_core::measure::measure_document(&grids, &roles, &Config::default());
+    let bones = &measurements["guard"]
+        .loop_continuity
+        .as_ref()
+        .expect("continuity")
+        .bones;
+    assert_eq!(bones[0].seam_velocity_delta_mps, 0.0);
+    assert!(bones[1].seam_velocity_delta_mps > 0.1);
 }
