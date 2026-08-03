@@ -1,12 +1,325 @@
 //! Pipeline-mechanical clip transforms, ported from the incubating
-//! bake's Python: frame-window slicing, hold-extension, and gait-anchor
-//! rotation. Scope rule (DESIGN.md §1): animsmith may rewrite a clip
+//! bake's Python: frame-window slicing, hold-extension, duplicate-endpoint
+//! removal, and gait-anchor rotation. Scope rule (DESIGN.md §1): animsmith may rewrite a clip
 //! only in ways whose correctness its own checks can verify.
 
 use crate::metrics::foot_cycle_metrics;
-use crate::model::{Clip, Interpolation, Skeleton, Track, TrackValues};
+use crate::model::{Clip, Interpolation, Property, Skeleton, Track, TrackValues};
 use crate::profile::ResolvedRoles;
 use crate::sample::{TrackSample, sample_clip, sample_track};
+use thiserror::Error;
+
+/// Failure while analyzing a duplicate loop endpoint.
+#[derive(Debug, Clone, PartialEq, Error)]
+#[non_exhaustive]
+pub enum DuplicateLoopEndpointError {
+    /// The clip has no tracks.
+    #[error("clip has no tracks")]
+    NoTracks,
+    /// Stored value count does not exactly match the interpolation mode.
+    #[error(
+        "track {track} has {value_count} values for {key_count} keys with {interpolation:?} interpolation"
+    )]
+    InvalidValueCount {
+        /// Index of the malformed track.
+        track: usize,
+        /// Number of authored keys.
+        key_count: usize,
+        /// Number of stored values.
+        value_count: usize,
+        /// Interpolation mode that determines values per key.
+        interpolation: Interpolation,
+    },
+    /// A property uses incompatible value storage.
+    #[error("track {track} has invalid value storage")]
+    InvalidValueStorage {
+        /// Index of the malformed track.
+        track: usize,
+    },
+    /// A duration, key time, or stored value is non-finite.
+    #[error("track {track:?} contains a non-finite authored value")]
+    NonFinite {
+        /// Index of the malformed track, or `None` for clip duration.
+        track: Option<usize>,
+    },
+    /// A timeline is not strictly increasing.
+    #[error("track {track} timeline is not strictly increasing")]
+    NonIncreasingTime {
+        /// Index of the malformed track.
+        track: usize,
+    },
+    /// A track differs from the exact common authored timeline.
+    #[error("track {track} does not share the exact authored timeline")]
+    TimelineMismatch {
+        /// Index of the mismatching track.
+        track: usize,
+    },
+    /// A final key time does not equal the declared duration.
+    #[error("track {track} does not end at the declared duration")]
+    DurationMismatch {
+        /// Index of the mismatching track.
+        track: usize,
+    },
+}
+
+/// The lossless change made by [`drop_duplicate_loop_endpoint`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub struct DuplicateLoopEndpointOutcome {
+    /// Number of consecutive closing keys removed from every track.
+    pub removed_keys_per_track: usize,
+    /// Declared duration before removal.
+    pub duration_before_s: f64,
+    /// Duration re-pinned to the final retained key.
+    pub duration_after_s: f64,
+    /// Largest closing translation-component delta, in metres.
+    pub max_translation_endpoint_delta_m: Option<f32>,
+    /// Largest sign-invariant closing rotation delta, in radians.
+    pub max_rotation_endpoint_delta_rad: Option<f32>,
+    /// Largest closing scale-component delta.
+    pub max_scale_endpoint_delta: Option<f32>,
+}
+
+/// Component-wise tolerance for duplicate translation and scale endpoints.
+pub const DUPLICATE_ENDPOINT_VEC3_TOLERANCE: f32 = 1.0e-5;
+/// Sign-invariant shortest-path angular tolerance for duplicate rotations.
+pub const DUPLICATE_ENDPOINT_QUATERNION_TOLERANCE_RAD: f32 = 1.0e-4;
+
+/// Analyze whether a clip has a safe, duplicated loop endpoint.
+///
+/// The authored timeline must be finite, strictly increasing, and exactly
+/// shared by every track; each track must have exact key/value cardinality,
+/// at least three keys, and a final time exactly equal to clip duration.
+/// Closing vectors compare component-wise within `1e-5`; quaternions compare
+/// with sign-invariant shortest-path angular distance within `1e-4` radians.
+/// The predicate is the mechanically removable subset of #22's future
+/// `duplicate_endpoint` mode, not a parallel endpoint-mode classifier.
+/// `Ok(None)` is a valid non-candidate, including two-key clips and stationary
+/// holds.
+pub fn analyze_duplicate_loop_endpoint(
+    clip: &Clip,
+) -> Result<Option<DuplicateLoopEndpointOutcome>, DuplicateLoopEndpointError> {
+    let Some(reference) = clip.tracks.first() else {
+        return Err(DuplicateLoopEndpointError::NoTracks);
+    };
+    if !clip.duration_s.is_finite() {
+        return Err(DuplicateLoopEndpointError::NonFinite { track: None });
+    }
+    let mut moving_terminal_count = None;
+    let mut terminal_counts = Vec::with_capacity(clip.tracks.len());
+    let mut max_translation_endpoint_delta_m: Option<f32> = None;
+    let mut max_rotation_endpoint_delta_rad: Option<f32> = None;
+    let mut max_scale_endpoint_delta: Option<f32> = None;
+    for (index, track) in clip.tracks.iter().enumerate() {
+        validate_duplicate_endpoint_track(index, track)?;
+        if track.times != reference.times {
+            return Err(DuplicateLoopEndpointError::TimelineMismatch { track: index });
+        }
+        // Authored key times are f32 even though the model carries duration as
+        // f64. Compare in the authored time domain so a preceding transform
+        // such as `slice` is not rejected only for f64 representation dust.
+        if track.end_time() != clip.duration_s as f32 {
+            return Err(DuplicateLoopEndpointError::DurationMismatch { track: index });
+        }
+        if track.key_count() < 3 {
+            return Ok(None);
+        }
+        let Some(count) = terminal_duplicate_count(track) else {
+            return Ok(None);
+        };
+        let final_key = track.key_count() - 1;
+        match track.property {
+            Property::Translation => {
+                let delta = vec3_key_delta(track, 0, final_key);
+                max_translation_endpoint_delta_m = Some(
+                    max_translation_endpoint_delta_m.map_or(delta, |current| current.max(delta)),
+                );
+            }
+            Property::Rotation => {
+                let Some(delta) = quaternion_key_delta(track, 0, final_key) else {
+                    return Ok(None);
+                };
+                max_rotation_endpoint_delta_rad = Some(
+                    max_rotation_endpoint_delta_rad.map_or(delta, |current| current.max(delta)),
+                );
+            }
+            Property::Scale => {
+                let delta = vec3_key_delta(track, 0, final_key);
+                max_scale_endpoint_delta =
+                    Some(max_scale_endpoint_delta.map_or(delta, |current| current.max(delta)));
+            }
+        }
+        let moves = track_has_motion(track);
+        if moves {
+            if moving_terminal_count.is_some_and(|expected| expected != count) {
+                return Ok(None);
+            }
+            moving_terminal_count = Some(count);
+        }
+        terminal_counts.push(count);
+    }
+    let Some(removed_keys_per_track) = moving_terminal_count else {
+        return Ok(None);
+    };
+    if terminal_counts
+        .into_iter()
+        .any(|available| available < removed_keys_per_track)
+    {
+        return Ok(None);
+    }
+    Ok(Some(DuplicateLoopEndpointOutcome {
+        removed_keys_per_track,
+        duration_before_s: clip.duration_s,
+        duration_after_s: reference.times[reference.key_count() - removed_keys_per_track - 1]
+            as f64,
+        max_translation_endpoint_delta_m,
+        max_rotation_endpoint_delta_rad,
+        max_scale_endpoint_delta,
+    }))
+}
+
+/// Atomically remove all consecutive duplicate closing keys from every track.
+///
+/// Retained times, values, and cubic tangent/value/tangent triplets are
+/// unchanged. Errors and non-candidates leave `clip` untouched.
+pub fn drop_duplicate_loop_endpoint(
+    clip: &mut Clip,
+) -> Result<Option<DuplicateLoopEndpointOutcome>, DuplicateLoopEndpointError> {
+    let Some(outcome) = analyze_duplicate_loop_endpoint(clip)? else {
+        return Ok(None);
+    };
+    for track in &mut clip.tracks {
+        let values = outcome.removed_keys_per_track
+            * if track.interpolation == Interpolation::CubicSpline {
+                3
+            } else {
+                1
+            };
+        track
+            .times
+            .truncate(track.key_count() - outcome.removed_keys_per_track);
+        match &mut track.values {
+            TrackValues::Vec3s(stored) => stored.truncate(stored.len() - values),
+            TrackValues::Quats(stored) => stored.truncate(stored.len() - values),
+        }
+    }
+    clip.duration_s = outcome.duration_after_s;
+    debug_assert!(matches!(analyze_duplicate_loop_endpoint(clip), Ok(None)));
+    Ok(Some(outcome))
+}
+
+fn validate_duplicate_endpoint_track(
+    index: usize,
+    track: &Track,
+) -> Result<(), DuplicateLoopEndpointError> {
+    let keys = track.key_count();
+    let expected = keys
+        * if track.interpolation == Interpolation::CubicSpline {
+            3
+        } else {
+            1
+        };
+    if track.values.len() != expected {
+        return Err(DuplicateLoopEndpointError::InvalidValueCount {
+            track: index,
+            key_count: keys,
+            value_count: track.values.len(),
+            interpolation: track.interpolation,
+        });
+    }
+    if !matches!(
+        (track.property, &track.values),
+        (Property::Rotation, TrackValues::Quats(_))
+            | (
+                Property::Translation | Property::Scale,
+                TrackValues::Vec3s(_)
+            )
+    ) {
+        return Err(DuplicateLoopEndpointError::InvalidValueStorage { track: index });
+    }
+    if track.times.iter().any(|time| !time.is_finite())
+        || match &track.values {
+            TrackValues::Vec3s(values) => values.iter().any(|value| !value.is_finite()),
+            TrackValues::Quats(values) => values.iter().any(|value| !value.is_finite()),
+        }
+    {
+        return Err(DuplicateLoopEndpointError::NonFinite { track: Some(index) });
+    }
+    if track.times.windows(2).any(|window| window[1] <= window[0]) {
+        return Err(DuplicateLoopEndpointError::NonIncreasingTime { track: index });
+    }
+    Ok(())
+}
+
+fn terminal_duplicate_count(track: &Track) -> Option<usize> {
+    let mut count = 0;
+    while count < track.key_count() - 2
+        && keyed_values_match(track, 0, track.key_count() - count - 1)
+    {
+        count += 1;
+    }
+    (count > 0).then_some(count)
+}
+
+fn track_has_motion(track: &Track) -> bool {
+    (1..track.key_count()).any(|key| !keyed_values_match(track, 0, key))
+        || (track.interpolation == Interpolation::CubicSpline
+            && match &track.values {
+                TrackValues::Vec3s(values) => values
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| index % 3 != 1)
+                    .any(|(_, value)| {
+                        value.abs().max_element() > DUPLICATE_ENDPOINT_VEC3_TOLERANCE
+                    }),
+                TrackValues::Quats(values) => values
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| index % 3 != 1)
+                    .any(|(_, value)| {
+                        value
+                            .to_array()
+                            .into_iter()
+                            .any(|component| component.abs() > DUPLICATE_ENDPOINT_VEC3_TOLERANCE)
+                    }),
+            })
+}
+
+fn keyed_values_match(track: &Track, first: usize, other: usize) -> bool {
+    match &track.values {
+        TrackValues::Vec3s(_) => {
+            vec3_key_delta(track, first, other) <= DUPLICATE_ENDPOINT_VEC3_TOLERANCE
+        }
+        TrackValues::Quats(_) => quaternion_key_delta(track, first, other)
+            .is_some_and(|delta| delta <= DUPLICATE_ENDPOINT_QUATERNION_TOLERANCE_RAD),
+    }
+}
+
+fn vec3_key_delta(track: &Track, first: usize, other: usize) -> f32 {
+    let TrackValues::Vec3s(values) = &track.values else {
+        unreachable!("validated vector track")
+    };
+    (values[track.value_index(first)] - values[track.value_index(other)])
+        .abs()
+        .max_element()
+}
+
+fn quaternion_key_delta(track: &Track, first: usize, other: usize) -> Option<f32> {
+    let TrackValues::Quats(values) = &track.values else {
+        unreachable!("validated quaternion track")
+    };
+    let first = values[track.value_index(first)];
+    let other = values[track.value_index(other)];
+    let first_length_squared = first.length_squared();
+    let other_length_squared = other.length_squared();
+    if first_length_squared == 0.0 || other_length_squared == 0.0 {
+        return None;
+    }
+    let delta = first.normalize().conjugate() * other.normalize();
+    let [x, y, z, w] = delta.to_array();
+    let sin_half_angle = glam::Vec3::new(x, y, z).length();
+    Some(2.0 * sin_half_angle.atan2(w.abs()))
+}
 
 /// Keep only the keys inside `[start, end]` seconds (with a half-frame
 /// epsilon at `fps` absorbing float drift from earlier retimings) and

@@ -82,7 +82,7 @@ animsmith lint    <file...> [--config animsmith.toml] [--select ids] [--deny war
 animsmith measure <file...> --format json          # measurements only, no judgment
 animsmith inspect <file>                           # clips, durations, tracks, bones, detected rig profile
 animsmith report  <file> -o report.html [--clip name]
-animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor]
+animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor] [--drop-duplicate-loop-endpoint]
 animsmith fix     <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
 animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb> [--material-texture-recipe recipe.toml] [--animation-only|--bake-static-mesh-transforms] [--format text|json]
 animsmith assemble <recipe.toml> -o <out.glb> --evidence <out.json>
@@ -340,6 +340,7 @@ golden-test against.
 | `constant-nonunit-scale` | constant non-unit scale channel or single-key pin | raw trajectory | opt-in severity (off by default) | new |
 | `constant-track` | redundant multi-key representation whose interpolation-aware trajectory never moves | raw trajectory | eps | new |
 | `frozen-bone` | required bone's max angular deviation from first frame below floor | grid + roles/meta | `min_rotation_deg` | reference contract rotation floor + measured rotation ranges |
+| `duplicate-loop-endpoint` | strict authored-key duplicate closing endpoint in a declared loop; warning/default-on | common finite strictly increasing timeline, valid cardinality, matching endpoints, interior motion + loop declaration | — | mechanical subset of #22's endpoint classifier plus open-cycle transform |
 | `loop-closure` | maximum per-bone model-space last→first position and shortest-path rotation delta | grid + loop declaration | `max_position_delta_m`, `max_rotation_delta_deg` | consumer-neutral authoring-loop requirement |
 | `loop-seam` | last→first position wrap discontinuity of feet-relative-to-hips, normalized by the *local neighbour* per-frame step, with a stride floor so stationary clips skip | grid + Hips/feet/toe roles | `max_ratio`, `min_stride_step_m` | `locomotion_metrics.py` — port verbatim |
 | `loop-seam-vel` | maximum per-bone model-space difference between the in-clip velocities entering and leaving the wrap | grid + loop declaration | `max_velocity_delta_mps` | consumer-neutral authoring-loop requirement |

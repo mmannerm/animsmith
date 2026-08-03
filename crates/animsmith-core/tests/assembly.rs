@@ -8,6 +8,9 @@ use animsmith_core::assembly::{
 use animsmith_core::model::{
     Bone, Clip, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
 };
+use animsmith_core::transform::{
+    DuplicateLoopEndpointError, analyze_duplicate_loop_endpoint, drop_duplicate_loop_endpoint,
+};
 use glam::{Quat, Vec3};
 
 fn bone(name: &str, x: f32) -> Bone {
@@ -243,4 +246,237 @@ fn removing_final_keys_keeps_cubic_alignment_and_retimes_duration() {
     assert_eq!(clip.tracks[0].key_vec3(1), Some(Vec3::Y));
     assert_eq!(clip.tracks[1].key_count(), 1);
     assert_eq!(clip.tracks[2].key_count(), 1);
+}
+
+fn duplicate_endpoint_track(
+    bone: usize,
+    property: Property,
+    interpolation: Interpolation,
+) -> Track {
+    let times = vec![0.0, 0.5, 1.0, 1.5];
+    let zero_quat = Quat::from_xyzw(0.0, 0.0, 0.0, 0.0);
+    let values = match (property, interpolation) {
+        (Property::Rotation, Interpolation::CubicSpline) => TrackValues::Quats(vec![
+            zero_quat,
+            Quat::IDENTITY,
+            zero_quat,
+            zero_quat,
+            Quat::from_rotation_x(0.4),
+            zero_quat,
+            zero_quat,
+            -Quat::IDENTITY,
+            zero_quat,
+            zero_quat,
+            Quat::IDENTITY,
+            zero_quat,
+        ]),
+        (Property::Rotation, _) => TrackValues::Quats(vec![
+            Quat::IDENTITY,
+            Quat::from_rotation_x(0.4),
+            -Quat::IDENTITY,
+            Quat::IDENTITY,
+        ]),
+        (_, Interpolation::CubicSpline) => TrackValues::Vec3s(vec![
+            Vec3::ZERO,
+            Vec3::ZERO,
+            Vec3::X,
+            Vec3::Y,
+            Vec3::X,
+            Vec3::Z,
+            Vec3::ZERO,
+            Vec3::ZERO,
+            Vec3::X,
+            Vec3::ZERO,
+            Vec3::ZERO,
+            Vec3::X,
+        ]),
+        _ => TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::X, Vec3::ZERO, Vec3::ZERO]),
+    };
+    Track {
+        bone,
+        property,
+        interpolation,
+        times,
+        values,
+    }
+}
+
+#[test]
+fn duplicate_loop_endpoint_analysis_and_drop_are_lossless_and_idempotent() {
+    let mut clip = Clip {
+        name: "loop".into(),
+        duration_s: 1.5,
+        tracks: vec![
+            duplicate_endpoint_track(0, Property::Translation, Interpolation::CubicSpline),
+            duplicate_endpoint_track(1, Property::Rotation, Interpolation::Linear),
+            duplicate_endpoint_track(2, Property::Rotation, Interpolation::CubicSpline),
+        ],
+    };
+    let before = clip.clone();
+    let outcome = analyze_duplicate_loop_endpoint(&clip)
+        .expect("valid authored data")
+        .expect("duplicated endpoint");
+    assert_eq!(outcome.removed_keys_per_track, 2);
+    assert_eq!(outcome.duration_before_s, 1.5);
+    assert_eq!(outcome.duration_after_s, 0.5);
+
+    assert_eq!(
+        drop_duplicate_loop_endpoint(&mut clip).unwrap(),
+        Some(outcome)
+    );
+    assert_eq!(clip.duration_s, 0.5);
+    for (after, original) in clip.tracks.iter().zip(&before.tracks) {
+        assert_eq!(after.times, original.times[..2]);
+        match (&after.values, &original.values) {
+            (TrackValues::Vec3s(after_values), TrackValues::Vec3s(original_values)) => {
+                assert_eq!(after_values, &original_values[..6]);
+            }
+            (TrackValues::Quats(after_values), TrackValues::Quats(original_values)) => {
+                let retained = if after.interpolation == Interpolation::CubicSpline {
+                    6
+                } else {
+                    2
+                };
+                assert_eq!(after_values, &original_values[..retained]);
+            }
+            _ => unreachable!(),
+        }
+    }
+    assert_eq!(analyze_duplicate_loop_endpoint(&clip).unwrap(), None);
+    assert_eq!(drop_duplicate_loop_endpoint(&mut clip).unwrap(), None);
+}
+
+#[test]
+fn duplicate_loop_endpoint_refuses_stationary_holds_but_accepts_cubic_motion() {
+    let stationary = Track {
+        bone: 0,
+        property: Property::Translation,
+        interpolation: Interpolation::Linear,
+        times: vec![0.0, 0.5, 1.0],
+        values: TrackValues::Vec3s(vec![Vec3::ZERO; 3]),
+    };
+    let mut stationary_clip = Clip {
+        name: "hold".into(),
+        duration_s: 1.0,
+        tracks: vec![stationary],
+    };
+    let stationary_before = format!("{stationary_clip:?}");
+    assert_eq!(
+        analyze_duplicate_loop_endpoint(&stationary_clip).unwrap(),
+        None
+    );
+    assert_eq!(
+        drop_duplicate_loop_endpoint(&mut stationary_clip).unwrap(),
+        None
+    );
+    assert_eq!(
+        format!("{stationary_clip:?}"),
+        stationary_before,
+        "a valid non-candidate is not mutated while probing"
+    );
+
+    let mut cubic_clip = Clip {
+        name: "cubic-loop".into(),
+        duration_s: 1.0,
+        tracks: vec![Track {
+            bone: 0,
+            property: Property::Translation,
+            interpolation: Interpolation::CubicSpline,
+            times: vec![0.0, 0.5, 1.0],
+            values: TrackValues::Vec3s(vec![
+                Vec3::ZERO,
+                Vec3::ZERO,
+                Vec3::X,
+                Vec3::ZERO,
+                Vec3::ZERO,
+                Vec3::ZERO,
+                -Vec3::X,
+                Vec3::ZERO,
+                Vec3::ZERO,
+            ]),
+        }],
+    };
+    assert_eq!(
+        drop_duplicate_loop_endpoint(&mut cubic_clip)
+            .unwrap()
+            .unwrap()
+            .removed_keys_per_track,
+        1
+    );
+}
+
+#[test]
+fn duplicate_loop_endpoint_rejects_invalid_timeline_without_mutating() {
+    let mut clip = Clip {
+        name: "invalid".into(),
+        duration_s: 1.0,
+        tracks: vec![Track {
+            bone: 0,
+            property: Property::Translation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 0.5, 1.0],
+            values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::X]),
+        }],
+    };
+    let before = format!("{clip:?}");
+    assert!(matches!(
+        drop_duplicate_loop_endpoint(&mut clip),
+        Err(DuplicateLoopEndpointError::InvalidValueCount { .. })
+    ));
+    assert_eq!(format!("{clip:?}"), before, "errors are atomic");
+
+    clip = Clip {
+        name: "mismatched-timeline".into(),
+        duration_s: 1.0,
+        tracks: vec![
+            Track {
+                bone: 0,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 0.5, 1.0],
+                values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::X, Vec3::ZERO]),
+            },
+            Track {
+                bone: 1,
+                property: Property::Scale,
+                interpolation: Interpolation::Step,
+                times: vec![0.0, 0.4, 1.0],
+                values: TrackValues::Vec3s(vec![Vec3::ONE, Vec3::X, Vec3::ONE]),
+            },
+        ],
+    };
+    let before = format!("{clip:?}");
+    assert!(matches!(
+        drop_duplicate_loop_endpoint(&mut clip),
+        Err(DuplicateLoopEndpointError::TimelineMismatch { .. })
+    ));
+    assert_eq!(format!("{clip:?}"), before, "refusal is atomic");
+
+    for (label, times, expected) in [
+        (
+            "non-finite",
+            vec![0.0, f32::NAN, 1.0],
+            DuplicateLoopEndpointError::NonFinite { track: Some(0) },
+        ),
+        (
+            "non-increasing",
+            vec![0.0, 0.0, 1.0],
+            DuplicateLoopEndpointError::NonIncreasingTime { track: 0 },
+        ),
+    ] {
+        let mut invalid = Clip {
+            name: label.into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 0,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times,
+                values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::X, Vec3::ZERO]),
+            }],
+        };
+        let before = format!("{invalid:?}");
+        assert_eq!(drop_duplicate_loop_endpoint(&mut invalid), Err(expected));
+        assert_eq!(format!("{invalid:?}"), before, "{label} refusal is atomic");
+    }
 }

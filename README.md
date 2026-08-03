@@ -149,6 +149,7 @@ Contract-aware checks use declared expectations and, where needed, rig roles:
 | id | severity | what |
 |---|---|---|
 | `fps` | warning | duration and keys must land on the declared frame grid |
+| `duplicate-loop-endpoint` | warning | a declared loop repeats its first authored pose at a mechanically removable final endpoint |
 | `loop-closure` | error | maximum per-bone model-space position and rotation mismatch in declared loops |
 | `loop-seam` | error | feet-relative-to-hips wrap discontinuity in declared loops |
 | `loop-seam-vel` | error | maximum per-bone model-space linear-velocity change across a declared loop wrap |
@@ -160,8 +161,18 @@ Contract-aware checks use declared expectations and, where needed, rig roles:
 | `frozen-bone` | error | required bones whose rotation never exceeds the configured floor |
 | `bind-pose` | warning | first frame deviating too far from the skeleton rest pose |
 
-`loop-closure` and `loop-seam-vel` inspect every skeleton bone and need no rig
-roles or locomotion stride. Checks that do require semantic roles report a
+`duplicate-loop-endpoint`, `loop-closure`, and `loop-seam-vel` need no rig
+roles or locomotion stride. `duplicate-loop-endpoint` is default-on but applies
+only when `[clips.<name>] loop = true`: it warns only for the strict authored-key
+case where every track shares one finite, strictly increasing timeline, has
+matching endpoint values (vector components within `1e-5`, sign-invariant
+quaternion angle within `1e-4` radians), and contains real interior motion. Use
+`transform --drop-duplicate-loop-endpoint` to make
+that eligible clip an open cycle; it removes the same terminal key count from
+every channel and re-pins its duration. It deliberately does not preserve a
+green `loop-closure` result, because that inclusive endpoint check expects the
+repeated final sample. The complete endpoint-mode classifier remains [#22](https://github.com/mmannerm/animsmith/issues/22).
+Checks that do require semantic roles report a
 typed, nonblocking coverage gap when those roles cannot be resolved rather
 than guessing or manufacturing a content finding.
 
