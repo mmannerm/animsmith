@@ -262,12 +262,8 @@ pub enum SkeletonNodeLocalRestUnavailableReason {
 pub enum SkeletonRestWorldMatrixUnavailableReason {
     /// The node-local rest transform is unavailable.
     NonFiniteLocalRest,
-    /// The declared parent does not occur in the source node table.
-    MissingParentNode,
     /// The parent rest-world matrix is unavailable.
     ParentRestWorldUnavailable,
-    /// The source parent graph has a cycle.
-    ParentCycle,
     /// Matrix composition produced a non-finite result.
     NonFiniteWorldMatrix,
 }
@@ -630,12 +626,21 @@ enum RestWorldVisit {
     Done,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourceRestWorldError {
+    NonFiniteLocalRest,
+    MissingParentNode,
+    ParentRestWorldUnavailable,
+    ParentCycle,
+    NonFiniteWorldMatrix,
+}
+
 fn source_rest_world(
     node_index: usize,
     source_nodes: &BTreeMap<usize, (&crate::model::SourceNodeAsset, Option<Mat4>)>,
     visits: &mut BTreeMap<usize, RestWorldVisit>,
-    worlds: &mut BTreeMap<usize, Result<Mat4, SkeletonRestWorldMatrixUnavailableReason>>,
-) -> Result<Mat4, SkeletonRestWorldMatrixUnavailableReason> {
+    worlds: &mut BTreeMap<usize, Result<Mat4, SourceRestWorldError>>,
+) -> Result<Mat4, SourceRestWorldError> {
     if let Some(result) = worlds.get(&node_index) {
         return *result;
     }
@@ -646,16 +651,16 @@ fn source_rest_world(
             break *result;
         }
         if visits.get(&current) == Some(&RestWorldVisit::Visiting) {
-            break Err(SkeletonRestWorldMatrixUnavailableReason::ParentCycle);
+            break Err(SourceRestWorldError::ParentCycle);
         }
         let Some((node, local)) = source_nodes.get(&current) else {
             if path.is_empty() {
-                return Err(SkeletonRestWorldMatrixUnavailableReason::MissingParentNode);
+                return Err(SourceRestWorldError::MissingParentNode);
             }
-            break Err(SkeletonRestWorldMatrixUnavailableReason::MissingParentNode);
+            break Err(SourceRestWorldError::MissingParentNode);
         };
         let Some(local) = *local else {
-            let result = Err(SkeletonRestWorldMatrixUnavailableReason::NonFiniteLocalRest);
+            let result = Err(SourceRestWorldError::NonFiniteLocalRest);
             worlds.insert(current, result);
             visits.insert(current, RestWorldVisit::Done);
             break result;
@@ -675,14 +680,19 @@ fn source_rest_world(
     };
 
     for (current, local) in path.into_iter().rev() {
-        parent_result = parent_result
-            .map_err(|_| SkeletonRestWorldMatrixUnavailableReason::ParentRestWorldUnavailable)
-            .map(|parent_world| parent_world * local)
-            .and_then(|world| {
+        parent_result = match parent_result {
+            Err(
+                error @ (SourceRestWorldError::MissingParentNode
+                | SourceRestWorldError::ParentCycle),
+            ) => Err(error),
+            Err(_) => Err(SourceRestWorldError::ParentRestWorldUnavailable),
+            Ok(parent_world) => {
+                let world = parent_world * local;
                 matrix_is_finite(world)
                     .then_some(world)
-                    .ok_or(SkeletonRestWorldMatrixUnavailableReason::NonFiniteWorldMatrix)
-            });
+                    .ok_or(SourceRestWorldError::NonFiniteWorldMatrix)
+            }
+        };
         visits.insert(current, RestWorldVisit::Done);
         worlds.insert(current, parent_result);
     }
@@ -781,29 +791,40 @@ fn measure_source_skeleton(
             &mut worlds,
         );
     }
-    let skeleton_nodes = source
-        .nodes
-        .iter()
-        .map(|node| {
-            let (local_rest, _) = source_local_rest_measurement(&node.local_rest);
-            let world = worlds.get(&node.source_node_index).copied().unwrap_or(Err(
-                SkeletonRestWorldMatrixUnavailableReason::MissingParentNode,
-            ));
-            let (rest_world_matrix, rest_world_matrix_unavailable_reason) = match world {
-                Ok(matrix) => (Some(matrix_to_columns(matrix)), None),
-                Err(reason) => (None, Some(reason)),
-            };
-            SkeletonNodeMeasurements {
-                node_index: node.source_node_index,
-                name: node.name.clone(),
-                parent_node_index: node.parent_source_node_index,
-                scene_root_indices: node.scene_root_indices.clone(),
-                local_rest,
-                rest_world_matrix,
-                rest_world_matrix_unavailable_reason,
+    let mut skeleton_nodes = Vec::with_capacity(source.nodes.len());
+    for node in &source.nodes {
+        let (local_rest, _) = source_local_rest_measurement(&node.local_rest);
+        let Some(world) = worlds.get(&node.source_node_index).copied() else {
+            return (SourceSkeletonCoverage::Unavailable, Vec::new(), Vec::new());
+        };
+        let (rest_world_matrix, rest_world_matrix_unavailable_reason) = match world {
+            Ok(matrix) => (Some(matrix_to_columns(matrix)), None),
+            Err(SourceRestWorldError::NonFiniteLocalRest) => (
+                None,
+                Some(SkeletonRestWorldMatrixUnavailableReason::NonFiniteLocalRest),
+            ),
+            Err(SourceRestWorldError::ParentRestWorldUnavailable) => (
+                None,
+                Some(SkeletonRestWorldMatrixUnavailableReason::ParentRestWorldUnavailable),
+            ),
+            Err(SourceRestWorldError::NonFiniteWorldMatrix) => (
+                None,
+                Some(SkeletonRestWorldMatrixUnavailableReason::NonFiniteWorldMatrix),
+            ),
+            Err(SourceRestWorldError::MissingParentNode | SourceRestWorldError::ParentCycle) => {
+                return (SourceSkeletonCoverage::Unavailable, Vec::new(), Vec::new());
             }
-        })
-        .collect();
+        };
+        skeleton_nodes.push(SkeletonNodeMeasurements {
+            node_index: node.source_node_index,
+            name: node.name.clone(),
+            parent_node_index: node.parent_source_node_index,
+            scene_root_indices: node.scene_root_indices.clone(),
+            local_rest,
+            rest_world_matrix,
+            rest_world_matrix_unavailable_reason,
+        });
+    }
 
     let skins = source
         .skins
@@ -864,9 +885,10 @@ fn measure_source_skeleton(
                         },
                         available_derived_matrix,
                     );
-                    let world = worlds.get(&node_index).copied().unwrap_or(Err(
-                        SkeletonRestWorldMatrixUnavailableReason::MissingParentNode,
-                    ));
+                    let world = worlds
+                        .get(&node_index)
+                        .copied()
+                        .unwrap_or(Err(SourceRestWorldError::ParentRestWorldUnavailable));
                     let mesh_bind_world = match world {
                         Ok(world) => {
                             let matrix = world * raw;
@@ -1578,6 +1600,37 @@ mod tests {
                 .expect("deep leaf rest world")[12],
             1.0
         );
+    }
+
+    #[test]
+    fn malformed_source_parent_graph_downgrades_source_coverage() {
+        for parent_source_node_index in [Some(7), Some(0)] {
+            let doc = Document {
+                assets: SceneAssets {
+                    source_skeleton: SourceSkeletonAssets {
+                        coverage: SourceSkeletonCoverage::Complete,
+                        nodes: vec![SourceNodeAsset {
+                            source_node_index: 0,
+                            name: None,
+                            parent_source_node_index,
+                            scene_root_indices: Vec::new(),
+                            local_rest: SourceNodeLocalRest::Matrix(Mat4::IDENTITY),
+                        }],
+                        skins: Vec::new(),
+                    },
+                    ..SceneAssets::default()
+                },
+                ..Document::default()
+            };
+
+            let measured = measure_assets(&doc);
+            assert_eq!(
+                measured.skeleton_source_coverage,
+                SourceSkeletonCoverage::Unavailable
+            );
+            assert!(measured.skeleton_nodes.is_empty());
+            assert!(measured.skins.is_empty());
+        }
     }
 
     #[test]

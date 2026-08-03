@@ -314,6 +314,9 @@ and joint index are source identities; names are display data and need not be
 unique. `scene_root_indices` lists the source scenes that directly declare the
 node as a root, in ascending source-scene order. A joint can name any source
 node as its parent, including a non-joint helper node.
+Structurally inconsistent source identity tables, such as a missing parent or
+parent cycle, downgrade the whole skeleton source domain to `"unavailable"`
+instead of publishing a self-contradictory complete table.
 
 Every source node records its authored `local_rest`, tagged as `"trs"`,
 `"matrix"`, or `"unavailable"`. A TRS has `translation_m`,

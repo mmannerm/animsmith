@@ -392,6 +392,11 @@ fn assert_skeleton_serializer_order(stdout: &[u8]) {
             "rest_world_matrix",
         ],
     );
+    let local_rest = json_container_after_key(node, "local_rest", b'{', b'}');
+    assert_ordered_key_markers(
+        local_rest,
+        &["kind", "translation_m", "rotation_xyzw", "scale"],
+    );
 
     let skin = json_object_in_array_after_key(measurements, "skins", 0);
     assert_ordered_key_markers(
@@ -404,6 +409,11 @@ fn assert_skeleton_serializer_order(stdout: &[u8]) {
             "attachments",
         ],
     );
+    let inverse_bind_accessor = json_container_after_key(skin, "inverse_bind_accessor", b'{', b'}');
+    assert_ordered_key_markers(
+        inverse_bind_accessor,
+        &["status", "declared_count", "matrices"],
+    );
 
     let joint = json_object_in_array_after_key(skin, "joints", 0);
     assert_ordered_key_markers(
@@ -415,6 +425,10 @@ fn assert_skeleton_serializer_order(stdout: &[u8]) {
             "mesh_bind_world",
         ],
     );
+    let joint_bind_to_mesh = json_container_after_key(joint, "joint_bind_to_mesh", b'{', b'}');
+    assert_ordered_key_markers(joint_bind_to_mesh, &["matrix"]);
+    let mesh_bind_world = json_container_after_key(joint, "mesh_bind_world", b'{', b'}');
+    assert_ordered_key_markers(mesh_bind_world, &["matrix"]);
 }
 
 #[test]
@@ -484,12 +498,8 @@ fn cli_measure_preserves_source_skin_identity_and_coordinate_domains() {
         })
     );
     assert_eq!(
-        measurements["skeleton_nodes"][2]["rest_world_matrix"][12],
-        10.0
-    );
-    assert_eq!(
-        measurements["skeleton_nodes"][2]["rest_world_matrix"][13],
-        3.0
+        measurements["skeleton_nodes"][2]["rest_world_matrix"],
+        json!(matrix_translation(10.0, 3.0, 0.0))
     );
 
     let skins = measurements["skins"].as_array().expect("skins");
@@ -513,15 +523,29 @@ fn cli_measure_preserves_source_skin_identity_and_coordinate_domains() {
     assert_eq!(skins[0]["inverse_bind_accessor"]["status"], "available");
     assert_eq!(skins[1]["inverse_bind_accessor"]["status"], "available");
     assert_eq!(
-        skins[0]["joints"][0]["joint_bind_to_mesh"]["matrix"][13],
-        3.0
+        skins[0]["inverse_bind_accessor"]["matrices"][0],
+        json!(matrix_translation(0.0, -3.0, 0.0))
     );
     assert_eq!(
-        skins[1]["joints"][0]["joint_bind_to_mesh"]["matrix"][12],
-        1.0
+        skins[1]["inverse_bind_accessor"]["matrices"][0],
+        json!(matrix_translation(-1.0, -3.0, 0.0))
     );
-    assert_eq!(skins[0]["joints"][0]["mesh_bind_world"]["matrix"][12], 10.0);
-    assert_eq!(skins[0]["joints"][0]["mesh_bind_world"]["matrix"][13], 0.0);
+    assert_eq!(
+        skins[0]["joints"][0]["joint_bind_to_mesh"]["matrix"],
+        json!(matrix_translation(0.0, 3.0, 0.0))
+    );
+    assert_eq!(
+        skins[1]["joints"][0]["joint_bind_to_mesh"]["matrix"],
+        json!(matrix_translation(1.0, 3.0, 0.0))
+    );
+    assert_eq!(
+        skins[0]["joints"][0]["mesh_bind_world"]["matrix"],
+        json!(matrix_translation(10.0, 0.0, 0.0))
+    );
+    assert_eq!(
+        skins[1]["joints"][0]["mesh_bind_world"]["matrix"],
+        json!(matrix_translation(9.0, 0.0, 0.0))
+    );
 }
 
 #[test]

@@ -220,7 +220,7 @@
         "scene_root_indices": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
         "local_rest": { "$ref": "#/$defs/local_rest" },
         "rest_world_matrix": { "$ref": "#/$defs/mat4" },
-        "rest_world_matrix_unavailable_reason": { "enum": ["non_finite_local_rest", "missing_parent_node", "parent_rest_world_unavailable", "parent_cycle", "non_finite_world_matrix"] }
+        "rest_world_matrix_unavailable_reason": { "enum": ["non_finite_local_rest", "parent_rest_world_unavailable", "non_finite_world_matrix"] }
       },
       "oneOf": [
         { "required": ["rest_world_matrix"], "not": { "required": ["rest_world_matrix_unavailable_reason"] } },

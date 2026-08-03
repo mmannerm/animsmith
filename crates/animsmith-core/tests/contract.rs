@@ -336,6 +336,33 @@ fn measurement_report_input_rejects_every_invalid_contract_branch() {
             "files[0] measurement contract has no `clips` map".to_owned(),
         ),
         (
+            "missing skeleton source coverage",
+            without("/files/0/measurements/skeleton_source_coverage"),
+            MeasurementReportError::File {
+                file_index: 0,
+                source: MeasurementFileError::MissingSkeletonSourceCoverage,
+            },
+            "files[0] measurement contract has no `skeleton_source_coverage`".to_owned(),
+        ),
+        (
+            "missing skeleton nodes",
+            without("/files/0/measurements/skeleton_nodes"),
+            MeasurementReportError::File {
+                file_index: 0,
+                source: MeasurementFileError::MissingSkeletonNodes,
+            },
+            "files[0] measurement contract has no `skeleton_nodes` array".to_owned(),
+        ),
+        (
+            "missing skins",
+            without("/files/0/measurements/skins"),
+            MeasurementReportError::File {
+                file_index: 0,
+                source: MeasurementFileError::MissingSkins,
+            },
+            "files[0] measurement contract has no `skins` array".to_owned(),
+        ),
+        (
             "missing mesh definitions",
             without("/files/0/measurements/mesh_definitions"),
             MeasurementReportError::File {
