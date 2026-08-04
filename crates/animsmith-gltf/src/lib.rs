@@ -1,7 +1,9 @@
 //! [`load`] and [`load_bytes`] read `.gltf`/`.glb` input into an
 //! [`animsmith_core::Document`], [`write::write`] emits a document as
 //! glTF/GLB, and the [`fix`] module provides byte-surgical quaternion
-//! repairs. Malformed inputs report [`LoadError`]; output failures
+//! repairs. [`preflight_scale_source`] inventories the original raw source and
+//! fails closed on domains that future scale producers cannot yet preserve.
+//! Malformed inputs report [`LoadError`]; output failures
 //! report [`WriteError`].
 //!
 //! This crate is the glTF/GLB format edge around `animsmith-core`.
@@ -68,8 +70,18 @@
 //!
 #![warn(missing_docs)]
 
+mod capability;
 pub mod fix;
 pub mod write;
+
+pub use capability::{
+    GltfAccessorCapability, GltfAnimationChannelCapability, GltfAttributeCapability,
+    GltfBufferCapability, GltfBufferSourceKind, GltfBufferViewCapability, GltfCapabilityManifest,
+    GltfCapabilityViolation, GltfCapabilityViolationKind, GltfContainerKind,
+    GltfInstancingCapability, GltfNodeCapability, GltfNodeRestKind, GltfPrimitiveCapability,
+    GltfScalePreflightError, GltfScaleSource, GltfSkinCapability, preflight_scale_source,
+    preflight_scale_source_bytes,
+};
 
 use animsmith_core::model::{
     AdditionalInfluenceSet, Bone, Clip, DecodedImageColorType, Document, ImageContainerFormat,
