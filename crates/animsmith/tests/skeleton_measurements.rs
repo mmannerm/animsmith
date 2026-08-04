@@ -5,7 +5,7 @@
 use serde_json::{Value, json};
 
 const MEASUREMENTS_SCHEMA: &str =
-    include_str!("../../../docs/schemas/measurements-v10.schema.json");
+    include_str!("../../../docs/schemas/measurements-v11.schema.json");
 const DEEP_HIERARCHY_DEPTH: usize = 4_096;
 
 #[derive(Clone, Copy)]
@@ -403,12 +403,19 @@ fn assert_skeleton_serializer_order(stdout: &[u8]) {
             "scene_root_indices",
             "local_rest",
             "rest_world_matrix",
+            "rest_world_translation_m",
+            "rest_world_linear",
         ],
     );
     let local_rest = json_container_after_key(node, "local_rest", b'{', b'}');
     assert_ordered_key_markers(
         local_rest,
-        &["kind", "translation_m", "rotation_xyzw", "scale"],
+        &[
+            "kind",
+            "translation_parent_space_m",
+            "rotation_xyzw",
+            "scale",
+        ],
     );
 
     let skin = json_object_in_array_after_key(measurements, "skins", 0);
@@ -419,6 +426,7 @@ fn assert_skeleton_serializer_order(stdout: &[u8]) {
             "name",
             "skeleton_root_node_index",
             "joints",
+            "joint_bind_linear_summary",
             "inverse_bind_accessor",
             "attachments",
         ],
@@ -440,9 +448,9 @@ fn assert_skeleton_serializer_order(stdout: &[u8]) {
         ],
     );
     let joint_bind_to_mesh = json_container_after_key(joint, "joint_bind_to_mesh", b'{', b'}');
-    assert_ordered_key_markers(joint_bind_to_mesh, &["matrix"]);
+    assert_ordered_key_markers(joint_bind_to_mesh, &["matrix", "linear"]);
     let mesh_bind_world = json_container_after_key(joint, "mesh_bind_world", b'{', b'}');
-    assert_ordered_key_markers(mesh_bind_world, &["matrix"]);
+    assert_ordered_key_markers(mesh_bind_world, &["matrix", "linear"]);
 }
 
 fn assert_inverse_bind_serializer_order(
@@ -499,10 +507,10 @@ fn cli_measure_preserves_source_skin_identity_and_coordinate_domains() {
         measurements, &second["files"][0]["measurements"],
         "deterministic measurements"
     );
-    assert_eq!(measurements["schema_version"], 10);
+    assert_eq!(measurements["schema_version"], 11);
     assert_eq!(
         measurements["schema"],
-        "urn:animsmith:schema:measurements:10"
+        "urn:animsmith:schema:measurements:11"
     );
     assert_eq!(measurements["skeleton_source_coverage"], "complete");
     assert_eq!(
@@ -542,13 +550,27 @@ fn cli_measure_preserves_source_skin_identity_and_coordinate_domains() {
     assert_eq!(
         measurements["skeleton_nodes"][0]["local_rest"],
         json!({
-            "kind": "trs", "translation_m": [10.0, 0.0, 0.0],
+            "kind": "trs", "translation_parent_space_m": [10.0, 0.0, 0.0],
             "rotation_xyzw": [0.0, 0.0, 0.0, 1.0], "scale": [1.0, 1.0, 1.0]
         })
     );
     assert_eq!(
         measurements["skeleton_nodes"][2]["rest_world_matrix"],
         json!(matrix_translation(10.0, 3.0, 0.0))
+    );
+    assert_eq!(
+        measurements["skeleton_nodes"][2]["rest_world_translation_m"],
+        json!([10.0, 3.0, 0.0])
+    );
+    assert_eq!(
+        measurements["skeleton_nodes"][2]["rest_world_linear"],
+        json!({
+            "classification": "unit_orthonormal",
+            "axis_lengths": [1.0, 1.0, 1.0],
+            "determinant": 1.0,
+            "orientation": "positive",
+            "uniform_scale": 1.0
+        })
     );
 
     let skins = measurements["skins"].as_array().expect("skins");
@@ -562,6 +584,16 @@ fn cli_measure_preserves_source_skin_identity_and_coordinate_domains() {
     for skin in skins {
         assert_eq!(skin["joints"][0]["joint_index"], 0);
         assert_eq!(skin["joints"][0]["node_index"], 2);
+        assert_eq!(
+            skin["joint_bind_linear_summary"],
+            json!({
+                "classification": "consistent_uniform",
+                "joint_count": 1,
+                "available_joint_count": 1,
+                "unavailable_joint_count": 0,
+                "consistent_uniform_scale": 1.0
+            })
+        );
     }
     assert_eq!(
         skins[0]["attachments"],
@@ -642,6 +674,7 @@ fn cli_measure_marks_absent_and_singular_inverse_binds_without_substitution() {
             "{field} must not fall back to node-rest data"
         );
         assert!(absent_skin["joints"][0][field].get("matrix").is_none());
+        assert!(absent_skin["joints"][0][field].get("linear").is_none());
     }
 
     let singular = dir.path().join("singular.gltf");
@@ -666,6 +699,10 @@ fn cli_measure_marks_absent_and_singular_inverse_binds_without_substitution() {
     assert_eq!(
         singular_skin["joints"][0]["mesh_bind_world"]["matrix"],
         json!(vec![0.0; 16])
+    );
+    assert_eq!(
+        singular_skin["joints"][0]["mesh_bind_world"]["linear"]["classification"],
+        "singular"
     );
 }
 
@@ -788,7 +825,7 @@ fn cli_measure_preserves_each_inverse_bind_accessor_state() {
 }
 
 #[test]
-fn published_schema_rejects_impossible_inverse_bind_states() {
+fn published_schema_rejects_impossible_skeleton_transform_states() {
     let dir = tempfile::tempdir().expect("temp dir");
     let input = dir.path().join("schema-state-base.gltf");
     write_source_skin_gltf(&input, InverseBindCase::Available, false);
@@ -819,6 +856,60 @@ fn published_schema_rejects_impossible_inverse_bind_states() {
         invalid["skins"][0]["inverse_bind_accessor"] = accessor;
         assert_measurements_schema_rejected(&invalid, case);
     }
+
+    let mut missing_world_translation = base.clone();
+    missing_world_translation["skeleton_nodes"][0]
+        .as_object_mut()
+        .expect("node object")
+        .remove("rest_world_translation_m");
+    assert_measurements_schema_rejected(
+        &missing_world_translation,
+        "an available rest-world matrix requires its direct translation",
+    );
+
+    let mut non_finite_with_numbers = base.clone();
+    non_finite_with_numbers["skeleton_nodes"][0]["rest_world_linear"]["classification"] =
+        json!("non_finite");
+    assert_measurements_schema_rejected(
+        &non_finite_with_numbers,
+        "non-finite linear facts cannot carry finite numeric observations",
+    );
+
+    let mut available_world_with_non_finite_linear = base.clone();
+    available_world_with_non_finite_linear["skeleton_nodes"][0]["rest_world_linear"] =
+        json!({ "classification": "non_finite" });
+    assert_measurements_schema_rejected(
+        &available_world_with_non_finite_linear,
+        "an available rest-world matrix requires finite linear facts",
+    );
+
+    let mut missing_bind_linear = base.clone();
+    missing_bind_linear["skins"][0]["joints"][0]["joint_bind_to_mesh"]
+        .as_object_mut()
+        .expect("derived matrix object")
+        .remove("linear");
+    assert_measurements_schema_rejected(
+        &missing_bind_linear,
+        "an available derived matrix requires linear facts",
+    );
+
+    let mut available_bind_with_non_finite_linear = base.clone();
+    available_bind_with_non_finite_linear["skins"][0]["joints"][0]["joint_bind_to_mesh"]["linear"] =
+        json!({ "classification": "non_finite" });
+    assert_measurements_schema_rejected(
+        &available_bind_with_non_finite_linear,
+        "an available derived matrix requires finite linear facts",
+    );
+
+    let mut missing_consistent_factor = base.clone();
+    missing_consistent_factor["skins"][0]["joint_bind_linear_summary"]
+        .as_object_mut()
+        .expect("skin summary object")
+        .remove("consistent_uniform_scale");
+    assert_measurements_schema_rejected(
+        &missing_consistent_factor,
+        "a consistent uniform skin summary requires its factor",
+    );
 }
 
 fn assert_derived_unavailable(skin: &Value, reason: &str) {
@@ -828,6 +919,7 @@ fn assert_derived_unavailable(skin: &Value, reason: &str) {
             "{field}"
         );
         assert!(skin["joints"][0][field].get("matrix").is_none(), "{field}");
+        assert!(skin["joints"][0][field].get("linear").is_none(), "{field}");
     }
 }
 
