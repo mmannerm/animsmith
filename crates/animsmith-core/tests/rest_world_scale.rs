@@ -384,8 +384,44 @@ fn rest_world_scale_reports_full_ancestry_and_the_selected_leaf_measurement() {
 
 #[test]
 fn rest_world_scale_retains_f64_policy_ordering() {
-    let doc = document(vec![node(0, "socket", None, trs(Vec3::ONE))]);
-    let evaluation = evaluate(&doc, &config(&["socket"], 1.0e300, 1.0e299));
+    let scale = 4.0e38_f64;
+    let diagonal = (-scale / 3.0) as f32;
+    let off_diagonal = (2.0 * scale / 3.0) as f32;
+    let doc = document(vec![node(
+        0,
+        "socket",
+        None,
+        SourceNodeLocalRest::Matrix(Mat4::from_cols_array(&[
+            diagonal,
+            off_diagonal,
+            off_diagonal,
+            0.0,
+            off_diagonal,
+            diagonal,
+            off_diagonal,
+            0.0,
+            off_diagonal,
+            off_diagonal,
+            diagonal,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+        ])),
+    )]);
+    let measured = measure_assets(&doc).skeleton_nodes[0]
+        .rest_world_linear
+        .uniform_scale
+        .expect("large finite matrix remains uniformly measurable");
+
+    assert!(measured > f64::from(f32::MAX));
+    assert!(
+        evaluate(&doc, &config(&["socket"], measured, 0.0))
+            .findings()
+            .is_empty()
+    );
+    let evaluation = evaluate(&doc, &config(&["socket"], 5.0e38, 0.0));
 
     assert_eq!(evaluation.findings().len(), 1);
 }

@@ -206,10 +206,16 @@ fn evaluate_node(
 /// does not warn only because its exact `f32` representation is slightly
 /// farther from the `f64` policy value.
 fn exceeds_inclusive_f32_range(measured: f64, expected: f64, tolerance: f64) -> bool {
-    let measured = measured as f32;
-    let lower = (expected - tolerance) as f32;
-    let upper = (expected + tolerance) as f32;
-    measured < lower || measured > upper
+    let lower = expected - tolerance;
+    let upper = expected + tolerance;
+    let measured_f32 = measured as f32;
+    let lower_f32 = lower as f32;
+    let upper_f32 = upper as f32;
+    if measured_f32.is_finite() && lower_f32.is_finite() && upper_f32.is_finite() {
+        measured_f32 < lower_f32 || measured_f32 > upper_f32
+    } else {
+        measured < lower || measured > upper
+    }
 }
 
 fn source_node_path(
