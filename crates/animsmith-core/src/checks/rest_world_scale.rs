@@ -201,10 +201,11 @@ fn evaluate_node(
 
 /// Whether an `f32`-derived scale falls outside a user-facing inclusive range.
 ///
-/// Source matrices store `f32` components. Quantize the configured range ends
-/// to that evidence precision so an authored boundary value such as `1.0001`
-/// does not warn only because its exact `f32` representation is slightly
-/// farther from the `f64` policy value.
+/// Source matrices store `f32` components. While all values remain representable
+/// there, quantize the measurement and configured range ends to that evidence
+/// precision so an authored boundary such as `1.0001` does not warn because of
+/// derived `f64` arithmetic dust. Preserve `f64` ordering for larger affine
+/// norms that finite source components can still produce.
 fn exceeds_inclusive_f32_range(measured: f64, expected: f64, tolerance: f64) -> bool {
     let lower = expected - tolerance;
     let upper = expected + tolerance;
