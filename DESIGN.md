@@ -444,9 +444,12 @@ learns an embedder's contract schema.
   represents selection, configuration, applicability, evaluation coverage,
   content findings, completed scopes, and typed gaps independently. Measure
   and lint share a nested, independently versioned measurement contract. The
-  current contract inventories glTF material definitions, material slots,
-  texture-to-image identity, and decoded image metadata in source order. It
-  makes absent loader support explicit as unavailable coverage and separates a
+  current contract inventories glTF material definitions, the five core
+  `base_color`, `normal`, `metallic_roughness`, `occlusion`, and `emissive`
+  texture slots, texture-to-image identity, and decoded image metadata in
+  source order. Complete coverage is scoped to that documented core domain;
+  extension-defined texture slots are not implied. The contract makes absent
+  loader support explicit as unavailable coverage and separates a
   source-declared MIME type from byte-detected container and decoded image
   facts. This remains measurement evidence, not an image acceptance, repair,
   resize, transcode, color-space, writer-preservation, or recipe-authority

@@ -214,7 +214,7 @@ contract is the source of truth and is versioned with `schema_version`.
 See [output.md](output.md) and
 [`output-v4.schema.json`](schemas/output-v4.schema.json). Nested measurement
 evidence has its own
-[`measurements-v9.schema.json`](schemas/measurements-v9.schema.json) contract.
+[`measurements-v10.schema.json`](schemas/measurements-v10.schema.json) contract.
 Output-v3 and earlier reports are historical contracts; regenerate a current
 report from the original asset with the current CLI before using `diff`.
 
@@ -252,15 +252,17 @@ the text is pasted into a trusted review comment. JSON retains the original
 strings as machine data.
 
 `measure --format json` also inventories glTF/GLB material definitions,
-texture-to-image links, and image metadata. This lets a pipeline distinguish a
-normal slot from a BaseColor slot and identify shared source resources without
-parsing the asset a second time. The nested measurement contract reports
-`material_resource_coverage: "complete"` for glTF/GLB and `"unavailable"`
-when a loader has no equivalent source-resource view. This is descriptive
-evidence only: it does not accept, repair, resize, transcode, or otherwise fix
-an image, and it does not promise that subsequent conversion or writing keeps
-every source payload. See [machine-readable output](output.md#measure-and-lint)
-for MIME, detected-container, decoded-color, and unavailable-image semantics.
+texture-to-image links, and image metadata. Its exact core source-slot domain
+is `base_color`, `normal`, `metallic_roughness`, `occlusion`, then `emissive`.
+This lets a pipeline distinguish an emissive-only material from an untextured
+one and identify shared source resources without parsing the asset again. The
+nested contract reports `material_resource_coverage: "complete"` when that
+documented five-slot glTF/GLB domain was inspected and `"unavailable"` when a
+loader has no equivalent source-resource view. Complete does not cover
+extension-defined texture slots or promise writer/conversion preservation.
+This is descriptive evidence only: it does not accept, repair, resize,
+transcode, or otherwise fix an image. See
+[machine-readable output](output.md#measure-and-lint) for the full boundary.
 
 ## CI Comments (`lint --format markdown`)
 

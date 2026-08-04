@@ -4,7 +4,8 @@
 
 use serde_json::{Value, json};
 
-const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v9.schema.json");
+const MEASUREMENTS_SCHEMA: &str =
+    include_str!("../../../docs/schemas/measurements-v10.schema.json");
 const DEEP_HIERARCHY_DEPTH: usize = 4_096;
 
 #[derive(Clone, Copy)]
@@ -286,24 +287,26 @@ fn measure(path: &std::path::Path) -> (Value, Vec<u8>) {
 }
 
 fn assert_measurements_schema(value: &Value) {
-    let schema: Value = serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid v6 schema JSON");
-    let validator = jsonschema::validator_for(&schema).expect("v6 schema compiles");
+    let schema: Value =
+        serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid measurement schema JSON");
+    let validator = jsonschema::validator_for(&schema).expect("measurement schema compiles");
     let errors = validator
         .iter_errors(value)
         .map(|error| error.to_string())
         .collect::<Vec<_>>();
     assert!(
         errors.is_empty(),
-        "v6 schema errors: {errors:#?}\n{value:#}"
+        "measurement schema errors: {errors:#?}\n{value:#}"
     );
 }
 
 fn assert_measurements_schema_rejected(value: &Value, case: &str) {
-    let schema: Value = serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid v6 schema JSON");
-    let validator = jsonschema::validator_for(&schema).expect("v6 schema compiles");
+    let schema: Value =
+        serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid measurement schema JSON");
+    let validator = jsonschema::validator_for(&schema).expect("measurement schema compiles");
     assert!(
         !validator.is_valid(value),
-        "v6 schema must reject {case}:\n{value:#}"
+        "measurement schema must reject {case}:\n{value:#}"
     );
 }
 
@@ -496,10 +499,10 @@ fn cli_measure_preserves_source_skin_identity_and_coordinate_domains() {
         measurements, &second["files"][0]["measurements"],
         "deterministic measurements"
     );
-    assert_eq!(measurements["schema_version"], 9);
+    assert_eq!(measurements["schema_version"], 10);
     assert_eq!(
         measurements["schema"],
-        "urn:animsmith:schema:measurements:9"
+        "urn:animsmith:schema:measurements:10"
     );
     assert_eq!(measurements["skeleton_source_coverage"], "complete");
     assert_eq!(

@@ -1012,7 +1012,10 @@ fn complete_resource_assets() -> AssetMeasurements {
         "material_definitions": [
             { "material_index": 0, "name": "body", "texture_bindings": [
                 { "slot": "base_color", "texture_index": 0 },
-                { "slot": "normal", "texture_index": 1 }
+                { "slot": "normal", "texture_index": 1 },
+                { "slot": "metallic_roughness", "texture_index": 0 },
+                { "slot": "occlusion", "texture_index": 1 },
+                { "slot": "emissive", "texture_index": 0 }
             ] },
             { "material_index": 1, "texture_bindings": [
                 { "slot": "occlusion", "texture_index": 0 }
@@ -1254,6 +1257,17 @@ fn measurement_contract_accepts_complete_empty_and_shared_material_resources() {
     let contract = MeasurementContract::new(BTreeMap::new(), complete_resource_assets())
         .expect("shared texture/image references are valid");
     let json = serde_json::to_value(contract).expect("resource measurements serialize");
+    assert_eq!(
+        json["material_definitions"][0]["texture_bindings"],
+        serde_json::json!([
+            { "slot": "base_color", "texture_index": 0 },
+            { "slot": "normal", "texture_index": 1 },
+            { "slot": "metallic_roughness", "texture_index": 0 },
+            { "slot": "occlusion", "texture_index": 1 },
+            { "slot": "emissive", "texture_index": 0 }
+        ]),
+        "the public contract serializes all core slots in fixed semantic order"
+    );
     assert_eq!(json["images"][0]["decoded_color_type"], "rgba8");
     assert!(json["images"][0].get("unavailable_reason").is_none());
     assert_eq!(json["images"][1]["unavailable_reason"], "resource_limit");
@@ -1296,6 +1310,11 @@ fn measurement_contract_rejects_invalid_material_resource_tables() {
     invalid_resource(
         &|assets| assets.material_definitions[0].texture_bindings.swap(0, 1),
         "material_definitions[0].texture_bindings[1].slot",
+        "texture bindings must be strictly ordered by slot and unique",
+    );
+    invalid_resource(
+        &|assets| assets.material_definitions[0].texture_bindings.swap(3, 4),
+        "material_definitions[0].texture_bindings[4].slot",
         "texture bindings must be strictly ordered by slot and unique",
     );
     invalid_resource(

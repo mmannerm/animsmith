@@ -7,15 +7,25 @@ use serde_json::{Value, json};
 use std::path::Path;
 use std::process::Command;
 
-const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v9.schema.json");
+const MEASUREMENTS_SCHEMA: &str =
+    include_str!("../../../docs/schemas/measurements-v10.schema.json");
 
 fn assert_valid_measurements(value: &Value) {
-    let schema = serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid v9 schema JSON");
+    let schema = serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid v10 schema JSON");
     let validator = jsonschema::validator_for(&schema).expect("measurement schema compiles");
     let errors = validator.iter_errors(value).collect::<Vec<_>>();
     assert!(
         errors.is_empty(),
-        "v9 measurement schema errors: {errors:#?}"
+        "v10 measurement schema errors: {errors:#?}"
+    );
+}
+
+fn assert_invalid_measurements(value: &Value) {
+    let schema = serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid measurement schema JSON");
+    let validator = jsonschema::validator_for(&schema).expect("measurement schema compiles");
+    assert!(
+        !validator.is_valid(value),
+        "measurement schema must keep the material-slot vocabulary closed: {value:#}"
     );
 }
 
@@ -57,6 +67,10 @@ fn write_fixture(path: &Path) {
         &png(ExtendedColorType::Rgba8, &[1, 2, 3, 255]),
     );
     write_image(&path.with_file_name("photo.jpg"), &jpeg());
+    write_image(
+        &path.with_file_name("emissive.png"),
+        &png(ExtendedColorType::Rgb8, &[240, 120, 30]),
+    );
     // The PNG signature makes container detection observable while the absent
     // chunks force decode failure rather than a successful image inspection.
     write_image(
@@ -80,19 +94,22 @@ fn write_fixture(path: &Path) {
             { "name": "photo", "uri": "photo.jpg" },
             { "name": "broken", "uri": "broken.png" },
             { "name": "unsupported", "uri": "unsupported.bmp" },
-            { "name": "inline", "uri": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL9aQAAAABJRU5ErkJggg==" }
+            { "name": "inline", "uri": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL9aQAAAABJRU5ErkJggg==" },
+            { "name": "emissive", "uri": "emissive.png" }
         ],
         "textures": [
             { "name": "shared-base", "source": 3 },
             { "name": "normal", "source": 2 },
             { "name": "photo", "source": 4 },
-            { "name": "inline", "source": 7 }
+            { "name": "inline", "source": 7 },
+            { "name": "emissive", "source": 8 }
         ],
         "materials": [
             { "name": "untextured" },
             { "name": "painted", "pbrMetallicRoughness": { "baseColorTexture": { "index": 0 } } },
             { "name": "detailed", "pbrMetallicRoughness": { "baseColorTexture": { "index": 0 } }, "normalTexture": { "index": 1 } },
-            { "name": "photo-material", "pbrMetallicRoughness": { "baseColorTexture": { "index": 2 }, "metallicRoughnessTexture": { "index": 3 } }, "occlusionTexture": { "index": 3 } }
+            { "name": "all-core-slots", "pbrMetallicRoughness": { "baseColorTexture": { "index": 2 }, "metallicRoughnessTexture": { "index": 3 } }, "normalTexture": { "index": 1 }, "occlusionTexture": { "index": 3 }, "emissiveTexture": { "index": 4 } },
+            { "name": "emissive-only", "emissiveTexture": { "index": 4 } }
         ]
     });
     std::fs::write(
@@ -129,17 +146,17 @@ fn cli_measure_reports_deterministic_material_image_inventory_without_paths() {
     let source = gltf::Gltf::open(&input).expect("fixture parses as glTF");
     assert_eq!(
         source.materials().count(),
-        4,
+        5,
         "untextured and textured materials"
     );
     assert_eq!(
         source.textures().count(),
-        4,
+        5,
         "shared and independent textures"
     );
     assert_eq!(
         source.images().count(),
-        8,
+        9,
         "all image forms remain declared"
     );
     assert!(
@@ -148,6 +165,25 @@ fn cli_measure_reports_deterministic_material_image_inventory_without_paths() {
             .nth(2)
             .expect("detailed material")
             .normal_texture()
+            .is_some()
+    );
+    assert_eq!(
+        source
+            .materials()
+            .nth(3)
+            .expect("all-core-slots material")
+            .emissive_texture()
+            .expect("emissive binding")
+            .texture()
+            .index(),
+        4
+    );
+    assert!(
+        source
+            .materials()
+            .nth(4)
+            .expect("emissive-only material")
+            .emissive_texture()
             .is_some()
     );
 
@@ -163,22 +199,28 @@ fn cli_measure_reports_deterministic_material_image_inventory_without_paths() {
             { "material_index": 0, "name": "untextured", "texture_bindings": [] },
             { "material_index": 1, "name": "painted", "texture_bindings": [{ "slot": "base_color", "texture_index": 0 }] },
             { "material_index": 2, "name": "detailed", "texture_bindings": [{ "slot": "base_color", "texture_index": 0 }, { "slot": "normal", "texture_index": 1 }] },
-            { "material_index": 3, "name": "photo-material", "texture_bindings": [{ "slot": "base_color", "texture_index": 2 }, { "slot": "metallic_roughness", "texture_index": 3 }, { "slot": "occlusion", "texture_index": 3 }] }
+            { "material_index": 3, "name": "all-core-slots", "texture_bindings": [{ "slot": "base_color", "texture_index": 2 }, { "slot": "normal", "texture_index": 1 }, { "slot": "metallic_roughness", "texture_index": 3 }, { "slot": "occlusion", "texture_index": 3 }, { "slot": "emissive", "texture_index": 4 }] },
+            { "material_index": 4, "name": "emissive-only", "texture_bindings": [{ "slot": "emissive", "texture_index": 4 }] }
         ])
     );
+    let mut invalid_slot = measurements.clone();
+    invalid_slot["material_definitions"][4]["texture_bindings"][0]["slot"] =
+        json!("unexpected_slot");
+    assert_invalid_measurements(&invalid_slot);
     assert_eq!(
         measurements["textures"],
         json!([
             { "texture_index": 0, "name": "shared-base", "image_index": 3 },
             { "texture_index": 1, "name": "normal", "image_index": 2 },
             { "texture_index": 2, "name": "photo", "image_index": 4 },
-            { "texture_index": 3, "name": "inline", "image_index": 7 }
+            { "texture_index": 3, "name": "inline", "image_index": 7 },
+            { "texture_index": 4, "name": "emissive", "image_index": 8 }
         ])
     );
     let images = measurements["images"]
         .as_array()
         .expect("image measurements");
-    assert_eq!(images.len(), 8);
+    assert_eq!(images.len(), 9);
     assert_eq!(
         images
             .iter()
@@ -193,6 +235,7 @@ fn cli_measure_reports_deterministic_material_image_inventory_without_paths() {
             Some("broken"),
             Some("unsupported"),
             Some("inline"),
+            Some("emissive"),
         ],
         "authored image names remain source-ordered identity evidence"
     );
@@ -223,6 +266,10 @@ fn cli_measure_reports_deterministic_material_image_inventory_without_paths() {
     assert_eq!(images[7]["source_kind"], "data_uri");
     assert_eq!(images[7]["declared_mime_type"], "image/png");
     assert_eq!(images[7]["detected_container"], "png");
+    assert_eq!(images[8]["source_kind"], "external");
+    assert_eq!(images[8]["detected_container"], "png");
+    assert_eq!(images[8]["decoded_color_type"], "rgb8");
+    assert_eq!(images[8]["channel_count"], 3);
     assert!(
         !serde_json::to_string(images)
             .expect("serializes image records")

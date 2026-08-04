@@ -8,10 +8,11 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 
 const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:4";
-const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:9";
+const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:10";
 const HOSTILE_PRESENTATION_TEXT: &str = "forged\nline\u{1b}[31m\u{2028}\u{2029}\u{202e}";
 const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v4.schema.json");
-const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v9.schema.json");
+const MEASUREMENTS_SCHEMA: &str =
+    include_str!("../../../docs/schemas/measurements-v10.schema.json");
 const EXPECTED_CHECK_IDS: [&str; 25] = [
     "nan",
     "time-monotonic",
@@ -456,7 +457,7 @@ fn measurement_report(duration_s: f64) -> Value {
             },
             "rig": { "profile": "unknown" },
             "measurements": {
-                "schema_version": 9,
+                "schema_version": 10,
                 "schema": MEASUREMENTS_SCHEMA_ID,
                 "clips": {
                     "walk": {
@@ -601,7 +602,7 @@ fn duplicate_loop_endpoint_cli_detects_trims_and_exposes_changed_contracts() {
     assert_output_schema_valid(&lint_json);
     assert_eq!(lint_json["schema_version"], 4);
     assert_eq!(lint_json["schema"], OUTPUT_SCHEMA_ID);
-    assert_eq!(lint_json["files"][0]["measurements"]["schema_version"], 9);
+    assert_eq!(lint_json["files"][0]["measurements"]["schema_version"], 10);
     assert_eq!(
         lint_json["files"][0]["measurements"]["schema"],
         MEASUREMENTS_SCHEMA_ID
@@ -1394,7 +1395,7 @@ fn measure_json_uses_versioned_envelope() {
     assert_eq!(files.len(), 1);
     assert_eq!(files[0]["rig"]["profile"], "unknown");
     assert!(files[0]["checks"].is_null());
-    assert_eq!(files[0]["measurements"]["schema_version"], 9);
+    assert_eq!(files[0]["measurements"]["schema_version"], 10);
     assert_eq!(files[0]["measurements"]["schema"], MEASUREMENTS_SCHEMA_ID);
     assert!(files[0]["measurements"]["clips"]["walk"]["duration_s"].is_number());
     let loop_bones = files[0]["measurements"]["clips"]["walk"]["loop_continuity"]["bones"]
@@ -1441,7 +1442,7 @@ fn angular_loop_seam_is_versioned_and_configurable_at_the_cli_boundary() {
     );
     let baseline: Value = serde_json::from_slice(&baseline.stdout).expect("valid lint JSON");
     assert_output_schema_valid(&baseline);
-    assert_eq!(baseline["files"][0]["measurements"]["schema_version"], 9);
+    assert_eq!(baseline["files"][0]["measurements"]["schema_version"], 10);
     assert_eq!(
         baseline["files"][0]["measurements"]["schema"],
         MEASUREMENTS_SCHEMA_ID
@@ -1454,7 +1455,7 @@ fn angular_loop_seam_is_versioned_and_configurable_at_the_cli_boundary() {
         .remove("seam_angular_velocity_delta_degps");
     assert!(
         !output_validator().is_valid(&missing_angular_evidence),
-        "measurements-v9 requires angular seam evidence in every loop-continuity row"
+        "measurements-v10 requires angular seam evidence in every loop-continuity row"
     );
     let bones =
         baseline["files"][0]["measurements"]["clips"]["angular_cusp"]["loop_continuity"]["bones"]
@@ -1852,7 +1853,7 @@ fn lint_json_uses_versioned_envelope() {
     assert_eq!(json["command"], "lint");
     assert_eq!(json["summary"]["files"], 1);
     assert!(json["files"][0]["checks"].is_array());
-    assert_eq!(json["files"][0]["measurements"]["schema_version"], 9);
+    assert_eq!(json["files"][0]["measurements"]["schema_version"], 10);
     assert_eq!(
         json["files"][0]["measurements"]["schema"],
         MEASUREMENTS_SCHEMA_ID
@@ -2858,7 +2859,7 @@ fn diff_preserves_tailored_report_errors_and_remediation() {
         (
             "unsupported measurement version",
             unsupported_measurement_version,
-            "has measurement schema_version 7; this build reads measurement schema_version 9"
+            "has measurement schema_version 7; this build reads measurement schema_version 10"
                 .to_owned(),
         ),
         (
@@ -2976,7 +2977,7 @@ fn diff_rejects_outer_and_nested_contract_identity_drift() {
                 report["files"][0]["measurements"]["schema_version"] = json!(7);
                 report
             },
-            "has measurement schema_version 7; this build reads measurement schema_version 9",
+            "has measurement schema_version 7; this build reads measurement schema_version 10",
         ),
         (
             {
@@ -3219,7 +3220,7 @@ fn diff_rejects_all_unsupported_nested_measurement_schema_versions() {
         );
         assert!(
             stderr(&output).contains(&format!(
-                "has measurement schema_version {version}; this build reads measurement schema_version 9"
+                "has measurement schema_version {version}; this build reads measurement schema_version 10"
             )),
             "version {version}: stderr:\n{}",
             stderr(&output)

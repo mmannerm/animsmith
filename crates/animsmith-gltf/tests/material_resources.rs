@@ -85,7 +85,8 @@ fn load_reports_source_order_bindings_and_bounded_image_inspection() {
                     {{ "name": "corrupt", "uri": "data:image/png;base64,{corrupt_b64}" }},
                     {{ "name": "invalid", "uri": "data:image/png;base64,%%%" }},
                     {{ "name": "missing", "uri": "missing.png", "mimeType": "image/png" }},
-                    {{ "name": "unsupported", "uri": "data:application/octet-stream;base64,{unsupported_b64}" }}
+                    {{ "name": "unsupported", "uri": "data:application/octet-stream;base64,{unsupported_b64}" }},
+                    {{ "name": "emissive-data", "uri": "data:image/png;base64,{rgba_b64}" }}
                 ],
                 "textures": [
                     {{ "name": "shared-rgba", "source": 0 }},
@@ -94,20 +95,23 @@ fn load_reports_source_order_bindings_and_bounded_image_inspection() {
                     {{ "name": "occlusion-corrupt", "source": 3 }},
                     {{ "name": "invalid-uri", "source": 4 }},
                     {{ "name": "missing-external", "source": 5 }},
-                    {{ "name": "unsupported-image", "source": 6 }}
+                    {{ "name": "unsupported-image", "source": 6 }},
+                    {{ "name": "emissive-rgba", "source": 7 }}
                 ],
                 "materials": [
                     {{}},
                     {{
-                        "name": "all-slots",
+                        "name": "all-core-slots",
                         "pbrMetallicRoughness": {{
                             "baseColorTexture": {{ "index": 0 }},
                             "metallicRoughnessTexture": {{ "index": 2 }}
                         }},
                         "normalTexture": {{ "index": 1, "scale": 0.5 }},
-                        "occlusionTexture": {{ "index": 3, "strength": 0.75 }}
+                        "occlusionTexture": {{ "index": 3, "strength": 0.75 }},
+                        "emissiveTexture": {{ "index": 7 }}
                     }},
-                    {{ "name": "shares-rgba", "pbrMetallicRoughness": {{ "baseColorTexture": {{ "index": 0 }} }} }}
+                    {{ "name": "shares-rgba", "pbrMetallicRoughness": {{ "baseColorTexture": {{ "index": 0 }} }} }},
+                    {{ "name": "emissive-only", "emissiveTexture": {{ "index": 7 }} }}
                 ]
             }}"#
         ),
@@ -118,17 +122,17 @@ fn load_reports_source_order_bindings_and_bounded_image_inspection() {
     let resources = &document.assets.material_resources;
     assert_eq!(
         resources.materials.len(),
-        3,
+        4,
         "untextured rows remain visible"
     );
     assert_eq!(
         resources.textures.len(),
-        7,
+        8,
         "unreferenced texture rows remain visible"
     );
     assert_eq!(
         resources.images.len(),
-        7,
+        8,
         "unreferenced image rows remain visible"
     );
     assert_eq!(
@@ -137,7 +141,12 @@ fn load_reports_source_order_bindings_and_bounded_image_inspection() {
             .iter()
             .map(|material| (material.material_index, material.name.as_deref()))
             .collect::<Vec<_>>(),
-        vec![(0, None), (1, Some("all-slots")), (2, Some("shares-rgba"))]
+        vec![
+            (0, None),
+            (1, Some("all-core-slots")),
+            (2, Some("shares-rgba")),
+            (3, Some("emissive-only")),
+        ]
     );
     assert_eq!(
         resources.materials[1]
@@ -150,10 +159,20 @@ fn load_reports_source_order_bindings_and_bounded_image_inspection() {
             (MaterialTextureSlot::Normal, 1),
             (MaterialTextureSlot::MetallicRoughness, 2),
             (MaterialTextureSlot::Occlusion, 3),
+            (MaterialTextureSlot::Emissive, 7),
         ],
         "bindings use semantic slot order, not incidental JSON order"
     );
     assert_eq!(resources.materials[2].texture_bindings[0].texture_index, 0);
+    assert_eq!(
+        resources.materials[3]
+            .texture_bindings
+            .iter()
+            .map(|binding| (binding.slot, binding.texture_index))
+            .collect::<Vec<_>>(),
+        vec![(MaterialTextureSlot::Emissive, 7)],
+        "an emissive-only material is not mistaken for an untextured material"
+    );
     assert_eq!(
         resources
             .textures
@@ -172,6 +191,7 @@ fn load_reports_source_order_bindings_and_bounded_image_inspection() {
             (4, 4, Some("invalid-uri")),
             (5, 5, Some("missing-external")),
             (6, 6, Some("unsupported-image")),
+            (7, 7, Some("emissive-rgba")),
         ]
     );
 
@@ -211,6 +231,16 @@ fn load_reports_source_order_bindings_and_bounded_image_inspection() {
         resources.images[2].inspection,
         SourceImageInspection::Available { .. }
     ));
+    assert_eq!(
+        resources.images[7].inspection,
+        SourceImageInspection::Available {
+            width: 1,
+            height: 1,
+            channel_count: 4,
+            color_type: DecodedImageColorType::Rgba8,
+        },
+        "emissive-only image bytes remain part of bounded source inspection"
+    );
     for (image, reason) in [
         (3, ImageUnavailableReason::DecodeFailed),
         (4, ImageUnavailableReason::InvalidDataUri),
