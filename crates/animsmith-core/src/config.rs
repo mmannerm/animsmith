@@ -205,6 +205,52 @@ pub struct GaitGroup {
     pub min_lr_amplitude_m: f64,
 }
 
+/// Thresholds for detecting a pair that is more phase-similar under reflected
+/// time than under a declared same-time / absolute-sync rule.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TimeComplementSettings {
+    /// Minimum reflected-time minus same-time phase-similarity score required
+    /// to report the diagnostic. This threshold is in `[0, 1]`; emitted
+    /// advantages are positive and no greater than one.
+    #[serde(deserialize_with = "deserialize_unit_interval")]
+    pub min_reflected_time_advantage: f64,
+    /// Minimum L−R foot-height amplitude (metres) required before a phase is
+    /// considered evidence rather than noise.
+    #[serde(deserialize_with = "deserialize_nonnegative_finite")]
+    pub min_lr_amplitude_m: f64,
+}
+
+fn deserialize_unit_interval<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = f64::deserialize(deserializer)?;
+    if !is_unit_interval(value) {
+        return Err(serde::de::Error::custom(
+            "must be a finite number in the range [0, 1]",
+        ));
+    }
+    Ok(value)
+}
+
+fn deserialize_nonnegative_finite<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = f64::deserialize(deserializer)?;
+    if !is_valid_loop_cap(value) {
+        return Err(serde::de::Error::custom(
+            "must be a finite non-negative number",
+        ));
+    }
+    Ok(value)
+}
+
+fn is_unit_interval(value: f64) -> bool {
+    value.is_finite() && (0.0..=1.0).contains(&value)
+}
+
 /// A set of clips sampled together by a same-time / absolute-sync runtime.
 ///
 /// The group compares timing representations; it does not prescribe a runtime
@@ -220,6 +266,11 @@ pub struct SyncGroup {
     pub max_frame_count_delta: u32,
     /// Largest permitted declared frame-rate range across members.
     pub max_fps_delta: f64,
+    /// Optional phase-similarity diagnostic for time-complementary member
+    /// pairs. A two-member group declares one pair; larger groups compare each
+    /// configured-order unordered pair.
+    #[serde(default)]
+    pub time_complement: Option<TimeComplementSettings>,
 }
 
 /// Rig selection: a named profile ("auto" to detect) and/or an inline
@@ -279,6 +330,16 @@ pub enum ConfigValidationError {
         /// Stable public field name.
         field: &'static str,
     },
+    /// A time-complement setting was outside its finite declared domain.
+    #[error(
+        "sync group {group:?} time-complement field {field:?} must be finite and within its documented range"
+    )]
+    InvalidTimeComplementSetting {
+        /// Configured group name.
+        group: String,
+        /// Stable public field name.
+        field: &'static str,
+    },
 }
 
 /// The whole configuration. Field names match the `animsmith.toml`
@@ -319,7 +380,11 @@ impl Config {
     /// # Errors
     ///
     /// Returns [`ConfigValidationError::InvalidClipLoopCap`] when a clip
-    /// selector contains a negative or non-finite per-clip loop cap.
+    /// selector contains a negative or non-finite per-clip loop cap,
+    /// [`ConfigValidationError::InvalidSyncGroupTolerance`] when a same-time
+    /// group has an invalid timing tolerance, or
+    /// [`ConfigValidationError::InvalidTimeComplementSetting`] when an
+    /// enabled time-complement policy has an invalid threshold.
     pub fn validate(&self) -> Result<(), ConfigValidationError> {
         for (selector, expectations) in &self.clips {
             for (field, value) in [
@@ -358,6 +423,25 @@ impl Config {
                         group: group.clone(),
                         field,
                     });
+                }
+            }
+            if let Some(settings) = &sync.time_complement {
+                for (field, valid) in [
+                    (
+                        "min_reflected_time_advantage",
+                        is_unit_interval(settings.min_reflected_time_advantage),
+                    ),
+                    (
+                        "min_lr_amplitude_m",
+                        is_valid_loop_cap(settings.min_lr_amplitude_m),
+                    ),
+                ] {
+                    if !valid {
+                        return Err(ConfigValidationError::InvalidTimeComplementSetting {
+                            group: group.clone(),
+                            field,
+                        });
+                    }
                 }
             }
         }

@@ -157,6 +157,7 @@ Contract-aware checks use declared expectations and, where needed, rig roles:
 | `in-place` | error | declared in-place vs root-motion mode must match measured travel |
 | `gait-group` | error | stride-phase spread across a declared directional blend ring |
 | `sync-group` | error | same-time blend members must share duration, frame grid, and endpoint convention |
+| `time-complement` | warning | same-time blend pairs whose gait phase aligns substantially better under reflected time |
 | `root-motion-speed` | error | measured horizontal root travel vs a declared speed pin |
 | `foot-slide` | warning | stance feet must move consistently with declared travel |
 | `missing-bones` | error | declared animated bones missing from the skeleton or carrying no keys |
@@ -229,6 +230,12 @@ clips = ["run_forward", "run_backward", "run_left", "run_right"]
 max_duration_delta_s = 0.001
 max_frame_count_delta = 0
 max_fps_delta = 0.01
+
+[sync_groups.run-ring.time_complement]
+# Compare every unordered pair in the group. Similarity is derived from the
+# left-minus-right foot-height gait phase; higher scores are closer.
+min_reflected_time_advantage = 0.25
+min_lr_amplitude_m = 0.03
 ```
 
 Duration-pin values must be finite and positive; their tolerances must be

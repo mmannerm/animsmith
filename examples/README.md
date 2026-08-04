@@ -290,6 +290,15 @@ FPS grid, and loop endpoint mode matter. Each group declares non-negative
 duration, key-count, and FPS spread tolerances; incompatible findings retain a
 machine-readable row for every configured member.
 
+The optional nested `time_complement` policy activates the separate
+warning-level `time-complement` check for every unordered pair in that sync
+group. It uses the already measured left-minus-right foot-height gait phase,
+so it needs resolvable hips plus left and right foot/toe roles. The
+`min_lr_amplitude_m` floor rejects near-idle or noisy phase evidence; among the
+remaining pairs, a warning appears only when reflected-time similarity beats
+same-time similarity by more than `min_reflected_time_advantage`. The finding's
+member rows retain both scores, their advantage, each phase, and each amplitude.
+
 `examples/assets/walk.glb` is a committed rig for this: a hips + two-foot
 skeleton with a one-second walk cycle. Its bone names resolve a built-in
 profile, so `inspect` binds the rig with no config at all:
@@ -476,6 +485,16 @@ speed_mps = { value = 3.1, tolerance = 0.25 }   # root-motion contract
 clips = ["run_forward", "run_backward", "run_left", "run_right"]
 max_gait_phase_spread = 0.15   # members must stride in phase
 min_lr_amplitude_m = 0.03      # exclude near-idle members
+
+[sync_groups.run-ring]
+clips = ["run_forward", "run_backward", "run_left", "run_right"]
+max_duration_delta_s = 0.001
+max_frame_count_delta = 0
+max_fps_delta = 0.01
+
+[sync_groups.run-ring.time_complement]
+min_reflected_time_advantage = 0.25 # reflected score must beat same-time score
+min_lr_amplitude_m = 0.03           # skip low-confidence gait signals
 ```
 
 A `gait_groups` block is the payoff for a real character: it holds every
