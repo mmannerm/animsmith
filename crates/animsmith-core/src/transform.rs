@@ -3,7 +3,7 @@
 //! removal, and gait-anchor rotation. Scope rule (DESIGN.md §1): animsmith may rewrite a clip
 //! only in ways whose correctness its own checks can verify.
 
-use crate::checks::constant_track::is_constant_track;
+use crate::checks::constant_track::{is_constant_track, quaternion_angular_delta};
 use crate::metrics::foot_cycle_metrics;
 use crate::model::{BoneId, Clip, Interpolation, Property, Skeleton, Track, TrackValues};
 use crate::profile::ResolvedRoles;
@@ -384,12 +384,8 @@ fn vec3_within(a: Vec3, b: Vec3) -> bool {
 }
 
 fn quaternion_within(a: Quat, b: Quat) -> bool {
-    a.is_finite()
-        && b.is_finite()
-        && a.length_squared() > 0.0
-        && b.length_squared() > 0.0
-        && a.normalize().angle_between(b.normalize()).abs()
-            <= CONSTANT_TRACK_PRUNE_QUAT_TOLERANCE_RAD
+    quaternion_angular_delta(a, b)
+        .is_some_and(|delta| delta <= CONSTANT_TRACK_PRUNE_QUAT_TOLERANCE_RAD)
 }
 
 /// Analyze whether a clip has a safe, duplicated loop endpoint.
