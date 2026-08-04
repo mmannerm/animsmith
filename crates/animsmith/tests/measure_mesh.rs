@@ -5,7 +5,8 @@
 use animsmith_core::glam::{Mat4, Vec3};
 use animsmith_core::model::*;
 
-const MEASUREMENTS_SCHEMA: &str = include_str!("../../../docs/schemas/measurements-v9.schema.json");
+const MEASUREMENTS_SCHEMA: &str =
+    include_str!("../../../docs/schemas/measurements-v10.schema.json");
 
 fn assert_measurements_schema_valid(measurements: &serde_json::Value) {
     let schema = serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid measurement schema JSON");
@@ -16,7 +17,7 @@ fn assert_measurements_schema_valid(measurements: &serde_json::Value) {
         .collect::<Vec<_>>();
     assert!(
         errors.is_empty(),
-        "measurement output must satisfy the published v9 schema:\n{}\ninstance: {measurements:#}",
+        "measurement output must satisfy the published v10 schema:\n{}\ninstance: {measurements:#}",
         errors.join("\n")
     );
 }
@@ -26,7 +27,7 @@ fn assert_measurements_schema_invalid(measurements: &serde_json::Value) {
     let validator = jsonschema::validator_for(&schema).expect("measurement schema compiles");
     assert!(
         !validator.is_valid(measurements),
-        "measurement output must violate the published v9 schema:\n{measurements:#}"
+        "measurement output must violate the published v10 schema:\n{measurements:#}"
     );
 }
 

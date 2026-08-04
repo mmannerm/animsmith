@@ -23,11 +23,14 @@ from it and `convert` carries it through.
 
 For glTF/GLB measurement, the loader also provides a source-resource sidecar:
 source-order material definitions, semantic texture bindings, texture-to-image
-identity, and bounded image metadata. It distinguishes declared MIME from the
-container detected in source bytes and decoded color/channel data; malformed
-or unsupported image data remains explicit unavailable evidence rather than a
-repair request. This sidecar is descriptive only and is not a writer
-preservation, image acceptance, resize/transcode, or recipe-authority promise.
+identity, and bounded image metadata. Its complete core binding domain is
+`base_color`, `normal`, `metallic_roughness`, `occlusion`, then `emissive`;
+extension-defined texture slots are outside that claim. It distinguishes
+declared MIME from the container detected in source bytes and decoded
+color/channel data; malformed or unsupported image data remains explicit
+unavailable evidence rather than a repair request. This sidecar is descriptive
+only and is not a writer or conversion preservation, image acceptance,
+resize/transcode, or recipe-authority promise.
 
 The glTF source-skeleton sidecar likewise preserves source node and skin
 indices independently from the parent-before-child sampling skeleton. It keeps

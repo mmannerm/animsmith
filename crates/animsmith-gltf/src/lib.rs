@@ -1328,7 +1328,7 @@ fn source_material_texture_bindings(
     material: &gltf::Material<'_>,
 ) -> Vec<SourceMaterialTextureBinding> {
     let pbr = material.pbr_metallic_roughness();
-    let mut texture_bindings = Vec::with_capacity(4);
+    let mut texture_bindings = Vec::with_capacity(5);
     let mut push = |slot, texture: Option<gltf::Texture>| {
         if let Some(texture) = texture {
             texture_bindings.push(SourceMaterialTextureBinding {
@@ -1352,6 +1352,10 @@ fn source_material_texture_bindings(
     push(
         MaterialTextureSlot::Occlusion,
         material.occlusion_texture().map(|info| info.texture()),
+    );
+    push(
+        MaterialTextureSlot::Emissive,
+        material.emissive_texture().map(|info| info.texture()),
     );
     texture_bindings
 }

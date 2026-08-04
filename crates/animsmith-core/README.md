@@ -42,11 +42,14 @@ skinning semantics.
 texture bindings, texture-to-image identities, and bounded image inspection
 metadata when a loader supplies a source-resource sidecar. Its explicit
 `material_resource_coverage` distinguishes complete glTF/GLB evidence from an
-unavailable source-resource view in another loader. Image records preserve
+unavailable source-resource view in another loader. For glTF/GLB, complete is
+scoped to the documented core slots `base_color`, `normal`,
+`metallic_roughness`, `occlusion`, and `emissive`; extension-defined texture
+slots are not implied. Image records preserve
 declared MIME separately from a detected container and decoded dimensions,
 channel count, and color type; unavailable images instead carry a reason.
 This is descriptive source evidence, not an image acceptance, repair, resize,
-transcode, writer-preservation, or material-recipe policy.
+transcode, writer-preservation, conversion, or material-recipe policy.
 
 Mesh-definition evidence also includes optional mesh-local finite-position
 bounds and an arithmetic vertex centroid. The centroid is descriptive source

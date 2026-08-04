@@ -13,10 +13,10 @@ identity `urn:animsmith:schema:output:4`. The retrievable schema is
 is a retrieval location, not the protocol identity.
 
 Measurement evidence is nested and independently versioned as
-`urn:animsmith:schema:measurements:9`. Its retrievable schema is
-[`measurements-v9.schema.json`](schemas/measurements-v9.schema.json). Version 9
-adds declared-loop endpoint modes and validated declared-FPS grid evidence; a future
-measurement-definition change can therefore bump that contract without
+`urn:animsmith:schema:measurements:10`. Its retrievable schema is
+[`measurements-v10.schema.json`](schemas/measurements-v10.schema.json). Version
+10 adds emissive material-texture bindings to the source-resource inventory; a
+future measurement-definition change can therefore bump that contract without
 redesigning the outer result envelope.
 
 `convert --format json` is deliberately a separate conversion-evidence
@@ -219,8 +219,8 @@ Both commands put evidence under `files[].measurements`:
 
 ```json
 {
-  "schema_version": 9,
-  "schema": "urn:animsmith:schema:measurements:9",
+  "schema_version": 10,
+  "schema": "urn:animsmith:schema:measurements:10",
   "clips": {},
   "mesh_definitions": [],
   "node_instances": [],
@@ -313,12 +313,18 @@ acceptable.
 Material and image evidence is deliberately separate from mesh definitions.
 `material_resource_coverage` is `"complete"` for glTF/GLB input and
 `"unavailable"` when the loader cannot provide the source-resource sidecar.
+For glTF/GLB, complete means the loader inspected the entire documented core
+source-resource domain: material, texture, and image definitions plus exactly
+the `base_color`, `normal`, `metallic_roughness`, `occlusion`, and `emissive`
+material-texture slots. It does not claim that extension-defined texture slots
+or every glTF material feature are modeled.
+
 When coverage is complete, `material_definitions`, `textures`, and `images`
 are source-indexed records in ascending source order. A material definition
 has its optional display `name` and zero or more bindings
-`{ "slot", "texture_index" }`. The supported slot vocabulary, in stable
-semantic order, is `base_color`, `normal`, `metallic_roughness`, and
-`occlusion`. A texture record has `texture_index`, optional `name`, and its
+`{ "slot", "texture_index" }`. Bindings use the five-slot order listed above;
+an emissive-only material therefore has one `emissive` binding rather than an
+empty list. A texture record has `texture_index`, optional `name`, and its
 `image_index`. This preserves shared images and textures without duplicating
 metadata per material slot.
 
@@ -342,10 +348,11 @@ acceptance decision: animsmith does not repair, resize, transcode, or judge
 color-space, normal-map, engine-import, or artistic suitability here.
 
 The records describe what the loader observed, not authority for later writes
-or conversion recipes. A source-resource sidecar is not a promise that a
-writer preserves every image payload, and a material-texture recipe remains a
-separate explicit conversion input. Preserve the raw source if those source
-details must be retained.
+or conversion recipes. Complete coverage does not promise writer or `convert`
+preservation of any observed binding or image payload, and a material-texture
+recipe remains a separate explicit conversion input. It also makes no image
+acceptance, repair, resize, transcode, color-space, or engine-import decision.
+Preserve the raw source if those source details must be retained.
 
 `node_instances` contains one record per mesh-bearing node. `node_index` and
 `mesh_index` are stable source indices, so names need not be unique. Its
@@ -542,7 +549,7 @@ delta count, and structured metric deltas:
 ```
 
 `diff` accepts asset files or one-file v4 `measure`/`lint` reports carrying
-measurement contract v9. Multi-file reports and unsupported contract versions
+measurement contract v10. Multi-file reports and unsupported contract versions
 are rejected as operator errors. Before extracting the clip metrics it uses,
 `diff` validates the complete measurement record, including mesh evidence, and
 rejects malformed or non-finite payload values.

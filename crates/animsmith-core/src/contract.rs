@@ -30,9 +30,9 @@ pub const OUTPUT_SCHEMA_VERSION: u32 = 4;
 /// Immutable identity of the current outer result envelope.
 pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:4";
 /// Current nested measurement-contract version.
-pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 9;
+pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 10;
 /// Immutable identity of the current nested measurement contract.
-pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:9";
+pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:10";
 
 /// Source checkout identity for the producing animsmith build.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

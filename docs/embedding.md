@@ -106,7 +106,10 @@ not retain or evaluate secondary per-vertex payloads.
 
 For glTF/GLB, asset measurements additionally provide source-order material,
 texture, and image inventory records plus explicit
-`material_resource_coverage`. These are loader observations, not a portable
+`material_resource_coverage`. Complete glTF/GLB coverage is scoped to the five
+documented core bindings, in order: `base_color`, `normal`,
+`metallic_roughness`, `occlusion`, and `emissive`. It does not cover
+extension-defined texture slots. These are loader observations, not a portable
 image-management API: a host must handle `"unavailable"` coverage from other
 loaders and must not infer writer preservation, image acceptance, repair,
 resizing, transcode, color-space policy, or engine-import behavior from them.

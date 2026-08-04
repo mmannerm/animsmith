@@ -524,7 +524,9 @@ pub struct MaterialAsset {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MaterialResourceCoverage {
-    /// Every source material, texture, and image was inspected.
+    /// The loader inspected its complete documented source material-resource
+    /// domain. Format-specific documentation defines which binding slots that
+    /// domain includes.
     Complete,
     /// The loader cannot provide source resource evidence.
     #[default]
@@ -532,6 +534,9 @@ pub enum MaterialResourceCoverage {
 }
 
 /// A material texture slot with stable source-format meaning.
+///
+/// Declaration order is the stable wire order used by material-resource
+/// measurements.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MaterialTextureSlot {
@@ -543,6 +548,8 @@ pub enum MaterialTextureSlot {
     MetallicRoughness,
     /// Occlusion texture.
     Occlusion,
+    /// Emissive texture.
+    Emissive,
 }
 
 /// One source material-to-texture binding.

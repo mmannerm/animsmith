@@ -254,8 +254,8 @@ $ animsmith measure --format json walking.glb
         "hips": "mixamorig:Hips", "spine": "mixamorig:Spine",
         "left_foot": "mixamorig:LeftFoot", "right_foot": "mixamorig:RightFoot" } },
       "measurements": {
-        "schema_version": 9,
-        "schema": "urn:animsmith:schema:measurements:9",
+        "schema_version": 10,
+        "schema": "urn:animsmith:schema:measurements:10",
         "clips": { "mixamo.com": {
           "duration_s": 1.0, "frame_count": 33,
           "animated_bones": ["mixamorig:Hips", "mixamorig:LeftFoot", "mixamorig:RightFoot"],
