@@ -538,6 +538,61 @@ pub(crate) fn render_transform_gait_anchor_skipped(clip_name: &str, reason: &str
     )
 }
 
+/// Render the opt-in constant-track pruning decision for one clip.
+///
+/// The original track index is part of each line so an operator can identify
+/// the source sampler even after earlier removals shift the output ordering.
+/// This remains presentation-only: transform output has no JSON contract.
+pub(crate) fn render_transform_constant_track_pruning(
+    clip_name: &str,
+    skeleton: &animsmith_core::model::Skeleton,
+    outcome: &animsmith_core::transform::PruneConstantTracksOutcome,
+) -> String {
+    if outcome.removed.is_empty() && outcome.retained.is_empty() {
+        return format!(
+            "  constant-track pruning '{}': no candidate tracks\n",
+            text_atom(clip_name),
+        );
+    }
+
+    let mut rendered = String::new();
+    for record in &outcome.removed {
+        let bone = skeleton
+            .bones
+            .get(record.bone)
+            .map(|bone| bone.name.as_str())
+            .unwrap_or("<invalid bone>");
+        rendered.push_str(&format!(
+            "  constant-track removed '{}': track index {} bone '{}' {} {:?} {} key(s)\n",
+            text_atom(clip_name),
+            record.original_track_index,
+            text_atom(bone),
+            record.property.as_str(),
+            record.interpolation,
+            record.key_count,
+        ));
+    }
+    for retained in &outcome.retained {
+        let record = &retained.record;
+        let bone = skeleton
+            .bones
+            .get(record.bone)
+            .map(|bone| bone.name.as_str())
+            .unwrap_or("<invalid bone>");
+        rendered.push_str(&format!(
+            "  constant-track retained '{}': track index {} bone '{}' {} {:?} {} key(s): {}\n",
+            text_atom(clip_name),
+            record.original_track_index,
+            text_atom(bone),
+            record.property.as_str(),
+            record.interpolation,
+            record.key_count,
+            text_atom(&retained.reason.to_string()),
+        ));
+    }
+    rendered
+}
+
 fn repair_action(repair: Repair) -> &'static str {
     match repair {
         Repair::QuatNorm => "unit-normalized",
@@ -1832,7 +1887,8 @@ mod tests {
                 lines
                     .iter()
                     .filter(|line| {
-                        *line == &format!(
+                        *line
+                            == &format!(
                             "  node \"{name}\" [ambiguous: {count} skeleton nodes share this name]"
                         )
                     })

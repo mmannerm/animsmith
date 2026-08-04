@@ -1253,6 +1253,21 @@ fn help_matches_compiled_feature_set() {
         cfg!(feature = "report"),
         "{out}"
     );
+
+    let transform = animsmith()
+        .args(["transform", "--help"])
+        .output()
+        .expect("runs transform help");
+    assert!(
+        transform.status.success(),
+        "stderr:\n{}",
+        stderr(&transform)
+    );
+    assert!(
+        stdout(&transform).contains("--prune-constant-tracks"),
+        "{}",
+        stdout(&transform)
+    );
 }
 
 #[cfg(feature = "fbx")]
