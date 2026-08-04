@@ -37,7 +37,8 @@ check_schema docs/schemas/output-v3.schema.json urn:animsmith:schema:output:3
 check_schema docs/schemas/output-v4.schema.json urn:animsmith:schema:output:4 crates/animsmith-core/src/contract.rs docs/output.md
 check_schema docs/schemas/measurements-v8.schema.json urn:animsmith:schema:measurements:8
 check_schema docs/schemas/measurements-v9.schema.json urn:animsmith:schema:measurements:9
-check_schema docs/schemas/measurements-v10.schema.json urn:animsmith:schema:measurements:10 crates/animsmith-core/src/contract.rs docs/output.md
+check_schema docs/schemas/measurements-v10.schema.json urn:animsmith:schema:measurements:10
+check_schema docs/schemas/measurements-v11.schema.json urn:animsmith:schema:measurements:11 crates/animsmith-core/src/contract.rs docs/output.md
 check_schema docs/schemas/conversion-evidence-v1.schema.json urn:animsmith:schema:conversion-evidence:1 docs/output.md
 check_schema docs/schemas/conversion-evidence-v2.schema.json urn:animsmith:schema:conversion-evidence:2 docs/output.md docs/cli.md
 
@@ -298,14 +299,14 @@ modern_scanner_regression=$(
     '  "schema_version": 2,' \
     '  "command": "measure",' \
     '  "files": [{ "measurements": {' \
-    '    "schema_version": 10,' \
-    '    "schema": "urn:animsmith:schema:measurements:10"' \
+    '    "schema_version": 11,' \
+    '    "schema": "urn:animsmith:schema:measurements:11"' \
     '  }}]' \
     '}' \
     | awk "$legacy_envelope_awk"
 )
 if [ -n "$modern_scanner_regression" ]; then
-  fail "legacy-envelope scanner misclassified nested measurements v10"
+  fail "legacy-envelope scanner misclassified nested measurements v11"
 fi
 
 legacy_envelope=$(

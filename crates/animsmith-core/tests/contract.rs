@@ -2,11 +2,12 @@ use std::collections::BTreeMap;
 
 use animsmith_core::check::{Check, CheckCtx};
 use animsmith_core::config::{CheckSettings, SeveritySetting};
+use animsmith_core::glam::Mat4;
 use animsmith_core::measure::{
     AssetMeasurements, ClipMeasurements, FrameGridMeasurement, ImageMeasurements,
-    MeshDefinitionMeasurements, SkeletonNodeLocalRestMeasurements,
+    LinearTransformClassification, MeshDefinitionMeasurements, SkeletonNodeLocalRestMeasurements,
     SkeletonNodeLocalRestUnavailableReason, SkeletonRestWorldMatrixUnavailableReason,
-    SkinDerivedMatrixUnavailableReason,
+    SkinDerivedMatrixUnavailableReason, measure_linear_transform,
 };
 use animsmith_core::{
     Bone, CheckEvaluation, CheckOutput, CheckSelection, Config, CoverageGap, CoverageGapCode,
@@ -1044,19 +1045,34 @@ fn complete_skeleton_assets() -> AssetMeasurements {
             "scene_root_indices": [],
             "local_rest": {
                 "kind": "trs",
-                "translation_m": [0.0, 0.0, 0.0],
+                "translation_parent_space_m": [0.0, 0.0, 0.0],
                 "rotation_xyzw": [0.0, 0.0, 0.0, 1.0],
                 "scale": [1.0, 1.0, 1.0]
             },
-            "rest_world_matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+            "rest_world_matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+            "rest_world_translation_m": [0.0, 0.0, 0.0],
+            "rest_world_linear": {
+                "classification": "unit_orthonormal",
+                "axis_lengths": [1.0, 1.0, 1.0],
+                "determinant": 1.0,
+                "orientation": "positive",
+                "uniform_scale": 1.0
+            }
         }],
         "skins": [{
             "skin_index": 0,
             "joints": [{
                 "joint_index": 0, "node_index": 0,
-                "joint_bind_to_mesh": { "matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0] },
-                "mesh_bind_world": { "matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0] }
+                "joint_bind_to_mesh": {
+                    "matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+                    "linear": { "classification": "unit_orthonormal", "axis_lengths": [1.0, 1.0, 1.0], "determinant": 1.0, "orientation": "positive", "uniform_scale": 1.0 }
+                },
+                "mesh_bind_world": {
+                    "matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+                    "linear": { "classification": "unit_orthonormal", "axis_lengths": [1.0, 1.0, 1.0], "determinant": 1.0, "orientation": "positive", "uniform_scale": 1.0 }
+                }
             }],
+            "joint_bind_linear_summary": { "classification": "consistent_uniform", "joint_count": 1, "available_joint_count": 1, "unavailable_joint_count": 0, "consistent_uniform_scale": 1.0 },
             "inverse_bind_accessor": {
                 "status": "available", "declared_count": 1,
                 "matrices": [[1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]]
@@ -1084,6 +1100,42 @@ fn measurement_contract_rejects_inconsistent_skeleton_source_evidence() {
     };
     invalid(
         &|assets| {
+            assets.skeleton_nodes[0].rest_world_translation_m = Some([1.0, 0.0, 0.0]);
+        },
+        "skeleton_nodes[0].rest_world_translation_m",
+        "rest_world_translation_m must equal the rest-world matrix translation column",
+    );
+    invalid(
+        &|assets| {
+            assets.skeleton_nodes[0].rest_world_linear.classification =
+                LinearTransformClassification::UniformScaled;
+        },
+        "skeleton_nodes[0].rest_world_linear",
+        "rest_world_linear must be derived from rest_world_matrix",
+    );
+    invalid(
+        &|assets| {
+            assets.skins[0].joints[0]
+                .joint_bind_to_mesh
+                .linear
+                .as_mut()
+                .expect("available linear facts")
+                .determinant = Some(2.0);
+        },
+        "skins[0].joints[0].joint_bind_to_mesh.linear",
+        "linear facts must be derived from the available matrix",
+    );
+    invalid(
+        &|assets| {
+            assets.skins[0]
+                .joint_bind_linear_summary
+                .available_joint_count = 0;
+        },
+        "skins[0].joint_bind_linear_summary",
+        "joint-bind linear summary must match the skin joint observations",
+    );
+    invalid(
+        &|assets| {
             let duplicate = assets.skins[0].attachments[0].clone();
             assets.skins[0].attachments.push(duplicate);
         },
@@ -1103,6 +1155,7 @@ fn measurement_contract_rejects_inconsistent_skeleton_source_evidence() {
     invalid(
         &|assets| {
             assets.skins[0].joints[0].joint_bind_to_mesh.matrix = None;
+            assets.skins[0].joints[0].joint_bind_to_mesh.linear = None;
             assets.skins[0].joints[0]
                 .joint_bind_to_mesh
                 .unavailable_reason =
@@ -1131,6 +1184,9 @@ fn measurement_contract_rejects_inconsistent_skeleton_source_evidence() {
     invalid(
         &|assets| {
             assets.skeleton_nodes[0].rest_world_matrix = None;
+            assets.skeleton_nodes[0].rest_world_translation_m = None;
+            assets.skeleton_nodes[0].rest_world_linear =
+                measure_linear_transform(Mat4::from_cols_array(&[f32::NAN; 16]));
             assets.skeleton_nodes[0].rest_world_matrix_unavailable_reason =
                 Some(SkeletonRestWorldMatrixUnavailableReason::NonFiniteLocalRest);
         },
@@ -1159,6 +1215,9 @@ fn measurement_contract_rejects_inconsistent_skeleton_source_evidence() {
             child.node_index = 1;
             child.parent_node_index = Some(0);
             child.rest_world_matrix = None;
+            child.rest_world_translation_m = None;
+            child.rest_world_linear =
+                measure_linear_transform(Mat4::from_cols_array(&[f32::NAN; 16]));
             child.rest_world_matrix_unavailable_reason =
                 Some(SkeletonRestWorldMatrixUnavailableReason::ParentRestWorldUnavailable);
             assets.skeleton_nodes.push(child);
@@ -1169,6 +1228,7 @@ fn measurement_contract_rejects_inconsistent_skeleton_source_evidence() {
     invalid(
         &|assets| {
             assets.skins[0].joints[0].joint_bind_to_mesh.matrix = None;
+            assets.skins[0].joints[0].joint_bind_to_mesh.linear = None;
             assets.skins[0].joints[0]
                 .joint_bind_to_mesh
                 .unavailable_reason =
@@ -1180,6 +1240,7 @@ fn measurement_contract_rejects_inconsistent_skeleton_source_evidence() {
     invalid(
         &|assets| {
             assets.skins[0].joints[0].mesh_bind_world.matrix = None;
+            assets.skins[0].joints[0].mesh_bind_world.linear = None;
             assets.skins[0].joints[0].mesh_bind_world.unavailable_reason =
                 Some(SkinDerivedMatrixUnavailableReason::JointRestWorldUnavailable);
         },
@@ -1192,9 +1253,13 @@ fn measurement_contract_rejects_inconsistent_skeleton_source_evidence() {
                 reason: SkeletonNodeLocalRestUnavailableReason::NonFiniteTransform,
             };
             assets.skeleton_nodes[0].rest_world_matrix = None;
+            assets.skeleton_nodes[0].rest_world_translation_m = None;
+            assets.skeleton_nodes[0].rest_world_linear =
+                measure_linear_transform(Mat4::from_cols_array(&[f32::NAN; 16]));
             assets.skeleton_nodes[0].rest_world_matrix_unavailable_reason =
                 Some(SkeletonRestWorldMatrixUnavailableReason::NonFiniteLocalRest);
             assets.skins[0].joints[0].mesh_bind_world.matrix = None;
+            assets.skins[0].joints[0].mesh_bind_world.linear = None;
             assets.skins[0].joints[0].mesh_bind_world.unavailable_reason =
                 Some(SkinDerivedMatrixUnavailableReason::NonFiniteDerivedMatrix);
         },
@@ -1204,6 +1269,7 @@ fn measurement_contract_rejects_inconsistent_skeleton_source_evidence() {
     invalid(
         &|assets| {
             assets.skins[0].joints[0].mesh_bind_world.matrix = None;
+            assets.skins[0].joints[0].mesh_bind_world.linear = None;
             assets.skins[0].joints[0].mesh_bind_world.unavailable_reason =
                 Some(SkinDerivedMatrixUnavailableReason::InverseBindMatrixNonInvertible);
         },
@@ -1237,11 +1303,20 @@ fn measurement_contract_accepts_deep_parent_chains_and_singular_raw_inverse_bind
     let mut assets = complete_skeleton_assets();
     assets.skins[0].inverse_bind_accessor.matrices[0] = [0.0; 16];
     assets.skins[0].joints[0].joint_bind_to_mesh.matrix = None;
+    assets.skins[0].joints[0].joint_bind_to_mesh.linear = None;
     assets.skins[0].joints[0]
         .joint_bind_to_mesh
         .unavailable_reason =
         Some(SkinDerivedMatrixUnavailableReason::InverseBindMatrixNonInvertible);
     assets.skins[0].joints[0].mesh_bind_world.matrix = Some([0.0; 16]);
+    assets.skins[0].joints[0].mesh_bind_world.linear = Some(measure_linear_transform(Mat4::ZERO));
+    assets.skins[0].joint_bind_linear_summary = serde_json::from_value(serde_json::json!({
+        "classification": "unavailable",
+        "joint_count": 1,
+        "available_joint_count": 0,
+        "unavailable_joint_count": 1
+    }))
+    .expect("unavailable skin summary fixture");
     MeasurementContract::new(BTreeMap::new(), assets)
         .expect("a singular raw inverse-bind remains usable for mesh-bind-world multiplication");
 }

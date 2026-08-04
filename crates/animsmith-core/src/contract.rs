@@ -6,6 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use glam::Mat4;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -14,9 +15,11 @@ use crate::evaluation::{
     Applicability, CheckEvaluation, ConfigurationState, EvaluationState, SelectionState,
 };
 use crate::measure::{
-    Aabb, AssetMeasurements, ClipMeasurements, ImageMeasurements, MaterialDefinitionMeasurements,
-    SkeletonNodeLocalRestMeasurements, SkeletonRestWorldMatrixUnavailableReason,
-    SkinDerivedMatrixMeasurements, SkinDerivedMatrixUnavailableReason, TextureMeasurements,
+    Aabb, AssetMeasurements, ClipMeasurements, ImageMeasurements, LinearTransformClassification,
+    LinearTransformMeasurements, MaterialDefinitionMeasurements, SkeletonNodeLocalRestMeasurements,
+    SkeletonRestWorldMatrixUnavailableReason, SkinDerivedMatrixMeasurements,
+    SkinDerivedMatrixUnavailableReason, TextureMeasurements, measure_linear_transform,
+    summarize_skin_bind_linear,
 };
 use crate::model::{
     DecodedImageColorType, MaterialResourceCoverage, SourceInverseBindAccessorStatus,
@@ -30,9 +33,9 @@ pub const OUTPUT_SCHEMA_VERSION: u32 = 4;
 /// Immutable identity of the current outer result envelope.
 pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:4";
 /// Current nested measurement-contract version.
-pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 10;
+pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 11;
 /// Immutable identity of the current nested measurement contract.
-pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:10";
+pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:11";
 
 /// Source checkout identity for the producing animsmith build.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -528,6 +531,72 @@ fn validate_measurements(
     Ok(())
 }
 
+fn validate_linear_transform_fields(
+    linear: &LinearTransformMeasurements,
+    path: &str,
+    invalid: &impl Fn(String, &str) -> MeasurementContractError,
+) -> Result<(), MeasurementContractError> {
+    let numeric_fields_present = linear.axis_lengths.is_some()
+        && linear.determinant.is_some()
+        && linear.orientation.is_some();
+    if linear.classification == LinearTransformClassification::NonFinite {
+        if linear.axis_lengths.is_some()
+            || linear.determinant.is_some()
+            || linear.orientation.is_some()
+            || linear.uniform_scale.is_some()
+        {
+            return Err(invalid(
+                path.into(),
+                "a non_finite classification cannot carry numeric linear-transform facts",
+            ));
+        }
+        return Ok(());
+    }
+    if !numeric_fields_present {
+        return Err(invalid(
+            path.into(),
+            "a finite classification requires axis_lengths, determinant, and orientation",
+        ));
+    }
+    for (axis, value) in linear
+        .axis_lengths
+        .expect("presence checked")
+        .into_iter()
+        .enumerate()
+    {
+        if !value.is_finite() {
+            return Err(MeasurementContractError::NonFiniteValue {
+                path: format!("{path}.axis_lengths[{axis}]"),
+            });
+        }
+        if value < 0.0 {
+            return Err(invalid(
+                format!("{path}.axis_lengths[{axis}]"),
+                "axis lengths must be non-negative",
+            ));
+        }
+    }
+    if !linear.determinant.expect("presence checked").is_finite() {
+        return Err(MeasurementContractError::NonFiniteValue {
+            path: format!("{path}.determinant"),
+        });
+    }
+    if let Some(scale) = linear.uniform_scale {
+        if !scale.is_finite() {
+            return Err(MeasurementContractError::NonFiniteValue {
+                path: format!("{path}.uniform_scale"),
+            });
+        }
+        if scale < 0.0 {
+            return Err(invalid(
+                format!("{path}.uniform_scale"),
+                "uniform scale must be non-negative",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_skeleton_measurements(
     assets: &AssetMeasurements,
     invalid: &impl Fn(String, &str) -> MeasurementContractError,
@@ -561,12 +630,15 @@ fn validate_skeleton_measurements(
         }
         match &node.local_rest {
             SkeletonNodeLocalRestMeasurements::Trs {
-                translation_m,
+                translation_parent_space_m,
                 rotation_xyzw,
                 scale,
             } => {
                 for (field, values) in [
-                    ("translation_m", translation_m.as_slice()),
+                    (
+                        "translation_parent_space_m",
+                        translation_parent_space_m.as_slice(),
+                    ),
                     ("rotation_xyzw", rotation_xyzw.as_slice()),
                     ("scale", scale.as_slice()),
                 ] {
@@ -587,25 +659,60 @@ fn validate_skeleton_measurements(
             )?,
             SkeletonNodeLocalRestMeasurements::Unavailable { .. } => {}
         }
+        let node_path = format!("skeleton_nodes[{offset}]");
+        validate_linear_transform_fields(
+            &node.rest_world_linear,
+            &format!("{node_path}.rest_world_linear"),
+            invalid,
+        )?;
         match (
             node.rest_world_matrix.as_ref(),
+            node.rest_world_translation_m.as_ref(),
             node.rest_world_matrix_unavailable_reason,
         ) {
-            (Some(matrix), None) => finite_matrix(
-                matrix,
-                &format!("skeleton_nodes[{offset}].rest_world_matrix"),
-            )?,
-            (None, Some(_)) => {}
-            (Some(_), Some(_)) => {
+            (Some(matrix), Some(translation), None) => {
+                finite_matrix(matrix, &format!("{node_path}.rest_world_matrix"))?;
+                for (component, value) in translation.iter().enumerate() {
+                    if !value.is_finite() {
+                        return Err(MeasurementContractError::NonFiniteValue {
+                            path: format!("{node_path}.rest_world_translation_m[{component}]"),
+                        });
+                    }
+                }
+                let expected_translation = [matrix[12], matrix[13], matrix[14]];
+                if *translation != expected_translation {
+                    return Err(invalid(
+                        format!("{node_path}.rest_world_translation_m"),
+                        "rest_world_translation_m must equal the rest-world matrix translation column",
+                    ));
+                }
+                let expected_linear = measure_linear_transform(Mat4::from_cols_array(matrix));
+                if node.rest_world_linear != expected_linear {
+                    return Err(invalid(
+                        format!("{node_path}.rest_world_linear"),
+                        "rest_world_linear must be derived from rest_world_matrix",
+                    ));
+                }
+            }
+            (None, None, Some(_)) => {
+                if node.rest_world_linear.classification != LinearTransformClassification::NonFinite
+                {
+                    return Err(invalid(
+                        format!("{node_path}.rest_world_linear"),
+                        "an unavailable rest-world matrix requires a non_finite linear classification",
+                    ));
+                }
+            }
+            (Some(_), Some(_), Some(_)) => {
                 return Err(invalid(
-                    format!("skeleton_nodes[{offset}]"),
+                    node_path,
                     "an available rest_world_matrix cannot have an unavailable reason",
                 ));
             }
-            (None, None) => {
+            _ => {
                 return Err(invalid(
-                    format!("skeleton_nodes[{offset}]"),
-                    "a missing rest_world_matrix requires an unavailable reason",
+                    node_path,
+                    "rest-world matrix, translation, and unavailable reason fields are inconsistent",
                 ));
             }
         }
@@ -889,6 +996,20 @@ fn validate_skeleton_measurements(
                 invalid,
             )?;
         }
+        if let Some(scale) = skin.joint_bind_linear_summary.consistent_uniform_scale
+            && !scale.is_finite()
+        {
+            return Err(MeasurementContractError::NonFiniteValue {
+                path: format!("skins[{offset}].joint_bind_linear_summary.consistent_uniform_scale"),
+            });
+        }
+        let expected_summary = summarize_skin_bind_linear(&skin.joints);
+        if skin.joint_bind_linear_summary != expected_summary {
+            return Err(invalid(
+                format!("skins[{offset}].joint_bind_linear_summary"),
+                "joint-bind linear summary must match the skin joint observations",
+            ));
+        }
         let mut previous_attachment_node = None;
         for (attachment_offset, attachment) in skin.attachments.iter().enumerate() {
             if attachment.node_index >= assets.skeleton_nodes.len() {
@@ -1030,19 +1151,32 @@ fn validate_derived_matrix(
     finite_matrix: &impl Fn(&[f32; 16], &str) -> Result<(), MeasurementContractError>,
     invalid: &impl Fn(String, &str) -> MeasurementContractError,
 ) -> Result<(), MeasurementContractError> {
-    match (&matrix.matrix, matrix.unavailable_reason) {
-        (Some(matrix), None) => finite_matrix(matrix, &format!("{path}.matrix"))?,
-        (None, Some(_)) => {}
-        (Some(_), Some(_)) => {
+    match (
+        &matrix.matrix,
+        matrix.linear.as_ref(),
+        matrix.unavailable_reason,
+    ) {
+        (Some(matrix), Some(linear), None) => {
+            finite_matrix(matrix, &format!("{path}.matrix"))?;
+            validate_linear_transform_fields(linear, &format!("{path}.linear"), invalid)?;
+            if *linear != measure_linear_transform(Mat4::from_cols_array(matrix)) {
+                return Err(invalid(
+                    format!("{path}.linear"),
+                    "linear facts must be derived from the available matrix",
+                ));
+            }
+        }
+        (None, None, Some(_)) => {}
+        (Some(_), Some(_), Some(_)) => {
             return Err(invalid(
                 path.into(),
                 "an available derived matrix cannot have an unavailable reason",
             ));
         }
-        (None, None) => {
+        _ => {
             return Err(invalid(
                 path.into(),
-                "a missing derived matrix requires an unavailable reason",
+                "derived matrix, linear facts, and unavailable reason fields are inconsistent",
             ));
         }
     }
@@ -1245,6 +1379,26 @@ struct InputIdentityInput {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum SkeletonNodeMeasurementInput {
+    Current(Box<crate::measure::SkeletonNodeMeasurements>),
+    Earlier {
+        #[serde(rename = "node_index")]
+        _node_index: usize,
+    },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum SkinMeasurementInput {
+    Current(Box<crate::measure::SkinMeasurements>),
+    Earlier {
+        #[serde(rename = "skin_index")]
+        _skin_index: usize,
+    },
+}
+
+#[derive(Debug, Deserialize)]
 struct MeasurementPayloadInput {
     schema_version: Option<u32>,
     schema: Option<String>,
@@ -1254,8 +1408,8 @@ struct MeasurementPayloadInput {
     textures: Option<Vec<TextureMeasurements>>,
     images: Option<Vec<ImageMeasurements>>,
     skeleton_source_coverage: Option<SourceSkeletonCoverage>,
-    skeleton_nodes: Option<Vec<crate::measure::SkeletonNodeMeasurements>>,
-    skins: Option<Vec<crate::measure::SkinMeasurements>>,
+    skeleton_nodes: Option<Vec<SkeletonNodeMeasurementInput>>,
+    skins: Option<Vec<SkinMeasurementInput>>,
     mesh_definitions: Option<Vec<crate::measure::MeshDefinitionMeasurements>>,
     node_instances: Option<Vec<crate::measure::NodeInstanceMeasurements>>,
     scenes: Option<Vec<crate::measure::SceneMeasurements>>,
@@ -1558,9 +1712,45 @@ impl MeasurementReportInput {
                         MeasurementFileError::MissingSkeletonNodes,
                     )
                 })?;
+                let skeleton_nodes = skeleton_nodes
+                    .into_iter()
+                    .enumerate()
+                    .map(|(offset, node)| match node {
+                        SkeletonNodeMeasurementInput::Current(node) => Ok(*node),
+                        SkeletonNodeMeasurementInput::Earlier { .. } => {
+                            Err(MeasurementReportError::file(
+                                file_index,
+                                MeasurementFileError::InvalidMeasurements {
+                                    source: MeasurementContractError::InvalidStructure {
+                                        path: format!("skeleton_nodes[{offset}]"),
+                                        reason: "uses a shape from an earlier measurement contract"
+                                            .into(),
+                                    },
+                                },
+                            ))
+                        }
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
                 let skins = measurements.skins.ok_or_else(|| {
                     MeasurementReportError::file(file_index, MeasurementFileError::MissingSkins)
                 })?;
+                let skins = skins
+                    .into_iter()
+                    .enumerate()
+                    .map(|(offset, skin)| match skin {
+                        SkinMeasurementInput::Current(skin) => Ok(*skin),
+                        SkinMeasurementInput::Earlier { .. } => Err(MeasurementReportError::file(
+                            file_index,
+                            MeasurementFileError::InvalidMeasurements {
+                                source: MeasurementContractError::InvalidStructure {
+                                    path: format!("skins[{offset}]"),
+                                    reason: "uses a shape from an earlier measurement contract"
+                                        .into(),
+                                },
+                            },
+                        )),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
                 let mesh_definitions = measurements.mesh_definitions.ok_or_else(|| {
                     MeasurementReportError::file(
                         file_index,
@@ -1608,6 +1798,49 @@ impl MeasurementReportInput {
 #[cfg(test)]
 mod measurement_report_input_tests {
     use super::*;
+
+    #[test]
+    fn unsupported_nested_version_is_rejected_before_current_shape_decode() {
+        let report: MeasurementReportInput = serde_json::from_value(serde_json::json!({
+            "schema_version": OUTPUT_SCHEMA_VERSION,
+            "schema": OUTPUT_SCHEMA_ID,
+            "command": "measure",
+            "files": [{
+                "path": "measurements-v10.json",
+                "input": { "sha256": "0".repeat(64), "bytes": 0 },
+                "measurements": {
+                    "schema_version": 10,
+                    "schema": "urn:animsmith:schema:measurements:10",
+                    "skeleton_nodes": [{
+                        "node_index": 0,
+                        "scene_root_indices": [],
+                        "local_rest": {
+                            "kind": "trs",
+                            "translation_m": [0.0, 0.0, 0.0],
+                            "rotation_xyzw": [0.0, 0.0, 0.0, 1.0],
+                            "scale": [1.0, 1.0, 1.0]
+                        },
+                        "rest_world_matrix": [
+                            1.0, 0.0, 0.0, 0.0,
+                            0.0, 1.0, 0.0, 0.0,
+                            0.0, 0.0, 1.0, 0.0,
+                            0.0, 0.0, 0.0, 1.0
+                        ]
+                    }],
+                    "skins": [{ "skin_index": 0 }]
+                }
+            }]
+        }))
+        .expect("unsupported payload shapes remain decodable for version rejection");
+
+        assert!(matches!(
+            report.into_files(),
+            Err(MeasurementReportError::File {
+                file_index: 0,
+                source: MeasurementFileError::UnsupportedMeasurementVersion { found: 10 },
+            })
+        ));
+    }
 
     #[test]
     fn recovered_payloads_run_measurement_contract_validation() {

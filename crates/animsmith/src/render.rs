@@ -9,6 +9,10 @@
 //! (SARIF, GitLab Code Quality, JUnit, CSV) belong here alongside JSON.
 
 use animsmith_core::diff::MetricDelta;
+use animsmith_core::measure::{
+    LinearTransformClassification, LinearTransformMeasurements, LinearTransformOrientation,
+    SkeletonNodeLocalRestMeasurements, SkinBindLinearSummaryClassification,
+};
 use animsmith_core::model::Clip;
 use animsmith_core::{
     CoverageGap, CoverageGapCode, Document, Finding, LintFileReport, MeasureFileReport,
@@ -64,6 +68,68 @@ fn render_point(label: &str, point: &[f32; 3]) -> String {
         " {label} ({:.3}, {:.3}, {:.3})",
         point[0], point[1], point[2]
     )
+}
+
+fn linear_class_name(classification: LinearTransformClassification) -> &'static str {
+    match classification {
+        LinearTransformClassification::UnitOrthonormal => "unit orthonormal",
+        LinearTransformClassification::UniformScaled => "uniform scaled",
+        LinearTransformClassification::NonUniform => "non-uniform",
+        LinearTransformClassification::Sheared => "sheared",
+        LinearTransformClassification::Reflected => "reflected",
+        LinearTransformClassification::Singular => "singular",
+        LinearTransformClassification::NonFinite => "non-finite",
+        _ => "unsupported",
+    }
+}
+
+fn render_linear_number(value: f64) -> String {
+    let magnitude = value.abs();
+    if value != 0.0 && !(0.0001..1_000_000.0).contains(&magnitude) {
+        format!("{value:.6e}")
+    } else {
+        format!("{value:.6}")
+    }
+}
+
+fn render_linear_facts(linear: &LinearTransformMeasurements) -> String {
+    let class = linear_class_name(linear.classification);
+    match (linear.axis_lengths, linear.determinant, linear.orientation) {
+        (Some(axes), Some(determinant), Some(orientation)) => {
+            let orientation = match orientation {
+                LinearTransformOrientation::Positive => "+",
+                LinearTransformOrientation::Negative => "-",
+                LinearTransformOrientation::Zero => "0",
+                _ => "?",
+            };
+            let uniform = linear
+                .uniform_scale
+                .map(|scale| format!(", uniform={}", render_linear_number(scale)))
+                .unwrap_or_default();
+            format!(
+                "{class} axes=({}, {}, {}) det={} orientation={orientation}{uniform}",
+                render_linear_number(axes[0]),
+                render_linear_number(axes[1]),
+                render_linear_number(axes[2]),
+                render_linear_number(determinant)
+            )
+        }
+        _ => class.to_string(),
+    }
+}
+
+fn skin_bind_summary_name(classification: SkinBindLinearSummaryClassification) -> &'static str {
+    match classification {
+        SkinBindLinearSummaryClassification::NoJoints => "no joints",
+        SkinBindLinearSummaryClassification::Unavailable => "unavailable",
+        SkinBindLinearSummaryClassification::PartiallyUnavailable => "partially unavailable",
+        SkinBindLinearSummaryClassification::ConsistentUniform => "consistent uniform",
+        SkinBindLinearSummaryClassification::MixedUniform => "mixed uniform factors",
+        SkinBindLinearSummaryClassification::NonUniformOrSheared => "non-uniform or sheared",
+        SkinBindLinearSummaryClassification::ReflectedOrSingular => "reflected or singular",
+        SkinBindLinearSummaryClassification::Mixed => "mixed",
+        _ => "unsupported",
+    }
 }
 
 /// Yield measurement reports in the presentation-only text format, one
@@ -249,6 +315,93 @@ pub(crate) fn render_measure_text(
                     "  scene #{}{}{}: {} instances{bounds}{excluded}",
                     scene.scene_index, name, default, scene.instance_count
                 )
+            }))
+            .chain(
+                report
+                    .measurements()
+                    .assets()
+                    .skeleton_nodes
+                    .iter()
+                    .map(|node| {
+                        let name = node
+                            .name
+                            .as_deref()
+                            .map(|name| format!(" {}", text_atom(name)))
+                            .unwrap_or_default();
+                        let parent_translation = match &node.local_rest {
+                            SkeletonNodeLocalRestMeasurements::Trs {
+                                translation_parent_space_m,
+                                ..
+                            } => format!(
+                                "({:.3}, {:.3}, {:.3})m",
+                                translation_parent_space_m[0],
+                                translation_parent_space_m[1],
+                                translation_parent_space_m[2]
+                            ),
+                            SkeletonNodeLocalRestMeasurements::Matrix { matrix } => format!(
+                                "({:.3}, {:.3}, {:.3})m (matrix)",
+                                matrix[12], matrix[13], matrix[14]
+                            ),
+                            SkeletonNodeLocalRestMeasurements::Unavailable { .. } => {
+                                "unavailable".into()
+                            }
+                            _ => "unsupported".into(),
+                        };
+                        let rest_world_translation = node
+                            .rest_world_translation_m
+                            .map(|translation| {
+                                format!(
+                                    "({:.3}, {:.3}, {:.3})m",
+                                    translation[0], translation[1], translation[2]
+                                )
+                            })
+                            .unwrap_or_else(|| "unavailable".into());
+                        format!(
+                            "  source node #{}{}: parent-space translation {parent_translation}; rest-world translation {rest_world_translation}; rest-world linear {}",
+                            node.node_index,
+                            name,
+                            render_linear_facts(&node.rest_world_linear)
+                        )
+                    }),
+            )
+            .chain(report.measurements().assets().skins.iter().flat_map(|skin| {
+                let name = skin
+                    .name
+                    .as_deref()
+                    .map(|name| format!(" {}", text_atom(name)))
+                    .unwrap_or_default();
+                let summary = &skin.joint_bind_linear_summary;
+                let factor = summary
+                    .consistent_uniform_scale
+                    .map(|scale| format!(" factor={}", render_linear_number(scale)))
+                    .unwrap_or_default();
+                let summary_line = format!(
+                    "  source skin #{}{}: joint bind linear {}{factor} ({}/{} available), {} attachments",
+                    skin.skin_index,
+                    name,
+                    skin_bind_summary_name(summary.classification),
+                    summary.available_joint_count,
+                    summary.joint_count,
+                    skin.attachments.len()
+                );
+                std::iter::once(summary_line).chain(skin.joints.iter().map(|joint| {
+                    let bind = joint
+                        .joint_bind_to_mesh
+                        .linear
+                        .as_ref()
+                        .map(render_linear_facts)
+                        .unwrap_or_else(|| "unavailable".into());
+                    let mesh_world = joint
+                        .mesh_bind_world
+                        .linear
+                        .as_ref()
+                        .map(render_linear_facts)
+                        .unwrap_or_else(|| "unavailable".into());
+                    format!(
+                        "    joint #{} node #{}: bind-to-mesh {bind}; mesh-bind-world {mesh_world}",
+                        joint.joint_index, joint.node_index
+                    )
+                }))
             }))
     })
 }
@@ -1180,6 +1333,8 @@ fn md_cell(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use animsmith_core::glam::{Mat4, Quat, Vec3};
+    use animsmith_core::measure::measure_assets;
     use animsmith_core::{
         Bone, CheckEvaluation, CheckOutput, Clip, CoverageGap, CoverageGapCode, Document,
         EvaluationScope, EvaluationScopeCode, Finding, InputIdentity, LintFileReport,
@@ -1187,6 +1342,11 @@ mod tests {
         TrackValues, Transform,
     };
     use animsmith_core::{Interpolation, Property};
+    use animsmith_core::{
+        SourceInverseBindAccessor, SourceInverseBindAccessorStatus, SourceNodeAsset,
+        SourceNodeLocalRest, SourceSkeletonAssets, SourceSkeletonCoverage, SourceSkinAsset,
+        SourceSkinAttachment,
+    };
     use serde_json::json;
     use std::collections::BTreeMap;
 
@@ -1402,6 +1562,100 @@ mod tests {
                 "  material resources: 0 materials, 0 textures, 0 images (unavailable)",
             ]
         );
+    }
+
+    #[test]
+    fn measure_renderer_explains_parent_world_and_compensated_bind_scale_domains() {
+        let doc = Document {
+            assets: animsmith_core::model::SceneAssets {
+                source_skeleton: SourceSkeletonAssets {
+                    coverage: SourceSkeletonCoverage::Complete,
+                    nodes: vec![
+                        SourceNodeAsset {
+                            source_node_index: 0,
+                            name: Some("unit-helper".into()),
+                            parent_source_node_index: None,
+                            scene_root_indices: vec![],
+                            local_rest: SourceNodeLocalRest::Trs {
+                                translation: Vec3::ZERO,
+                                rotation: Quat::IDENTITY,
+                                scale: Vec3::splat(0.01),
+                            },
+                        },
+                        SourceNodeAsset {
+                            source_node_index: 1,
+                            name: Some("socket".into()),
+                            parent_source_node_index: Some(0),
+                            scene_root_indices: vec![],
+                            local_rest: SourceNodeLocalRest::Trs {
+                                translation: Vec3::new(11.5, 0.0, 0.0),
+                                rotation: Quat::IDENTITY,
+                                scale: Vec3::ONE,
+                            },
+                        },
+                        SourceNodeAsset {
+                            source_node_index: 2,
+                            name: Some("mesh".into()),
+                            parent_source_node_index: None,
+                            scene_root_indices: vec![],
+                            local_rest: SourceNodeLocalRest::Matrix(Mat4::IDENTITY),
+                        },
+                    ],
+                    skins: vec![SourceSkinAsset {
+                        source_skin_index: 0,
+                        name: Some("body".into()),
+                        skeleton_root_source_node_index: Some(0),
+                        joint_source_node_indices: vec![1],
+                        inverse_bind_accessor: SourceInverseBindAccessor {
+                            status: SourceInverseBindAccessorStatus::Available,
+                            declared_count: Some(1),
+                            matrices: vec![Mat4::from_scale(Vec3::splat(100.0))],
+                        },
+                        attachments: vec![SourceSkinAttachment {
+                            source_node_index: 2,
+                            source_mesh_index: Some(0),
+                        }],
+                    }],
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let report = MeasureFileReport::new(
+            "scaled.glb",
+            input_identity("scaled.glb"),
+            empty_rig(),
+            MeasurementContract::new(BTreeMap::new(), measure_assets(&doc))
+                .expect("scale-domain measurements are valid"),
+        );
+        let lines = render_measure_text(&[report]).collect::<Vec<_>>();
+        assert!(lines.iter().any(|line| {
+            line.contains("source node #1 socket: parent-space translation (11.500, 0.000, 0.000)m")
+                && line.contains("rest-world translation (0.115, 0.000, 0.000)m")
+                && line.contains("uniform scaled")
+                && line.contains("uniform=0.010000")
+        }));
+        assert!(lines.iter().any(|line| {
+            line.contains(
+                "source skin #0 body: joint bind linear consistent uniform factor=0.010000",
+            ) && line.contains("(1/1 available), 1 attachments")
+        }));
+        assert!(lines.iter().any(|line| {
+            line.contains("joint #0 node #1: bind-to-mesh uniform scaled")
+                && line.contains("mesh-bind-world unit orthonormal")
+        }));
+    }
+
+    #[test]
+    fn linear_renderer_preserves_tiny_nonzero_scale_facts() {
+        let rendered = render_linear_facts(&animsmith_core::measure::measure_linear_transform(
+            Mat4::from_scale(Vec3::splat(1.0e-8)),
+        ));
+
+        assert!(rendered.contains("axes=(1.000000e-8, 1.000000e-8, 1.000000e-8)"));
+        assert!(rendered.contains("det=1.000000e-24"));
+        assert!(rendered.contains("uniform=1.000000e-8"));
+        assert!(!rendered.contains("uniform=0.000000"));
     }
 
     #[test]

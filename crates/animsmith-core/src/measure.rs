@@ -26,6 +26,11 @@ use std::collections::{BTreeMap, BTreeSet};
 /// pipeline's convention).
 pub const MIN_RECORDED_ROTATION_DEG: f64 = 0.1;
 
+/// Relative tolerance used for orthogonality and equal-axis classification.
+pub const LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE: f64 = 1.0e-5;
+/// Scale-relative determinant threshold used to classify singular matrices.
+pub const LINEAR_CLASSIFICATION_SINGULAR_TOLERANCE: f64 = 1.0e-6;
+
 /// Axis-aligned bounding box whose coordinates use the owning measurement's
 /// documented definition-local, node-world, or scene-world domain.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -242,8 +247,10 @@ pub type SkeletonSourceCoverage = SourceSkeletonCoverage;
 pub enum SkeletonNodeLocalRestMeasurements {
     /// Authored local translation, rotation, and scale.
     Trs {
-        /// Translation in scene units.
-        translation_m: [f32; 3],
+        /// Translation in metres expressed in the direct parent's coordinate
+        /// frame. It is not directly comparable with scene- or mesh-space
+        /// measurements until ancestor transforms are composed.
+        translation_parent_space_m: [f32; 3],
         /// Quaternion components in XYZW order.
         rotation_xyzw: [f32; 4],
         /// Non-uniform local scale.
@@ -259,6 +266,73 @@ pub enum SkeletonNodeLocalRestMeasurements {
         /// Stable reason for the unavailable local transform.
         reason: SkeletonNodeLocalRestUnavailableReason,
     },
+}
+
+/// Stable classification of the linear 3x3 part of an affine transform.
+///
+/// Reflection is classified before shear or scale shape; the axis lengths and
+/// orientation retain the remaining facts for reflected transforms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum LinearTransformClassification {
+    /// Orthogonal unit-length axes with positive orientation.
+    UnitOrthonormal,
+    /// Orthogonal equal-length axes with a non-unit factor.
+    UniformScaled,
+    /// Orthogonal axes with unequal lengths.
+    NonUniform,
+    /// At least two axes are not orthogonal.
+    Sheared,
+    /// The determinant is negative; axis and uniform-factor facts remain
+    /// available to describe the reflected transform further.
+    Reflected,
+    /// The linear transform is singular or near-singular relative to its axis
+    /// lengths.
+    Singular,
+    /// At least one matrix component, derived axis length, or determinant is
+    /// non-finite.
+    NonFinite,
+}
+
+/// Orientation sign of a finite linear transform.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum LinearTransformOrientation {
+    /// Positive determinant.
+    Positive,
+    /// Negative determinant (a reflection).
+    Negative,
+    /// Zero or near-zero relative determinant.
+    Zero,
+}
+
+/// Deterministic facts derived from the linear 3x3 part of an affine matrix.
+///
+/// Numeric fields are present for every finite observation and absent only for
+/// [`LinearTransformClassification::NonFinite`]. `uniform_scale` is present
+/// when the columns are mutually orthogonal and have one common length,
+/// including reflected uniform transforms. Derived numeric fields use `f64`
+/// so determinant products remain representable across finite `f32` matrices.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct LinearTransformMeasurements {
+    /// Stable transform class.
+    pub classification: LinearTransformClassification,
+    /// Lengths of the X, Y, and Z matrix columns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub axis_lengths: Option<[f64; 3]>,
+    /// Determinant of the linear 3x3 matrix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub determinant: Option<f64>,
+    /// Determinant sign, using the same relative singularity tolerance as the
+    /// classification.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orientation: Option<LinearTransformOrientation>,
+    /// Common orthogonal axis length when one is well-defined.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uniform_scale: Option<f64>,
 }
 
 /// Why a node-local rest representation is unavailable.
@@ -305,6 +379,13 @@ pub struct SkeletonNodeMeasurements {
     /// column-major order.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rest_world_matrix: Option<[f32; 16]>,
+    /// Translation column of [`Self::rest_world_matrix`], in metres in the
+    /// accumulated source rest-world coordinate domain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rest_world_translation_m: Option<[f32; 3]>,
+    /// Linear-transform facts for the accumulated rest-world matrix. A
+    /// non-finite classification accompanies an unavailable matrix.
+    pub rest_world_linear: LinearTransformMeasurements,
     /// Present exactly when [`Self::rest_world_matrix`] is unavailable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rest_world_matrix_unavailable_reason: Option<SkeletonRestWorldMatrixUnavailableReason>,
@@ -383,9 +464,64 @@ pub struct SkinDerivedMatrixMeasurements {
     /// Matrix in the documented coordinate domain, in column-major order.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub matrix: Option<[f32; 16]>,
+    /// Linear-transform facts derived from [`Self::matrix`]. Present exactly
+    /// when the matrix is available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linear: Option<LinearTransformMeasurements>,
     /// Present exactly when [`Self::matrix`] is unavailable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unavailable_reason: Option<SkinDerivedMatrixUnavailableReason>,
+}
+
+/// Stable aggregate class for one skin's joint-bind-to-mesh linear facts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SkinBindLinearSummaryClassification {
+    /// The skin declares no joint slots.
+    NoJoints,
+    /// No joint-bind-to-mesh matrix is available.
+    Unavailable,
+    /// Some, but not all, joint-bind-to-mesh matrices are available.
+    PartiallyUnavailable,
+    /// Every joint is an unreflected orthogonal uniform transform with the
+    /// same factor.
+    ConsistentUniform,
+    /// Every joint is unreflected, orthogonal, and uniform, but factors differ.
+    MixedUniform,
+    /// Every joint is non-uniform or sheared.
+    NonUniformOrSheared,
+    /// Every joint is reflected or singular.
+    ReflectedOrSingular,
+    /// Available joints span more than one of the preceding transform groups.
+    Mixed,
+}
+
+/// Summary of one skin's joint-bind-to-mesh linear-transform evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct SkinBindLinearSummaryMeasurements {
+    /// Stable aggregate class.
+    pub classification: SkinBindLinearSummaryClassification,
+    /// Number of declared skin joint slots.
+    pub joint_count: usize,
+    /// Number of slots with an available joint-bind-to-mesh matrix.
+    pub available_joint_count: usize,
+    /// Number of slots without an available joint-bind-to-mesh matrix.
+    pub unavailable_joint_count: usize,
+    /// Shared factor for [`SkinBindLinearSummaryClassification::ConsistentUniform`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consistent_uniform_scale: Option<f64>,
+}
+
+fn unavailable_linear_transform() -> LinearTransformMeasurements {
+    LinearTransformMeasurements {
+        classification: LinearTransformClassification::NonFinite,
+        axis_lengths: None,
+        determinant: None,
+        orientation: None,
+        uniform_scale: None,
+    }
 }
 
 /// One source skin in stable source-skin order.
@@ -402,6 +538,8 @@ pub struct SkinMeasurements {
     pub skeleton_root_node_index: Option<usize>,
     /// Source joint slots in their declared order.
     pub joints: Vec<SkinJointMeasurements>,
+    /// Aggregate of the joints' bind-to-mesh linear-transform facts.
+    pub joint_bind_linear_summary: SkinBindLinearSummaryMeasurements,
     /// Exact source accessor state and finite readable raw matrices.
     pub inverse_bind_accessor: SkinInverseBindAccessorMeasurements,
     /// Source nodes that reference this skin, in source-node order.
@@ -636,7 +774,7 @@ fn source_local_rest_measurement(
             if matrix_is_finite(matrix) {
                 (
                     SkeletonNodeLocalRestMeasurements::Trs {
-                        translation_m: translation.to_array(),
+                        translation_parent_space_m: translation.to_array(),
                         rotation_xyzw: rotation.to_array(),
                         scale: scale.to_array(),
                     },
@@ -772,11 +910,197 @@ fn invertible_matrix(matrix: Mat4) -> Option<Mat4> {
     matrix_is_finite(inverse).then_some(inverse)
 }
 
+fn relatively_equal(left: f64, right: f64) -> bool {
+    let scale = left.abs().max(right.abs());
+    if scale == 0.0 {
+        left == right
+    } else {
+        (left - right).abs() <= LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE * scale
+    }
+}
+
+/// Derive deterministic scale, orientation, and shape facts from an affine
+/// matrix's linear 3x3 part.
+///
+/// Singularity is tested relative to the product of the three axis lengths,
+/// so the classification does not depend on whether the transform happens to
+/// use metre, centimetre, or another uniformly scaled coordinates. Reflection
+/// takes precedence over shear and scale-shape classes; the other numeric facts
+/// remain available on reflected observations.
+pub fn measure_linear_transform(matrix: Mat4) -> LinearTransformMeasurements {
+    if !matrix_is_finite(matrix) {
+        return LinearTransformMeasurements {
+            classification: LinearTransformClassification::NonFinite,
+            axis_lengths: None,
+            determinant: None,
+            orientation: None,
+            uniform_scale: None,
+        };
+    }
+
+    // Matrices are stored as f32, but scale-cubed determinants can overflow or
+    // underflow f32 even when every source component is finite and the matrix
+    // is well-conditioned. Derive all reported facts in f64 so the relative
+    // classification remains stable across the complete finite f32 range.
+    let matrix = matrix.to_cols_array();
+    let columns = [
+        [
+            f64::from(matrix[0]),
+            f64::from(matrix[1]),
+            f64::from(matrix[2]),
+        ],
+        [
+            f64::from(matrix[4]),
+            f64::from(matrix[5]),
+            f64::from(matrix[6]),
+        ],
+        [
+            f64::from(matrix[8]),
+            f64::from(matrix[9]),
+            f64::from(matrix[10]),
+        ],
+    ];
+    let axis_lengths = columns.map(|column| {
+        column
+            .into_iter()
+            .map(|component| component * component)
+            .sum::<f64>()
+            .sqrt()
+    });
+    let [x, y, z] = columns;
+    let determinant = x[0] * (y[1] * z[2] - y[2] * z[1]) - y[0] * (x[1] * z[2] - x[2] * z[1])
+        + z[0] * (x[1] * y[2] - x[2] * y[1]);
+    let scale_product = axis_lengths.into_iter().product::<f64>();
+
+    let singular = scale_product == 0.0
+        || determinant.abs() <= LINEAR_CLASSIFICATION_SINGULAR_TOLERANCE * scale_product;
+    let orientation = if singular {
+        LinearTransformOrientation::Zero
+    } else if determinant < 0.0 {
+        LinearTransformOrientation::Negative
+    } else {
+        LinearTransformOrientation::Positive
+    };
+    let orthogonal = [(0usize, 1usize), (0, 2), (1, 2)]
+        .into_iter()
+        .all(|(left, right)| {
+            let length_product = axis_lengths[left] * axis_lengths[right];
+            let dot = columns[left]
+                .into_iter()
+                .zip(columns[right])
+                .map(|(left, right)| left * right)
+                .sum::<f64>();
+            length_product == 0.0
+                || dot.abs() <= LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE * length_product
+        });
+    let uniform = relatively_equal(axis_lengths[0], axis_lengths[1])
+        && relatively_equal(axis_lengths[0], axis_lengths[2]);
+    let uniform_scale = (orthogonal && uniform)
+        .then_some((axis_lengths[0] + axis_lengths[1] + axis_lengths[2]) / 3.0);
+    let unit = uniform_scale
+        .is_some_and(|scale| (scale - 1.0).abs() <= LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE);
+    let classification = if singular {
+        LinearTransformClassification::Singular
+    } else if orientation == LinearTransformOrientation::Negative {
+        LinearTransformClassification::Reflected
+    } else if !orthogonal {
+        LinearTransformClassification::Sheared
+    } else if unit {
+        LinearTransformClassification::UnitOrthonormal
+    } else if uniform {
+        LinearTransformClassification::UniformScaled
+    } else {
+        LinearTransformClassification::NonUniform
+    };
+
+    LinearTransformMeasurements {
+        classification,
+        axis_lengths: Some(axis_lengths),
+        determinant: Some(determinant),
+        orientation: Some(orientation),
+        uniform_scale,
+    }
+}
+
+pub(crate) fn summarize_skin_bind_linear(
+    joints: &[SkinJointMeasurements],
+) -> SkinBindLinearSummaryMeasurements {
+    let joint_count = joints.len();
+    let available: Vec<_> = joints
+        .iter()
+        .filter_map(|joint| joint.joint_bind_to_mesh.linear)
+        .collect();
+    let available_joint_count = available.len();
+    let unavailable_joint_count = joint_count.saturating_sub(available_joint_count);
+    let (classification, consistent_uniform_scale) = if joint_count == 0 {
+        (SkinBindLinearSummaryClassification::NoJoints, None)
+    } else if available_joint_count == 0 {
+        (SkinBindLinearSummaryClassification::Unavailable, None)
+    } else if unavailable_joint_count > 0 {
+        (
+            SkinBindLinearSummaryClassification::PartiallyUnavailable,
+            None,
+        )
+    } else if available.iter().all(|linear| {
+        matches!(
+            linear.classification,
+            LinearTransformClassification::UnitOrthonormal
+                | LinearTransformClassification::UniformScaled
+        )
+    }) {
+        let first = available[0]
+            .uniform_scale
+            .expect("uniform classifications carry a scale");
+        if available.iter().all(|linear| {
+            linear
+                .uniform_scale
+                .is_some_and(|scale| relatively_equal(scale, first))
+        }) {
+            (
+                SkinBindLinearSummaryClassification::ConsistentUniform,
+                Some(first),
+            )
+        } else {
+            (SkinBindLinearSummaryClassification::MixedUniform, None)
+        }
+    } else if available.iter().all(|linear| {
+        matches!(
+            linear.classification,
+            LinearTransformClassification::NonUniform | LinearTransformClassification::Sheared
+        )
+    }) {
+        (
+            SkinBindLinearSummaryClassification::NonUniformOrSheared,
+            None,
+        )
+    } else if available.iter().all(|linear| {
+        matches!(
+            linear.classification,
+            LinearTransformClassification::Reflected | LinearTransformClassification::Singular
+        )
+    }) {
+        (
+            SkinBindLinearSummaryClassification::ReflectedOrSingular,
+            None,
+        )
+    } else {
+        (SkinBindLinearSummaryClassification::Mixed, None)
+    };
+    SkinBindLinearSummaryMeasurements {
+        classification,
+        joint_count,
+        available_joint_count,
+        unavailable_joint_count,
+        consistent_uniform_scale,
+    }
+}
+
 fn unavailable_derived_matrix(
     reason: SkinDerivedMatrixUnavailableReason,
 ) -> SkinDerivedMatrixMeasurements {
     SkinDerivedMatrixMeasurements {
         matrix: None,
+        linear: None,
         unavailable_reason: Some(reason),
     }
 }
@@ -784,6 +1108,7 @@ fn unavailable_derived_matrix(
 fn available_derived_matrix(matrix: Mat4) -> SkinDerivedMatrixMeasurements {
     SkinDerivedMatrixMeasurements {
         matrix: Some(matrix_to_columns(matrix)),
+        linear: Some(measure_linear_transform(matrix)),
         unavailable_reason: None,
     }
 }
@@ -843,18 +1168,34 @@ fn measure_source_skeleton(
         let Some(world) = worlds.get(&node.source_node_index).copied() else {
             return (SourceSkeletonCoverage::Unavailable, Vec::new(), Vec::new());
         };
-        let (rest_world_matrix, rest_world_matrix_unavailable_reason) = match world {
-            Ok(matrix) => (Some(matrix_to_columns(matrix)), None),
+        let (
+            rest_world_matrix,
+            rest_world_translation_m,
+            rest_world_linear,
+            rest_world_matrix_unavailable_reason,
+        ) = match world {
+            Ok(matrix) => (
+                Some(matrix_to_columns(matrix)),
+                Some(matrix.w_axis.truncate().to_array()),
+                measure_linear_transform(matrix),
+                None,
+            ),
             Err(SourceRestWorldError::NonFiniteLocalRest) => (
                 None,
+                None,
+                unavailable_linear_transform(),
                 Some(SkeletonRestWorldMatrixUnavailableReason::NonFiniteLocalRest),
             ),
             Err(SourceRestWorldError::ParentRestWorldUnavailable) => (
                 None,
+                None,
+                unavailable_linear_transform(),
                 Some(SkeletonRestWorldMatrixUnavailableReason::ParentRestWorldUnavailable),
             ),
             Err(SourceRestWorldError::NonFiniteWorldMatrix) => (
                 None,
+                None,
+                unavailable_linear_transform(),
                 Some(SkeletonRestWorldMatrixUnavailableReason::NonFiniteWorldMatrix),
             ),
             Err(SourceRestWorldError::MissingParentNode | SourceRestWorldError::ParentCycle) => {
@@ -868,6 +1209,8 @@ fn measure_source_skeleton(
             scene_root_indices: node.scene_root_indices.clone(),
             local_rest,
             rest_world_matrix,
+            rest_world_translation_m,
+            rest_world_linear,
             rest_world_matrix_unavailable_reason,
         });
     }
@@ -901,7 +1244,7 @@ fn measure_source_skeleton(
                 declared_count: skin.inverse_bind_accessor.declared_count,
                 matrices: raw_matrices,
             };
-            let joints = skin
+            let joints: Vec<_> = skin
                 .joint_source_node_indices
                 .iter()
                 .enumerate()
@@ -959,11 +1302,13 @@ fn measure_source_skeleton(
                     }
                 })
                 .collect();
+            let joint_bind_linear_summary = summarize_skin_bind_linear(&joints);
             SkinMeasurements {
                 skin_index: skin.source_skin_index,
                 name: skin.name.clone(),
                 skeleton_root_node_index: skin.skeleton_root_source_node_index,
                 joints,
+                joint_bind_linear_summary,
                 inverse_bind_accessor,
                 attachments: skin
                     .attachments
@@ -1546,6 +1891,300 @@ mod tests {
             None,
             "a readable count-mismatched accessor can still supply earlier slots"
         );
+    }
+
+    #[test]
+    fn linear_transform_measurements_classify_affine_shape_and_orientation() {
+        let cases = [
+            (
+                Mat4::IDENTITY,
+                LinearTransformClassification::UnitOrthonormal,
+                Some(LinearTransformOrientation::Positive),
+                Some(1.0),
+            ),
+            (
+                Mat4::from_scale(Vec3::splat(0.01)),
+                LinearTransformClassification::UniformScaled,
+                Some(LinearTransformOrientation::Positive),
+                Some(f64::from(0.01f32)),
+            ),
+            (
+                Mat4::from_scale(Vec3::new(2.0, 3.0, 4.0)),
+                LinearTransformClassification::NonUniform,
+                Some(LinearTransformOrientation::Positive),
+                None,
+            ),
+            (
+                Mat4::from_cols_array(&[
+                    1.0, 0.0, 0.0, 0.0, 0.5, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+                ]),
+                LinearTransformClassification::Sheared,
+                Some(LinearTransformOrientation::Positive),
+                None,
+            ),
+            (
+                Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0)),
+                LinearTransformClassification::Reflected,
+                Some(LinearTransformOrientation::Negative),
+                Some(1.0),
+            ),
+            (
+                Mat4::from_scale(Vec3::new(1.0, 0.0, 1.0)),
+                LinearTransformClassification::Singular,
+                Some(LinearTransformOrientation::Zero),
+                None,
+            ),
+        ];
+        for (matrix, classification, orientation, uniform_scale) in cases {
+            let measured = measure_linear_transform(matrix);
+            assert_eq!(measured.classification, classification);
+            assert_eq!(measured.orientation, orientation);
+            assert_eq!(measured.uniform_scale, uniform_scale);
+            assert!(measured.axis_lengths.is_some());
+            assert!(measured.determinant.is_some());
+        }
+
+        let non_finite = measure_linear_transform(Mat4::from_cols_array(&[f32::NAN; 16]));
+        assert_eq!(
+            non_finite,
+            LinearTransformMeasurements {
+                classification: LinearTransformClassification::NonFinite,
+                axis_lengths: None,
+                determinant: None,
+                orientation: None,
+                uniform_scale: None,
+            }
+        );
+
+        for scale in [1.0e-30f32, 1.0e-16, 1.0e13, 1.0e30] {
+            let measured = measure_linear_transform(Mat4::from_scale(Vec3::splat(scale)));
+            assert_eq!(
+                measured.classification,
+                LinearTransformClassification::UniformScaled,
+                "finite uniform scale {scale:e}"
+            );
+            assert_eq!(measured.uniform_scale, Some(f64::from(scale)));
+            assert!(measured.determinant.is_some_and(f64::is_finite));
+            assert_ne!(measured.determinant, Some(0.0));
+        }
+    }
+
+    #[test]
+    fn skin_bind_summary_covers_every_stable_aggregate_class() {
+        let available_joint = |joint_index, matrix| SkinJointMeasurements {
+            joint_index,
+            node_index: joint_index,
+            joint_bind_to_mesh: available_derived_matrix(matrix),
+            mesh_bind_world: available_derived_matrix(Mat4::IDENTITY),
+        };
+        let unavailable_joint = |joint_index| SkinJointMeasurements {
+            joint_index,
+            node_index: joint_index,
+            joint_bind_to_mesh: unavailable_derived_matrix(
+                SkinDerivedMatrixUnavailableReason::InverseBindAccessorAbsent,
+            ),
+            mesh_bind_world: unavailable_derived_matrix(
+                SkinDerivedMatrixUnavailableReason::InverseBindAccessorAbsent,
+            ),
+        };
+        let assert_summary = |joints: &[SkinJointMeasurements],
+                              classification,
+                              available_joint_count,
+                              unavailable_joint_count,
+                              consistent_uniform_scale| {
+            assert_eq!(
+                summarize_skin_bind_linear(joints),
+                SkinBindLinearSummaryMeasurements {
+                    classification,
+                    joint_count: joints.len(),
+                    available_joint_count,
+                    unavailable_joint_count,
+                    consistent_uniform_scale,
+                }
+            );
+        };
+
+        assert_summary(
+            &[],
+            SkinBindLinearSummaryClassification::NoJoints,
+            0,
+            0,
+            None,
+        );
+        assert_summary(
+            &[unavailable_joint(0)],
+            SkinBindLinearSummaryClassification::Unavailable,
+            0,
+            1,
+            None,
+        );
+        assert_summary(
+            &[available_joint(0, Mat4::IDENTITY), unavailable_joint(1)],
+            SkinBindLinearSummaryClassification::PartiallyUnavailable,
+            1,
+            1,
+            None,
+        );
+        assert_summary(
+            &[
+                available_joint(0, Mat4::IDENTITY),
+                available_joint(1, Mat4::IDENTITY),
+            ],
+            SkinBindLinearSummaryClassification::ConsistentUniform,
+            2,
+            0,
+            Some(1.0),
+        );
+        assert_summary(
+            &[
+                available_joint(0, Mat4::IDENTITY),
+                available_joint(1, Mat4::from_scale(Vec3::splat(2.0))),
+            ],
+            SkinBindLinearSummaryClassification::MixedUniform,
+            2,
+            0,
+            None,
+        );
+        assert_summary(
+            &[
+                available_joint(0, Mat4::from_scale(Vec3::new(1.0, 2.0, 3.0))),
+                available_joint(
+                    1,
+                    Mat4::from_cols_array(&[
+                        1.0, 0.0, 0.0, 0.0, 0.5, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0,
+                        1.0,
+                    ]),
+                ),
+            ],
+            SkinBindLinearSummaryClassification::NonUniformOrSheared,
+            2,
+            0,
+            None,
+        );
+        assert_summary(
+            &[
+                available_joint(0, Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0))),
+                available_joint(
+                    1,
+                    Mat4::from_cols_array(&[
+                        1.0, 0.0, 0.0, 0.0, 1.0, 1.0e-8, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0,
+                        0.0, 1.0,
+                    ]),
+                ),
+            ],
+            SkinBindLinearSummaryClassification::ReflectedOrSingular,
+            2,
+            0,
+            None,
+        );
+        assert_summary(
+            &[
+                available_joint(0, Mat4::IDENTITY),
+                available_joint(1, Mat4::from_scale(Vec3::new(1.0, 2.0, 3.0))),
+            ],
+            SkinBindLinearSummaryClassification::Mixed,
+            2,
+            0,
+            None,
+        );
+    }
+
+    #[test]
+    fn source_measurement_reports_disagreeing_uniform_joint_bind_scales() {
+        let doc = Document {
+            assets: SceneAssets {
+                source_skeleton: SourceSkeletonAssets {
+                    coverage: SourceSkeletonCoverage::Complete,
+                    nodes: (0..2)
+                        .map(|source_node_index| SourceNodeAsset {
+                            source_node_index,
+                            name: Some(format!("joint_{source_node_index}")),
+                            parent_source_node_index: None,
+                            scene_root_indices: vec![0],
+                            local_rest: SourceNodeLocalRest::Matrix(Mat4::IDENTITY),
+                        })
+                        .collect(),
+                    skins: vec![SourceSkinAsset {
+                        source_skin_index: 0,
+                        name: Some("mixed_uniform_bind_scale".into()),
+                        skeleton_root_source_node_index: Some(0),
+                        joint_source_node_indices: vec![0, 1],
+                        inverse_bind_accessor: SourceInverseBindAccessor {
+                            status: SourceInverseBindAccessorStatus::Available,
+                            declared_count: Some(2),
+                            matrices: vec![Mat4::IDENTITY, Mat4::from_scale(Vec3::splat(0.5))],
+                        },
+                        attachments: Vec::new(),
+                    }],
+                },
+                ..SceneAssets::default()
+            },
+            ..Document::default()
+        };
+
+        let measured = measure_assets(&doc);
+        let skin = &measured.skins[0];
+        assert_eq!(
+            skin.joints
+                .iter()
+                .map(|joint| {
+                    let linear = joint
+                        .joint_bind_to_mesh
+                        .linear
+                        .expect("finite invertible raw inverse binds are measurable");
+                    (linear.classification, linear.uniform_scale)
+                })
+                .collect::<Vec<_>>(),
+            vec![
+                (LinearTransformClassification::UnitOrthonormal, Some(1.0)),
+                (LinearTransformClassification::UniformScaled, Some(2.0)),
+            ]
+        );
+        assert_eq!(
+            skin.joint_bind_linear_summary,
+            SkinBindLinearSummaryMeasurements {
+                classification: SkinBindLinearSummaryClassification::MixedUniform,
+                joint_count: 2,
+                available_joint_count: 2,
+                unavailable_joint_count: 0,
+                consistent_uniform_scale: None,
+            }
+        );
+    }
+
+    #[test]
+    fn non_finite_source_rest_is_explicit_in_matrix_and_linear_domains() {
+        let doc = Document {
+            assets: SceneAssets {
+                source_skeleton: SourceSkeletonAssets {
+                    coverage: SourceSkeletonCoverage::Complete,
+                    nodes: vec![SourceNodeAsset {
+                        source_node_index: 0,
+                        name: None,
+                        parent_source_node_index: None,
+                        scene_root_indices: Vec::new(),
+                        local_rest: SourceNodeLocalRest::Matrix(Mat4::from_cols_array(
+                            &[f32::NAN; 16],
+                        )),
+                    }],
+                    skins: Vec::new(),
+                },
+                ..SceneAssets::default()
+            },
+            ..Document::default()
+        };
+        let node = &measure_assets(&doc).skeleton_nodes[0];
+        assert!(node.rest_world_matrix.is_none());
+        assert!(node.rest_world_translation_m.is_none());
+        assert_eq!(
+            node.rest_world_matrix_unavailable_reason,
+            Some(SkeletonRestWorldMatrixUnavailableReason::NonFiniteLocalRest)
+        );
+        assert_eq!(
+            node.rest_world_linear.classification,
+            LinearTransformClassification::NonFinite
+        );
+        assert!(node.rest_world_linear.axis_lengths.is_none());
     }
 
     #[test]

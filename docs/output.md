@@ -13,11 +13,11 @@ identity `urn:animsmith:schema:output:4`. The retrievable schema is
 is a retrieval location, not the protocol identity.
 
 Measurement evidence is nested and independently versioned as
-`urn:animsmith:schema:measurements:10`. Its retrievable schema is
-[`measurements-v10.schema.json`](schemas/measurements-v10.schema.json). Version
-10 adds emissive material-texture bindings to the source-resource inventory; a
-future measurement-definition change can therefore bump that contract without
-redesigning the outer result envelope.
+`urn:animsmith:schema:measurements:11`. Its retrievable schema is
+[`measurements-v11.schema.json`](schemas/measurements-v11.schema.json). Version
+11 makes parent-space translation explicit and adds rest-world and skin-bind
+linear-transform facts. A future measurement-definition change can therefore
+bump that contract without redesigning the outer result envelope.
 
 `convert --format json` is deliberately a separate conversion-evidence
 contract, not another command in the output-v4 envelope. Its immutable
@@ -219,8 +219,8 @@ Both commands put evidence under `files[].measurements`:
 
 ```json
 {
-  "schema_version": 10,
-  "schema": "urn:animsmith:schema:measurements:10",
+  "schema_version": 11,
+  "schema": "urn:animsmith:schema:measurements:11",
   "clips": {},
   "mesh_definitions": [],
   "node_instances": [],
@@ -387,16 +387,39 @@ parent cycle, downgrade the whole skeleton source domain to `"unavailable"`
 instead of publishing a self-contradictory complete table.
 
 Every source node records its authored `local_rest`, tagged as `"trs"`,
-`"matrix"`, or `"unavailable"`. A TRS has `translation_m`,
-`rotation_xyzw`, and `scale`; the quaternion is `[x, y, z, w]`. A matrix is a
-16-element column-major local transform. `rest_world_matrix` is a separately
-derived, column-major default/rest world matrix, or its typed unavailable
-reason. An unavailable local representation carries its stable `reason`. The
-local representation is never silently decomposed or replaced by
-the world transform. A declared scene is membership only, not a transform
-domain: `scene_root_indices` is membership evidence and adds no transform. A
+`"matrix"`, or `"unavailable"`. A TRS has
+`translation_parent_space_m`, `rotation_xyzw`, and `scale`; the quaternion is
+`[x, y, z, w]`. The translation is expressed in the direct parent's coordinate
+frame. Even though glTF linear distances use metres, its numeric value is not
+directly comparable with a mesh-local or scene-world AABB until ancestor
+transforms are composed. A matrix is a 16-element column-major local
+transform. Measurements v10 and earlier called the TRS field `translation_m`;
+v11 renamed it so adapters cannot accidentally erase the coordinate domain.
+
+`rest_world_matrix` is the separately derived, column-major default/rest world
+matrix. `rest_world_translation_m` repeats indices 12, 13, and 14 of that
+matrix as a directly consumable world-domain translation. `rest_world_linear`
+describes its upper-left 3x3 matrix with X/Y/Z column lengths, determinant,
+orientation sign, an optional common orthogonal `uniform_scale`, and one stable
+classification: `unit_orthonormal`, `uniform_scaled`, `non_uniform`,
+`sheared`, `reflected`, `singular`, or `non_finite`. Reflection takes
+classification precedence; axis lengths and the negative orientation retain
+the scale-shape evidence. Relative `1e-5` orthogonality/equal-axis tolerances
+and a scale-relative `1e-6` determinant tolerance make the result independent
+of a uniform choice of source units. The derived numeric facts are calculated
+and serialized with `f64` precision so scale-cubed determinants do not
+overflow or underflow across the finite `f32` source-matrix range. A
+non-finite or transitively unavailable world matrix carries its typed
+unavailable reason and a `non_finite` linear classification without fabricated
+numeric fields.
+
+The local representation is never silently decomposed or replaced by the
+world transform. A declared scene is membership only, not a transform domain:
+`scene_root_indices` is membership evidence and adds no transform. A
 transformed node selected as a scene root retains its own local rest record,
-and its ancestors determine the derived world matrix.
+and its ancestors determine the derived world matrix. These composition rules
+follow the [glTF node hierarchy and transform
+definition](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#nodes-and-hierarchy).
 
 `skins` is a source-skin table in ascending `skin_index` order. Its `joints`
 are in declared skin-slot order; each joint row owns its `joint_index`,
@@ -416,10 +439,31 @@ the mesh-local bind domain declared by that skin; `mesh_bind_world` is
 into world bind coordinates when the authored rest and bind poses agree. These
 remain per-joint observations rather than claims that rows agree. Attachments
 are identity evidence, not an extra transform folded into either calculation.
-Each derived field is either a finite matrix or a typed unavailable reason.
+Each available derived field preserves its finite matrix and adds the same
+`linear` facts used by rest-world nodes. Otherwise it carries a typed
+unavailable reason. `joint_bind_linear_summary` summarizes only
+`joint_bind_to_mesh`: it reports joint/available/unavailable counts and
+distinguishes a shared `consistent_uniform` factor, differing `mixed_uniform`
+factors, `non_uniform_or_sheared`, `reflected_or_singular`, mixed groups, and
+partial or total unavailability. The detailed joint rows remain authoritative.
 These are descriptive calculations only. animsmith does not decide whether a
 consumer requires a joint, whether a skin/rest comparison is close enough,
 which root is canonical, or whether an unavailable matrix is acceptable.
+
+For example, an exporter may put a `0.01` scale on an ancestor and author a
+child socket translation of `11.5`. The local value remains
+`11.5` parent-space metres while the accumulated rest-world contribution is
+approximately `0.115 m`. A skin can still render at its intended size when an
+inverse bind contributes the compensating factor: a joint may show effective
+rest-world scale `0.01`, raw inverse-bind scale `100`, joint-bind-to-mesh scale
+`0.01`, and mesh-bind-world scale `1`. That compensation applies to the
+skinning equation; an ordinary weapon,
+effect, or collision object parented to the socket generally inherits the
+socket's non-unit affine scale. The measurements expose all three domains so a
+consumer can apply its own attachment policy. They do not infer authored units
+from character height, mesh size, or any other plausibility heuristic. The
+matrix relationship follows the [glTF skinning
+definition](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#skins).
 
 These facts help an artist or engine integration diagnose common handoff
 questions without reparsing the source: whether a joint is nested below a
@@ -549,7 +593,7 @@ delta count, and structured metric deltas:
 ```
 
 `diff` accepts asset files or one-file v4 `measure`/`lint` reports carrying
-measurement contract v10. Multi-file reports and unsupported contract versions
+measurement contract v11. Multi-file reports and unsupported contract versions
 are rejected as operator errors. Before extracting the clip metrics it uses,
 `diff` validates the complete measurement record, including mesh evidence, and
 rejects malformed or non-finite payload values.

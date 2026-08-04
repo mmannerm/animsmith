@@ -8,11 +8,11 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 
 const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:4";
-const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:10";
+const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:11";
 const HOSTILE_PRESENTATION_TEXT: &str = "forged\nline\u{1b}[31m\u{2028}\u{2029}\u{202e}";
 const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v4.schema.json");
 const MEASUREMENTS_SCHEMA: &str =
-    include_str!("../../../docs/schemas/measurements-v10.schema.json");
+    include_str!("../../../docs/schemas/measurements-v11.schema.json");
 const EXPECTED_CHECK_IDS: [&str; 25] = [
     "nan",
     "time-monotonic",
@@ -457,7 +457,7 @@ fn measurement_report(duration_s: f64) -> Value {
             },
             "rig": { "profile": "unknown" },
             "measurements": {
-                "schema_version": 10,
+                "schema_version": 11,
                 "schema": MEASUREMENTS_SCHEMA_ID,
                 "clips": {
                     "walk": {
@@ -602,7 +602,7 @@ fn duplicate_loop_endpoint_cli_detects_trims_and_exposes_changed_contracts() {
     assert_output_schema_valid(&lint_json);
     assert_eq!(lint_json["schema_version"], 4);
     assert_eq!(lint_json["schema"], OUTPUT_SCHEMA_ID);
-    assert_eq!(lint_json["files"][0]["measurements"]["schema_version"], 10);
+    assert_eq!(lint_json["files"][0]["measurements"]["schema_version"], 11);
     assert_eq!(
         lint_json["files"][0]["measurements"]["schema"],
         MEASUREMENTS_SCHEMA_ID
@@ -1395,7 +1395,7 @@ fn measure_json_uses_versioned_envelope() {
     assert_eq!(files.len(), 1);
     assert_eq!(files[0]["rig"]["profile"], "unknown");
     assert!(files[0]["checks"].is_null());
-    assert_eq!(files[0]["measurements"]["schema_version"], 10);
+    assert_eq!(files[0]["measurements"]["schema_version"], 11);
     assert_eq!(files[0]["measurements"]["schema"], MEASUREMENTS_SCHEMA_ID);
     assert!(files[0]["measurements"]["clips"]["walk"]["duration_s"].is_number());
     let loop_bones = files[0]["measurements"]["clips"]["walk"]["loop_continuity"]["bones"]
@@ -1442,7 +1442,7 @@ fn angular_loop_seam_is_versioned_and_configurable_at_the_cli_boundary() {
     );
     let baseline: Value = serde_json::from_slice(&baseline.stdout).expect("valid lint JSON");
     assert_output_schema_valid(&baseline);
-    assert_eq!(baseline["files"][0]["measurements"]["schema_version"], 10);
+    assert_eq!(baseline["files"][0]["measurements"]["schema_version"], 11);
     assert_eq!(
         baseline["files"][0]["measurements"]["schema"],
         MEASUREMENTS_SCHEMA_ID
@@ -1455,7 +1455,7 @@ fn angular_loop_seam_is_versioned_and_configurable_at_the_cli_boundary() {
         .remove("seam_angular_velocity_delta_degps");
     assert!(
         !output_validator().is_valid(&missing_angular_evidence),
-        "measurements-v10 requires angular seam evidence in every loop-continuity row"
+        "measurements-v11 requires angular seam evidence in every loop-continuity row"
     );
     let bones =
         baseline["files"][0]["measurements"]["clips"]["angular_cusp"]["loop_continuity"]["bones"]
@@ -1545,23 +1545,23 @@ fn measure_text_escapes_controls_in_clip_and_mesh_names() {
     assert!(text.contains("Δω=0.00°/s"), "angular aggregate: {text}");
     assert_eq!(
         text.matches("\\n").count(),
-        3,
-        "clip, mesh, and node: {text}"
+        5,
+        "clip, mesh, node instance, and two source nodes: {text}"
     );
     assert_eq!(
         text.matches("\\u{1b}").count(),
-        3,
-        "clip, mesh, and node: {text}"
+        5,
+        "clip, mesh, node instance, and two source nodes: {text}"
     );
     assert_eq!(
         text.matches("\\u{2028}").count(),
-        3,
-        "clip, mesh, and node: {text}"
+        5,
+        "clip, mesh, node instance, and two source nodes: {text}"
     );
     assert_eq!(
         text.matches("\\u{202e}").count(),
-        3,
-        "clip, mesh, and node: {text}"
+        5,
+        "clip, mesh, node instance, and two source nodes: {text}"
     );
 }
 
@@ -1661,8 +1661,8 @@ fn measure_text_renderer_escapes_hostile_asset_text_and_input_path() {
     );
     assert_eq!(
         text.matches(escaped_asset).count(),
-        3,
-        "clip, mesh-definition, and node names should each be escaped:\n{text}"
+        5,
+        "clip, mesh-definition, node-instance, and source-node names should each be escaped:\n{text}"
     );
     assert!(
         text.lines()
@@ -1853,7 +1853,7 @@ fn lint_json_uses_versioned_envelope() {
     assert_eq!(json["command"], "lint");
     assert_eq!(json["summary"]["files"], 1);
     assert!(json["files"][0]["checks"].is_array());
-    assert_eq!(json["files"][0]["measurements"]["schema_version"], 10);
+    assert_eq!(json["files"][0]["measurements"]["schema_version"], 11);
     assert_eq!(
         json["files"][0]["measurements"]["schema"],
         MEASUREMENTS_SCHEMA_ID
@@ -2859,7 +2859,7 @@ fn diff_preserves_tailored_report_errors_and_remediation() {
         (
             "unsupported measurement version",
             unsupported_measurement_version,
-            "has measurement schema_version 7; this build reads measurement schema_version 10"
+            "has measurement schema_version 7; this build reads measurement schema_version 11"
                 .to_owned(),
         ),
         (
@@ -2977,7 +2977,7 @@ fn diff_rejects_outer_and_nested_contract_identity_drift() {
                 report["files"][0]["measurements"]["schema_version"] = json!(7);
                 report
             },
-            "has measurement schema_version 7; this build reads measurement schema_version 10",
+            "has measurement schema_version 7; this build reads measurement schema_version 11",
         ),
         (
             {
@@ -3200,7 +3200,7 @@ fn diff_rejects_unsupported_schema_versions() {
 fn diff_rejects_all_unsupported_nested_measurement_schema_versions() {
     let dir = unique_temp_dir("diff-unsupported-nested-schema");
     let report_path = dir.path().join("report.json");
-    for version in [0, 1, 2, 3, 4, 5, 6, 7, 8, 99] {
+    for version in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 99] {
         let mut report = measurement_report(1.0);
         report["files"][0]["measurements"]["schema_version"] = json!(version);
         write_json(&report_path, &report);
@@ -3220,12 +3220,124 @@ fn diff_rejects_all_unsupported_nested_measurement_schema_versions() {
         );
         assert!(
             stderr(&output).contains(&format!(
-                "has measurement schema_version {version}; this build reads measurement schema_version 10"
+                "has measurement schema_version {version}; this build reads measurement schema_version 11"
             )),
             "version {version}: stderr:\n{}",
             stderr(&output)
         );
     }
+}
+
+#[test]
+fn diff_rejects_v10_skeleton_shape_before_decoding_v11_fields() {
+    let dir = unique_temp_dir("diff-v10-skeleton-shape");
+    let report_path = dir.path().join("report.json");
+    let mut report = measurement_report(1.0);
+    report["files"][0]["measurements"]["schema_version"] = json!(10);
+    report["files"][0]["measurements"]["schema"] = json!("urn:animsmith:schema:measurements:10");
+    report["files"][0]["measurements"]["skeleton_source_coverage"] = json!("complete");
+    report["files"][0]["measurements"]["skeleton_nodes"] = json!([{
+        "node_index": 0,
+        "scene_root_indices": [],
+        "local_rest": {
+            "kind": "trs",
+            "translation_m": [0.0, 0.0, 0.0],
+            "rotation_xyzw": [0.0, 0.0, 0.0, 1.0],
+            "scale": [1.0, 1.0, 1.0]
+        },
+        "rest_world_matrix": [
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+            0.0, 0.0, 0.0, 1.0
+        ]
+    }]);
+    write_json(&report_path, &report);
+
+    let output = animsmith()
+        .args([
+            "diff",
+            report_path.to_str().expect("utf-8 report path"),
+            fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stdout(&output).is_empty());
+    assert!(
+        stderr(&output).contains(
+            "has measurement schema_version 10; this build reads measurement schema_version 11"
+        ),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    assert!(!stderr(&output).contains("bad JSON"));
+}
+
+#[test]
+fn diff_does_not_accept_v10_skeleton_or_skin_shapes_under_the_v11_identity() {
+    let dir = unique_temp_dir("diff-v10-shape-v11-identity");
+    let report_path = dir.path().join("report.json");
+    let mut report = measurement_report(1.0);
+    report["files"][0]["measurements"]["skeleton_source_coverage"] = json!("complete");
+    report["files"][0]["measurements"]["skeleton_nodes"] = json!([{
+        "node_index": 0,
+        "scene_root_indices": [],
+        "local_rest": {
+            "kind": "trs",
+            "translation_m": [0.0, 0.0, 0.0],
+            "rotation_xyzw": [0.0, 0.0, 0.0, 1.0],
+            "scale": [1.0, 1.0, 1.0]
+        },
+        "rest_world_matrix": [
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+            0.0, 0.0, 0.0, 1.0
+        ]
+    }]);
+    write_json(&report_path, &report);
+
+    let output = animsmith()
+        .args([
+            "diff",
+            report_path.to_str().expect("utf-8 report path"),
+            fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stdout(&output).is_empty());
+    assert!(
+        stderr(&output).contains(
+            "measurement structure skeleton_nodes[0] is invalid: uses a shape from an earlier measurement contract"
+        ),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+
+    report["files"][0]["measurements"]["skeleton_source_coverage"] = json!("unavailable");
+    report["files"][0]["measurements"]["skeleton_nodes"] = json!([]);
+    report["files"][0]["measurements"]["skins"] = json!([{ "skin_index": 0 }]);
+    write_json(&report_path, &report);
+    let output = animsmith()
+        .args([
+            "diff",
+            report_path.to_str().expect("utf-8 report path"),
+            fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
+        ])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        stderr(&output).contains(
+            "measurement structure skins[0] is invalid: uses a shape from an earlier measurement contract"
+        ),
+        "stderr:\n{}",
+        stderr(&output)
+    );
 }
 
 #[test]
