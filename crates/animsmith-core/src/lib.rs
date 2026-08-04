@@ -11,6 +11,9 @@
 //! The opt-in [`bake_static_mesh_transforms`] operation canonicalizes supported
 //! unanimated, unskinned mesh scenes into identity-root geometry and returns
 //! deterministic producer evidence.
+//! The opt-in [`transform::prune_constant_tracks`] helper removes only
+//! interpolation-aware constant-track candidates whose sampled local and
+//! model-space pose evidence remains within its documented tolerances.
 //! The [`animsmith-gltf`] and [`animsmith-fbx`] loader crates translate file
 //! formats into this model; their docs.rs pages continue the library path for
 //! format-specific loading and, for glTF, writing.

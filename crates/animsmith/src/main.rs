@@ -112,7 +112,7 @@ enum Cmd {
     },
     /// Apply mechanical clip transforms.
     #[command(
-        long_about = "Apply pipeline-mechanical clip transforms and write the result as glTF, carrying through any scene assets the input brought (FBX or glTF meshes, skins, materials, and embedded base-color and normal textures). Operations apply to every clip, or one clip via --clip. Dropping a duplicate loop endpoint requires the clip to be declared loop = true in config and produces an open-cycle representation."
+        long_about = "Apply pipeline-mechanical clip transforms and write the result as glTF, carrying through any scene assets the input brought (FBX or glTF meshes, skins, materials, and embedded base-color and normal textures). Operations apply to every clip, or one clip via --clip. Dropping a duplicate loop endpoint requires the clip to be declared loop = true in config and produces an open-cycle representation. Pruning constant tracks is opt-in and keeps tracks for bones declared animates_bones."
     )]
     Transform {
         /// Input .glb, .gltf, or .fbx file.
@@ -139,6 +139,10 @@ enum Cmd {
         /// t=0 (needs hips+feet rig roles).
         #[arg(long)]
         gait_anchor: bool,
+        /// Remove provably constant multi-key tracks after all other transforms.
+        /// Tracks for bones declared `animates_bones` remain as motion evidence.
+        #[arg(long)]
+        prune_constant_tracks: bool,
         /// Frame rate used for epsilon and shift quantization.
         #[arg(long, default_value_t = 30.0)]
         fps: f64,
@@ -542,6 +546,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             hold_extend,
             drop_duplicate_loop_endpoint,
             gait_anchor,
+            prune_constant_tracks,
             fps,
         } => {
             let config = load_config(cli.config.as_deref())?;
@@ -630,6 +635,39 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                             render::render_transform_gait_anchor_skipped(&c.name, &reason)
                         ),
                     }
+                }
+                if prune_constant_tracks {
+                    // `animates_bones` is an animation/motion contract.  Keep its
+                    // exact-name tracks even if they are mechanically constant, so
+                    // subsequent lint can still diagnose an unmet declaration.
+                    // `[rig] required_bones` is deliberately not included: it is a
+                    // skeleton-presence contract, not per-clip motion evidence.
+                    let protected_bones = config
+                        .expectations_for(&c.name)
+                        .animates_bones
+                        .as_deref()
+                        .map(|names| {
+                            skeleton
+                                .bones
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(id, bone)| {
+                                    names.iter().any(|name| name == &bone.name).then_some(id)
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    let outcome = animsmith_core::transform::prune_constant_tracks(
+                        &skeleton,
+                        c,
+                        &protected_bones,
+                    );
+                    print!(
+                        "{}",
+                        render::render_transform_constant_track_pruning(
+                            &c.name, &skeleton, &outcome,
+                        )
+                    );
                 }
             }
             if touched == 0 {

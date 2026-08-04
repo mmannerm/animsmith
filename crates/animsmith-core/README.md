@@ -83,6 +83,16 @@ removal. It rejects ambiguous or missing referenced names rather than guessing
 at a retargeting relationship. For a final-pose hold, use the existing
 `animsmith_core::transform::hold_extend` helper.
 
+## Constant-Track Pruning
+
+`animsmith_core::transform::prune_constant_tracks` is an opt-in mechanical
+edit for redundant multi-key TRS tracks. It shares the built-in
+`constant-track` classifier, tests cumulative removals on the original clip's
+sample grid, and returns authored-order removed and retained records. Callers
+provide any bone IDs whose authored channels must remain; the function also
+refuses changes that alter sampled local TRS or model-space position/rotation,
+cannot be sampled safely, or would leave the clip without a writable track.
+
 ## Skinned Bind-Pose Canonicalization
 
 `animsmith_core::canonicalize_skinned_bind_pose` prepares an unanimated,

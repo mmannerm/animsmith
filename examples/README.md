@@ -219,8 +219,9 @@ mechanical transform can make the clip conform without touching
 geometry.
 
 `transform` applies mechanical pipeline edits — slice a window, hold the
-final pose, re-anchor a gait cycle, or remove an eligible duplicate loop
-endpoint. Geometry passes through unchanged.
+final pose, re-anchor a gait cycle, remove an eligible duplicate loop
+endpoint, or prune provably constant multi-key tracks. Geometry passes through
+unchanged.
 
 Slice a sub-window (retimed to start at 0):
 
@@ -262,6 +263,23 @@ the duration; it does not repair a stationary hold, root-travel/nonclosing
 clip, mismatched timelines, endpoint tangents, or retargeting damage. The open
 cycle is for engines that wrap over duration, so its inclusive
 `loop-closure` result is expected to change.
+
+For exported clips with redundant “key everything” or baked-control channels,
+start with the default `constant-track` note, inspect the DCC/engine result,
+then make the explicit mechanical edit:
+
+```console
+$ animsmith lint exported.glb --select constant-track
+$ animsmith transform exported.glb -o compact.glb --prune-constant-tracks
+  constant-track removed 'idle': track 3 bone 'control' scale Linear 90 key(s)
+```
+
+The transform keeps a deterministic text record for every removal and every
+candidate it declines, including the source track index. It leaves an
+`animates_bones` target in place so the declared motion contract can still be
+checked; it does not protect `[rig] required_bones`, which only declares that
+the skeleton must contain a name. Re-lint and preview `compact.glb` in the
+target engine before replacing the export.
 
 ---
 

@@ -3,10 +3,13 @@
 //! removal, and gait-anchor rotation. Scope rule (DESIGN.md §1): animsmith may rewrite a clip
 //! only in ways whose correctness its own checks can verify.
 
+use crate::checks::constant_track::is_constant_track;
 use crate::metrics::foot_cycle_metrics;
-use crate::model::{Clip, Interpolation, Property, Skeleton, Track, TrackValues};
+use crate::model::{BoneId, Clip, Interpolation, Property, Skeleton, Track, TrackValues};
 use crate::profile::ResolvedRoles;
-use crate::sample::{TrackSample, sample_clip, sample_track};
+use crate::sample::{TrackSample, default_frame_count, sample_clip, sample_track};
+use glam::{Quat, Vec3};
+use std::fmt;
 use thiserror::Error;
 
 /// Failure while analyzing a duplicate loop endpoint.
@@ -84,6 +87,310 @@ pub struct DuplicateLoopEndpointOutcome {
 pub const DUPLICATE_ENDPOINT_VEC3_TOLERANCE: f32 = 1.0e-5;
 /// Sign-invariant shortest-path angular tolerance for duplicate rotations.
 pub const DUPLICATE_ENDPOINT_QUATERNION_TOLERANCE_RAD: f32 = 1.0e-4;
+
+/// Maximum component-wise local translation/scale change accepted when
+/// pruning a constant track. This aliases the `constant-track` check's
+/// classification tolerance.
+pub const CONSTANT_TRACK_PRUNE_VEC3_TOLERANCE: f32 = crate::checks::constant_track::VEC3_TOLERANCE;
+/// Maximum sign-invariant local rotation change accepted when pruning a
+/// constant track. This aliases the `constant-track` check's tolerance.
+pub const CONSTANT_TRACK_PRUNE_QUAT_TOLERANCE_RAD: f32 =
+    crate::checks::constant_track::QUAT_TOLERANCE_RAD;
+
+/// Outcome of [`prune_constant_tracks`].
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct PruneConstantTracksOutcome {
+    /// Candidate tracks removed, in original authored order.
+    pub removed: Vec<ConstantTrackPruneRecord>,
+    /// Candidate tracks retained, in original authored order.
+    pub retained: Vec<ConstantTrackRetainedRecord>,
+}
+
+/// One constant-track candidate considered by [`prune_constant_tracks`].
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct ConstantTrackPruneRecord {
+    /// Original index in [`Clip::tracks`].
+    pub original_track_index: usize,
+    /// Target bone.
+    pub bone: BoneId,
+    /// Target local TRS property.
+    pub property: Property,
+    /// Authored interpolation mode.
+    pub interpolation: Interpolation,
+    /// Number of authored keyframes.
+    pub key_count: usize,
+}
+
+/// A candidate that [`prune_constant_tracks`] conservatively retained.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct ConstantTrackRetainedRecord {
+    /// The candidate's immutable authored evidence.
+    pub record: ConstantTrackPruneRecord,
+    /// Why it was retained.
+    pub reason: ConstantTrackRetentionReason,
+}
+
+/// Reason a constant-track candidate was not removed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ConstantTrackRetentionReason {
+    /// The caller identifies this bone as a required authored channel.
+    ProtectedBone,
+    /// The track targets no bone in the supplied skeleton.
+    InvalidTarget,
+    /// The original or a trial clip cannot be safely sampled.
+    SamplingUnavailable,
+    /// Removing the track changes sampled local TRS or model-space pose data.
+    PoseChanged,
+    /// Removing the track would leave no writable track in the clip.
+    LastWritableTrack,
+}
+
+impl fmt::Display for ConstantTrackRetentionReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::ProtectedBone => "target bone is protected",
+            Self::InvalidTarget => "track target is not present in the skeleton",
+            Self::SamplingUnavailable => "the original or trial clip cannot be sampled safely",
+            Self::PoseChanged => {
+                "removal changes sampled local TRS or model-space position/rotation"
+            }
+            Self::LastWritableTrack => "removal would leave no writable track",
+        })
+    }
+}
+
+/// Remove constant multi-key tracks only when doing so preserves every local
+/// TRS and model-space position/rotation on the original clip's default sample
+/// grid.
+///
+/// This is deliberately more conservative than the `constant-track` check:
+/// an all-zero translation track, for example, only disappears if the rest
+/// pose and any other channel reproduce it. Candidate classification shares
+/// that check's interpolation-aware tolerances; accepted removals are then
+/// validated cumulatively against the untouched original. Invalid hand-built
+/// inputs are retained instead of panicking. The final edit is atomic.
+pub fn prune_constant_tracks(
+    skeleton: &Skeleton,
+    clip: &mut Clip,
+    protected_bones: &[BoneId],
+) -> PruneConstantTracksOutcome {
+    let candidates: Vec<ConstantTrackPruneRecord> = clip
+        .tracks
+        .iter()
+        .enumerate()
+        .filter(|(_, track)| is_constant_track(track))
+        .map(|(original_track_index, track)| ConstantTrackPruneRecord {
+            original_track_index,
+            bone: track.bone,
+            property: track.property,
+            interpolation: track.interpolation,
+            key_count: track.key_count(),
+        })
+        .collect();
+    if candidates.is_empty() {
+        return PruneConstantTracksOutcome {
+            removed: Vec::new(),
+            retained: Vec::new(),
+        };
+    }
+
+    if !valid_sampling_target(skeleton, clip) {
+        return PruneConstantTracksOutcome {
+            removed: Vec::new(),
+            retained: candidates
+                .into_iter()
+                .map(|record| ConstantTrackRetainedRecord {
+                    reason: if record.bone >= skeleton.bones.len() {
+                        ConstantTrackRetentionReason::InvalidTarget
+                    } else {
+                        ConstantTrackRetentionReason::SamplingUnavailable
+                    },
+                    record,
+                })
+                .collect(),
+        };
+    }
+
+    let frames = default_frame_count(clip);
+    let original = sample_clip(skeleton, clip, frames);
+    if !finite_grid(&original) {
+        return PruneConstantTracksOutcome {
+            removed: Vec::new(),
+            retained: candidates
+                .into_iter()
+                .map(|record| ConstantTrackRetainedRecord {
+                    record,
+                    reason: ConstantTrackRetentionReason::SamplingUnavailable,
+                })
+                .collect(),
+        };
+    }
+
+    let source = clip.clone();
+    let mut accepted = Vec::new();
+    let mut removed_records = Vec::new();
+    let mut retained = Vec::new();
+    for record in candidates {
+        if protected_bones.contains(&record.bone) {
+            retained.push(ConstantTrackRetainedRecord {
+                record,
+                reason: ConstantTrackRetentionReason::ProtectedBone,
+            });
+            continue;
+        }
+        if source.tracks.len() <= accepted.len() + 1 {
+            retained.push(ConstantTrackRetainedRecord {
+                record,
+                reason: ConstantTrackRetentionReason::LastWritableTrack,
+            });
+            continue;
+        }
+        let mut trial = source.clone();
+        let mut removed: Vec<usize> = accepted.clone();
+        removed.push(record.original_track_index);
+        trial.tracks = source
+            .tracks
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !removed.contains(index))
+            .map(|(_, track)| track.clone())
+            .collect();
+        let trial_grid = sample_clip(skeleton, &trial, frames);
+        if !finite_grid(&trial_grid) {
+            retained.push(ConstantTrackRetainedRecord {
+                record,
+                reason: ConstantTrackRetentionReason::SamplingUnavailable,
+            });
+        } else if !sampled_poses_match(&original, &trial_grid) {
+            retained.push(ConstantTrackRetainedRecord {
+                record,
+                reason: ConstantTrackRetentionReason::PoseChanged,
+            });
+        } else {
+            accepted.push(record.original_track_index);
+            removed_records.push(record);
+        }
+    }
+    if !accepted.is_empty() {
+        clip.tracks = source
+            .tracks
+            .into_iter()
+            .enumerate()
+            .filter(|(index, _)| !accepted.contains(index))
+            .map(|(_, track)| track)
+            .collect();
+    }
+    PruneConstantTracksOutcome {
+        removed: removed_records,
+        retained,
+    }
+}
+
+fn valid_sampling_target(skeleton: &Skeleton, clip: &Clip) -> bool {
+    clip.duration_s.is_finite()
+        && clip.duration_s > 0.0
+        && skeleton.bones.iter().enumerate().all(|(index, bone)| {
+            bone.parent.is_none_or(|parent| parent < index)
+                && bone.rest.translation.is_finite()
+                && bone.rest.scale.is_finite()
+                && bone.rest.rotation.is_finite()
+                && bone.rest.rotation.length_squared() > 0.0
+        })
+        && clip.tracks.iter().all(|track| {
+            let Some(expected) = track.key_count().checked_mul(
+                if track.interpolation == Interpolation::CubicSpline {
+                    3
+                } else {
+                    1
+                },
+            ) else {
+                return false;
+            };
+            track.bone < skeleton.bones.len()
+                && track.key_count() > 0
+                && track.values.len() == expected
+                && track.times.iter().all(|time| time.is_finite())
+                && track.times.windows(2).all(|pair| pair[0] < pair[1])
+                && matches!(
+                    (track.property, &track.values),
+                    (Property::Rotation, TrackValues::Quats(_))
+                        | (
+                            Property::Translation | Property::Scale,
+                            TrackValues::Vec3s(_)
+                        )
+                )
+                && match &track.values {
+                    TrackValues::Vec3s(values) => values.iter().all(|value| value.is_finite()),
+                    TrackValues::Quats(values) => {
+                        values.iter().enumerate().all(|(index, value)| {
+                            value.is_finite()
+                                && (track.interpolation == Interpolation::CubicSpline
+                                    && index % 3 != 1
+                                    || value.length_squared() > 0.0)
+                        })
+                    }
+                }
+        })
+}
+
+fn finite_grid(grid: &crate::sample::PoseGrid) -> bool {
+    (0..grid.frame_count()).all(|frame| {
+        (0..grid.bone_count()).all(|bone| {
+            let pose = grid.local(frame, bone);
+            let model_position = grid.model_position(frame, bone);
+            let model_rotation = grid.model_rotation(frame, bone);
+            pose.translation.is_finite()
+                && pose.scale.is_finite()
+                && pose.rotation.is_finite()
+                && pose.rotation.length_squared() > 0.0
+                && model_position.is_finite()
+                && model_rotation.is_finite()
+                && model_rotation.length_squared() > 0.0
+        })
+    })
+}
+
+fn sampled_poses_match(
+    original: &crate::sample::PoseGrid,
+    trial: &crate::sample::PoseGrid,
+) -> bool {
+    original.frame_count() == trial.frame_count()
+        && original.bone_count() == trial.bone_count()
+        && (0..original.frame_count()).all(|frame| {
+            (0..original.bone_count()).all(|bone| {
+                let a = original.local(frame, bone);
+                let b = trial.local(frame, bone);
+                vec3_within(a.translation, b.translation)
+                    && vec3_within(a.scale, b.scale)
+                    && quaternion_within(a.rotation, b.rotation)
+                    && vec3_within(
+                        original.model_position(frame, bone),
+                        trial.model_position(frame, bone),
+                    )
+                    && quaternion_within(
+                        original.model_rotation(frame, bone),
+                        trial.model_rotation(frame, bone),
+                    )
+            })
+        })
+}
+
+fn vec3_within(a: Vec3, b: Vec3) -> bool {
+    (a - b).abs().max_element() <= CONSTANT_TRACK_PRUNE_VEC3_TOLERANCE
+}
+
+fn quaternion_within(a: Quat, b: Quat) -> bool {
+    a.is_finite()
+        && b.is_finite()
+        && a.length_squared() > 0.0
+        && b.length_squared() > 0.0
+        && a.normalize().angle_between(b.normalize()).abs()
+            <= CONSTANT_TRACK_PRUNE_QUAT_TOLERANCE_RAD
+}
 
 /// Analyze whether a clip has a safe, duplicated loop endpoint.
 ///
@@ -516,7 +823,9 @@ pub fn align_gait_anchor(
     let unrotatable: Vec<String> = clip
         .tracks
         .iter()
-        .filter(|t| t.interpolation == Interpolation::CubicSpline && !is_constant_track(t))
+        .filter(|t| {
+            t.interpolation == Interpolation::CubicSpline && !is_rotation_invariant_track(t)
+        })
         .map(|t| format!("{} bone {}", t.property.as_str(), t.bone))
         .collect();
     if !unrotatable.is_empty() {
@@ -558,35 +867,32 @@ pub fn align_gait_anchor(
     Ok(outcome)
 }
 
-/// True when `track` holds the same pose at every time — such a track
-/// is invariant under time rotation, so it can be skipped safely. For
-/// CUBICSPLINE this means the keyed values agree *and* every in/out
-/// tangent is zero: equal values with non-zero tangents still describe
-/// an animated Hermite curve (the sampler interpolates through the
-/// tangents), so that track must be rotated or refused, never skipped.
-/// A short or inconsistent value array reads as animated (never wrongly
-/// skipped).
-fn is_constant_track(track: &Track) -> bool {
+/// Exact representation-level predicate used by gait-anchor rotation. It is
+/// intentionally stricter than the lint/prune tolerance classifier: changing
+/// this would change which tracks gait rotation leaves untouched.
+fn is_rotation_invariant_track(track: &Track) -> bool {
     let n = track.key_count();
     if n <= 1 {
         return true;
     }
     let cubic = track.interpolation == Interpolation::CubicSpline;
-    fn constant<T: Copy + PartialEq>(v: &[T], n: usize, cubic: bool, zero: T) -> bool {
-        let value = |k: usize| if cubic { 3 * k + 1 } else { k };
-        let Some(&first) = v.get(value(0)) else {
+    fn constant<T: Copy + PartialEq>(values: &[T], n: usize, cubic: bool, zero: T) -> bool {
+        let value = |key: usize| if cubic { 3 * key + 1 } else { key };
+        let Some(&first) = values.get(value(0)) else {
             return false;
         };
-        (0..n).all(|k| {
-            // Keyed value matches, and for cubic the in/out tangents
-            // (indices 3k and 3k+2) are zero — a genuinely flat hold.
-            v.get(value(k)) == Some(&first)
-                && (!cubic || (v.get(3 * k) == Some(&zero) && v.get(3 * k + 2) == Some(&zero)))
+        (0..n).all(|key| {
+            values.get(value(key)) == Some(&first)
+                && (!cubic
+                    || (values.get(3 * key) == Some(&zero)
+                        && values.get(3 * key + 2) == Some(&zero)))
         })
     }
     match &track.values {
-        TrackValues::Vec3s(v) => constant(v, n, cubic, glam::Vec3::ZERO),
-        TrackValues::Quats(v) => constant(v, n, cubic, glam::Quat::from_xyzw(0.0, 0.0, 0.0, 0.0)),
+        TrackValues::Vec3s(values) => constant(values, n, cubic, glam::Vec3::ZERO),
+        TrackValues::Quats(values) => {
+            constant(values, n, cubic, glam::Quat::from_xyzw(0.0, 0.0, 0.0, 0.0))
+        }
     }
 }
 
@@ -621,7 +927,7 @@ fn rotate_values(clip: &mut Clip, phase: f64, fps: f64, frame_offset: i32) {
         // reaching here are constant, so the zip below only touches
         // LINEAR/STEP values. Non-constant short tracks (e.g. a 2-key
         // root ramp) are now rotated instead of silently left behind.
-        if is_constant_track(track) {
+        if is_rotation_invariant_track(track) {
             continue;
         }
         let sampled: Vec<TrackSample> = track

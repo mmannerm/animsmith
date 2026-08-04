@@ -500,10 +500,11 @@ Export hygiene problems rarely break playback outright, which is why
 they accumulate:
 
 - **Constant tracks are export bloat.** A multi-key track whose values
-  never move comes from unbaked rig channels or "key everything"
-  exports. Harmless at runtime, wasteful on disk and in every blend
-  the runtime evaluates — the `constant-track` check reports it as a
-  note.
+  never move comes from unbaked rig channels, baked controls, or "key
+  everything" exports. It is harmless motion-wise but costs disk space and
+  work in every blend the runtime evaluates — the `constant-track` check
+  reports it as a note, and the opt-in transform can remove strictly safe
+  candidates.
 
 ### Why scale animation deserves its own review
 
@@ -577,12 +578,26 @@ The desired end state depends on intent:
 - accidental scale motion or non-uniformity is removed at its authoring source;
 - a constant non-unit pin remains only when the rig/import contract requires it.
 
-animsmith does not delete scale tracks, flatten skeletal scale into mesh
-geometry, retarget the clip, rewrite cubic tangents, or decide whether an
-effect is artistically correct. Those operations can change deformation and
-must stay in the DCC or an engine-aware retarget/import pipeline. The checks
-turn the exported facts into a reviewable work order; they are not an automatic
-scale repair.
+After the `constant-track` note identifies redundant multi-key data,
+`transform --prune-constant-tracks` can remove the narrow safe subset: flat
+translation, rotation, or scale tracks (vector tolerance `1e-4`,
+sign-invariant rotation tolerance `1e-3` radians). This is useful when a DCC
+keys every property or bakes controls into dense holds: the resulting clip has
+the same modeled motion with fewer evaluated channels and less animation data.
+It prints each exact original track index so you can compare the source and
+result, then you should re-lint and preview the result in the target engine.
+
+The transform refuses candidate tracks on `animates_bones` targets, when
+removal changes sampled local TRS or model-space position/rotation, or when
+removal would empty the clip. Single-key pins, malformed data, and cubic tangents that create
+motion above tolerance are not candidates and remain unchanged. These cases
+can carry semantics AnimSmith cannot safely erase. It does not model or remove
+custom curves, judge a non-rest constant pin, reduce changing keys, rewrite
+cubic tangents, perform DCC cleanup, flatten skeletal scale into mesh geometry,
+retarget the clip, or decide whether an effect is artistically correct. Those
+operations can change deformation and must stay in the DCC or an engine-aware
+retarget/import pipeline. The checks turn exported facts into a reviewable work
+order; they are not general animation cleanup.
 
 ---
 
@@ -600,12 +615,12 @@ scale repair.
 | Feet slide within a clip | `foot-slide` | re-author in DCC | `[clips.<name>] speed_mps` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Missing runtime socket or IK target | `required-bones` | repair source rig / re-export | `[rig] required_bones` | [Structural rig contract](../examples/README.md#keeping-the-exported-rig-shape-stable) |
 | T-posed limb, static bone, wrong bind | `missing-bones`, `frozen-bone`, `bind-pose` | re-export | `[clips.<name>] animates_bones`, `[rig]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
-| Bloat, retargeter breakage | `constant-track`, `scale-keys`, `non-uniform-scale`, opt-in `constant-nonunit-scale` | re-export with baked/clean channels | `[checks.<id>]` severity | [First gate](../examples/README.md#1-a-first-cli-gate) |
+| Bloat, retargeter breakage | `constant-track`, `scale-keys`, `non-uniform-scale`, opt-in `constant-nonunit-scale` | inspect `constant-track`, then `transform --prune-constant-tracks` for safe candidates; otherwise clean/re-export in DCC | `[checks.<id>]` severity; `[clips.<name>] animates_bones` protects declared motion tracks | [Editing a clip](../examples/README.md#3-editing-a-clip) |
 
 Where the repair column says *re-export*, that is deliberate: animsmith
 rewrites a clip only in ways whose correctness its own checks can
 verify. Lossless quaternion repairs and mechanical edits (slice,
-hold-extend, gait-anchor, duplicate-loop-endpoint removal, FBX→glTF conversion) qualify; artistic
+hold-extend, gait-anchor, duplicate-loop-endpoint removal, constant-track pruning, FBX→glTF conversion) qualify; artistic
 transformation — retargeting, motion editing — is DCC work and stays
 out of scope.
 

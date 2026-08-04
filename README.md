@@ -100,6 +100,7 @@ $ animsmith assemble character-assembly.toml -o character.glb --evidence charact
 $ animsmith diff old.glb new.glb
 $ animsmith fix clip.glb -o fixed.glb
 $ animsmith fix clip.glb --dry-run
+$ animsmith transform clip.glb -o compact.glb --prune-constant-tracks
 ```
 
 Exit codes are `0` for runs with no failing findings (warnings, notes, and

@@ -47,7 +47,8 @@ output, and a self-contained HTML report with a 3D preview.
   widened 2026-07-03; see Appendix A). In scope: `fix` for lossless
   mechanical repairs (quaternion unit normalization and hemisphere
   normalization), frame-range
-  slice/trim + hold-extend, gait-anchor rotation, and format conversion
+  slice/trim + hold-extend, gait-anchor rotation, opt-in pruning of
+  provably constant multi-key tracks, and format conversion
   including a full mesh/skin FBX→glTF path (a maintained replacement
   for the archived FBX2glTF). Out of scope stays *artistic*
   transformation: retargeting, motion editing, procedural animation —
@@ -82,7 +83,7 @@ animsmith lint    <file...> [--config animsmith.toml] [--select ids] [--deny war
 animsmith measure <file...> --format json          # measurements only, no judgment
 animsmith inspect <file>                           # clips, durations, tracks, bones, detected rig profile
 animsmith report  <file> -o report.html [--clip name]
-animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor] [--drop-duplicate-loop-endpoint]
+animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor] [--drop-duplicate-loop-endpoint] [--prune-constant-tracks]
 animsmith fix     <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
 animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb> [--material-texture-recipe recipe.toml] [--animation-only|--bake-static-mesh-transforms] [--format text|json]
 animsmith assemble <recipe.toml> -o <out.glb> --evidence <out.json>
@@ -102,6 +103,14 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or single-file 
   policy in `main.rs` and passes structured values to the renderer; the
   renderer is the single owner of escaping untrusted text for terminal-safe
   presentation. JSON result serialization remains a separate, unchanged path.
+- `transform --prune-constant-tracks` is an opt-in, candidate-first mechanical
+  edit: it shares the `constant-track` tolerances (vector components `1e-4`,
+  sign-invariant rotations `1e-3` radians), verifies the resulting sampled
+  local TRS and model-space position/rotation, and reports every original track
+  index it removed or retained.
+  It runs after selected transforms and never substitutes for DCC curve cleanup
+  or key reduction. Per-clip `animates_bones` names protect motion evidence;
+  `[rig] required_bones` remains a skeleton-presence-only contract.
 - Inputs: `.glb`, `.gltf` (+ external buffers), `.fbx` (via the `fbx`
   feature, default-on in the released binary).
 - **Malformation policy**: *structural* malformation — keyframe/value

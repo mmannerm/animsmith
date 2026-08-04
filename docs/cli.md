@@ -50,7 +50,7 @@ animsmith inspect <file>
 animsmith measure <file...> [--format text|json]
 animsmith lint <file...> [--format text|json|markdown] [--select id[,id]] [--allow id[,id]] [--deny-warnings]
 animsmith report <file> -o <report.html> [--clip name]
-animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor] [--drop-duplicate-loop-endpoint] [--fps N]
+animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor] [--drop-duplicate-loop-endpoint] [--prune-constant-tracks] [--fps N]
 animsmith fix <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
 animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb|out.gltf> [--material-texture-recipe recipe.toml] [--animation-only|--bake-static-mesh-transforms] [--format text|json]
 animsmith assemble <recipe.toml> -o <out.glb> --evidence <out.json>
@@ -78,6 +78,29 @@ clips are not generalized, retimed, or repaired by this flag. The resulting
 open-cycle representation no longer satisfies inclusive `loop-closure`, which
 expects a repeated final sample; the complete endpoint-mode classifier remains
 [#22](https://github.com/mmannerm/animsmith/issues/22).
+
+`transform --prune-constant-tracks` is an opt-in companion to the default
+`constant-track` note. It removes only multi-key translation, rotation, and
+scale tracks whose evaluated keyed values are constant: vector components may
+vary by at most `1e-4`, and rotations by at most `1e-3` radians under
+sign-invariant quaternion comparison. Single-key pins, malformed/non-finite
+data, and cubic-spline tangents that create motion above tolerance are not
+candidates and remain unchanged. For each candidate, the transform either
+removes it or prints a refusal reason: removing it would change sampled local
+TRS or model-space position/rotation, it is the clip's last remaining track, sampling is unsafe,
+or it targets a bone named by that clip's effective `animates_bones`
+expectation. The latter preserves the evidence needed for `missing-bones` and
+`frozen-bone`; `[rig] required_bones` does not protect tracks because it is a
+skeleton-presence contract.
+
+Pruning runs after any selected slice, hold extension, duplicate-endpoint
+removal, and gait anchoring, so the final clip is what is judged. Text output
+lists every removed or retained candidate with its original track index, bone,
+property, interpolation, key count, and (for retained tracks) reason; no
+machine-readable output schema changes. It does not reduce changing keys,
+rewrite DCC curves, remove custom curves AnimSmith does not model, decide
+whether a non-rest constant pin is artistically intentional, or repair cubic
+tangents.
 
 ## Exit Codes
 
