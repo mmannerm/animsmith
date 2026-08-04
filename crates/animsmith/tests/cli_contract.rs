@@ -7,13 +7,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
-const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:4";
+const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:5";
 const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:11";
 const HOSTILE_PRESENTATION_TEXT: &str = "forged\nline\u{1b}[31m\u{2028}\u{2029}\u{202e}";
-const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v4.schema.json");
+const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v5.schema.json");
 const MEASUREMENTS_SCHEMA: &str =
     include_str!("../../../docs/schemas/measurements-v11.schema.json");
-const EXPECTED_CHECK_IDS: [&str; 25] = [
+const EXPECTED_CHECK_IDS: [&str; 26] = [
     "nan",
     "time-monotonic",
     "quat-norm",
@@ -25,6 +25,7 @@ const EXPECTED_CHECK_IDS: [&str; 25] = [
     "constant-track",
     "missing-bones",
     "required-bones",
+    "rest-world-scale",
     "frozen-bone",
     "duplicate-loop-endpoint",
     "loop-closure",
@@ -64,7 +65,7 @@ fn assert_output_schema_valid(instance: &Value) {
         .collect();
     assert!(
         errors.is_empty(),
-        "output must satisfy the published v4 schemas:\n{}\ninstance: {instance:#}",
+        "output must satisfy the published v5 schemas:\n{}\ninstance: {instance:#}",
         errors.join("\n")
     );
 }
@@ -446,7 +447,7 @@ fn write_json(path: &std::path::Path, value: &Value) {
 
 fn measurement_report(duration_s: f64) -> Value {
     json!({
-        "schema_version": 4,
+        "schema_version": 5,
         "schema": OUTPUT_SCHEMA_ID,
         "command": "measure",
         "files": [{
@@ -600,7 +601,7 @@ fn duplicate_loop_endpoint_cli_detects_trims_and_exposes_changed_contracts() {
     assert_eq!(lint_json.status.code(), Some(0));
     let lint_json: Value = serde_json::from_slice(&lint_json.stdout).expect("valid lint JSON");
     assert_output_schema_valid(&lint_json);
-    assert_eq!(lint_json["schema_version"], 4);
+    assert_eq!(lint_json["schema_version"], 5);
     assert_eq!(lint_json["schema"], OUTPUT_SCHEMA_ID);
     assert_eq!(lint_json["files"][0]["measurements"]["schema_version"], 11);
     assert_eq!(
@@ -1371,7 +1372,7 @@ fn measure_json_uses_versioned_envelope() {
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_output_schema_valid(&json);
-    assert_eq!(json["schema_version"], 4);
+    assert_eq!(json["schema_version"], 5);
     assert_eq!(json["schema"], OUTPUT_SCHEMA_ID);
     assert_eq!(json["tool"]["name"], "animsmith");
     assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
@@ -1738,7 +1739,7 @@ fn report_text_escapes_its_output_path() {
 }
 
 #[test]
-fn embedded_contract_types_emit_the_published_v4_envelope() {
+fn embedded_contract_types_emit_the_published_v5_envelope() {
     let doc = Document::default();
     let config = animsmith_core::Config::default();
     let roles = animsmith_core::ResolvedRoles::default();
@@ -1846,7 +1847,7 @@ fn lint_json_uses_versioned_envelope() {
 
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
-    assert_eq!(json["schema_version"], 4);
+    assert_eq!(json["schema_version"], 5);
     assert_eq!(json["schema"], OUTPUT_SCHEMA_ID);
     assert_eq!(json["tool"]["name"], "animsmith");
     assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
@@ -2017,7 +2018,7 @@ fn lint_json_exposes_complete_clean_and_unselected_checks() {
 
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
-    assert_eq!(json["schema_version"], 4);
+    assert_eq!(json["schema_version"], 5);
     assert_eq!(json["schema"], OUTPUT_SCHEMA_ID);
     let checks = json["files"][0]["checks"].as_array().expect("checks");
     let nan = checks
@@ -2217,7 +2218,7 @@ fn lint_json_gait_group_can_carry_finding_and_coverage_gap() {
 
 #[test]
 fn lint_json_sync_group_emits_schema_valid_member_table() {
-    let dir = unique_temp_dir("v4-partial-sync-group");
+    let dir = unique_temp_dir("v5-partial-sync-group");
     let config = write_config(
         dir.path(),
         "partial.toml",
@@ -2277,7 +2278,7 @@ fn lint_json_sync_group_emits_schema_valid_member_table() {
 
 #[test]
 fn lint_json_time_complement_emits_stable_pair_scores() {
-    let dir = unique_temp_dir("v4-time-complement");
+    let dir = unique_temp_dir("v5-time-complement");
     let input = dir.path().join("time-complement.glb");
     write_time_complement_glb(&input);
     let config = write_config(
@@ -2473,7 +2474,7 @@ fn diff_json_uses_versioned_envelope() {
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_output_schema_valid(&json);
-    assert_eq!(json["schema_version"], 4);
+    assert_eq!(json["schema_version"], 5);
     assert_eq!(json["schema"], OUTPUT_SCHEMA_ID);
     assert_eq!(json["tool"]["name"], "animsmith");
     assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
@@ -2824,7 +2825,7 @@ fn diff_preserves_tailored_report_errors_and_remediation() {
         (
             "unsupported output version",
             unsupported_output_version,
-            "has schema_version 2; this build reads schema_version 4".to_owned(),
+            "has schema_version 2; this build reads schema_version 5".to_owned(),
         ),
         (
             "missing command",
@@ -3346,7 +3347,7 @@ fn diff_rejects_envelope_without_files() {
     let report = dir.path().join("no-files.json");
     std::fs::write(
         &report,
-        r#"{"schema_version":4,"schema":"urn:animsmith:schema:output:4","command":"measure"}"#,
+        r#"{"schema_version":5,"schema":"urn:animsmith:schema:output:5","command":"measure"}"#,
     )
     .expect("writes report");
 

@@ -34,7 +34,8 @@ check_schema() {
 
 check_schema docs/schemas/output-v2.schema.json urn:animsmith:schema:output:2
 check_schema docs/schemas/output-v3.schema.json urn:animsmith:schema:output:3
-check_schema docs/schemas/output-v4.schema.json urn:animsmith:schema:output:4 crates/animsmith-core/src/contract.rs docs/output.md
+check_schema docs/schemas/output-v4.schema.json urn:animsmith:schema:output:4
+check_schema docs/schemas/output-v5.schema.json urn:animsmith:schema:output:5 crates/animsmith-core/src/contract.rs docs/output.md
 check_schema docs/schemas/measurements-v8.schema.json urn:animsmith:schema:measurements:8
 check_schema docs/schemas/measurements-v9.schema.json urn:animsmith:schema:measurements:9
 check_schema docs/schemas/measurements-v10.schema.json urn:animsmith:schema:measurements:10
@@ -45,10 +46,10 @@ check_schema docs/schemas/conversion-evidence-v2.schema.json urn:animsmith:schem
 # Current-contract descriptions must not send readers back to the immutable
 # output-v2 schema. Keep these exact statements aligned with the current outer
 # contract when it advances.
-grep -Fq 'Final output-v4 record for one catalog check.' crates/animsmith-core/src/evaluation.rs \
-  || fail 'CheckEvaluation documentation does not identify output v4'
-grep -Fq 'regenerate a current output-v4 report from the original' docs/output.md \
-  || fail 'report migration documentation does not identify output v4'
+grep -Fq 'Final output-v5 record for one catalog check.' crates/animsmith-core/src/evaluation.rs \
+  || fail 'CheckEvaluation documentation does not identify output v5'
+grep -Fq 'regenerate a current output-v5 report from the original' docs/output.md \
+  || fail 'report migration documentation does not identify output v5'
 
 for removed_schema in \
   docs/schemas/output-v1.schema.json \
@@ -214,7 +215,7 @@ legacy_candidate_pattern='"schema_version"'
 
 # Pin the scanner against a normal outer envelope whose schema/tool fields sit
 # between its version and command. Also prove that current nested measurements in a
-# current output-v4 envelope are not mistaken for an outer legacy contract.
+# current output-v5 envelope are not mistaken for an outer legacy contract.
 legacy_scanner_regression=$(
   printf '%s\n' \
     '{' \

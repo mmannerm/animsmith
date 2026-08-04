@@ -89,6 +89,17 @@ pub struct CheckSettings {
     pub contact_height_m: Option<f64>,
     /// `foot-slide`: allowed stance-speed deviation (default 0.3 m/s).
     pub max_slide_mps: Option<f64>,
+    /// `rest-world-scale`: exact names or `*` globs that must each resolve to
+    /// one source node before its effective rest-world scale is judged.
+    pub node_selectors: Option<Vec<String>>,
+    /// `rest-world-scale`: expected positive uniform scale factor (default
+    /// 1.0).
+    #[serde(default, deserialize_with = "deserialize_positive_finite_option")]
+    pub expected_uniform_scale: Option<f64>,
+    /// `rest-world-scale`: inclusive absolute tolerance around the expected
+    /// uniform factor (default 0.0001).
+    #[serde(default, deserialize_with = "deserialize_nonnegative_finite_option")]
+    pub uniform_scale_tolerance: Option<f64>,
 }
 
 /// What the author declares about one clip (or a glob of clips).
@@ -185,8 +196,25 @@ where
     Ok(value)
 }
 
+fn deserialize_positive_finite_option<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<f64>::deserialize(deserializer)?;
+    if value.is_some_and(|value| !is_positive_finite(value)) {
+        return Err(serde::de::Error::custom(
+            "must be a finite number greater than zero",
+        ));
+    }
+    Ok(value)
+}
+
 fn is_valid_loop_cap(value: f64) -> bool {
     value.is_finite() && value >= 0.0
+}
+
+fn is_positive_finite(value: f64) -> bool {
+    value.is_finite() && value > 0.0
 }
 
 /// A set of clips whose gait phases must agree (a directional blend
@@ -314,6 +342,14 @@ impl Default for RigConfig {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ConfigValidationError {
+    /// A numeric per-check policy setting was outside its documented domain.
+    #[error("check {check_id:?} field {field:?} must be finite and within its documented range")]
+    InvalidCheckSetting {
+        /// Configured stable check id.
+        check_id: String,
+        /// Stable public [`CheckSettings`] field name.
+        field: &'static str,
+    },
     /// A per-clip loop-continuity cap was negative or non-finite.
     #[error("clip selector {selector:?} field {field:?} must be a finite non-negative number")]
     InvalidClipLoopCap {
@@ -379,13 +415,38 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigValidationError::InvalidClipLoopCap`] when a clip
-    /// selector contains a negative or non-finite per-clip loop cap,
+    /// Returns [`ConfigValidationError::InvalidCheckSetting`] when a direct
+    /// per-check numeric policy is outside its documented finite domain,
+    /// [`ConfigValidationError::InvalidClipLoopCap`] when a clip selector
+    /// contains a negative or non-finite per-clip loop cap,
     /// [`ConfigValidationError::InvalidSyncGroupTolerance`] when a same-time
     /// group has an invalid timing tolerance, or
     /// [`ConfigValidationError::InvalidTimeComplementSetting`] when an
     /// enabled time-complement policy has an invalid threshold.
     pub fn validate(&self) -> Result<(), ConfigValidationError> {
+        for (check_id, settings) in &self.checks {
+            for (field, valid) in [
+                (
+                    "expected_uniform_scale",
+                    settings
+                        .expected_uniform_scale
+                        .is_none_or(is_positive_finite),
+                ),
+                (
+                    "uniform_scale_tolerance",
+                    settings
+                        .uniform_scale_tolerance
+                        .is_none_or(is_valid_loop_cap),
+                ),
+            ] {
+                if !valid {
+                    return Err(ConfigValidationError::InvalidCheckSetting {
+                        check_id: check_id.clone(),
+                        field,
+                    });
+                }
+            }
+        }
         for (selector, expectations) in &self.clips {
             for (field, value) in [
                 (

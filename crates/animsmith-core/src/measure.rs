@@ -1113,7 +1113,7 @@ fn available_derived_matrix(matrix: Mat4) -> SkinDerivedMatrixMeasurements {
     }
 }
 
-fn measure_source_skeleton(
+pub(crate) fn measure_source_skeleton(
     doc: &Document,
 ) -> (
     SkeletonSourceCoverage,

@@ -29,9 +29,9 @@ use crate::profile::ResolvedRoles;
 use crate::{Document, Severity};
 
 /// Current outer result-envelope version.
-pub const OUTPUT_SCHEMA_VERSION: u32 = 4;
+pub const OUTPUT_SCHEMA_VERSION: u32 = 5;
 /// Immutable identity of the current outer result envelope.
-pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:4";
+pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:5";
 /// Current nested measurement-contract version.
 pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 11;
 /// Immutable identity of the current nested measurement contract.
@@ -50,7 +50,7 @@ impl ToolSource {
     /// Packaged or otherwise provenance-free builds use `None` for fields they
     /// cannot establish rather than claiming a clean checkout. Revisions that
     /// are not full 40-character hexadecimal Git object ids are dropped so an
-    /// envelope constructed through this API remains within output v4.
+    /// envelope constructed through this API remains within output v5.
     pub fn new(revision: Option<String>, dirty: Option<bool>) -> Self {
         let revision = revision.filter(|revision| {
             revision.len() == 40 && revision.bytes().all(|byte| byte.is_ascii_hexdigit())

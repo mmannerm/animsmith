@@ -237,8 +237,8 @@ The semantic checks need *your* expectations declared. Start from what
 ```console
 $ animsmith measure --format json walking.glb
 {
-  "schema_version": 4,
-  "schema": "urn:animsmith:schema:output:4",
+  "schema_version": 5,
+  "schema": "urn:animsmith:schema:output:5",
   "tool": { "name": "animsmith", "version": "0.1.0",
             "source": { "revision": null, "dirty": null } },
   "command": "measure",

@@ -214,9 +214,9 @@ enum Cmd {
         long_about = "Compare the measurements of two inputs (asset files or prior single-file `measure` or `lint` JSON) and report movement beyond significance thresholds. Exits 1 on significant movement."
     )]
     Diff {
-        /// Before input: asset file or single-file v4 `measure`/`lint` JSON report.
+        /// Before input: asset file or single-file v5 `measure`/`lint` JSON report.
         a: PathBuf,
-        /// After input: asset file or single-file v4 `measure`/`lint` JSON report.
+        /// After input: asset file or single-file v5 `measure`/`lint` JSON report.
         b: PathBuf,
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
@@ -884,7 +884,7 @@ fn load_measurements(
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         let report: MeasurementReportInput = serde_json::from_str(&text)
             .map_err(|e| format!("bad JSON in {}: {e}", path.display()))?;
-        // Only the current output-v4 envelope with measurement contract v11 is
+        // Only the current output-v5 envelope with measurement contract v11 is
         // accepted. Older report shapes are intentionally not retained while
         // the project is alpha.
         let file_count = report.file_count();

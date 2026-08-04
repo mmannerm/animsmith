@@ -7,9 +7,9 @@ future machine serializers should project the JSON contract.
 
 ## Contract identities
 
-Validation and comparison JSON commands emit output contract v4 with the immutable protocol
-identity `urn:animsmith:schema:output:4`. The retrievable schema is
-[`output-v4.schema.json`](schemas/output-v4.schema.json); its repository URL
+Validation and comparison JSON commands emit output contract v5 with the immutable protocol
+identity `urn:animsmith:schema:output:5`. The retrievable schema is
+[`output-v5.schema.json`](schemas/output-v5.schema.json); its repository URL
 is a retrieval location, not the protocol identity.
 
 Measurement evidence is nested and independently versioned as
@@ -20,7 +20,7 @@ linear-transform facts. A future measurement-definition change can therefore
 bump that contract without redesigning the outer result envelope.
 
 `convert --format json` is deliberately a separate conversion-evidence
-contract, not another command in the output-v4 envelope. Its immutable
+contract, not another command in the output-v5 envelope. Its immutable
 identity is `urn:animsmith:schema:conversion-evidence:2`; its retrievable
 schema is
 [`conversion-evidence-v2.schema.json`](schemas/conversion-evidence-v2.schema.json).
@@ -38,17 +38,19 @@ Conversion evidence v1 remains a historical immutable contract at
 `urn:animsmith:schema:conversion-evidence:1`. The current CLI emits v2
 exclusively; regenerate v1 evidence when a v2 consumer is required.
 
-[`Output-v2`](schemas/output-v2.schema.json) remains a historical immutable
-contract. The current CLI emits and
-`diff` reads output-v4; regenerate a current output-v4 report from the original
+[`Output-v2`](schemas/output-v2.schema.json),
+[`output-v3`](schemas/output-v3.schema.json), and
+[`output-v4`](schemas/output-v4.schema.json) remain historical immutable
+contracts. The current CLI emits and
+`diff` reads output-v5; regenerate a current output-v5 report from the original
 asset with `animsmith measure --format json` before passing it to `diff`.
 
 ## Common envelope
 
 ```json
 {
-  "schema_version": 4,
-  "schema": "urn:animsmith:schema:output:4",
+  "schema_version": 5,
+  "schema": "urn:animsmith:schema:output:5",
   "tool": {
     "name": "animsmith",
     "version": "0.1.0",
@@ -498,8 +500,10 @@ Built-in gap codes are:
 | Gap code | Meaning | Emitted by |
 |---|---|---|
 | `roles_unresolved` | Required semantic rig roles were not resolved. | `loop-seam`, `root-motion-speed`, `in-place`, `foot-slide`, `gait-group`, `time-complement` |
-| `measurement_unavailable` | A required numeric measurement could not be produced or did not meet its evidence floor. | `loop-closure`, `duplicate-loop-endpoint`, `loop-seam`, `loop-seam-vel`, `loop-seam-rot`, `root-motion-speed`, `in-place`, `foot-slide`, `gait-group`, `sync-group`, `time-complement` |
+| `measurement_unavailable` | A required numeric measurement could not be produced or did not meet its evidence floor. | `loop-closure`, `duplicate-loop-endpoint`, `loop-seam`, `loop-seam-vel`, `loop-seam-rot`, `root-motion-speed`, `in-place`, `foot-slide`, `gait-group`, `sync-group`, `time-complement`, `rest-world-scale` |
 | `skeleton_unavailable` | Required skeleton presence work could not run because the file has no usable skeleton. | `required-bones` |
+| `node_selector_no_match` | A configured source-node selector matched no named source node. | `rest-world-scale` |
+| `node_selector_ambiguous` | A configured source-node selector matched more than one named source node. | `rest-world-scale` |
 | `insufficient_measurable_members` | Fewer than two configured group members produced usable comparison evidence. | `gait-group`, `sync-group`, `time-complement` |
 | `members_not_evaluated` | Some configured group members did not produce usable comparison evidence. | `gait-group`, `sync-group`, `time-complement` |
 | `invalid_declared_fps` | A declared frame rate was zero, negative, or non-finite. | `fps` |
@@ -521,6 +525,7 @@ Built-in completed/gap scope codes are:
 | `loop_seam_velocity` | One named clip's per-bone model-space seam velocity continuity was measured. | `loop-seam-vel` |
 | `loop_seam_rotation` | One named clip's per-bone model-space angular seam velocity continuity was measured. | `loop-seam-rot` |
 | `required_bone_presence` | Configured structural skeleton-bone presence requirements were evaluated. | `required-bones` |
+| `selected_node_rest_scale` | One configured source-node selector resolved and its effective rest-world linear scale was evaluated. | `rest-world-scale` |
 | `root_motion_speed` | One named clip's root-motion speed was measured. | `root-motion-speed` |
 | `travel_mode` | One named clip's in-place/root-motion declaration was judged. | `in-place` |
 | `foot_stance` | Whole-clip prerequisites for stance analysis were evaluated. | `foot-slide` |
@@ -551,8 +556,11 @@ counts still reflect every underlying per-scope JSON gap.
 
 ## Findings and numeric values
 
-Findings carry `check_id`, `severity`, optional `clip`, `bone`, `time_s`,
-`measured`, and `expected` fields, plus a human message. Treat `check_id` and
+Findings carry `check_id`, `severity`, optional `clip`, `bone`, `node`,
+`time_s`, `measured`, and `expected` fields, plus a human message. `node` is a
+source-node path whose components include stable source indices; it is
+distinct from the normalized skeletal `bone` context used by animation
+checks. Treat `check_id` and
 the structured fields as automation data; treat `message` as display text.
 Group-level findings may also carry `members`, a configured-order array whose
 rows contain the member name and a key-sorted map of scalar measurements.
@@ -571,13 +579,13 @@ the same numeric value to a conforming adapter.
 
 ## `diff`
 
-`diff --format json` uses the same output v4 header and emits `inputs`, a
+`diff --format json` uses the same output v5 header and emits `inputs`, a
 delta count, and structured metric deltas:
 
 ```json
 {
-  "schema_version": 4,
-  "schema": "urn:animsmith:schema:output:4",
+  "schema_version": 5,
+  "schema": "urn:animsmith:schema:output:5",
   "tool": {
     "name": "animsmith",
     "version": "0.1.0",
@@ -592,7 +600,7 @@ delta count, and structured metric deltas:
 }
 ```
 
-`diff` accepts asset files or one-file v4 `measure`/`lint` reports carrying
+`diff` accepts asset files or one-file v5 `measure`/`lint` reports carrying
 measurement contract v11. Multi-file reports and unsupported contract versions
 are rejected as operator errors. Before extracting the clip metrics it uses,
 `diff` validates the complete measurement record, including mesh evidence, and

@@ -262,6 +262,9 @@ fn measurement_report_input_rejects_every_invalid_contract_branch() {
     let mut v2_output = base.clone();
     v2_output["schema_version"] = serde_json::json!(2);
     v2_output["schema"] = serde_json::json!("urn:animsmith:schema:output:2");
+    let mut v4_output = base.clone();
+    v4_output["schema_version"] = serde_json::json!(4);
+    v4_output["schema"] = serde_json::json!("urn:animsmith:schema:output:4");
     let mut wrong_output_identity = base.clone();
     wrong_output_identity["schema"] = serde_json::json!("urn:other:output");
     let mut unsupported_command = base.clone();
@@ -302,6 +305,14 @@ fn measurement_report_input_rejects_every_invalid_contract_branch() {
             MeasurementReportError::UnsupportedOutputVersion { found: 2 },
             format!(
                 "has schema_version 2; this build reads schema_version {OUTPUT_SCHEMA_VERSION}"
+            ),
+        ),
+        (
+            "retired v4 output",
+            v4_output,
+            MeasurementReportError::UnsupportedOutputVersion { found: 4 },
+            format!(
+                "has schema_version 4; this build reads schema_version {OUTPUT_SCHEMA_VERSION}"
             ),
         ),
         (
@@ -895,7 +906,7 @@ fn measurement_report_input_identifies_invalid_file_without_cli_remediation() {
 }
 
 #[test]
-fn tool_source_drops_revision_text_outside_the_v4_schema() {
+fn tool_source_drops_revision_text_outside_the_v5_schema() {
     for invalid in ["f".repeat(39), "z".repeat(40), "f".repeat(41)] {
         let source = ToolSource::new(Some(invalid), Some(true));
         let json =
