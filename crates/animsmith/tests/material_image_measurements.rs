@@ -283,29 +283,33 @@ fn cli_measure_reports_deterministic_material_image_inventory_without_paths() {
 }
 
 #[test]
-fn cli_measure_reports_embedded_image_metadata() {
+fn cli_measure_reports_embedded_image_metadata_and_emissive_bindings() {
     let directory = tempfile::tempdir().expect("temporary fixture directory");
     let input = directory.path().join("embedded.glb");
-    let mut json = serde_json::to_vec(&json!({
-        "asset": { "version": "2.0" },
-        "buffers": [{ "byteLength": 70 }],
-        "bufferViews": [{ "buffer": 0, "byteLength": 70 }],
-        "images": [{ "name": "packed", "bufferView": 0, "mimeType": "image/jpeg" }]
-    }))
-    .expect("serializes GLB JSON");
-    while !json.len().is_multiple_of(4) {
-        json.push(b' ');
-    }
     // The declaration is intentionally JPEG while the payload is PNG: these
     // are distinct source and byte-inspection facts in the output contract.
     let mut image = png(ExtendedColorType::Rgba8, &[1, 2, 3, 255]);
     let image_len = image.len();
     // Keep the declared buffer/view lengths exact while retaining legal GLB padding.
-    json = serde_json::to_vec(&json!({
+    let mut json = serde_json::to_vec(&json!({
         "asset": { "version": "2.0" },
         "buffers": [{ "byteLength": image_len }],
         "bufferViews": [{ "buffer": 0, "byteLength": image_len }],
-        "images": [{ "name": "packed", "bufferView": 0, "mimeType": "image/jpeg" }]
+        "images": [{ "name": "packed", "bufferView": 0, "mimeType": "image/jpeg" }],
+        "textures": [{ "name": "shared", "source": 0 }],
+        "materials": [
+            {
+                "name": "all-core-slots",
+                "pbrMetallicRoughness": {
+                    "baseColorTexture": { "index": 0 },
+                    "metallicRoughnessTexture": { "index": 0 }
+                },
+                "normalTexture": { "index": 0 },
+                "occlusionTexture": { "index": 0 },
+                "emissiveTexture": { "index": 0 }
+            },
+            { "name": "emissive-only", "emissiveTexture": { "index": 0 } }
+        ]
     }))
     .expect("serializes GLB JSON");
     while !json.len().is_multiple_of(4) {
@@ -326,7 +330,37 @@ fn cli_measure_reports_embedded_image_metadata() {
     glb.extend_from_slice(&0x004E4942_u32.to_le_bytes());
     glb.extend_from_slice(&image);
     std::fs::write(&input, glb).expect("writes GLB fixture");
-    let image = &measure(&input, "measure")["files"][0]["measurements"]["images"][0];
+
+    let measured = measure(&input, "measure");
+    let measurements = &measured["files"][0]["measurements"];
+    assert_valid_measurements(measurements);
+    assert_eq!(measurements["material_resource_coverage"], "complete");
+    assert_eq!(
+        measurements["material_definitions"],
+        json!([
+            {
+                "material_index": 0,
+                "name": "all-core-slots",
+                "texture_bindings": [
+                    { "slot": "base_color", "texture_index": 0 },
+                    { "slot": "normal", "texture_index": 0 },
+                    { "slot": "metallic_roughness", "texture_index": 0 },
+                    { "slot": "occlusion", "texture_index": 0 },
+                    { "slot": "emissive", "texture_index": 0 }
+                ]
+            },
+            {
+                "material_index": 1,
+                "name": "emissive-only",
+                "texture_bindings": [{ "slot": "emissive", "texture_index": 0 }]
+            }
+        ])
+    );
+    assert_eq!(
+        measurements["textures"],
+        json!([{ "texture_index": 0, "name": "shared", "image_index": 0 }])
+    );
+    let image = &measurements["images"][0];
     assert_eq!(
         image,
         &json!({
@@ -341,6 +375,10 @@ fn cli_measure_reports_embedded_image_metadata() {
             "decoded_color_type": "rgba8",
         })
     );
+
+    let linted = measure(&input, "lint");
+    assert_valid_measurements(&linted["files"][0]["measurements"]);
+    assert_eq!(linted["files"][0]["measurements"], *measurements);
 }
 
 #[test]
