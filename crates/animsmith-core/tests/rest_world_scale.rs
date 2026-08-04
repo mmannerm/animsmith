@@ -244,7 +244,7 @@ fn rest_world_scale_reports_selector_miss_and_ambiguity_without_guessing() {
         node(2, "duplicate", Some(0), trs(Vec3::ONE)),
         node(3, "root-extra", None, trs(Vec3::ONE)),
     ]);
-    let config = config(&["root", "mis*sing", "du*cate", "root"], 1.0, 1.0e-4);
+    let config = config(&["root", "missing*node", "duplic*ate", "root"], 1.0, 1.0e-4);
     let evaluation = evaluate(&doc, &config);
 
     assert_eq!(evaluation.evaluation(), EvaluationState::Partial);
@@ -257,7 +257,7 @@ fn rest_world_scale_reports_selector_miss_and_ambiguity_without_guessing() {
     );
     assert_eq!(
         evaluation.gaps()[1].message,
-        "source-node selector \"du*cate\" matched 2 nodes (#0(root)/#1(duplicate), #0(root)/#2(duplicate)); use a selector that resolves exactly once"
+        "source-node selector \"duplic*ate\" matched 2 nodes (#0(root)/#1(duplicate), #0(root)/#2(duplicate)); use a selector that resolves exactly once"
     );
     assert!(evaluation.findings().is_empty());
 }
@@ -322,7 +322,7 @@ fn rest_world_scale_reports_full_ancestry_and_the_selected_leaf_measurement() {
         node(1, "conversion-helper", Some(0), trs(Vec3::splat(0.1))),
         node(2, "attachment-socket", Some(1), trs(Vec3::splat(2.0))),
     ]);
-    let evaluation = evaluate(&doc, &config(&["*ment-soc*"], 1.0, 1.0e-4));
+    let evaluation = evaluate(&doc, &config(&["attach*socket"], 1.0, 1.0e-4));
     let finding = serde_json::to_value(&evaluation.findings()[0]).expect("finding serializes");
 
     assert_eq!(
