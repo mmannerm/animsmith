@@ -30,6 +30,14 @@ fn trs(scale: Vec3) -> SourceNodeLocalRest {
     }
 }
 
+fn rotated_trs(scale: Vec3) -> SourceNodeLocalRest {
+    SourceNodeLocalRest::Trs {
+        translation: Vec3::ZERO,
+        rotation: Quat::from_rotation_z(0.1),
+        scale,
+    }
+}
+
 fn document(nodes: Vec<SourceNodeAsset>) -> Document {
     Document {
         assets: animsmith_core::model::SceneAssets {
@@ -314,6 +322,12 @@ fn rest_world_scale_uses_documented_defaults_when_numeric_policy_is_omitted() {
     let clean = document(vec![
         node(0, "upper", None, trs(Vec3::splat(upper_boundary))),
         node(1, "lower", None, trs(Vec3::splat(lower_boundary))),
+        node(
+            2,
+            "rotated-upper",
+            None,
+            rotated_trs(Vec3::splat(upper_boundary)),
+        ),
     ]);
     let warning = document(vec![
         node(
@@ -329,8 +343,14 @@ fn rest_world_scale_uses_documented_defaults_when_numeric_policy_is_omitted() {
             trs(Vec3::splat(f32::from_bits(lower_boundary.to_bits() - 1))),
         ),
     ]);
-    let config = default_policy_config(&["upper", "lower"]);
+    let config = default_policy_config(&["upper", "lower", "rotated-upper"]);
 
+    let rotated_measured = measure_assets(&clean).skeleton_nodes[2]
+        .rest_world_linear
+        .uniform_scale
+        .expect("rotated uniform scale is measurable");
+    assert!(rotated_measured > f64::from(upper_boundary));
+    assert_eq!(rotated_measured as f32, upper_boundary);
     assert!(evaluate(&clean, &config).findings().is_empty());
     let evaluation = evaluate(&warning, &config);
     assert_eq!(evaluation.findings().len(), 2);
