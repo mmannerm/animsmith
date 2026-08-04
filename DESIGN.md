@@ -666,3 +666,306 @@ These decisions record result-contract ownership after output v3 finalization:
    impose a file-count rule or prescribe CLI remediation. The `diff` frontend
    owns its single-file policy and operator guidance; embedded consumers may
    accept empty or multi-file reports according to their own workflows.
+
+## Appendix D — decision record: skinned rest/bind scale canonicalization
+
+**Status (2026-08-04): accepted design; no rest-scale transform is implemented
+or authorized by this record.** Implementation is deliberately split into
+follow-up issues after this decision is accepted. Existing commands, APIs,
+schemas, and character-assembly recipe v1 keep their current behaviour.
+
+### D.1 Problem and two distinct operations
+
+A skinned mesh can already have the intended physical dimensions while its
+joint hierarchy carries a compensating uniform scale. For example, a root can
+contribute `0.01`, descendant translations can be authored 100 times larger,
+and inverse-bind matrices can carry a compensating linear magnitude of 100.
+Skin deformation is then visually correct, but a rigid object parented to a
+joint inherits the unwanted `0.01` scale.
+
+That case must not be confused with a document whose *entire* linear unit is
+wrong. The following are separate, explicitly selected operations:
+
+1. **Whole-document linear-unit conversion** changes physical size. The caller
+   declares a finite factor `q > 0`; every represented length is converted by
+   `q`. It is appropriate only when the source was authored in a different
+   linear unit.
+2. **Rest/bind hierarchy reparameterization** preserves already-correct world
+   geometry. It removes one compensating inherited scale from a restricted
+   skinned hierarchy, rebases local rest and animation translations, and
+   regenerates inverse binds.
+
+Neither operation may infer its factor or applicability from mesh bounds,
+character height, joint lengths, inverse-bind magnitude, filename, or an asset
+category. Measurements from #267 are diagnostic evidence, not conversion
+authority. A caller must name the operation and declare or accept the exact
+factor that the transform plan validates.
+
+The declared unit-conversion transform is a finite positive scalar only; it is
+not an axis, rotation, translation, shear, or reflection operation. The initial
+reparameterization source class is finite, orientation-preserving, positive
+uniform rest-world scale. Non-uniform scale, shear, reflection, singular or
+near-singular matrices, non-finite values, and mixed effective factors in the
+selected domain fail before any output is written.
+
+Classification and proof share one versioned tolerance policy and compute in
+`f64`, narrowing only at the writer model boundary. Initial relative
+orthogonality, equal-axis, and common-factor tolerance is `1e-5`; a determinant
+is singular when `abs(det) <= 1e-6 * product(axis_lengths)`; scalar/vector
+comparison uses `abs_error <= 1e-6 + 1e-5 * max(abs(before), abs(after))`;
+shortest-path rotation residual is at most `1e-5` radians; and postcondition
+unit-scale residual is at most `1e-5`. Exact float equality is forbidden. The
+implementation records every threshold and observed maximum residual in
+evidence, so noisy values such as `100.000015` can be accepted for an explicit,
+reviewable reason rather than by implementation accident.
+
+### D.2 Algebra and rewrite rules
+
+Let `L_i(t)` and `W_i(t)` be node `i`'s local and composed world matrices, `G`
+be a skinned primitive's geometry-bind-to-world matrix, and `B_i` be its
+inverse bind. Valid input satisfies
+
+```text
+W_i(rest) * B_i = G
+```
+
+for every joint slot. Matrices below act on column vectors.
+
+#### Whole-document linear-unit conversion
+
+For the caller-declared factor `q`, define `U = scale(q)`. Coordinates change
+basis as `M' = U M U^-1`. For a uniform `U`, this multiplies an affine matrix's
+translation by `q` while leaving its dimensionless linear part unchanged.
+Therefore:
+
+- multiply every node-local rest translation by `q`;
+- multiply every animation translation value and both glTF cubic-spline
+  translation tangents by `q`; key times remain seconds;
+- multiply mesh `POSITION` values and morph `POSITION` deltas by `q`;
+- conjugate every per-skin inverse bind as `B_i' = U B_i U^-1`;
+- multiply every supported camera, light, collision, or extension length by
+  `q` through a field-specific handler; and
+- leave rotations, normals under positive uniform conversion, UVs, weights,
+  times, morph weights, and rest/animation scale channels unchanged.
+
+Root-motion positions and velocities are not separate stored fields: they are
+recomputed from the converted translation tracks. Distances and velocities
+therefore change by `q`; durations do not. Animation scale is dimensionless
+and is never multiplied as though it were a distance.
+
+This operation preserves topology and semantics while intentionally producing
+world positions `q` times the source positions. It is not a repair for an
+already-correct mesh with a compensating skeleton scale.
+
+#### Rest/bind hierarchy reparameterization
+
+For the initial supported class, every affected joint has a rest-world linear
+part within tolerance of `s R_i`, where `s > 0` is one common factor and `R_i`
+is a proper rotation. The affected domain is a closed connected hierarchy:
+the scaled ancestor, all selected skin joints and paths between them, and all
+descendant nodes whose attachment transform would otherwise inherit `s`.
+Crossing into a second factor, an unclassified helper, or an instance outside
+that closure rejects the plan.
+
+For affected node `i`, define the constant basis correction
+`C_i = scale(1 / s_i)`, where the initial contract admits `s_i = s` inside the
+domain and `s_i = 1` at its parent boundary. The desired world matrix is
+
+```text
+W_i'(t) = W_i(t) * C_i
+```
+
+and the corresponding local matrix is
+
+```text
+L_i'(t) = C_parent^-1 * L_i(t) * C_i .
+```
+
+Because every admitted `C` is a positive uniform scale, the result remains
+representable as TRS. The node-local translation is multiplied by the
+parent's `s_parent`; rotation is unchanged; and the local scale is multiplied
+by the dimensionless ratio `s_parent / s_i`. Translation animation values and
+both cubic translation tangents receive the same parent-basis multiplier.
+The initial implementation rejects scale-animation channels in the affected
+domain: although their values are dimensionless, accepting them could
+reintroduce time-varying attachment scale and needs a separate proven rebase
+contract. Rotation tracks and key times remain unchanged.
+
+Mesh positions, morph deltas, and normals remain unchanged because their world
+geometry is already correct. Each inverse bind is regenerated from the
+unchanged geometry bind:
+
+```text
+B_i' = inverse(W_i'(rest)) * G = C_i^-1 * B_i .
+```
+
+Consequently `W_i'(t) * B_i' = W_i(t) * B_i`: the complete skin palette,
+not merely joint origins, is analytically preserved.
+
+Both bone convenience inverse binds and every per-instance skin-slot array must
+be updated; the single bone-level value is never authority for a multi-skin
+document. The output deliberately changes the affected nodes' composed scale
+to one while preserving their world translations and orientations, animation
+trajectories, skinned vertices, and bounds.
+
+### D.3 Worked synthetic cases
+
+The implementation fixtures use literal analytic values rather than values
+generated by the transform under test.
+
+1. **Unit skeleton.** A root and child both have unit scale, the child rest
+   translation is `(0, 1, 0)`, and the IBM is rigid. Reparameterization with
+   an expected factor of one is a deterministic no-op. Requesting any other
+   factor rejects as a source-fact mismatch. A whole-document conversion by
+   `0.01` instead produces a `0.01 m` child offset and mesh while leaving scale
+   channels at one.
+2. **Compensated inherited scale.** A root has scale `0.01`; its child has
+   local translation `(0, 100, 0)` and local scale one. Their composed child
+   position is `(0, 1, 0)`, every selected joint has effective scale `0.01`,
+   and the corresponding IBM linear columns have magnitude 100. The
+   reparameterized root and child have unit composed scale, the child local
+   translation is `(0, 1, 0)`, the IBM is rigid, and mesh positions and the
+   child world position stay byte-for-byte or tolerance-equivalent as defined
+   by the proof. A transform-only child at local offset `(1, 0, 0)` is rebased
+   to `(0.01, 0, 0)`, preserving its world origin while its composed linear
+   scale changes from `0.01` to one. Transforming a further off-origin point
+   through that child's complete affine distinguishes the result from a no-op.
+   Checking only `joint_translation + joint_rotation * offset` is invalid
+   because it drops the very scale channel the fixture must prove. Unskinned
+   geometry in the affected closure is initially rejected rather than silently
+   resized; supporting it would require a separate geometry and instancing
+   rule.
+3. **Separate clips.** A compatible clip declares the same named parent
+   topology, rest orientations, helper layout, and `0.01` translation basis;
+   its child translation value and cubic tangents are rebased by `0.01` before
+   remapping. A name-identical clip with a unit parent basis, different parent
+   rotation, different helper layout, or a mixed factor fails compatibility
+   before any keys are copied.
+4. **Rejected affines.** Independent fixtures introduce `(0.01, 0.02, 0.01)`
+   scale, a shear term, a negative determinant, a zero/near-zero determinant,
+   `NaN`/infinity, and one joint with an effective factor different from the
+   common factor. Each must produce a stable typed rejection, no artifact, and
+   no partial evidence publication. Near-valid noisy matrices such as a
+   `100.000015` IBM column and a homogeneous bottom-right value near one are
+   accepted only when their measured residual is within the declared
+   tolerance.
+
+### D.4 Modeled domains and preservation coverage
+
+The transform plan owns an explicit capability manifest. A field absent from
+`Document` is not evidence that the source lacks that field; preflight must
+inspect the raw input or a loader-supplied complete inventory before mutation.
+
+| Domain | Current model boundary | Unit conversion | Reparameterization |
+|---|---|---|---|
+| Rest hierarchy | `Bone::rest.translation`; source glTF TRS/matrix also exists as read-side evidence | Scale translations; conjugate retained matrices | Rebase affected translations/scales; preserve orientations |
+| Translation animation | Values and cubic tangent triplets are retained | Multiply values and both tangents by `q` | Multiply by the affected parent-basis factor |
+| Rotation and scale animation | Retained as dimensionless values | Leave unchanged | Rotation unchanged; initially reject affected scale tracks |
+| Root motion and velocity | Derived from translation tracks | Convert tracks, then recompute | Preserve sampled trajectory and derived velocity |
+| Base mesh geometry | Base `POSITION` and normals are retained | Scale positions; normals unchanged | Leave positions and normals unchanged |
+| Morphs | Morph deltas and morph-weight animation are not retained | Reject until `POSITION` deltas can be scaled and all data preserved | Reject until full morph preservation is proven |
+| Skin binds | Per-instance IBMs plus a lossy bone convenience value | Conjugate every per-skin matrix | Regenerate every per-skin matrix from output joints and unchanged `G` |
+| Cameras/lights | Node transform only; typed fields are not modeled | Reject until all length fields have handlers | Reject when attached to the affected domain until preservation is proven |
+| Collision/custom data | No semantic model for extras or extensions | Reject unless a registered handler covers every length | Reject when affected unless exact preservation is proven |
+| Other vertex/source data | Several attributes, non-triangle modes, and extension payloads are not writer-preserved | Reject on the normalized-model route | Reject on the normalized-model route |
+
+The current glTF writer rebuilds nodes as TRS, emits only modeled triangle
+attributes, creates skin/holder structures, and does not preserve arbitrary
+source JSON. The current FBX loader bakes takes, normalizes coordinates,
+generates some missing data, and exposes no complete source skeleton sidecar.
+Consequently neither current load-`Document`-write route qualifies as a
+preservation-proof frontend for these operations without the raw capability
+preflight and explicitly bounded writer work. Unknown extensions or extras,
+unmodeled morphs, cameras, lights, collision metadata, non-triangle primitives,
+unmodeled vertex attributes, secondary influence payloads, and malformed or
+missing inverse binds fail closed. FBX support follows only after its loader can
+prove the declared boundary; evidence must state that FBX curves were baked,
+not preserved as authored curves.
+
+### D.5 Separate-clip compatibility
+
+Exact bone-name matching is necessary but insufficient. Before transforming or
+remapping a separately supplied clip, the producer compares a versioned
+skeleton-basis record containing:
+
+- named parent topology and target node paths;
+- finite local rest matrices, rest orientations, and helper-node layout;
+- declared/normalized coordinate convention;
+- effective uniform scale at every translation-track target;
+- selected reparameterization domain and factor; and
+- loader/tool identity plus the exact input-byte digest.
+
+Compatibility requires topology and orientation agreement within their
+declared rules and the analytically expected translation-basis relationship.
+Different rest translation bases, parent scale, parent rotation, helper layout,
+or effective factor reject before remapping. A digest identifies the evidence
+record but does not replace tolerance-aware semantic comparison.
+
+### D.6 Proof, evidence, publication, and rollback
+
+The proof runs on the in-memory candidate before publication and then repeats
+the artifact-level checks after write/reload. It evaluates rest, every key time,
+and analytic or sufficiently bounded interior times for cubic segments. For
+reparameterization it must prove, within versioned tolerances:
+
+- equal world joint translations and orientations before/after;
+- equal sampled animated trajectories, root motion, and derived velocities;
+- equal skinned vertex positions and bounds for analytic one-joint and
+  multi-joint fixtures plus deterministic sampled production evidence;
+- unchanged mesh/material/skin identity and declared unaffected payloads;
+- unit composed scale for every affected node; and
+- the analytically expected full world affine of a transform-only attached
+  child: preserved origin/orientation and unit linear scale, so a no-op cannot
+  pass.
+
+For whole-document conversion, the corresponding length facts must differ by
+exactly the declared factor within tolerance while dimensionless facts remain
+equal. Both operations prove finite output, the skin equation, deterministic
+artifact bytes, and deterministic evidence bytes.
+
+The future producer evidence is a new immutable versioned contract containing
+the operation kind, declared and observed factors, tolerance policy and
+residuals, affected node/skin identities, raw capability manifest, separate
+clip compatibility results, input/output byte digests and counts, proof sample
+coverage/results, tool identity, and rejection reason. It is written as an
+atomic artifact/evidence publication pair. Failure leaves no new output; an
+existing pair is restored. The original input is retained so rollback is
+selecting the prior artifact, not attempting an inverse float rewrite.
+
+Migration is opt-in. `assemble.canonicalize_skin` in recipe v1 remains the
+existing unanimated bind-geometry operation with identity source-to-metre
+conversion; it does not gain rest-scale rewriting, and old recipes are not
+silently reinterpreted. A later assembly integration requires recipe/evidence
+v2 and explicit basis-compatibility evidence. Consumers that invert scaled
+inverse binds with the rigid-only shortcut `-A^T t` can observe a change by
+`s^2`; that exposes a pre-existing consumer error because the shortcut is valid
+only for an orthonormal linear part, not a geometry change made by this
+operation.
+
+### D.7 Ownership choice and deferred slices
+
+Putting all semantics in assembly was rejected: it would hide a reusable
+single-document operation and preserve assembly's currently insufficient
+separate-clip proof. A standalone command with unrelated duplicate math was
+also rejected. The chosen end state is one shared core transform-plan and proof
+layer with distinct, explicit frontends: a dedicated single-document producer
+and, later, an assembly-v2 integration. The existing
+`canonicalize_skinned_bind_pose` remains the narrower unanimated bind-geometry
+foundation; it is not silently widened or renamed into this contract.
+
+After this design is accepted, implementation is split into independently
+auditable issues, in order:
+
+1. raw-format capability inventory and fail-closed preflight, without mutation;
+2. shared core plan/proof types for the two distinct operations;
+3. a preservation-safe glTF whole-document unit rewrite;
+4. the restricted animated rest/bind reparameterization with analytic fixtures;
+5. a dedicated atomic CLI producer and new evidence contract;
+6. explicit assembly recipe/evidence v2 integration with basis fingerprints;
+7. FBX support only after complete ufbx-side capability evidence exists.
+
+The live roadmap remains issue #165. On acceptance, that ledger records this
+Appendix as the completed design gate and schedules the implementation slices
+from their measured risk; the older narrative in section 11 is not the live
+queue. Work beyond this positive-uniform, fail-closed decision remains
+ADR-gated.
