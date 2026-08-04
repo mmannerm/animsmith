@@ -90,6 +90,11 @@ fn rest_world_scale_is_quiet_until_node_policy_is_declared() {
     assert_eq!(evaluation.evaluation(), EvaluationState::NotEvaluated);
     assert!(evaluation.findings().is_empty());
     assert!(evaluation.gaps().is_empty());
+
+    let empty_policy = default_policy_config(&[]);
+    let evaluation = evaluate(&doc, &empty_policy);
+    assert_eq!(evaluation.applicability(), Applicability::NotApplicable);
+    assert_eq!(evaluation.evaluation(), EvaluationState::NotEvaluated);
 }
 
 #[test]
@@ -304,13 +309,31 @@ fn rest_world_scale_tolerance_is_inclusive_and_expected_factor_is_configurable()
 
 #[test]
 fn rest_world_scale_uses_documented_defaults_when_numeric_policy_is_omitted() {
-    let clean = document(vec![node(0, "socket", None, trs(Vec3::splat(1.00005)))]);
-    let warning = document(vec![node(0, "socket", None, trs(Vec3::splat(1.0002)))]);
-    let config = default_policy_config(&["socket"]);
+    let upper_boundary = 1.0001f32;
+    let lower_boundary = 0.9999f32;
+    let clean = document(vec![
+        node(0, "upper", None, trs(Vec3::splat(upper_boundary))),
+        node(1, "lower", None, trs(Vec3::splat(lower_boundary))),
+    ]);
+    let warning = document(vec![
+        node(
+            0,
+            "upper",
+            None,
+            trs(Vec3::splat(f32::from_bits(upper_boundary.to_bits() + 1))),
+        ),
+        node(
+            1,
+            "lower",
+            None,
+            trs(Vec3::splat(f32::from_bits(lower_boundary.to_bits() - 1))),
+        ),
+    ]);
+    let config = default_policy_config(&["upper", "lower"]);
 
     assert!(evaluate(&clean, &config).findings().is_empty());
     let evaluation = evaluate(&warning, &config);
-    assert_eq!(evaluation.findings().len(), 1);
+    assert_eq!(evaluation.findings().len(), 2);
     let finding = serde_json::to_value(&evaluation.findings()[0]).expect("finding serializes");
     assert_eq!(finding["expected"], 1.0);
 }

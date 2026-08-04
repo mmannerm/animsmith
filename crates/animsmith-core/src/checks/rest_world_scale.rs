@@ -164,7 +164,7 @@ fn evaluate_node(
             let measured = linear
                 .uniform_scale
                 .expect("finite uniform classifications carry their factor");
-            if (measured - expected).abs() > tolerance {
+            if exceeds_inclusive_f32_range(measured, expected, tolerance) {
                 Some(
                     Finding::new(
                         "rest-world-scale",
@@ -197,6 +197,18 @@ fn evaluate_node(
         ),
         LinearTransformClassification::NonFinite => None,
     }
+}
+
+/// Whether an `f32`-derived scale falls outside a user-facing inclusive range.
+///
+/// Source matrices store `f32` components. Quantize the configured range ends
+/// to that evidence precision so an authored boundary value such as `1.0001`
+/// does not warn only because its exact `f32` representation is slightly
+/// farther from the `f64` policy value.
+fn exceeds_inclusive_f32_range(measured: f64, expected: f64, tolerance: f64) -> bool {
+    let lower = f64::from((expected - tolerance) as f32);
+    let upper = f64::from((expected + tolerance) as f32);
+    measured < lower || measured > upper
 }
 
 fn source_node_path(
