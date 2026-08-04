@@ -269,7 +269,7 @@ if (!data.findings.length) {
   list.appendChild(li);
 }
 for (const f of data.findings) {
-  // Built with textContent throughout: clip/bone names and messages
+  // Built with textContent throughout: clip/bone/node names and messages
   // come from the linted asset, i.e. untrusted input.
   const li = document.createElement("li");
   li.className = "finding " + f.severity;
@@ -283,7 +283,7 @@ for (const f of data.findings) {
   add("span", "sev", f.severity);
   add("code", "", f.check);
   li.appendChild(document.createTextNode(" "));
-  add("b", "", [f.clip, f.bone].filter(Boolean).join(" · "));
+  add("b", "", [f.clip, f.bone, f.node].filter(Boolean).join(" · "));
   if (f.time != null) li.appendChild(document.createTextNode(` @${f.time.toFixed(3)}s`));
   li.appendChild(document.createElement("br"));
   li.appendChild(document.createTextNode(f.message));

@@ -506,6 +506,44 @@ they accumulate:
   reports it as a note, and the opt-in transform can remove strictly safe
   candidates.
 
+### Attachment nodes and inherited rest-world scale
+
+A node's local scale is not its effective scale. The
+[glTF node hierarchy](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#nodes-and-hierarchy)
+composes every ancestor transform, so a socket with local scale `(1,1,1)` can
+still have rest-world scale `0.01` under a unit-conversion helper. Skinning may
+look correct because inverse-bind matrices compensate when deforming mesh
+vertices; an ordinary effect, collision shape, or weapon parented to that
+socket does not automatically receive the same skinning compensation. It
+usually inherits the node hierarchy, including the non-unit scale. This is the
+same parent-scale failure mode described by Unity's
+[Transform documentation](https://docs.unity3d.com/6000.1/Documentation/Manual/class-Transform.html#non-uniform-scaling),
+although the exact runtime consequences remain engine-specific.
+
+Use `rest-world-scale` only for source nodes your runtime contract cares
+about:
+
+```toml
+[checks.rest-world-scale]
+node_selectors = ["weapon_socket", "ik_*_target"]
+expected_uniform_scale = 1.0
+uniform_scale_tolerance = 0.0001
+```
+
+Each exact name or `*` glob must resolve to one named source node. A miss or
+multiple matches is reported as a coverage gap, not guessed. A finding carries
+an ancestor path with source indices and reports either the measured uniform
+factor or the distinct non-uniform, sheared, reflected, or singular affine
+class. The tolerance is inclusive for uniform factors. Unavailable/non-finite
+rest evidence remains a coverage gap.
+
+Fix an unintended result in the source hierarchy or exporter, then rerun lint
+against the exported asset. AnimSmith does not rescale the file, decide which
+node names your project uses, infer units from mesh height, or predict a
+runtime's whole attachment system. Animation-channel scale remains under
+`scale-keys`, `non-uniform-scale`, and `constant-nonunit-scale`; this check
+judges the static inherited rest domain only.
+
 ### Why scale animation deserves its own review
 
 A transform scale is a three-component value `(x, y, z)`. A value of
@@ -528,7 +566,7 @@ runtime consequences are project- and engine-dependent. Unity documents that
 [non-uniform parent scale](https://docs.unity3d.com/6000.1/Documentation/Manual/class-Transform.html#non-uniform-scaling)
 can skew rotated children and disagree with some collider shapes.
 
-animsmith separates four facts so a team can make that policy decision without
+animsmith separates five facts so a team can make that policy decision without
 conflating them:
 
 | Check | Literal fact | Typical source | Why review it |
@@ -536,6 +574,7 @@ conflating them:
 | `scale-keys` | At least one scale component changes over time after interpolation. | Intentional squash/stretch; constraint or retarget bake; unit-conversion keys; exporter-created curves. | It can change proportions, child placement, blending, physics assumptions, and animation storage. Confirm the motion is intentional in the target engine. |
 | `non-uniform-scale` | X, Y, and Z differ somewhere on the evaluated trajectory. | Stretching one bone axis; unapplied object scale; cubic interpolation overshoot between apparently harmless keys. | Parent/child hierarchies, normals, colliders, and engine components may treat non-uniform scale differently from uniform scale. |
 | `constant-nonunit-scale` | A scale channel or single-key pin stays away from `(1, 1, 1)`. Disabled by default. | Unit conversion; a deliberately resized character; an unapplied static transform that survived into the rig. | Often harmless, sometimes a pipeline-policy violation. Enable it only when the project expects unit scale in animation channels. |
+| `rest-world-scale` | A selected source node's inherited rest-world affine scale differs from its configured uniform policy. Quiet until node selectors are supplied. | Unit-conversion ancestor; non-uniform or reflected helper hierarchy; unapplied object scale. | Runtime attachments can inherit this scale even when inverse binds make the skinned mesh look correct. |
 | `constant-track` | A multi-key track stores repeated values and never changes. | "Key everything" export, baked controls, or importer-generated constant curves. | It is redundant data even when its value is valid. Unity exposes a corresponding importer option to [remove constant scale curves](https://docs.unity3d.com/ScriptReference/ModelImporter-removeConstantScaleCurves.html). |
 
 Examples:
@@ -614,6 +653,7 @@ order; they are not general animation cleanup.
 | Same-time pair looks mirrored or swaps footfall timing | `time-complement` | align contacts in DCC, add markers, or phase-remap in the runtime | `[sync_groups.<name>.time_complement]` | [A blend pair is time-complementary](#a-blend-pair-is-time-complementary) |
 | Feet slide within a clip | `foot-slide` | re-author in DCC | `[clips.<name>] speed_mps` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Missing runtime socket or IK target | `required-bones` | repair source rig / re-export | `[rig] required_bones` | [Structural rig contract](../examples/README.md#keeping-the-exported-rig-shape-stable) |
+| Attachment, socket, or helper imports at the wrong size | `rest-world-scale` | apply or rebake the unintended source hierarchy scale, then re-export | `[checks.rest-world-scale] node_selectors`, `expected_uniform_scale`, `uniform_scale_tolerance` | [Attachment nodes and inherited rest-world scale](#attachment-nodes-and-inherited-rest-world-scale) |
 | T-posed limb, static bone, wrong bind | `missing-bones`, `frozen-bone`, `bind-pose` | re-export | `[clips.<name>] animates_bones`, `[rig]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Bloat, retargeter breakage | `constant-track`, `scale-keys`, `non-uniform-scale`, opt-in `constant-nonunit-scale` | inspect `constant-track`, then `transform --prune-constant-tracks` for safe candidates; otherwise clean/re-export in DCC | `[checks.<id>]` severity; `[clips.<name>] animates_bones` protects declared motion tracks | [Editing a clip](../examples/README.md#3-editing-a-clip) |
 

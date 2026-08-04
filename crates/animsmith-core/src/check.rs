@@ -136,6 +136,7 @@ pub fn mechanical_checks() -> Vec<Box<dyn Check>> {
 pub fn all_checks() -> Vec<Box<dyn Check>> {
     let mut checks = mechanical_checks();
     checks.push(Box::new(crate::checks::required_bones::RequiredBones));
+    checks.push(Box::new(crate::checks::rest_world_scale::RestWorldScale));
     checks.push(Box::new(crate::checks::missing_bones::MissingBones));
     checks.push(Box::new(crate::checks::frozen_bone::FrozenBone));
     checks.push(Box::new(

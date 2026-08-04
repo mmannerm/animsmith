@@ -163,6 +163,7 @@ Contract-aware checks use declared expectations and, where needed, rig roles:
 | `foot-slide` | warning | stance feet must move consistently with declared travel |
 | `missing-bones` | error | declared animated bones missing from the skeleton or carrying no keys |
 | `required-bones` | error | declared rig bones missing from the skeleton, even when no clip is expected to animate them |
+| `rest-world-scale` | warning | selected source nodes have an unexpected effective rest-world scale or affine class |
 | `frozen-bone` | error | required bones whose rotation never exceeds the configured floor |
 | `bind-pose` | warning | first frame deviating too far from the skeleton rest pose |
 
@@ -205,6 +206,12 @@ max_velocity_delta_mps = 0.1
 [checks.loop-seam-rot]
 max_angular_velocity_delta_degps = 5.0
 
+[checks.rest-world-scale]
+# Each exact name or `*` glob must resolve to exactly one source node.
+node_selectors = ["weapon_socket", "ik_*_target"]
+expected_uniform_scale = 1.0
+uniform_scale_tolerance = 0.0001
+
 [clips."run_*"]
 loop = true
 # Clip/glob caps override these global defaults only for matching clips.
@@ -242,6 +249,15 @@ min_lr_amplitude_m = 0.03
 Duration-pin values must be finite and positive; their tolerances must be
 finite and non-negative. Invalid pins are explicit `duration-sanity` errors,
 not silently ignored contracts.
+
+`rest-world-scale` is quiet until `node_selectors` is nonempty. Each selector
+uses a deterministic `*` glob and must resolve exactly once; a miss or multiple
+matches is a typed coverage gap rather than a guessed node. The check compares
+the selected node's inherited rest-world uniform factor with
+`expected_uniform_scale` (default `1.0`) using the inclusive
+`uniform_scale_tolerance` (default `0.0001`). Non-uniform, sheared, reflected,
+and singular transforms are distinct findings. This policy never infers units
+from mesh bounds or asset height.
 
 The four loop-continuity caps may also be declared under a clip name or
 `*`-glob: `max_loop_position_delta_m`, `max_loop_rotation_delta_deg`, and

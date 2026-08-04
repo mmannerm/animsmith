@@ -104,6 +104,11 @@ pub struct Finding {
     /// Bone associated with the finding, when applicable.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bone: Option<String>,
+    /// Stable source-node path associated with the finding, when applicable.
+    /// Path components carry source indices so repeated display names remain
+    /// distinguishable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node: Option<String>,
     /// Finite time in seconds associated with the finding, when applicable.
     /// Non-finite values are omitted from serialized output.
     #[serde(skip_serializing_if = "non_finite_time_or_none")]
@@ -131,6 +136,7 @@ impl Finding {
             severity,
             clip: None,
             bone: None,
+            node: None,
             time_s: None,
             measured: None,
             expected: None,
@@ -148,6 +154,12 @@ impl Finding {
     /// Attach a bone name.
     pub fn bone(mut self, bone: impl Into<String>) -> Self {
         self.bone = Some(bone.into());
+        self
+    }
+
+    /// Attach a stable source-node path.
+    pub fn node(mut self, node: impl Into<String>) -> Self {
+        self.node = Some(node.into());
         self
     }
 

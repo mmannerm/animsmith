@@ -127,6 +127,7 @@ pub fn render(
                 "severity": f.severity.to_string(),
                 "clip": f.clip,
                 "bone": f.bone,
+                "node": f.node,
                 "time": f.time_s,
                 "message": f.message,
             })

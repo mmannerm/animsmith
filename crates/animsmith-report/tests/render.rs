@@ -135,6 +135,7 @@ fn render_self_contained_with_roles_findings_and_charts() {
         Finding::new("fixture-check", Severity::Warning, "fixture finding")
             .clip("walk")
             .bone("hips")
+            .node("#0(root)/#1(hips)")
             .time(0.5),
     ];
 
@@ -163,6 +164,7 @@ fn render_self_contained_with_roles_findings_and_charts() {
     assert_eq!(data["findings"][0]["severity"], "warning");
     assert_eq!(data["findings"][0]["clip"], "walk");
     assert_eq!(data["findings"][0]["bone"], "hips");
+    assert_eq!(data["findings"][0]["node"], "#0(root)/#1(hips)");
     assert_eq!(data["findings"][0]["message"], "fixture finding");
 }
 

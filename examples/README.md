@@ -92,7 +92,7 @@ should fail on warnings too:
 $ animsmith lint --deny-warnings examples/assets/clip-dirty.glb   # exits 1
 ```
 
-For machine consumption, `--format json` emits the v4 result envelope
+For machine consumption, `--format json` emits the v5 result envelope
 (see [output.md](../docs/output.md)). This `jq` projection keeps the example
 short while showing where retained/promotion evidence, content findings, and
 independently versioned measurement evidence live:
@@ -103,8 +103,8 @@ $ animsmith lint --format json examples/assets/clip-dirty.glb | jq \
       check: (.files[0].checks[] | select(.check_id == "quat-norm")),
       measurements: (.files[0].measurements | {schema_version, schema})}'
 {
-  "schema_version": 4,
-  "schema": "urn:animsmith:schema:output:4",
+  "schema_version": 5,
+  "schema": "urn:animsmith:schema:output:5",
   "command": "lint",
   "input": {
     "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
@@ -345,8 +345,8 @@ since this cycle returns its feet exactly), gait phase, and L/R foot amplitude:
 ```console
 $ animsmith measure examples/assets/walk.glb          # --format json
 {
-  "schema_version": 4,
-  "schema": "urn:animsmith:schema:output:4",
+  "schema_version": 5,
+  "schema": "urn:animsmith:schema:output:5",
   "tool": { "name": "animsmith", "version": "0.1.0",
             "source": { "revision": null, "dirty": null } },
   "command": "measure",
@@ -465,6 +465,23 @@ animates_bones = [...]` when the same bones must move in a particular clip,
 and `frozen-bone` when keyed rotation is required to exceed a meaningful
 motion floor.
 
+Presence and transform policy are separate. To require a runtime-facing node
+to inherit a unit effective rest scale, select it explicitly:
+
+```toml
+[checks.rest-world-scale]
+node_selectors = ["weapon_socket", "ik_*_target"]
+expected_uniform_scale = 1.0
+uniform_scale_tolerance = 0.0001
+```
+
+An exact name or `*` glob must match exactly one source node. A miss or
+multiple matches produces explicit coverage instead of guessing. The finding's
+`node` path includes source indices and ancestors, so a local scale of `1` can
+still be traced to a non-unit effective scale inherited from a parent. This
+does not inspect animation scale keys, infer units from geometry, or rescale
+the file.
+
 ### Scaling up to a full character
 
 [`examples/character.animsmith.toml`](character.animsmith.toml)
@@ -483,6 +500,10 @@ max_rotation_delta_deg = 1.0
 max_velocity_delta_mps = 0.1
 [checks.loop-seam-rot]
 max_angular_velocity_delta_degps = 5.0
+[checks.rest-world-scale]
+node_selectors = ["weapon_socket", "ik_*_target"]
+expected_uniform_scale = 1.0
+uniform_scale_tolerance = 0.0001
 [checks.frozen-bone]
 min_rotation_deg = 0.5
 [checks.quat-flip]

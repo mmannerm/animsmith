@@ -853,6 +853,9 @@ pub(crate) fn render_text(reports: &[LintFileReport], suppressed: &[String]) -> 
             if let Some(bone) = &f.bone {
                 location.push_str(&format!(" bone '{}'", text_atom(bone)));
             }
+            if let Some(node) = &f.node {
+                location.push_str(&format!(" node '{}'", text_atom(node)));
+            }
             if let Some(t) = f.time_s {
                 location.push_str(&format!(" @{t:.3}s"));
             }
@@ -1167,6 +1170,12 @@ pub(crate) fn render_markdown(reports: &[LintFileReport], suppressed: &[String])
                 if let Some(bone) = &f.bone {
                     let _ = write!(location, "bone `{}`", md_cell(bone));
                 }
+                if let Some(node) = &f.node {
+                    if !location.is_empty() {
+                        location.push(' ');
+                    }
+                    let _ = write!(location, "node `{}`", md_cell(node));
+                }
                 if let Some(t) = f.time_s {
                     if !location.is_empty() {
                         location.push(' ');
@@ -1296,7 +1305,7 @@ fn md_value_cell(value: Option<&animsmith_core::finding::Value>) -> String {
 /// Escape asset-derived text for a Markdown table cell that the renderer
 /// wraps in a `` ` `` code span.
 ///
-/// The finding fields fed here (clip, bone, message, textual measured /
+/// The finding fields fed here (clip, bone, node, message, textual measured /
 /// expected values, and the input path) come from files a user
 /// downloaded from anywhere, and this output is meant to be pasted into a
 /// trusted GitHub/GitLab CI comment — so a hostile name must not be able
@@ -2457,14 +2466,24 @@ mod tests {
         let f = Finding::new("quat-norm", Severity::Error, "non-unit key")
             .clip("walk")
             .bone("spine")
+            .node("#0(root)/#2(spine)")
             .time(0.5)
             .measured(1.05_f64)
             .expected(1.0_f64);
-        let md = render_markdown(&[report("a.glb", vec![f])], &[]);
-        // The Location cell carries the bone and the formatted time, and
+        let report = report("a.glb", vec![f]);
+        let text = render_text(std::slice::from_ref(&report), &[]);
+        assert!(
+            text.contains("bone 'spine' node '#0(root)/#2(spine)' @0.500s"),
+            "{text}"
+        );
+        let md = render_markdown(&[report], &[]);
+        // The Location cell carries bone, source node, and formatted time, and
         // the measured/expected values render as their own cells — a
         // renderer that dropped either would fail here.
-        assert!(md.contains("bone `spine` @0.500s"), "{md}");
+        assert!(
+            md.contains("bone `spine` node `#0(root)/#2(spine)` @0.500s"),
+            "{md}"
+        );
         assert!(
             md.contains("| `1.0500` | `1.0000` | `non-unit key` |"),
             "{md}"
@@ -2612,14 +2631,15 @@ mod tests {
         let f = Finding::new("x", Severity::Error, hostile)
             .clip(hostile)
             .bone(hostile)
+            .node(hostile)
             .measured(hostile);
         let md = render_markdown(&[report(hostile, vec![f])], &[]);
         // The raw hostile string never survives anywhere, and the escaped
         // form appears once per cell it was routed through (path, clip,
-        // bone, message, value).
+        // bone, node, message, value).
         assert!(!md.contains(hostile), "raw hostile text leaked:\n{md}");
         assert!(
-            md.matches(esc.as_str()).count() >= 5,
+            md.matches(esc.as_str()).count() >= 6,
             "escaped form missing from some cell:\n{md}"
         );
     }

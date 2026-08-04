@@ -182,6 +182,9 @@ builtin_codes!(
     REQUIRED_BONE_PRESENCE => "required_bone_presence",
         meaning = "Configured structural skeleton-bone presence requirements were evaluated.",
         emitted_by = ["required-bones"],
+    SELECTED_NODE_REST_SCALE => "selected_node_rest_scale",
+        meaning = "One configured source-node selector resolved and its effective rest-world linear scale was evaluated.",
+        emitted_by = ["rest-world-scale"],
 );
 
 impl EvaluationScopeCode {
@@ -250,10 +253,16 @@ builtin_codes!(
         emitted_by = ["loop-seam", "root-motion-speed", "in-place", "foot-slide", "gait-group", "time-complement"],
     MEASUREMENT_UNAVAILABLE => "measurement_unavailable",
         meaning = "A required numeric measurement could not be produced or did not meet its evidence floor.",
-        emitted_by = ["loop-closure", "duplicate-loop-endpoint", "loop-seam", "loop-seam-vel", "loop-seam-rot", "root-motion-speed", "in-place", "foot-slide", "gait-group", "sync-group", "time-complement"],
+        emitted_by = ["loop-closure", "duplicate-loop-endpoint", "loop-seam", "loop-seam-vel", "loop-seam-rot", "root-motion-speed", "in-place", "foot-slide", "gait-group", "sync-group", "time-complement", "rest-world-scale"],
     SKELETON_UNAVAILABLE => "skeleton_unavailable",
         meaning = "Required skeleton presence work could not run because the file has no usable skeleton.",
         emitted_by = ["required-bones"],
+    NODE_SELECTOR_NO_MATCH => "node_selector_no_match",
+        meaning = "A configured source-node selector matched no named source node.",
+        emitted_by = ["rest-world-scale"],
+    NODE_SELECTOR_AMBIGUOUS => "node_selector_ambiguous",
+        meaning = "A configured source-node selector matched more than one named source node.",
+        emitted_by = ["rest-world-scale"],
     INSUFFICIENT_MEASURABLE_MEMBERS => "insufficient_measurable_members",
         meaning = "Fewer than two configured group members produced usable comparison evidence.",
         emitted_by = ["gait-group", "sync-group", "time-complement"],
@@ -366,7 +375,7 @@ impl CheckOutput {
     }
 }
 
-/// Final output-v4 record for one catalog check.
+/// Final output-v5 record for one catalog check.
 #[derive(Debug, Clone)]
 pub struct CheckEvaluation {
     check_id: &'static str,

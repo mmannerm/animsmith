@@ -21,6 +21,7 @@ pub mod non_uniform_scale;
 pub mod quat_flip;
 pub mod quat_norm;
 pub mod required_bones;
+pub mod rest_world_scale;
 pub mod root_motion_speed;
 pub mod scale_keys;
 pub mod sync_group;

@@ -17,6 +17,13 @@ max_ratio = 1.6
 # Rotational C1: incoming/outgoing shortest-path model-space angular velocity.
 max_angular_velocity_delta_degps = 5.0
 
+# Runtime-facing attachment nodes should normally inherit the expected uniform
+# rest scale. Each exact name or `*` glob must resolve to one source node.
+[checks.rest-world-scale]
+node_selectors = ["weapon_socket", "ik_*_target"]
+expected_uniform_scale = 1.0
+uniform_scale_tolerance = 0.0001
+
 [checks.frozen-bone]
 min_rotation_deg = 0.5
 
