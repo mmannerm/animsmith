@@ -271,7 +271,7 @@ then make the explicit mechanical edit:
 ```console
 $ animsmith lint exported.glb --select constant-track
 $ animsmith transform exported.glb -o compact.glb --prune-constant-tracks
-  constant-track removed 'idle': track 3 bone 'control' scale Linear 90 key(s)
+  constant-track removed 'idle': track index 3 bone 'control' scale Linear 90 key(s)
 ```
 
 The transform keeps a deterministic text record for every removal and every
