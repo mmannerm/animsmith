@@ -11,7 +11,19 @@ use std::process::{Command, Output};
 
 const HOSTILE_CLIP: &str = "walk\nclip\u{1b}[31m";
 const HOSTILE_BONE: &str = "hand\nnode\u{1b}[31m";
-type TrackSnapshot = (BoneId, &'static str, Vec<u32>);
+#[derive(Debug, PartialEq, Eq)]
+enum ValuesSnapshot {
+    Vec3s(Vec<[u32; 3]>),
+    Quats(Vec<[u32; 4]>),
+}
+
+type TrackSnapshot = (
+    BoneId,
+    &'static str,
+    Interpolation,
+    Vec<u32>,
+    ValuesSnapshot,
+);
 type ClipTrackSnapshot = (String, Vec<TrackSnapshot>);
 
 fn run(args: &[&std::ffi::OsStr]) -> Output {
@@ -193,7 +205,35 @@ fn track_snapshot(doc: &Document) -> Vec<ClipTrackSnapshot> {
                         (
                             track.bone,
                             track.property.as_str(),
+                            track.interpolation,
                             track.times.iter().map(|time| time.to_bits()).collect(),
+                            match &track.values {
+                                TrackValues::Vec3s(values) => ValuesSnapshot::Vec3s(
+                                    values
+                                        .iter()
+                                        .map(|value| {
+                                            [
+                                                value.x.to_bits(),
+                                                value.y.to_bits(),
+                                                value.z.to_bits(),
+                                            ]
+                                        })
+                                        .collect(),
+                                ),
+                                TrackValues::Quats(values) => ValuesSnapshot::Quats(
+                                    values
+                                        .iter()
+                                        .map(|value| {
+                                            [
+                                                value.x.to_bits(),
+                                                value.y.to_bits(),
+                                                value.z.to_bits(),
+                                                value.w.to_bits(),
+                                            ]
+                                        })
+                                        .collect(),
+                                ),
+                            },
                         )
                     })
                     .collect(),
@@ -263,7 +303,9 @@ fn transform_prunes_only_safe_selected_unprotected_tracks_and_is_idempotent() {
     write_fixture(&input);
     std::fs::write(
         &config,
-        "[clips.protected-clip]\nanimates_bones = [\"protected\"]\n",
+        "[rig]\nrequired_bones = [\"hand\\nnode\\u001B[31m\"]\n\
+[clips.protected-clip]\nanimates_bones = [\"protected\"]\n\
+[clips.other]\nanimates_bones = [\"hand\"]\n",
     )
     .expect("writes config");
     let before = animsmith_gltf::load(&input).expect("loads fixture");
@@ -365,6 +407,12 @@ fn transform_prunes_only_safe_selected_unprotected_tracks_and_is_idempotent() {
             "  constant-track retained 'solo-clip': track index 0 bone 'solo' scale Linear 3 key(s): removal would leave no writable track\n"
         ),
         "last-track evidence: {all_text}"
+    );
+    assert!(
+        all_text.contains(
+            "  constant-track removed 'other': track index 1 bone 'hand\\nnode\\u{1b}[31m' scale Linear 3 key(s)\n"
+        ),
+        "neither a required_bones declaration nor a substring animates_bones name protects the track: {all_text}"
     );
     let all = animsmith_gltf::load(&all_pruned).expect("reloads unscoped output");
     assert!(

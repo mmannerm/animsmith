@@ -8,6 +8,54 @@ use animsmith_core::{
     default_frame_count, sample_clip,
 };
 
+#[derive(Debug, PartialEq, Eq)]
+enum ValuesSnapshot {
+    Vec3s(Vec<[u32; 3]>),
+    Quats(Vec<[u32; 4]>),
+}
+
+type TrackSnapshot = (usize, Property, Interpolation, Vec<u32>, ValuesSnapshot);
+
+fn clip_snapshot(clip: &Clip) -> (u64, Vec<TrackSnapshot>) {
+    (
+        clip.duration_s.to_bits(),
+        clip.tracks
+            .iter()
+            .map(|track| {
+                (
+                    track.bone,
+                    track.property,
+                    track.interpolation,
+                    track.times.iter().map(|time| time.to_bits()).collect(),
+                    match &track.values {
+                        TrackValues::Vec3s(values) => ValuesSnapshot::Vec3s(
+                            values
+                                .iter()
+                                .map(|value| {
+                                    [value.x.to_bits(), value.y.to_bits(), value.z.to_bits()]
+                                })
+                                .collect(),
+                        ),
+                        TrackValues::Quats(values) => ValuesSnapshot::Quats(
+                            values
+                                .iter()
+                                .map(|value| {
+                                    [
+                                        value.x.to_bits(),
+                                        value.y.to_bits(),
+                                        value.z.to_bits(),
+                                        value.w.to_bits(),
+                                    ]
+                                })
+                                .collect(),
+                        ),
+                    },
+                )
+            })
+            .collect(),
+    )
+}
+
 fn skeleton(rest: Transform) -> Skeleton {
     Skeleton {
         bones: vec![Bone {
@@ -379,7 +427,13 @@ fn model_space_hierarchy_amplification_refuses_an_otherwise_local_match() {
     };
     let small_rotation = Quat::from_rotation_z(CONSTANT_TRACK_PRUNE_QUAT_TOLERANCE_RAD * 0.5);
     let mut clip = clip(vec![
-        quat_track(vec![small_rotation, small_rotation]),
+        Track {
+            bone: 0,
+            property: Property::Rotation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 0.5, 1.0],
+            values: TrackValues::Quats(vec![Quat::IDENTITY, small_rotation, Quat::IDENTITY]),
+        },
         Track {
             bone: 1,
             ..vec_track(
@@ -390,6 +444,7 @@ fn model_space_hierarchy_amplification_refuses_an_otherwise_local_match() {
         },
     ]);
     let original = clip.clone();
+    assert_eq!(default_frame_count(&original), 3);
     let outcome = prune_constant_tracks(&skeleton, &mut clip, &[]);
     assert!(outcome.removed.is_empty());
     assert_eq!(
@@ -397,4 +452,151 @@ fn model_space_hierarchy_amplification_refuses_an_otherwise_local_match() {
         ConstantTrackRetentionReason::PoseChanged
     );
     assert_eq!(clip.tracks.len(), original.tracks.len());
+}
+
+#[test]
+fn cumulative_trials_are_compared_with_the_untouched_original() {
+    let skeleton = Skeleton {
+        bones: vec![
+            Bone {
+                name: "root".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            },
+            Bone {
+                name: "child".into(),
+                parent: Some(0),
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            },
+            Bone {
+                name: "leaf".into(),
+                parent: Some(1),
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            },
+        ],
+    };
+    let delta = Quat::from_rotation_z(CONSTANT_TRACK_PRUNE_QUAT_TOLERANCE_RAD * 0.6);
+    let mut clip = clip(vec![
+        quat_track(vec![delta, delta]),
+        Track {
+            bone: 1,
+            ..quat_track(vec![delta, delta])
+        },
+        Track {
+            bone: 2,
+            ..quat_track(vec![Quat::IDENTITY, Quat::from_rotation_y(0.2)])
+        },
+    ]);
+
+    let outcome = prune_constant_tracks(&skeleton, &mut clip, &[]);
+    assert_eq!(
+        outcome
+            .removed
+            .iter()
+            .map(|record| record.original_track_index)
+            .collect::<Vec<_>>(),
+        [0]
+    );
+    assert_eq!(outcome.retained.len(), 1);
+    assert_eq!(outcome.retained[0].record.original_track_index, 1);
+    assert_eq!(
+        outcome.retained[0].reason,
+        ConstantTrackRetentionReason::PoseChanged
+    );
+}
+
+#[test]
+fn sampling_unavailable_candidates_are_reported_without_mutation() {
+    let skeleton = skeleton(Transform::IDENTITY);
+    let mut zero_duration = clip(vec![
+        vec_track(
+            Property::Translation,
+            Interpolation::Linear,
+            vec![Vec3::ZERO, Vec3::ZERO],
+        ),
+        quat_track(vec![Quat::IDENTITY, Quat::from_rotation_y(0.2)]),
+    ]);
+    zero_duration.duration_s = 0.0;
+    let before = clip_snapshot(&zero_duration);
+    let outcome = prune_constant_tracks(&skeleton, &mut zero_duration, &[]);
+    assert!(outcome.removed.is_empty());
+    assert_eq!(outcome.retained.len(), 1);
+    assert_eq!(
+        outcome.retained[0].reason,
+        ConstantTrackRetentionReason::SamplingUnavailable
+    );
+    assert_eq!(clip_snapshot(&zero_duration), before);
+
+    let overflow_skeleton = Skeleton {
+        bones: vec![
+            Bone {
+                name: "root".into(),
+                parent: None,
+                rest: Transform {
+                    scale: Vec3::splat(f32::MAX),
+                    ..Transform::IDENTITY
+                },
+                inverse_bind: None,
+            },
+            Bone {
+                name: "child".into(),
+                parent: Some(0),
+                rest: Transform {
+                    translation: Vec3::splat(f32::MAX),
+                    ..Transform::IDENTITY
+                },
+                inverse_bind: None,
+            },
+        ],
+    };
+    let mut trial_overflow = clip(vec![
+        vec_track(
+            Property::Scale,
+            Interpolation::Linear,
+            vec![Vec3::ZERO, Vec3::ZERO],
+        ),
+        quat_track(vec![Quat::IDENTITY, Quat::from_rotation_y(0.2)]),
+    ]);
+    let before = clip_snapshot(&trial_overflow);
+    let outcome = prune_constant_tracks(&overflow_skeleton, &mut trial_overflow, &[]);
+    assert!(outcome.removed.is_empty());
+    assert_eq!(outcome.retained.len(), 1);
+    assert_eq!(
+        outcome.retained[0].reason,
+        ConstantTrackRetentionReason::SamplingUnavailable
+    );
+    assert_eq!(clip_snapshot(&trial_overflow), before);
+}
+
+#[test]
+fn single_key_pins_and_rotation_above_tolerance_are_not_candidates() {
+    let skeleton = skeleton(Transform::IDENTITY);
+    let mut single_key = clip(vec![Track {
+        bone: 0,
+        property: Property::Translation,
+        interpolation: Interpolation::Linear,
+        times: vec![0.0],
+        values: TrackValues::Vec3s(vec![Vec3::ZERO]),
+    }]);
+    let outcome = prune_constant_tracks(&skeleton, &mut single_key, &[]);
+    assert!(outcome.removed.is_empty() && outcome.retained.is_empty());
+    assert_eq!(single_key.tracks.len(), 1);
+
+    let mut changing_rotation = clip(vec![
+        quat_track(vec![
+            Quat::IDENTITY,
+            Quat::from_rotation_z(CONSTANT_TRACK_PRUNE_QUAT_TOLERANCE_RAD * 2.0),
+        ]),
+        vec_track(
+            Property::Translation,
+            Interpolation::Linear,
+            vec![Vec3::ZERO, Vec3::X],
+        ),
+    ]);
+    let outcome = prune_constant_tracks(&skeleton, &mut changing_rotation, &[]);
+    assert!(outcome.removed.is_empty() && outcome.retained.is_empty());
+    assert_eq!(changing_rotation.tracks.len(), 2);
 }
