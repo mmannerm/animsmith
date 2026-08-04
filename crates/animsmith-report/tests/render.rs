@@ -166,6 +166,10 @@ fn render_self_contained_with_roles_findings_and_charts() {
     assert_eq!(data["findings"][0]["bone"], "hips");
     assert_eq!(data["findings"][0]["node"], "#0(root)/#1(hips)");
     assert_eq!(data["findings"][0]["message"], "fixture finding");
+    assert!(
+        html.contains("[f.clip, f.bone, f.node].filter(Boolean)"),
+        "the embedded viewer must render node context, not only carry it in JSON"
+    );
 }
 
 #[test]

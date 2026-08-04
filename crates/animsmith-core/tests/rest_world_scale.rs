@@ -1,5 +1,6 @@
 use animsmith_core::config::CheckSettings;
 use animsmith_core::glam::{Mat4, Quat, Vec3};
+use animsmith_core::measure::{LinearTransformClassification, measure_assets};
 use animsmith_core::{
     Applicability, CheckCtx, CheckEvaluation, CheckSelection, Config, ConfigValidationError,
     Document, EvaluationState, MetricGrids, ResolvedRoles, SourceNodeAsset, SourceNodeLocalRest,
@@ -51,6 +52,18 @@ fn config(selectors: &[&str], expected: f64, tolerance: f64) -> Config {
             node_selectors: Some(selectors.iter().map(|value| (*value).into()).collect()),
             expected_uniform_scale: Some(expected),
             uniform_scale_tolerance: Some(tolerance),
+            ..Default::default()
+        },
+    );
+    config
+}
+
+fn default_policy_config(selectors: &[&str]) -> Config {
+    let mut config = Config::default();
+    config.checks.insert(
+        "rest-world-scale".into(),
+        CheckSettings {
+            node_selectors: Some(selectors.iter().map(|value| (*value).into()).collect()),
             ..Default::default()
         },
     );
@@ -152,7 +165,7 @@ fn rest_world_scale_classifies_local_inherited_compensated_and_affine_failures()
     ]);
     let config = config(
         &[
-            "local-scaled",
+            "local-*",
             "inherited",
             "compensated",
             "non-uniform",
@@ -173,6 +186,7 @@ fn rest_world_scale_classifies_local_inherited_compensated_and_affine_failures()
         evaluation.gaps()[0].code.as_str(),
         "measurement_unavailable"
     );
+    assert!(evaluation.gaps()[0].message.contains("#8(non-finite)"));
     assert_eq!(evaluation.findings().len(), 6);
     let serialized = evaluation
         .findings()
@@ -188,26 +202,38 @@ fn rest_world_scale_classifies_local_inherited_compensated_and_affine_failures()
         finding["node"] == "#1(unit-helper)/#2(inherited)"
             && finding["measured"]
                 .as_f64()
-                .is_some_and(|value| value < 0.011)
+                .is_some_and(|value| (value - 0.01).abs() < 1.0e-8)
     }));
     assert!(
         !serialized
             .iter()
             .any(|finding| finding["node"] == "#1(unit-helper)/#3(compensated)")
     );
-    for (name, classification) in [
-        ("#4(non-uniform)", "non-uniform"),
-        ("#5(sheared)", "sheared"),
-        ("#6(reflected)", "reflected"),
-        ("#7(singular)", "singular"),
+    for (name, evidence) in [
+        (
+            "#4(non-uniform)",
+            "non-uniform axes=(1.000000,2.000000,1.000000)",
+        ),
+        ("#5(sheared)", "sheared axes=(1.000000,1.118034,1.000000)"),
+        (
+            "#6(reflected)",
+            "reflected axes=(1.000000,1.000000,1.000000)",
+        ),
+        ("#7(singular)", "singular axes=(0.000000,1.000000,1.000000)"),
     ] {
-        assert!(serialized.iter().any(|finding| {
-            finding["node"] == name
-                && finding["measured"]
-                    .as_str()
-                    .is_some_and(|measured| measured.starts_with(classification))
-        }));
+        assert!(
+            serialized
+                .iter()
+                .any(|finding| { finding["node"] == name && finding["measured"] == evidence })
+        );
     }
+
+    let measured = measure_assets(&doc);
+    assert_eq!(
+        measured.skeleton_nodes[3].rest_world_linear.classification,
+        LinearTransformClassification::UnitOrthonormal
+    );
+    assert!(doc.assets.meshes.is_empty());
 }
 
 #[test]
@@ -216,8 +242,9 @@ fn rest_world_scale_reports_selector_miss_and_ambiguity_without_guessing() {
         node(0, "root", None, trs(Vec3::ONE)),
         node(1, "duplicate", Some(0), trs(Vec3::ONE)),
         node(2, "duplicate", Some(0), trs(Vec3::ONE)),
+        node(3, "root-extra", None, trs(Vec3::ONE)),
     ]);
-    let config = config(&["root", "missing", "dupli*", "root"], 1.0, 1.0e-4);
+    let config = config(&["root", "mis*sing", "du*cate", "root"], 1.0, 1.0e-4);
     let evaluation = evaluate(&doc, &config);
 
     assert_eq!(evaluation.evaluation(), EvaluationState::Partial);
@@ -228,15 +255,9 @@ fn rest_world_scale_reports_selector_miss_and_ambiguity_without_guessing() {
         evaluation.gaps()[1].code.as_str(),
         "node_selector_ambiguous"
     );
-    assert!(
-        evaluation.gaps()[1]
-            .message
-            .contains("#0(root)/#1(duplicate)")
-    );
-    assert!(
-        evaluation.gaps()[1]
-            .message
-            .contains("#0(root)/#2(duplicate)")
+    assert_eq!(
+        evaluation.gaps()[1].message,
+        "source-node selector \"du*cate\" matched 2 nodes (#0(root)/#1(duplicate), #0(root)/#2(duplicate)); use a selector that resolves exactly once"
     );
     assert!(evaluation.findings().is_empty());
 }
@@ -259,6 +280,62 @@ fn rest_world_scale_tolerance_is_inclusive_and_expected_factor_is_configurable()
         evaluate(&doc, &config(&["socket"], 1.25, 0.0))
             .findings()
             .is_empty()
+    );
+
+    let below_unit = document(vec![node(0, "socket", None, trs(Vec3::splat(0.5)))]);
+    assert!(
+        evaluate(&below_unit, &config(&["socket"], 0.5, 0.0))
+            .findings()
+            .is_empty()
+    );
+    let scale_two = document(vec![node(0, "socket", None, trs(Vec3::splat(2.0)))]);
+    assert!(
+        evaluate(&scale_two, &config(&["socket"], 1.0, 1.0))
+            .findings()
+            .is_empty()
+    );
+    assert_eq!(
+        evaluate(&scale_two, &config(&["socket"], 1.0, 0.99))
+            .findings()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn rest_world_scale_uses_documented_defaults_when_numeric_policy_is_omitted() {
+    let clean = document(vec![node(0, "socket", None, trs(Vec3::splat(1.00005)))]);
+    let warning = document(vec![node(0, "socket", None, trs(Vec3::splat(1.0002)))]);
+    let config = default_policy_config(&["socket"]);
+
+    assert!(evaluate(&clean, &config).findings().is_empty());
+    let evaluation = evaluate(&warning, &config);
+    assert_eq!(evaluation.findings().len(), 1);
+    let finding = serde_json::to_value(&evaluation.findings()[0]).expect("finding serializes");
+    assert_eq!(finding["expected"], 1.0);
+}
+
+#[test]
+fn rest_world_scale_reports_full_ancestry_and_the_selected_leaf_measurement() {
+    let doc = document(vec![
+        node(0, "root", None, trs(Vec3::splat(0.1))),
+        node(1, "conversion-helper", Some(0), trs(Vec3::splat(0.1))),
+        node(2, "attachment-socket", Some(1), trs(Vec3::splat(2.0))),
+    ]);
+    let evaluation = evaluate(&doc, &config(&["*ment-soc*"], 1.0, 1.0e-4));
+    let finding = serde_json::to_value(&evaluation.findings()[0]).expect("finding serializes");
+
+    assert_eq!(
+        finding["node"],
+        "#0(root)/#1(conversion-helper)/#2(attachment-socket)"
+    );
+    assert!(
+        (finding["measured"]
+            .as_f64()
+            .expect("numeric selected-leaf factor")
+            - 0.02)
+            .abs()
+            < 1.0e-8
     );
 }
 

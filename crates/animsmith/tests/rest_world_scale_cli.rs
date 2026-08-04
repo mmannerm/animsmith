@@ -39,13 +39,20 @@ fn append_f32s(bytes: &mut Vec<u8>, values: impl IntoIterator<Item = f32>) -> (u
     (offset, bytes.len() - offset)
 }
 
-fn write_compensated_attachment_gltf(path: &Path) {
+fn write_compensated_attachment_gltf(path: &Path, geometry_extent_m: f32) {
     let mut bytes = Vec::new();
     let (positions_offset, positions_length) = append_f32s(
         &mut bytes,
         [
-            0.0_f32, 0.0, 0.0, // one-metre triangle
-            1.0, 0.0, 0.0, 0.0, 1.0, 0.0,
+            0.0_f32,
+            0.0,
+            0.0,
+            geometry_extent_m,
+            0.0,
+            0.0,
+            0.0,
+            geometry_extent_m,
+            0.0,
         ],
     );
     let joints_offset = bytes.len();
@@ -83,7 +90,7 @@ fn write_compensated_attachment_gltf(path: &Path) {
             { "buffer": 0, "byteOffset": inverse_bind_offset, "byteLength": inverse_bind_length }
         ],
         "accessors": [
-            { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0] },
+            { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0.0, 0.0, 0.0], "max": [geometry_extent_m, geometry_extent_m, 0.0] },
             { "bufferView": 1, "componentType": 5121, "count": 3, "type": "VEC4" },
             { "bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC4" },
             { "bufferView": 3, "componentType": 5126, "count": 1, "type": "MAT4" }
@@ -133,14 +140,14 @@ fn lint_selected_rest_world_scale_reports_compensated_attachment_in_every_output
     let dir = tempfile::tempdir().expect("creates temp directory");
     let input = dir.path().join("compensated-attachment.gltf");
     let config = dir.path().join("animsmith.toml");
-    write_compensated_attachment_gltf(&input);
+    write_compensated_attachment_gltf(&input, 1.0);
     std::fs::write(
         &config,
         concat!(
             "[checks.rest-world-scale]\n",
             "node_selectors = [\"attachment-socket\"]\n",
-            "expected_uniform_scale = 1.0\n",
-            "uniform_scale_tolerance = 0.0001\n",
+            "expected_uniform_scale = 1.25\n",
+            "uniform_scale_tolerance = 0.2\n",
         ),
     )
     .expect("writes lint config");
@@ -190,6 +197,12 @@ fn lint_selected_rest_world_scale_reports_compensated_attachment_in_every_output
         skin["joints"][0]["mesh_bind_world"]["linear"]["uniform_scale"],
         1.0
     );
+    assert_eq!(
+        skin["joints"][0]["mesh_bind_world"]["matrix"],
+        json!([
+            1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0
+        ])
+    );
 
     let json_output = run_lint(&input, &config, "json");
     assert!(
@@ -230,7 +243,7 @@ fn lint_selected_rest_world_scale_reports_compensated_attachment_in_every_output
             < 1.0e-8,
         "finding retains the inherited centimetre factor: {finding:#}"
     );
-    assert_eq!(finding["expected"], 1.0);
+    assert_eq!(finding["expected"], 1.25);
 
     let text_output = run_lint(&input, &config, "text");
     assert!(text_output.status.success(), "text lint exits successfully");
@@ -260,4 +273,68 @@ fn lint_selected_rest_world_scale_reports_compensated_attachment_in_every_output
         "stdout:\n{markdown}"
     );
     assert!(markdown.contains("`0.0100`"), "stdout:\n{markdown}");
+
+    for (name, policy) in [
+        (
+            "expected-override.toml",
+            concat!(
+                "[checks.rest-world-scale]\n",
+                "node_selectors = [\"attachment-socket\"]\n",
+                "expected_uniform_scale = 0.01\n",
+                "uniform_scale_tolerance = 0.000001\n",
+            ),
+        ),
+        (
+            "wide-tolerance.toml",
+            concat!(
+                "[checks.rest-world-scale]\n",
+                "node_selectors = [\"attachment-socket\"]\n",
+                "expected_uniform_scale = 1.0\n",
+                "uniform_scale_tolerance = 1.0\n",
+            ),
+        ),
+    ] {
+        let policy_path = dir.path().join(name);
+        std::fs::write(&policy_path, policy).expect("writes override config");
+        let output = run_lint(&input, &policy_path, "json");
+        assert!(output.status.success(), "override lint succeeds");
+        let report: Value = serde_json::from_slice(&output.stdout).expect("valid override JSON");
+        let check = report["files"][0]["checks"]
+            .as_array()
+            .expect("checks")
+            .iter()
+            .find(|check| check["check_id"] == "rest-world-scale")
+            .expect("rest-world-scale record");
+        assert_eq!(check["evaluation"], "complete");
+        assert_eq!(check["findings"], json!([]), "{name} must affect lint");
+    }
+
+    let tiny_input = dir.path().join("tiny-compensated-attachment.gltf");
+    write_compensated_attachment_gltf(&tiny_input, 0.01);
+    let tiny_output = run_lint(&tiny_input, &config, "json");
+    assert!(tiny_output.status.success(), "tiny-geometry lint succeeds");
+    let tiny_report: Value = serde_json::from_slice(&tiny_output.stdout).expect("valid tiny JSON");
+    assert_eq!(
+        tiny_report["files"][0]["measurements"]["mesh_definitions"][0]["geometry_aabb"]["max"],
+        json!([0.01, 0.01, 0.0])
+    );
+    let tiny_check = tiny_report["files"][0]["checks"]
+        .as_array()
+        .expect("checks")
+        .iter()
+        .find(|check| check["check_id"] == "rest-world-scale")
+        .expect("rest-world-scale record");
+    assert_eq!(
+        tiny_check["findings"].as_array().expect("findings").len(),
+        1
+    );
+    assert!(
+        (tiny_check["findings"][0]["measured"]
+            .as_f64()
+            .expect("tiny-geometry selected-node factor")
+            - 0.01)
+            .abs()
+            < 1.0e-8,
+        "mesh magnitude must not influence the selected-node scale policy"
+    );
 }
