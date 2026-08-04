@@ -748,6 +748,10 @@ Therefore:
 - leave rotations, normals under positive uniform conversion, UVs, weights,
   times, morph weights, and rest/animation scale channels unchanged.
 
+glTF `LINEAR` and `STEP` samplers have values only; they do not store tangent
+elements to rewrite. “Translation tangents” throughout this record therefore
+means the explicit in/out elements of a `CUBICSPLINE` translation sampler.
+
 Root-motion positions and velocities are not separate stored fields: they are
 recomputed from the converted translation tracks. Distances and velocities
 therefore change by `q`; durations do not. Animation scale is dimensionless
@@ -942,7 +946,60 @@ inverse binds with the rigid-only shortcut `-A^T t` can observe a change by
 only for an orthonormal linear part, not a geometry change made by this
 operation.
 
-### D.7 Ownership choice and deferred slices
+### D.7 Prospective CLI, configuration, and public API
+
+The first producer uses a required operation subcommand, not one flag whose
+meaning depends on the input:
+
+```console
+animsmith scale whole-document INPUT.glb -o OUTPUT.glb \
+  --factor 0.01 --evidence OUTPUT.scale.json
+
+animsmith scale rest-bind INPUT.glb -o OUTPUT.glb \
+  --source-skin-index 0 --source-root-node-index 3 \
+  --expected-factor 0.01 --evidence OUTPUT.scale.json
+```
+
+All numeric and source-identity arguments shown are required; there is no
+inferred factor, implicit first skin/root, or in-place mode. Artifact and
+evidence paths must be distinct from each other and the input. Initial support
+is glTF/GLB only. The command uses the fixed tolerance-policy version recorded
+in evidence rather than accepting per-run tolerance flags. A future policy
+change requires a new policy identity and compatibility review.
+
+The single-document producer has no `animsmith.toml` key and no separate plan
+file in its first version: mutation must not become an incidental effect of a
+lint configuration. Later assembly support is an explicit recipe-v2 block:
+
+```toml
+[rest_bind_scale]
+source_skin_index = 0
+source_root_node_index = 3
+expected_factor = 0.01
+```
+
+The block has no defaults and is absent by default. Assembly validates every
+base and clip basis before applying it. Recipe v1 rejects this block as an
+unknown field and retains its current semantics.
+
+The public `animsmith-core` shape is a non-exhaustive `ScaleOperation` with
+distinct `WholeDocumentLinearUnits { factor }` and
+`RestBindUniformScale { source_skin_index, source_root_node_index,
+expected_factor }` variants, carried by a `ScaleRequest`. Pure planning returns
+either a typed `ScalePlan` (affected closure, per-domain rewrites, tolerance
+policy, and proof obligations) or a typed `ScaleError`; proof returns a
+`ScaleProof` with the residual maxima that producer evidence serializes.
+Planning and proof take format-neutral node, track, bind, and capability facts.
+They do not accept paths, glTF/ufbx types, config parsers, or publication
+policy. The format frontend owns raw inventory and exact source rewriting; the
+CLI owns atomic artifact/evidence publication. Applying a plan builds a
+candidate and never mutates the caller's source on failure.
+
+These names describe the contract shape, not an implemented API in this PR.
+Any change to the operation variants, required selectors, or failure boundary
+is a design change rather than an implementation detail.
+
+### D.8 Ownership choice and deferred slices
 
 Putting all semantics in assembly was rejected: it would hide a reusable
 single-document operation and preserve assembly's currently insufficient
@@ -967,5 +1024,6 @@ auditable issues, in order:
 The live roadmap remains issue #165. On acceptance, that ledger records this
 Appendix as the completed design gate and schedules the implementation slices
 from their measured risk; the older narrative in section 11 is not the live
-queue. Work beyond this positive-uniform, fail-closed decision remains
-ADR-gated.
+queue. Issue #150 must consume and link this decision before freezing any
+unit/root-scale engine-profile expectation. Work beyond this positive-uniform,
+fail-closed decision remains ADR-gated.
