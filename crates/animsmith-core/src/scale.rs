@@ -1570,6 +1570,26 @@ pub struct ScaleCandidate {
 }
 
 impl ScaleCandidate {
+    /// Wrap a candidate `document` that a format frontend produced by
+    /// rewriting its own exact source bytes, so it can be handed to
+    /// [`prove_scale`].
+    ///
+    /// DESIGN.md Appendix D §D.8 assigns "exact source rewriting" to the
+    /// format frontend, which necessarily produces candidates this module did
+    /// not build: `animsmith_gltf`'s whole-document linear-unit rewrite
+    /// operates on raw glTF JSON and buffer bytes and then reloads the
+    /// artifact. Without this constructor that reloaded [`Document`] could
+    /// never reach [`prove_scale`], and the artifact-level proof D.6 requires
+    /// would have no in-memory layer to sit on top of.
+    ///
+    /// This constructor asserts nothing about `document`. It does not need
+    /// to: [`prove_scale`] already re-validates both documents it is given
+    /// and re-derives every claim from them, so this type carries no safety
+    /// obligation that [`prove_scale`] does not independently redo.
+    pub fn from_document(document: Document) -> Self {
+        Self { document }
+    }
+
     /// The candidate document.
     pub fn document(&self) -> &Document {
         &self.document
@@ -3179,6 +3199,71 @@ mod tests {
         assert!(ibm.w_axis.abs_diff_eq(Vec4::new(0.0, 0.0, 0.0, 1.0), 1e-6));
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
         assert!(proof.bounds_residual < 1e-6);
+    }
+
+    #[test]
+    fn a_candidate_wrapped_from_an_external_document_is_proved_rather_than_trusted() {
+        let doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
+        let capability = complete_capability();
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::WholeDocumentLinearUnits { factor: 0.01 },
+            document: &doc,
+            capability: &capability,
+        })
+        .unwrap();
+
+        // Converted here by hand, exactly as a format frontend's reloaded
+        // artifact arrives: never through `build_scale_candidate`.
+        let mut converted = doc.clone();
+        for bone in &mut converted.skeleton.bones {
+            bone.rest.translation *= 0.01;
+        }
+        for node in &mut converted.assets.source_skeleton.nodes {
+            node.local_rest = match &node.local_rest {
+                SourceNodeLocalRest::Trs {
+                    translation,
+                    rotation,
+                    scale,
+                } => SourceNodeLocalRest::Trs {
+                    translation: *translation * 0.01,
+                    rotation: *rotation,
+                    scale: *scale,
+                },
+                SourceNodeLocalRest::Matrix(matrix) => {
+                    SourceNodeLocalRest::Matrix(scale_translation_only(*matrix, 0.01))
+                }
+            };
+        }
+        for mesh in &mut converted.assets.meshes {
+            for primitive in &mut mesh.primitives {
+                for position in &mut primitive.positions {
+                    *position *= 0.01;
+                }
+            }
+        }
+        for instance in &mut converted.assets.instances {
+            for inverse_bind in &mut instance.skin_ibms {
+                *inverse_bind = scale_translation_only(*inverse_bind, 0.01);
+            }
+        }
+        let proof = prove_scale(&doc, &ScaleCandidate::from_document(converted), &plan).unwrap();
+        assert!(proof.rest_translation_residual < 1e-6);
+        assert!(proof.mesh_position_residual < 1e-6);
+
+        // The constructor asserts nothing, and does not need to: the same
+        // wrapper around an *unconverted* document is rejected by proof.
+        let error = prove_scale(&doc, &ScaleCandidate::from_document(doc.clone()), &plan)
+            .expect_err("an unconverted candidate must not prove");
+        assert!(
+            matches!(
+                error,
+                ScaleError::ProofResidualExceeded {
+                    kind: ProofResidualKind::MeshPosition,
+                    ..
+                }
+            ),
+            "expected a MeshPosition residual, got {error:?}"
+        );
     }
 
     #[test]

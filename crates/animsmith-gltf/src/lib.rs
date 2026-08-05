@@ -72,6 +72,7 @@
 
 mod capability;
 pub mod fix;
+mod scale;
 pub mod write;
 
 pub use capability::{
@@ -81,6 +82,10 @@ pub use capability::{
     GltfInstancingCapability, GltfNodeCapability, GltfNodeRestKind, GltfPrimitiveCapability,
     GltfScalePreflightError, GltfScaleSource, GltfSkinCapability, preflight_scale_source,
     preflight_scale_source_bytes,
+};
+pub use scale::{
+    GltfScaleArtifact, GltfScaleArtifactProof, GltfScaleRewriteError, capability_facts,
+    prove_rewritten_artifact, rewrite_linear_units,
 };
 
 use animsmith_core::model::{

@@ -225,20 +225,20 @@ fn document_to_json(doc: &Document, buffer_uri: Option<String>, buffer_len: usiz
 /// Narrow a GLB byte length to the `u32` its header/chunk field requires,
 /// failing closed above the 4 GiB GLB limit rather than truncating (which
 /// would emit a length field disagreeing with the bytes on disk).
-fn glb_len_u32(field: &'static str, len: usize) -> Result<u32, WriteError> {
+pub(crate) fn glb_len_u32(field: &'static str, len: usize) -> Result<u32, WriteError> {
     u32::try_from(len).map_err(|_| WriteError::TooLarge { field, bytes: len })
 }
 
 /// The `u32` length fields of a GLB container.
 #[derive(Debug)]
-struct GlbLengths {
+pub(crate) struct GlbLengths {
     /// Total file length (12-byte header + JSON chunk + optional BIN chunk).
-    total: u32,
+    pub(crate) total: u32,
     /// JSON chunk payload length.
-    json: u32,
+    pub(crate) json: u32,
     /// BIN chunk payload length, or `None` when the payload is empty (the
     /// BIN chunk is then omitted — an empty chunk is GLB_EMPTY_CHUNK).
-    bin: Option<u32>,
+    pub(crate) bin: Option<u32>,
 }
 
 /// Plan a GLB's chunk framing from its (already 4-byte-padded) JSON and
@@ -247,7 +247,7 @@ struct GlbLengths {
 /// total so an oversized JSON or BIN chunk is attributed to itself rather
 /// than masked as a total overflow (each part is `<= total`, so a
 /// total-first check could only ever report `total`).
-fn plan_glb_lengths(json_len: usize, bin_len: usize) -> Result<GlbLengths, WriteError> {
+pub(crate) fn plan_glb_lengths(json_len: usize, bin_len: usize) -> Result<GlbLengths, WriteError> {
     let json = glb_len_u32("JSON chunk", json_len)?;
     let (bin, bin_bytes) = if bin_len > 0 {
         (Some(glb_len_u32("BIN chunk", bin_len)?), 8 + bin_len)
