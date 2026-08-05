@@ -210,7 +210,17 @@ source identity (`source_skin_index`, `source_root_node_index`), resolved
 against `Document::assets::source_skeleton` — never a normalized `BoneId` or
 mesh-instance ordinal. A frontend that wants to raw-preflight a glTF source
 before calling into this module can use `animsmith_gltf::preflight_scale_source`
-and project its `GltfCapabilityManifest` down to `ScaleCapabilityFacts`.
+and project its `GltfCapabilityManifest` down to `ScaleCapabilityFacts` with
+`animsmith_gltf::capability_facts`.
+
+For glTF/GLB, `animsmith_gltf::rewrite_linear_units` then performs the
+whole-document conversion on the source's own JSON and buffer bytes — never
+through the normalized writer — and `animsmith_gltf::prove_rewritten_artifact`
+proves the emitted container: byte preservation outside the converted accessor
+ranges, array identities, container framing, `min`/`max` consistency, and
+deterministic output bytes. Wrap the reloaded artifact in
+`ScaleCandidate::from_document` to run `prove_scale` over it as well; the two
+proof layers are complementary, not alternatives.
 
 ## What the libraries do not own
 

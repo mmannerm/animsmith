@@ -1001,6 +1001,15 @@ and `ScaleError`, candidate construction, and the `ScaleProof` residual
 maxima. Any change to the operation variants, required selectors, or failure
 boundary is a design change rather than an implementation detail.
 
+`animsmith-gltf` owns the glTF/GLB frontend of that contract:
+`preflight_scale_source` (issue #280) captures the raw inventory, and
+`capability_facts` / `rewrite_linear_units` / `prove_rewritten_artifact`
+(issue #282) implement the whole-document conversion of §D.2 directly on the
+source's own JSON and buffer bytes. Because that route produces a candidate
+core did not build, `ScaleCandidate::from_document` exists so the reloaded
+artifact can reach `prove_scale`; the type asserts nothing that `prove_scale`
+does not independently re-derive.
+
 ### D.8 Ownership choice and deferred slices
 
 Putting all semantics in assembly was rejected: it would hide a reusable

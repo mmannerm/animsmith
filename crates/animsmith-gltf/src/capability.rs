@@ -423,7 +423,11 @@ fn validate_document(document: &gltf::Document) -> Result<(), gltf::Error> {
     }
 }
 
-fn raw_json_bytes(bytes: &[u8]) -> Result<(GltfContainerKind, &[u8]), LoadError> {
+/// Split a captured container into its kind and its top-level JSON bytes.
+///
+/// Shared with [`crate::scale`], whose artifact proof must re-read the
+/// emitted container through exactly the same framing the preflight used.
+pub(crate) fn raw_json_bytes(bytes: &[u8]) -> Result<(GltfContainerKind, &[u8]), LoadError> {
     if !bytes.starts_with(GLB_MAGIC) {
         return Ok((GltfContainerKind::Gltf, bytes));
     }
@@ -1161,7 +1165,14 @@ fn collect_accessor_uses(root: &Map<String, Value>) -> BTreeMap<usize, BTreeSet<
     uses
 }
 
-fn dense_f32_accessor_range(
+/// The `(buffer, start, end)` byte range of a dense, non-normalized,
+/// non-sparse, 4-byte-aligned `f32` accessor, or `None` when the accessor is
+/// not in that shape.
+///
+/// Shared with [`crate::scale`]: the byte rewriter must resolve exactly the
+/// same range this preflight vouched for, so re-deriving it there would let
+/// the two definitions drift apart.
+pub(crate) fn dense_f32_accessor_range(
     root: &Map<String, Value>,
     buffers: &[Vec<u8>],
     accessor_index: usize,

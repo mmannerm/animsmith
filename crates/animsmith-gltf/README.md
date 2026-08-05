@@ -61,8 +61,33 @@ manifest before deciding support. A fully covered source returns that manifest
 with the exact captured top-level and resolved buffer bytes. Unsupported
 domains return the complete inventory alongside all source-indexed violations
 before a scale plan, candidate, or output exists. This API does not convert
-units, alter rest/bind data, infer a scale factor, or expose a mutation method;
-those remain separate dependency-ordered implementation slices.
+units, alter rest/bind data, infer a scale factor, or expose a mutation method.
+
+## Whole-Document Linear-Unit Rewrite
+
+`rewrite_linear_units` converts every length in a preflighted source by a
+caller-declared finite factor `q > 0`, and never infers that factor.
+`capability_facts` projects a `GltfCapabilityManifest` down to the
+format-neutral `ScaleCapabilityFacts` that `animsmith_core::scale::plan_scale`
+consumes, and `prove_rewritten_artifact` checks the emitted bytes against the
+claims a normalized `Document` cannot carry.
+
+The rewrite operates on the source's own JSON tree and buffer bytes and never
+routes through the normalized writer, so buffer bytes outside the converted
+accessor ranges, every array index, and every unmodeled source payload survive
+exactly. Node rest translations, node matrix translation columns, mesh
+`POSITION`, translation sampler outputs (including both `CUBICSPLINE`
+tangents), per-skin inverse-bind translation columns, and the corresponding
+accessor `min`/`max` are converted; rotations, scales, normals, UVs, weights,
+key times, and morph weights are not. Each accessor is converted once per
+*unique* accessor index, so a `POSITION` shared by several primitives scales by
+`q`, never `q^2`. JSON object key order and float spelling are not preserved:
+output is deterministic, but it is not a minimal textual diff.
+
+Camera, light, and extension length fields have no registered handler in this
+slice, and the preflight rejects those domains outright. Rest/bind
+reparameterization, morph `POSITION` deltas, and CLI/evidence publication
+remain separate dependency-ordered implementation slices.
 
 ## Install
 
