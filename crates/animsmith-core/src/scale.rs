@@ -5263,6 +5263,67 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_rest_rotation_chord_above_two_saturates_at_two_pi_instead_of_reporting_nan() {
+        // `quat_residual_radians` inverts the chord relation
+        // `chord = 2 * sin(theta / 4)` as `theta = 4 * asin(chord / 2)`, whose
+        // domain runs out at `chord = 2`. No pair of *unit* quaternions can
+        // reach that (the double-cover minimum is at most `sqrt(2)`), but an
+        // authored non-unit value can — and `invariant-9` forbids the loader
+        // from normalizing one away — so the conversion clamps and saturates
+        // at `4 * asin(1) = 2 * pi` rather than handing `asin` an
+        // out-of-domain argument and reporting `NaN`.
+        //
+        // The pair fails closed either way: `2 * pi` and `NaN` both exceed the
+        // `1e-5` bound (`check_residual` rejects a non-finite observation
+        // outright). What is pinned here is therefore the *reported* residual
+        // — the value DESIGN.md Appendix D §D.6 requires evidence to publish
+        // next to the tolerance policy — not the accept/reject outcome.
+        //
+        // Both operands are literal. The source leaf rotation is exactly the
+        // identity `(0, 0, 0, 1)` and the candidate's is the non-unit
+        // `(0, 0, 0, -4)`, so the double-cover-aware chord is
+        // `min(|(0, 0, 0, 5)|, |(0, 0, 0, -3)|) = 3`: `chord / 2 = 1.5` is
+        // genuinely outside `asin`'s domain, and the clamp is the only thing
+        // between this pair and a `NaN`.
+        let doc = rig_document(&rest_only_leaf_rig(), &[1], 0, Mat4::IDENTITY);
+        assert_eq!(doc.skeleton.bones[2].rest.rotation, Quat::IDENTITY);
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        assert_eq!(plan.tolerance_policy().rotation_residual_radians, 1e-5);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+
+        // Bone 2 is a leaf carrying no skin slot, no mesh vertex and no track,
+        // so the rest-rotation obligation is the only one that can observe it.
+        // A quaternion of the form `(0, 0, 0, w)` also leaves the world matrix
+        // derived from it at the identity, so not even the rest-*translation*
+        // residual of this node moves: the saturated value below is reported
+        // by the rotation obligation and nothing else.
+        let mut broken = candidate.document().clone();
+        broken.skeleton.bones[2].rest.rotation = Quat::from_xyzw(0.0, 0.0, 0.0, -4.0);
+        let broken = ScaleCandidate { document: broken };
+
+        let error = prove_scale(&doc, &broken, &plan).unwrap_err();
+        let ScaleError::ProofResidualExceeded {
+            kind,
+            observed,
+            tolerance,
+        } = error
+        else {
+            panic!("expected a residual rejection, got {error:?}");
+        };
+        assert_eq!(kind, ProofResidualKind::RestRotation);
+        assert_eq!(tolerance, 1e-5);
+        assert!(
+            observed.is_finite(),
+            "saturated residual {observed} must never be NaN"
+        );
+        // Exact, not approximate: `4.0 * asin(1.0)` is `4 * FRAC_PI_2`, and
+        // scaling by a power of two is exact, so the saturation value is
+        // bit-for-bit `TAU`.
+        assert_eq!(observed, std::f64::consts::TAU);
+    }
+
     // --- f32 representability of the declared factor --------------------
 
     #[test]
@@ -5626,13 +5687,70 @@ mod tests {
         let mut unskinned = doc.clone();
         unskinned.assets.instances[0].skin_joints.clear();
         unskinned.assets.instances[0].skin_ibms.clear();
-        assert!(matches!(
-            prove_scale(&unskinned, &candidate, &plan).unwrap_err(),
-            ScaleError::MissingProofEvidence {
-                kind: ProofResidualKind::Bounds,
-                ..
-            }
-        ));
+        let error = prove_scale(&unskinned, &candidate, &plan).unwrap_err();
+        let ScaleError::MissingProofEvidence { kind, detail } = error else {
+            panic!("expected missing bounds evidence, got {error:?}");
+        };
+        assert_eq!(kind, ProofResidualKind::Bounds);
+        // The `detail` is load-bearing, not decoration. Deleting the early
+        // `has_skinned_evidence` gate leaves the later `skinned_bounds`
+        // fallback returning the same *variant* and the same `kind` from a
+        // different cause, so only the reason string distinguishes "the
+        // document carries no skinned instance at all" from "it carries one
+        // whose vertices produced no box".
+        assert_eq!(detail, "no_skinned_instance_in_affected_closure");
+    }
+
+    #[test]
+    fn a_source_skin_whose_vertices_are_all_unweighted_names_the_missing_source_bounds() {
+        // The instance still declares an affected joint, so the early
+        // `has_skinned_evidence` gate is satisfied and this reaches the
+        // `skinned_bounds` fallback. What is missing is a vertex that
+        // actually binds to that joint: a fully unweighted vertex is
+        // legitimately excluded from bounds, and with the fixture's only
+        // vertex excluded the source yields no box at all.
+        let doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        assert!(plan.proof_obligations().prove_bounds);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        prove_scale(&doc, &candidate, &plan).unwrap();
+
+        let mut unweighted = doc.clone();
+        unweighted.assets.meshes[0].primitives[0].weights[0] = [0.0; 4];
+        assert_eq!(unweighted.assets.instances[0].skin_joints, vec![1]);
+        let error = prove_scale(&unweighted, &candidate, &plan).unwrap_err();
+        let ScaleError::MissingProofEvidence { kind, detail } = error else {
+            panic!("expected missing bounds evidence, got {error:?}");
+        };
+        assert_eq!(kind, ProofResidualKind::Bounds);
+        assert_eq!(detail, "source_bounds_missing");
+    }
+
+    #[test]
+    fn a_candidate_skin_whose_vertices_are_all_unweighted_names_the_missing_candidate_bounds() {
+        // Same shape as the source case, on the other side of the comparison:
+        // vertex weights are not part of the structural parity
+        // `validate_candidate_structure` enforces, so a candidate can reach
+        // the bounds obligation carrying a box-less skin while the source
+        // still has one. The two sides must not be reported interchangeably.
+        let doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        assert!(plan.proof_obligations().prove_bounds);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+
+        let mut unweighted = candidate.document().clone();
+        unweighted.assets.meshes[0].primitives[0].weights[0] = [0.0; 4];
+        let unweighted = ScaleCandidate {
+            document: unweighted,
+        };
+        let error = prove_scale(&doc, &unweighted, &plan).unwrap_err();
+        let ScaleError::MissingProofEvidence { kind, detail } = error else {
+            panic!("expected missing bounds evidence, got {error:?}");
+        };
+        assert_eq!(kind, ProofResidualKind::Bounds);
+        assert_eq!(detail, "candidate_bounds_missing");
     }
 
     // --- Absent inverse-bind accessor through a rest/bind rebase ---------
