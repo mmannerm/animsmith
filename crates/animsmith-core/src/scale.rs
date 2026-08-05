@@ -1876,7 +1876,13 @@ pub struct ScaleProof {
     pub tolerance_policy: ScaleTolerancePolicy,
     /// Maximum rest-world translation residual across affected nodes.
     pub rest_translation_residual: f64,
-    /// Maximum rest-world rotation residual, in radians.
+    /// Maximum rest-world rotation residual, in radians, directly comparable
+    /// to [`ScaleTolerancePolicy::rotation_residual_radians`].
+    ///
+    /// Measured as a double-cover-aware quaternion chord length
+    /// `|q1 - q2| = 2 * sin(theta / 4)` and reported as the angle
+    /// `theta = 4 * asin(chord / 2)` that chord represents, so this value and
+    /// the tolerance it is checked against carry the same unit.
     pub rest_rotation_residual: f64,
     /// Maximum postcondition unit-scale residual (rest/bind only).
     pub unit_scale_residual: f64,
@@ -2002,7 +2008,12 @@ pub fn prove_scale(
                 .ok_or(ScaleError::BoneIndexOutOfRange { index: node })?
                 .rest
                 .rotation;
-            let rotation_residual = quat_equality_residual(source_rotation, candidate_rotation);
+            // [`quat_equality_residual`] answers in *chord* space, and this
+            // obligation's declared bound is an angle, so the chord is
+            // converted to the angle it represents before it is either
+            // reported or compared (see [`quat_residual_radians`]).
+            let rotation_residual =
+                quat_residual_radians(quat_equality_residual(source_rotation, candidate_rotation));
             proof.rest_rotation_residual = proof.rest_rotation_residual.max(rotation_residual);
             check_residual(
                 ProofResidualKind::RestRotation,
@@ -2521,6 +2532,42 @@ fn quat_equality_residual(before: Quat, after: Quat) -> f64 {
     let before = before.as_dquat();
     let after = after.as_dquat();
     (before - after).length().min((before + after).length())
+}
+
+/// Convert the chord length [`quat_equality_residual`] reports into the
+/// shortest-path rotation angle it represents, in radians.
+///
+/// For unit quaternions `q1 . q2 = cos(theta / 2)`, so
+/// `|q1 - q2|^2 = 2 - 2 * cos(theta / 2) = 4 * sin(theta / 4)^2` and the
+/// chord is `2 * sin(theta / 4)`, which is `theta / 2` to first order.
+/// Comparing that chord directly against
+/// [`ScaleTolerancePolicy::rotation_residual_radians`] therefore accepted
+/// *twice* the declared angle: a genuine `2e-5 rad` error measured
+/// `9.99e-6` against a `1e-5` policy and passed. Inverting the relation
+/// gives `theta = 4 * asin(chord / 2)`.
+///
+/// Converting here — rather than comparing in chord space, or renaming the
+/// reported field to say "chord" — is the choice that keeps the public
+/// evidence contract honest. DESIGN.md Appendix D §D.1 declares the bound as
+/// "shortest-path rotation residual is at most `1e-5` radians", §D.6 requires
+/// evidence to publish the tolerance policy *and* the observed residuals
+/// together, and [`ScaleProof::rest_rotation_residual`] is headed for the
+/// immutable evidence format. A chord-valued residual sitting next to a
+/// radian-valued policy in that record would hand every reader the same
+/// factor-of-two misreading this conversion removes. Converting once, up
+/// front, also keeps the comparison, the tracked maximum, and
+/// [`ScaleError::ProofResidualExceeded`]'s `observed`/`tolerance` pair all in
+/// one unit.
+///
+/// The conversion is monotone over the whole reachable chord range, so it
+/// changes which residuals are accepted only by the intended factor of two,
+/// never by re-ordering them. The clamp covers a chord above `2`, which no
+/// pair of unit quaternions can produce (the double-cover minimum is at most
+/// `sqrt(2)`) but an authored non-unit value can: saturating at `2 * pi`
+/// fails closed on such a pair instead of reporting a `NaN` that only the
+/// non-finite guard in [`check_residual`] would catch.
+fn quat_residual_radians(chord: f64) -> f64 {
+    4.0 * (chord / 2.0).min(1.0).asin()
 }
 
 fn matrix_residual(before: Mat4, after: Mat4) -> f64 {
@@ -3333,6 +3380,190 @@ mod tests {
         broken.skeleton.bones[2].rest.translation = Vec3::new(1.0, 0.0, 0.0);
         let broken = ScaleCandidate { document: broken };
         assert!(prove_scale(&doc, &broken, &plan).is_err());
+    }
+
+    // --- The `C_parent = I` boundary at the top of the domain ------------
+
+    /// A rest/bind rig whose scaled root is *not* the skeleton root.
+    ///
+    /// DESIGN.md Appendix D §D.2 rebases each affected local matrix as
+    /// `L' = C_parent^-1 * L * C_i`, where `C_i = scale(1 / s)` inside the
+    /// affected domain and `C_parent = I` at its parent boundary. Every other
+    /// fixture here scales the skeleton root itself, with a zero local
+    /// translation and no track of its own, so `C_parent = I` and
+    /// `C_parent = C_i` are indistinguishable and the boundary rule — the
+    /// core of the operation — goes unpinned on both the build and the proof
+    /// side.
+    ///
+    /// This rig makes them differ, in one closure:
+    ///
+    /// ```text
+    /// bone 0   parent -   T (5, 0, 0)     S 1      boundary parent, outside
+    /// bone 1   parent 0   T (0, 2, 0)     S 0.01   scaled root, animated
+    /// bone 2   parent 1   T (0, 100, 0)   S 1      the skin's only joint
+    /// bone 3   parent 2   T (100, 0, 0)   S 1      attachment, depth 1
+    /// bone 4   parent 3   T (0, 0, 200)   S 1      attachment, depth 2
+    /// ```
+    ///
+    /// Every rest-world linear part from bone 1 down is `0.01 * I`, so the
+    /// domain classifies at the common factor `0.01`; bone 0 contributes a
+    /// pure translation and is neither a joint, an ancestor path between
+    /// joints, nor a descendant, so it stays outside. The rest-world
+    /// translations are bone 1 `(5, 2, 0)`, bone 2 `(5, 3, 0)`, bone 3
+    /// `(6, 3, 0)` and bone 4 `(6, 3, 2)`.
+    fn parent_boundary_rig() -> Vec<RigNode> {
+        vec![
+            rig(None, 0, Vec3::new(5.0, 0.0, 0.0)),
+            RigNode {
+                parent: Some(0),
+                source_node_index: 1,
+                translation: Vec3::new(0.0, 2.0, 0.0),
+                rotation: Quat::IDENTITY,
+                scale: Vec3::splat(0.01),
+            },
+            rig(Some(1), 2, Vec3::new(0.0, 100.0, 0.0)),
+            rig(Some(2), 3, Vec3::new(100.0, 0.0, 0.0)),
+            rig(Some(3), 4, Vec3::new(0.0, 0.0, 200.0)),
+        ]
+    }
+
+    fn parent_boundary_document() -> Document {
+        // `B = inverse(W_rest(bone 2))` for `W = T(5, 3, 0) * scale(0.01)`:
+        // `W^-1 = scale(100) * T(-5, -3, 0)`, that is a linear part of
+        // `100 * I` and a translation column of `100 * (-5, -3, 0)`.
+        let ibm = Mat4::from_scale_rotation_translation(
+            Vec3::splat(100.0),
+            Quat::IDENTITY,
+            Vec3::new(-500.0, -300.0, 0.0),
+        );
+        let mut doc = rig_document(&parent_boundary_rig(), &[2], 0, ibm);
+        // A translation track on the scaled root *itself*. Its parent is
+        // outside the closure, so this track's parent-basis multiplier is the
+        // boundary factor of one and both values must survive the rebase
+        // byte-for-byte — unlike the descendant tracks every other animated
+        // fixture here carries, which are rebased by `s`.
+        doc.clips.push(Clip {
+            name: "clip".into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 1,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Vec3s(vec![
+                    Vec3::new(0.0, 2.0, 0.0),
+                    Vec3::new(0.0, 4.0, 0.0),
+                ]),
+            }],
+        });
+        doc
+    }
+
+    #[test]
+    fn a_scaled_root_whose_parent_is_outside_the_closure_keeps_its_own_translation_basis() {
+        let doc = parent_boundary_document();
+        let capability = complete_capability();
+        let request = ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 1,
+                expected_factor: 0.01,
+            },
+            document: &doc,
+            capability: &capability,
+        };
+        let plan = plan_scale(&request).unwrap();
+        // The closure is the scaled root, its one joint, and *both*
+        // attachment levels below it: bone 4 is two hops below the deepest
+        // node the joint/ancestor seeding reaches, so a descendant walk that
+        // stops after one level drops it. Bone 0 is the boundary parent and
+        // must stay out.
+        assert_eq!(plan.affected_nodes(), &[1, 2, 3, 4]);
+        assert_eq!(plan.transform_only_attachments(), &[3, 4]);
+        assert_eq!(plan.common_factor(), 0.01);
+
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let bones = &candidate.document().skeleton.bones;
+        // The boundary parent is not in the domain and is not rewritten.
+        assert_eq!(bones[0].rest.translation, Vec3::new(5.0, 0.0, 0.0));
+        assert_eq!(bones[0].rest.scale, Vec3::ONE);
+        // Scaled root: `C_parent = I`, so its local translation keeps the
+        // basis it was authored in — multiplying it by `s` here would move
+        // its world origin from `(5, 2, 0)` to `(5, 0.02, 0)` — while its own
+        // `C_i` still corrects its local scale from `0.01` to one.
+        assert!((bones[1].rest.translation - Vec3::new(0.0, 2.0, 0.0)).length() < 1e-9);
+        // Below the root every parent is itself affected, so
+        // `C_parent = scale(1 / s)` and each local translation is rebased by
+        // `s = 0.01`: `(0, 100, 0) -> (0, 1, 0)`, `(100, 0, 0) -> (1, 0, 0)`,
+        // `(0, 0, 200) -> (0, 0, 2)`.
+        assert!((bones[2].rest.translation - Vec3::new(0.0, 1.0, 0.0)).length() < 1e-6);
+        assert!((bones[3].rest.translation - Vec3::new(1.0, 0.0, 0.0)).length() < 1e-6);
+        assert!((bones[4].rest.translation - Vec3::new(0.0, 0.0, 2.0)).length() < 1e-6);
+        for (id, bone) in bones.iter().enumerate().skip(1) {
+            assert!(
+                (bone.rest.scale - Vec3::ONE).length() < 1e-6,
+                "bone {id} local scale {:?}",
+                bone.rest.scale
+            );
+        }
+
+        // The raw source projection is rebased by the same rule, and the
+        // scaled root's authored local translation is unchanged there too.
+        let source_nodes = &candidate.document().assets.source_skeleton.nodes;
+        let expected_projection = [
+            (0, Vec3::new(5.0, 0.0, 0.0), Vec3::ONE),
+            (1, Vec3::new(0.0, 2.0, 0.0), Vec3::ONE),
+            (2, Vec3::new(0.0, 1.0, 0.0), Vec3::ONE),
+            (3, Vec3::new(1.0, 0.0, 0.0), Vec3::ONE),
+            (4, Vec3::new(0.0, 0.0, 2.0), Vec3::ONE),
+        ];
+        for (index, expected_translation, expected_scale) in expected_projection {
+            let SourceNodeLocalRest::Trs {
+                translation, scale, ..
+            } = &source_nodes[index].local_rest
+            else {
+                panic!("expected a trs source rest");
+            };
+            assert!(
+                (*translation - expected_translation).length() < 1e-6,
+                "source node {index} translation {translation:?}"
+            );
+            assert!(
+                (*scale - expected_scale).length() < 1e-6,
+                "source node {index} scale {scale:?}"
+            );
+        }
+
+        // The scaled root's own translation track is *not* rebased.
+        let TrackValues::Vec3s(values) = &candidate.document().clips[0].tracks[0].values else {
+            panic!("expected a vec3 track");
+        };
+        let expected_values = [Vec3::new(0.0, 2.0, 0.0), Vec3::new(0.0, 4.0, 0.0)];
+        for (value, expected) in values.iter().zip(expected_values) {
+            assert!((*value - expected).length() < 1e-9, "track value {value:?}");
+        }
+
+        // `B' = C^-1 * B = scale(s) * B`: linear `I`, translation column
+        // `0.01 * (-500, -300, 0)`.
+        let binds = &candidate.document().assets.instances[0].skin_ibms;
+        assert_eq!(binds.len(), 1);
+        assert!(
+            binds[0].abs_diff_eq(Mat4::from_translation(Vec3::new(-5.0, -3.0, 0.0)), 1e-5),
+            "rebased bind {:?}",
+            binds[0]
+        );
+
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+        // Two key times, no cubic segment.
+        assert_eq!(proof.sample_time_count, 2);
+        assert!(proof.rest_translation_residual < 1e-4);
+        assert!(proof.unit_scale_residual < 1e-4);
+        assert!(proof.transform_only_affine_residual < 1e-4);
+        // Exactly zero: the one rewritten track's multiplier is one.
+        assert!(proof.track_value_residual < 1e-9);
+        assert!(proof.trajectory_residual < 1e-4);
+        assert!(proof.skin_matrix_residual < 1e-4);
+        assert!(proof.bounds_residual < 1e-4);
     }
 
     // --- Affine violation classes (rest/bind classification) -----------
@@ -4741,6 +4972,72 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn a_rest_rotation_error_is_bounded_by_the_declared_angle_not_twice_it() {
+        // DESIGN.md Appendix D §D.1 declares "shortest-path rotation residual
+        // is at most `1e-5` radians". The residual is *measured* as a
+        // double-cover-aware quaternion chord `|q1 - q2| = 2 * sin(theta / 4)`
+        // — which is `theta / 2` to first order — so checking that chord
+        // against the declared *angle* accepted a genuine `2e-5 rad` rotation
+        // error: fail-open by exactly two.
+        //
+        // Both probes are literal. A rotation of `theta` about Y is
+        // `(0, sin(theta / 2), 0, cos(theta / 2))`; at these angles
+        // `cos(theta / 2)` is within `6e-11` of one and rounds to exactly
+        // `1.0f32`, so the authored value is `(0, theta / 2, 0, 1)` and the
+        // angle it represents is `2 * atan2(theta / 2, 1) = theta` to far
+        // better than the `1e-9` bands asserted below. The source rotation is
+        // the identity, so each doctored quaternion's own angle *is* the
+        // residual under test.
+        let doc = rig_document(&rest_only_leaf_rig(), &[1], 0, Mat4::IDENTITY);
+        assert_eq!(doc.skeleton.bones[2].rest.rotation, Quat::IDENTITY);
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        assert_eq!(plan.tolerance_policy().rotation_residual_radians, 1e-5);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+
+        // Bone 2 is a leaf carrying no skin slot, no mesh vertex and no
+        // track, so rotating it moves no descendant origin, no skin palette
+        // and no sampled pose: the rest-rotation obligation is the only one
+        // that can see either probe.
+        let rotate_leaf = |half_angle: f32| {
+            let mut broken = candidate.document().clone();
+            broken.skeleton.bones[2].rest.rotation = Quat::from_xyzw(0.0, half_angle, 0.0, 1.0);
+            ScaleCandidate { document: broken }
+        };
+
+        // `9e-6 rad`: inside the declared bound, and reported *as* `9e-6`
+        // rather than as the `4.5e-6` chord it was measured from — the
+        // reported field carries the unit its name and the §D.6 evidence
+        // contract promise.
+        let inside = rotate_leaf(4.5e-6);
+        let proof = prove_scale(&doc, &inside, &plan).unwrap();
+        assert!(
+            (proof.rest_rotation_residual - 9.0e-6).abs() < 1e-9,
+            "residual {} is not the 9e-6 radian angle it measures",
+            proof.rest_rotation_residual
+        );
+
+        // `1.1e-5 rad`: outside the declared bound, but only a `5.5e-6`
+        // chord — the value a chord-against-radians comparison accepted.
+        let outside = rotate_leaf(5.5e-6);
+        let error = prove_scale(&doc, &outside, &plan).unwrap_err();
+        let ScaleError::ProofResidualExceeded {
+            kind,
+            observed,
+            tolerance,
+        } = error
+        else {
+            panic!("expected a residual rejection, got {error:?}");
+        };
+        assert_eq!(kind, ProofResidualKind::RestRotation);
+        assert_eq!(tolerance, 1e-5);
+        assert!(
+            (observed - 1.1e-5).abs() < 1e-9,
+            "observed {observed} is not the 1.1e-5 radian angle it measures"
+        );
+    }
+
     // --- f32 representability of the declared factor --------------------
 
     #[test]
@@ -5135,6 +5432,176 @@ mod tests {
         ));
     }
 
+    /// The same compensated-scale relationship as [`compensated_document`],
+    /// with every affected node's authored local rest declared as
+    /// [`SourceNodeLocalRest::Matrix`] instead of `Trs` — the variant every
+    /// other fixture in this module leaves unexercised, and the only one that
+    /// reaches [`rebase_matrix`].
+    ///
+    /// ```text
+    /// bone 0   parent -   scale(0.01)                   scaled root
+    /// bone 1   parent 0   T(0, 100, 0) * diag(-1,-1,1)  the skin's joint
+    /// bone 2   parent 1   T(0, 0, 50)                   transform-only child
+    /// ```
+    ///
+    /// `diag(-1, -1, 1)` is the proper rotation by `pi` about z, so the
+    /// linear parts stay orthogonal with a positive determinant and the
+    /// domain classifies at `0.01`. The matching [`Bone::rest`] rotation is
+    /// `Quat::from_rotation_z(PI)`, whose `f32` matrix differs from that
+    /// literal by under `1e-7`.
+    ///
+    /// Rest-world facts: bone 1 has linear `0.01 * diag(-1, -1, 1)` and
+    /// translation `(0, 1, 0)`; bone 2 adds `0.01 * (0, 0, 50)` for
+    /// `(0, 1, 0.5)`.
+    fn matrix_projection_document() -> Document {
+        let nodes = vec![
+            RigNode {
+                parent: None,
+                source_node_index: 0,
+                translation: Vec3::ZERO,
+                rotation: Quat::IDENTITY,
+                scale: Vec3::splat(0.01),
+            },
+            RigNode {
+                parent: Some(0),
+                source_node_index: 1,
+                translation: Vec3::new(0.0, 100.0, 0.0),
+                rotation: Quat::from_rotation_z(std::f32::consts::PI),
+                scale: Vec3::ONE,
+            },
+            rig(Some(1), 2, Vec3::new(0.0, 0.0, 50.0)),
+        ];
+        // `B = inverse(W_rest(bone 1))`. With `R = diag(-1, -1, 1) = R^-1`,
+        // `W = scale(0.01) * T(0, 100, 0) * R` has linear `0.01 * R` and
+        // translation `(0, 1, 0)`, so `W^-1 = R * scale(100) * T(0, -1, 0)`:
+        // linear `diag(-100, -100, 100)`, translation column `(0, 100, 0)`.
+        let ibm = Mat4::from_cols(
+            Vec4::new(-100.0, 0.0, 0.0, 0.0),
+            Vec4::new(0.0, -100.0, 0.0, 0.0),
+            Vec4::new(0.0, 0.0, 100.0, 0.0),
+            Vec4::new(0.0, 100.0, 0.0, 1.0),
+        );
+        let mut doc = rig_document(&nodes, &[1], 0, ibm);
+        let authored = [
+            Mat4::from_cols(
+                Vec4::new(0.01, 0.0, 0.0, 0.0),
+                Vec4::new(0.0, 0.01, 0.0, 0.0),
+                Vec4::new(0.0, 0.0, 0.01, 0.0),
+                Vec4::new(0.0, 0.0, 0.0, 1.0),
+            ),
+            Mat4::from_cols(
+                Vec4::new(-1.0, 0.0, 0.0, 0.0),
+                Vec4::new(0.0, -1.0, 0.0, 0.0),
+                Vec4::new(0.0, 0.0, 1.0, 0.0),
+                Vec4::new(0.0, 100.0, 0.0, 1.0),
+            ),
+            Mat4::from_cols(
+                Vec4::new(1.0, 0.0, 0.0, 0.0),
+                Vec4::new(0.0, 1.0, 0.0, 0.0),
+                Vec4::new(0.0, 0.0, 1.0, 0.0),
+                Vec4::new(0.0, 0.0, 50.0, 1.0),
+            ),
+        ];
+        for (node, matrix) in doc.assets.source_skeleton.nodes.iter_mut().zip(authored) {
+            node.local_rest = SourceNodeLocalRest::Matrix(matrix);
+        }
+        doc
+    }
+
+    #[test]
+    fn rest_bind_rebases_a_matrix_declared_source_projection_to_agree_with_the_skeleton() {
+        // `rebase_matrix` implements the `SourceNodeLocalRest::Matrix` half of
+        // the source-projection rewrite and is unreachable from a `Trs`
+        // fixture, so nothing else here executes it. The shipped code is
+        // correct — this pins it against the same
+        // `L' = scale(s_parent) * L * scale(1 / s_node)` the `Trs` half
+        // applies, including the fact that a uniform right-multiply scales
+        // the three linear columns and leaves the translation column alone.
+        let doc = matrix_projection_document();
+        let capability = complete_capability();
+        let request = ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 0.01,
+            },
+            document: &doc,
+            capability: &capability,
+        };
+        let plan = plan_scale(&request).unwrap();
+        assert_eq!(plan.affected_nodes(), &[0, 1, 2]);
+        assert_eq!(plan.transform_only_attachments(), &[2]);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+
+        // Hand-computed rewrites. Bone 0 is the scaled root, so
+        // `s_parent = 1` and only its linear columns are divided by
+        // `s = 0.01`: `scale(0.01) -> I`. Bones 1 and 2 have an affected
+        // parent, so `s_parent = s_node = 0.01`: their linear columns are
+        // multiplied and divided by the same factor and come out unchanged,
+        // while their translation columns are multiplied by `0.01` alone —
+        // `(0, 100, 0) -> (0, 1, 0)` and `(0, 0, 50) -> (0, 0, 0.5)`.
+        let expected = [
+            Mat4::IDENTITY,
+            Mat4::from_cols(
+                Vec4::new(-1.0, 0.0, 0.0, 0.0),
+                Vec4::new(0.0, -1.0, 0.0, 0.0),
+                Vec4::new(0.0, 0.0, 1.0, 0.0),
+                Vec4::new(0.0, 1.0, 0.0, 1.0),
+            ),
+            Mat4::from_cols(
+                Vec4::new(1.0, 0.0, 0.0, 0.0),
+                Vec4::new(0.0, 1.0, 0.0, 0.0),
+                Vec4::new(0.0, 0.0, 1.0, 0.0),
+                Vec4::new(0.0, 0.0, 0.5, 1.0),
+            ),
+        ];
+        for (index, expected) in expected.into_iter().enumerate() {
+            let SourceNodeLocalRest::Matrix(matrix) =
+                &candidate.document().assets.source_skeleton.nodes[index].local_rest
+            else {
+                panic!("an authored matrix source rest must stay a matrix");
+            };
+            assert!(
+                matrix.abs_diff_eq(expected, 1e-6),
+                "source node {index} rebased to {matrix:?}"
+            );
+            // And the rewritten projection describes the same local transform
+            // as the rewritten normalized bone: the two halves of the rest
+            // rewrite must not drift apart.
+            let rest = candidate.document().skeleton.bones[index].rest;
+            let bone_matrix =
+                Mat4::from_scale_rotation_translation(rest.scale, rest.rotation, rest.translation);
+            assert!(
+                matrix.abs_diff_eq(bone_matrix, 1e-6),
+                "source node {index} projection {matrix:?} disagrees with bone rest {bone_matrix:?}"
+            );
+        }
+
+        // `B' = C^-1 * B = scale(s) * B`: linear `diag(-1, -1, 1)`,
+        // translation `(0, 1, 0)`.
+        let binds = &candidate.document().assets.instances[0].skin_ibms;
+        assert!(
+            binds[0].abs_diff_eq(
+                Mat4::from_cols(
+                    Vec4::new(-1.0, 0.0, 0.0, 0.0),
+                    Vec4::new(0.0, -1.0, 0.0, 0.0),
+                    Vec4::new(0.0, 0.0, 1.0, 0.0),
+                    Vec4::new(0.0, 1.0, 0.0, 1.0),
+                ),
+                1e-5
+            ),
+            "rebased bind {:?}",
+            binds[0]
+        );
+
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+        assert!(proof.rest_translation_residual < 1e-4);
+        assert!(proof.rest_rotation_residual < 1e-9);
+        assert!(proof.unit_scale_residual < 1e-4);
+        assert!(proof.transform_only_affine_residual < 1e-4);
+        assert!(proof.skin_matrix_residual < 1e-4);
+    }
+
     #[test]
     fn whole_document_conversion_rebases_the_raw_source_projection_too() {
         let doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
@@ -5201,6 +5668,35 @@ mod tests {
     }
 
     #[test]
+    fn a_rest_translation_error_confined_to_z_is_still_named_by_the_rest_translation_obligation() {
+        // The rest-translation residual is a three-component length, and
+        // every other fixture's translation error has an x or y term, so a
+        // residual that quietly dropped its z term would still be caught
+        // everywhere else. This candidate keeps x and y at the analytically
+        // expected `(3, 0, 0) * 0.01` and moves z alone; as in the test
+        // above, the leaf carries no skin slot, mesh vertex or track, so the
+        // rest-translation obligation is the only one that can see it at all.
+        let doc = rig_document(&rest_only_leaf_rig(), &[1], 0, Mat4::IDENTITY);
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let mut broken = candidate.document().clone();
+        broken.skeleton.bones[2].rest.translation = Vec3::new(0.03, 0.0, 1.0);
+        let broken = ScaleCandidate { document: broken };
+        let error = prove_scale(&doc, &broken, &plan).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                ScaleError::ProofResidualExceeded {
+                    kind: ProofResidualKind::RestTranslation,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[test]
     fn a_non_unit_composed_scale_on_an_affected_node_is_named_by_the_unit_scale_obligation() {
         let doc = compensated_document();
         let capability = complete_capability();
@@ -5230,6 +5726,44 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn a_composed_scale_anomaly_confined_to_z_is_still_named_by_the_unit_scale_obligation() {
+        // The postcondition residual sums a per-axis deviation from one, and
+        // no other fixture puts a composed-scale anomaly on z alone, so a
+        // residual that dropped its z axis would still be caught everywhere
+        // else. Here the composed x and y scales stay one and only z becomes
+        // two: dropping z reports `0.0` and hands the candidate on to a
+        // *different* obligation, which is why this test names the kind
+        // rather than merely asserting a rejection.
+        let doc = compensated_document();
+        let capability = complete_capability();
+        let request = ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 0.01,
+            },
+            document: &doc,
+            capability: &capability,
+        };
+        let plan = plan_scale(&request).unwrap();
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let mut broken = candidate.document().clone();
+        broken.skeleton.bones[2].rest.scale = Vec3::new(1.0, 1.0, 2.0);
+        let broken = ScaleCandidate { document: broken };
+        let error = prove_scale(&doc, &broken, &plan).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                ScaleError::ProofResidualExceeded {
+                    kind: ProofResidualKind::UnitScale,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
     }
 
     #[test]
