@@ -5075,6 +5075,67 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn prove_scale_rejects_a_candidate_whose_track_times_differ_from_the_source() {
+        // `prove_scale` does not require its two documents to be the same
+        // one: a caller can build a candidate from one document and prove
+        // it against another. Track times are the sampling grid *both*
+        // sides are read on, so a candidate that agrees on track identity,
+        // count, property and interpolation but disagrees on `times` would
+        // have every sampled obligation -- key, cubic interior, trajectory,
+        // skin and bounds -- comparing values drawn from different
+        // instants. That proves nothing, so it is a structure mismatch
+        // rather than a residual.
+        let mut doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
+        doc.clips.push(Clip {
+            name: "clip".into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 1,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Vec3s(vec![
+                    Vec3::new(0.0, 1.0, 0.0),
+                    Vec3::new(0.0, 3.0, 0.0),
+                ]),
+            }],
+        });
+        let capability = complete_capability();
+        // Whole-document conversion by `0.01`.
+        let plan = whole_document_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+
+        // The candidate is otherwise *correct*: both affected translation
+        // keys carry exactly `0.01x` the authored value, and it proves.
+        let TrackValues::Vec3s(built) = &candidate.document().clips[0].tracks[0].values else {
+            panic!("translation track must hold Vec3 values");
+        };
+        assert!((built[0] - Vec3::new(0.0, 0.01, 0.0)).length() < 1e-9);
+        assert!((built[1] - Vec3::new(0.0, 0.03, 0.0)).length() < 1e-9);
+        prove_scale(&doc, &candidate, &plan).unwrap();
+
+        // Move the second key from `1.0s` to `2.0s` and change nothing
+        // else. Track count, `(bone, property, interpolation)` and the
+        // value count all still match the source, so neither a count
+        // mismatch nor a value residual can fire ahead of the time check:
+        // the disagreeing sampling grid is the only thing left to catch.
+        let mut retimed = candidate.document().clone();
+        retimed.clips[0].tracks[0].times = vec![0.0, 2.0];
+        assert_eq!(
+            retimed.clips[0].tracks[0].values.len(),
+            doc.clips[0].tracks[0].values.len(),
+            "only the sampling grid may differ"
+        );
+        let retimed = ScaleCandidate { document: retimed };
+        assert_eq!(
+            prove_scale(&doc, &retimed, &plan).unwrap_err(),
+            ScaleError::CandidateStructureMismatch {
+                reason: "track_shape_mismatch"
+            }
+        );
+    }
+
     // --- Authored (unnormalized) rotation equality ----------------------
 
     #[test]
@@ -6829,7 +6890,7 @@ mod tests {
         let plan = whole_document_plan(&doc, &capability);
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
 
-        let cases: [StructureMismatchCase; 6] = [
+        let cases: [StructureMismatchCase; 8] = [
             ("track_count_mismatch", |d| {
                 d.clips[0].tracks.push(Track {
                     bone: 1,
@@ -6841,6 +6902,15 @@ mod tests {
             }),
             ("track_shape_mismatch", |d| {
                 d.clips[0].tracks[0].interpolation = Interpolation::Step
+            }),
+            // The remaining track-identity clauses, each doctored on its
+            // own: a track retargeted to the sibling bone, and one
+            // rebranded onto the other `Vec3`-valued channel. Both leave
+            // track count, times and value count untouched, so only the
+            // clause under test can name the mismatch.
+            ("track_shape_mismatch", |d| d.clips[0].tracks[0].bone = 0),
+            ("track_shape_mismatch", |d| {
+                d.clips[0].tracks[0].property = Property::Scale
             }),
             ("instance_count_mismatch", |d| {
                 let extra = d.assets.instances[0].clone();
