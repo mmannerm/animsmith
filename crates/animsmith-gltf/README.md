@@ -45,6 +45,25 @@ different primitives. This is presence metadata only: secondary values are not
 evaluated as skinning influences or preserved by the writer. See the
 machine-readable output contract for the exact boundary.
 
+## Raw Scale Preflight
+
+`preflight_scale_source` and `preflight_scale_source_bytes` are read-only
+foundations for the scale operations specified in `DESIGN.md` Appendix D. A
+normalized `Document` cannot prove that a source lacked morph targets,
+cameras, custom extension data, secondary attributes, or another domain the
+current model does not retain. Treating an empty normalized field as proof of
+absence would let a future rewrite silently drop or incorrectly scale authored
+data.
+
+The preflight therefore inspects the original glTF JSON and accessor layouts,
+including GPU-instancing declarations, and builds a deterministic typed
+manifest before deciding support. A fully covered source returns that manifest
+with the exact captured top-level and resolved buffer bytes. Unsupported
+domains return the complete inventory alongside all source-indexed violations
+before a scale plan, candidate, or output exists. This API does not convert
+units, alter rest/bind data, infer a scale factor, or expose a mutation method;
+those remain separate dependency-ordered implementation slices.
+
 ## Install
 
 ```toml
