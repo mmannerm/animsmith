@@ -428,7 +428,16 @@ pub enum SourceNodeLocalRest {
 }
 
 /// One source-format node with source-native identity facts.
+///
+/// Marked `#[non_exhaustive]` because this projection grows as loaders learn
+/// to carry more source-native identity (`bone` was the most recent
+/// addition): out-of-crate embedders construct it through
+/// [`SourceNodeAsset::new`] and assign the optional facts they have, so a
+/// later field cannot break their build. The sibling source-asset structs in
+/// this module are not yet marked; they are stable in a way this one has
+/// already demonstrated it is not.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SourceNodeAsset {
     /// Stable node-array index in the source format.
     pub source_node_index: usize,
@@ -453,6 +462,26 @@ pub struct SourceNodeAsset {
     /// [`Skeleton`] must use this field rather than assuming source-node
     /// order equals bone order.
     pub bone: Option<BoneId>,
+}
+
+impl SourceNodeAsset {
+    /// One source node identified by its stable source-array index and its
+    /// authored local rest — the two facts every loader necessarily has.
+    ///
+    /// Every remaining fact ([`Self::name`], [`Self::parent_source_node_index`],
+    /// [`Self::scene_root_indices`], [`Self::bone`]) starts absent and is
+    /// assigned through the public fields. This is the only way to build the
+    /// value outside `animsmith-core`, since the type is `#[non_exhaustive]`.
+    pub fn new(source_node_index: usize, local_rest: SourceNodeLocalRest) -> Self {
+        Self {
+            source_node_index,
+            name: None,
+            parent_source_node_index: None,
+            scene_root_indices: Vec::new(),
+            local_rest,
+            bone: None,
+        }
+    }
 }
 
 /// Read status for a source skin's inverse-bind accessor.

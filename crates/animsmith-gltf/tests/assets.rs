@@ -1539,3 +1539,74 @@ fn load_records_absent_empty_short_singular_and_non_finite_inverse_binds() {
         "source sidecar retains parseable non-finite matrix values for later coverage reporting"
     );
 }
+
+#[test]
+fn load_maps_every_source_node_to_the_bone_it_normalized_to() {
+    // `SourceNodeAsset::bone` is the only bridge from raw source-node
+    // identity to normalized `BoneId`, and `animsmith_core::scale`'s
+    // rest/bind planning resolves its caller-declared `source_root_node_index`
+    // and every skin joint through it. This fixture deliberately makes source
+    // (file) order and bone (DFS) order disagree at four of five nodes, so an
+    // identity or off-by-one mapping cannot pass.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("source-bone-mapping.gltf");
+    write_source_skeleton_gltf(
+        &path,
+        serde_json::json!([
+            { "name": "tip", "translation": [0, 1, 0] },
+            { "name": "scene-root", "children": [2, 4] },
+            { "name": "rig-helper", "children": [3] },
+            { "name": "root", "children": [0] },
+            { "name": "body", "mesh": 0, "skin": 0 }
+        ]),
+        serde_json::json!([{ "joints": [3, 0], "inverseBindMatrices": 1 }]),
+        serde_json::json!([{ "primitives": [{ "attributes": { "POSITION": 0 } }] }]),
+        &[(
+            2,
+            vec![
+                Mat4::IDENTITY,
+                Mat4::from_translation(Vec3::new(0.0, -1.0, 0.0)),
+            ],
+        )],
+        &[1],
+    );
+
+    let doc = animsmith_gltf::load(&path).expect("loads");
+    let source = &doc.assets.source_skeleton;
+    // The DFS from the single root visits scene-root, rig-helper, root, tip,
+    // body — bone ids 0..4 in that order — while source order stays 0..4 in
+    // file order.
+    assert_eq!(
+        source
+            .nodes
+            .iter()
+            .map(|node| (node.source_node_index, node.bone))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, Some(3)),
+            (1, Some(0)),
+            (2, Some(1)),
+            (3, Some(2)),
+            (4, Some(4))
+        ],
+    );
+    // Independent cross-check against the normalized skeleton: the bone each
+    // source node claims must be the bone carrying that node's own name.
+    for node in &source.nodes {
+        let bone = node.bone.expect("every loaded node normalizes to a bone");
+        assert_eq!(
+            Some(doc.skeleton.bones[bone].name.as_str()),
+            node.name.as_deref(),
+            "source node {} maps to the wrong bone",
+            node.source_node_index
+        );
+    }
+    // The `Option` exists for index alignment, not because a loaded file can
+    // contain an unnormalized node: every node the topology DFS fails to
+    // reach is a rootless cycle, which is a `LoadError::Topology` instead of
+    // a partial load (see `hardening::loader_rejects_cyclic_node_graph`).
+    assert!(
+        source.nodes.iter().all(|node| node.bone.is_some()),
+        "a file that loads at all has no unnormalized source node"
+    );
+}

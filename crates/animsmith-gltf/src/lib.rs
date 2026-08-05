@@ -802,14 +802,12 @@ fn extract_source_skeleton(
                 SourceNodeLocalRest::Matrix(Mat4::from_cols_array_2d(&matrix))
             }
         };
-        nodes.push(SourceNodeAsset {
-            source_node_index: node.index(),
-            name: node.name().map(str::to_owned),
-            parent_source_node_index: topo.parent[node.index()],
-            scene_root_indices: std::mem::take(&mut scene_root_indices[node.index()]),
-            local_rest,
-            bone: topo.bone_of_node[node.index()],
-        });
+        let mut source_node = SourceNodeAsset::new(node.index(), local_rest);
+        source_node.name = node.name().map(str::to_owned);
+        source_node.parent_source_node_index = topo.parent[node.index()];
+        source_node.scene_root_indices = std::mem::take(&mut scene_root_indices[node.index()]);
+        source_node.bone = topo.bone_of_node[node.index()];
+        nodes.push(source_node);
     }
 
     let mut skins = Vec::with_capacity(doc.skins().count());
