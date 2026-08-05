@@ -369,6 +369,9 @@ impl GltfScaleArtifact {
     ///
     /// Buffer URIs re-encoded during container reassembly are not domain
     /// rewrites and are reported by [`Self::reencoded_buffers`] instead.
+    ///
+    /// [`prove_rewritten_artifact`] checks this list against its own
+    /// independent scan, so it is evidence rather than an unverified label.
     pub fn rewritten_json_pointers(&self) -> &[String] {
         &self.rewritten_json_pointers
     }
@@ -432,6 +435,26 @@ pub enum GltfScaleRewriteError {
         /// JSON pointer of the accessor.
         location: String,
     },
+    /// A node declares `matrix` alongside a TRS member. glTF 2.0 forbids the
+    /// combination, and the `gltf` crate accepts it, so the conversion would
+    /// otherwise emit two rewrites for one node's single transform.
+    #[error("{location} declares a TRS member alongside matrix")]
+    ConflictingNodeTransform {
+        /// JSON pointer of the TRS member that conflicts with `matrix`.
+        location: String,
+    },
+    /// A node `matrix` is not TRS-decomposable: its last row is not
+    /// `(0, 0, 0, 1)`, so it carries a projective component that transforms
+    /// as `1/q` rather than staying dimensionless under `U M U^-1`.
+    #[error("{location} is {value}, so the node matrix is not TRS-decomposable")]
+    NonAffineNodeMatrix {
+        /// JSON pointer of the offending matrix entry.
+        location: String,
+        /// The authored value.
+        value: f64,
+        /// The only value glTF 2.0 permits there.
+        expected: f64,
+    },
     /// An `image` reads a buffer view overlapping an accessor the conversion
     /// rewrites, so converting would corrupt the image payload.
     ///
@@ -491,7 +514,10 @@ pub enum GltfScaleRewriteError {
 /// unpreservable domain, [`GltfScaleRewriteError::Plan`] for an invalid or
 /// unrepresentable factor or a malformed source document,
 /// [`GltfScaleRewriteError::UnhandledLengthField`] for a length field with no
-/// registered handler, [`GltfScaleRewriteError::ConflictingRewriteRule`] when
+/// registered handler, [`GltfScaleRewriteError::ConflictingNodeTransform`] for
+/// a node declaring `matrix` alongside a TRS member,
+/// [`GltfScaleRewriteError::NonAffineNodeMatrix`] for a node `matrix` that is
+/// not TRS-decomposable, [`GltfScaleRewriteError::ConflictingRewriteRule`] when
 /// one accessor is reached by two disagreeing rules,
 /// [`GltfScaleRewriteError::UnrewritableAccessor`] for an accessor outside the
 /// dense `f32` layout, [`GltfScaleRewriteError::ImagePayloadOverlap`] when an
@@ -526,6 +552,7 @@ pub fn rewrite_linear_units(
     {
         return Err(GltfScaleRewriteError::UnhandledLengthField { location });
     }
+    reject_out_of_contract_nodes(root)?;
 
     let accessor_rules = rules::collect_accessor_rules(root).map_err(|accessor_index| {
         GltfScaleRewriteError::ConflictingRewriteRule { accessor_index }
@@ -588,6 +615,68 @@ pub fn rewrite_linear_units(
         reencoded_buffers,
         declared_factor: factor,
     })
+}
+
+/// The last row of a column-major glTF node `matrix`, and the only values
+/// glTF 2.0 permits there.
+const AFFINE_LAST_ROW: [(usize, f64); 4] = [(3, 0.0), (7, 0.0), (11, 0.0), (15, 1.0)];
+
+/// Reject a node whose transform is outside the glTF 2.0 contract.
+///
+/// The `gltf` crate parses both shapes below, so neither reaches #280's
+/// preflight as a violation and neither is a wrong answer on valid input.
+/// They are refused here because silently converting a document the schema
+/// forbids is the one outcome this boundary must not produce:
+///
+/// * A node declaring `matrix` **and** a TRS member. glTF 2.0 §3.5 makes the
+///   two mutually exclusive. [`rules::collect_json_rewrites`] would emit one
+///   rewrite for each, so a single node's transform would be converted twice
+///   under two different rules and the reader's choice of which to honour
+///   would decide the result.
+/// * A node `matrix` whose last row is not `(0, 0, 0, 1)`. glTF 2.0 requires
+///   `matrix` to be decomposable to translation, rotation and scale, and the
+///   `U M U^-1` identity this conversion rests on holds only for such a
+///   matrix. A projective row transforms as `1/q`, not as a dimensionless
+///   quantity, so treating entries 3, 7 and 11 as invariant would silently
+///   emit a matrix that is not the converted transform.
+fn reject_out_of_contract_nodes(root: &Map<String, Value>) -> Result<(), GltfScaleRewriteError> {
+    let Some(nodes) = root.get("nodes").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    for (node_index, node) in nodes.iter().enumerate() {
+        let Some(matrix) = node.get("matrix") else {
+            continue;
+        };
+        for member in ["translation", "rotation", "scale"] {
+            if node.get(member).is_some() {
+                return Err(GltfScaleRewriteError::ConflictingNodeTransform {
+                    location: format!("/nodes/{node_index}/{member}"),
+                });
+            }
+        }
+        // A `matrix` of the wrong arity is reported by `rewrite_json_array`
+        // as a malformed source, so shape errors keep one owner.
+        let Some(values) = matrix
+            .as_array()
+            .filter(|values| values.len() == JsonArrayRule::Mat4TranslationColumn.expected_len())
+        else {
+            continue;
+        };
+        for (component, expected) in AFFINE_LAST_ROW {
+            let location = format!("/nodes/{node_index}/matrix/{component}");
+            let value = values[component]
+                .as_f64()
+                .ok_or_else(|| LoadError::Malformed(format!("{location} is not a number")))?;
+            if value != expected {
+                return Err(GltfScaleRewriteError::NonAffineNodeMatrix {
+                    location,
+                    value,
+                    expected,
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Reject an `image` whose buffer view shares bytes with a converted accessor.

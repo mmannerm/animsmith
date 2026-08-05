@@ -10,7 +10,10 @@
 //!    influences, extension payloads, names, `asset`);
 //! 2. byte preservation of every buffer byte outside the converted accessor
 //!    ranges;
-//! 3. array identities — every array length and every index-valued field;
+//! 3. array identities — every array length and every index-valued field,
+//!    plus honest reporting: the accessor indices and JSON pointers the
+//!    artifact says it rewrote are exactly the ones this module's own scan
+//!    derives;
 //! 4. determinism — rewriting the same source twice yields identical bytes;
 //! 5. container integrity — GLB header and chunk framing, 4-byte padding, and
 //!    declared buffer lengths;
@@ -179,6 +182,19 @@ pub fn prove_rewritten_artifact(
         &mut converted_pointers,
         &mut proof,
     )?;
+
+    // The artifact's own report of what it changed is evidence, so it is
+    // checked rather than trusted: `converted_pointers` was accumulated by
+    // this module's independent scan, and it is exactly the set the rewriter
+    // is allowed to have touched.
+    if artifact.rewritten_json_pointers() != converted_pointers.iter().cloned().collect::<Vec<_>>()
+    {
+        return Err(failed(
+            "artifact reports exactly the JSON pointers this proof independently derives",
+            artifact.rewritten_json_pointers().len() as f64,
+            converted_pointers.len() as f64,
+        ));
+    }
 
     let mut allowed = converted_pointers;
     for &buffer_index in artifact.reencoded_buffers() {
@@ -568,6 +584,13 @@ fn check_preserved_bytes(
                 }
                 preserved += 1;
             }
+            // `max` rather than a plain assignment. Unreachable through
+            // `prove_rewritten_artifact` — `converted` is sorted and #280
+            // rejects a source whose scale-bearing accessor ranges overlap,
+            // so no later span can end before the cursor — but a nested span
+            // must never rewind the cursor and re-compare bytes that were
+            // already accounted for. Pinned by
+            // `a_nested_converted_range_does_not_rewind_the_preserved_byte_cursor`.
             cursor = cursor.max(end);
         }
     }
@@ -758,4 +781,372 @@ fn numeric(value: &Value, location: &str) -> Result<f64, GltfScaleRewriteError> 
     value
         .as_f64()
         .ok_or_else(|| LoadError::Malformed(format!("{location} is not a number")).into())
+}
+
+#[cfg(test)]
+mod tests {
+    //! Per-claim negative tests.
+    //!
+    //! Each test corrupts exactly one thing about an otherwise valid artifact
+    //! and asserts the exact claim string that must catch it. These live here
+    //! rather than in `tests/scale_rewrite.rs` because
+    //! [`super::super::GltfScaleArtifact`]'s fields are private, and two of
+    //! the claims — the accessor and JSON-pointer cross-checks — can only be
+    //! falsified by making the artifact's own report disagree with its bytes.
+    //!
+    //! The fixture is a `.gltf`, not a GLB, so an artifact is pure JSON and a
+    //! corruption is a `serde_json` edit plus a base64 round trip. No test
+    //! below asserts a value this crate produced: every expectation is a
+    //! claim string, and every payload literal is exact under a factor of
+    //! four.
+
+    use super::*;
+    use crate::preflight_scale_source_bytes;
+    use animsmith_core::scale::{ScaleOperation, ScaleRequest, plan_scale};
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use serde_json::json;
+
+    /// Byte offsets inside the fixture's single buffer.
+    mod offsets {
+        pub const POSITION: usize = 0; // 36 bytes, converted
+        pub const INVERSE_BIND: usize = 36; // 64 bytes, converted
+        pub const JOINTS: usize = 100; // 24 bytes, preserved
+        pub const WEIGHTS: usize = 124; // 48 bytes, preserved
+        pub const SPARE: usize = 172; // 4 bytes, reached by no bufferView
+        pub const LENGTH: usize = 176;
+    }
+
+    const FACTOR: f64 = 4.0;
+
+    const POSITIONS: [f32; 9] = [1.0, 2.0, -3.0, 0.5, -0.25, 4.0, 2.0, 0.0, 1.5];
+    const INVERSE_BIND: [f32; 16] = [
+        1.0, 0.0, 0.0, 0.0, //
+        0.0, 1.0, 0.0, 0.0, //
+        0.0, 0.0, 1.0, 0.0, //
+        -1.0, 2.0, -0.5, 1.0,
+    ];
+
+    fn data_uri(bytes: &[u8]) -> String {
+        format!(
+            "data:application/octet-stream;base64,{}",
+            STANDARD.encode(bytes)
+        )
+    }
+
+    fn fixture_buffer() -> Vec<u8> {
+        let mut buffer = vec![0u8; offsets::LENGTH];
+        for (index, value) in POSITIONS.iter().enumerate() {
+            let at = offsets::POSITION + index * 4;
+            buffer[at..at + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        for (index, value) in INVERSE_BIND.iter().enumerate() {
+            let at = offsets::INVERSE_BIND + index * 4;
+            buffer[at..at + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        // One joint, full weight on it, for each of the three vertices.
+        for vertex in 0..3 {
+            let at = offsets::WEIGHTS + vertex * 16;
+            buffer[at..at + 4].copy_from_slice(&1.0f32.to_le_bytes());
+        }
+        buffer
+    }
+
+    /// A skinned source whose buffer carries four bytes no `bufferView`
+    /// reaches, so a byte can be flipped outside every converted range
+    /// without disturbing anything the normalized `Document` models.
+    fn fixture_json(buffer: &[u8]) -> Value {
+        json!({
+            "asset": { "version": "2.0" },
+            "buffers": [{ "uri": data_uri(buffer), "byteLength": offsets::LENGTH }],
+            "bufferViews": [
+                { "buffer": 0, "byteOffset": offsets::POSITION, "byteLength": 36 },
+                { "buffer": 0, "byteOffset": offsets::INVERSE_BIND, "byteLength": 64 },
+                { "buffer": 0, "byteOffset": offsets::JOINTS, "byteLength": 24 },
+                { "buffer": 0, "byteOffset": offsets::WEIGHTS, "byteLength": 48 }
+            ],
+            "accessors": [
+                { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+                  "min": [0.5, -0.25, -3.0], "max": [2.0, 2.0, 4.0] },
+                { "bufferView": 1, "componentType": 5126, "count": 1, "type": "MAT4" },
+                { "bufferView": 2, "componentType": 5123, "count": 3, "type": "VEC4" },
+                { "bufferView": 3, "componentType": 5126, "count": 3, "type": "VEC4" }
+            ],
+            "materials": [{ "name": "surface" }],
+            "meshes": [{ "primitives": [{
+                "attributes": { "POSITION": 0, "JOINTS_0": 2, "WEIGHTS_0": 3 },
+                "material": 0
+            }] }],
+            "nodes": [{ "name": "joint" }, { "name": "holder", "mesh": 0, "skin": 0 }],
+            "scenes": [{ "nodes": [0, 1] }],
+            "scene": 0,
+            "skins": [{ "joints": [0], "skeleton": 0, "inverseBindMatrices": 1 }]
+        })
+    }
+
+    fn fixture() -> (GltfScaleSource, GltfScaleArtifact, ScalePlan) {
+        let value = fixture_json(&fixture_buffer());
+        let bytes = serde_json::to_vec(&value).expect("fixture serializes");
+        let source = preflight_scale_source_bytes(Path::new("proof-fixture.gltf"), &bytes)
+            .expect("the fixture preflights cleanly");
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::WholeDocumentLinearUnits { factor: FACTOR },
+            document: source.document(),
+            capability: &super::super::capability_facts(source.manifest()),
+        })
+        .expect("plan");
+        let artifact = super::super::rewrite_linear_units(&source, FACTOR).expect("rewrite");
+        (source, artifact, plan)
+    }
+
+    /// The artifact's JSON, as a mutable tree.
+    fn artifact_value(artifact: &GltfScaleArtifact) -> Value {
+        serde_json::from_slice(artifact.bytes()).expect("a .gltf artifact is JSON")
+    }
+
+    fn put_artifact_value(artifact: &mut GltfScaleArtifact, value: &Value) {
+        artifact.bytes = serde_json::to_vec(value).expect("corrupted fixture serializes");
+    }
+
+    fn artifact_buffer(value: &Value) -> Vec<u8> {
+        let uri = value["buffers"][0]["uri"].as_str().expect("data URI");
+        STANDARD
+            .decode(uri.split_once("base64,").expect("base64 data URI").1)
+            .expect("valid base64")
+    }
+
+    fn put_artifact_buffer(value: &mut Value, bytes: &[u8]) {
+        value["buffers"][0]["uri"] = json!(data_uri(bytes));
+    }
+
+    /// Assert that proving `artifact` fails with exactly `expected`.
+    fn expect_claim(
+        source: &GltfScaleSource,
+        artifact: &GltfScaleArtifact,
+        plan: &ScalePlan,
+        expected: &str,
+    ) {
+        match prove_rewritten_artifact(source, artifact, plan) {
+            Err(GltfScaleRewriteError::ArtifactProofFailed { claim, .. }) => {
+                assert_eq!(claim, expected);
+            }
+            other => panic!("expected the claim {expected:?} to fail, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_uncorrupted_fixture_proves_and_reports_its_evidence() {
+        // Without this, every negative below could be passing for the wrong
+        // reason: a fixture that never proves cannot show which claim caught
+        // which corruption.
+        let (source, artifact, plan) = fixture();
+        let proof = prove_rewritten_artifact(&source, &artifact, &plan).expect("artifact proof");
+        assert_eq!(proof.rewritten_accessor_count, 2, "POSITION and the IBM");
+        assert_eq!(proof.length_factor_residual, 0.0);
+        assert_eq!(proof.dimensionless_residual, 0.0);
+        // 0..36 and 36..100 are converted, so 100..104 is the only preserved
+        // complement range.
+        assert_eq!(proof.preserved_byte_ranges, 1);
+        assert_eq!(artifact.rewritten_accessors(), [0, 1]);
+        assert_eq!(
+            artifact.rewritten_json_pointers(),
+            ["/accessors/0/max", "/accessors/0/min"]
+        );
+    }
+
+    #[test]
+    fn a_flipped_byte_outside_every_converted_range_fails_byte_preservation() {
+        let (source, mut artifact, plan) = fixture();
+        let mut value = artifact_value(&artifact);
+        let mut buffer = artifact_buffer(&value);
+        buffer[offsets::SPARE] ^= 0xff;
+        put_artifact_buffer(&mut value, &buffer);
+        put_artifact_value(&mut artifact, &value);
+        expect_claim(
+            &source,
+            &artifact,
+            &plan,
+            "buffer bytes outside the converted ranges are preserved",
+        );
+    }
+
+    #[test]
+    fn a_dimensionless_component_inside_a_converted_range_must_be_bit_identical() {
+        // The inverse bind's 3x3 entry 1 is `+0.0`; setting its sign bit
+        // makes it `-0.0`, which is numerically identical and so invisible to
+        // every residual — only the bit comparison catches it.
+        let (source, mut artifact, plan) = fixture();
+        let mut value = artifact_value(&artifact);
+        let mut buffer = artifact_buffer(&value);
+        const SIGN_BYTE: usize = offsets::INVERSE_BIND + 4 + 3;
+        buffer[SIGN_BYTE] |= 0x80;
+        put_artifact_buffer(&mut value, &buffer);
+        put_artifact_value(&mut artifact, &value);
+        expect_claim(
+            &source,
+            &artifact,
+            &plan,
+            "a converted accessor's dimensionless components are bit-identical",
+        );
+    }
+
+    #[test]
+    fn an_under_reported_converted_accessor_fails_the_accessor_cross_check() {
+        let (source, mut artifact, plan) = fixture();
+        artifact.rewritten_accessors.pop();
+        expect_claim(
+            &source,
+            &artifact,
+            &plan,
+            "artifact reports exactly the accessors this proof independently derives",
+        );
+    }
+
+    #[test]
+    fn an_under_reported_rewritten_json_pointer_fails_the_pointer_cross_check() {
+        let (source, mut artifact, plan) = fixture();
+        artifact.rewritten_json_pointers.pop();
+        expect_claim(
+            &source,
+            &artifact,
+            &plan,
+            "artifact reports exactly the JSON pointers this proof independently derives",
+        );
+    }
+
+    #[test]
+    fn a_changed_preserved_json_location_fails_json_preservation() {
+        let (source, mut artifact, plan) = fixture();
+        let mut value = artifact_value(&artifact);
+        value["materials"][0]["name"] = json!("renamed");
+        put_artifact_value(&mut artifact, &value);
+        expect_claim(
+            &source,
+            &artifact,
+            &plan,
+            "every raw JSON location outside the converted set is preserved exactly",
+        );
+    }
+
+    #[test]
+    fn a_changed_top_level_array_length_fails_array_identity() {
+        let (source, mut artifact, plan) = fixture();
+        let mut value = artifact_value(&artifact);
+        value["materials"]
+            .as_array_mut()
+            .expect("materials array")
+            .push(json!({ "name": "smuggled" }));
+        put_artifact_value(&mut artifact, &value);
+        expect_claim(
+            &source,
+            &artifact,
+            &plan,
+            "every top-level array keeps its source length",
+        );
+    }
+
+    #[test]
+    fn a_resolved_buffer_that_grew_fails_the_buffer_length_claim() {
+        // `byteLength` is left alone, so the growth is invisible to the JSON
+        // comparison and only the resolved-bytes claim can see it.
+        let (source, mut artifact, plan) = fixture();
+        let mut value = artifact_value(&artifact);
+        let mut buffer = artifact_buffer(&value);
+        buffer.extend_from_slice(&[0u8; 4]);
+        put_artifact_buffer(&mut value, &buffer);
+        put_artifact_value(&mut artifact, &value);
+        expect_claim(
+            &source,
+            &artifact,
+            &plan,
+            "every resolved buffer keeps its source byte length",
+        );
+    }
+
+    #[test]
+    fn a_declared_buffer_length_without_backing_bytes_fails_container_integrity() {
+        let (source, mut artifact, plan) = fixture();
+        let mut value = artifact_value(&artifact);
+        value["buffers"][0]["byteLength"] = json!(offsets::LENGTH + 4);
+        put_artifact_value(&mut artifact, &value);
+        expect_claim(
+            &source,
+            &artifact,
+            &plan,
+            "every declared buffer byteLength is backed by resolved bytes",
+        );
+    }
+
+    #[test]
+    fn a_flipped_container_kind_fails_the_container_claim() {
+        let (source, mut artifact, plan) = fixture();
+        artifact.container = GltfContainerKind::Glb;
+        expect_claim(
+            &source,
+            &artifact,
+            &plan,
+            "artifact container kind is unchanged",
+        );
+    }
+
+    #[test]
+    fn a_bound_that_no_longer_bounds_the_converted_payload_fails() {
+        // One ULP above the converted minimum: far inside the shared scalar
+        // tolerance, so every residual still passes and only the bounding
+        // obligation itself can reject it.
+        let (source, mut artifact, plan) = fixture();
+        let mut value = artifact_value(&artifact);
+        value["accessors"][0]["min"][0] = json!(2.0000002f32 as f64);
+        put_artifact_value(&mut artifact, &value);
+        expect_claim(
+            &source,
+            &artifact,
+            &plan,
+            "a converted bound still bounds the converted payload",
+        );
+    }
+
+    #[test]
+    fn bytes_that_are_not_the_rewriters_own_output_fail_the_determinism_claim() {
+        // Same JSON value, different bytes. Every claim that reads the
+        // artifact through `serde_json` still passes, so nothing but the
+        // byte-for-byte repeat comparison can notice.
+        let (source, mut artifact, plan) = fixture();
+        let value = artifact_value(&artifact);
+        artifact.bytes = serde_json::to_vec_pretty(&value).expect("pretty serializes");
+        expect_claim(
+            &source,
+            &artifact,
+            &plan,
+            "rewriting the same source twice yields identical bytes",
+        );
+    }
+
+    #[test]
+    fn a_nested_converted_range_does_not_rewind_the_preserved_byte_cursor() {
+        // `check_preserved_bytes` is exercised directly here because #280
+        // rejects a source whose scale-bearing accessor ranges overlap, so
+        // `prove_rewritten_artifact` can never hand it a nested pair. The
+        // guard that makes the walk safe anyway is `cursor.max(end)`: without
+        // it the inner span rewinds the cursor to 8 and bytes 8..16 — which
+        // lie *inside* the outer converted range and are legitimately allowed
+        // to differ — get compared as if they were preserved.
+        let mut before = vec![0u8; 20];
+        let mut after = vec![0u8; 20];
+        before[10] = 1;
+        after[10] = 2;
+        let span = |start: usize, end: usize| AccessorSpan {
+            accessor_index: 0,
+            buffer: 0,
+            start,
+            end,
+            components: 1,
+        };
+        let spans = [
+            (span(0, 16), AccessorRule::AllComponents),
+            (span(4, 8), AccessorRule::AllComponents),
+        ];
+        let preserved = check_preserved_bytes(&[before], &[after], &spans)
+            .expect("only 16..20 lies outside the converted ranges");
+        assert_eq!(preserved, 1);
+    }
 }

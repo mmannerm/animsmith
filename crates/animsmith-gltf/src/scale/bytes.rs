@@ -76,6 +76,17 @@ pub(crate) fn accessor_span(
     // matrix column padding, so a span that disagrees means the range and the
     // declared shape describe different data. Refuse rather than stride over
     // whatever is actually there.
+    //
+    // Unreachable today, and deliberately kept: `dense_f32_accessor_range`
+    // requires `stride == element_size`, and for a four-byte component
+    // `crate::capability`'s `accessor_element_size` and this module's
+    // `components_per_element` derive the same element size from the same
+    // `type` string (glTF's matrix column padding rounds each column up to
+    // four bytes, a no-op at four-byte components). So the two sizes agree by
+    // construction — an invariant across two independent tables that
+    // `the_two_element_size_tables_agree_for_every_f32_type` pins. This is
+    // the guard that keeps a change to either table from becoming an
+    // out-of-bounds stride instead of a rejection.
     if end.checked_sub(start) != count.checked_mul(components).and_then(|f| f.checked_mul(4)) {
         return Err(unsupported());
     }
@@ -283,6 +294,47 @@ mod tests {
                 assert_eq!(value, 1.0e-30f32 as f64 * 1.0e-20);
             }
             other => panic!("expected a located ValueNotRepresentable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_two_element_size_tables_agree_for_every_f32_type() {
+        // `accessor_span`'s shape guard compares a span sized by
+        // `crate::capability::accessor_element_size` against one sized by
+        // `components_per_element`. The guard is unreachable exactly while
+        // the two agree, so the agreement is what gets pinned; if either
+        // table changes, this fails here rather than silently arming the
+        // guard (or, worse, striding past the end of a buffer).
+        for (accessor_type, components) in [
+            ("SCALAR", 1usize),
+            ("VEC2", 2),
+            ("VEC3", 3),
+            ("VEC4", 4),
+            ("MAT2", 4),
+            ("MAT3", 9),
+            ("MAT4", 16),
+        ] {
+            let count = 3usize;
+            let byte_length = count * components * 4;
+            let root = json!({
+                "bufferViews": [{ "buffer": 0, "byteLength": byte_length }],
+                "accessors": [{
+                    "bufferView": 0, "componentType": 5126,
+                    "count": count, "type": accessor_type
+                }]
+            });
+            let root = root.as_object().expect("object");
+            let buffers = vec![vec![0u8; byte_length]];
+            let span = accessor_span(root, &buffers, 0, AccessorRule::AllComponents)
+                .unwrap_or_else(|error| panic!("{accessor_type} span: {error:?}"));
+            assert_eq!(span.components, components, "{accessor_type} components");
+            assert_eq!(span.start, 0, "{accessor_type} start");
+            assert_eq!(span.end, byte_length, "{accessor_type} end");
+            assert_eq!(
+                span.float_count(),
+                count * components,
+                "{accessor_type} float count"
+            );
         }
     }
 

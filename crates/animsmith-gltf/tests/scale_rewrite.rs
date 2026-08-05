@@ -423,6 +423,101 @@ fn a_matrix_node_scales_only_its_translation_column() {
     assert_eq!(proof.length_factor_residual, 0.0);
 }
 
+// --- 2b: out-of-contract node transforms ------------------------------------
+
+/// The identity node `matrix`, column-major.
+const IDENTITY_MATRIX: [f64; 16] = [
+    1.0, 0.0, 0.0, 0.0, //
+    0.0, 1.0, 0.0, 0.0, //
+    0.0, 0.0, 1.0, 0.0, //
+    0.0, 0.0, 0.0, 1.0,
+];
+
+fn node_matrix_document(matrix: [f64; 16], extra: Option<(&str, Value)>) -> Value {
+    let (mut value, _) = minimal_json(&[0.0; 9]);
+    let mut node = json!({ "matrix": Vec::from(matrix) });
+    if let Some((member, member_value)) = extra {
+        node[member] = member_value;
+    }
+    value["nodes"] = json!([node]);
+    value
+}
+
+#[test]
+fn a_node_declaring_matrix_alongside_a_trs_member_is_refused() {
+    // glTF 2.0 makes `matrix` and TRS mutually exclusive, but the `gltf`
+    // crate parses the combination, so #280's preflight accepts it. The
+    // rewriter would then emit two rewrites for one node's single transform.
+    for (member, member_value) in [
+        ("translation", json!([1.5, -2.0, 0.25])),
+        ("rotation", json!([0.0, 0.0, 0.0, 1.0])),
+        ("scale", json!([2.0, 2.0, 2.0])),
+    ] {
+        let value = node_matrix_document(IDENTITY_MATRIX, Some((member, member_value)));
+        let source = accepted("matrix-plus-trs.gltf", &value);
+        match rewrite_linear_units(&source, 4.0) {
+            Err(GltfScaleRewriteError::ConflictingNodeTransform { location }) => {
+                assert_eq!(location, format!("/nodes/0/{member}"));
+            }
+            other => panic!("matrix + {member} should be refused, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn a_node_matrix_that_is_not_trs_decomposable_is_refused() {
+    // The conversion is `M' = U M U^-1` for a uniform `U = scale(q)`, which
+    // leaves entries 3, 7, 11 and 15 alone only when they are the affine
+    // `(0, 0, 0, 1)`. A projective entry transforms as `1/q`, so converting
+    // such a node would emit a matrix that is not the converted transform.
+    for (component, authored, expected) in [
+        (3usize, 0.5f64, 0.0f64),
+        (7, -1.0, 0.0),
+        (11, 2.0, 0.0),
+        (15, 2.0, 1.0),
+    ] {
+        let mut matrix = IDENTITY_MATRIX;
+        matrix[component] = authored;
+        let value = node_matrix_document(matrix, None);
+        let source = accepted("projective-matrix.gltf", &value);
+        match rewrite_linear_units(&source, 4.0) {
+            Err(GltfScaleRewriteError::NonAffineNodeMatrix {
+                location,
+                value,
+                expected: reported,
+            }) => {
+                assert_eq!(location, format!("/nodes/0/matrix/{component}"));
+                assert_eq!(value, authored);
+                assert_eq!(reported, expected);
+            }
+            other => panic!("matrix[{component}] = {authored} should be refused, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn an_affine_node_matrix_with_a_translation_column_still_converts() {
+    // The guard above must not reject the ordinary case: entries 3, 7 and 11
+    // are zero and entry 15 is one, and the translation column converts.
+    let mut matrix = IDENTITY_MATRIX;
+    matrix[12] = 1.5;
+    matrix[13] = -2.0;
+    matrix[14] = 0.25;
+    let value = node_matrix_document(matrix, None);
+    let source = accepted("affine-matrix.gltf", &value);
+    let artifact = rewrite_linear_units(&source, 4.0).expect("an affine matrix converts");
+    let (json, _) = artifact_parts(&artifact);
+    assert_eq!(
+        json["nodes"][0]["matrix"],
+        json!([
+            1.0, 0.0, 0.0, 0.0, //
+            0.0, 1.0, 0.0, 0.0, //
+            0.0, 0.0, 1.0, 0.0, //
+            6.0, -8.0, 1.0, 1.0
+        ])
+    );
+}
+
 // --- 3, 4, 5: translation samplers -----------------------------------------
 
 #[test]
@@ -530,42 +625,152 @@ fn mesh_positions_and_their_bounds_scale_and_still_bound_the_payload() {
     assert_eq!(glb_json["accessors"][0]["min"], json!([2.0, -1.0, -12.0]));
 }
 
+/// The `f32` whose shortest round-tripping decimal spelling is
+/// `29460752000`, which is *not* the decimal its `f64` widening prints
+/// (`29460752384`). A real exporter writes the shortest spelling, so the
+/// authored JSON bound and the stored payload disagree in `f64` even though
+/// they are the same `f32`.
+const BOUND_PROBE: f32 = 2.9460752e10;
+
+/// The factor that makes the two `f64` narrowings straddle one `f32` ULP.
+const BOUND_PROBE_FACTOR: f64 = 5.72563720703125e-11;
+
 #[test]
 fn a_bound_that_narrowing_would_leave_violated_is_widened_to_the_payload() {
-    // 1e-8 is not representable in f32; `1e-8 * 3` narrows to a value that
-    // can land on the wrong side of the narrowed payload minimum. Whatever
-    // the rounding, the emitted bound must still bound the emitted bytes.
-    let positions = [1.0e-8f32, 0.0, 0.0, 3.0e-8, 0.0, 0.0, 5.0e-8, 0.0, 0.0];
+    // The payload narrows `f64(29460752384) * q` to `1.6868159`; the authored
+    // bound narrows `f64(29460752000) * q` to `1.6868157`, one ULP nearer
+    // zero. So the converted `max` is *below* the largest converted sample
+    // and the converted `min` is *above* the smallest — both invalid glTF —
+    // unless each bound is reconciled against the observed extrema. A
+    // one-ULP nudge is not enough to know which way to move; only the
+    // observed extrema are.
+    //
+    // Both literals below are the arithmetic truth of that narrowing, not a
+    // value this crate produced: see the constants above.
+    let positions = [-BOUND_PROBE, 0.0, 0.0, BOUND_PROBE, 0.0, 0.0, 0.0, 0.0, 0.0];
     let (mut value, _) = minimal_json(&positions);
-    value["accessors"][0]["min"] = json!([1.0e-8, 0.0, 0.0]);
-    value["accessors"][0]["max"] = json!([5.0e-8, 0.0, 0.0]);
+    // Authored as the shortest round-tripping decimal, the way an exporter
+    // emits it. `minimal_json` would otherwise serialize the `f32`'s `f64`
+    // widening, which agrees with the payload and hides the whole effect.
+    value["accessors"][0]["min"] = json!([-2.9460752e10, 0.0, 0.0]);
+    value["accessors"][0]["max"] = json!([2.9460752e10, 0.0, 0.0]);
 
     let source = accepted("bounds.gltf", &value);
-    let artifact = rewrite_linear_units(&source, 1.0 / 3.0).expect("rewrite");
+    let artifact = rewrite_linear_units(&source, BOUND_PROBE_FACTOR).expect("rewrite");
     let (json, buffers) = artifact_parts(&artifact);
 
-    let payload = read_f32(&buffers[0]);
-    let observed_min = payload
-        .iter()
-        .step_by(3)
-        .copied()
-        .fold(f32::INFINITY, f32::min);
-    let observed_max = payload
-        .iter()
-        .step_by(3)
-        .copied()
-        .fold(f32::NEG_INFINITY, f32::max);
-    // Compared in `f32`, the model glTF declares for `min`/`max`.
-    let declared_min = json["accessors"][0]["min"][0].as_f64().expect("number") as f32;
-    let declared_max = json["accessors"][0]["max"][0].as_f64().expect("number") as f32;
-    assert!(
-        declared_min <= observed_min,
-        "min {declared_min} does not bound {observed_min}"
+    assert_eq!(
+        read_f32(&buffers[0]),
+        vec![-1.6868159, 0.0, 0.0, 1.6868159, 0.0, 0.0, 0.0, 0.0, 0.0],
+        "the payload narrows the f32's own widening"
     );
-    assert!(
-        declared_max >= observed_max,
-        "max {declared_max} does not bound {observed_max}"
+    assert_eq!(
+        json["accessors"][0]["min"],
+        json!([-1.6868159, 0.0, 0.0]),
+        "widening the authored bound to the payload; narrowing alone gives -1.6868157"
     );
+    assert_eq!(
+        json["accessors"][0]["max"],
+        json!([1.6868159, 0.0, 0.0]),
+        "widening the authored bound to the payload; narrowing alone gives 1.6868157"
+    );
+}
+
+#[test]
+fn every_converted_bound_still_bounds_its_converted_payload() {
+    // A factor sweep over payloads whose authored bounds are the shortest
+    // round-tripping decimals of the stored `f32`s. Each case restates the
+    // binding obligation directly: whatever the rounding, `min` is at or
+    // below every converted sample and `max` at or above.
+    type Case = (&'static str, [f32; 3], [f64; 3], f64);
+    let cases: [Case; 6] = [
+        // (name, x samples, authored x bounds [min, mid, max], factor)
+        (
+            "one-ULP straddle, both bounds",
+            [-BOUND_PROBE, BOUND_PROBE, 0.0],
+            [-2.9460752e10, 0.0, 2.9460752e10],
+            BOUND_PROBE_FACTOR,
+        ),
+        (
+            "min straddles upward under a metric factor",
+            [1.8783379, 5.0, 9.0],
+            [1.8783379, 5.0, 9.0],
+            0.001,
+        ),
+        (
+            "max straddles downward under a metric factor",
+            [-9.0, -5.0, -1.8783379],
+            [-9.0, -5.0, -1.8783379],
+            0.001,
+        ),
+        (
+            "repeating-binary factor",
+            [1.0e-8, 3.0e-8, 5.0e-8],
+            [1.0e-8, 3.0e-8, 5.0e-8],
+            1.0 / 3.0,
+        ),
+        (
+            "small samples under a 1e-5 factor",
+            [0.0013283765, 0.002, 0.05],
+            [0.0013283765, 0.002, 0.05],
+            1.0e-5,
+        ),
+        (
+            "exact power of two",
+            [-3.0, 0.5, 2.0],
+            [-3.0, 0.5, 2.0],
+            0.25,
+        ),
+    ];
+
+    for (name, samples, authored, factor) in cases {
+        let positions = [
+            samples[0], 0.0, 0.0, //
+            samples[1], 0.0, 0.0, //
+            samples[2], 0.0, 0.0,
+        ];
+        let (mut value, _) = minimal_json(&positions);
+        let authored_min = authored.iter().copied().fold(f64::INFINITY, f64::min);
+        let authored_max = authored.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        value["accessors"][0]["min"] = json!([authored_min, 0.0, 0.0]);
+        value["accessors"][0]["max"] = json!([authored_max, 0.0, 0.0]);
+
+        let source = accepted("sweep.gltf", &value);
+        let artifact = rewrite_linear_units(&source, factor)
+            .unwrap_or_else(|error| panic!("{name}: rewrite failed: {error:?}"));
+        let (json, buffers) = artifact_parts(&artifact);
+
+        let payload = read_f32(&buffers[0]);
+        for component in 0..3 {
+            let observed_min = payload
+                .iter()
+                .skip(component)
+                .step_by(3)
+                .copied()
+                .fold(f32::INFINITY, f32::min);
+            let observed_max = payload
+                .iter()
+                .skip(component)
+                .step_by(3)
+                .copied()
+                .fold(f32::NEG_INFINITY, f32::max);
+            // Compared in `f32`, the model glTF declares for `min`/`max`.
+            let declared_min = json["accessors"][0]["min"][component]
+                .as_f64()
+                .expect("number") as f32;
+            let declared_max = json["accessors"][0]["max"][component]
+                .as_f64()
+                .expect("number") as f32;
+            assert!(
+                declared_min <= observed_min,
+                "{name}: min[{component}] {declared_min} does not bound {observed_min}"
+            );
+            assert!(
+                declared_max >= observed_max,
+                "{name}: max[{component}] {declared_max} does not bound {observed_max}"
+            );
+        }
+    }
 }
 
 // --- 8: the accessor-aliasing guard ----------------------------------------
@@ -1010,6 +1215,99 @@ fn an_image_reading_a_converted_range_is_refused_rather_than_corrupted() {
             assert_eq!(accessor_index, 0);
         }
         other => panic!("expected ImagePayloadOverlap, got {other:?}"),
+    }
+}
+
+/// A 48-byte buffer holding one image payload and one `POSITION` accessor,
+/// at caller-chosen offsets, so both sides of the half-open overlap test can
+/// be exercised.
+///
+/// The `POSITION` accessor always occupies `position_offset ..
+/// position_offset + 36`; the image view occupies `image_offset ..
+/// image_offset + image_length`.
+fn image_and_positions(image_offset: usize, image_length: usize, position_offset: usize) -> Value {
+    let mut buffer = vec![0u8; 48];
+    let positions = f32_bytes(&[
+        1.0, 2.0, 3.0, //
+        0.0, 0.0, 0.0, //
+        0.0, 0.0, 0.0,
+    ]);
+    buffer[position_offset..position_offset + 36].copy_from_slice(&positions);
+    json!({
+        "asset": { "version": "2.0" },
+        "buffers": [{ "uri": data_uri(&buffer), "byteLength": 48 }],
+        "bufferViews": [
+            { "buffer": 0, "byteOffset": image_offset, "byteLength": image_length },
+            { "buffer": 0, "byteOffset": position_offset, "byteLength": 36 }
+        ],
+        "accessors": [{
+            "bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3",
+            "min": [0.0, 0.0, 0.0], "max": [1.0, 2.0, 3.0]
+        }],
+        "images": [{ "bufferView": 0, "mimeType": "image/png" }],
+        "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 } }] }]
+    })
+}
+
+#[test]
+fn an_image_view_exactly_adjacent_to_a_converted_accessor_is_converted() {
+    // Both ranges are half-open, so touching endpoints share no byte.
+    // Refusing either case would reject the ordinary tightly-packed layout
+    // every exporter emits. Both orders are pinned because the two
+    // comparisons that decide it are independent.
+    for (name, image_offset, image_length, position_offset) in [
+        (
+            "image ends where the accessor begins",
+            0usize,
+            12usize,
+            12usize,
+        ),
+        ("image begins where the accessor ends", 36, 12, 0),
+    ] {
+        let value = image_and_positions(image_offset, image_length, position_offset);
+        let source = accepted("image-adjacent.gltf", &value);
+        let artifact = rewrite_linear_units(&source, 2.0)
+            .unwrap_or_else(|error| panic!("{name}: adjacency is not an overlap: {error:?}"));
+        let (_, buffers) = artifact_parts(&artifact);
+
+        assert_eq!(
+            &buffers[0][image_offset..image_offset + image_length],
+            &[0u8; 12],
+            "{name}: image bytes are untouched"
+        );
+        assert_eq!(
+            read_f32(&buffers[0][position_offset..position_offset + 12]),
+            vec![2.0, 4.0, 6.0],
+            "{name}: the accessor still converts"
+        );
+    }
+}
+
+#[test]
+fn an_image_view_overlapping_a_converted_accessor_by_one_byte_is_refused() {
+    // One byte past adjacency, on either side, the image payload really does
+    // share storage with the converted range.
+    for (name, image_offset, image_length, position_offset) in [
+        (
+            "image runs one byte into the accessor",
+            0usize,
+            13usize,
+            12usize,
+        ),
+        ("accessor runs one byte into the image", 35, 13, 0),
+    ] {
+        let value = image_and_positions(image_offset, image_length, position_offset);
+        let source = accepted("image-one-byte.gltf", &value);
+        match rewrite_linear_units(&source, 2.0) {
+            Err(GltfScaleRewriteError::ImagePayloadOverlap {
+                location,
+                accessor_index,
+            }) => {
+                assert_eq!(location, "/images/0/bufferView", "{name}");
+                assert_eq!(accessor_index, 0, "{name}");
+            }
+            other => panic!("{name}: expected ImagePayloadOverlap, got {other:?}"),
+        }
     }
 }
 
