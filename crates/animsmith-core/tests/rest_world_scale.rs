@@ -19,6 +19,7 @@ fn node(
         parent_source_node_index: parent,
         scene_root_indices: parent.is_none().then_some(0).into_iter().collect(),
         local_rest,
+        bone: None,
     }
 }
 

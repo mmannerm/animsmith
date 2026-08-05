@@ -6,7 +6,7 @@
 
 use crate::model::{
     Bone, Document, MeshAsset, MeshInstance, SceneAsset, SceneAssets, Skeleton,
-    SourceSkeletonAssets, Transform,
+    SourceSkeletonAssets, Transform, WorldMatrixError, world_rest_matrices,
 };
 use glam::{Mat3, Mat4, Vec3};
 use std::collections::BTreeSet;
@@ -467,25 +467,14 @@ fn validate(
 }
 
 fn world_matrices(skeleton: &Skeleton) -> Result<Vec<Mat4>, SkinnedBindPoseCanonicalizationError> {
-    let mut worlds = Vec::with_capacity(skeleton.bones.len());
-    for (node, bone) in skeleton.bones.iter().enumerate() {
-        let local = bone.rest.to_mat4();
-        if !matrix4_is_finite(local) {
-            return Err(SkinnedBindPoseCanonicalizationError::NonFiniteTransform { node });
+    world_rest_matrices(skeleton).map_err(|error| match error {
+        WorldMatrixError::NonFiniteTransform { node } => {
+            SkinnedBindPoseCanonicalizationError::NonFiniteTransform { node }
         }
-        let world = match bone.parent {
-            Some(parent) if parent < node => worlds[parent] * local,
-            Some(parent) => {
-                return Err(SkinnedBindPoseCanonicalizationError::InvalidParent { node, parent });
-            }
-            None => local,
-        };
-        if !matrix4_is_finite(world) {
-            return Err(SkinnedBindPoseCanonicalizationError::NonFiniteTransform { node });
+        WorldMatrixError::InvalidParent { node, parent } => {
+            SkinnedBindPoseCanonicalizationError::InvalidParent { node, parent }
         }
-        worlds.push(world);
-    }
-    Ok(worlds)
+    })
 }
 
 fn inverse_joint_matrix(

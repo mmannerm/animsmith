@@ -191,6 +191,27 @@ For the library cutover itself:
 4. Keep project-specific sidecars, hashes, provenance, and storage policy in
    the host pipeline.
 
+## Scale plan and proof contracts
+
+`animsmith_core::scale` owns the format-neutral plan/proof contracts for the
+two distinct scale operations from
+[DESIGN.md Appendix D](../DESIGN.md#appendix-d--decision-record-skinned-restbind-scale-canonicalization):
+whole-document linear-unit conversion and rest/bind hierarchy
+reparameterization. `plan_scale` is pure and fail-closed against a
+`Document` and a format-neutral `ScaleCapabilityFacts` projection;
+`build_scale_candidate` builds a new candidate document without mutating the
+source; `prove_scale` independently re-derives the plan's claims and reports
+residual maxima against the fixed `ScaleTolerancePolicy::APPENDIX_D_V1`
+tolerance identity. This module does not select CLI arguments, publish
+artifacts/evidence, or write files — see the crate rustdoc for the exact
+selector, error, and proof-obligation contracts.
+`ScaleOperation::RestBindUniformScale`'s selectors are raw, format-neutral
+source identity (`source_skin_index`, `source_root_node_index`), resolved
+against `Document::assets::source_skeleton` — never a normalized `BoneId` or
+mesh-instance ordinal. A frontend that wants to raw-preflight a glTF source
+before calling into this module can use `animsmith_gltf::preflight_scale_source`
+and project its `GltfCapabilityManifest` down to `ScaleCapabilityFacts`.
+
 ## What the libraries do not own
 
 - Parsing the host's contract files into `Config`.

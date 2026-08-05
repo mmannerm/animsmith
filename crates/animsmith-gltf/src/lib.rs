@@ -808,6 +808,7 @@ fn extract_source_skeleton(
             parent_source_node_index: topo.parent[node.index()],
             scene_root_indices: std::mem::take(&mut scene_root_indices[node.index()]),
             local_rest,
+            bone: topo.bone_of_node[node.index()],
         });
     }
 

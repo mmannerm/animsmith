@@ -2102,6 +2102,7 @@ mod tests {
                             parent_source_node_index: None,
                             scene_root_indices: vec![0],
                             local_rest: SourceNodeLocalRest::Matrix(Mat4::IDENTITY),
+                            bone: None,
                         })
                         .collect(),
                     skins: vec![SourceSkinAsset {
@@ -2166,6 +2167,7 @@ mod tests {
                         local_rest: SourceNodeLocalRest::Matrix(Mat4::from_cols_array(
                             &[f32::NAN; 16],
                         )),
+                        bone: None,
                     }],
                     skins: Vec::new(),
                 },
@@ -2241,6 +2243,7 @@ mod tests {
                                 rotation: Quat::IDENTITY,
                                 scale: Vec3::ONE,
                             },
+                            bone: None,
                         },
                         SourceNodeAsset {
                             source_node_index: 1,
@@ -2252,6 +2255,7 @@ mod tests {
                                 rotation: Quat::IDENTITY,
                                 scale: Vec3::ONE,
                             },
+                            bone: None,
                         },
                         SourceNodeAsset {
                             source_node_index: 2,
@@ -2259,6 +2263,7 @@ mod tests {
                             parent_source_node_index: Some(1),
                             scene_root_indices: vec![],
                             local_rest: SourceNodeLocalRest::Matrix(Mat4::IDENTITY),
+                            bone: None,
                         },
                     ],
                     skins: vec![SourceSkinAsset {
@@ -2334,6 +2339,7 @@ mod tests {
                         parent_source_node_index: None,
                         scene_root_indices: vec![],
                         local_rest: SourceNodeLocalRest::Matrix(Mat4::IDENTITY),
+                        bone: None,
                     }],
                     skins: vec![SourceSkinAsset {
                         source_skin_index: 0,
@@ -2385,6 +2391,7 @@ mod tests {
                             2.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 0.0, 4.0, 0.0, 10.0, 20.0,
                             30.0, 1.0,
                         ])),
+                        bone: None,
                     }],
                     skins: vec![SourceSkinAsset {
                         source_skin_index: 0,
@@ -2436,6 +2443,7 @@ mod tests {
                 } else {
                     Mat4::IDENTITY
                 }),
+                bone: None,
             })
             .collect();
         let doc = Document {
@@ -2473,6 +2481,7 @@ mod tests {
                             parent_source_node_index,
                             scene_root_indices: Vec::new(),
                             local_rest: SourceNodeLocalRest::Matrix(Mat4::IDENTITY),
+                            bone: None,
                         }],
                         skins: Vec::new(),
                     },
