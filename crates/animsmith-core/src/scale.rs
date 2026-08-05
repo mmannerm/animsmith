@@ -3382,6 +3382,170 @@ mod tests {
         assert!(prove_scale(&doc, &broken, &plan).is_err());
     }
 
+    // --- A closure that genuinely branches -------------------------------
+
+    /// A rest/bind rig whose affected closure *branches*, at two depths.
+    ///
+    /// Every other rig in this module is a single chain: no domain node has
+    /// more than one child, so a descendant walk that followed only each
+    /// node's *first* child would still produce the correct closure for all
+    /// of them, and the traversal's breadth goes entirely unpinned.
+    ///
+    /// ```text
+    /// bone 0  source 0  parent -  T (0, 0, 0)     S 0.01  scaled root
+    /// bone 1  source 1  parent 0  T (0, 100, 0)   S 1     the skin's only joint
+    /// bone 2  source 2  parent 0  T (100, 0, 0)   S 1     root's SECOND child
+    /// bone 3  source 3  parent 1  T (0, 0, 100)   S 1     joint's first child
+    /// bone 4  source 4  parent 1  T (0, 50, 0)    S 1     joint's SECOND child
+    /// bone 5  source 5  parent 2  T (0, 0, 50)    S 1     child of bone 2 only
+    /// ```
+    ///
+    /// Bones 2, 4 and 5 are reachable *only* through a second-or-later
+    /// child: none of them is a skin joint, and none lies on a joint's
+    /// ancestor path, so neither the root insertion nor the joint
+    /// ancestor walk can pull them in — only the descendant walk can, and
+    /// only if it visits more than one child per node. Bone 5 additionally
+    /// hangs below a second child, so it is reachable only after the walk
+    /// has already branched once.
+    ///
+    /// Hand-computed rest-world matrices — linear part `0.01 * I`
+    /// throughout, so the whole domain classifies at the common factor
+    /// `0.01`:
+    ///
+    /// ```text
+    /// W0 (0, 0, 0)   W1 (0, 1, 0)     W2 (1, 0, 0)
+    /// W3 (0, 1, 1)   W4 (0, 1.5, 0)   W5 (1, 0, 0.5)
+    /// ```
+    fn branching_rig() -> Vec<RigNode> {
+        vec![
+            RigNode {
+                parent: None,
+                source_node_index: 0,
+                translation: Vec3::ZERO,
+                rotation: Quat::IDENTITY,
+                scale: Vec3::splat(0.01),
+            },
+            rig(Some(0), 1, Vec3::new(0.0, 100.0, 0.0)),
+            rig(Some(0), 2, Vec3::new(100.0, 0.0, 0.0)),
+            rig(Some(1), 3, Vec3::new(0.0, 0.0, 100.0)),
+            rig(Some(1), 4, Vec3::new(0.0, 50.0, 0.0)),
+            rig(Some(2), 5, Vec3::new(0.0, 0.0, 50.0)),
+        ]
+    }
+
+    fn branching_document() -> Document {
+        // `B1 = inverse(W1) = inverse([0.01 I | (0, 1, 0)]) = [100 I | (0, -100, 0)]`,
+        // written as a literal rather than derived from the fixture, so
+        // `W1 * B1 = I` is a hand-checked fact of the source.
+        let ibm = Mat4::from_cols(
+            Vec4::new(100.0, 0.0, 0.0, 0.0),
+            Vec4::new(0.0, 100.0, 0.0, 0.0),
+            Vec4::new(0.0, 0.0, 100.0, 0.0),
+            Vec4::new(0.0, -100.0, 0.0, 1.0),
+        );
+        let mut doc = rig_document(&branching_rig(), &[1], 0, ibm);
+        // Animated on the branch that only a second child reaches: bone 4's
+        // world translation is `(0, 1, 0) + 0.01 * value`, so the source
+        // trajectory runs `(0, 1.5, 0)` -> `(0, 1.6, 0)`.
+        doc.clips.push(Clip {
+            name: "clip".into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 4,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Vec3s(vec![
+                    Vec3::new(0.0, 50.0, 0.0),
+                    Vec3::new(0.0, 60.0, 0.0),
+                ]),
+            }],
+        });
+        doc
+    }
+
+    #[test]
+    fn a_branching_affected_closure_pulls_in_every_child_at_every_depth() {
+        let doc = branching_document();
+        let capability = complete_capability();
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 0.01,
+            },
+            document: &doc,
+            capability: &capability,
+        })
+        .unwrap();
+        // The complete expected closure, as a literal. A walk that follows
+        // only a first child yields `[0, 1, 3]`: bone 2 (the root's second
+        // child), bone 4 (the joint's second child) and bone 5 (below bone
+        // 2) are all missing.
+        assert_eq!(plan.affected_nodes(), &[0, 1, 2, 3, 4, 5]);
+        // Everything but the scaled root and the skin's one joint.
+        assert_eq!(plan.transform_only_attachments(), &[2, 3, 4, 5]);
+        assert_eq!(plan.common_factor(), 0.01);
+
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let bones = &candidate.document().skeleton.bones;
+        // `L' = C_parent^-1 * L * C_i`: every affected local translation is
+        // multiplied by its parent's factor (`0.01` inside the domain, one
+        // at the root boundary) and every affected local scale becomes one.
+        let expected_local = [
+            Vec3::ZERO,
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(0.0, 0.5, 0.0),
+            Vec3::new(0.0, 0.0, 0.5),
+        ];
+        for (node, expected) in expected_local.iter().enumerate() {
+            assert!(
+                (bones[node].rest.translation - *expected).length() < 1e-6,
+                "bone {node} translation {:?}",
+                bones[node].rest.translation
+            );
+            assert!(
+                (bones[node].rest.scale - Vec3::ONE).length() < 1e-6,
+                "bone {node} scale {:?}",
+                bones[node].rest.scale
+            );
+        }
+        // The animated branch node is rebased by its parent's `0.01` too.
+        let TrackValues::Vec3s(values) = &candidate.document().clips[0].tracks[0].values else {
+            panic!("expected a vec3 track");
+        };
+        assert!((values[0] - Vec3::new(0.0, 0.5, 0.0)).length() < 1e-6);
+        assert!((values[1] - Vec3::new(0.0, 0.6, 0.0)).length() < 1e-6);
+        // `B1' = C^-1 * B1 = scale(0.01) * [100 I | (0, -100, 0)]
+        //      = [I | (0, -1, 0)]`.
+        let rebased_ibm = candidate.document().assets.instances[0].skin_ibms[0];
+        assert!(
+            rebased_ibm.abs_diff_eq(
+                Mat4::from_cols(
+                    Vec4::new(1.0, 0.0, 0.0, 0.0),
+                    Vec4::new(0.0, 1.0, 0.0, 0.0),
+                    Vec4::new(0.0, 0.0, 1.0, 0.0),
+                    Vec4::new(0.0, -1.0, 0.0, 1.0),
+                ),
+                1e-6
+            ),
+            "rebased inverse bind {rebased_ibm:?}"
+        );
+
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+        // Two key times, from the one animated branch node.
+        assert_eq!(proof.sample_time_count, 2);
+        assert!(proof.rest_translation_residual < 1e-6);
+        assert!(proof.unit_scale_residual < 1e-6);
+        assert!(proof.transform_only_affine_residual < 1e-6);
+        assert!(proof.trajectory_residual < 1e-6);
+        assert!(proof.key_translation_residual < 1e-6);
+        assert!(proof.skin_matrix_residual < 1e-4);
+        assert!(proof.bounds_residual < 1e-6);
+    }
+
     // --- The `C_parent = I` boundary at the top of the domain ------------
 
     /// A rest/bind rig whose scaled root is *not* the skeleton root.
@@ -5225,6 +5389,67 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn an_unsampled_translation_tangent_is_named_by_the_track_value_obligation() {
+        // The rotation and mesh-position arms of `check_candidate_values`
+        // each already name themselves (see the two tests above); its
+        // `Vec3s` arm — every translation value and cubic tangent element —
+        // did not, so the kind it reports was free to be any variant.
+        //
+        // glTF cubic evaluation of the segment `[k0, k1]` reads only the
+        // *out*-tangent of `k0` and the *in*-tangent of `k1`. For a two-key
+        // track that leaves `values[0]`, the in-tangent at the first key,
+        // unread at every key time and every cubic interior time — and so
+        // unread by the trajectory, skin and bounds obligations derived from
+        // those samples. The direct per-element check is the only obligation
+        // that can see this element at all, which is what makes the kind it
+        // reports this test's subject rather than an artefact of ordering.
+        let mut doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
+        doc.clips.push(Clip {
+            name: "clip".into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 1,
+                property: Property::Translation,
+                interpolation: Interpolation::CubicSpline,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Vec3s(vec![
+                    Vec3::new(0.0, 500.0, 0.0), // in-tangent @0 — never sampled
+                    Vec3::new(0.0, 1.0, 0.0),   // value @0
+                    Vec3::ZERO,                 // out-tangent @0 (`m0`)
+                    Vec3::ZERO,                 // in-tangent @1 (`m1`)
+                    Vec3::new(0.0, 1.0, 0.0),   // value @1
+                    Vec3::ZERO,                 // out-tangent @1
+                ]),
+            }],
+        });
+        let capability = complete_capability();
+        // Whole-document conversion by `0.01`.
+        let plan = whole_document_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let mut broken = candidate.document().clone();
+        let TrackValues::Vec3s(values) = &mut broken.clips[0].tracks[0].values else {
+            panic!("expected a vec3 track");
+        };
+        // A builder that left this one element un-rewritten: the candidate
+        // keeps the source's `500` where `0.01 * 500 = 5` is expected.
+        values[0] = Vec3::new(0.0, 500.0, 0.0);
+        let broken = ScaleCandidate { document: broken };
+        let error = prove_scale(&doc, &broken, &plan).unwrap_err();
+        let ScaleError::ProofResidualExceeded {
+            kind,
+            observed,
+            tolerance,
+        } = error
+        else {
+            panic!("expected a proof residual, got {error:?}");
+        };
+        assert_eq!(kind, ProofResidualKind::TrackValue);
+        // `|500 - 5| = 495`, against `1e-6 + 1e-5 * 500 = 5.001e-3`.
+        assert!((observed - 495.0).abs() < 1e-9, "observed {observed}");
+        assert!((tolerance - 5.001e-3).abs() < 1e-9, "tolerance {tolerance}");
     }
 
     #[test]
