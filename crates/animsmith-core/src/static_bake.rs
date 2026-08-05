@@ -7,7 +7,7 @@
 
 use crate::model::{
     Bone, Document, MeshAsset, MeshInstance, Primitive, SceneAsset, SceneAssets, Skeleton,
-    SourceSkeletonAssets, Transform,
+    SourceSkeletonAssets, Transform, WorldMatrixError, world_rest_matrices,
 };
 use glam::{Mat3, Mat4};
 use serde::Serialize;
@@ -497,23 +497,14 @@ fn validate_materials(assets: &SceneAssets) -> Result<(), StaticMeshBakeError> {
 }
 
 fn world_matrices(skeleton: &Skeleton) -> Result<Vec<Mat4>, StaticMeshBakeError> {
-    let mut worlds = Vec::with_capacity(skeleton.bones.len());
-    for (node, bone) in skeleton.bones.iter().enumerate() {
-        let local = bone.rest.to_mat4();
-        if !matrix4_is_finite(local) {
-            return Err(StaticMeshBakeError::NonFiniteTransform { node });
+    world_rest_matrices(skeleton).map_err(|error| match error {
+        WorldMatrixError::NonFiniteTransform { node } => {
+            StaticMeshBakeError::NonFiniteTransform { node }
         }
-        let world = match bone.parent {
-            Some(parent) if parent < node => worlds[parent] * local,
-            Some(parent) => return Err(StaticMeshBakeError::InvalidParent { node, parent }),
-            None => local,
-        };
-        if !matrix4_is_finite(world) {
-            return Err(StaticMeshBakeError::NonFiniteTransform { node });
+        WorldMatrixError::InvalidParent { node, parent } => {
+            StaticMeshBakeError::InvalidParent { node, parent }
         }
-        worlds.push(world);
-    }
-    Ok(worlds)
+    })
 }
 
 fn validate_mesh(
@@ -687,13 +678,6 @@ fn bake_mesh(
         }
     }
     Ok(baked)
-}
-
-fn matrix4_is_finite(matrix: Mat4) -> bool {
-    matrix
-        .to_cols_array()
-        .into_iter()
-        .all(|component| component.is_finite())
 }
 
 fn matrix3_is_finite(matrix: Mat3) -> bool {

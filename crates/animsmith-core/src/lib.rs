@@ -14,6 +14,14 @@
 //! The opt-in [`transform::prune_constant_tracks`] helper removes only
 //! interpolation-aware constant-track candidates whose sampled local and
 //! model-space pose evidence remains within its documented tolerances.
+//! The [`scale`] module owns the format-neutral plan/proof contracts for the
+//! two distinct DESIGN.md Appendix D scale operations —
+//! [`scale::ScaleOperation::WholeDocumentLinearUnits`] and
+//! [`scale::ScaleOperation::RestBindUniformScale`] — through pure, fail-closed
+//! [`scale::plan_scale`], candidate construction with
+//! [`scale::build_scale_candidate`], and independent [`scale::prove_scale`].
+//! It does not decide selectors, publish artifacts, or write files; a format
+//! frontend and a dedicated producer own those steps.
 //! The [`animsmith-gltf`] and [`animsmith-fbx`] loader crates translate file
 //! formats into this model; their docs.rs pages continue the library path for
 //! format-specific loading and, for glTF, writing.
@@ -105,6 +113,7 @@ pub mod metrics;
 pub mod model;
 pub mod profile;
 pub mod sample;
+pub mod scale;
 pub mod skinned_canonical;
 pub mod static_bake;
 pub mod transform;
@@ -145,6 +154,12 @@ pub use profile::{
     ResolvedRoles, RigProfile, Role, builtin_profiles, detect_profile, resolve_configured_roles,
 };
 pub use sample::{PoseGrid, TrackSample, default_frame_count, sample_clip, sample_track};
+pub use scale::{
+    AffineDomainViolation, ProofResidualKind, ScaleCandidate, ScaleCapabilityCoverage,
+    ScaleCapabilityFacts, ScaleDomainRewrites, ScaleError, ScaleOperation, ScalePlan, ScaleProof,
+    ScaleProofObligations, ScaleRequest, ScaleTolerancePolicy, build_scale_candidate, plan_scale,
+    prove_scale,
+};
 pub use skinned_canonical::{
     SkinnedBindPoseCanonicalization, SkinnedBindPoseCanonicalizationError,
     SkinnedBindPoseCanonicalizationOptions, SkinnedBindPosePlacement,

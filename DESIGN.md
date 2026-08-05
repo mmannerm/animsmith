@@ -995,9 +995,11 @@ policy. The format frontend owns raw inventory and exact source rewriting; the
 CLI owns atomic artifact/evidence publication. Applying a plan builds a
 candidate and never mutates the caller's source on failure.
 
-These names describe the contract shape, not an implemented API in this PR.
-Any change to the operation variants, required selectors, or failure boundary
-is a design change rather than an implementation detail.
+`animsmith-core::scale` now implements this contract (issue #281): the
+`ScaleOperation`/`ScaleRequest` planning entry point, the typed `ScalePlan`
+and `ScaleError`, candidate construction, and the `ScaleProof` residual
+maxima. Any change to the operation variants, required selectors, or failure
+boundary is a design change rather than an implementation detail.
 
 ### D.8 Ownership choice and deferred slices
 

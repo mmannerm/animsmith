@@ -13,13 +13,11 @@ fn node(
     parent: Option<usize>,
     local_rest: SourceNodeLocalRest,
 ) -> SourceNodeAsset {
-    SourceNodeAsset {
-        source_node_index: index,
-        name: Some(name.into()),
-        parent_source_node_index: parent,
-        scene_root_indices: parent.is_none().then_some(0).into_iter().collect(),
-        local_rest,
-    }
+    let mut node = SourceNodeAsset::new(index, local_rest);
+    node.name = Some(name.into());
+    node.parent_source_node_index = parent;
+    node.scene_root_indices = parent.is_none().then_some(0).into_iter().collect();
+    node
 }
 
 fn trs(scale: Vec3) -> SourceNodeLocalRest {

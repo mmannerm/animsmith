@@ -1580,34 +1580,38 @@ mod tests {
                 source_skeleton: SourceSkeletonAssets {
                     coverage: SourceSkeletonCoverage::Complete,
                     nodes: vec![
-                        SourceNodeAsset {
-                            source_node_index: 0,
-                            name: Some("unit-helper".into()),
-                            parent_source_node_index: None,
-                            scene_root_indices: vec![],
-                            local_rest: SourceNodeLocalRest::Trs {
-                                translation: Vec3::ZERO,
-                                rotation: Quat::IDENTITY,
-                                scale: Vec3::splat(0.01),
-                            },
+                        {
+                            let mut node = SourceNodeAsset::new(
+                                0,
+                                SourceNodeLocalRest::Trs {
+                                    translation: Vec3::ZERO,
+                                    rotation: Quat::IDENTITY,
+                                    scale: Vec3::splat(0.01),
+                                },
+                            );
+                            node.name = Some("unit-helper".into());
+                            node
                         },
-                        SourceNodeAsset {
-                            source_node_index: 1,
-                            name: Some("socket".into()),
-                            parent_source_node_index: Some(0),
-                            scene_root_indices: vec![],
-                            local_rest: SourceNodeLocalRest::Trs {
-                                translation: Vec3::new(11.5, 0.0, 0.0),
-                                rotation: Quat::IDENTITY,
-                                scale: Vec3::ONE,
-                            },
+                        {
+                            let mut node = SourceNodeAsset::new(
+                                1,
+                                SourceNodeLocalRest::Trs {
+                                    translation: Vec3::new(11.5, 0.0, 0.0),
+                                    rotation: Quat::IDENTITY,
+                                    scale: Vec3::ONE,
+                                },
+                            );
+                            node.name = Some("socket".into());
+                            node.parent_source_node_index = Some(0);
+                            node
                         },
-                        SourceNodeAsset {
-                            source_node_index: 2,
-                            name: Some("mesh".into()),
-                            parent_source_node_index: None,
-                            scene_root_indices: vec![],
-                            local_rest: SourceNodeLocalRest::Matrix(Mat4::IDENTITY),
+                        {
+                            let mut node = SourceNodeAsset::new(
+                                2,
+                                SourceNodeLocalRest::Matrix(Mat4::IDENTITY),
+                            );
+                            node.name = Some("mesh".into());
+                            node
                         },
                     ],
                     skins: vec![SourceSkinAsset {

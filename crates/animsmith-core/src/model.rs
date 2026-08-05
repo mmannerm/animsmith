@@ -77,6 +77,64 @@ impl Skeleton {
     }
 }
 
+/// Structural failure composing [`Skeleton`] rest-local transforms into
+/// world matrices, returned by [`world_rest_matrices`].
+///
+/// This is deliberately generic over the eventual caller-facing error: every
+/// caller of [`world_rest_matrices`] maps one of these two structural facts
+/// into its own typed error variant rather than sharing an error enum across
+/// module boundaries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WorldMatrixError {
+    /// The node's local or accumulated world transform has a non-finite
+    /// component.
+    NonFiniteTransform {
+        /// The node with the non-finite transform.
+        node: BoneId,
+    },
+    /// The node's parent is not earlier in [`Skeleton::bones`], so the
+    /// skeleton is not in the required parent-before-child order.
+    InvalidParent {
+        /// The node with an invalid parent.
+        node: BoneId,
+        /// The invalid parent index.
+        parent: BoneId,
+    },
+}
+
+/// Compose every [`Bone::rest`] local transform in `skeleton` into a
+/// parent-before-child world matrix, shared by every module that needs plain
+/// rest-world FK (skin bind-pose canonicalization, static mesh baking, and
+/// scale planning/proof).
+///
+/// `skeleton.bones` order is trusted as parent-before-child, matching
+/// [`Skeleton`]'s documented invariant; a parent index that is not strictly
+/// less than its child's is reported as [`WorldMatrixError::InvalidParent`]
+/// rather than assumed.
+pub(crate) fn world_rest_matrices(skeleton: &Skeleton) -> Result<Vec<Mat4>, WorldMatrixError> {
+    let mut worlds = Vec::with_capacity(skeleton.bones.len());
+    for (node, bone) in skeleton.bones.iter().enumerate() {
+        let local = bone.rest.to_mat4();
+        if !mat4_is_finite(local) {
+            return Err(WorldMatrixError::NonFiniteTransform { node });
+        }
+        let world = match bone.parent {
+            Some(parent) if parent < node => worlds[parent] * local,
+            Some(parent) => return Err(WorldMatrixError::InvalidParent { node, parent }),
+            None => local,
+        };
+        if !mat4_is_finite(world) {
+            return Err(WorldMatrixError::NonFiniteTransform { node });
+        }
+        worlds.push(world);
+    }
+    Ok(worlds)
+}
+
+pub(crate) fn mat4_is_finite(matrix: Mat4) -> bool {
+    matrix.to_cols_array().into_iter().all(f32::is_finite)
+}
+
 /// Animated property targeted by a [`Track`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Property {
@@ -370,7 +428,16 @@ pub enum SourceNodeLocalRest {
 }
 
 /// One source-format node with source-native identity facts.
+///
+/// Marked `#[non_exhaustive]` because this projection grows as loaders learn
+/// to carry more source-native identity (`bone` was the most recent
+/// addition): out-of-crate embedders construct it through
+/// [`SourceNodeAsset::new`] and assign the optional facts they have, so a
+/// later field cannot break their build. The sibling source-asset structs in
+/// this module are not yet marked; they are stable in a way this one has
+/// already demonstrated it is not.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SourceNodeAsset {
     /// Stable node-array index in the source format.
     pub source_node_index: usize,
@@ -383,6 +450,38 @@ pub struct SourceNodeAsset {
     pub scene_root_indices: Vec<usize>,
     /// Authored local-rest representation.
     pub local_rest: SourceNodeLocalRest,
+    /// The core [`BoneId`] this source node normalized to, when the loader's
+    /// topology derivation kept it reachable from a scene root.
+    ///
+    /// `None` means the loader dropped this source node during
+    /// normalization (for example, it was unreachable from any root and so
+    /// never became a [`Skeleton`] bone). Format-neutral consumers that need
+    /// to resolve a raw source-node selector (for example
+    /// [`crate::scale::ScaleOperation::RestBindUniformScale`]'s
+    /// `source_root_node_index`/skin joints) into the normalized
+    /// [`Skeleton`] must use this field rather than assuming source-node
+    /// order equals bone order.
+    pub bone: Option<BoneId>,
+}
+
+impl SourceNodeAsset {
+    /// One source node identified by its stable source-array index and its
+    /// authored local rest — the two facts every loader necessarily has.
+    ///
+    /// Every remaining fact ([`Self::name`], [`Self::parent_source_node_index`],
+    /// [`Self::scene_root_indices`], [`Self::bone`]) starts absent and is
+    /// assigned through the public fields. This is the only way to build the
+    /// value outside `animsmith-core`, since the type is `#[non_exhaustive]`.
+    pub fn new(source_node_index: usize, local_rest: SourceNodeLocalRest) -> Self {
+        Self {
+            source_node_index,
+            name: None,
+            parent_source_node_index: None,
+            scene_root_indices: Vec::new(),
+            local_rest,
+            bone: None,
+        }
+    }
 }
 
 /// Read status for a source skin's inverse-bind accessor.
