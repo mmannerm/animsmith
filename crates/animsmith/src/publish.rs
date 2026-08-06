@@ -1,10 +1,28 @@
 //! Atomic artifact/evidence publication shared by every producer command.
 //!
 //! A producer prepares both members of its pair as temporary files beside
-//! their destinations, then hands them here. Publication moves any existing
-//! destination aside, promotes both temps, and — on any failure — restores
-//! whatever was there before, so a run either publishes a complete new pair
-//! or leaves the previous one exactly as it found it.
+//! their destinations, then hands them here. Publication moves the existing
+//! artifact aside, promotes the artifact temp, promotes the evidence temp,
+//! and — on any failure — puts the previous artifact back, so a run either
+//! publishes a complete new pair or leaves the previous one exactly as it
+//! found it.
+//!
+//! # What a crash between the two renames leaves
+//!
+//! The renames are individually atomic but not atomic together, so a process
+//! killed between them leaves the new artifact beside the *previous*
+//! evidence. That is the deliberate choice: only the artifact destination is
+//! backed up. Moving the previous evidence aside first would make the same
+//! kill leave the new artifact with no evidence at all, and a pair whose
+//! members disagree is detectable from the evidence's own record of the
+//! artifact digest, where a missing member is not.
+//!
+//! # Permissions
+//!
+//! Both members are promoted from [`tempfile`] temporaries, so a published
+//! file carries that crate's `0600` rather than the `0644` a `create` under
+//! the process umask would produce. This is shared by every producer that
+//! publishes this way and is not specific to any one of them.
 //!
 //! This module is deliberately **not** feature gated. `assemble` is the only
 //! producer in the default build, but the `scale` producer exists in a
@@ -32,15 +50,21 @@ pub(crate) fn parent_or_current(path: &Path) -> &Path {
         .unwrap_or_else(|| Path::new("."))
 }
 
-/// A path's identity for distinctness checks: its canonical parent joined
-/// with its own file name.
+/// A **destination**'s identity for distinctness checks: its canonical parent
+/// joined with its own file name.
 ///
 /// Canonicalizing the parent collapses `.`, `..`, and symlinked directories,
 /// so two lexically different arguments naming one file compare equal. It
-/// does **not** resolve a symlinked final component, so two paths whose last
-/// component differs still compare different even if one links to the other.
-/// The canonical form exists for this comparison only and is never recorded
-/// in evidence: evidence keeps the operator's declared path verbatim.
+/// deliberately does **not** resolve a symlinked final component, because a
+/// destination is reached by [`fs::rename`], which *replaces* the link rather
+/// than following it: publishing to `latest.glb -> store/rig.glb` leaves
+/// `store/rig.glb` untouched, so the two are genuinely different
+/// destinations. The canonical form exists for this comparison only and is
+/// never recorded in evidence: evidence keeps the operator's declared path
+/// verbatim.
+///
+/// An **input** must not use this function — see [`input_identity`], whose
+/// doc comment carries the argument for the asymmetry.
 ///
 /// # Errors
 ///
@@ -58,6 +82,30 @@ pub(crate) fn destination_identity(path: &Path) -> Result<PathBuf, String> {
         .file_name()
         .ok_or_else(|| format!("output {} has no file name", path.display()))?;
     Ok(parent.join(file_name))
+}
+
+/// An **input**'s identity for distinctness checks: its fully canonical path,
+/// final component included.
+///
+/// An input is reached by [`fs::read`], which *follows* a symlinked final
+/// component, so the file an input argument names is the link's target — and
+/// only the target's identity can tell a caller whether the input and a
+/// destination are the same file. Comparing an input by
+/// [`destination_identity`] instead is silently destructive: with
+/// `latest.glb -> store/rig.glb`, the pair `--input latest.glb -o
+/// store/rig.glb` compares as two different files, publication renames over
+/// `store/rig.glb`, and the source asset the run read is gone.
+///
+/// Like [`destination_identity`], the canonical form exists for the
+/// distinctness comparison only and is never serialized.
+///
+/// # Errors
+///
+/// Returns an operator error when the path cannot be resolved — which
+/// includes the input not existing, so the message is phrased as the read
+/// failure it is.
+pub(crate) fn input_identity(path: &Path) -> Result<PathBuf, String> {
+    fs::canonicalize(path).map_err(|error| format!("cannot read {}: {error}", path.display()))
 }
 
 /// Reject a destination whose directory does not exist, or which exists as
@@ -145,7 +193,12 @@ fn flush_directory(path: &Path) {
 }
 
 /// Publish `artifact_temp` and `evidence_temp` to their destinations as one
-/// pair, restoring any prior pair if either promotion fails.
+/// pair, restoring the prior artifact if either promotion fails.
+///
+/// The evidence destination is never moved aside and never removed: it is
+/// written by one rename, so a failure anywhere leaves the previous evidence
+/// where it was. See the module docs for why that is stronger than backing it
+/// up.
 ///
 /// `fail_after_first_for_test` injects a failure between the two renames.
 /// It is the only way to exercise the rollback path without a filesystem
@@ -168,14 +221,17 @@ pub(crate) fn publish_pair(
     // must not cost the caller its existing published pair.
     flush_file(artifact_temp)?;
     flush_file(evidence_temp)?;
+    // Only the artifact is moved aside. The evidence destination needs no
+    // backup: it is written by exactly one rename, which either succeeds — in
+    // which case there is nothing to restore — or leaves the previous
+    // evidence in place untouched. Backing it up anyway would put the
+    // previous evidence under a temporary name across both renames, so a
+    // process killed between them would leave the new artifact with *no*
+    // evidence beside it; without the backup that same kill leaves the new
+    // artifact with the *old* evidence, a complete pair whose members
+    // disagree. A mismatched pair is detectable — the evidence records the
+    // artifact's digest — and a missing one is not.
     let artifact_backup = backup_destination(artifact)?;
-    let evidence_backup = match backup_destination(evidence) {
-        Ok(backup) => backup,
-        Err(error) => {
-            restore_destination(artifact, artifact_backup.as_ref())?;
-            return Err(error);
-        }
-    };
     let promote = || -> Result<(), String> {
         fs::rename(artifact_temp, artifact)
             .map_err(|error| format!("cannot publish {}: {error}", artifact.display()))?;
@@ -187,21 +243,15 @@ pub(crate) fn publish_pair(
         Ok(())
     };
     if let Err(error) = promote() {
+        // The evidence destination is deliberately not touched here: either
+        // its rename never ran, or it ran and this failure came from
+        // somewhere the rename cannot have reached. Removing it would destroy
+        // the previous evidence the missing backup is there to preserve.
         let artifact_restore = restore_destination(artifact, artifact_backup.as_ref());
-        let evidence_restore = restore_destination(evidence, evidence_backup.as_ref());
         flush_directory(parent_or_current(artifact));
-        flush_directory(parent_or_current(evidence));
-        let rollback_errors = [artifact_restore.err(), evidence_restore.err()]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
-        return if rollback_errors.is_empty() {
-            Err(error)
-        } else {
-            Err(format!(
-                "{error}; rollback also failed: {}",
-                rollback_errors.join("; ")
-            ))
+        return match artifact_restore {
+            Ok(()) => Err(error),
+            Err(rollback) => Err(format!("{error}; rollback also failed: {rollback}")),
         };
     }
     flush_directory(parent_or_current(artifact));

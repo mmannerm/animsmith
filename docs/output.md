@@ -43,6 +43,17 @@ artifact and its evidence are prepared as temporaries and published as one
 pair, so a refusal or an operator failure emits neither destination and
 restores any prior pair.
 
+Publication promotes the two temporaries with two renames, which are
+individually atomic but not atomic together. Only the artifact destination is
+moved aside first, so a process killed between the renames leaves the new
+artifact beside the *previous* evidence — a complete pair whose members
+disagree, which the evidence's own record of the artifact digest makes
+detectable. Backing the evidence up as well would turn that same window into
+a new artifact with no evidence at all. Both members are promoted from
+temporary files and therefore land with mode `0600` rather than the `0644` a
+plain create under the process umask would produce; this is shared by every
+producer that publishes a pair.
+
 Conversion evidence v1 remains a historical immutable contract at
 `urn:animsmith:schema:conversion-evidence:1`. The current CLI emits v2
 exclusively; regenerate v1 evidence when a v2 consumer is required.
@@ -241,7 +252,10 @@ machine-readable result to stdout and exits 1 when the asset has a problem.
 
 The record binds the operation and its declared selectors, the operator's
 declared paths verbatim, the input digest and byte count, and the complete raw
-capability manifest of the source. A published run adds the fixed tolerance
+capability manifest of the source. `capability` is `null` only for a refusal
+raised before an inventory existed — bytes that never parsed. A published
+record always carries the manifest, because publication is reachable only
+through a preflight that built one. A published run adds the fixed tolerance
 policy by identity and in full, both observed-factor witnesses with the
 divergence between them and the ceiling the design expects of it, the affected
 node and skin identities in the raw source index space the selectors use, the

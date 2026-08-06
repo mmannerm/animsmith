@@ -10,7 +10,10 @@
 //! `scale` is the first evidence-emitting producer in the minimal binary, and
 //! a feature-gated import here would silently drop that coverage.
 
-use animsmith_testkit::{rest_bind_scale_rig_glb, rest_bind_scale_rig_gltf};
+use animsmith_testkit::{
+    nodes_only_scale_rig_glb, oversized_proof_scale_rig_glb, rest_bind_scale_rig_glb,
+    rest_bind_scale_rig_gltf, unaffected_bind_scale_rig_glb,
+};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -50,6 +53,10 @@ impl Fixture {
 
     /// `scale rest-bind` on the rig at the declared factor, into `out.glb`
     /// and `out.json`.
+    ///
+    /// The factor is passed as `--expected-factor=<value>` rather than as two
+    /// arguments so that a negative one is not read as a bundle of short
+    /// flags: a factor the operation must reject has to reach the operation.
     fn rest_bind(&self, expected_factor: &str, format: &str) -> Output {
         animsmith()
             .current_dir(self.dir.path())
@@ -63,13 +70,9 @@ impl Fixture {
                 "0",
                 "--source-root-node-index",
                 "0",
-                "--expected-factor",
-                expected_factor,
-                "--evidence",
-                "out.json",
-                "--format",
-                format,
             ])
+            .arg(format!("--expected-factor={expected_factor}"))
+            .args(["--evidence", "out.json", "--format", format])
             .output()
             .expect("runs animsmith")
     }
@@ -77,19 +80,9 @@ impl Fixture {
     fn whole_document(&self, factor: &str, format: &str) -> Output {
         animsmith()
             .current_dir(self.dir.path())
-            .args([
-                "scale",
-                "whole-document",
-                "rig.glb",
-                "-o",
-                "out.glb",
-                "--factor",
-                factor,
-                "--evidence",
-                "out.json",
-                "--format",
-                format,
-            ])
+            .args(["scale", "whole-document", "rig.glb", "-o", "out.glb"])
+            .arg(format!("--factor={factor}"))
+            .args(["--evidence", "out.json", "--format", format])
             .output()
             .expect("runs animsmith")
     }
@@ -179,6 +172,17 @@ fn rest_bind_publishes_a_pair_whose_evidence_names_the_appendix_d3_case_2_rewrit
     );
     assert_eq!(result["artifact"]["container"], "glb");
     assert_eq!(result["proof"]["read_back_digest_matches"], true);
+
+    // Publication is only reachable through a preflight that inventoried the
+    // source, so a published record always carries the raw #280 manifest. A
+    // `null` here would describe a run that cannot have happened.
+    assert_eq!(record["capability"]["container"], "glb");
+    assert_eq!(record["capability"]["camera_count"], 0);
+
+    // §D.6's proof coverage. The rig's clip declares two authored key times
+    // and both its samplers are `LINEAR`, so there are no cubic-segment
+    // interior times to add: two sample times, counted once each.
+    assert_eq!(result["proof"]["sample_time_count"], 2);
 
     // The published digest and byte count describe the file that landed.
     let published = std::fs::read(fixture.path("out.glb")).expect("reads the artifact");
@@ -382,6 +386,89 @@ fn an_unevaluated_obligation_publishes_null_rather_than_a_zero_residual() {
 }
 
 #[test]
+fn a_rig_with_no_meshes_and_no_clips_reports_absences_for_what_it_cannot_evaluate() {
+    // Three of the twelve residual predicates are `true` on every other
+    // fixture here, so nothing distinguishes them from a constant `true`:
+    // `track_value`'s and `mesh_position`'s, which are re-derived from the
+    // source's own payloads because `prove_scale` evaluates those two claims
+    // unconditionally, and the rest obligation behind `rest_translation` and
+    // `rest_rotation`. This rig has no mesh and no clip, which separates
+    // them: the first two have nothing to walk while the rest obligation is
+    // still declared and still measured.
+    let fixture = Fixture::new();
+    std::fs::write(fixture.path("nodes.glb"), nodes_only_scale_rig_glb()).unwrap();
+    let run = rest_bind_paths(&fixture, "nodes.glb", "out.glb", "out.json");
+    assert_eq!(run.status.code(), Some(0), "stderr:\n{}", stderr(&run));
+
+    let record = read_json(&fixture.path("out.json"));
+    assert_schema_valid(&record);
+    let residuals = &record["result"]["proof"]["residuals"];
+    for claim in ["track_value", "mesh_position"] {
+        assert_eq!(residuals[claim]["evaluated"], false, "{claim}");
+        assert_eq!(residuals[claim]["max"], Value::Null, "{claim}");
+    }
+    // The rest obligation is a property of the *operation*, not of the
+    // payloads the other two read, so removing the clip must not silence it.
+    for claim in ["rest_translation", "rest_rotation"] {
+        assert_eq!(residuals[claim]["evaluated"], true, "{claim}");
+        // An exact zero, not an approximation: both sides of the comparison
+        // reach each world rest position through the same `f32` products in
+        // the same order — the source multiplies the parent's authored
+        // `0.01` in, the candidate multiplies the same narrowed factor into
+        // the child's own translation — so the difference is bit-for-bit
+        // nothing.
+        assert_eq!(residuals[claim]["max"], 0.0, "{claim}");
+    }
+    // With no clip there is nothing to sample, and the count says so rather
+    // than being absent.
+    assert_eq!(record["result"]["proof"]["sample_time_count"], 0);
+}
+
+#[test]
+fn a_skin_outside_the_closure_publishes_a_measured_unaffected_inverse_bind() {
+    // The `unaffected_inverse_bind` claim is the one residual that asserts
+    // what the rewrite did *not* touch, and on the §D.3 case 2 rig it reports
+    // an absence: the only skinned instance's joint is inside the affected
+    // closure. This rig adds a second instance of the same mesh under its own
+    // skin, whose joint is outside, which is the only shape where the claim
+    // has something to walk — and therefore the only shape that can tell a
+    // measured `0.0` from the fabricated one §D.6 forbids.
+    let fixture = Fixture::new();
+    std::fs::write(fixture.path("two.glb"), unaffected_bind_scale_rig_glb()).unwrap();
+    let run = rest_bind_paths(&fixture, "two.glb", "out.glb", "out.json");
+    assert_eq!(run.status.code(), Some(0), "stderr:\n{}", stderr(&run));
+
+    let record = read_json(&fixture.path("out.json"));
+    assert_schema_valid(&record);
+    let result = &record["result"];
+    assert_eq!(
+        result["proof"]["residuals"]["unaffected_inverse_bind"]["evaluated"],
+        true
+    );
+    // Skin 1's bind is the identity and node 4 carries no transform, so
+    // `W(rest) * B = I` on both sides of the rewrite. The rewrite must leave
+    // both exactly as it found them, which makes the checked residual an
+    // exact zero rather than a narrowing error.
+    assert_eq!(
+        result["proof"]["residuals"]["unaffected_inverse_bind"]["max"],
+        0.0
+    );
+    // And the second skin really is outside the closure: the operation
+    // rewrote the same three §D.2 node members and the same two accessors as
+    // it does without it.
+    assert_eq!(
+        result["affected"]["source_nodes"],
+        serde_json::json!([0, 1, 2])
+    );
+    assert_eq!(result["affected"]["source_skins"], serde_json::json!([0]));
+    assert_eq!(
+        result["artifact"]["rewritten_accessors"],
+        serde_json::json!([3, 5]),
+        "accessor 7 is skin 1's own inverse bind and must not be rewritten"
+    );
+}
+
+#[test]
 fn identical_inputs_and_arguments_produce_byte_identical_artifact_and_evidence() {
     let first = Fixture::new();
     let second = Fixture::new();
@@ -541,6 +628,117 @@ fn an_unsupported_source_domain_is_refused_with_its_typed_violations() {
     assert_eq!(record["capability"]["container"], "gltf");
 }
 
+#[test]
+fn a_document_whose_size_alone_exceeds_the_proof_sampling_budget_is_refused_at_the_proof() {
+    // The proof stage is otherwise unreachable from the CLI: every residual
+    // refusal needs a rewrite that produces one, which a correct rewriter
+    // does not. The sampling budget is the exception, because it is a pure
+    // size property of the input — and it is checked before the first sample
+    // time is evaluated, so this 1.9 MB rig refuses in milliseconds.
+    //
+    // Hand-computed against the `appendix-d-v2` budget of 400,000,000:
+    //
+    //   per-sample cost = 2 sides * 3 bones                    =       6
+    //                   + (2 sides + 1 skin residual) * 1 slot =       3
+    //                   + 2 sides * 50,000 skinned vertices    = 100,000
+    //                                                            -------
+    //                                                            100,009
+    //   sample times    = 5,000 LINEAR keys, no cubic segments
+    //   work            = 5,000 * 100,009 = 500,045,000
+    let fixture = Fixture::new();
+    std::fs::write(fixture.path("big.glb"), oversized_proof_scale_rig_glb()).unwrap();
+    let output = animsmith()
+        .current_dir(fixture.dir.path())
+        .args([
+            "scale",
+            "whole-document",
+            "big.glb",
+            "-o",
+            "out.glb",
+            "--factor",
+            "0.01",
+            "--evidence",
+            "out.json",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a refusal that is a property of the input asset exits 1, whatever \
+         stage raised it\nstderr:\n{}",
+        stderr(&output)
+    );
+    assert!(!fixture.path("out.glb").exists());
+    assert!(!fixture.path("out.json").exists());
+
+    let record: Value = serde_json::from_str(&stdout(&output)).expect("stdout is one JSON record");
+    assert_schema_valid(&record);
+    assert_eq!(record["rejection"]["stage"], "proof");
+    assert_eq!(
+        record["rejection"]["kind"],
+        "proof-sampling-budget-exceeded"
+    );
+    let detail = record["rejection"]["detail"]
+        .as_str()
+        .expect("a rejection detail");
+    for expected in ["500045000", "5000 sample times", "100009 work units"] {
+        assert!(detail.contains(expected), "{expected} is not in {detail}");
+    }
+}
+
+#[test]
+fn a_source_whose_bytes_do_not_parse_is_a_refusal_and_not_an_operator_error() {
+    // The bytes were read: `fs::read` succeeded, and what failed is the
+    // *asset*. Reporting that as exit 2 tells an operator their command line
+    // was wrong when it was not — the exact inversion the 1-vs-2 split
+    // exists to prevent.
+    let fixture = Fixture::new();
+    let mut truncated = rest_bind_scale_rig_glb();
+    truncated.truncate(64);
+    std::fs::write(fixture.path("junk.glb"), &truncated).unwrap();
+    let output = animsmith()
+        .current_dir(fixture.dir.path())
+        .args([
+            "scale",
+            "whole-document",
+            "junk.glb",
+            "-o",
+            "out.glb",
+            "--factor",
+            "0.01",
+            "--evidence",
+            "out.json",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    assert!(!fixture.path("out.glb").exists());
+    assert!(!fixture.path("out.json").exists());
+
+    let record: Value = serde_json::from_str(&stdout(&output)).expect("stdout is one JSON record");
+    assert_schema_valid(&record);
+    assert_eq!(record["outcome"], "rejected");
+    assert_eq!(record["rejection"]["stage"], "preflight");
+    assert_eq!(record["rejection"]["kind"], "unreadable-source");
+    // Nothing loaded, so there is no inventory. `null` is that absence, and
+    // the schema permits it only for a refusal.
+    assert_eq!(record["capability"], Value::Null);
+    // The record still identifies the bytes it refused.
+    assert_eq!(record["input"]["bytes"], 64);
+}
+
 // --- Operator errors --------------------------------------------------------
 
 /// Run `scale rest-bind` with substituted paths and report the exit code and
@@ -590,6 +788,124 @@ fn two_arguments_naming_one_file_are_an_operator_error() {
             stderr(&run)
         );
     }
+    assert!(!fixture.path("out.glb").exists());
+    assert!(!fixture.path("out.json").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_input_aliasing_a_destination_is_refused_before_the_asset_is_destroyed() {
+    // The input and the two destinations are reached by different syscalls:
+    // `fs::read` follows a symlinked final component, `fs::rename` replaces
+    // one. Resolving the input the destination way therefore makes
+    // `latest.glb -> store/rig.glb` compare as a *different* file from
+    // `store/rig.glb`, publication renames over the source asset the run just
+    // read, and the command reports success over a destroyed input.
+    let fixture = Fixture::new();
+    std::fs::create_dir(fixture.path("store")).unwrap();
+    std::fs::rename(fixture.path("rig.glb"), fixture.path("store/rig.glb")).unwrap();
+    std::os::unix::fs::symlink("store/rig.glb", fixture.path("latest.glb")).unwrap();
+    let asset = rest_bind_scale_rig_glb();
+    assert_eq!(std::fs::read(fixture.path("store/rig.glb")).unwrap(), asset);
+
+    for (output, evidence, expected) in [
+        ("store/rig.glb", "out.json", "input and output"),
+        // `--evidence` has no extension check at all, so this direction
+        // replaces the GLB with a JSON record.
+        ("out.glb", "store/rig.glb", "input and evidence"),
+    ] {
+        let run = rest_bind_paths(&fixture, "latest.glb", output, evidence);
+        assert_eq!(
+            run.status.code(),
+            Some(2),
+            "{output} {evidence}\nstderr:\n{}",
+            stderr(&run)
+        );
+        assert!(
+            stderr(&run).contains(expected),
+            "{output} {evidence}\nstderr:\n{}",
+            stderr(&run)
+        );
+        assert_eq!(
+            std::fs::read(fixture.path("store/rig.glb")).unwrap(),
+            asset,
+            "{output} {evidence}: the source asset must survive byte-identical"
+        );
+    }
+    assert!(!fixture.path("out.glb").exists());
+    assert!(!fixture.path("out.json").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_input_that_aliases_nothing_publishes_normally() {
+    // The guard above is distinctness, not a ban on symbolic links. `scale`
+    // deliberately does not adopt `assemble`'s `reject_symlink_path`: that
+    // rule keeps a recipe's declared inputs inside the recipe's own
+    // directory, a containment property this command does not have, and its
+    // three paths are the operator's own.
+    let fixture = Fixture::new();
+    std::fs::create_dir(fixture.path("store")).unwrap();
+    std::fs::rename(fixture.path("rig.glb"), fixture.path("store/rig.glb")).unwrap();
+    std::os::unix::fs::symlink("store/rig.glb", fixture.path("latest.glb")).unwrap();
+
+    let run = rest_bind_paths(&fixture, "latest.glb", "out.glb", "out.json");
+    assert_eq!(run.status.code(), Some(0), "stderr:\n{}", stderr(&run));
+    assert_schema_valid(&read_json(&fixture.path("out.json")));
+    // The declared path is recorded verbatim: the canonical form the
+    // distinctness check computes never reaches the record.
+    assert_eq!(
+        read_json(&fixture.path("out.json"))["paths"]["input"],
+        "latest.glb"
+    );
+    assert_eq!(
+        std::fs::read(fixture.path("store/rig.glb")).unwrap(),
+        rest_bind_scale_rig_glb(),
+        "the linked-to asset is read, not written"
+    );
+}
+
+#[test]
+fn a_factor_that_is_not_finite_and_positive_is_an_operator_error() {
+    // These are properties of the *invocation*: the factor is rejected before
+    // a single member of the document is consulted, so a rejected evidence
+    // record would claim the asset was examined and found wanting.
+    let fixture = Fixture::new();
+    for factor in ["nan", "inf", "-inf", "0", "-1"] {
+        let run = fixture.whole_document(factor, "json");
+        assert_eq!(
+            run.status.code(),
+            Some(2),
+            "--factor {factor}\nstderr:\n{}",
+            stderr(&run)
+        );
+        assert_eq!(
+            stdout(&run),
+            "",
+            "--factor {factor} must print no evidence record"
+        );
+        assert!(
+            stderr(&run).contains("scale factor must be finite and positive"),
+            "--factor {factor}\nstderr:\n{}",
+            stderr(&run)
+        );
+    }
+
+    // The rest/bind operation validates its own declared factor, and says so
+    // in its own words.
+    let rest_bind = fixture.rest_bind("0", "json");
+    assert_eq!(
+        rest_bind.status.code(),
+        Some(2),
+        "stderr:\n{}",
+        stderr(&rest_bind)
+    );
+    assert!(
+        stderr(&rest_bind).contains("rest/bind expected factor must be finite and positive"),
+        "stderr:\n{}",
+        stderr(&rest_bind)
+    );
+
     assert!(!fixture.path("out.glb").exists());
     assert!(!fixture.path("out.json").exists());
 }

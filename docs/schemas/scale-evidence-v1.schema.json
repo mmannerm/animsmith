@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:animsmith:schema:scale-evidence:1",
   "title": "animsmith scale evidence v1",
-  "description": "Immutable versioned evidence emitted by animsmith scale. One record serves both outcomes: a published artifact/evidence pair carries result and a null rejection, a refused run the reverse. A refused run's record is printed by --format json and is never published, because publication is an artifact/evidence pair and a refusal has no artifact.",
+  "description": "Immutable versioned evidence emitted by animsmith scale. One record serves both outcomes: a published artifact/evidence pair carries result and a null rejection, a refused run the reverse. A refused run's record is printed by --format json and is never published, because publication is an artifact/evidence pair and a refusal has no artifact. A published record additionally always carries the raw capability manifest: publication is only reachable through a preflight that inventoried the source, so a null manifest beside outcome published would describe a run that cannot have happened.",
   "type": "object",
   "required": ["schema_version", "schema", "tool", "command", "outcome", "operation", "paths", "input", "capability", "result", "rejection"],
   "properties": {
@@ -22,7 +22,11 @@
     {
       "if": { "properties": { "outcome": { "const": "published" } }, "required": ["outcome"] },
       "then": {
-        "properties": { "result": { "$ref": "#/$defs/result" }, "rejection": { "type": "null" } }
+        "properties": {
+          "capability": { "$ref": "#/$defs/capability" },
+          "result": { "$ref": "#/$defs/result" },
+          "rejection": { "type": "null" }
+        }
       },
       "else": {
         "properties": { "result": { "type": "null" }, "rejection": { "$ref": "#/$defs/rejection" } }

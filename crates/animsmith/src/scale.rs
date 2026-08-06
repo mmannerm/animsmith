@@ -19,16 +19,24 @@
 //! | Refusal | nothing | the record, `outcome: "rejected"` | 1 |
 //! | Operator error | nothing | — (prose on stderr) | 2 |
 //!
-//! Exit `1` is reserved for a refusal that is a property of the **input
-//! asset**: an unsupported source domain, any shared planning or proof
-//! rejection, any frontend rewrite or artifact-proof rejection, and a
-//! read-back digest mismatch. Exit `2` is operator error: a missing or
-//! unreadable input, a wrong extension, a container the extension disagrees
-//! with, two arguments naming one file, a missing output directory, or a
-//! publication or rollback I/O failure. This follows `lint --format json`,
-//! which prints its machine-readable result to stdout and exits `1` when the
-//! asset has a problem; it deliberately diverges from `assemble`, which maps
-//! every failure to `2`.
+//! The split is by *what the failure is a property of*, not by where in the
+//! pipeline it was raised.
+//!
+//! Exit `1` is a refusal that is a property of the **input asset**: bytes
+//! that do not parse as the glTF/GLB the extension declares, an unsupported
+//! source domain, any shared planning or proof rejection, any frontend
+//! rewrite or artifact-proof rejection, and a read-back digest mismatch.
+//!
+//! Exit `2` is a property of the **invocation** or of the operator's
+//! filesystem: a declared factor that is not finite and positive (rejected
+//! before any member of the document is consulted), a missing or unopenable
+//! input, a wrong extension, a container the extension disagrees with, two
+//! arguments naming one file, a missing output directory, or a publication or
+//! rollback I/O failure.
+//!
+//! This follows `lint --format json`, which prints its machine-readable
+//! result to stdout and exits `1` when the asset has a problem; it
+//! deliberately diverges from `assemble`, which maps every failure to `2`.
 //!
 //! # Determinism
 //!
@@ -52,7 +60,7 @@
 //! for the raw manifest and a digest of one is not a manifest.
 
 use crate::publish::{
-    destination_identity, parent_or_current, publish_pair, read_digest,
+    destination_identity, input_identity, parent_or_current, publish_pair, read_digest,
     require_writable_destination, sha256_hex,
 };
 use crate::{Format, render};
@@ -530,13 +538,38 @@ fn scale_error_kind(error: &ScaleError) -> &'static str {
     }
 }
 
+/// Classify one shared planning rejection.
+///
+/// Almost every [`ScaleError`] planning raises is a fact about the input
+/// asset — an unusable selector, a hierarchy the operations do not accept, a
+/// factor the source disagrees with — and refuses with exit `1`. The two
+/// exceptions are the declared factor's own validity: a factor that is not
+/// finite and positive is rejected before a single member of the document is
+/// consulted, so it is a property of the *invocation*, and reporting it as a
+/// refusal would tell an operator the asset was examined and found wanting
+/// when it was not.
+///
+/// [`ScaleError::FactorNotRepresentable`] deliberately stays a refusal: it is
+/// raised for the reciprocal `1 / expected_factor` as well as for the
+/// declared factor, and it is also reachable from the frontend rewrite, where
+/// this classification does not apply.
+fn plan_failure(error: ScaleError) -> Failure {
+    match error {
+        ScaleError::InvalidFactor { .. } | ScaleError::InvalidExpectedFactor { .. } => {
+            Failure::Operator(error.to_string())
+        }
+        error => refuse(Stage::Plan, scale_error_kind(&error), error.to_string()),
+    }
+}
+
 /// Classify one frontend rewrite or artifact-proof rejection.
 ///
 /// Every variant is a fact about the input asset — none of them names the
 /// operator's filesystem — so all of them refuse with exit `1`. `Load` here
 /// is the *artifact* or the source's own JSON failing to parse, not a
-/// missing file: the producer reads the input itself and reports a read
-/// failure as an operator error before the frontend is reached.
+/// missing file: the producer reads the input's bytes itself, and a file that
+/// cannot be opened at all is the operator error raised before the frontend
+/// is reached.
 fn rewrite_failure(stage: Stage, error: GltfScaleRewriteError) -> Failure {
     let detail = error.to_string();
     let (kind, violations) = match error {
@@ -728,11 +761,28 @@ fn container_name(container: GltfContainerKind) -> &'static str {
 
 /// Reject any two of the three paths naming one file.
 ///
+/// The input and the two destinations are resolved *differently*, because the
+/// operations that reach them differ: the input is read, which follows a
+/// symlinked final component, and the destinations are renamed over, which
+/// replaces one. Resolving the input the destination way is what lets
+/// `latest.glb -> store/rig.glb` be handed in as the input while
+/// `store/rig.glb` is named as the output, with publication then destroying
+/// the source asset the run just read. See [`input_identity`] and
+/// [`destination_identity`].
+///
+/// This one check is the whole guard: `scale` deliberately does not also
+/// reject symlinked paths outright the way `assemble`'s `reject_symlink_path`
+/// does. That guard exists to keep a recipe's declared inputs inside the
+/// recipe's own directory, a containment property `scale` does not have —
+/// its three paths are the operator's own, unconstrained, and a symlinked
+/// input that aliases nothing is a legitimate invocation this command has no
+/// reason to refuse.
+///
 /// The canonical forms exist only for this comparison; §D.6's evidence keeps
 /// the operator's declared path verbatim, so nothing computed here is
 /// serialized.
 fn require_distinct_paths(request: &Request) -> Result<(), String> {
-    let input = destination_identity(&request.input)?;
+    let input = input_identity(&request.input)?;
     let output = destination_identity(&request.output)?;
     let evidence = destination_identity(&request.evidence)?;
     for (first, second, first_label, second_label) in [
@@ -756,10 +806,10 @@ fn require_distinct_paths(request: &Request) -> Result<(), String> {
 ///
 /// # Errors
 ///
-/// Returns an operator error (exit `2`) for a bad invocation, an unreadable
-/// input, a destination that cannot be prepared, or a publication or
-/// rollback failure. A refusal that is a property of the input asset is not
-/// an error here: it prints its record and returns exit `1`.
+/// Returns an operator error (exit `2`) for a bad invocation, an input that
+/// cannot be opened, a destination that cannot be prepared, or a publication
+/// or rollback failure. A refusal that is a property of the input asset is
+/// not an error here: it prints its record and returns exit `1`.
 pub(crate) fn run(request: &Request, tool: ToolInfo) -> Result<ExitCode, String> {
     let input_container = declared_container(&request.input, "input")?;
     let output_container = declared_container(&request.output, "output")?;
@@ -791,8 +841,21 @@ pub(crate) fn run(request: &Request, tool: ToolInfo) -> Result<ExitCode, String>
     // `capability: null`, which is an absence, not an empty document.
     let source = match preflight_scale_source_bytes(&request.input, &input_bytes) {
         Ok(source) => source,
+        // The bytes are in hand — `fs::read` already succeeded — so this is
+        // the *asset* failing to parse, not the operator's filesystem. It
+        // refuses with exit `1` for the same reason every other malformed
+        // input does: nothing about the invocation was wrong, and telling an
+        // operator to check their command line sends them to the wrong place.
+        // No manifest exists: the inventory is built from a document that
+        // never loaded, and `capability: null` is that absence.
         Err(GltfScalePreflightError::Load(error)) => {
-            return Err(format!("cannot read {}: {error}", request.input.display()));
+            let rejection = RejectionRecord {
+                stage: Stage::Preflight,
+                kind: "unreadable-source",
+                detail: error.to_string(),
+                violations: Vec::new(),
+            };
+            return emit_rejection(request, tool, &paths, identity, None, rejection);
         }
         Err(GltfScalePreflightError::Unsupported {
             manifest,
@@ -867,7 +930,7 @@ fn produce(request: &Request, source: &GltfScaleSource) -> Result<Produced, Fail
         document: source.document(),
         capability: &facts,
     })
-    .map_err(|error| refuse(Stage::Plan, scale_error_kind(&error), error.to_string()))?;
+    .map_err(plan_failure)?;
 
     let artifact = match request.operation {
         Operation::WholeDocument { factor } => rewrite_linear_units(source, factor),

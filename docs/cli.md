@@ -101,12 +101,25 @@ inputs and arguments produce byte-identical artifact and evidence: the record
 carries no timestamp, and the declared paths are recorded verbatim rather than
 canonicalized.
 
-A refusal that is a property of the input asset publishes nothing, leaves any
-prior pair byte-identical, and exits 1 — with the typed reason as prose on
-stderr under `--format text` and as the same evidence record with
-`outcome: "rejected"` on stdout under `--format json`. An operator error —
-a missing or unreadable input, a wrong extension, two arguments naming one
-file, a missing output directory — exits 2 with prose on stderr.
+`scale` splits its two failure codes by what the failure is a property of, not
+by how far the run got. A refusal that is a property of the **input asset**
+publishes nothing, leaves any prior pair byte-identical, and exits 1 — with
+the typed reason as prose on stderr under `--format text` and as the same
+evidence record with `outcome: "rejected"` on stdout under `--format json`.
+That includes bytes that do not parse as the glTF/GLB the extension declares,
+and a document whose size puts the sampled proof over the policy's work
+budget. A failure that is a property of the **invocation** or of the
+operator's filesystem exits 2 with prose on stderr: a declared factor that is
+not finite and positive, an input that cannot be opened, a wrong extension, a
+container the extension disagrees with, two arguments naming one file, or a
+missing output directory.
+
+The three paths must name three different files, and each is compared by the
+file it actually reaches: the input is resolved through a symbolic link,
+because reading follows one, while a destination is not, because publishing
+renames *over* a link rather than through it. Passing a symlinked input
+alongside a destination naming its target is refused before anything is
+written. A symlinked input that aliases neither destination is accepted.
 
 `transform --drop-duplicate-loop-endpoint` is the narrow mechanical transform
 for an inclusive DCC cycle export that copied frame 0 to the final frame. It
@@ -151,7 +164,7 @@ tangents.
 |---:|---|
 | 0 | No failing findings: clean, warnings-only, notes-only, or coverage gaps only. |
 | 1 | At least one failing finding, a significant `diff`, pending repairs under `fix --dry-run`, or a `scale` refusal that is a property of the input asset. |
-| 2 | Operator/tool error: unreadable input, bad config, unsupported format, or invalid flags. |
+| 2 | Operator/tool error: unopenable input, bad config, unsupported format, or invalid flags. |
 
 A role-dependent check with missing prerequisites reports a typed coverage
 gap and does not fail the run — exit `0` means no failing findings among the
