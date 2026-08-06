@@ -43,6 +43,19 @@ pub(crate) fn accessor_span(
     accessor_index: usize,
     rule: AccessorRule,
 ) -> Result<AccessorSpan, GltfScaleRewriteError> {
+    accessor_span_typed(root, buffers, accessor_index, rule.required_accessor_type())
+}
+
+/// [`accessor_span`] keyed by the required accessor `type` spelling directly,
+/// so a caller whose rewrite rules are not [`AccessorRule`]s — the rest/bind
+/// reparameterization's per-slot claims — resolves spans through the same
+/// checked path rather than a parallel one.
+pub(crate) fn accessor_span_typed(
+    root: &Map<String, Value>,
+    buffers: &[Vec<u8>],
+    accessor_index: usize,
+    required_accessor_type: Option<&'static str>,
+) -> Result<AccessorSpan, GltfScaleRewriteError> {
     let location = format!("/accessors/{accessor_index}");
     let unsupported = || GltfScaleRewriteError::UnrewritableAccessor {
         accessor_index,
@@ -58,10 +71,7 @@ pub(crate) fn accessor_span(
         .get("type")
         .and_then(Value::as_str)
         .ok_or_else(unsupported)?;
-    if rule
-        .required_accessor_type()
-        .is_some_and(|required| required != accessor_type)
-    {
+    if required_accessor_type.is_some_and(|required| required != accessor_type) {
         return Err(unsupported());
     }
     let components = components_per_element(accessor_type).ok_or_else(unsupported)?;
@@ -123,6 +133,28 @@ pub(crate) fn scale_span(
     rule: AccessorRule,
     factor: f64,
 ) -> Result<ComponentExtrema, GltfScaleRewriteError> {
+    scale_span_with(buffers, span, &|_element, component| {
+        rule.scales_component(component).then_some(factor)
+    })
+}
+
+/// [`scale_span`] with a per-element, per-component multiplier.
+///
+/// `multiplier` returns `None` for a value that must come through
+/// bit-identical and `Some(m)` for one that is replaced by the single
+/// narrowing of `before * m`. The distinction is not cosmetic: a `Some(1.0)`
+/// would round-trip every finite value unchanged but would also route a
+/// non-finite stored value through [`narrow`], turning "this element is
+/// preserved" into "this element is rejected".
+///
+/// The rest/bind reparameterization needs the per-element axis, because one
+/// `inverseBindMatrices` accessor carries one factor per skin slot: a joint
+/// inside the affected closure scales by `s` and one outside is preserved.
+pub(crate) fn scale_span_with(
+    buffers: &mut [Vec<u8>],
+    span: AccessorSpan,
+    multiplier: &dyn Fn(usize, usize) -> Option<f64>,
+) -> Result<ComponentExtrema, GltfScaleRewriteError> {
     let buffer = buffers
         .get_mut(span.buffer)
         .filter(|buffer| span.end <= buffer.len())
@@ -141,13 +173,13 @@ pub(crate) fn scale_span(
             .expect("slice has four bytes");
         let before = f32::from_le_bytes(bytes);
         let component = float_index % span.components;
-        let after = if rule.scales_component(component) {
-            narrow(
+        let element = float_index / span.components;
+        let after = match multiplier(element, component) {
+            Some(factor) => narrow(
                 f64::from(before) * factor,
                 &format!("/accessors/{}[{float_index}]", span.accessor_index),
-            )?
-        } else {
-            before
+            )?,
+            None => before,
         };
         buffer[offset..offset + 4].copy_from_slice(&after.to_le_bytes());
         extrema.min[component] = extrema.min[component].min(after);
