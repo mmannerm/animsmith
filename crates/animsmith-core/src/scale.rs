@@ -1432,6 +1432,17 @@ fn plan_rest_bind(
             .map_err(|reason| ScaleError::InvalidAffineDomain { node: bone, reason })?;
         node_factor.insert(bone, factor);
     }
+    // Read at the scaled root, which DESIGN.md Appendix D §D.6 names, and not
+    // at whichever affected node happens to sort first. The two are *not*
+    // interchangeable: this closure and every factor above it were walked in
+    // source-node space through `parent_source_node_index`, while the
+    // "parent strictly earlier than child" ordering `world_rests` enforces is
+    // a fact about `Skeleton::parent`. Nothing compares the two chains —
+    // `validate_source_skeleton_identity` checks only that the projection's
+    // indices are unique — so a document whose projection inverts a skeleton
+    // parent link puts the scaled root somewhere other than the lowest
+    // affected bone id, with a different factor. Pinned by
+    // `the_observed_factor_is_read_at_the_scaled_root_not_the_lowest_affected_bone`.
     let observed_common = node_factor[&scaled_root_bone];
     if !tol.relative(tol.common_factor, observed_common, expected_factor) {
         return Err(ScaleError::FactorMismatch {
@@ -2277,23 +2288,22 @@ pub struct ScaleProof {
     /// ([`ProofResidualKind::UnitScale`]) that §D.1 derives from that band.
     ///
     /// Measured from `source`, not from `candidate`. That is a choice, not an
-    /// impossibility, and an earlier revision of this paragraph claimed
-    /// otherwise — that a rest/bind candidate "has unit composed scale at
-    /// every affected node by construction", so nothing in it records what
-    /// the source measured. It does record it. `build_rest_bind` rebases an
-    /// affected node's local scale by `s_parent / s_node` with `s_node` the
-    /// *declared* factor, and the affected closure never contains the scaled
-    /// root's parent, so `s_parent` is one there and the candidate's composed
-    /// root scale is exactly `s_observed / s_declared` — unit only when the
-    /// two agree, which the input band admits without requiring. The
-    /// candidate route is real and it is accurate:
-    /// `plan.common_factor() * axis_length_average(axis_lengths(candidate
-    /// root world linear))` recovers the measurement to a relative error
-    /// under `5e-8` across every `0.01`-factor fixture this module already
-    /// carries (worst case `4.84e-8`, at a source root of `0.010_000_099`).
+    /// impossibility: a rest/bind candidate does record what its source
+    /// measured. `build_rest_bind` rebases an affected node's local scale by
+    /// `s_parent / s_node` with `s_node` the *declared* factor, and the
+    /// affected closure never contains the scaled root's parent, so `s_parent`
+    /// is one there and the candidate's composed root scale is exactly
+    /// `s_observed / s_declared` — unit only when the two agree, which the
+    /// input band admits without requiring. The candidate route is real and it
+    /// is accurate: `plan.common_factor() * axis_length_average(axis_lengths(
+    /// candidate root world linear))` recovers the measurement to a relative
+    /// error below `2^-24`, the half-ulp of the one binary32 rounding that
+    /// round trip costs at unit magnitude. Swept over all 215 binary32 values
+    /// the `1e-5` band admits around a declared `0.01`, the worst is
+    /// `5.9604613e-8`; over this module's own `0.01`-factor fixtures it is
+    /// `4.84e-8`, at a source root of `0.010_000_099`.
     ///
-    /// It is not the route taken, for four reasons — none of them that the
-    /// number is absent:
+    /// It is not the route taken, for four reasons:
     ///
     /// - **Independence.** [`prove_scale`] does not require `candidate` to
     ///   have come from [`build_scale_candidate`]; checking one that did not
@@ -2312,11 +2322,6 @@ pub struct ScaleProof {
     /// - **Attribution.** That residual is also a maximum over every affected
     ///   node rather than a value read at the scaled root, so it does not
     ///   name the node §D.6 defines the observed factor at.
-    ///
-    /// The source/candidate *pair* additionally exposes
-    /// `|W| / |W'| = s_declared`, which is the declared number under another
-    /// name; that the pair yields the declared factor is not a reason the
-    /// candidate cannot yield the observed one.
     ///
     /// See [`ScalePlan::observed_factor`] for how each operation defines it;
     /// for a whole-document conversion this is the declared factor, there
@@ -5350,6 +5355,236 @@ mod tests {
         let proof = prove_scale(&proved, &candidate, &plan).unwrap();
         assert_eq!(proof.observed_factor, NEAR_UNIT_OBSERVED_FACTOR);
         assert_eq!(proof.unit_scale_residual, 0.0);
+    }
+
+    /// The factor the *lowest affected bone* of
+    /// [`contradictory_parent_chain_document`] carries, as distinct from the
+    /// factor at its scaled root.
+    ///
+    /// That node's projected rest world is `0.01_f32 * (1 + 2^-18)` evaluated
+    /// in binary32. `0.01_f32` is `10_737_418 * 2^-30` and `1 + 2^-18` is
+    /// `262_145 * 2^-18`, so the exact product is `2_814_760_441_610 * 2^-48`,
+    /// whose 42 significant bits round to the 24-bit `10_737_459 * 2^-30`
+    /// (the exact quotient is `10_737_458.96875`, so it rounds up). Column
+    /// lengths and their mean are exact on a diagonal basis by the argument
+    /// in [`NOISY_OBSERVED_FACTOR`].
+    ///
+    /// Exactly `0.010000037960708141326904296875`; spelled, like its
+    /// neighbours, as the shortest decimal that round-trips.
+    const CONTRADICTORY_CHILD_OBSERVED_FACTOR: f64 = 0.010_000_037_960_708_141;
+
+    /// A document whose two parent hierarchies contradict each other.
+    ///
+    /// `Skeleton::parent` says bone 0 parents bone 1. The source-node
+    /// projection's `parent_source_node_index` says node 1 (bone 1) parents
+    /// node 0 (bone 0). Nothing in this module reconciles them: the affected
+    /// closure and every factor planning classifies are walked in *source
+    /// node* space, while the "a parent is strictly earlier than its child"
+    /// ordering [`crate::model::world_rest_matrices`] enforces is a fact about
+    /// `Skeleton::parent` alone, and `validate_source_skeleton_identity`
+    /// checks only that the projection's indices are unique. So "the scaled
+    /// root" and "the lowest affected bone id" are not the same node here.
+    ///
+    /// Each hierarchy carries its own local rests, and both projected factors
+    /// sit inside the `1e-5` common-factor band around the declared `0.01`, so
+    /// the document plans, builds, and proves either way:
+    ///
+    ///   projection root  node 1 -> bone 1  local `0.01_f32`
+    ///     world `0.01_f32`                              = the scaled root
+    ///   projection child node 0 -> bone 0  local `1 + 2^-18`
+    ///     world `fl32(0.01_f32 * (1 + 2^-18))`          = the lowest bone id
+    ///
+    /// whose relative separation is `2^-18 = 3.81e-6`, inside the `1e-5` band
+    /// the mixed-factor check applies and far outside the exact equality the
+    /// two assertions below make.
+    ///
+    /// The skeleton keeps the ordinary shape — bone 0 the root at `0.01`,
+    /// bone 1 its unit-scaled child — so the rest/bind rebase and its
+    /// unit-scale postcondition behave exactly as they do everywhere else.
+    fn contradictory_parent_chain_document() -> Document {
+        let mut doc = rig_document(
+            &[
+                RigNode {
+                    parent: None,
+                    source_node_index: 0,
+                    translation: Vec3::ZERO,
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::splat(0.01),
+                },
+                rig(Some(0), 1, Vec3::ZERO),
+            ],
+            &[0],
+            0,
+            Mat4::IDENTITY,
+        );
+        let nodes = &mut doc.assets.source_skeleton.nodes;
+        nodes[0].parent_source_node_index = Some(1);
+        nodes[0].scene_root_indices = Vec::new();
+        nodes[0].local_rest = SourceNodeLocalRest::Trs {
+            translation: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::splat(1.0 + 2f32.powi(-18)),
+        };
+        nodes[1].parent_source_node_index = None;
+        nodes[1].scene_root_indices = vec![0];
+        nodes[1].local_rest = SourceNodeLocalRest::Trs {
+            translation: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::splat(0.01),
+        };
+        doc
+    }
+
+    #[test]
+    fn the_observed_factor_is_read_at_the_scaled_root_not_the_lowest_affected_bone() {
+        // §D.6 defines the observed factor *at the scaled root*, and on every
+        // other fixture in this module the scaled root also happens to be the
+        // lowest bone id in the closure — so reading either one reports the
+        // same number and the distinction is invisible.
+        //
+        // It is not a theorem that they agree. The two facts that look like
+        // they compose into one are about different hierarchies: the closure
+        // is a source-node-space walk, and the id ordering `world_rests`
+        // enforces constrains `Skeleton::parent`. `contradictory_parent_chain_document`
+        // is the document where they disagree, and it is an ordinary
+        // fully-proving document otherwise.
+        let doc = contradictory_parent_chain_document();
+        let capability = complete_capability();
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 1,
+                expected_factor: 0.01,
+            },
+            document: &doc,
+            capability: &capability,
+        })
+        .unwrap();
+        // Bone 1 is the scaled root; bone 0 is the lowest affected id.
+        assert_eq!(plan.affected_nodes(), &[0, 1]);
+        assert_eq!(plan.observed_factor(), NEAR_UNIT_OBSERVED_FACTOR);
+
+        // The other node's factor, read through the public API rather than
+        // asserted about: planning the same document *at* bone 0 makes it its
+        // own scaled root, and its closure is the joint alone.
+        let at_child = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 0.01,
+            },
+            document: &doc,
+            capability: &capability,
+        })
+        .unwrap();
+        assert_eq!(at_child.affected_nodes(), &[0]);
+        assert_eq!(
+            at_child.observed_factor(),
+            CONTRADICTORY_CHILD_OBSERVED_FACTOR
+        );
+        assert_ne!(
+            CONTRADICTORY_CHILD_OBSERVED_FACTOR,
+            NEAR_UNIT_OBSERVED_FACTOR
+        );
+
+        // And the whole document proves, so the separation above is not an
+        // artifact of a fixture that planning would have rejected downstream.
+        // Proof measures the *normalized skeleton* — bone 0 at `0.01` and its
+        // unit-scaled child bone 1 — so its own root world is `0.01_f32` too.
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+        assert_eq!(proof.observed_factor, NEAR_UNIT_OBSERVED_FACTOR);
+        assert_eq!(proof.unit_scale_residual, 0.0);
+    }
+
+    /// `noisy_factor_document`'s rig with a per-axis root rest scale.
+    ///
+    /// Only ever a *proof* source: [`prove_scale`] deliberately does not
+    /// re-run [`classify_affine`], so nothing on that path bounds how far
+    /// apart the scaled root's three axes are, and the test below asserts
+    /// that planning this same document is refused.
+    fn per_axis_factor_document(scale: Vec3) -> Document {
+        let nodes = vec![
+            RigNode {
+                parent: None,
+                source_node_index: 0,
+                translation: Vec3::ZERO,
+                rotation: Quat::IDENTITY,
+                scale,
+            },
+            rig(Some(0), 1, Vec3::ZERO),
+        ];
+        rig_document(&nodes, &[1], 0, Mat4::IDENTITY)
+    }
+
+    #[test]
+    fn the_observed_factor_is_the_mean_of_the_scaled_roots_axes_not_its_first_one() {
+        // `observed_factor_from_source` reports
+        // `axis_length_average(axis_lengths(..))` — the same pair of helpers
+        // `classify_affine` returns its factor through, which is what makes
+        // the two "the same quantity by definition rather than by
+        // coincidence". On a basis whose axes are equal within
+        // `equal_axis`, though, the mean and any single axis agree to within
+        // that band, and every other proof-source fixture here has a
+        // *uniform* scaled root — so nothing separates the mean from, say,
+        // its first column.
+        //
+        // Something has to. Proof does not re-classify its source, by design,
+        // so the axis spread of the document `prove_scale` is handed is
+        // bounded by nothing at all: the only downstream constraint is the
+        // unit-scale postcondition on the rebased *candidate*, which admits
+        // `postcondition_unit_scale_residual = 2^-14 = 6.10e-5` of it — six
+        // times the `1e-5` equal-axis band planning would have applied. The
+        // fixture uses half of what the postcondition allows.
+        //
+        // The fixture puts the root's axes a fixed `328` ulps either side of
+        // `0.01_f32`, which is `10_737_418 * 2^-30`:
+        //
+        //   x  (10_737_418 + 328) * 2^-30      y  (10_737_418 - 328) * 2^-30
+        //   z   10_737_418        * 2^-30
+        //
+        // Each is exact in binary32 (`10_737_746 < 2^24`), so each column
+        // length is exact, and their sum telescopes to `3 * 10_737_418 *
+        // 2^-30` — 26 bits, exact in binary64 — whose third is `0.01_f32`
+        // again. The mean is therefore exactly `NEAR_UNIT_OBSERVED_FACTOR`
+        // while no individual axis is, and `328 / 10_737_418 = 3.05e-5` of
+        // spread stays inside the postcondition band the rebase must meet.
+        let step = 328.0 * 2f32.powi(-30);
+        let proved = per_axis_factor_document(Vec3::new(0.01 + step, 0.01 - step, 0.01));
+        let root = proved.skeleton.bones[0].rest.scale;
+        let ulps = 328.0 * 2f64.powi(-30);
+        assert_eq!(f64::from(root.x), NEAR_UNIT_OBSERVED_FACTOR + ulps);
+        assert_eq!(f64::from(root.y), NEAR_UNIT_OBSERVED_FACTOR - ulps);
+        assert_eq!(f64::from(root.z), NEAR_UNIT_OBSERVED_FACTOR);
+
+        // Planning refuses it — `3.05e-5` of spread is three times the
+        // `equal_axis` band — which is exactly why the spread has to arrive
+        // through the proof source rather than through a plan.
+        let capability = complete_capability();
+        assert_eq!(
+            plan_scale(&noisy_factor_request(&proved, &capability)).unwrap_err(),
+            ScaleError::InvalidAffineDomain {
+                node: 0,
+                reason: AffineDomainViolation::NonUniformScale,
+            }
+        );
+
+        let planned = noisy_factor_document(0.01);
+        let plan = plan_scale(&noisy_factor_request(&planned, &capability)).unwrap();
+        let candidate = build_scale_candidate(&proved, &plan).unwrap();
+        let proof = prove_scale(&proved, &candidate, &plan).unwrap();
+        assert_eq!(proof.observed_factor, NEAR_UNIT_OBSERVED_FACTOR);
+
+        // The rebase multiplier is the exact `1.0_f32 / 0.01_f32 == 100`, so
+        // the candidate's root axes are `fl32(x * 100)` and `fl32(y * 100)`:
+        // `1_073_774_600 * 2^-30` rounds to `1 + 2^-15`, and `1_073_709_000 *
+        // 2^-30` rounds to `(2^24 - 513) * 2^-24`. The larger deviation from
+        // one is the second, `513 * 2^-24`, and the postcondition admits it
+        // with room to spare.
+        assert_eq!(proof.unit_scale_residual, 513.0 * 2f64.powi(-24));
+        assert!(
+            proof.unit_scale_residual <= plan.tolerance_policy().postcondition_unit_scale_residual
+        );
     }
 
     #[test]
@@ -9934,26 +10169,38 @@ mod tests {
         // comparison derives for itself, so the proof succeeds and the
         // reported maximum is the perturbation:
         //
-        //   source bind    diag(2, 2, 2, 1)
-        //   candidate bind diag(2 + 2^-18, 2 + 2^-17, 2, 1)
+        //   source bind    diag(2, 2, 2) with translation column (64, 0, 0)
+        //   candidate bind diag(2 + 2^-18, 2 + 2^-17, 2), same translation
         //
         // Both perturbations are exact in binary32 (`2.0` is `2^1`, whose ulp
         // is `2^-22`), `matrix_residual` is an L-infinity fold over the
         // sixteen components, and the larger of the two is `2^-17`. The
-        // tolerance is `1e-6 + 1e-5 * max(2, 2 + 2^-17) = 2.100008e-5`,
-        // roughly `2.75x` the residual, so this is a pass with headroom and
-        // not a boundary case. The smaller perturbation is there so the
-        // reported number is a genuine maximum rather than the only candidate
-        // for one.
-        let doc =
-            compensated_document_with_unrelated_skin(Some(Mat4::from_scale(Vec3::splat(2.0))));
+        // tolerance is `1e-6 + 1e-5 * max(64, 64) = 6.41e-4`, roughly `84x`
+        // the residual, so this is a pass with headroom and not a boundary
+        // case. The smaller perturbation is there so the reported number is a
+        // genuine maximum rather than the only candidate for one.
+        //
+        // The translation column is what makes this the rest/bind fixture
+        // that separates the two expectations this obligation can state. A
+        // bind with a zero translation column is a fixed point of
+        // `scale_translation_only`, so on one the whole-document conversion
+        // expectation and the rest/bind "unchanged" expectation are the same
+        // matrix and the `is_whole_document` branch is unobservable. At `64`
+        // the conversion expectation would be `0.64` and this proof would
+        // fail instead of reporting a residual.
+        let bind = |scale: Vec3| {
+            let mut bind = Mat4::from_scale(scale);
+            bind.w_axis.x = 64.0;
+            bind
+        };
+        let doc = compensated_document_with_unrelated_skin(Some(bind(Vec3::splat(2.0))));
         let capability = complete_capability();
         let plan = compensated_rest_bind_plan(&doc, &capability);
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
 
         let mut nudged = candidate.document().clone();
         nudged.assets.instances[1].skin_ibms[0] =
-            Mat4::from_scale(Vec3::new(2.0 + 2f32.powi(-18), 2.0 + 2f32.powi(-17), 2.0));
+            bind(Vec3::new(2.0 + 2f32.powi(-18), 2.0 + 2f32.powi(-17), 2.0));
         let proof = prove_scale(&doc, &ScaleCandidate { document: nudged }, &plan).unwrap();
         assert_eq!(proof.unaffected_inverse_bind_residual, 2f64.powi(-17));
     }
@@ -10160,6 +10407,19 @@ mod tests {
         //   source bind translation (100, 0, 0), q = 0.01
         //   candidate bind translation (1, 0, 0) = the built candidate's
         //   expected translation (1, 0, 0), residual 0
+        //
+        // A zero residual is also this field's *initialized* value, so the
+        // honest run below cannot by itself tell "checked, and it matched"
+        // from "skipped": deleting this obligation's whole-document branch
+        // leaves every assertion in it standing. The second run therefore
+        // perturbs the candidate's translation *inside* the tolerance this
+        // comparison derives for itself and pins the reported maximum:
+        //
+        //   candidate bind translation (1 + 2^-18, 0, 0)
+        //   residual   2^-18 = 3.8147e-6, exact: `1 + 2^-18` is exact in
+        //              binary32 (`ulp(1) = 2^-23`) and so is the difference
+        //   tolerance  1e-6 + 1e-5 * max(1, 1 + 2^-18) = 1.1000038e-5,
+        //              roughly `2.9x` the residual — a pass with headroom.
         let capability = complete_capability();
         let planned = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
         let plan = plan_scale(&ScaleRequest {
@@ -10185,6 +10445,12 @@ mod tests {
         );
         let proof = prove_scale(&wider, &candidate, &plan).unwrap();
         assert_eq!(proof.unaffected_inverse_bind_residual, 0.0);
+
+        let mut nudged = candidate.document().clone();
+        nudged.assets.instances[1].skin_ibms[0] =
+            Mat4::from_translation(Vec3::new(1.0 + 2f32.powi(-18), 0.0, 0.0));
+        let proof = prove_scale(&wider, &ScaleCandidate { document: nudged }, &plan).unwrap();
+        assert_eq!(proof.unaffected_inverse_bind_residual, 2f64.powi(-18));
     }
 
     // --- Stable reason strings ---------------------------------------------
