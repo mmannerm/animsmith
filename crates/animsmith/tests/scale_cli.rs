@@ -221,6 +221,16 @@ fn rest_bind_publishes_a_pair_whose_evidence_names_the_appendix_d3_case_2_rewrit
     // interior times to add: two sample times, counted once each.
     assert_eq!(result["proof"]["sample_time_count"], 2);
 
+    // The same count reaches the human-readable summary. The record above is
+    // the frozen contract, but the summary is what an operator reads without
+    // parsing anything, and it is rendered from a separate argument — an
+    // audit mutated that argument and the record's assertion did not see it.
+    let summary = stdout(&output);
+    assert!(
+        summary.contains("2 proof sample time(s)"),
+        "summary should carry the sample-time count, got:\n{summary}"
+    );
+
     // The published digest and byte count describe the file that landed.
     let published = std::fs::read(fixture.path("out.glb")).expect("reads the artifact");
     assert_eq!(
