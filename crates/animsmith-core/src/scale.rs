@@ -6477,6 +6477,132 @@ mod tests {
         );
     }
 
+    /// The column pair a single shear term is aimed at.
+    #[derive(Clone, Copy, Debug)]
+    enum ShearPair {
+        /// `dot01` — `columns[0] · columns[1]`.
+        XY,
+        /// `dot02` — `columns[0] · columns[2]`.
+        XZ,
+        /// `dot12` — `columns[1] · columns[2]`.
+        YZ,
+    }
+
+    /// A basis carrying exactly one shear term `s`, in the named column pair.
+    ///
+    /// Two columns are the unit axes they name; the third adds `s` in one
+    /// foreign axis:
+    ///
+    /// ```text
+    ///   XY: (1, 0, 0) (s, 1, 0) (0, 0, 1)   dot01 = s, dot02 = 0, dot12 = 0
+    ///   XZ: (1, 0, 0) (0, 1, 0) (s, 0, 1)   dot02 = s, dot01 = 0, dot12 = 0
+    ///   YZ: (1, 0, 0) (0, 1, 0) (0, s, 1)   dot12 = s, dot01 = 0, dot02 = 0
+    /// ```
+    ///
+    /// Each zero above is structural — every term of those two dot products
+    /// has a literal `0.0` factor — so the pairs a fixture is *not* aiming at
+    /// stay exactly zero for every `s`, and only the named comparison can
+    /// decide.
+    fn single_shear_basis(pair: ShearPair, s: f32) -> Mat3 {
+        match pair {
+            ShearPair::XY => Mat3::from_cols(
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(s, 1.0, 0.0),
+                Vec3::new(0.0, 0.0, 1.0),
+            ),
+            ShearPair::XZ => Mat3::from_cols(
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, 1.0, 0.0),
+                Vec3::new(s, 0.0, 1.0),
+            ),
+            ShearPair::YZ => Mat3::from_cols(
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, 1.0, 0.0),
+                Vec3::new(0.0, s, 1.0),
+            ),
+        }
+    }
+
+    /// Drive [`single_shear_basis`] through `classify_affine` at both signs of
+    /// both magnitudes, asserting `Sheared` outside the band and acceptance
+    /// inside it.
+    ///
+    /// The shape is chosen so that *no other check in `classify_affine` can
+    /// fire*, at either magnitude and either sign. With `s = ±2^-15`:
+    ///
+    /// * **NonFinite** — every entry is a finite literal.
+    /// * **Singular** — the sheared column is `unit_axis + s * other_axis`,
+    ///   and `other_axis` is one of the two columns left untouched, so the
+    ///   triple product is unchanged from the identity's: `determinant` is
+    ///   exactly `1.0` for all three pairs. `axis_product` is
+    ///   `sqrt(1 + 2^-30) < 1.000000001`, so the singular threshold is
+    ///   `1e-6 * that`, six orders below `1.0`.
+    /// * **NonUniformScale** — the length multiset is
+    ///   `(1, 1, sqrt(1 + 2^-30))` for all three pairs, i.e.
+    ///   `(1, 1, 1.000000000465661…)`. The average is `1.000000000155220…`
+    ///   and the largest deviation is `2/3 * 2^-31 = 3.10e-10`, against a
+    ///   band of `1e-5 * max(average, length) > 1e-5` — four and a half
+    ///   orders of headroom.
+    /// * **Reflected** — the determinant is `+1.0`, so even deleting the
+    ///   orthogonality check outright yields `Ok`, never `Reflected`.
+    ///
+    /// That leaves the orthogonality comparison as the only possible source
+    /// of a `Sheared` verdict. It fires because
+    /// `|s| = 2^-15 = 3.0517578125e-5` and the tolerance is
+    /// `1e-5 * average^2 = 1.0000000003…e-5` — the shear is 3.05x the bound.
+    /// At `s = ±2^-17 = ±7.62939453125e-6` the same arithmetic gives
+    /// `0.76x` the bound (lengths `(1, 1, sqrt(1 + 2^-34))`, tolerance
+    /// `1.0000000000…e-5`), so the in-band cases must be accepted: the
+    /// rejections above are the shear magnitude talking and not the shape.
+    fn assert_only_this_column_pair_decides_shear(pair: ShearPair) {
+        let tol = ScaleTolerancePolicy::APPENDIX_D_V2;
+        // Written as exact dyadics rather than decimal literals, so the
+        // binary32 bits are readable straight off the page: `2^-15` and
+        // `2^-17`.
+        let out_of_band_magnitude = 2.0_f32.powi(-15);
+        let in_band_magnitude = 2.0_f32.powi(-17);
+        for sign in [1.0_f32, -1.0] {
+            let out_of_band = sign * out_of_band_magnitude;
+            assert_eq!(
+                classify_affine(single_shear_basis(pair, out_of_band), &tol),
+                Err(AffineDomainViolation::Sheared),
+                "{pair:?} shear {out_of_band} was not rejected as sheared"
+            );
+            let in_band = sign * in_band_magnitude;
+            assert!(
+                classify_affine(single_shear_basis(pair, in_band), &tol).is_ok(),
+                "{pair:?} shear {in_band} was rejected, so the shape and not \
+                 the magnitude is what the out-of-band case rejects on"
+            );
+        }
+    }
+
+    #[test]
+    fn shear_isolated_to_the_x_y_column_pair_is_sheared_at_either_sign() {
+        // Pins `dot01`'s own clause *and* its `.abs()`: with the absolute
+        // value dropped, `dot01 = -2^-15` is not `> tolerance` and the other
+        // two dot products are structurally zero, so the basis is accepted.
+        assert_only_this_column_pair_decides_shear(ShearPair::XY);
+    }
+
+    #[test]
+    fn shear_isolated_to_the_x_z_column_pair_is_sheared_at_either_sign() {
+        // Pins `dot02`'s clause and its `.abs()`. No other fixture isolates
+        // `x·z`: the two column pairs either side of it stay exactly zero
+        // here, so deleting this clause accepts the basis outright.
+        assert_only_this_column_pair_decides_shear(ShearPair::XZ);
+    }
+
+    #[test]
+    fn shear_isolated_to_the_y_z_column_pair_is_sheared_at_either_sign() {
+        // Pins `dot12`'s clause and its `.abs()`.
+        // `a_shear_only_f64_can_see_is_still_classified_as_sheared` already
+        // reaches this comparison, but through a dense basis in which all
+        // three dot products are nonzero; this one isolates it, so the three
+        // pairs are covered on equal terms.
+        assert_only_this_column_pair_decides_shear(ShearPair::YZ);
+    }
+
     // --- Per-value proof of every domain --------------------------------
 
     /// `unit_rig` plus a rotation track and a three-vertex primitive whose
