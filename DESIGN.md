@@ -732,45 +732,87 @@ so the input band and the postcondition are directly commensurable.
 normative *input* contract, and the unit-scale postcondition bound is *derived*
 from it rather than declared independently. For an affected node `i` with
 observed rest-world factor `s_i`, a domain common factor `s_0`, and a declared
-factor `s_declared`, the candidate's composed scale at `i` is `s_i /
-s_declared`. Two independently bounded relative comparisons stand between those
-two numbers, and a multi-node affected chain composes both:
+factor `s_declared`, the candidate's composed scale on axis `k` of node `i` is
+`axis_ik / s_declared`. Three independently bounded relative comparisons stand
+between those two numbers, and an affected chain composes all three:
 
-- the declared-factor match binds `s_0` to `s_declared` within `c = 1e-5`; and
+- the declared-factor match binds `s_0` to `s_declared` within `c = 1e-5`;
 - the mixed-factor check binds every other affected node's `s_i` to `s_0`
+  within the same `c`; and
+- the equal-axis check binds each individual axis length `axis_ik` to `s_i`
   within the same `c`.
 
-Each is stated relative to `max` of its operands, so each contributes at most
-`c / (1 - c)` when re-expressed relative to the smaller one, and the composed
-worst case is `(1 - c)^-2 - 1 = 2.00003e-5`. The policy therefore sets the
-postcondition bound to three common-factor bands — `3e-5` — rounded up to the
-next power of two, `2^-15 = 3.0517578125e-5`. Two of those bands are the
-analytic composition above; the third is headroom for the `f32` world-matrix
-composition and decomposition that produces the measured composed scale.
-`2^-15` is also `256 * 2^-23`, and so lies on the binary32 mantissa grid the
-measurement lives on, which is what makes the inclusive "at most" above
+The third band is the easiest to lose sight of and cannot be dropped: `s_i` is
+the *average* of node `i`'s three rest-world axis lengths, while the
+postcondition measures an individual axis, so an axis is permitted a further
+band away from the very number the mixed-factor check compared. A rig whose
+root is off-factor, whose leaf is off-common-factor, and whose leaf axes are
+non-uniform within the equal-axis band loads all three at once.
+
+Each comparison is stated relative to `max` of its operands, so each
+contributes at most `c / (1 - c)` when re-expressed relative to the smaller
+one, and the composed worst case is `(1 - c)^-3 - 1 = 3.00006e-5`. The policy
+therefore sets the postcondition bound to four common-factor bands — `4e-5` —
+rounded up to the next power of two, `2^-14 = 6.103515625e-5`. Three of those
+bands are the analytic composition above; the fourth is headroom for the `f32`
+world-matrix composition and decomposition that produces the measured composed
+scale. `2^-14` is also `512 * 2^-23`, and so lies on the binary32 mantissa grid
+the measurement lives on, which is what makes the inclusive "at most" above
 reachable rather than vacuous for this obligation.
 
-What that guarantees is the closure property: **any plan the common-factor
-band accepts yields a candidate whose every affected node satisfies the
-unit-scale postcondition**, with a full band to spare
-(`3.0518e-5 - 2.00003e-5 = 1.05e-5`). The guarantee is stated for the single
-closed affected domain this record admits —
-one common factor, one declared factor, hence exactly the two composed bands
-above. Admitting a second independently classified factor in one plan would
-compose a third band and require a new policy identity, not a wider bound at
-this one.
+Three bands rounded up (`2^-15 = 3.0517578125e-5`) would leave that analytic
+worst case only four binary32 ulps of room — `5.17e-7`, or `4.34 * 2^-23`.
+That is a rounding artefact, not headroom, and it would make the reserved
+float-headroom band above a claim rather than a fact. The fourth band buys the
+claim honestly, and it does not blunt the obligation: every build defect this
+postcondition exists to catch — a dropped rebase, a factor applied twice, a
+stale no-op candidate — is at least `1e-3`, so `6.1e-5` still leaves better
+than a `16x` detection margin.
+
+**No floor on the comparison base.** The common-factor and mixed-factor
+comparisons are `abs(a - b) <= c * max(abs(a), abs(b))`, with nothing else
+inside the `max`. Flooring that base — at `1.0`, at the `1e-6` absolute scalar
+term, or at anything else — turns the band into an absolute tolerance below the
+floor, which is a *relative* band of `floor * c / abs(s)` that widens without
+limit as the declared factor shrinks. It therefore breaks the closure property
+below `floor * c / 2^-14`; at a `1e-6` floor that is `6.5536e-7`, and at a
+declared factor of `1e-9` such a band admits `1e-2` relative error, `1000x` the
+declared policy. The degenerate `a == b == 0` case needs no floor either: it
+compares `0 <= 0`.
+
+What the derivation guarantees is the closure property: **any plan the
+common-factor band accepts yields a candidate whose every affected node
+satisfies the unit-scale postcondition** — at every declared factor the policy
+admits, not merely near unit magnitude — with a full band to spare
+(`6.1035e-5 - 3.00006e-5 = 3.1035e-5`). The guarantee is stated for the single
+closed affected domain this record admits — one common factor, one declared
+factor, hence exactly the three composed bands above. Admitting a second
+independently classified factor in one plan would compose a fourth band and
+require a new policy identity, not a wider bound at this one.
 
 **Sampling budget.** The policy also bounds the total sampled proof work a
-document may demand, as `sample_time_count * (bone_count + skinned_vertex_count)`
-against a budget of `1e8` work units. Every sampled obligation costs one
-forward-kinematics pass over the skeleton, hence the bone count; the vertex
-count is charged when the bounds obligation is declared, since that is the
-obligation that walks vertices. Exceeding the budget is a typed refusal raised
-before the first sample time is evaluated; proof never silently samples a
-subset. The budget is part of the policy identity for the same reason every
-tolerance is: it is recorded in evidence, and two evidence records carrying the
-same policy id must describe the same amount of checking.
+document may demand, as `sample_time_count * per_sample_work_units` against a
+budget of `1e8` work units. The per-sample cost is every pass the sampled
+obligations actually make, and each is charged once per document *side*, since
+proof walks the source and the candidate:
+
+```text
+2 * bone_count
+  + sum over affected skinned instances of
+        (2 + [prove_skin]) * len(skin_joints)
+      + [prove_bounds] * 2 * (vertices over every primitive of its mesh)
+```
+
+Every sampled obligation poses both skeletons, hence the bone term. The slot
+term is charged explicitly, per instance: nothing bounds the instance count,
+and nothing bounds `skin_joints`, which may repeat a joint, so slot work bears
+no relation to the bone count and must not be folded into it. `sample_time_count`
+counts key times *and* cubic-segment interior times, because both are
+evaluated. Exceeding the budget is a typed refusal raised before the first
+sample time is evaluated; proof never silently samples a subset. The budget is
+part of the policy identity for the same reason every tolerance is: it is
+recorded in evidence, and two evidence records carrying the same policy id must
+describe the same amount of checking.
 
 ### D.2 Algebra and rewrite rules
 
@@ -987,8 +1029,10 @@ Proof cost is bounded, not merely expected to be small. Source and candidate
 world matrices are derived once per sample time and shared across the
 trajectory, skin, and bounds obligations, and the skin and bounds obligations
 share one walk over the affected instances and their vertices. The remaining
-work is `sample_time_count * (bone_count + skinned_vertex_count)`, which the
-tolerance policy of §D.1 caps. A document above that cap is refused with a
+work is `sample_time_count * per_sample_work_units` with the per-sample cost
+spelled out in §D.1 — bones, skin slots, and skinned vertices, each charged
+once per document side — which the tolerance policy of §D.1 caps. A document
+above that cap is refused with a
 typed error naming the policy identity, the sample count, the per-sample cost,
 the computed work, and the budget. It is never proved against a truncated
 sample set: a bounded proof of a subset would publish evidence for claims it
