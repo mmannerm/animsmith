@@ -33,6 +33,19 @@
 //! claims from the source and candidate documents and reports the observed
 //! residual maxima against the fixed [`ScaleTolerancePolicy::APPENDIX_D_V2`]
 //! tolerance identity.
+//!
+//! Those residuals are the producer evidence record of §D.6, which is why
+//! two properties of this module are contracts rather than implementation
+//! details. Every claim in [`ScaleProofObligations`] is declared only when
+//! the planned document carries the evidence for it, and a declared claim
+//! whose evidence is missing at proof time is
+//! [`ScaleError::MissingProofEvidence`] rather than a zero residual — a
+//! record asserting `0.0` for something nothing checked would be false, not
+//! merely incomplete. And the two independent observed-factor witnesses
+//! §D.6 asks for are both recorded, together with
+//! [`ScaleProof::observed_factor_divergence`] between them, so the record
+//! states the relationship between its own two measurements instead of
+//! leaving a consumer to guess which to trust.
 
 use crate::model::{
     BoneId, Clip, Document, Interpolation, MeshInstance, Primitive, Property, Skeleton,
@@ -214,6 +227,49 @@ impl ScaleTolerancePolicy {
         // stays inside five.
         proof_sample_work_budget: 400_000_000,
     };
+
+    /// The expected ceiling on [`ScaleProof::observed_factor_divergence`]:
+    /// [`Self::common_factor`] plus
+    /// [`Self::postcondition_unit_scale_residual`], `7.103515625e-5` under
+    /// [`Self::APPENDIX_D_V2`].
+    ///
+    /// [`ScalePlan::observed_factor`] and [`ScaleProof::observed_factor`] are
+    /// two independent witnesses of the same quantity, measured from
+    /// genuinely different state — the raw source projection composed through
+    /// `parent_source_node_index`, and the normalized skeleton composed
+    /// through `world_rest_matrices`. Their independence is the point, and it
+    /// is why they are not equal. This is how far apart the design expects
+    /// them to be, and the sum is where it comes from:
+    ///
+    /// - planning binds its witness to the caller's declared factor within
+    ///   [`Self::common_factor`], or refuses with
+    ///   [`ScaleError::FactorMismatch`]; and
+    /// - for a candidate [`build_scale_candidate`] produced from the source
+    ///   under proof, that candidate's composed root scale is the proof
+    ///   witness divided by the declared factor, so the unit-scale
+    ///   postcondition binds the proof witness to the declared factor within
+    ///   [`Self::postcondition_unit_scale_residual`].
+    ///
+    /// Both bands are stated relative to the `max` of their operands, as this
+    /// divergence is, which only shrinks the ratio — so two witnesses each
+    /// inside their own band are inside their sum of each other.
+    ///
+    /// **Reported, not enforced, and expected rather than proved.** Nothing
+    /// refuses a document for exceeding this. The second step above holds for
+    /// a candidate this module built from the source it is being proved
+    /// against, which [`prove_scale`] deliberately does not require, and it
+    /// costs the binary32 rounding of the rebase on the way — so the sum is
+    /// the ceiling the design guarantees, not a bound proved to the last ulp.
+    /// A divergence beyond it means the source's two parent chains disagree
+    /// with each other, which nothing here validates.
+    ///
+    /// Derived from two bands this policy already declares rather than
+    /// introduced as a third, so it adds no tolerance and no policy identity —
+    /// and a consumer of the evidence record does not have to sum two
+    /// separate policy fields to know what the recorded divergence means.
+    pub fn observed_factor_divergence_ceiling(&self) -> f64 {
+        self.common_factor + self.postcondition_unit_scale_residual
+    }
 
     /// `abs_error <= scalar_absolute + scalar_relative * max(abs(before), abs(after))`.
     ///
@@ -808,45 +864,72 @@ pub struct ScaleDomainRewrites {
 }
 
 /// Which claims [`prove_scale`] must independently verify for one plan.
+///
+/// **Every flag is evidence-gated.** [`plan_scale`] declares an obligation
+/// only when the planned document carries the payload that obligation reads,
+/// and [`prove_scale`] refuses with [`ScaleError::MissingProofEvidence`],
+/// naming the obligation, when a declared one's evidence is not in the
+/// documents it was handed. Neither half is optional: a declared obligation
+/// with nothing to iterate would report a `0.0` residual, and those residuals
+/// are what producer evidence records (DESIGN.md Appendix D §D.6). A record
+/// stating "residual 0.0" for a claim nothing checked is a false record, not
+/// a missing one, so an unprovable claim is never declared and a vanished one
+/// is never quietly downgraded to success.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ScaleProofObligations {
     /// Prove rest-world translation/orientation facts for affected nodes.
+    ///
+    /// Evidence: a non-empty affected closure. Only
+    /// [`ScaleOperation::WholeDocumentLinearUnits`] can plan an empty one (a
+    /// document with no bones); a rest/bind closure always contains its
+    /// scaled root.
     pub prove_rest: bool,
     /// Prove unit composed scale at every affected node (rest/bind only).
+    ///
+    /// Nested inside [`Self::prove_rest`]'s walk, and shares its evidence.
     pub prove_unit_scale_postcondition: bool,
     /// Prove the complete expected world affine of every transform-only
     /// attachment via an off-origin point, so a translation/rotation-only
     /// check cannot mistake a no-op for a correct rebase.
+    ///
+    /// Evidence: a non-empty [`ScalePlan::transform_only_attachments`]. §D.6
+    /// justifies this obligation as the one ensuring "a no-op cannot pass",
+    /// which an empty probe loop reporting `0.0` would not do.
     pub prove_transform_only_affine: bool,
     /// Prove every keyframe time of an affected translation track.
+    ///
+    /// Evidence: some clip declares a translation track on an affected bone.
     pub prove_keys: bool,
     /// Prove bounded interior times of cubic-spline translation segments.
+    ///
+    /// Evidence: some clip declares both an affected cubic-spline track with
+    /// at least two key times — the only source of an interior time — and an
+    /// affected translation track for the comparison at that time to read.
     pub prove_cubic_interiors: bool,
     /// Prove sampled world-space trajectories.
+    ///
+    /// Evidence: some clip declares any track on an affected bone, which is
+    /// what yields a sample time to pose both skeletons at.
     pub prove_trajectories: bool,
     /// Prove the skin equation `W_i(t) * B_i` for affected skins, at rest
     /// and at every declared key/cubic-interior sample time.
     ///
-    /// This flag is one of those that arms [`prove_scale`]'s sampled loop.
-    /// Under every plan the current planners construct it is *co-declared*
-    /// with [`Self::prove_keys`], [`Self::prove_cubic_interiors`] and
-    /// [`Self::prove_trajectories`], so today it never arms that loop alone
-    /// and dropping it from the trigger would change nothing observable. That
-    /// redundancy is a property of the current planners, not of this
-    /// contract: a future plan shape that declares `prove_skin` without those
-    /// siblings must still evaluate the skin equation under animation, and
-    /// `a_skin_only_plan_still_evaluates_its_sampled_obligations` pins
-    /// exactly that shape so the coverage cannot be lost silently.
+    /// Evidence: a skinned mesh instance with a joint inside the affected
+    /// closure — the same instance walk [`Self::prove_bounds`] needs, and so
+    /// the same predicate.
+    ///
+    /// This flag is one of those that arms [`prove_scale`]'s sampled loop,
+    /// and its evidence predicate is independent of the three clip-driven
+    /// flags': a document with a skinned instance and no clips declares this
+    /// one and none of them. `a_skin_only_plan_still_evaluates_its_sampled
+    /// _obligations` pins the shape where it arms that loop alone, so the
+    /// coverage cannot be lost silently.
     pub prove_skin: bool,
     /// Prove skinned mesh bounds, at rest and at every declared
     /// key/cubic-interior sample time.
     ///
-    /// Declared only when the planned document actually carries a skinned
-    /// mesh instance with a joint inside the affected closure — an
-    /// obligation this module cannot check is never asserted. Once declared
-    /// it is binding: proving against a document with no such instance is
-    /// [`ScaleError::MissingProofEvidence`], not a silent zero residual.
+    /// Evidence: as [`Self::prove_skin`].
     ///
     /// Base `POSITION` preservation does not depend on this flag; it is
     /// proved per primitive regardless (see
@@ -1354,7 +1437,10 @@ fn plan_whole_document(document: &Document, factor: f64) -> Result<ScalePlan, Sc
     }
     check_factor_narrows(factor, factor)?;
     let affected_nodes: Vec<BoneId> = (0..document.skeleton.bones.len()).collect();
-    let prove_bounds = has_skinned_evidence(document, &affected_nodes.iter().copied().collect());
+    let affected: BTreeSet<BoneId> = affected_nodes.iter().copied().collect();
+    let skinned = has_skinned_evidence(document, &affected);
+    let sampled = sampled_evidence(document, &affected);
+    let boned = !affected_nodes.is_empty();
     Ok(ScalePlan {
         operation: ScaleOperation::WholeDocumentLinearUnits { factor },
         tolerance_policy: ScaleTolerancePolicy::APPENDIX_D_V2,
@@ -1369,15 +1455,23 @@ fn plan_whole_document(document: &Document, factor: f64) -> Result<ScalePlan, Sc
             inverse_binds: true,
             base_mesh_positions: true,
         },
+        // Every flag below is the evidence predicate for its own obligation,
+        // never an unconditional `true`: a declared obligation whose payload
+        // the document does not carry would report a `0.0` residual for a
+        // claim nothing checked, and those residuals are the evidence record
+        // (DESIGN.md Appendix D §D.6).
         proof_obligations: ScaleProofObligations {
-            prove_rest: true,
+            // The rest obligation walks the affected closure, which for this
+            // operation is the whole skeleton — empty for a document with no
+            // bones at all.
+            prove_rest: boned,
             prove_unit_scale_postcondition: false,
             prove_transform_only_affine: false,
-            prove_keys: true,
-            prove_cubic_interiors: true,
-            prove_trajectories: true,
-            prove_skin: true,
-            prove_bounds,
+            prove_keys: sampled.key_translations,
+            prove_cubic_interiors: sampled.cubic_interiors,
+            prove_trajectories: sampled.sample_times,
+            prove_skin: skinned,
+            prove_bounds: skinned,
         },
     })
 }
@@ -1489,7 +1583,10 @@ fn plan_rest_bind(
         }
     }
 
-    let prove_bounds = has_skinned_evidence(document, &affected_nodes.iter().copied().collect());
+    let affected: BTreeSet<BoneId> = affected_nodes.iter().copied().collect();
+    let skinned = has_skinned_evidence(document, &affected);
+    let sampled = sampled_evidence(document, &affected);
+    let attached = !transform_only_attachments.is_empty();
 
     Ok(ScalePlan {
         operation: ScaleOperation::RestBindUniformScale {
@@ -1512,15 +1609,21 @@ fn plan_rest_bind(
             inverse_binds: true,
             base_mesh_positions: false,
         },
+        // As in [`plan_whole_document`], every flag is its obligation's own
+        // evidence predicate. `prove_rest` and the unit-scale postcondition
+        // it nests are declared unconditionally here because this closure is
+        // never empty: it is seeded from `source_root_node_index`, and
+        // `bone_of_source` maps that node to a bone or fails outright, so the
+        // scaled root is always in `affected_nodes`.
         proof_obligations: ScaleProofObligations {
             prove_rest: true,
             prove_unit_scale_postcondition: true,
-            prove_transform_only_affine: true,
-            prove_keys: true,
-            prove_cubic_interiors: true,
-            prove_trajectories: true,
-            prove_skin: true,
-            prove_bounds,
+            prove_transform_only_affine: attached,
+            prove_keys: sampled.key_translations,
+            prove_cubic_interiors: sampled.cubic_interiors,
+            prove_trajectories: sampled.sample_times,
+            prove_skin: skinned,
+            prove_bounds: skinned,
         },
     })
 }
@@ -2329,6 +2432,44 @@ pub struct ScaleProof {
     /// does not exist, because `build_whole_document` rewrites translations
     /// only and leaves every composed scale exactly as it found it.
     pub observed_factor: f64,
+    /// The observed factor [`plan_scale`] measured, copied from
+    /// [`ScalePlan::observed_factor`].
+    ///
+    /// The record carries both witnesses because they are measured from
+    /// genuinely different state and neither is derivable from the other:
+    /// this one from the raw source projection (`SourceNodeAsset::local_rest`
+    /// composed through `parent_source_node_index`),
+    /// [`Self::observed_factor`] from the normalized skeleton (`Bone::rest`
+    /// composed through `world_rest_matrices`). That independence is the
+    /// property DESIGN.md Appendix D §D.6 wants of a second witness, and it
+    /// is why the two are generally not equal. Carrying only one of them
+    /// would leave a reader unable to tell which was reported; carrying both
+    /// with no stated relationship would leave them unable to tell which to
+    /// trust, which is what [`Self::observed_factor_divergence`] answers.
+    ///
+    /// For [`ScaleOperation::WholeDocumentLinearUnits`] both are the declared
+    /// factor, there being nothing to measure, and the divergence is exactly
+    /// zero.
+    pub planned_observed_factor: f64,
+    /// How far apart the two observed factors are:
+    /// `abs(planned - proved) / max(abs(planned), abs(proved))`.
+    ///
+    /// Recorded explicitly rather than left for a consumer to compute, so the
+    /// evidence record states the relationship between its own two witnesses
+    /// instead of presenting two numbers that both answer to "the observed
+    /// factor". Compare it against
+    /// [`ScaleTolerancePolicy::observed_factor_divergence_ceiling`], which is
+    /// how far apart the design expects them to be and why — a consumer does
+    /// not have to re-derive that ceiling by summing two separate policy
+    /// fields.
+    ///
+    /// **Reported, not checked.** Nothing refuses a document for exceeding
+    /// the ceiling; see that method for what the ceiling does and does not
+    /// guarantee. A divergence beyond it means the source's raw projection
+    /// parent chain and its skeleton parent chain disagree — nothing in this
+    /// module reconciles the two, by construction — and that is a fact about
+    /// the input worth surfacing, not a residual this proof owns.
+    pub observed_factor_divergence: f64,
     /// Number of distinct times sampled across all clips.
     pub sample_time_count: usize,
 }
@@ -2360,7 +2501,11 @@ pub struct ScaleProof {
 ///
 /// [`ScaleProof::observed_factor`] is re-derived here from `source` rather
 /// than copied from [`ScalePlan::observed_factor`]; it is reported as
-/// evidence and is not itself an obligation.
+/// evidence and is not itself an obligation. Both witnesses and the
+/// divergence between them are recorded
+/// ([`ScaleProof::planned_observed_factor`],
+/// [`ScaleProof::observed_factor_divergence`]); none of the three is checked
+/// against a band here.
 pub fn prove_scale(
     source: &Document,
     candidate: &ScaleCandidate,
@@ -2375,6 +2520,7 @@ pub fn prove_scale(
     let source_worlds = world_rests(&source.skeleton)?;
     let candidate_worlds = world_rests(&candidate.skeleton)?;
 
+    let observed_factor = observed_factor_from_source(source, &source_worlds, plan)?;
     let mut proof = ScaleProof {
         tolerance_policy: tol,
         rest_translation_residual: 0.0,
@@ -2389,13 +2535,23 @@ pub fn prove_scale(
         skin_matrix_residual: 0.0,
         bounds_residual: 0.0,
         unaffected_inverse_bind_residual: 0.0,
-        observed_factor: observed_factor_from_source(source, &source_worlds, plan)?,
+        observed_factor,
+        planned_observed_factor: plan.observed_factor,
+        observed_factor_divergence: relative_divergence(plan.observed_factor, observed_factor),
         sample_time_count: 0,
     };
 
     check_candidate_values(source, candidate, &affected, plan, &tol, &mut proof)?;
 
     if plan.proof_obligations.prove_rest {
+        // The affected closure is this obligation's whole evidence base, and
+        // a plan only declares it when the closure is non-empty.
+        if plan.affected_nodes.is_empty() {
+            return Err(ScaleError::MissingProofEvidence {
+                kind: ProofResidualKind::RestTranslation,
+                detail: "empty_affected_closure",
+            });
+        }
         for &node in &plan.affected_nodes {
             let before = *source_worlds
                 .get(node)
@@ -2482,6 +2638,18 @@ pub fn prove_scale(
     }
 
     if plan.proof_obligations.prove_transform_only_affine {
+        // A plan only declares this obligation when its closure actually
+        // carried a transform-only attachment, so an empty list here means
+        // the plan and the documents under proof disagree. Failing closed
+        // matches `prove_bounds`: iterating an empty list instead would
+        // report a `0.0` residual for §D.6's "a no-op cannot pass" claim
+        // without ever transforming a probe point.
+        if plan.transform_only_attachments.is_empty() {
+            return Err(ScaleError::MissingProofEvidence {
+                kind: ProofResidualKind::TransformOnlyAffine,
+                detail: "no_transform_only_attachment",
+            });
+        }
         // scale(1/s): the analytically expected basis correction `C_i` for
         // every node inside the affected domain (DESIGN.md Appendix D §D.2).
         let correction = Mat4::from_scale(Vec3::splat((1.0 / plan.common_factor) as f32));
@@ -2530,6 +2698,32 @@ pub fn prove_scale(
         || plan.proof_obligations.prove_skin
         || plan.proof_obligations.prove_bounds;
     if any_sampled_obligation {
+        // The clip-driven obligations are declared only when the planned
+        // document carried the tracks they read (see [`SampledEvidence`]), so
+        // a `source` that carries none is not the document this plan was
+        // computed against. Each obligation is refused separately and names
+        // itself, because "no clips at all" and "clips with no affected
+        // cubic segment" are different gaps and a caller repairing one should
+        // not be told about the other.
+        let evidence = sampled_evidence(source, &affected);
+        if plan.proof_obligations.prove_keys && !evidence.key_translations {
+            return Err(ScaleError::MissingProofEvidence {
+                kind: ProofResidualKind::KeyTranslation,
+                detail: "no_affected_translation_track",
+            });
+        }
+        if plan.proof_obligations.prove_cubic_interiors && !evidence.cubic_interiors {
+            return Err(ScaleError::MissingProofEvidence {
+                kind: ProofResidualKind::CubicInterior,
+                detail: "no_affected_cubic_interior_time",
+            });
+        }
+        if plan.proof_obligations.prove_trajectories && !evidence.sample_times {
+            return Err(ScaleError::MissingProofEvidence {
+                kind: ProofResidualKind::Trajectory,
+                detail: "no_affected_sample_time",
+            });
+        }
         // Harvested once, up front, for two reasons: the budget below has to
         // know the total sample count *before* the first sample is evaluated,
         // and re-harvesting per clip inside the loop would sort and dedup the
@@ -3362,6 +3556,28 @@ fn world_at_time(skeleton: &Skeleton, clip: &Clip, t: f32) -> Result<Vec<Mat4>, 
     Ok(worlds)
 }
 
+/// `abs(planned - proved) / max(abs(planned), abs(proved))` — the divergence
+/// between the two observed-factor witnesses, on the same comparison base
+/// [`ScaleTolerancePolicy::relative`] uses.
+///
+/// Sharing that base is what makes the reported number commensurable with
+/// [`ScaleTolerancePolicy::observed_factor_divergence_ceiling`], which is a
+/// sum of two bands stated on it. The one division this spelling costs is
+/// what a predicate would not pay, so the two are not bit-identical near the
+/// ceiling; nothing here compares against it, so nothing depends on that.
+///
+/// No floor on the base, for [`ScaleTolerancePolicy::relative`]'s reasons,
+/// and none is needed: `planned` is strictly positive under both operations —
+/// a declared factor [`plan_scale`] range-checked, or an observed one
+/// [`classify_affine`] proved non-singular — so the base is at least
+/// `planned` and never zero. `proved` carries no such guarantee: it is read
+/// from whichever `source` [`prove_scale`] was handed, and a degenerate one
+/// measuring exactly zero there reports a divergence of one rather than a
+/// division by zero.
+fn relative_divergence(planned: f64, proved: f64) -> f64 {
+    (planned - proved).abs() / planned.abs().max(proved.abs())
+}
+
 /// Re-derive this operation's observed factor from `source`, without reading
 /// [`ScalePlan::observed_factor`].
 ///
@@ -3610,15 +3826,26 @@ fn check_skin_and_bounds(
     if !prove_skin && !prove_bounds {
         return Ok(());
     }
-    // A plan only declares `prove_bounds` when its source actually carried a
+    // A plan only declares these two when its source actually carried a
     // skinned instance touching the affected closure, so reaching here with
     // none means the document handed to `prove_scale` is not the one the plan
     // was computed against. Failing closed here matches how every other
     // missing-counterpart branch behaves; returning `Ok` instead would report
-    // a `0.0` bounds residual for a claim that was never checked.
-    if prove_bounds && !has_skinned_evidence(source, affected) {
+    // a `0.0` skin-matrix or bounds residual for a claim that was never
+    // checked.
+    if (prove_skin || prove_bounds) && !has_skinned_evidence(source, affected) {
         return Err(ScaleError::MissingProofEvidence {
-            kind: ProofResidualKind::Bounds,
+            // One gap, reported once, named for whichever of the two the plan
+            // declared — and for `prove_bounds` when it declared both, which
+            // every planner-built plan does. This gate was `prove_bounds`'s
+            // alone (#288) before `prove_skin` joined it, and what a
+            // planner-built plan reports here must not move underneath a
+            // caller matching on it.
+            kind: if prove_bounds {
+                ProofResidualKind::Bounds
+            } else {
+                ProofResidualKind::SkinMatrix
+            },
             detail: "no_skinned_instance_in_affected_closure",
         });
     }
@@ -3766,8 +3993,8 @@ fn check_skin_and_bounds(
 }
 
 /// Whether `document` carries at least one skinned mesh instance with a
-/// joint inside `affected` — the only evidence a bounds obligation can be
-/// checked against.
+/// joint inside `affected` — the only evidence the skin-equation and bounds
+/// obligations can be checked against.
 fn has_skinned_evidence(document: &Document, affected: &BTreeSet<BoneId>) -> bool {
     document.assets.instances.iter().any(|instance| {
         instance
@@ -3775,6 +4002,59 @@ fn has_skinned_evidence(document: &Document, affected: &BTreeSet<BoneId>) -> boo
             .iter()
             .any(|joint| affected.contains(joint))
     })
+}
+
+/// Which of the clip-driven obligations `document` carries evidence for
+/// inside `affected`.
+///
+/// Each field is exactly the condition under which that obligation's residual
+/// loop reads at least one payload, so a plan that declares the obligation is
+/// declaring something [`prove_scale`] will actually check, and the residual
+/// it reports is a measurement rather than the zero an empty loop leaves
+/// behind. Computed the same way on both sides of the plan/proof boundary:
+/// [`plan_scale`] uses it to decide what to declare, and [`prove_scale`] uses
+/// it to fail closed when a declared obligation's evidence is not in the
+/// document it was handed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct SampledEvidence {
+    /// Some clip declares a translation track on an affected bone. That
+    /// track is both what puts key times into [`clip_sample_times`] and the
+    /// only payload [`check_track_value_residual`] compares, so it is the
+    /// whole evidence base for `prove_keys`.
+    key_translations: bool,
+    /// Some clip declares *both* an affected cubic-spline track with at least
+    /// two key times — which is what produces an interior time at all — and
+    /// an affected translation track, which is what the comparison at that
+    /// interior time reads. The two need not be the same track, but they must
+    /// be in the same clip: interior times are harvested per clip and
+    /// compared against that clip's tracks.
+    cubic_interiors: bool,
+    /// Some clip yields at least one sample time for an affected bone, of
+    /// either kind. The trajectory obligation compares composed world
+    /// matrices rather than track payloads, so any affected track's key times
+    /// are evidence for it.
+    sample_times: bool,
+}
+
+/// Measure [`SampledEvidence`] over `document`'s clips.
+fn sampled_evidence(document: &Document, affected: &BTreeSet<BoneId>) -> SampledEvidence {
+    let mut evidence = SampledEvidence::default();
+    for clip in &document.clips {
+        let mut translations = false;
+        let mut cubic_segments = false;
+        for track in &clip.tracks {
+            if !affected.contains(&track.bone) || track.times.is_empty() {
+                continue;
+            }
+            evidence.sample_times = true;
+            translations |= track.property == Property::Translation;
+            cubic_segments |=
+                track.interpolation == Interpolation::CubicSpline && track.times.len() >= 2;
+        }
+        evidence.key_translations |= translations;
+        evidence.cubic_interiors |= translations && cubic_segments;
+    }
+    evidence
 }
 
 /// Running skinned-bounds extremes for one document side.
@@ -5357,6 +5637,156 @@ mod tests {
         assert_eq!(proof.unit_scale_residual, 0.0);
     }
 
+    // --- Reconciling the two observed factors (issue #306) ----------------
+
+    #[test]
+    fn the_evidence_record_carries_both_observed_factors_and_the_divergence_between_them() {
+        // §D.6's evidence record carries two numbers that both answer to "the
+        // observed factor", measured from genuinely different state. The
+        // record therefore also carries how far apart they are, so a consumer
+        // neither mistakes one for the other nor has to derive the
+        // relationship itself.
+        let capability = complete_capability();
+
+        // A document whose two chains agree — the ordinary case — puts both
+        // witnesses on the same number, and the divergence is a *measured*
+        // zero rather than an unset field.
+        let consistent = noisy_factor_document(0.010_000_02);
+        let plan = plan_scale(&noisy_factor_request(&consistent, &capability)).unwrap();
+        let candidate = build_scale_candidate(&consistent, &plan).unwrap();
+        let proof = prove_scale(&consistent, &candidate, &plan).unwrap();
+        assert_eq!(proof.planned_observed_factor, NOISY_OBSERVED_FACTOR);
+        assert_eq!(proof.observed_factor, NOISY_OBSERVED_FACTOR);
+        assert_eq!(proof.observed_factor_divergence, 0.0);
+
+        // Planning one source and proving another separates the two
+        // witnesses, exactly as `the_proof_re_derives_the_observed_factor
+        // _from_its_own_source_not_from_the_plan` does — and this proof
+        // *succeeds*, so the divergence below is a measurement taken from a
+        // complete evidence record rather than a number read off a failure.
+        //
+        //   planned 0.010_000_02_f32 = 10_737_440 * 2^-30
+        //   proved  0.01_f32         = 10_737_418 * 2^-30
+        //   difference               =         22 * 2^-30 (exact: equal
+        //                                      exponents, and the result is
+        //                                      representable)
+        //   divergence = 22 / 10_737_440 = 11 / 5_368_720
+        //              = 2.0489055119283555e-6
+        let proved = noisy_factor_document(0.01);
+        let candidate = build_scale_candidate(&proved, &plan).unwrap();
+        let proof = prove_scale(&proved, &candidate, &plan).unwrap();
+        assert_eq!(proof.planned_observed_factor, NOISY_OBSERVED_FACTOR);
+        assert_eq!(proof.observed_factor, NEAR_UNIT_OBSERVED_FACTOR);
+        assert_eq!(proof.observed_factor_divergence, 11.0 / 5_368_720.0);
+        // Nowhere near the ceiling: this pair separates the two witnesses,
+        // it does not saturate their bands. The fixture below does that.
+        assert!(
+            proof.observed_factor_divergence
+                < plan.tolerance_policy().observed_factor_divergence_ceiling()
+        );
+
+        // The same two documents with their roles swapped, so the *proved*
+        // witness is now the larger of the pair. The comparison base is the
+        // `max` of the two, exactly as `ScaleTolerancePolicy::relative`'s is
+        // and for the same reason, so the divergence is the same number in
+        // both directions — which a base of "whichever operand came first"
+        // would not be. Without this direction that `max` is untested: every
+        // other fixture here observes the planned witness as the larger one.
+        let swapped_plan = plan_scale(&noisy_factor_request(&proved, &capability)).unwrap();
+        let swapped_candidate = build_scale_candidate(&consistent, &swapped_plan).unwrap();
+        let swapped = prove_scale(&consistent, &swapped_candidate, &swapped_plan).unwrap();
+        assert_eq!(swapped.planned_observed_factor, NEAR_UNIT_OBSERVED_FACTOR);
+        assert_eq!(swapped.observed_factor, NOISY_OBSERVED_FACTOR);
+        assert_eq!(swapped.observed_factor_divergence, 11.0 / 5_368_720.0);
+    }
+
+    #[test]
+    fn the_divergence_ceiling_is_the_sum_of_the_two_bands_that_produce_it() {
+        // Stated from the two bands rather than read back off the policy, so
+        // a ceiling derived from any other pair of fields — the equal-axis
+        // band, the scalar relative term, a multiple of either — fails here.
+        // The sum is exact: `2^-14` is a power of two well above `fl(1e-5)`'s
+        // last bit, and the rounded sum is the same binary64 value the
+        // decimal literal denotes.
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V2;
+        assert_eq!(policy.common_factor, 1e-5);
+        assert_eq!(policy.postcondition_unit_scale_residual, 2f64.powi(-14));
+        assert_eq!(
+            policy.observed_factor_divergence_ceiling(),
+            1e-5 + 2f64.powi(-14)
+        );
+        assert_eq!(
+            policy.observed_factor_divergence_ceiling(),
+            7.103_515_625e-5
+        );
+    }
+
+    #[test]
+    fn a_divergence_that_saturates_both_bands_stays_inside_the_ceiling() {
+        // The ceiling claim of §D.6, exercised at the far end of both bands
+        // it is the sum of, on a pair of documents that *proves*:
+        //
+        //   planned root 0.010_000_099_f32 = 10_737_525 * 2^-30
+        //     |s - 0.01| = 9.9427998e-8 against 1e-5 * s = 1.00000994e-7,
+        //     so planning's band is 99.4% used;
+        //   proved  root 0.009_999_4_f32   = 10_736_774 * 2^-30
+        //     the rebase multiplier `1.0f32 / 0.01f32` is 100.0 exactly, and
+        //     fl32(10_736_774 * 2^-30 * 100) = 1 - 1007 * 2^-24, so the
+        //     unit-scale residual is 1007 * 2^-24 = 6.002187728881836e-5
+        //     against the 512 * 2^-23 bound, 98.3% used.
+        //
+        //   divergence = (10_737_525 - 10_736_774) / 10_737_525
+        //              = 751 / 10_737_525 = 6.994162993799782e-5
+        //   ceiling    = 1e-5 + 2^-14     = 7.103515625e-5
+        //   headroom   =                    1.0935263120021840e-6
+        let planned = noisy_factor_document(0.010_000_099);
+        let proved = noisy_factor_document(0.009_999_4);
+        let capability = complete_capability();
+        let plan = plan_scale(&noisy_factor_request(&planned, &capability)).unwrap();
+        let candidate = build_scale_candidate(&proved, &plan).unwrap();
+        let proof = prove_scale(&proved, &candidate, &plan).unwrap();
+
+        assert_eq!(proof.unit_scale_residual, 1007.0 * 2f64.powi(-24));
+        assert_eq!(proof.observed_factor_divergence, 751.0 / 10_737_525.0);
+        let ceiling = plan.tolerance_policy().observed_factor_divergence_ceiling();
+        assert!(
+            proof.observed_factor_divergence < ceiling,
+            "divergence {} exceeds ceiling {ceiling}",
+            proof.observed_factor_divergence
+        );
+        // Both bands are nearly spent, so the margin left is small — which is
+        // what makes this a test of the ceiling rather than of a fixture that
+        // never approached it.
+        assert!(ceiling - proof.observed_factor_divergence < 1.1e-6);
+    }
+
+    #[test]
+    fn a_whole_document_conversion_reports_one_factor_under_both_names() {
+        // That operation declares its factor rather than observing one
+        // (§D.1: nothing may infer it from the document), so both witnesses
+        // are the declared factor and the divergence is structurally zero.
+        // A consumer reading the record does not have to special-case the
+        // operation to learn that.
+        //
+        // The zero here is the weakest of the three assertions — an
+        // implementation that reported a constant zero divergence would
+        // satisfy it, and the two rest/bind fixtures above are what refuse
+        // that. What this one pins is the *factors*: `payload_document`'s rig
+        // is unit-scaled throughout, so an implementation that measured a
+        // whole-document conversion's observed factor from the document
+        // instead of declaring it would report `1.0` under one name, `0.01`
+        // under the other, and a divergence of `0.99`.
+        let doc = payload_document();
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+        assert_eq!(plan.common_factor(), 0.01);
+        assert_eq!(proof.planned_observed_factor, 0.01);
+        assert_eq!(proof.observed_factor, 0.01);
+        assert_eq!(proof.observed_factor_divergence, 0.0);
+    }
+
     /// The factor the *lowest affected bone* of
     /// [`contradictory_parent_chain_document`] carries, as distinct from the
     /// factor at its scaled root.
@@ -5495,6 +5925,26 @@ mod tests {
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
         assert_eq!(proof.observed_factor, NEAR_UNIT_OBSERVED_FACTOR);
         assert_eq!(proof.unit_scale_residual, 0.0);
+
+        // And the two witnesses of §D.6 *agree exactly* on this document, so
+        // the recorded divergence is zero: contradictory parent chains are
+        // not by themselves a divergence witness. The projection root is
+        // node 1 with local rest `0.01_f32` and no parent, and the skeleton
+        // path to bone 1 is `0.01_f32` at bone 0 composed with bone 1's unit
+        // rest — the same number by two routes. What the contradiction moves
+        // is *which node* the scaled root is, not what is measured there.
+        // Detecting it needs the chain-agreement check #309 asks for; a bound
+        // on the divergence would not see this document at all.
+        //
+        // Documentary rather than adversarial: the substantive claim is that
+        // the two witnesses land on the same number by two different routes,
+        // and the zero divergence follows. What separates a computed
+        // divergence from a constant one is
+        // `the_evidence_record_carries_both_observed_factors_and_the
+        // _divergence_between_them`.
+        assert_eq!(proof.planned_observed_factor, proof.observed_factor);
+        assert_eq!(proof.planned_observed_factor, NEAR_UNIT_OBSERVED_FACTOR);
+        assert_eq!(proof.observed_factor_divergence, 0.0);
     }
 
     /// `noisy_factor_document`'s rig with a per-axis root rest scale.
@@ -7712,6 +8162,11 @@ mod tests {
         let capability = complete_capability();
         let plan = whole_document_plan(&doc, &capability);
         assert!(!plan.proof_obligations().prove_bounds);
+        // The skin equation reads the same instance walk and is gated on the
+        // same evidence: with no skinned instance there is no `W_i * B_i` to
+        // evaluate either, and a declared `prove_skin` would report a `0.0`
+        // skin-matrix residual for a claim nothing checked.
+        assert!(!plan.proof_obligations().prove_skin);
         assert!(plan.domain_rewrites().base_mesh_positions);
     }
 
@@ -7777,6 +8232,323 @@ mod tests {
         // document carries no skinned instance at all" from "it carries one
         // whose vertices produced no box".
         assert_eq!(detail, "no_skinned_instance_in_affected_closure");
+    }
+
+    // --- Evidence gating, per obligation (issue #302) ---------------------
+
+    /// `multi_joint_document` with its two affected translation tracks
+    /// replaced by one affected *rotation* track.
+    ///
+    /// That clip still yields sample times — so the trajectory obligation has
+    /// evidence — while carrying no translation payload for the key
+    /// obligation to compare and no cubic segment to take an interior of.
+    /// It is the one document shape that separates `prove_trajectories` from
+    /// its two siblings, which is what makes each of the three refusals below
+    /// reachable on its own.
+    fn rotation_only_clip_document() -> Document {
+        let mut doc = multi_joint_document();
+        doc.clips[0].tracks = vec![Track {
+            bone: 1,
+            property: Property::Rotation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Quats(vec![Quat::IDENTITY, Quat::IDENTITY]),
+        }];
+        doc
+    }
+
+    /// Strip every clip from a source and a candidate together, so the pair
+    /// still satisfies `validate_candidate_structure` and what fails is the
+    /// missing obligation evidence rather than clip-count parity.
+    fn without_clips(source: &Document, candidate: ScaleCandidate) -> (Document, ScaleCandidate) {
+        let mut source = source.clone();
+        source.clips.clear();
+        let mut document = candidate.into_document();
+        document.clips.clear();
+        (source, ScaleCandidate { document })
+    }
+
+    #[test]
+    fn the_clip_driven_obligations_are_declared_only_by_the_tracks_that_evidence_them() {
+        let capability = complete_capability();
+
+        // No clips at all: none of the three has anything to read.
+        let unanimated = compensated_document();
+        let unanimated_plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 0.01,
+            },
+            document: &unanimated,
+            capability: &capability,
+        })
+        .unwrap();
+        assert!(unanimated.clips.is_empty());
+        let obligations = unanimated_plan.proof_obligations();
+        assert!(!obligations.prove_keys);
+        assert!(!obligations.prove_cubic_interiors);
+        assert!(!obligations.prove_trajectories);
+
+        // An affected rotation track: a sample time exists, a translation
+        // payload does not.
+        let rotation_only = rotation_only_clip_document();
+        let obligations = multi_joint_plan(&rotation_only, &capability).proof_obligations();
+        assert!(!obligations.prove_keys);
+        assert!(!obligations.prove_cubic_interiors);
+        assert!(obligations.prove_trajectories);
+
+        // An affected *linear* translation track: keys and trajectories have
+        // evidence; a linear segment has no interior time to bound.
+        let mut linear_only = multi_joint_document();
+        linear_only.clips[0].tracks.truncate(1);
+        assert_eq!(
+            linear_only.clips[0].tracks[0].interpolation,
+            Interpolation::Linear
+        );
+        let obligations = multi_joint_plan(&linear_only, &capability).proof_obligations();
+        assert!(obligations.prove_keys);
+        assert!(!obligations.prove_cubic_interiors);
+        assert!(obligations.prove_trajectories);
+
+        // And the unmodified fixture, which carries both track kinds, still
+        // declares all three — so the three negatives above are the evidence
+        // gate and not a planner that stopped declaring them.
+        let animated = multi_joint_document();
+        let obligations = multi_joint_plan(&animated, &capability).proof_obligations();
+        assert!(obligations.prove_keys);
+        assert!(obligations.prove_cubic_interiors);
+        assert!(obligations.prove_trajectories);
+    }
+
+    #[test]
+    fn a_declared_key_obligation_with_no_affected_translation_track_is_missing_not_vacuous() {
+        let doc = multi_joint_document();
+        let capability = complete_capability();
+        let plan = multi_joint_plan(&doc, &capability);
+        assert!(plan.proof_obligations().prove_keys);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        prove_scale(&doc, &candidate, &plan).unwrap();
+
+        let (clipless, clipless_candidate) = without_clips(&doc, candidate);
+        let error = prove_scale(&clipless, &clipless_candidate, &plan).unwrap_err();
+        let ScaleError::MissingProofEvidence { kind, detail } = error else {
+            panic!("expected missing key evidence, got {error:?}");
+        };
+        assert_eq!(kind, ProofResidualKind::KeyTranslation);
+        assert_eq!(detail, "no_affected_translation_track");
+    }
+
+    #[test]
+    fn a_declared_cubic_obligation_with_no_affected_cubic_segment_is_missing_not_vacuous() {
+        let doc = multi_joint_document();
+        let capability = complete_capability();
+        let plan = multi_joint_plan(&doc, &capability);
+        assert!(plan.proof_obligations().prove_cubic_interiors);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+
+        // Drop only the cubic track, from both sides. The linear translation
+        // track survives, so the key obligation still has its evidence and
+        // the refusal below is the cubic one specifically — the two are
+        // reported separately on purpose.
+        let mut source = doc.clone();
+        source.clips[0].tracks.truncate(1);
+        let mut document = candidate.into_document();
+        document.clips[0].tracks.truncate(1);
+        let error = prove_scale(&source, &ScaleCandidate { document }, &plan).unwrap_err();
+        let ScaleError::MissingProofEvidence { kind, detail } = error else {
+            panic!("expected missing cubic evidence, got {error:?}");
+        };
+        assert_eq!(kind, ProofResidualKind::CubicInterior);
+        assert_eq!(detail, "no_affected_cubic_interior_time");
+    }
+
+    #[test]
+    fn a_declared_trajectory_obligation_with_no_sample_time_is_missing_not_vacuous() {
+        // `prove_trajectories` is the widest of the three, so its refusal is
+        // only reachable from a plan that declares it *without* the other
+        // two — otherwise the key or cubic refusal fires first and this one
+        // would never be observed.
+        let doc = rotation_only_clip_document();
+        let capability = complete_capability();
+        let plan = multi_joint_plan(&doc, &capability);
+        let obligations = plan.proof_obligations();
+        assert!(obligations.prove_trajectories);
+        assert!(!obligations.prove_keys);
+        assert!(!obligations.prove_cubic_interiors);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        prove_scale(&doc, &candidate, &plan).unwrap();
+
+        let (clipless, clipless_candidate) = without_clips(&doc, candidate);
+        let error = prove_scale(&clipless, &clipless_candidate, &plan).unwrap_err();
+        let ScaleError::MissingProofEvidence { kind, detail } = error else {
+            panic!("expected missing trajectory evidence, got {error:?}");
+        };
+        assert_eq!(kind, ProofResidualKind::Trajectory);
+        assert_eq!(detail, "no_affected_sample_time");
+    }
+
+    #[test]
+    fn a_closure_with_no_transform_only_attachment_does_not_declare_the_affine_obligation() {
+        let capability = complete_capability();
+
+        // Every affected node of `multi_joint_document` is either the scaled
+        // root or a selected skin joint, so there is no attachment to probe.
+        let bare = multi_joint_document();
+        let bare_plan = multi_joint_plan(&bare, &capability);
+        assert!(bare_plan.transform_only_attachments().is_empty());
+        assert!(!bare_plan.proof_obligations().prove_transform_only_affine);
+
+        // The same operation on a closure that does carry one declares it,
+        // so the negative above is the evidence gate rather than an
+        // obligation that stopped being declared at all.
+        let attached = compensated_document();
+        let attached_plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 0.01,
+            },
+            document: &attached,
+            capability: &capability,
+        })
+        .unwrap();
+        assert_eq!(attached_plan.transform_only_attachments(), &[2]);
+        assert!(
+            attached_plan
+                .proof_obligations()
+                .prove_transform_only_affine
+        );
+    }
+
+    #[test]
+    fn a_declared_transform_only_obligation_with_no_attachment_is_missing_not_vacuous() {
+        // The attachment list lives in the plan, so this obligation's
+        // evidence cannot vanish from a *document*: the fail-open state
+        // §D.6's "a no-op cannot pass" claim has to be protected against is a
+        // plan that declares the obligation over an empty list, which is
+        // exactly what `plan_rest_bind` produced unconditionally before this
+        // gate. Reconstructed here the same way the skin-only and bounds-only
+        // plans below are.
+        let doc = compensated_document();
+        let capability = complete_capability();
+        let planned = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 0.01,
+            },
+            document: &doc,
+            capability: &capability,
+        })
+        .unwrap();
+        let candidate = build_scale_candidate(&doc, &planned).unwrap();
+        prove_scale(&doc, &candidate, &planned).unwrap();
+
+        let mut obligations = planned.proof_obligations();
+        assert!(obligations.prove_transform_only_affine);
+        obligations.prove_skin = false;
+        obligations.prove_bounds = false;
+        let unattached = ScalePlan {
+            operation: planned.operation(),
+            tolerance_policy: planned.tolerance_policy(),
+            affected_nodes: planned.affected_nodes().to_vec(),
+            transform_only_attachments: Vec::new(),
+            common_factor: planned.common_factor(),
+            observed_factor: planned.observed_factor(),
+            domain_rewrites: planned.domain_rewrites(),
+            proof_obligations: obligations,
+        };
+        let error = prove_scale(&doc, &candidate, &unattached).unwrap_err();
+        let ScaleError::MissingProofEvidence { kind, detail } = error else {
+            panic!("expected missing transform-only evidence, got {error:?}");
+        };
+        assert_eq!(kind, ProofResidualKind::TransformOnlyAffine);
+        assert_eq!(detail, "no_transform_only_attachment");
+    }
+
+    #[test]
+    fn a_declared_skin_obligation_with_no_skinned_evidence_is_missing_not_vacuous() {
+        // The mirror of `a_declared_bounds_obligation_with_no_skinned
+        // _evidence_is_missing_not_vacuous`. Both flags read the same
+        // instance walk, so the gate reports one gap once and names it for
+        // `prove_bounds` whenever that is declared; the skin-only plan is the
+        // shape where `prove_skin` is the one left holding the claim.
+        let doc = multi_joint_document();
+        let capability = complete_capability();
+        let planned = multi_joint_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &planned).unwrap();
+
+        let skin_only = ScalePlan {
+            operation: planned.operation(),
+            tolerance_policy: planned.tolerance_policy(),
+            affected_nodes: planned.affected_nodes().to_vec(),
+            transform_only_attachments: Vec::new(),
+            common_factor: planned.common_factor(),
+            observed_factor: planned.observed_factor(),
+            domain_rewrites: planned.domain_rewrites(),
+            proof_obligations: ScaleProofObligations {
+                prove_rest: false,
+                prove_unit_scale_postcondition: false,
+                prove_transform_only_affine: false,
+                prove_keys: false,
+                prove_cubic_interiors: false,
+                prove_trajectories: false,
+                prove_skin: true,
+                prove_bounds: false,
+            },
+        };
+        prove_scale(&doc, &candidate, &skin_only).unwrap();
+
+        let mut unskinned = doc.clone();
+        unskinned.assets.instances[0].skin_joints.clear();
+        unskinned.assets.instances[0].skin_ibms.clear();
+        let mut document = candidate.into_document();
+        document.assets.instances[0].skin_joints.clear();
+        document.assets.instances[0].skin_ibms.clear();
+        let error = prove_scale(&unskinned, &ScaleCandidate { document }, &skin_only).unwrap_err();
+        let ScaleError::MissingProofEvidence { kind, detail } = error else {
+            panic!("expected missing skin evidence, got {error:?}");
+        };
+        assert_eq!(kind, ProofResidualKind::SkinMatrix);
+        assert_eq!(detail, "no_skinned_instance_in_affected_closure");
+    }
+
+    #[test]
+    fn a_boneless_document_declares_no_rest_obligation_and_a_declared_one_is_missing() {
+        // A whole-document conversion's affected closure is the whole
+        // skeleton, so a document with no bones plans an empty one — the only
+        // way either planner reaches that state. `prove_rest` walking an
+        // empty closure would report a `0.0` rest-translation residual for
+        // nodes that do not exist.
+        let doc = Document::default();
+        assert!(doc.skeleton.bones.is_empty());
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        assert!(plan.affected_nodes().is_empty());
+        assert!(!plan.proof_obligations().prove_rest);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        prove_scale(&doc, &candidate, &plan).unwrap();
+
+        let declared = ScalePlan {
+            operation: plan.operation(),
+            tolerance_policy: plan.tolerance_policy(),
+            affected_nodes: Vec::new(),
+            transform_only_attachments: Vec::new(),
+            common_factor: plan.common_factor(),
+            observed_factor: plan.observed_factor(),
+            domain_rewrites: plan.domain_rewrites(),
+            proof_obligations: ScaleProofObligations {
+                prove_rest: true,
+                ..plan.proof_obligations()
+            },
+        };
+        let error = prove_scale(&doc, &candidate, &declared).unwrap_err();
+        let ScaleError::MissingProofEvidence { kind, detail } = error else {
+            panic!("expected missing rest evidence, got {error:?}");
+        };
+        assert_eq!(kind, ProofResidualKind::RestTranslation);
+        assert_eq!(detail, "empty_affected_closure");
     }
 
     #[test]

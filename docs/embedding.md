@@ -203,8 +203,16 @@ reparameterization. `plan_scale` is pure and fail-closed against a
 source; `prove_scale` independently re-derives the plan's claims and reports
 residual maxima against the fixed `ScaleTolerancePolicy::APPENDIX_D_V2`
 tolerance identity, refusing a document whose sampled proof work exceeds that
-policy's budget rather than sampling a subset of it. This module does not
-select CLI arguments, publish
+policy's budget rather than sampling a subset of it. Every proof obligation is
+evidence-gated: a plan declares one only when the planned document carries the
+payload that obligation reads, and a declared obligation whose evidence is
+missing at proof time is a typed `MissingProofEvidence` refusal rather than a
+zero residual. `ScaleProof` records both observed-factor witnesses — the
+plan's, measured from the raw source projection, and the proof's, measured
+from the normalized skeleton — plus the relative divergence between them and
+the ceiling that divergence is expected to stay under
+(`ScaleTolerancePolicy::observed_factor_divergence_ceiling`). This module does
+not select CLI arguments, publish
 artifacts/evidence, or write files — see the crate rustdoc for the exact
 selector, error, and proof-obligation contracts.
 `ScaleOperation::RestBindUniformScale`'s selectors are raw, format-neutral
