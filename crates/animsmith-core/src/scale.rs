@@ -2276,19 +2276,53 @@ pub struct ScaleProof {
     /// binds the candidate is the postcondition
     /// ([`ProofResidualKind::UnitScale`]) that §D.1 derives from that band.
     ///
-    /// Measured from `source`, not from `candidate`, and that is forced
-    /// rather than chosen: a rest/bind candidate has unit composed scale at
-    /// every affected node by construction, and its regenerated binds are
-    /// `C^-1 * B`, so the factor is precisely what the operation removed from
-    /// it. The one factor the source/candidate *pair* does expose is
-    /// `|W| / |W'| = s_declared` — because [`build_scale_candidate`] applies
-    /// the declared factor — which re-derives the declared number under
-    /// another name, not the observed one. The observed factor is a fact
-    /// about the input, and the input is where proof re-measures it.
+    /// Measured from `source`, not from `candidate`. That is a choice, not an
+    /// impossibility, and an earlier revision of this paragraph claimed
+    /// otherwise — that a rest/bind candidate "has unit composed scale at
+    /// every affected node by construction", so nothing in it records what
+    /// the source measured. It does record it. `build_rest_bind` rebases an
+    /// affected node's local scale by `s_parent / s_node` with `s_node` the
+    /// *declared* factor, and the affected closure never contains the scaled
+    /// root's parent, so `s_parent` is one there and the candidate's composed
+    /// root scale is exactly `s_observed / s_declared` — unit only when the
+    /// two agree, which the input band admits without requiring. The
+    /// candidate route is real and it is accurate:
+    /// `plan.common_factor() * axis_length_average(axis_lengths(candidate
+    /// root world linear))` recovers the measurement to a relative error
+    /// under `5e-8` across every `0.01`-factor fixture this module already
+    /// carries (worst case `4.84e-8`, at a source root of `0.010_000_099`).
+    ///
+    /// It is not the route taken, for four reasons — none of them that the
+    /// number is absent:
+    ///
+    /// - **Independence.** [`prove_scale`] does not require `candidate` to
+    ///   have come from [`build_scale_candidate`]; checking one that did not
+    ///   is the reason it exists. Reading the reported measurement off the
+    ///   artifact under test would let that artifact pick its own evidence
+    ///   value. The observed factor is a fact about the *input*, so the input
+    ///   is where it is measured.
+    /// - **Precision.** The candidate route divides by the declared factor in
+    ///   `f32` and multiplies back in `f64`, so it reports a rounded
+    ///   neighbour of the source measurement rather than the measurement.
+    /// - **Sign.** The nearest already-published proxy,
+    ///   [`Self::unit_scale_residual`], is an absolute value, so
+    ///   `common_factor * (1 + unit_scale_residual)` reconstructs
+    ///   `s_observed` only when the observed factor is the *larger* of the
+    ///   two and reflects it about the declared factor when it is not.
+    /// - **Attribution.** That residual is also a maximum over every affected
+    ///   node rather than a value read at the scaled root, so it does not
+    ///   name the node §D.6 defines the observed factor at.
+    ///
+    /// The source/candidate *pair* additionally exposes
+    /// `|W| / |W'| = s_declared`, which is the declared number under another
+    /// name; that the pair yields the declared factor is not a reason the
+    /// candidate cannot yield the observed one.
     ///
     /// See [`ScalePlan::observed_factor`] for how each operation defines it;
     /// for a whole-document conversion this is the declared factor, there
-    /// being nothing to measure.
+    /// being nothing to measure — and there the candidate route genuinely
+    /// does not exist, because `build_whole_document` rewrites translations
+    /// only and leaves every composed scale exactly as it found it.
     pub observed_factor: f64,
     /// Number of distinct times sampled across all clips.
     pub sample_time_count: usize,
@@ -2752,10 +2786,16 @@ fn per_sample_work_units(
 /// [`SourceInverseBindAccessorStatus::Absent`] accessor licenses. That step
 /// answers "what bind does this slot *have*", which is the right question
 /// when composing `W * B`; this one answers "what bind does this document
-/// *record*", which is the right question when comparing two documents'
-/// stored evidence, and conflating them would let a candidate that
-/// materialized an explicit array read as identical to a source that
-/// recorded nothing.
+/// *record*", which is the question [`check_unaffected_instance_binds`] is
+/// asking.
+///
+/// The two questions genuinely disagree on one input — an evidence-free slot
+/// under an `Absent` accessor, where the *effective* bind is identity and the
+/// *recorded* one is nothing — and asking the recorded question there refuses
+/// a candidate that only changed representation. That is a known and
+/// deliberate narrowness, not an oversight; see the trap note on
+/// [`check_unaffected_instance_binds`] for why it is left standing and what
+/// replacing it would take.
 ///
 /// The out-of-range branch is unreachable for a document that passed
 /// [`validate_scene_assets`], which requires a non-empty `skin_ibms` to be
@@ -3406,6 +3446,48 @@ fn observed_factor_from_source(
 /// [`crate::model::SourceSkinAsset::inverse_bind_accessor`], which is
 /// read-side evidence about the input accessor rather than a bind either
 /// planning or proof consumes.
+///
+/// The skip is `any`, not `all`, and that is load-bearing rather than
+/// idiomatic. An instance with *some* joint in the affected closure belongs to
+/// [`check_skin_and_bounds`], which checks `W * B` on both sides and expects
+/// exactly the rewrite [`build_rest_bind`] performs on those slots. Holding
+/// such an instance to "binds unchanged" as well rejects this module's own
+/// output — pinned by
+/// `a_partially_affected_skin_stays_with_the_skin_obligation_that_owns_it`.
+///
+/// # Known trap: a semantics-preserving representation change is refused
+///
+/// The one-stored-side rule is stated over *stored* evidence, and there is a
+/// case where the two sides store different things and mean the same thing.
+/// A complete-coverage source skin whose
+/// [`crate::model::SourceSkinAsset::inverse_bind_accessor`] is
+/// [`SourceInverseBindAccessorStatus::Absent`] licenses the format-defined
+/// identity default, so [`instance_bind`] resolves a slot with no stored
+/// evidence to [`Mat4::IDENTITY`]. A candidate that materializes that default
+/// as an explicit `[IDENTITY]` array has changed nothing about the effective
+/// bind — and is exactly what [`build_rest_bind`] does for an *affected*
+/// instance, deliberately — yet is refused here as
+/// `MissingProofEvidence { source_slot_bind_missing }`, and the converse as
+/// `candidate_slot_bind_missing`.
+///
+/// This is not reachable through the shipped pipeline: the only producer,
+/// [`build_rest_bind`], materializes an array only for an instance with an
+/// affected joint, and this obligation skips those. It is a trap for a future
+/// rest/bind frontend that normalizes bind representation on the way out.
+///
+/// It is left refusing rather than relaxed, for two reasons. First, the
+/// refusal is the behaviour DESIGN.md §D.6 now states outright ("a slot
+/// exactly one side records is a rewritten skin and is refused"), so
+/// admitting the representation change is a contract amendment rather than a
+/// bug fix. Second, the narrow patch — resolving through [`instance_bind`]
+/// only in the one-sided rows — leaves the three rows incoherent, because the
+/// neither-stored row would then be the only one that does *not* consult the
+/// format default it is entirely about. The coherent alternative is a
+/// differently-shaped rule: resolve both sides through [`instance_bind`] and
+/// treat [`ScaleError::MissingInverseBind`] on *both* sides as the
+/// out-of-scope case, which preserves the fail-closed property the third row
+/// exists for while comparing effective binds throughout. That is a design
+/// change and belongs in its own issue.
 ///
 /// Unconditional, like the base `POSITION` comparison in
 /// [`check_candidate_values`] and for the same reason: it is a structural
@@ -4495,6 +4577,15 @@ mod tests {
         assert_eq!(plan.affected_nodes(), &[1, 2, 3, 4]);
         assert_eq!(plan.transform_only_attachments(), &[3, 4]);
         assert_eq!(plan.common_factor(), 0.01);
+        // The observed factor is measured *at the scaled root*, and here that
+        // is bone 1, not bone 0. Bone 0's rest-world linear part is the
+        // identity, so an implementation that measured a fixed bone zero — or
+        // the first affected bone by any rule other than "the plan's resolved
+        // scaled root" — would report `1.0`, a hundredfold error, rather than
+        // `0.01f32` widened to `f64`. Every other observed-factor fixture in
+        // this module puts its scaled root at bone 0 and cannot separate the
+        // two.
+        assert_eq!(plan.observed_factor(), NEAR_UNIT_OBSERVED_FACTOR);
 
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
         let bones = &candidate.document().skeleton.bones;
@@ -4568,6 +4659,8 @@ mod tests {
         );
 
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+        // Re-derived independently of the plan, and at the same bone 1.
+        assert_eq!(proof.observed_factor, NEAR_UNIT_OBSERVED_FACTOR);
         // Two key times, no cubic segment.
         assert_eq!(proof.sample_time_count, 2);
         assert!(proof.rest_translation_residual < 1e-4);
@@ -4578,6 +4671,103 @@ mod tests {
         assert!(proof.trajectory_residual < 1e-4);
         assert!(proof.skin_matrix_residual < 1e-4);
         assert!(proof.bounds_residual < 1e-4);
+    }
+
+    /// A rig whose scaled root sits under an ancestor that is itself scaled
+    /// and stays *outside* the closure, so the root's local scale and its
+    /// composed rest-world scale are different numbers:
+    ///
+    /// ```text
+    ///   bone 0  local scale 2      world scale 2      (boundary parent)
+    ///   bone 1  local scale 0.005  world scale 0.01   (scaled root)
+    ///   bone 2  local scale 1      world scale 0.01   (the skin's joint)
+    /// ```
+    ///
+    /// Every step is exact in binary32: `0.005f32` is `0.01f32 / 2` exactly
+    /// (halving is exact for a normal number), so `2 * 0.005f32 == 0.01f32`
+    /// and the root's composed linear part is `0.01f32 * I` with no rounding
+    /// at all. The observed factor is therefore the same
+    /// [`NEAR_UNIT_OBSERVED_FACTOR`] every `0.01f32` fixture here reports,
+    /// while the root's *local* scale widens to `0.004999999888241291` —
+    /// half of it.
+    fn scaled_ancestor_rig() -> Vec<RigNode> {
+        vec![
+            RigNode {
+                parent: None,
+                source_node_index: 0,
+                translation: Vec3::new(5.0, 0.0, 0.0),
+                rotation: Quat::IDENTITY,
+                scale: Vec3::splat(2.0),
+            },
+            RigNode {
+                parent: Some(0),
+                source_node_index: 1,
+                translation: Vec3::new(0.0, 2.0, 0.0),
+                rotation: Quat::IDENTITY,
+                scale: Vec3::splat(0.005),
+            },
+            rig(Some(1), 2, Vec3::new(0.0, 100.0, 0.0)),
+        ]
+    }
+
+    fn scaled_ancestor_document() -> Document {
+        // `B = inverse(W_rest(bone 2))` for `W = T(5, 5, 0) * scale(0.01)`:
+        // a linear part of `100 * I` and a translation column of
+        // `100 * (-5, -5, 0)`.
+        let ibm = Mat4::from_scale_rotation_translation(
+            Vec3::splat(100.0),
+            Quat::IDENTITY,
+            Vec3::new(-500.0, -500.0, 0.0),
+        );
+        rig_document(&scaled_ancestor_rig(), &[2], 0, ibm)
+    }
+
+    #[test]
+    fn the_observed_factor_is_the_scaled_roots_composed_scale_not_its_local_one() {
+        // DESIGN.md Appendix D §D.1 classifies the affine domain from each
+        // node's *rest-world* linear part, and §D.6's observed factor is that
+        // measurement at the scaled root. Every other fixture in this module
+        // puts the scaled root directly under an unscaled parent, where the
+        // local and composed scales coincide and an implementation that read
+        // `Bone::rest.scale` — or the raw projection's local `Trs` scale —
+        // is indistinguishable from one that composed the world matrix. Here
+        // they differ by exactly the factor two the boundary parent carries.
+        let doc = scaled_ancestor_document();
+        let capability = complete_capability();
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 1,
+                expected_factor: 0.01,
+            },
+            document: &doc,
+            capability: &capability,
+        })
+        .unwrap();
+        // The scaled ancestor is the boundary parent and stays out.
+        assert_eq!(plan.affected_nodes(), &[1, 2]);
+        assert_eq!(plan.common_factor(), 0.01);
+        assert_eq!(plan.observed_factor(), NEAR_UNIT_OBSERVED_FACTOR);
+        // The local scale a local-only measurement would have reported, named
+        // here so the two are separated by an exact comparison rather than by
+        // a tolerance: it is half the composed factor.
+        assert_eq!(
+            f64::from(doc.skeleton.bones[1].rest.scale.x),
+            NEAR_UNIT_OBSERVED_FACTOR / 2.0
+        );
+
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        // `C_parent = I` at the boundary, `C_1 = scale(1 / 0.01f32)`, and
+        // `1.0f32 / 0.01f32` is exactly `100.0`, so the root's local scale
+        // becomes `0.005f32 * 100` — which rounds to exactly `0.5`, leaving
+        // the composed root scale `2 * 0.5 = 1` with a zero residual.
+        assert_eq!(
+            candidate.document().skeleton.bones[1].rest.scale,
+            Vec3::splat(0.5)
+        );
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+        assert_eq!(proof.unit_scale_residual, 0.0);
+        assert_eq!(proof.observed_factor, NEAR_UNIT_OBSERVED_FACTOR);
     }
 
     // --- Affine violation classes (rest/bind classification) -----------
@@ -9730,6 +9920,142 @@ mod tests {
             panic!("expected an unaffected-inverse-bind residual, got {error:?}");
         };
         assert_eq!(observed, 1.0);
+    }
+
+    #[test]
+    fn a_successful_unaffected_bind_proof_reports_the_residual_maximum_it_observed() {
+        // Every other assertion on `unaffected_inverse_bind_residual` in this
+        // module reads `0.0`, which is the field's initialized value: none of
+        // them can tell a proof that measured and folded a residual from one
+        // that never wrote the field at all. #284 will serialize this number,
+        // so a permanently-zero field is a permanently-wrong record.
+        //
+        // The candidate's bind is perturbed *inside* the tolerance this
+        // comparison derives for itself, so the proof succeeds and the
+        // reported maximum is the perturbation:
+        //
+        //   source bind    diag(2, 2, 2, 1)
+        //   candidate bind diag(2 + 2^-18, 2 + 2^-17, 2, 1)
+        //
+        // Both perturbations are exact in binary32 (`2.0` is `2^1`, whose ulp
+        // is `2^-22`), `matrix_residual` is an L-infinity fold over the
+        // sixteen components, and the larger of the two is `2^-17`. The
+        // tolerance is `1e-6 + 1e-5 * max(2, 2 + 2^-17) = 2.100008e-5`,
+        // roughly `2.75x` the residual, so this is a pass with headroom and
+        // not a boundary case. The smaller perturbation is there so the
+        // reported number is a genuine maximum rather than the only candidate
+        // for one.
+        let doc =
+            compensated_document_with_unrelated_skin(Some(Mat4::from_scale(Vec3::splat(2.0))));
+        let capability = complete_capability();
+        let plan = compensated_rest_bind_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+
+        let mut nudged = candidate.document().clone();
+        nudged.assets.instances[1].skin_ibms[0] =
+            Mat4::from_scale(Vec3::new(2.0 + 2f32.powi(-18), 2.0 + 2f32.powi(-17), 2.0));
+        let proof = prove_scale(&doc, &ScaleCandidate { document: nudged }, &plan).unwrap();
+        assert_eq!(proof.unaffected_inverse_bind_residual, 2f64.powi(-17));
+    }
+
+    #[test]
+    fn a_partially_affected_skin_stays_with_the_skin_obligation_that_owns_it() {
+        // The skip predicate is `any`, not `all`, and the difference is not
+        // cosmetic. An instance with *some* joint in the closure is the skin
+        // obligation's, which checks `W * B` on both sides; holding its binds
+        // to "unchanged" as well would refuse the honest candidate this very
+        // module builds, because `build_rest_bind` rewrites exactly the slots
+        // whose joint is affected. That is the fail-closed regression class
+        // #296 was deferred from #288 to avoid, re-introduced from the other
+        // end.
+        //
+        // Slot 0 is bone 3 (outside every closure), slot 1 is bone 1 (inside
+        // it), so this instance is partially affected and no other fixture
+        // here is.
+        let unaffected_bind = Mat4::from_scale(Vec3::splat(2.0));
+        let mut doc = compensated_document_with_unrelated_skin(Some(unaffected_bind));
+        let affected_bind = doc.assets.instances[0].skin_ibms[0];
+        doc.assets.instances[1].skin_joints = vec![3, 1];
+        doc.assets.instances[1].skin_ibms = vec![unaffected_bind, affected_bind];
+
+        let capability = complete_capability();
+        let plan = compensated_rest_bind_plan(&doc, &capability);
+        assert_eq!(plan.affected_nodes(), &[0, 1, 2]);
+
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let rebased = &candidate.document().assets.instances[1].skin_ibms;
+        // The unaffected slot came through byte-identical; the affected one
+        // was conjugated by `scale(s)` and did not.
+        assert_eq!(rebased[0], unaffected_bind);
+        assert_ne!(rebased[1], affected_bind);
+
+        // The builder's own output proves. Under an `all` predicate this
+        // instance is no longer skipped, slot 1 is compared against the
+        // source bind it was deliberately rebased away from, and this call
+        // returns `ProofResidualExceeded { UnaffectedInverseBind }`.
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+        assert_eq!(proof.unaffected_inverse_bind_residual, 0.0);
+    }
+
+    #[test]
+    fn a_slot_carrying_both_an_array_and_a_bone_bind_is_compared_through_the_array() {
+        // The precedence `stored_instance_bind` documents — the per-instance
+        // array first, then the bone convenience value — became normative in
+        // this change's §D.6 amendment ("in the resolution order the model
+        // defines"). No other fixture gives one slot *both*, so reversing the
+        // two orders is invisible: the array-only fixtures resolve through
+        // the array either way, and the bone-only fixture through the bone.
+        //
+        // Here the unrelated slot carries an array bind of `scale(2)` and a
+        // bone bind of `scale(4)`, and the two directions are separated by
+        // doctoring exactly one of them in the candidate.
+        let array_bind = Mat4::from_scale(Vec3::splat(2.0));
+        let bone_bind = Mat4::from_scale(Vec3::splat(4.0));
+        let mut doc = compensated_document_with_unrelated_skin(Some(array_bind));
+        doc.skeleton.bones[3].inverse_bind = Some(bone_bind);
+        let capability = complete_capability();
+        let plan = compensated_rest_bind_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+
+        // The array is the authority, so a rewritten array is caught even
+        // though the shadowed bone bind still matches. `scale(2)` against
+        // `scale(3)` differs by `1` on each of three diagonal components,
+        // against a `1e-6 + 1e-5 * 3 = 3.1e-5` tolerance.
+        let mut rewritten_array = candidate.document().clone();
+        rewritten_array.assets.instances[1].skin_ibms[0] = Mat4::from_scale(Vec3::splat(3.0));
+        let error = prove_scale(
+            &doc,
+            &ScaleCandidate {
+                document: rewritten_array,
+            },
+            &plan,
+        )
+        .unwrap_err();
+        let ScaleError::ProofResidualExceeded {
+            kind: ProofResidualKind::UnaffectedInverseBind,
+            observed,
+            ..
+        } = error
+        else {
+            panic!("expected an unaffected-inverse-bind residual, got {error:?}");
+        };
+        assert_eq!(observed, 1.0);
+
+        // And the converse, which is the half a one-directional test misses:
+        // a bone bind shadowed by a non-empty array is not authority for this
+        // slot, so rewriting it changes nothing this obligation claims. Under
+        // the reversed precedence this call fails instead.
+        let mut rewritten_bone = candidate.document().clone();
+        rewritten_bone.skeleton.bones[3].inverse_bind = Some(Mat4::from_scale(Vec3::splat(5.0)));
+        let proof = prove_scale(
+            &doc,
+            &ScaleCandidate {
+                document: rewritten_bone,
+            },
+            &plan,
+        )
+        .unwrap();
+        assert_eq!(proof.unaffected_inverse_bind_residual, 0.0);
     }
 
     #[test]
