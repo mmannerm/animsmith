@@ -1152,8 +1152,12 @@ binds its witness to the declared factor within the first band or refuses;
 and for a candidate this operation built from the source under proof, that
 candidate's composed root scale is the proof witness divided by the declared
 factor, so the unit-scale postcondition binds the proof witness to the
-declared factor within the second. Both bands are relative to the `max` of
-their operands, as the divergence is, which only shrinks the ratio.
+declared factor within the second. The two bands are not stated the same way,
+and the sum is a ceiling only up to that difference: planning's is relative to
+the `max` of its two operands, exactly as the divergence is, while the
+postcondition's is an absolute L∞ deviation from `1` on the *candidate's*
+composed scale — so it bounds `|proved − declared|` as a fraction of the
+declared factor rather than as a fraction of `max(planned, proved)`.
 
 The divergence is **reported, not enforced**. The second step above holds for
 a candidate this operation built from the source it is proved against — which

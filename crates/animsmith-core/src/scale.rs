@@ -250,9 +250,14 @@ impl ScaleTolerancePolicy {
     ///   postcondition binds the proof witness to the declared factor within
     ///   [`Self::postcondition_unit_scale_residual`].
     ///
-    /// Both bands are stated relative to the `max` of their operands, as this
-    /// divergence is, which only shrinks the ratio — so two witnesses each
-    /// inside their own band are inside their sum of each other.
+    /// The two bands are not stated the same way, and the sum is a ceiling
+    /// only up to that difference. Planning's is relative to the `max` of its
+    /// two operands, exactly as this divergence is. The postcondition's is not
+    /// a relative band on the two witnesses at all: it is an absolute
+    /// L-infinity deviation from `1` on the *candidate's* composed scale, and
+    /// that candidate's scale is the proof witness rebased by the declared
+    /// factor — so what it bounds is `|proved - declared|` as a fraction of
+    /// the declared factor, not as a fraction of `max(planned, proved)`.
     ///
     /// **Reported, not enforced, and expected rather than proved.** Nothing
     /// refuses a document for exceeding this. The second step above holds for
@@ -5722,7 +5727,17 @@ mod tests {
     }
 
     #[test]
-    fn a_divergence_that_saturates_both_bands_stays_inside_the_ceiling() {
+    fn a_pair_that_nearly_spends_both_bands_leaves_barely_any_ceiling_headroom() {
+        // Named for what it pins and no wider: *this* pair's divergence and
+        // *this* pair's headroom. The general form — "saturating both bands
+        // keeps a divergence inside their sum" — is false, and
+        // `a_document_whose_skeleton_and_projection_disagree_is_proved_not
+        // _refused` below is the counterexample: the rebase's binary32
+        // rounding can put a divergence over the sum with both witnesses
+        // still honouring their own band. What the two tests together say is
+        // that the ceiling is tight in the direction this one measures and
+        // not a proved bound in the direction that one does.
+        //
         // The ceiling claim of §D.6, exercised at the far end of both bands
         // it is the sum of, on a pair of documents that *proves*:
         //
@@ -5758,6 +5773,62 @@ mod tests {
         // what makes this a test of the ceiling rather than of a fixture that
         // never approached it.
         assert!(ceiling - proof.observed_factor_divergence < 1.1e-6);
+    }
+
+    #[test]
+    fn a_document_whose_skeleton_and_projection_disagree_is_proved_not_refused() {
+        // Issue #306's own construction: one document whose normalized
+        // skeleton and raw source projection disagree about the scaled root's
+        // rest scale. Every other divergence fixture here separates the two
+        // witnesses by planning document A and proving document B, which is a
+        // property of the pair rather than of a document; this skews
+        // `skeleton.bones[0].rest.scale` alone and leaves the projection
+        // untouched, so the disagreement is inside the single document both
+        // witnesses are read from.
+        //
+        //   projection root `0.009_999_9_f32`   = 10_737_311 * 2^-30
+        //     planning's witness, measured through `parent_source_node_index`.
+        //     |s - 0.01| = 9.987503290197208e-8 against the band
+        //     1e-5 * max(s, 0.01) = 1e-7, so 99.9% of it is used and planning
+        //     accepts.
+        //   skeleton root   `0.010_000_611_f32` = 10_738_074 * 2^-30
+        //     proof's witness, measured through `world_rest_matrices`, and
+        //     also what `build_scale_candidate` rebases. The multiplier
+        //     `1.0f32 / 0.01f32` is `100.0` exactly (as in the fixture above),
+        //     and fl32(10_738_074 * 2^-30 * 100) = 1 + 512 * 2^-23, so the
+        //     unit-scale residual is exactly `2^-14` — the bound itself,
+        //     admitted because every policy quantity is an inclusive "at
+        //     most".
+        //
+        //   divergence = (10_738_074 - 10_737_311) / 10_738_074
+        //              = 763 / 10_738_074 = 7.105557290813977e-5
+        //   ceiling    = 1e-5 + 2^-14     = 7.103515625e-5
+        //
+        // So the divergence *exceeds* the ceiling while each witness honours
+        // its own band — planning's with room to spare, the postcondition's
+        // to the last ulp — because the rebase rounds to binary32 on the way
+        // and the pre-rounding ratio, 65_576/1_073_741_824 = 6.10723e-5, is
+        // itself already past `2^-14`. This is the counterexample that
+        // justifies the chosen behaviour: the divergence is *recorded* and the
+        // proof succeeds. Refusing at the ceiling would refuse this document.
+        let mut doc = noisy_factor_document(0.009_999_9);
+        doc.skeleton.bones[0].rest.scale = Vec3::splat(0.010_000_611);
+        let capability = complete_capability();
+        let plan = plan_scale(&noisy_factor_request(&doc, &capability)).unwrap();
+        assert_eq!(plan.observed_factor(), 0.009_999_900_124_967_098);
+
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+        assert_eq!(proof.observed_factor, 0.010_000_610_724_091_53);
+        assert_eq!(proof.unit_scale_residual, 2f64.powi(-14));
+        assert_eq!(proof.observed_factor_divergence, 763.0 / 10_738_074.0);
+
+        let ceiling = plan.tolerance_policy().observed_factor_divergence_ceiling();
+        assert!(
+            proof.observed_factor_divergence > ceiling,
+            "divergence {} did not exceed ceiling {ceiling}",
+            proof.observed_factor_divergence
+        );
     }
 
     #[test]
@@ -5926,15 +5997,12 @@ mod tests {
         assert_eq!(proof.observed_factor, NEAR_UNIT_OBSERVED_FACTOR);
         assert_eq!(proof.unit_scale_residual, 0.0);
 
-        // And the two witnesses of §D.6 *agree exactly* on this document, so
-        // the recorded divergence is zero: contradictory parent chains are
-        // not by themselves a divergence witness. The projection root is
-        // node 1 with local rest `0.01_f32` and no parent, and the skeleton
-        // path to bone 1 is `0.01_f32` at bone 0 composed with bone 1's unit
-        // rest — the same number by two routes. What the contradiction moves
-        // is *which node* the scaled root is, not what is measured there.
-        // Detecting it needs the chain-agreement check #309 asks for; a bound
-        // on the divergence would not see this document at all.
+        // And the two witnesses of §D.6 *agree exactly* here, so the recorded
+        // divergence is zero. The projection root is node 1 with local rest
+        // `0.01_f32` and no parent, and the skeleton path to bone 1 is
+        // `0.01_f32` at bone 0 composed with bone 1's unit rest — the same
+        // number by two routes. What the contradiction moves is *which node*
+        // the scaled root is, not what is measured there.
         //
         // Documentary rather than adversarial: the substantive claim is that
         // the two witnesses land on the same number by two different routes,
@@ -5945,6 +6013,38 @@ mod tests {
         assert_eq!(proof.planned_observed_factor, proof.observed_factor);
         assert_eq!(proof.planned_observed_factor, NEAR_UNIT_OBSERVED_FACTOR);
         assert_eq!(proof.observed_factor_divergence, 0.0);
+
+        // That zero belongs to the *(document, scaled root)* pair above, not
+        // to the document: the very same fixture, planned at its other node,
+        // separates the two witnesses. Planning reads the projection chain and
+        // observes bone 0's `fl32(0.01 * (1 + 2^-18))`; proof reads the
+        // skeleton, where bone 0 is the root at `0.01_f32` and its own scaled
+        // root, and observes `0.01_f32`.
+        //
+        //   planned 10_737_459 * 2^-30   (`CONTRADICTORY_CHILD_OBSERVED_FACTOR`)
+        //   proved  10_737_418 * 2^-30   (`NEAR_UNIT_OBSERVED_FACTOR`)
+        //   divergence = 41 / 10_737_459 = 3.8184080609760655e-6
+        //
+        // The conclusion the zero was cited for still holds, and now for a
+        // stated reason rather than by accident: `3.8e-6` is two orders below
+        // the `7.1e-5` ceiling, so a bound on the divergence would not detect
+        // this chain contradiction at either root. Detecting it needs the
+        // chain-agreement check #309 asks for.
+        let at_child_candidate = build_scale_candidate(&doc, &at_child).unwrap();
+        let at_child_proof = prove_scale(&doc, &at_child_candidate, &at_child).unwrap();
+        assert_eq!(
+            at_child_proof.planned_observed_factor,
+            CONTRADICTORY_CHILD_OBSERVED_FACTOR
+        );
+        assert_eq!(at_child_proof.observed_factor, NEAR_UNIT_OBSERVED_FACTOR);
+        assert_eq!(
+            at_child_proof.observed_factor_divergence,
+            41.0 / 10_737_459.0
+        );
+        assert!(
+            at_child_proof.observed_factor_divergence
+                < plan.tolerance_policy().observed_factor_divergence_ceiling() / 10.0
+        );
     }
 
     /// `noisy_factor_document`'s rig with a per-axis root rest scale.
@@ -8386,6 +8486,263 @@ mod tests {
         };
         assert_eq!(kind, ProofResidualKind::Trajectory);
         assert_eq!(detail, "no_affected_sample_time");
+    }
+
+    /// A two-key `CUBICSPLINE` *rotation* track on bone 2, with zero
+    /// tangents so the interpolation is well conditioned and the pose it
+    /// produces is not what is under test.
+    ///
+    /// What matters is only that it is a cubic segment carrying no
+    /// translation payload: it is what produces an interior time, and it is
+    /// not what the comparison at that time reads.
+    fn cubic_rotation_track() -> Track {
+        let zero = Quat::from_xyzw(0.0, 0.0, 0.0, 0.0);
+        Track {
+            bone: 2,
+            property: Property::Rotation,
+            interpolation: Interpolation::CubicSpline,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Quats(vec![
+                zero,                       // in-tangent @0
+                Quat::IDENTITY,             // value @0
+                zero,                       // out-tangent @0
+                zero,                       // in-tangent @1
+                Quat::from_rotation_z(0.5), // value @1
+                zero,                       // out-tangent @1
+            ]),
+        }
+    }
+
+    /// The same linear translation track `multi_joint_document` carries on
+    /// bone 1, so the fixtures below differ from that document only where
+    /// they mean to.
+    fn linear_translation_track() -> Track {
+        Track {
+            bone: 1,
+            property: Property::Translation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Vec3s(vec![
+                Vec3::new(0.0, 100.0, 0.0),
+                Vec3::new(0.0, 200.0, 0.0),
+            ]),
+        }
+    }
+
+    #[test]
+    fn the_cubic_obligations_two_halves_must_meet_inside_one_clip_and_neither_need_be_the_other() {
+        // The cubic obligation is the only one whose evidence is a
+        // *conjunction*: an interior time has to exist, and something the
+        // comparison reads has to exist at it. Interior times are harvested
+        // per clip (`clip_sample_times`) and compared against that clip's
+        // tracks (`check_track_value_residual`), so the two halves must meet
+        // inside one clip — and neither half has to be the other's track.
+        //
+        // `multi_joint_document` cannot show either fact: its cubic track *is*
+        // a translation track, in the same clip as another translation track,
+        // so "per clip", "document-wide", "cubic segment alone" and "the cubic
+        // must be the translation track" all report `true` on it alike.
+        let capability = complete_capability();
+
+        // Split across two clips: clip 0 has the payload and no cubic
+        // segment, clip 1 has the cubic segment and no payload. Neither clip
+        // has both, so there is no cubic-interior evidence — while the
+        // document as a whole carries one of each, which is exactly what a
+        // document-wide conjunction would (wrongly) accept, and what dropping
+        // the translation half of the conjunction would accept too.
+        let mut split = multi_joint_document();
+        split.clips[0].tracks = vec![linear_translation_track()];
+        split.clips.push(Clip {
+            name: "cubic_rotation".into(),
+            duration_s: 1.0,
+            tracks: vec![cubic_rotation_track()],
+        });
+        let split_plan = multi_joint_plan(&split, &capability);
+        let obligations = split_plan.proof_obligations();
+        assert!(obligations.prove_keys);
+        assert!(!obligations.prove_cubic_interiors);
+        assert!(obligations.prove_trajectories);
+        // And it is an otherwise ordinary document, so the negative above is
+        // the conjunction and not a document proof would have refused anyway.
+        // Under a document-wide conjunction this same call returns `Ok` with
+        // `cubic_interior_residual` published as `0.0` from zero comparisons —
+        // issue #302's falsehood exactly.
+        let split_candidate = build_scale_candidate(&split, &split_plan).unwrap();
+        let proof = prove_scale(&split, &split_candidate, &split_plan).unwrap();
+        assert_eq!(proof.cubic_interior_residual, 0.0);
+
+        // The same two tracks in one clip: now the obligation has both halves,
+        // and the cubic track supplying the interior time is a *rotation*
+        // track while the translation read at that time is a different track
+        // on a different bone. Requiring the cubic segment to be the
+        // translation track itself would refuse this legal document.
+        let mut shared = multi_joint_document();
+        shared.clips[0].tracks = vec![linear_translation_track(), cubic_rotation_track()];
+        let shared_plan = multi_joint_plan(&shared, &capability);
+        let obligations = shared_plan.proof_obligations();
+        assert!(obligations.prove_keys);
+        assert!(obligations.prove_cubic_interiors);
+        assert!(obligations.prove_trajectories);
+        let shared_candidate = build_scale_candidate(&shared, &shared_plan).unwrap();
+        // The declared obligation is honoured: `0.5` is the rotation track's
+        // interior, and the translation track is read there.
+        prove_scale(&shared, &shared_candidate, &shared_plan).unwrap();
+    }
+
+    #[test]
+    fn a_single_key_cubic_track_is_not_a_cubic_segment() {
+        // `times.len() >= 2` is what makes the track a *segment*:
+        // `clip_sample_times` takes interiors from `times.windows(2)`, so one
+        // key yields none. A one-key cubic alongside a translation track has
+        // every other mark of cubic evidence — cubic interpolation, an
+        // affected bone, a translation payload in the same clip — and still
+        // produces nothing for the obligation to read.
+        let mut doc = multi_joint_document();
+        doc.clips[0].tracks = vec![
+            linear_translation_track(),
+            Track {
+                bone: 2,
+                property: Property::Translation,
+                interpolation: Interpolation::CubicSpline,
+                times: vec![0.0],
+                values: TrackValues::Vec3s(vec![
+                    Vec3::ZERO,                 // in-tangent @0
+                    Vec3::new(0.0, 100.0, 0.0), // value @0
+                    Vec3::ZERO,                 // out-tangent @0
+                ]),
+            },
+        ];
+        let capability = complete_capability();
+        let plan = multi_joint_plan(&doc, &capability);
+        let obligations = plan.proof_obligations();
+        assert!(obligations.prove_keys);
+        assert!(!obligations.prove_cubic_interiors);
+        assert!(obligations.prove_trajectories);
+
+        // Declaring it on this document would publish a `0.0` cubic residual
+        // from an interior-time loop with nothing to iterate.
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+        assert_eq!(proof.cubic_interior_residual, 0.0);
+    }
+
+    #[test]
+    fn a_track_on_an_unaffected_bone_is_evidence_for_nothing() {
+        // Every other fixture here animates a bone that is *in* the closure,
+        // so the `affected` filter in `sampled_evidence` never decides
+        // anything. `contradictory_parent_chain_document` planned at source
+        // node 0 is the exception available: that node is a leaf in the
+        // projection hierarchy the closure is walked in, so the closure is one
+        // bone of the document's two and the other is free to animate.
+        let mut doc = contradictory_parent_chain_document();
+        doc.clips.push(Clip {
+            name: "unaffected".into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 1,
+                property: Property::Translation,
+                interpolation: Interpolation::CubicSpline,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Vec3s(vec![
+                    Vec3::ZERO,
+                    Vec3::new(0.0, 1.0, 0.0),
+                    Vec3::ZERO,
+                    Vec3::ZERO,
+                    Vec3::new(0.0, 2.0, 0.0),
+                    Vec3::ZERO,
+                ]),
+            }],
+        });
+        let capability = complete_capability();
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 0.01,
+            },
+            document: &doc,
+            capability: &capability,
+        })
+        .unwrap();
+        assert_eq!(plan.affected_nodes(), &[0]);
+        assert_eq!(doc.skeleton.bones.len(), 2);
+        // A translation track, cubic, with two keys — every property the
+        // three flags read — on the one bone the closure does not contain.
+        let obligations = plan.proof_obligations();
+        assert!(!obligations.prove_keys);
+        assert!(!obligations.prove_cubic_interiors);
+        assert!(!obligations.prove_trajectories);
+
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        prove_scale(&doc, &candidate, &plan).unwrap();
+    }
+
+    #[test]
+    fn the_proof_side_key_gate_reads_the_key_evidence_and_not_a_neighbouring_field() {
+        // The three proof-side gates differ only in which `SampledEvidence`
+        // field each reads, and `a_declared_key_obligation_with_no_affected
+        // _translation_track_is_missing_not_vacuous` removes every clip, which
+        // takes all three fields false together — so the key gate reading
+        // `sample_times` instead of `key_translations` would behave
+        // identically there.
+        //
+        // A rotation-only clip separates them: `sample_times` is true and
+        // `key_translations` is false. The plan is built from a document whose
+        // only track is a *linear* translation, so it declares `prove_keys`
+        // without `prove_cubic_interiors` and the key gate is the first one
+        // reached.
+        let mut linear_only = multi_joint_document();
+        linear_only.clips[0].tracks = vec![linear_translation_track()];
+        let capability = complete_capability();
+        let plan = multi_joint_plan(&linear_only, &capability);
+        let obligations = plan.proof_obligations();
+        assert!(obligations.prove_keys);
+        assert!(!obligations.prove_cubic_interiors);
+        assert!(obligations.prove_trajectories);
+
+        // The proof source keeps a clip — so it still has sample times — and
+        // carries no translation payload for the key obligation to read.
+        let rotation_only = rotation_only_clip_document();
+        let candidate = build_scale_candidate(&rotation_only, &plan).unwrap();
+        let error = prove_scale(&rotation_only, &candidate, &plan).unwrap_err();
+        let ScaleError::MissingProofEvidence { kind, detail } = error else {
+            panic!("expected missing key evidence, got {error:?}");
+        };
+        assert_eq!(kind, ProofResidualKind::KeyTranslation);
+        assert_eq!(detail, "no_affected_translation_track");
+    }
+
+    #[test]
+    fn an_unskinned_rest_bind_document_declares_neither_skin_nor_bounds() {
+        // Both flags are `has_skinned_evidence` on the rest/bind planner too,
+        // and nothing here was covering that: every rest/bind skin or bounds
+        // test uses a document that *does* carry a skinned instance, and the
+        // `has_skinned_evidence` negatives all run on the whole-document
+        // planner (`an_unskinned_document_does_not_declare_a_bounds
+        // _obligation_it_cannot_check`).
+        //
+        // A rest/bind rebase does not need a mesh instance: the operation is
+        // resolved from `source_skeleton.skins`, so a document that declares a
+        // skin but instantiates no mesh through it is legal and must prove.
+        // Declaring either flag unconditionally here turns it into a refusal.
+        let mut doc = multi_joint_document();
+        doc.assets.instances.clear();
+        let capability = complete_capability();
+        let plan = multi_joint_plan(&doc, &capability);
+        let obligations = plan.proof_obligations();
+        assert!(!obligations.prove_skin);
+        assert!(!obligations.prove_bounds);
+        // The clip-driven obligations are unaffected, so this is the skinned
+        // evidence gate and not a planner that stopped declaring anything.
+        assert!(obligations.prove_keys);
+        assert!(obligations.prove_trajectories);
+
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+        // The document is sampled, so a declared skin or bounds obligation
+        // here would have been reached rather than skipped for want of a
+        // sample time: what the two flags turn on is the instance walk alone.
+        assert!(proof.sample_time_count > 0);
     }
 
     #[test]
