@@ -85,7 +85,7 @@ pub use capability::{
 };
 pub use scale::{
     GltfScaleArtifact, GltfScaleArtifactProof, GltfScaleRewriteError, capability_facts,
-    prove_rewritten_artifact, rewrite_linear_units,
+    prove_rewritten_artifact, prove_rewritten_rest_bind, rewrite_linear_units, rewrite_rest_bind,
 };
 
 use animsmith_core::model::{

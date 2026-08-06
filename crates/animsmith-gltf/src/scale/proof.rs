@@ -47,25 +47,30 @@ use std::path::Path;
 const GLB_JSON_CHUNK: u32 = 0x4e4f_534a;
 const GLB_BIN_CHUNK: u32 = 0x004e_4942;
 
-/// Observed artifact-level evidence from [`prove_rewritten_artifact`].
+/// Observed artifact-level evidence from [`prove_rewritten_artifact`] or
+/// [`super::prove_rewritten_rest_bind`].
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct GltfScaleArtifactProof {
     /// The in-memory candidate proof, run on the reloaded artifact.
     pub core: ScaleProof,
-    /// Maximum `abs(after - before * q)` across every converted raw element,
-    /// in JSON and in buffer payloads.
+    /// Maximum `abs(after - before * m)` across every rewritten raw element,
+    /// in JSON and in buffer payloads, where `m` is the multiplier that
+    /// element's domain analytically requires: the declared `q` for a
+    /// whole-document conversion, and `s_parent`, `s_parent / s_i` or `s_i`
+    /// per DESIGN.md Appendix D §D.2 for a rest/bind reparameterization.
     pub length_factor_residual: f64,
-    /// Maximum `abs(after - before)` across every dimensionless element that
-    /// lives *inside* a converted range — a `MAT4` linear part, a `matrix`
-    /// node's 3x3 and homogeneous component, and the unconverted entries of a
-    /// converted accessor's `min`/`max`. Everything outside a converted range
-    /// is proved byte-identical instead.
+    /// Maximum `abs(after - before)` across every element that lives *inside*
+    /// a rewritten range and must nevertheless come through unchanged — a
+    /// whole-document `MAT4` linear part, a `matrix` node's homogeneous row,
+    /// an unaffected joint's inverse-bind slot, and the untouched entries of
+    /// a rewritten accessor's `min`/`max`. Everything outside a rewritten
+    /// range is proved byte-identical instead.
     pub dimensionless_residual: f64,
-    /// Number of maximal buffer byte ranges outside the converted accessor
+    /// Number of maximal buffer byte ranges outside the rewritten accessor
     /// ranges that were verified byte-identical to the source.
     pub preserved_byte_ranges: usize,
-    /// Number of unique accessors converted.
+    /// Number of unique accessors rewritten.
     pub rewritten_accessor_count: usize,
 }
 
@@ -216,8 +221,12 @@ pub fn prove_rewritten_artifact(
         ));
     }
 
-    proof.preserved_byte_ranges =
-        check_preserved_bytes(source.resolved_buffers(), &artifact_buffers, &spans)?;
+    let converted_spans: Vec<AccessorSpan> = spans.iter().map(|(span, _)| *span).collect();
+    proof.preserved_byte_ranges = check_preserved_bytes(
+        source.resolved_buffers(),
+        &artifact_buffers,
+        &converted_spans,
+    )?;
 
     let repeat = super::rewrite_linear_units(source, factor)?;
     if repeat.bytes() != artifact.bytes() {
@@ -233,7 +242,7 @@ pub fn prove_rewritten_artifact(
 // --- Claims ---------------------------------------------------------------
 
 /// GLB header/chunk framing and declared buffer lengths.
-fn check_container_integrity(
+pub(super) fn check_container_integrity(
     artifact: &GltfScaleArtifact,
     artifact_root: &Map<String, Value>,
     artifact_buffers: &[Vec<u8>],
@@ -307,7 +316,7 @@ fn check_container_integrity(
 
 /// Every top-level array keeps its length, so every index-valued field in the
 /// document still names the same element.
-fn check_array_identities(
+pub(super) fn check_array_identities(
     source_root: &Map<String, Value>,
     artifact_root: &Map<String, Value>,
 ) -> Result<(), GltfScaleRewriteError> {
@@ -545,10 +554,10 @@ fn check_accessor_bounds(
 
 /// Buffer bytes outside the converted ranges are identical, counted as
 /// maximal preserved ranges.
-fn check_preserved_bytes(
+pub(super) fn check_preserved_bytes(
     source_buffers: &[Vec<u8>],
     artifact_buffers: &[Vec<u8>],
-    spans: &[(AccessorSpan, AccessorRule)],
+    spans: &[AccessorSpan],
 ) -> Result<usize, GltfScaleRewriteError> {
     if source_buffers.len() != artifact_buffers.len() {
         return Err(failed(
@@ -568,8 +577,8 @@ fn check_preserved_bytes(
         }
         let mut converted: Vec<(usize, usize)> = spans
             .iter()
-            .filter(|(span, _)| span.buffer == buffer_index)
-            .map(|(span, _)| (span.start, span.end))
+            .filter(|span| span.buffer == buffer_index)
+            .map(|span| (span.start, span.end))
             .collect();
         converted.sort_unstable();
         let mut cursor = 0usize;
@@ -599,7 +608,7 @@ fn check_preserved_bytes(
 
 /// Collect every JSON location where the artifact differs from the source,
 /// skipping the pointers the conversion is allowed to change.
-fn collect_json_differences(
+pub(super) fn collect_json_differences(
     before: &Value,
     after: &Value,
     pointer: &str,
@@ -618,6 +627,18 @@ fn collect_json_differences(
                     (Some(before), Some(after)) => {
                         collect_json_differences(before, after, &child, allowed, out);
                     }
+                    // A member only one side declares is a difference unless
+                    // the caller's own scan already accounted for it. The
+                    // rest/bind reparameterization materializes exactly one
+                    // such member — the closure root's `scale`, whose glTF
+                    // default `[1, 1, 1]` is not fixed under `* 1/s` — and its
+                    // caller records that pointer only after checking the
+                    // materialized value against that default. Skipping the
+                    // `allowed` test here would make an added member
+                    // unreportable *and* unchecked; the whole-document
+                    // conversion adds no member at all, so nothing there
+                    // changes either way.
+                    _ if allowed.contains(&child) => {}
                     _ => out.push(child),
                 }
             }
@@ -723,7 +744,7 @@ fn scale_bearing_accessors(root: &Map<String, Value>) -> BTreeMap<usize, Accesso
 
 // --- Residual bookkeeping ---------------------------------------------------
 
-fn track_length(
+pub(super) fn track_length(
     before: f64,
     after: f64,
     factor: f64,
@@ -744,7 +765,7 @@ fn track_length(
     Ok(())
 }
 
-fn track_dimensionless(
+pub(super) fn track_dimensionless(
     before: f64,
     after: f64,
     tolerance: &ScaleTolerancePolicy,
@@ -763,7 +784,7 @@ fn track_dimensionless(
     Ok(())
 }
 
-fn failed(claim: &'static str, observed: f64, tolerance: f64) -> GltfScaleRewriteError {
+pub(super) fn failed(claim: &'static str, observed: f64, tolerance: f64) -> GltfScaleRewriteError {
     GltfScaleRewriteError::ArtifactProofFailed {
         claim,
         observed,
@@ -771,13 +792,13 @@ fn failed(claim: &'static str, observed: f64, tolerance: f64) -> GltfScaleRewrit
     }
 }
 
-fn object(value: &Value) -> Result<&Map<String, Value>, GltfScaleRewriteError> {
+pub(super) fn object(value: &Value) -> Result<&Map<String, Value>, GltfScaleRewriteError> {
     value
         .as_object()
         .ok_or_else(|| LoadError::Malformed("top-level glTF JSON is not an object".into()).into())
 }
 
-fn numeric(value: &Value, location: &str) -> Result<f64, GltfScaleRewriteError> {
+pub(super) fn numeric(value: &Value, location: &str) -> Result<f64, GltfScaleRewriteError> {
     value
         .as_f64()
         .ok_or_else(|| LoadError::Malformed(format!("{location} is not a number")).into())
@@ -1141,10 +1162,7 @@ mod tests {
             end,
             components: 1,
         };
-        let spans = [
-            (span(0, 16), AccessorRule::AllComponents),
-            (span(4, 8), AccessorRule::AllComponents),
-        ];
+        let spans = [span(0, 16), span(4, 8)];
         let preserved = check_preserved_bytes(&[before], &[after], &spans)
             .expect("only 16..20 lies outside the converted ranges");
         assert_eq!(preserved, 1);

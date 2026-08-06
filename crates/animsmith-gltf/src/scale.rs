@@ -76,6 +76,8 @@
 mod bytes;
 mod container;
 mod proof;
+mod rest_bind;
+mod rest_bind_proof;
 mod rules;
 
 use crate::capability::{
@@ -93,6 +95,8 @@ use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub use proof::{GltfScaleArtifactProof, prove_rewritten_artifact};
+pub use rest_bind::rewrite_rest_bind;
+pub use rest_bind_proof::prove_rewritten_rest_bind;
 
 // --- Capability projection --------------------------------------------------
 
@@ -364,6 +368,7 @@ pub struct GltfScaleArtifact {
     rewritten_json_pointers: Vec<String>,
     reencoded_buffers: Vec<usize>,
     declared_factor: f64,
+    operation: ScaleOperation,
 }
 
 impl GltfScaleArtifact {
@@ -401,9 +406,21 @@ impl GltfScaleArtifact {
         &self.reencoded_buffers
     }
 
-    /// The factor the caller declared.
+    /// The factor the caller declared: the conversion factor `q` for a
+    /// whole-document conversion, the expected common factor `s` for a
+    /// rest/bind reparameterization.
     pub fn declared_factor(&self) -> f64 {
         self.declared_factor
+    }
+
+    /// The operation that produced this artifact, echoed with the selectors
+    /// the caller declared.
+    ///
+    /// Reported so a proof can refuse to check a rest/bind artifact against a
+    /// whole-document plan, or the reverse: the two operations write
+    /// different domains, and a factor alone does not distinguish them.
+    pub fn operation(&self) -> ScaleOperation {
+        self.operation
     }
 }
 
@@ -501,6 +518,81 @@ pub enum GltfScaleRewriteError {
         location: String,
         /// The `f64` product that could not be narrowed.
         value: f64,
+    },
+    /// Two logical uses of one accessor demand different rest/bind factors,
+    /// so no single rewrite of that accessor can satisfy both.
+    ///
+    /// This is a fail-closed domain #280 does not produce. Its aliasing guard
+    /// is a two-value classification — scale-bearing versus dimensionless —
+    /// and fires only on the cross; the scale-bearing/scale-bearing cross is
+    /// *accepted*, correctly, because a whole-document conversion multiplies
+    /// every such use by the same `q`. Under a rest/bind reparameterization
+    /// the multiplier differs per node and per skin slot, so the same sharing
+    /// makes "rebase affected translation animation values" and "preserve
+    /// declared unaffected payloads" simultaneously unsatisfiable. The
+    /// manifest is clean and the file is valid glTF; it is the *plan* that
+    /// makes the sharing unsatisfiable.
+    ///
+    /// Splitting the accessor is not the remedy: it would change the
+    /// `accessors` and `bufferViews` array lengths and destroy the array
+    /// identities the artifact proof pins. Both claimants are named so the
+    /// source can be fixed instead.
+    #[error(
+        "accessor {accessor_index} element {element} must scale by {first_factor} for {first_location} and by {second_factor} for {second_location}"
+    )]
+    ConflictingRestBindFactor {
+        /// The contested accessor index.
+        accessor_index: usize,
+        /// First element index at which the two claims disagree.
+        element: usize,
+        /// JSON pointer of the first use to claim this accessor.
+        first_location: String,
+        /// The factor that use demands at `element`.
+        first_factor: f64,
+        /// JSON pointer of the use that disagreed.
+        second_location: String,
+        /// The factor that use demands at `element`.
+        second_factor: f64,
+    },
+    /// The affected closure derived from the raw node hierarchy is not the
+    /// closure [`animsmith_core::scale::plan_scale`] planned.
+    ///
+    /// The plan walks `SourceNodeAsset::parent_source_node_index`; this crate
+    /// walks `/nodes/*/children`. Nothing in `animsmith_core` requires those
+    /// to agree, so a projection that contradicts the source it projects
+    /// plans, builds and proves cleanly there.
+    #[error(
+        "the plan's affected closure {planned:?} is not the closure {derived:?} derived from the raw node hierarchy"
+    )]
+    ClosureMismatch {
+        /// Plan closure, as source-node indices in ascending order.
+        planned: Vec<usize>,
+        /// Raw-hierarchy closure, as source-node indices in ascending order.
+        derived: Vec<usize>,
+    },
+    /// A node's parent in the normalized skeleton is not its parent in the
+    /// raw node hierarchy, so the two disagree about which nodes inherit the
+    /// factor being removed.
+    #[error(
+        "source node {source_node_index} has a different parent in the skeleton than in the raw hierarchy"
+    )]
+    ParentChainDisagreement {
+        /// The source node whose two parent links disagree.
+        source_node_index: usize,
+    },
+    /// Two source nodes claim the same normalized [`animsmith_core::BoneId`],
+    /// so the plan's bone-keyed closure cannot be resolved back to a unique
+    /// source node to rewrite.
+    #[error("two source nodes both normalized to bone {bone}")]
+    AmbiguousSourceNodeProjection {
+        /// The contested bone.
+        bone: animsmith_core::BoneId,
+    },
+    /// The raw node hierarchy cannot support the requested closure.
+    #[error("source node hierarchy is unusable: {reason}")]
+    UnusableSourceHierarchy {
+        /// Stable machine-readable reason.
+        reason: &'static str,
     },
     /// An artifact-level proof claim failed.
     #[error("artifact proof claim {claim:?} observed {observed}, tolerance {tolerance}")]
@@ -633,6 +725,7 @@ pub fn rewrite_linear_units(
         rewritten_json_pointers,
         reencoded_buffers,
         declared_factor: factor,
+        operation: ScaleOperation::WholeDocumentLinearUnits { factor },
     })
 }
 
@@ -700,6 +793,18 @@ fn reject_image_payload_overlap(
     manifest: &GltfCapabilityManifest,
     spans: &[(AccessorSpan, AccessorRule)],
 ) -> Result<(), GltfScaleRewriteError> {
+    reject_image_payload_overlap_spans(root, manifest, spans.iter().map(|(span, _)| *span))
+}
+
+/// [`reject_image_payload_overlap`] over a bare span sequence, so the
+/// rest/bind rewrite — whose spans carry per-slot claims rather than
+/// [`AccessorRule`]s — shares one implementation with the whole-document
+/// conversion instead of growing a second one.
+fn reject_image_payload_overlap_spans(
+    root: &Map<String, Value>,
+    manifest: &GltfCapabilityManifest,
+    spans: impl Iterator<Item = AccessorSpan> + Clone,
+) -> Result<(), GltfScaleRewriteError> {
     let Some(images) = root.get("images").and_then(Value::as_array) else {
         return Ok(());
     };
@@ -719,7 +824,7 @@ fn reject_image_payload_overlap(
         if start >= end {
             continue;
         }
-        for &(span, _) in spans {
+        for span in spans.clone() {
             if span.buffer == view.buffer_index && start < span.end && span.start < end {
                 return Err(GltfScaleRewriteError::ImagePayloadOverlap {
                     location: format!("/images/{image_index}/bufferView"),
@@ -779,6 +884,36 @@ fn rewrite_accessor_bounds(
     factor: f64,
     observed: &ComponentExtrema,
 ) -> Result<Vec<String>, GltfScaleRewriteError> {
+    rewrite_accessor_bounds_with(
+        json,
+        accessor_index,
+        &|component| rule.scales_component(component),
+        Some(factor),
+        observed,
+    )
+}
+
+/// [`rewrite_accessor_bounds`] for a rewrite whose per-element factors need
+/// not agree.
+///
+/// `factor` is the single multiplier every element of this accessor shares,
+/// when there is one. `None` means the accessor's elements were rebased by
+/// *different* factors — one `inverseBindMatrices` accessor whose joints
+/// straddle the affected closure — and an authored bound then has no single
+/// conversion at all. In that case the emitted bound is the observed extremum
+/// of the rewritten payload: still deterministic, still sufficient, and the
+/// only choice that cannot claim a bound the data does not satisfy. It can
+/// tighten a loose authored bound, which is a fact about a document that
+/// declares `min`/`max` on a partially-rebased matrix accessor, not a general
+/// behaviour — for a single shared factor the authored bound is preserved
+/// exactly as before.
+fn rewrite_accessor_bounds_with(
+    json: &mut Value,
+    accessor_index: usize,
+    scales_component: &dyn Fn(usize) -> bool,
+    factor: Option<f64>,
+    observed: &ComponentExtrema,
+) -> Result<Vec<String>, GltfScaleRewriteError> {
     let mut rewritten = Vec::new();
     for (member, is_min) in [("min", true), ("max", false)] {
         let pointer = format!("/accessors/{accessor_index}/{member}");
@@ -794,14 +929,18 @@ fn rewrite_accessor_bounds(
             .into());
         }
         for (component, entry) in bounds.iter_mut().enumerate() {
-            if !rule.scales_component(component) {
+            if !scales_component(component) {
                 continue;
             }
             let location = format!("{pointer}/{component}");
             let before = entry
                 .as_f64()
                 .ok_or_else(|| LoadError::Malformed(format!("{location} is not a number")))?;
-            let converted = bytes::narrow(before * factor, &location)?;
+            let converted = match factor {
+                Some(factor) => bytes::narrow(before * factor, &location)?,
+                None if is_min => observed.min[component],
+                None => observed.max[component],
+            };
             let reconciled = if is_min {
                 converted.min(observed.min[component])
             } else {

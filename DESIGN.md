@@ -923,9 +923,34 @@ not merely joint origins, is analytically preserved.
 
 Both bone convenience inverse binds and every per-instance skin-slot array must
 be updated; the single bone-level value is never authority for a multi-skin
-document. The output deliberately changes the affected nodes' composed scale
-to one while preserving their world translations and orientations, animation
-trajectories, skinned vertices, and bounds.
+document. A raw format has one bind store per skin and no per-node bind, so the
+frontend rewrites each affected skin's stored matrices with per-slot factors and
+proves through the reloaded document that every per-instance array and bone
+convenience value is correspondingly correct. The output deliberately changes
+the affected nodes' composed scale to one while preserving their world
+translations and orientations, animation trajectories, skinned vertices, and
+bounds.
+
+**Disagreeing multipliers on one shared payload reject.** Unlike the
+whole-document conversion, whose every converted use takes the same `q`, this
+operation's multiplier depends on which node or skin slot reaches a payload.
+Two logical uses of one accessor can therefore demand different multipliers,
+and no single rewrite satisfies both: a translation output reached from the
+closure root and from a child, or from an affected and an unaffected node; an
+accessor used as both mesh `POSITION` and a translation output; or one
+inverse-bind store shared by two skins whose joints straddle the closure. The
+raw capability preflight does not reject these — its aliasing classification is
+scale-bearing versus dimensionless, and every pair above is scale-bearing on
+both sides — and the source is valid; it is the *plan* that makes the sharing
+unsatisfiable, because "rebase affected translation animation values" and
+"preserve declared unaffected payloads" cannot both hold for one payload.
+Splitting the payload is not the remedy, because it changes array lengths and
+destroys the identities the proof pins. The frontend therefore builds a
+payload-to-multiplier map covering every scale-bearing payload, factor-one ones
+included, and refuses on disagreement with a typed error naming both claimants
+and both multipliers. Uses that agree impose no restriction however many reach
+one payload, and a declared factor of one makes every multiplier one, so the
+refusal cannot fire on a no-op.
 
 ### D.3 Worked synthetic cases
 
@@ -989,6 +1014,7 @@ inspect the raw input or a loader-supplied complete inventory before mutation.
 | Other vertex/source data | Several attributes, non-triangle modes, and extension payloads are not writer-preserved | Reject on the normalized-model route | Reject on the normalized-model route |
 | Out-of-contract node transforms | A `matrix` beside a TRS member, or a `matrix` whose last row is not `(0, 0, 0, 1)`, parses but is not glTF 2.0 | Reject: which transform the author meant is unknowable, and `U M U^-1` leaves a projective row unconverted | Reject for the same reason |
 | Aliased buffer payloads | An `image` reads a `bufferView` directly and never becomes an accessor | Reject when its bytes overlap a scale-bearing accessor | Reject when its bytes overlap a rewritten accessor |
+| Shared scale-bearing payloads | One accessor reached by several logical uses; the preflight classifies use kinds, not identities | Convert once per unique accessor: every use takes the same `q` | Reject when two uses demand different multipliers (§D.2); convert once when they agree |
 
 The current glTF writer rebuilds nodes as TRS, emits only modeled triangle
 attributes, creates skin/holder structures, and does not preserve arbitrary
@@ -1171,13 +1197,27 @@ conversion the observed factor is the declared one, because §D.1 gives that
 operation's factor no measurable source counterpart at all.
 
 `animsmith-gltf` owns the glTF/GLB frontend of that contract:
-`preflight_scale_source` (issue #280) captures the raw inventory, and
+`preflight_scale_source` (issue #280) captures the raw inventory,
 `capability_facts` / `rewrite_linear_units` / `prove_rewritten_artifact`
 (issue #282) implement the whole-document conversion of §D.2 directly on the
-source's own JSON and buffer bytes. Because that route produces a candidate
+source's own JSON and buffer bytes, and `rewrite_rest_bind` /
+`prove_rewritten_rest_bind` (issue #283) implement the rest/bind
+reparameterization the same way. Because that route produces a candidate
 core did not build, `ScaleCandidate::from_document` exists so the reloaded
 artifact can reach `prove_scale`; the type asserts nothing that `prove_scale`
 does not independently re-derive.
+
+`rewrite_rest_bind` takes the same required raw selectors the command line
+does — a source-skin index, a source-root-node index and an expected factor —
+and plans internally, so no caller can hand it a plan built against a
+different document. `GltfScaleArtifact` reports which operation produced it
+beside the declared factor, because the two operations rewrite different
+domains and a factor alone does not distinguish them. Beyond the shared
+plan/proof rejections, the frontend owns three refusals the format-neutral
+layer cannot state: the disagreeing-multiplier refusal of §D.2, and two
+agreement checks over the raw node hierarchy, the loader's source-node
+projection, and the normalized skeleton's parent links — nothing in
+`animsmith-core` requires those three to describe the same tree.
 
 ### D.8 Ownership choice and deferred slices
 

@@ -472,6 +472,31 @@ pub(crate) fn scale_source_past_the_gate(
     capture_scale_source(path, bytes, GatePolicy::Bypass)
 }
 
+/// A captured source with its normalized document replaced.
+///
+/// The sibling of [`scale_source_past_the_gate`], for the one relaxation that
+/// gate bypass cannot supply. A captured source's raw child arrays,
+/// `SourceNodeAsset::parent_source_node_index` and `Skeleton::parent` all come
+/// from a single `topology()` pass over a single parsed document, so no glTF
+/// byte sequence makes them contradict each other — which is what issue #309
+/// records, and what leaves
+/// [`crate::scale::rest_bind`]'s hierarchy cross-check with no reachable
+/// input. Handing the rewriter a source whose document says one thing and
+/// whose bytes say another is the only way to falsify that check's *wiring*
+/// rather than only its classification.
+///
+/// The document is the sole field replaced: the bytes, the raw JSON, the
+/// manifest and the resolved buffers stay the captured ones, so the rewriter
+/// still reads a real source and only the normalized projection disagrees.
+/// It is not a public API and not reachable from an integration test.
+#[cfg(test)]
+pub(crate) fn scale_source_with_document(
+    source: GltfScaleSource,
+    document: Document,
+) -> GltfScaleSource {
+    GltfScaleSource { document, ..source }
+}
+
 fn validate_document(document: &gltf::Document) -> Result<(), gltf::Error> {
     use gltf::json::validation::{Error, Validate};
 
