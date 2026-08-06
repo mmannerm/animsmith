@@ -473,6 +473,66 @@ fn an_affine_node_matrix_with_a_translation_column_still_converts() {
     );
 }
 
+#[test]
+fn a_transform_member_authored_as_json_null_declares_no_transform_and_converts() {
+    // `"matrix": null` is `Some(Value::Null)` to `serde_json` and `None` to
+    // the typed glTF parse. The raw rewrite selection must agree with the
+    // typed parse: selecting the `null` would hand `rewrite_json_array` a
+    // value that is not an array of numbers, which it can only report as a
+    // malformed source — so the node would preflight clean at the gate and
+    // then kill the rewriter.
+    let (mut value, _) = minimal_json(&[0.0; 9]);
+    value["nodes"] = json!([{ "matrix": null, "translation": [1.5, -2.0, 0.25] }]);
+    let source = accepted("null-matrix.gltf", &value);
+    let artifact = rewrite_linear_units(&source, 4.0).expect("a null `matrix` declares no matrix");
+    let (json, _) = artifact_parts(&artifact);
+    assert_eq!(json["nodes"][0]["translation"], json!([6.0, -8.0, 1.0]));
+    assert_eq!(json["nodes"][0]["matrix"], Value::Null);
+    assert!(
+        !artifact
+            .rewritten_json_pointers()
+            .contains(&"/nodes/0/matrix".to_owned()),
+        "a null `matrix` is not a rewritten location"
+    );
+
+    // The mirror: an affine `matrix` beside a null `translation` converts its
+    // translation column, and the null is not selected either.
+    let mut matrix = IDENTITY_MATRIX;
+    matrix[12] = 1.5;
+    matrix[13] = -2.0;
+    matrix[14] = 0.25;
+    let value = node_matrix_document(matrix, Some(("translation", Value::Null)));
+    let source = accepted("null-translation.gltf", &value);
+    let artifact =
+        rewrite_linear_units(&source, 4.0).expect("a null `translation` declares no translation");
+    let (json, _) = artifact_parts(&artifact);
+    assert_eq!(
+        json["nodes"][0]["matrix"],
+        json!([
+            1.0, 0.0, 0.0, 0.0, //
+            0.0, 1.0, 0.0, 0.0, //
+            0.0, 0.0, 1.0, 0.0, //
+            6.0, -8.0, 1.0, 1.0
+        ])
+    );
+    assert_eq!(json["nodes"][0]["translation"], Value::Null);
+    assert!(
+        !artifact
+            .rewritten_json_pointers()
+            .contains(&"/nodes/0/translation".to_owned()),
+        "a null `translation` is not a rewritten location"
+    );
+
+    // A null `matrix` alone round-trips: nothing about the node converts, and
+    // the member survives the rewrite unchanged.
+    let (mut value, _) = minimal_json(&[0.0; 9]);
+    value["nodes"] = json!([{ "matrix": null }]);
+    let source = accepted("only-null-matrix.gltf", &value);
+    let artifact = rewrite_linear_units(&source, 4.0).expect("a null `matrix` alone converts");
+    let (json, _) = artifact_parts(&artifact);
+    assert_eq!(json["nodes"][0], json!({ "matrix": null }));
+}
+
 // --- 3, 4, 5: translation samplers -----------------------------------------
 
 #[test]

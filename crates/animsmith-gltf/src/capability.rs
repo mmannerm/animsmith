@@ -361,6 +361,37 @@ pub fn preflight_scale_source_bytes(
     path: &Path,
     bytes: &[u8],
 ) -> Result<GltfScaleSource, GltfScalePreflightError> {
+    capture_scale_source(path, bytes, GatePolicy::Enforce)
+}
+
+/// Whether a captured source must clear the preflight's violation gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GatePolicy {
+    /// A source with any violation is refused. The only policy in a
+    /// non-test build.
+    Enforce,
+    /// Violations are inventoried and then ignored, so a
+    /// [`GltfScaleSource`] is built for a source the gate would refuse.
+    ///
+    /// Every operation below the gate keeps its own guard for the source
+    /// facts the gate decides — [`crate::scale::rewrite_linear_units`]
+    /// re-checks out-of-contract node transforms and image payloads aliasing
+    /// a converted accessor. Those guards are what must hold if the gate is
+    /// ever relaxed, which is exactly the property no test can observe while
+    /// the gate refuses every source that would reach them: deleting the
+    /// guard's call site leaves the public API's behaviour unchanged. This
+    /// policy is the synthetic relaxation those tests need, and it exists
+    /// only under `cfg(test)` so no release path can select it.
+    #[cfg(test)]
+    Bypass,
+}
+
+/// Capture a scale source, applying `policy` to the preflight's violations.
+fn capture_scale_source(
+    path: &Path,
+    bytes: &[u8],
+    policy: GatePolicy,
+) -> Result<GltfScaleSource, GltfScalePreflightError> {
     validate_glb_framing(bytes)?;
     let (container, json_bytes) = raw_json_bytes(bytes)?;
     let raw_json: Value = serde_json::from_slice(json_bytes)
@@ -399,7 +430,12 @@ pub fn preflight_scale_source_bytes(
     }
     violations.sort();
     violations.dedup();
-    if !violations.is_empty() {
+    let refuse = match policy {
+        GatePolicy::Enforce => !violations.is_empty(),
+        #[cfg(test)]
+        GatePolicy::Bypass => false,
+    };
+    if refuse {
         let count = violations.len();
         return Err(GltfScalePreflightError::Unsupported {
             manifest: Box::new(manifest),
@@ -416,6 +452,24 @@ pub fn preflight_scale_source_bytes(
         raw_json,
         resolved_buffers,
     })
+}
+
+/// Capture a [`GltfScaleSource`] from bytes the preflight gate would refuse.
+///
+/// See [`GatePolicy::Bypass`] for why this exists. It is not a public API and
+/// not reachable from an integration test: the gate is the only way to build a
+/// [`GltfScaleSource`] outside this crate, and that stays true.
+///
+/// # Errors
+///
+/// Returns [`GltfScalePreflightError::Load`] for input that is malformed
+/// rather than merely out of contract. `Unsupported` is never returned.
+#[cfg(test)]
+pub(crate) fn scale_source_past_the_gate(
+    path: &Path,
+    bytes: &[u8],
+) -> Result<GltfScaleSource, GltfScalePreflightError> {
+    capture_scale_source(path, bytes, GatePolicy::Bypass)
 }
 
 fn validate_document(document: &gltf::Document) -> Result<(), gltf::Error> {
@@ -752,6 +806,28 @@ impl NodeTransformFault {
     }
 }
 
+/// The value `object` declares for `member`, treating an explicit JSON `null`
+/// as no declaration at all.
+///
+/// `serde_json` reports `"matrix": null` as `Some(Value::Null)`, while the
+/// typed glTF parse deserializes the same member into `Option<[f32; 16]>` as
+/// `None`. A raw-JSON walker asking only whether the key is *present*
+/// therefore disagrees with the typed parse about what the node declared: it
+/// reads `{"matrix": null, "translation": [...]}` as a node declaring both,
+/// and refuses a document the typed parse reads as a plain TRS node — naming
+/// the innocent `translation` as the offender.
+///
+/// Every walker deciding whether a node authored a transform goes through
+/// here, so the gate, the rewriter's guard and [`crate::scale`]'s rewrite
+/// selection cannot disagree about it. Presence checks whose only outcome is
+/// a fail-closed refusal — `/nodes/*/camera` and `/nodes/*/weights` — are
+/// deliberately left key-based: over-refusing a `null` there costs a source
+/// nothing that could have converted, while over-refusing a transform member
+/// costs a source that converts correctly.
+pub(crate) fn declared<'a>(object: &'a Value, member: &str) -> Option<&'a Value> {
+    object.get(member).filter(|value| !value.is_null())
+}
+
 /// Every glTF 2.0 node-transform contract violation in `nodes`, in node order
 /// and, within a node, TRS members before `matrix` entries.
 ///
@@ -772,14 +848,16 @@ impl NodeTransformFault {
 /// A `matrix` of the wrong arity fails the typed glTF parse — which
 /// deserializes it as `[f32; 16]` — before either caller runs, so shape
 /// errors keep their existing owner rather than gaining a second report here.
+///
+/// A member authored as JSON `null` is not a declaration: see [`declared`].
 pub(crate) fn node_transform_faults(nodes: &[Value]) -> Vec<NodeTransformFault> {
     let mut faults = Vec::new();
     for (node_index, node) in nodes.iter().enumerate() {
-        let Some(matrix) = node.get("matrix") else {
+        let Some(matrix) = declared(node, "matrix") else {
             continue;
         };
         for member in ["translation", "rotation", "scale"] {
-            if node.get(member).is_some() {
+            if declared(node, member).is_some() {
                 faults.push(NodeTransformFault::TrsBesideMatrix { node_index, member });
             }
         }
@@ -819,17 +897,21 @@ fn inventory_nodes(
         violation(violations, fault.kind(), fault.location());
     }
     for (node_index, node) in nodes.iter().enumerate() {
-        let Some(node) = node.as_object() else {
+        if !node.is_object() {
             continue;
-        };
-        if node.contains_key("weights") {
+        }
+        // `weights` and `camera` stay key-based: a `null` there is a domain
+        // the conversion cannot preserve either way, so refusing it is the
+        // safe direction. `matrix` below cannot, because there a false
+        // positive refuses a source that converts correctly.
+        if node.get("weights").is_some() {
             violation(
                 violations,
                 GltfCapabilityViolationKind::MorphWeights,
                 format!("/nodes/{node_index}/weights"),
             );
         }
-        if node.contains_key("camera") {
+        if node.get("camera").is_some() {
             violation(
                 violations,
                 GltfCapabilityViolationKind::Camera,
@@ -857,7 +939,9 @@ fn inventory_nodes(
         }
         manifest.nodes.push(GltfNodeCapability {
             node_index,
-            rest_kind: if node.contains_key("matrix") {
+            // A key-based check would report a `"matrix": null` node as
+            // `Matrix` while the typed parse reads it as `Trs`.
+            rest_kind: if declared(node, "matrix").is_some() {
                 GltfNodeRestKind::Matrix
             } else {
                 GltfNodeRestKind::Trs
@@ -1282,6 +1366,10 @@ fn image_payload_ranges(root: &Map<String, Value>) -> Vec<OwnedRange> {
         let end = start.saturating_add(clamped_usize(
             view.get("byteLength").and_then(Value::as_u64).unwrap_or(0),
         ));
+        // An empty view shares no byte with anything under the half-open
+        // comparison every range here uses, so it is dropped rather than
+        // ranged. [`crate::scale::reject_image_payload_overlap`] skips the
+        // same shape, so the gate and the guard give one answer for it.
         if start < end {
             out.push((
                 buffer,

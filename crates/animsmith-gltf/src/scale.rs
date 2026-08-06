@@ -648,6 +648,10 @@ pub fn rewrite_linear_units(
 /// one for the conflicting TRS member — converting a single node's transform
 /// twice under two different rules — and that `M' = U M U^-1` leaves the last
 /// row alone, which is only the converted transform when that row is affine.
+///
+/// Its call site above is test-protected: `rewrite_linear_units` is driven
+/// past a synthetic gate by `capability::scale_source_past_the_gate`, so
+/// deleting the call fails a test rather than passing silently.
 fn reject_out_of_contract_nodes(root: &Map<String, Value>) -> Result<(), GltfScaleRewriteError> {
     let Some(nodes) = root.get("nodes").and_then(Value::as_array) else {
         return Ok(());
@@ -676,6 +680,21 @@ fn reject_out_of_contract_nodes(root: &Map<String, Value>) -> Result<(), GltfSca
 }
 
 /// Reject an `image` whose buffer view shares bytes with a converted accessor.
+///
+/// An empty image view is skipped, matching
+/// [`crate::capability::image_payload_ranges`], which admits a range only when
+/// `start < end`. Both walkers compare half-open ranges, under which an empty
+/// range shares no byte with anything — including a range it sits inside — so
+/// skipping it is the same answer the overlap test would give, not a
+/// relaxation of it. Without the skip the predicate below degenerates for
+/// `start == end` into "the view's offset lies strictly inside the span", and
+/// the gate would accept a source this guard refuses. (`byteLength: 0` is
+/// schema-invalid — glTF 2.0 gives `bufferView.byteLength` `minimum: 1` — so
+/// this decides an unreachable case rather than a supported one; it is pinned
+/// because the two walkers must not drift, not because the shape is expected.)
+///
+/// Its call site above is test-protected the same way
+/// [`reject_out_of_contract_nodes`] is.
 fn reject_image_payload_overlap(
     root: &Map<String, Value>,
     manifest: &GltfCapabilityManifest,
@@ -697,6 +716,9 @@ fn reject_image_payload_overlap(
         };
         let start = view.byte_offset as usize;
         let end = start.saturating_add(view.byte_length as usize);
+        if start >= end {
+            continue;
+        }
         for &(span, _) in spans {
             if span.buffer == view.buffer_index && start < span.end && span.start < end {
                 return Err(GltfScaleRewriteError::ImagePayloadOverlap {
@@ -988,6 +1010,14 @@ mod tests {
     // and these guards are unreachable from an integration test. They are
     // deliberately kept — they are the layer that must hold if the gate is
     // relaxed — so they are exercised directly here instead.
+    //
+    // Two things need proving, and they are not the same thing. That each
+    // guard *classifies* correctly is proved by calling it directly. That
+    // each guard is still *wired into* `rewrite_linear_units` is proved by
+    // `capability::scale_source_past_the_gate`, the `cfg(test)`-only seam
+    // that builds a `GltfScaleSource` from bytes the gate would refuse —
+    // the synthetic relaxation the guards exist for. Without it, deleting a
+    // guard's call site changes no observable behaviour and no test fails.
 
     /// The identity node `matrix`, column-major.
     const IDENTITY_MATRIX: [f64; 16] = [
@@ -1081,19 +1111,34 @@ mod tests {
 
     /// [`reject_image_payload_overlap`] for one image view and one converted
     /// accessor span, both in buffer 0.
+    ///
+    /// The image sits on `bufferView 2`, behind two decoy views that share no
+    /// byte with any span, so a guard reading a fixed view rather than the
+    /// indexed one answers from a range that is never the image's.
     fn image_overlap(image: (u64, u64), span: (usize, usize)) -> Result<(), GltfScaleRewriteError> {
-        let root = serde_json::json!({ "images": [{ "bufferView": 0, "mimeType": "image/png" }] })
+        let root = serde_json::json!({ "images": [{ "bufferView": 2, "mimeType": "image/png" }] })
             .as_object()
             .expect("literal JSON object")
             .clone();
-        let mut manifest = manifest();
-        manifest.buffer_views = vec![GltfBufferViewCapability {
-            buffer_view_index: 0,
-            buffer_index: 0,
-            byte_offset: image.0,
-            byte_length: image.1,
+        let decoy = |buffer_view_index| GltfBufferViewCapability {
+            buffer_view_index,
+            buffer_index: 1,
+            byte_offset: 0,
+            byte_length: 4096,
             byte_stride: None,
-        }];
+        };
+        let mut manifest = manifest();
+        manifest.buffer_views = vec![
+            decoy(0),
+            decoy(1),
+            GltfBufferViewCapability {
+                buffer_view_index: 2,
+                buffer_index: 0,
+                byte_offset: image.0,
+                byte_length: image.1,
+                byte_stride: None,
+            },
+        ];
         let spans = vec![(
             AccessorSpan {
                 accessor_index: 0,
@@ -1144,6 +1189,149 @@ mod tests {
             image_overlap(image, span)
                 .unwrap_or_else(|error| panic!("{name}: adjacency is not an overlap: {error:?}"));
         }
+    }
+
+    #[test]
+    fn an_empty_image_view_inside_a_converted_span_is_not_an_overlap() {
+        // A `byteLength: 0` view covers no byte, so under the half-open
+        // comparison it aliases nothing — not even a span it sits inside.
+        // `capability::image_payload_ranges` drops the same shape before
+        // comparing, and the two walkers must give one answer: without the
+        // skip this predicate degenerates for `start == end` into "the
+        // offset lies strictly inside the span", and the gate would accept
+        // what this guard refused.
+        for (name, image, span) in [
+            (
+                "empty view inside the span",
+                (12u64, 0u64),
+                (0usize, 36usize),
+            ),
+            ("empty view at the span's start", (0, 0), (0, 36)),
+            ("empty view at the span's end", (36, 0), (0, 36)),
+        ] {
+            image_overlap(image, span)
+                .unwrap_or_else(|error| panic!("{name}: an empty view aliases nothing: {error:?}"));
+        }
+    }
+
+    // --- The guards are still wired into `rewrite_linear_units` -----------
+
+    /// A [`GltfScaleSource`] built from `value` past the preflight gate.
+    fn past_the_gate(name: &str, value: Value) -> crate::GltfScaleSource {
+        let bytes = serde_json::to_vec(&value).expect("literal JSON serializes");
+        crate::capability::scale_source_past_the_gate(std::path::Path::new(name), &bytes)
+            .unwrap_or_else(|error| panic!("{name} must still load past the gate: {error:?}"))
+    }
+
+    /// One 96-byte buffer, a `POSITION` accessor on `bufferView 1`, and one
+    /// image on `bufferView 2` at a caller-chosen range.
+    ///
+    /// The image is deliberately **not** on `bufferView 0`: a guard reading
+    /// the first view instead of the indexed one would answer from the unused
+    /// decoy view at index 0, which shares no byte with `POSITION`.
+    fn image_and_position_document(image_offset: usize, image_length: usize) -> Value {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        serde_json::json!({
+            "asset": { "version": "2.0" },
+            "buffers": [{
+                "uri": format!(
+                    "data:application/octet-stream;base64,{}",
+                    STANDARD.encode([0u8; 96])
+                ),
+                "byteLength": 96
+            }],
+            "bufferViews": [
+                { "buffer": 0, "byteOffset": 48, "byteLength": 12 },
+                { "buffer": 0, "byteOffset": 0, "byteLength": 36 },
+                { "buffer": 0, "byteOffset": image_offset, "byteLength": image_length }
+            ],
+            "accessors": [{
+                "bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3",
+                "min": [0, 0, 0], "max": [0, 0, 0]
+            }],
+            "images": [{ "bufferView": 2, "mimeType": "image/png" }],
+            "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 } }] }]
+        })
+    }
+
+    #[test]
+    fn rewrite_linear_units_still_calls_the_node_transform_guard() {
+        // Deleting `reject_out_of_contract_nodes(root)?` from
+        // `rewrite_linear_units` must fail a test. It cannot fail one through
+        // the public API, because the gate refuses every source that would
+        // reach it; the seam supplies the relaxation the guard exists for.
+        let mut node = serde_json::json!({ "matrix": Vec::from(IDENTITY_MATRIX) });
+        node["translation"] = serde_json::json!([1.5, -2.0, 0.25]);
+        let source = past_the_gate(
+            "matrix-plus-trs.gltf",
+            serde_json::json!({ "asset": { "version": "2.0" }, "nodes": [node] }),
+        );
+        match rewrite_linear_units(&source, 4.0) {
+            Err(GltfScaleRewriteError::ConflictingNodeTransform { location }) => {
+                assert_eq!(location, "/nodes/0/translation");
+            }
+            other => panic!("the wired guard must refuse matrix + translation, got {other:?}"),
+        }
+
+        // The projective arm is reached through the same call site, and
+        // without it `U M U^-1` would silently emit an unconverted last row.
+        let mut matrix = IDENTITY_MATRIX;
+        matrix[15] = 2.0;
+        let source = past_the_gate(
+            "projective-matrix.gltf",
+            serde_json::json!({
+                "asset": { "version": "2.0" },
+                "nodes": [{ "matrix": Vec::from(matrix) }]
+            }),
+        );
+        match rewrite_linear_units(&source, 4.0) {
+            Err(GltfScaleRewriteError::NonAffineNodeMatrix {
+                location,
+                value,
+                expected,
+            }) => {
+                assert_eq!(location, "/nodes/0/matrix/15");
+                assert_eq!(value, 2.0);
+                assert_eq!(expected, 1.0);
+            }
+            other => panic!("the wired guard must refuse a projective matrix, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rewrite_linear_units_still_calls_the_image_payload_guard() {
+        // Deleting `reject_image_payload_overlap(root, manifest, &spans)?`
+        // must fail a test. Without it the conversion runs to completion and
+        // writes converted `f32`s over bytes the image reads.
+        let source = past_the_gate(
+            "image-overlap.gltf",
+            // `POSITION` is [0, 36); the image view is [12, 24).
+            image_and_position_document(12, 12),
+        );
+        match rewrite_linear_units(&source, 2.0) {
+            Err(GltfScaleRewriteError::ImagePayloadOverlap {
+                location,
+                accessor_index,
+            }) => {
+                assert_eq!(location, "/images/0/bufferView");
+                assert_eq!(accessor_index, 0);
+            }
+            other => panic!("the wired guard must refuse an aliased image, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_wired_image_guard_still_accepts_a_disjoint_image_view() {
+        // The seam must not make every source refusable: the same document
+        // with the image moved clear of `POSITION` converts. This is what
+        // keeps the two tests above from passing for the wrong reason.
+        let source = past_the_gate(
+            "image-disjoint.gltf",
+            // `POSITION` is [0, 36); the image view is [36, 48).
+            image_and_position_document(36, 12),
+        );
+        rewrite_linear_units(&source, 2.0)
+            .expect("an image view disjoint from every converted span converts");
     }
 
     #[test]

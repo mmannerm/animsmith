@@ -481,13 +481,60 @@ fn accepts_an_affine_node_matrix_and_a_matrixless_trs_node() {
     assert_eq!(source.manifest().nodes[0].rest_kind, GltfNodeRestKind::Trs);
 }
 
+#[test]
+fn a_transform_member_authored_as_json_null_is_not_a_declaration() {
+    // `serde_json` reports `"matrix": null` as `Some(Value::Null)`, but the
+    // typed glTF parse deserializes the same member into `Option<[f32; 16]>`
+    // as `None`. A gate asking only whether the *key* is present therefore
+    // disagrees with the loader about what the node declared: it reads this
+    // as a node carrying both transforms, refuses a document the loader reads
+    // as plain TRS, and names `/nodes/0/translation` — the one member that is
+    // genuinely declared and genuinely innocent — as the offender.
+    let mut null_matrix = base_json();
+    null_matrix["nodes"] = json!([{ "matrix": null, "translation": [1.5, -2.0, 0.25] }]);
+    let source = preflight_scale_source_bytes(Path::new("null-matrix.gltf"), &bytes(&null_matrix))
+        .expect("a null `matrix` declares no matrix, so this is a plain TRS node");
+    assert_eq!(source.manifest().nodes[0].rest_kind, GltfNodeRestKind::Trs);
+
+    // The mirror. An affine `matrix` beside a null `translation` is a plain
+    // matrix node, and `/nodes/0/matrix` is not the offender either.
+    let mut matrix = IDENTITY_MATRIX;
+    matrix[12] = 1.5;
+    matrix[13] = -2.0;
+    matrix[14] = 0.25;
+    let value = node_matrix_document(matrix, &[("translation", Value::Null)]);
+    let source = preflight_scale_source_bytes(Path::new("null-translation.gltf"), &bytes(&value))
+        .expect("a null `translation` declares no translation");
+    assert_eq!(
+        source.manifest().nodes[0].rest_kind,
+        GltfNodeRestKind::Matrix
+    );
+
+    // A null `matrix` alone is a TRS node at glTF's identity defaults.
+    let mut only_null_matrix = base_json();
+    only_null_matrix["nodes"] = json!([{ "matrix": null }]);
+    let source = preflight_scale_source_bytes(
+        Path::new("only-null-matrix.gltf"),
+        &bytes(&only_null_matrix),
+    )
+    .expect("a null `matrix` alone declares no matrix");
+    assert_eq!(source.manifest().nodes[0].rest_kind, GltfNodeRestKind::Trs);
+}
+
 // --- Image payloads sharing bytes with a scale-bearing accessor (#300) ------
 
 /// A 96-byte buffer holding a `POSITION` accessor, an optional `NORMAL`
 /// accessor, and one image payload, at caller-chosen offsets.
 ///
-/// `POSITION` occupies `position_offset .. position_offset + 36`; the image
-/// view occupies `image_offset .. image_offset + image_length`.
+/// `POSITION` is on `bufferView 1` and occupies
+/// `position_offset .. position_offset + 36`; the image is on `bufferView 2`
+/// and occupies `image_offset .. image_offset + image_length`.
+///
+/// `bufferView 0` is an unreferenced filler at `[84, 96)`, which no accessor
+/// and no image ever reaches. It is there so the image is never the *first*
+/// view: a sweep reading a fixed view rather than the one the image names
+/// would otherwise answer from the image's own range by coincidence, and
+/// every case below would still pass.
 fn image_and_positions(
     image_offset: usize,
     image_length: usize,
@@ -495,8 +542,9 @@ fn image_and_positions(
     normal_offset: Option<usize>,
 ) -> Value {
     let mut buffer_views = vec![
-        json!({ "buffer": 0, "byteOffset": image_offset, "byteLength": image_length }),
+        json!({ "buffer": 0, "byteOffset": 84, "byteLength": 12 }),
         json!({ "buffer": 0, "byteOffset": position_offset, "byteLength": 36 }),
+        json!({ "buffer": 0, "byteOffset": image_offset, "byteLength": image_length }),
     ];
     let mut accessors = vec![json!({
         "bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3",
@@ -506,7 +554,7 @@ fn image_and_positions(
     if let Some(normal_offset) = normal_offset {
         buffer_views.push(json!({ "buffer": 0, "byteOffset": normal_offset, "byteLength": 36 }));
         accessors.push(json!({
-            "bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC3"
+            "bufferView": 3, "componentType": 5126, "count": 3, "type": "VEC3"
         }));
         attributes["NORMAL"] = json!(1);
     }
@@ -515,7 +563,7 @@ fn image_and_positions(
         "buffers": [{ "uri": data_uri(&[0u8; 96]), "byteLength": 96 }],
         "bufferViews": buffer_views,
         "accessors": accessors,
-        "images": [{ "bufferView": 0, "mimeType": "image/png" }],
+        "images": [{ "bufferView": 2, "mimeType": "image/png" }],
         "meshes": [{ "primitives": [{ "attributes": attributes }] }]
     })
 }
@@ -578,6 +626,30 @@ fn accepts_an_image_payload_adjacent_to_or_aliasing_only_dimensionless_bytes() {
         let value = image_and_positions(image_offset, image_length, position_offset, normal_offset);
         preflight_scale_source_bytes(Path::new("image-adjacent.gltf"), &bytes(&value))
             .unwrap_or_else(|error| panic!("{name}: must preflight cleanly, got {error:?}"));
+    }
+}
+
+#[test]
+fn an_empty_image_view_is_ranged_by_neither_the_gate_nor_the_rewriter() {
+    // A `byteLength: 0` view covers no byte, so under the half-open
+    // comparison every range here uses it aliases nothing — not even a
+    // converted accessor it sits inside. The gate drops it before comparing
+    // and `scale::reject_image_payload_overlap` skips the same shape; this
+    // pins that they agree. Without the skip on the rewriter's side its
+    // predicate degenerates for `start == end` into "the offset lies strictly
+    // inside the span", and this source would be accepted here and refused
+    // there. `byteLength: 0` is schema-invalid (glTF 2.0 gives
+    // `bufferView.byteLength` `minimum: 1`), so this pins an unreachable case
+    // — the point is that the two walkers must not drift, not that the shape
+    // is expected.
+    for (name, image_offset) in [
+        ("empty view inside POSITION", 12usize),
+        ("empty view at POSITION's start", 0),
+        ("empty view at POSITION's end", 36),
+    ] {
+        let value = image_and_positions(image_offset, 0, 0, None);
+        preflight_scale_source_bytes(Path::new("empty-image-view.gltf"), &bytes(&value))
+            .unwrap_or_else(|error| panic!("{name}: an empty view aliases nothing: {error:?}"));
     }
 }
 

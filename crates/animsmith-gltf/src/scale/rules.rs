@@ -14,6 +14,7 @@
 //!    length field with no entry is a located rejection rather than a silent
 //!    skip.
 
+use crate::capability::declared;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 
@@ -196,19 +197,24 @@ impl JsonArrayRule {
 ///
 /// Node `rotation` and `scale` are deliberately absent: `M' = U M U^-1`
 /// leaves both untouched for a uniform `U`.
+///
+/// A member authored as JSON `null` declares no transform — see
+/// [`crate::capability::declared`] — and selecting one here would hand
+/// [`super::rewrite_json_array`] a `null` to multiply, which it can only
+/// report as a malformed source.
 pub(crate) fn collect_json_rewrites(root: &Map<String, Value>) -> Vec<(String, JsonArrayRule)> {
     let mut out = Vec::new();
     let Some(nodes) = root.get("nodes").and_then(Value::as_array) else {
         return out;
     };
     for (node_index, node) in nodes.iter().enumerate() {
-        if node.get("translation").is_some() {
+        if declared(node, "translation").is_some() {
             out.push((
                 format!("/nodes/{node_index}/translation"),
                 JsonArrayRule::AllComponents,
             ));
         }
-        if node.get("matrix").is_some() {
+        if declared(node, "matrix").is_some() {
             out.push((
                 format!("/nodes/{node_index}/matrix"),
                 JsonArrayRule::Mat4TranslationColumn,
