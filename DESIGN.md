@@ -1033,7 +1033,15 @@ reparameterization it must prove, within versioned tolerances:
   multi-joint fixtures plus deterministic sampled production evidence;
 - unchanged mesh/material/skin identity and declared unaffected payloads —
   including that each candidate mesh instance draws the same mesh and binds the
-  same skin joints as its source counterpart, which neither operation rewrites;
+  same skin joints as its source counterpart, which neither operation rewrites,
+  and that a skin *outside* the affected closure keeps the inverse binds each
+  side stores. That last comparison is over stored evidence, in the resolution
+  order the model defines (per-instance array, then the bone convenience
+  value). A slot exactly one side records is a rewritten skin and is refused;
+  a slot neither side records is reported as out of the proof's scope, never
+  as proven — a document carrying an unrelated skin with no bind evidence at
+  all is not an operation this record touches, and must not be refused for
+  lacking evidence about it;
 - unit composed scale for every affected node, measured per axis against the
   derived bound of §D.1; and
 - the analytically expected full world affine of a transform-only attached
@@ -1132,6 +1140,18 @@ candidate and never mutates the caller's source on failure.
 and `ScaleError`, candidate construction, and the `ScaleProof` residual
 maxima. Any change to the operation variants, required selectors, or failure
 boundary is a design change rather than an implementation detail.
+
+`ScalePlan` and `ScaleProof` each carry the observed factor beside the
+declared one, as §D.6's evidence contract requires (issue #290). The declared
+factor is what the build applies and what every proof expectation is stated
+in; the observed factor is the rest-world uniform factor measured at the
+scaled root, which the declared-factor band admits without requiring equality.
+Proof re-measures it from the source it is handed rather than reading it off
+the plan, so evidence does not depend on planning having recorded it. It is
+reported, not checked: the input band is planning's obligation and the
+postcondition derived from it in §D.1 is proof's. For a whole-document
+conversion the observed factor is the declared one, because §D.1 gives that
+operation's factor no measurable source counterpart at all.
 
 `animsmith-gltf` owns the glTF/GLB frontend of that contract:
 `preflight_scale_source` (issue #280) captures the raw inventory, and
