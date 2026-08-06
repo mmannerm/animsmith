@@ -170,6 +170,43 @@ fn rest_bind_publishes_a_pair_whose_evidence_names_the_appendix_d3_case_2_rewrit
         result["artifact"]["rewritten_accessors"],
         serde_json::json!([3, 5])
     );
+    // The artifact proof's own count of that same set. The two halves are
+    // derived independently — the list is what the artifact reports it
+    // rewrote, the count is what `prove_rewritten_rest_bind` re-derived from
+    // the source — and a record whose count disagrees with its own list is
+    // false whichever half is wrong, so they are cross-checked against each
+    // other as well as against the hand-known two.
+    assert_eq!(result["proof"]["artifact"]["rewritten_accessor_count"], 2);
+    assert_eq!(
+        result["proof"]["artifact"]["rewritten_accessor_count"]
+            .as_u64()
+            .expect("a count"),
+        result["artifact"]["rewritten_accessors"]
+            .as_array()
+            .expect("a list")
+            .len() as u64,
+        "the count and the list must describe one set"
+    );
+    // The maximal buffer ranges *outside* the rewritten accessors that were
+    // re-read and found byte-identical. The rig's single 412-byte buffer
+    // lays its accessors out from zero, in accessor order:
+    //
+    //   0..36    POSITION         accessor 0   not rewritten by rest/bind
+    //   36..60   JOINTS_0         accessor 1   not rewritten
+    //   60..108  WEIGHTS_0        accessor 2   not rewritten
+    //   108..172 inverse bind     accessor 3   REWRITTEN
+    //   172..180 key times        accessor 4   not rewritten
+    //   180..204 translation out  accessor 5   REWRITTEN
+    //   204..252 unreferenced
+    //   252..284 rotation out     accessor 6   not rewritten
+    //   284..412 unreferenced
+    //
+    // Deleting the two rewritten spans from `0..412` leaves exactly three
+    // maximal gaps — `0..108`, `172..180` and `204..412`. Non-zero for a
+    // structural reason and not by luck: a rewrite that spilled outside its
+    // two accessors would merge or lose gaps, and one that claimed the whole
+    // buffer would report zero.
+    assert_eq!(result["proof"]["artifact"]["preserved_byte_ranges"], 3);
     assert_eq!(result["artifact"]["container"], "glb");
     assert_eq!(result["proof"]["read_back_digest_matches"], true);
 
@@ -287,6 +324,54 @@ fn whole_document_publishes_the_exact_binary32_narrowing_residuals_the_factor_co
     assert_eq!(
         result["proof"]["residuals"]["mesh_position"]["evaluated"],
         true
+    );
+
+    // The other three artifact-proof fields, all hand-derived from the rig.
+    //
+    // A whole-document conversion rewrites exactly the accessors §D.4's
+    // domain table names as scale-bearing: the mesh's `POSITION` (accessor
+    // 0), the skin's `inverseBindMatrices` translation column (accessor 3),
+    // and the output of the one sampler whose channel targets `translation`
+    // (accessor 5). `JOINTS_0`, `WEIGHTS_0`, the key times and the rotation
+    // output carry no length. That is three, and it must equal the length of
+    // the list the artifact reports on the other side of the record.
+    assert_eq!(
+        result["artifact"]["rewritten_accessors"],
+        serde_json::json!([0, 3, 5])
+    );
+    assert_eq!(result["proof"]["artifact"]["rewritten_accessor_count"], 3);
+    assert_eq!(
+        result["proof"]["artifact"]["rewritten_accessor_count"]
+            .as_u64()
+            .expect("a count"),
+        result["artifact"]["rewritten_accessors"]
+            .as_array()
+            .expect("a list")
+            .len() as u64,
+        "the count and the list must describe one set"
+    );
+    // Those three occupy `0..36`, `108..172` and `180..204` of the rig's
+    // single 412-byte buffer, so deleting them leaves three maximal gaps —
+    // `36..108`, `172..180` and `204..412` — each re-read and found
+    // byte-identical. Three rather than the rest/bind run's three by a
+    // different partition: this operation also rewrites `POSITION` at the
+    // buffer's head, which closes the gap `0..108` and opens `36..108`.
+    assert_eq!(result["proof"]["artifact"]["preserved_byte_ranges"], 3);
+    // `dimensionless_residual` is the maximum drift across values that live
+    // *inside* a rewritten range and must nevertheless come through
+    // unchanged. This rig declares none: it has no `matrix` node (whose 3x3
+    // and homogeneous row would be dimensionless under a unit conversion),
+    // and the only rewritten accessor carrying `min`/`max` is `POSITION`,
+    // every component of which scales. So the maximum is taken over an empty
+    // set and the published value is an exact `0.0` — an absence, not a
+    // measurement, and the reason no fixture in this file can make it
+    // non-zero is that each such element is separately required to be
+    // bit-identical rather than merely close.
+    assert_eq!(
+        result["proof"]["artifact"]["dimensionless_residual"]
+            .as_f64()
+            .expect("a finite residual"),
+        0.0
     );
 
     // Whole-document conversion's closure is every node and every skin.
@@ -862,6 +947,44 @@ fn a_symlinked_input_that_aliases_nothing_publishes_normally() {
         std::fs::read(fixture.path("store/rig.glb")).unwrap(),
         rest_bind_scale_rig_glb(),
         "the linked-to asset is read, not written"
+    );
+}
+
+#[test]
+fn a_hardlinked_input_and_output_publish_with_the_source_surviving() {
+    // A hard link is not an alias the distinctness check has to refuse, and
+    // this test pins that reading so a future change does not "fix" it into
+    // one. `rig.glb` and `alias.glb` are two directory entries for one inode;
+    // `fs::canonicalize` resolves each to its own name, so they compare as
+    // different paths — and they genuinely are different destinations,
+    // because publication reaches the output through `fs::rename`, which
+    // replaces `alias.glb`'s entry with the artifact's and leaves `rig.glb`
+    // pointing at the original inode with its original bytes.
+    //
+    // That is exactly the distinctness §D.7 asks for: the run's source
+    // survives the run. The symlink case above is different only because
+    // `fs::read` follows a symlinked final component, so there the input and
+    // the output are one entry rather than two.
+    let fixture = Fixture::new();
+    std::fs::hard_link(fixture.path("rig.glb"), fixture.path("alias.glb"))
+        .expect("hard links the rig");
+    let source = rest_bind_scale_rig_glb();
+    assert_eq!(std::fs::read(fixture.path("alias.glb")).unwrap(), source);
+
+    let run = rest_bind_paths(&fixture, "rig.glb", "alias.glb", "out.json");
+    assert_eq!(run.status.code(), Some(0), "stderr:\n{}", stderr(&run));
+    assert_schema_valid(&read_json(&fixture.path("out.json")));
+    assert_eq!(
+        std::fs::read(fixture.path("rig.glb")).unwrap(),
+        source,
+        "the input entry must survive byte-identical"
+    );
+    // And the publication really did land on the other entry, so the two
+    // have parted company rather than the run having been a no-op.
+    assert_ne!(
+        std::fs::read(fixture.path("alias.glb")).unwrap(),
+        source,
+        "the output entry carries the rewritten artifact"
     );
 }
 

@@ -549,10 +549,18 @@ fn scale_error_kind(error: &ScaleError) -> &'static str {
 /// refusal would tell an operator the asset was examined and found wanting
 /// when it was not.
 ///
-/// [`ScaleError::FactorNotRepresentable`] deliberately stays a refusal: it is
-/// raised for the reciprocal `1 / expected_factor` as well as for the
-/// declared factor, and it is also reachable from the frontend rewrite, where
-/// this classification does not apply.
+/// [`ScaleError::FactorNotRepresentable`] stays a refusal, and this is
+/// settled rather than pending. The classification this function performs is
+/// on the *variant*, and the variant is shared by three provenances that do
+/// not classify alike: the operator's declared factor, the reciprocal
+/// `1 / expected_factor` that the rest/bind plan derives, and the occurrences
+/// the frontend rewrite raises against the asset's own magnitudes. Moving the
+/// variant to `Failure::Operator` would therefore report a derived or
+/// asset-side failure as a bad invocation — the mirror image of the mistake
+/// the paragraph above avoids, and the more damaging direction, because it
+/// suppresses the record entirely. Splitting it correctly needs
+/// provenance-specific variants in [`ScaleError`], not a change to this
+/// match.
 fn plan_failure(error: ScaleError) -> Failure {
     match error {
         ScaleError::InvalidFactor { .. } | ScaleError::InvalidExpectedFactor { .. } => {

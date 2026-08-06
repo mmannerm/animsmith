@@ -96,6 +96,16 @@ pub(crate) fn destination_identity(path: &Path) -> Result<PathBuf, String> {
 /// store/rig.glb` compares as two different files, publication renames over
 /// `store/rig.glb`, and the source asset the run read is gone.
 ///
+/// A **hard link is deliberately not caught by this**, and that is the
+/// intended reading rather than a gap. Canonicalization resolves each of an
+/// inode's directory entries to its own name, so an input and an output that
+/// are two links to one inode compare as distinct — and they are distinct in
+/// the sense that matters: the output is reached by [`fs::rename`], which
+/// replaces only the output's entry, leaving the input's name bound to the
+/// original inode and its bytes intact. Refusing the pair would refuse an
+/// invocation whose source survives it. Pinned by
+/// `a_hardlinked_input_and_output_publish_with_the_source_surviving`.
+///
 /// Like [`destination_identity`], the canonical form exists for the
 /// distinctness comparison only and is never serialized.
 ///
