@@ -987,6 +987,8 @@ inspect the raw input or a loader-supplied complete inventory before mutation.
 | Cameras/lights | Node transform only; typed fields are not modeled | Reject until all length fields have handlers | Reject when attached to the affected domain until preservation is proven |
 | Collision/custom data | No semantic model for extras or extensions | Reject unless a registered handler covers every length | Reject when affected unless exact preservation is proven |
 | Other vertex/source data | Several attributes, non-triangle modes, and extension payloads are not writer-preserved | Reject on the normalized-model route | Reject on the normalized-model route |
+| Out-of-contract node transforms | A `matrix` beside a TRS member, or a `matrix` whose last row is not `(0, 0, 0, 1)`, parses but is not glTF 2.0 | Reject: which transform the author meant is unknowable, and `U M U^-1` leaves a projective row unconverted | Reject for the same reason |
+| Aliased buffer payloads | An `image` reads a `bufferView` directly and never becomes an accessor | Reject when its bytes overlap a scale-bearing accessor | Reject when its bytes overlap a rewritten accessor |
 
 The current glTF writer rebuilds nodes as TRS, emits only modeled triangle
 attributes, creates skin/holder structures, and does not preserve arbitrary
@@ -996,10 +998,25 @@ Consequently neither current load-`Document`-write route qualifies as a
 preservation-proof frontend for these operations without the raw capability
 preflight and explicitly bounded writer work. Unknown extensions or extras,
 unmodeled morphs, cameras, lights, collision metadata, non-triangle primitives,
-unmodeled vertex attributes, secondary influence payloads, and malformed or
-missing inverse binds fail closed. FBX support follows only after its loader can
-prove the declared boundary; evidence must state that FBX curves were baked,
-not preserved as authored curves.
+unmodeled vertex attributes, secondary influence payloads, malformed or
+missing inverse binds, node transforms outside the glTF 2.0 contract, and image
+payloads sharing bytes with a scale-bearing accessor fail closed. FBX support
+follows only after its loader can prove the declared boundary; evidence must
+state that FBX curves were baked, not preserved as authored curves.
+
+Source validity is decided once, at the preflight, and not re-derived per
+operation. The preflight's byte-disjointness inspection therefore ranges more
+than accessors. glTF 2.0 core declares four `bufferView` consumers: an
+accessor's own `bufferView`, a sparse accessor's `indices` and `values` views,
+and an `image`'s `bufferView`. The inspection ranges the accessor views of
+every accessor a mesh, skin or sampler references, and every image view; a
+referenced sparse accessor is refused outright before disjointness matters, and
+extension-defined consumers are unreachable while every extension is itself a
+refusal. It does **not** range an accessor no mesh, skin or sampler references,
+nor that accessor's sparse views — a document may therefore still carry
+unreferenced payload aliasing a converted range. Each operation keeps its own
+guard as defence in depth, since the guard is what must hold if the gate is
+ever relaxed, but it shares the gate's classifier rather than re-deriving one.
 
 ### D.5 Separate-clip compatibility
 

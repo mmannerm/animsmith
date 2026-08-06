@@ -94,6 +94,18 @@ fn assert_has(violations: &[GltfCapabilityViolation], kind: GltfCapabilityViolat
     );
 }
 
+/// Every location reported for `kind`, in the preflight's own sorted order.
+fn locations(
+    violations: &[GltfCapabilityViolation],
+    kind: GltfCapabilityViolationKind,
+) -> Vec<&str> {
+    violations
+        .iter()
+        .filter(|violation| violation.kind == kind)
+        .map(|violation| violation.location.as_str())
+        .collect()
+}
+
 #[test]
 fn accepts_self_contained_gltf_and_equivalent_glb_without_writing() {
     let mut gltf = base_json();
@@ -312,6 +324,333 @@ fn inventories_trs_and_matrix_nodes_from_raw_json() {
     assert_eq!(source.manifest().nodes[0].mesh_index, Some(0));
     assert_eq!(source.manifest().nodes[0].skin_index, None);
     assert_eq!(source.manifest().nodes[1].node_index, 1);
+}
+
+// --- Out-of-contract node transforms (#301) ---------------------------------
+
+/// The identity node `matrix`, column-major.
+const IDENTITY_MATRIX: [f64; 16] = [
+    1.0, 0.0, 0.0, 0.0, //
+    0.0, 1.0, 0.0, 0.0, //
+    0.0, 0.0, 1.0, 0.0, //
+    0.0, 0.0, 0.0, 1.0,
+];
+
+/// `base_json` carrying one node with `matrix` plus the given extra members.
+fn node_matrix_document(matrix: [f64; 16], extras: &[(&str, Value)]) -> Value {
+    let mut node = json!({ "matrix": Vec::from(matrix) });
+    for (member, value) in extras {
+        node[*member] = value.clone();
+    }
+    let mut value = base_json();
+    value["nodes"] = json!([node]);
+    value
+}
+
+#[test]
+fn rejects_a_node_declaring_matrix_alongside_any_trs_member() {
+    // glTF 2.0 §3.5 makes `matrix` and TRS mutually exclusive, but the `gltf`
+    // crate parses the combination and silently honours `matrix`, so nothing
+    // below the gate can tell which the author meant.
+    for (member, member_value) in [
+        ("translation", json!([1.5, -2.0, 0.25])),
+        ("rotation", json!([0.0, 0.0, 0.0, 1.0])),
+        ("scale", json!([2.0, 2.0, 2.0])),
+    ] {
+        let value = node_matrix_document(IDENTITY_MATRIX, &[(member, member_value)]);
+        let (violations, manifest) = unsupported(&value);
+        assert_eq!(
+            locations(
+                &violations,
+                GltfCapabilityViolationKind::ConflictingNodeTransform
+            ),
+            vec![format!("/nodes/0/{member}")],
+            "matrix + {member}"
+        );
+        assert!(
+            locations(
+                &violations,
+                GltfCapabilityViolationKind::NonAffineNodeMatrix
+            )
+            .is_empty(),
+            "matrix + {member}: the identity matrix is affine"
+        );
+        assert_eq!(manifest.nodes[0].rest_kind, GltfNodeRestKind::Matrix);
+    }
+
+    // All three at once report all three members, sorted by location.
+    let value = node_matrix_document(
+        IDENTITY_MATRIX,
+        &[
+            ("translation", json!([1.5, -2.0, 0.25])),
+            ("rotation", json!([0.0, 0.0, 0.0, 1.0])),
+            ("scale", json!([2.0, 2.0, 2.0])),
+        ],
+    );
+    let (violations, _) = unsupported(&value);
+    assert_eq!(
+        locations(
+            &violations,
+            GltfCapabilityViolationKind::ConflictingNodeTransform
+        ),
+        vec![
+            "/nodes/0/rotation",
+            "/nodes/0/scale",
+            "/nodes/0/translation"
+        ]
+    );
+}
+
+#[test]
+fn rejects_a_node_matrix_whose_last_row_is_not_affine() {
+    // The whole-document conversion is `M' = U M U^-1` for a uniform
+    // `U = scale(q)`, which leaves entries 3, 7, 11 and 15 alone. That is the
+    // converted transform only when they are `(0, 0, 0, 1)`: a projective
+    // entry transforms as `1/q`, so the gate refuses rather than answer wrong.
+    for (component, authored) in [(3usize, 0.5), (7, -1.0), (11, 2.0), (15, 2.0)] {
+        let mut matrix = IDENTITY_MATRIX;
+        matrix[component] = authored;
+        let value = node_matrix_document(matrix, &[]);
+        let (violations, _) = unsupported(&value);
+        assert_eq!(
+            locations(
+                &violations,
+                GltfCapabilityViolationKind::NonAffineNodeMatrix
+            ),
+            vec![format!("/nodes/0/matrix/{component}")],
+            "matrix[{component}] = {authored}"
+        );
+        assert!(
+            locations(
+                &violations,
+                GltfCapabilityViolationKind::ConflictingNodeTransform
+            )
+            .is_empty(),
+            "matrix[{component}] = {authored}: no TRS member is declared"
+        );
+    }
+
+    // One matrix breaking all four entries reports all four, and the sorted
+    // order is lexical over the JSON pointers rather than numeric.
+    let mut matrix = IDENTITY_MATRIX;
+    for component in [3usize, 7, 11, 15] {
+        matrix[component] = 0.5;
+    }
+    let value = node_matrix_document(matrix, &[]);
+    let (violations, _) = unsupported(&value);
+    assert_eq!(
+        locations(
+            &violations,
+            GltfCapabilityViolationKind::NonAffineNodeMatrix
+        ),
+        vec![
+            "/nodes/0/matrix/11",
+            "/nodes/0/matrix/15",
+            "/nodes/0/matrix/3",
+            "/nodes/0/matrix/7"
+        ]
+    );
+}
+
+#[test]
+fn accepts_an_affine_node_matrix_and_a_matrixless_trs_node() {
+    // The guard must not reject the ordinary cases. A `matrix` carrying a
+    // translation column is affine — entries 3, 7 and 11 are zero and entry
+    // 15 is one — and a node declaring TRS *without* `matrix` declares no
+    // conflict at all.
+    let mut matrix = IDENTITY_MATRIX;
+    matrix[12] = 1.5;
+    matrix[13] = -2.0;
+    matrix[14] = 0.25;
+    let value = node_matrix_document(matrix, &[]);
+    let source = preflight_scale_source_bytes(Path::new("affine-matrix.gltf"), &bytes(&value))
+        .expect("an affine matrix with a translation column preflights");
+    assert_eq!(
+        source.manifest().nodes[0].rest_kind,
+        GltfNodeRestKind::Matrix
+    );
+
+    let mut trs = base_json();
+    trs["nodes"] = json!([{
+        "translation": [1.5, -2.0, 0.25],
+        "rotation": [0.0, 0.0, 0.0, 1.0],
+        "scale": [2.0, 2.0, 2.0]
+    }]);
+    let source = preflight_scale_source_bytes(Path::new("trs-node.gltf"), &bytes(&trs))
+        .expect("a node declaring all three TRS members and no matrix preflights");
+    assert_eq!(source.manifest().nodes[0].rest_kind, GltfNodeRestKind::Trs);
+}
+
+#[test]
+fn a_transform_member_authored_as_json_null_is_not_a_declaration() {
+    // `serde_json` reports `"matrix": null` as `Some(Value::Null)`, but the
+    // typed glTF parse deserializes the same member into `Option<[f32; 16]>`
+    // as `None`. A gate asking only whether the *key* is present therefore
+    // disagrees with the loader about what the node declared: it reads this
+    // as a node carrying both transforms, refuses a document the loader reads
+    // as plain TRS, and names `/nodes/0/translation` — the one member that is
+    // genuinely declared and genuinely innocent — as the offender.
+    let mut null_matrix = base_json();
+    null_matrix["nodes"] = json!([{ "matrix": null, "translation": [1.5, -2.0, 0.25] }]);
+    let source = preflight_scale_source_bytes(Path::new("null-matrix.gltf"), &bytes(&null_matrix))
+        .expect("a null `matrix` declares no matrix, so this is a plain TRS node");
+    assert_eq!(source.manifest().nodes[0].rest_kind, GltfNodeRestKind::Trs);
+
+    // The mirror. An affine `matrix` beside a null `translation` is a plain
+    // matrix node, and `/nodes/0/matrix` is not the offender either.
+    let mut matrix = IDENTITY_MATRIX;
+    matrix[12] = 1.5;
+    matrix[13] = -2.0;
+    matrix[14] = 0.25;
+    let value = node_matrix_document(matrix, &[("translation", Value::Null)]);
+    let source = preflight_scale_source_bytes(Path::new("null-translation.gltf"), &bytes(&value))
+        .expect("a null `translation` declares no translation");
+    assert_eq!(
+        source.manifest().nodes[0].rest_kind,
+        GltfNodeRestKind::Matrix
+    );
+
+    // A null `matrix` alone is a TRS node at glTF's identity defaults.
+    let mut only_null_matrix = base_json();
+    only_null_matrix["nodes"] = json!([{ "matrix": null }]);
+    let source = preflight_scale_source_bytes(
+        Path::new("only-null-matrix.gltf"),
+        &bytes(&only_null_matrix),
+    )
+    .expect("a null `matrix` alone declares no matrix");
+    assert_eq!(source.manifest().nodes[0].rest_kind, GltfNodeRestKind::Trs);
+}
+
+// --- Image payloads sharing bytes with a scale-bearing accessor (#300) ------
+
+/// A 96-byte buffer holding a `POSITION` accessor, an optional `NORMAL`
+/// accessor, and one image payload, at caller-chosen offsets.
+///
+/// `POSITION` is on `bufferView 1` and occupies
+/// `position_offset .. position_offset + 36`; the image is on `bufferView 2`
+/// and occupies `image_offset .. image_offset + image_length`.
+///
+/// `bufferView 0` is an unreferenced filler at `[84, 96)`, which no accessor
+/// and no image ever reaches. It is there so the image is never the *first*
+/// view: a sweep reading a fixed view rather than the one the image names
+/// would otherwise answer from the image's own range by coincidence, and
+/// every case below would still pass.
+fn image_and_positions(
+    image_offset: usize,
+    image_length: usize,
+    position_offset: usize,
+    normal_offset: Option<usize>,
+) -> Value {
+    let mut buffer_views = vec![
+        json!({ "buffer": 0, "byteOffset": 84, "byteLength": 12 }),
+        json!({ "buffer": 0, "byteOffset": position_offset, "byteLength": 36 }),
+        json!({ "buffer": 0, "byteOffset": image_offset, "byteLength": image_length }),
+    ];
+    let mut accessors = vec![json!({
+        "bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3",
+        "min": [0, 0, 0], "max": [0, 0, 0]
+    })];
+    let mut attributes = json!({ "POSITION": 0 });
+    if let Some(normal_offset) = normal_offset {
+        buffer_views.push(json!({ "buffer": 0, "byteOffset": normal_offset, "byteLength": 36 }));
+        accessors.push(json!({
+            "bufferView": 3, "componentType": 5126, "count": 3, "type": "VEC3"
+        }));
+        attributes["NORMAL"] = json!(1);
+    }
+    json!({
+        "asset": { "version": "2.0" },
+        "buffers": [{ "uri": data_uri(&[0u8; 96]), "byteLength": 96 }],
+        "bufferViews": buffer_views,
+        "accessors": accessors,
+        "images": [{ "bufferView": 2, "mimeType": "image/png" }],
+        "meshes": [{ "primitives": [{ "attributes": attributes }] }]
+    })
+}
+
+#[test]
+fn rejects_an_image_payload_overlapping_a_scale_bearing_accessor() {
+    // An `image` reads its buffer view directly and never becomes an
+    // accessor, so a check built from accessor ranges alone never compares
+    // the two. Both ends of the overlap are located: the image that would be
+    // corrupted, and the accessor whose rewrite would corrupt it.
+    for (name, image_offset, image_length, position_offset) in [
+        (
+            "image runs one byte into the accessor",
+            0usize,
+            13usize,
+            12usize,
+        ),
+        ("accessor runs one byte into the image", 35, 13, 0),
+        ("image fully contains the accessor", 0, 48, 4),
+    ] {
+        let value = image_and_positions(image_offset, image_length, position_offset, None);
+        let (violations, _) = unsupported(&value);
+        assert_eq!(
+            locations(
+                &violations,
+                GltfCapabilityViolationKind::ImagePayloadOverlap
+            ),
+            vec!["/images/0/bufferView"],
+            "{name}"
+        );
+        assert_eq!(
+            locations(
+                &violations,
+                GltfCapabilityViolationKind::OverlappingAccessorRanges
+            ),
+            vec!["/accessors/0"],
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn accepts_an_image_payload_adjacent_to_or_aliasing_only_dimensionless_bytes() {
+    // Both ranges are half-open, so touching endpoints share no byte, and
+    // refusing that would reject the tightly packed layout every exporter
+    // emits. Both orders are pinned because the two sweeps that decide it are
+    // independent. An image aliasing a `NORMAL` accessor is likewise accepted:
+    // the conversion never writes those bytes.
+    for (name, image_offset, image_length, position_offset, normal_offset) in [
+        (
+            "image ends where the accessor begins",
+            0usize,
+            12usize,
+            12usize,
+            None,
+        ),
+        ("image begins where the accessor ends", 36, 12, 0, None),
+        ("image aliases NORMAL only", 48, 12, 0, Some(36usize)),
+    ] {
+        let value = image_and_positions(image_offset, image_length, position_offset, normal_offset);
+        preflight_scale_source_bytes(Path::new("image-adjacent.gltf"), &bytes(&value))
+            .unwrap_or_else(|error| panic!("{name}: must preflight cleanly, got {error:?}"));
+    }
+}
+
+#[test]
+fn an_empty_image_view_is_ranged_by_neither_the_gate_nor_the_rewriter() {
+    // A `byteLength: 0` view covers no byte, so under the half-open
+    // comparison every range here uses it aliases nothing — not even a
+    // converted accessor it sits inside. The gate drops it before comparing
+    // and `scale::reject_image_payload_overlap` skips the same shape; this
+    // pins that they agree. Without the skip on the rewriter's side its
+    // predicate degenerates for `start == end` into "the offset lies strictly
+    // inside the span", and this source would be accepted here and refused
+    // there. `byteLength: 0` is schema-invalid (glTF 2.0 gives
+    // `bufferView.byteLength` `minimum: 1`), so this pins an unreachable case
+    // — the point is that the two walkers must not drift, not that the shape
+    // is expected.
+    for (name, image_offset) in [
+        ("empty view inside POSITION", 12usize),
+        ("empty view at POSITION's start", 0),
+        ("empty view at POSITION's end", 36),
+    ] {
+        let value = image_and_positions(image_offset, 0, 0, None);
+        preflight_scale_source_bytes(Path::new("empty-image-view.gltf"), &bytes(&value))
+            .unwrap_or_else(|error| panic!("{name}: an empty view aliases nothing: {error:?}"));
+    }
 }
 
 #[test]

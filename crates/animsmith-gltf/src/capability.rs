@@ -250,8 +250,18 @@ pub enum GltfCapabilityViolationKind {
     UnsafeAccessorLayout,
     /// One accessor is shared between scale-bearing and dimensionless semantics.
     ConflictingAccessorUse,
-    /// A scale-bearing accessor overlaps another used accessor in a source buffer.
+    /// A scale-bearing accessor overlaps another used byte range in a source
+    /// buffer. The other range is an accessor, or an `image` payload reported
+    /// alongside it as [`GltfCapabilityViolationKind::ImagePayloadOverlap`].
     OverlappingAccessorRanges,
+    /// A node declares `matrix` alongside `translation`, `rotation` or
+    /// `scale`, which glTF 2.0 §3.5 forbids.
+    ConflictingNodeTransform,
+    /// A node `matrix` is not TRS-decomposable: its last row is not
+    /// `(0, 0, 0, 1)`.
+    NonAffineNodeMatrix,
+    /// An `image` reads a buffer view overlapping a scale-bearing accessor.
+    ImagePayloadOverlap,
 }
 
 /// One deterministic, source-indexed preflight rejection.
@@ -351,6 +361,37 @@ pub fn preflight_scale_source_bytes(
     path: &Path,
     bytes: &[u8],
 ) -> Result<GltfScaleSource, GltfScalePreflightError> {
+    capture_scale_source(path, bytes, GatePolicy::Enforce)
+}
+
+/// Whether a captured source must clear the preflight's violation gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GatePolicy {
+    /// A source with any violation is refused. The only policy in a
+    /// non-test build.
+    Enforce,
+    /// Violations are inventoried and then ignored, so a
+    /// [`GltfScaleSource`] is built for a source the gate would refuse.
+    ///
+    /// Every operation below the gate keeps its own guard for the source
+    /// facts the gate decides — [`crate::scale::rewrite_linear_units`]
+    /// re-checks out-of-contract node transforms and image payloads aliasing
+    /// a converted accessor. Those guards are what must hold if the gate is
+    /// ever relaxed, which is exactly the property no test can observe while
+    /// the gate refuses every source that would reach them: deleting the
+    /// guard's call site leaves the public API's behaviour unchanged. This
+    /// policy is the synthetic relaxation those tests need, and it exists
+    /// only under `cfg(test)` so no release path can select it.
+    #[cfg(test)]
+    Bypass,
+}
+
+/// Capture a scale source, applying `policy` to the preflight's violations.
+fn capture_scale_source(
+    path: &Path,
+    bytes: &[u8],
+    policy: GatePolicy,
+) -> Result<GltfScaleSource, GltfScalePreflightError> {
     validate_glb_framing(bytes)?;
     let (container, json_bytes) = raw_json_bytes(bytes)?;
     let raw_json: Value = serde_json::from_slice(json_bytes)
@@ -389,7 +430,12 @@ pub fn preflight_scale_source_bytes(
     }
     violations.sort();
     violations.dedup();
-    if !violations.is_empty() {
+    let refuse = match policy {
+        GatePolicy::Enforce => !violations.is_empty(),
+        #[cfg(test)]
+        GatePolicy::Bypass => false,
+    };
+    if refuse {
         let count = violations.len();
         return Err(GltfScalePreflightError::Unsupported {
             manifest: Box::new(manifest),
@@ -406,6 +452,24 @@ pub fn preflight_scale_source_bytes(
         raw_json,
         resolved_buffers,
     })
+}
+
+/// Capture a [`GltfScaleSource`] from bytes the preflight gate would refuse.
+///
+/// See [`GatePolicy::Bypass`] for why this exists. It is not a public API and
+/// not reachable from an integration test: the gate is the only way to build a
+/// [`GltfScaleSource`] outside this crate, and that stays true.
+///
+/// # Errors
+///
+/// Returns [`GltfScalePreflightError::Load`] for input that is malformed
+/// rather than merely out of contract. `Unsupported` is never returned.
+#[cfg(test)]
+pub(crate) fn scale_source_past_the_gate(
+    path: &Path,
+    bytes: &[u8],
+) -> Result<GltfScaleSource, GltfScalePreflightError> {
+    capture_scale_source(path, bytes, GatePolicy::Bypass)
 }
 
 fn validate_document(document: &gltf::Document) -> Result<(), gltf::Error> {
@@ -672,6 +736,155 @@ fn inventory_buffer_views_and_accessors(
     }
 }
 
+/// The last row of a column-major glTF node `matrix`, and the only values
+/// glTF 2.0 permits there.
+///
+/// Shared with [`crate::scale`], whose rewriter keeps its own guard as
+/// defence in depth: re-deriving the row there would let two definitions of
+/// "affine" drift apart, which is exactly how this workspace's two affine
+/// classifiers once came to disagree.
+pub(crate) const AFFINE_LAST_ROW: [(usize, f64); 4] = [(3, 0.0), (7, 0.0), (11, 0.0), (15, 1.0)];
+
+/// One way a source node's transform is outside the glTF 2.0 contract.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum NodeTransformFault {
+    /// A TRS member is declared alongside `matrix`.
+    TrsBesideMatrix {
+        /// Stable source node index.
+        node_index: usize,
+        /// The offending member's glTF spelling.
+        member: &'static str,
+    },
+    /// A last-row `matrix` entry is a number other than the affine one.
+    ProjectiveMatrixEntry {
+        /// Stable source node index.
+        node_index: usize,
+        /// Component index inside the column-major `matrix`.
+        component: usize,
+        /// The authored value.
+        value: f64,
+        /// The only value glTF 2.0 permits there.
+        expected: f64,
+    },
+    /// A last-row `matrix` entry is not a JSON number at all, so it cannot be
+    /// shown to be the affine value.
+    UnreadableMatrixEntry {
+        /// Stable source node index.
+        node_index: usize,
+        /// Component index inside the column-major `matrix`.
+        component: usize,
+    },
+}
+
+impl NodeTransformFault {
+    /// JSON pointer of the offending member or `matrix` entry.
+    pub(crate) fn location(self) -> String {
+        match self {
+            Self::TrsBesideMatrix { node_index, member } => format!("/nodes/{node_index}/{member}"),
+            Self::ProjectiveMatrixEntry {
+                node_index,
+                component,
+                ..
+            }
+            | Self::UnreadableMatrixEntry {
+                node_index,
+                component,
+            } => format!("/nodes/{node_index}/matrix/{component}"),
+        }
+    }
+
+    /// The preflight violation kind this fault is reported as.
+    fn kind(self) -> GltfCapabilityViolationKind {
+        match self {
+            Self::TrsBesideMatrix { .. } => GltfCapabilityViolationKind::ConflictingNodeTransform,
+            // An entry that is not a readable number is not the affine value
+            // either, so it fails closed as the same kind.
+            Self::ProjectiveMatrixEntry { .. } | Self::UnreadableMatrixEntry { .. } => {
+                GltfCapabilityViolationKind::NonAffineNodeMatrix
+            }
+        }
+    }
+}
+
+/// The value `object` declares for `member`, treating an explicit JSON `null`
+/// as no declaration at all.
+///
+/// `serde_json` reports `"matrix": null` as `Some(Value::Null)`, while the
+/// typed glTF parse deserializes the same member into `Option<[f32; 16]>` as
+/// `None`. A raw-JSON walker asking only whether the key is *present*
+/// therefore disagrees with the typed parse about what the node declared: it
+/// reads `{"matrix": null, "translation": [...]}` as a node declaring both,
+/// and refuses a document the typed parse reads as a plain TRS node — naming
+/// the innocent `translation` as the offender.
+///
+/// Every walker deciding whether a node authored a transform goes through
+/// here, so the gate, the rewriter's guard and [`crate::scale`]'s rewrite
+/// selection cannot disagree about it. Presence checks whose only outcome is
+/// a fail-closed refusal — `/nodes/*/camera` and `/nodes/*/weights` — are
+/// deliberately left key-based: over-refusing a `null` there costs a source
+/// nothing that could have converted, while over-refusing a transform member
+/// costs a source that converts correctly.
+pub(crate) fn declared<'a>(object: &'a Value, member: &str) -> Option<&'a Value> {
+    object.get(member).filter(|value| !value.is_null())
+}
+
+/// Every glTF 2.0 node-transform contract violation in `nodes`, in node order
+/// and, within a node, TRS members before `matrix` entries.
+///
+/// The `gltf` crate parses both shapes, so neither is refused by the typed
+/// parse and neither is a wrong answer on schema-valid input:
+///
+/// * A node declaring `matrix` **and** a TRS member. glTF 2.0 §3.5 makes the
+///   two mutually exclusive, and the typed parse silently honours `matrix`
+///   while ignoring the TRS members, so a consumer cannot know which the
+///   author meant.
+/// * A node `matrix` whose last row is not `(0, 0, 0, 1)`. glTF 2.0 requires
+///   `matrix` to be decomposable to translation, rotation and scale. The
+///   whole-document conversion's `M' = U M U^-1` identity leaves entries 3, 7,
+///   11 and 15 alone, which is only correct when they are the affine row: a
+///   projective row transforms as `1/q`, so treating it as invariant would
+///   emit a matrix that is not the converted transform.
+///
+/// A `matrix` of the wrong arity fails the typed glTF parse — which
+/// deserializes it as `[f32; 16]` — before either caller runs, so shape
+/// errors keep their existing owner rather than gaining a second report here.
+///
+/// A member authored as JSON `null` is not a declaration: see [`declared`].
+pub(crate) fn node_transform_faults(nodes: &[Value]) -> Vec<NodeTransformFault> {
+    let mut faults = Vec::new();
+    for (node_index, node) in nodes.iter().enumerate() {
+        let Some(matrix) = declared(node, "matrix") else {
+            continue;
+        };
+        for member in ["translation", "rotation", "scale"] {
+            if declared(node, member).is_some() {
+                faults.push(NodeTransformFault::TrsBesideMatrix { node_index, member });
+            }
+        }
+        let Some(values) = matrix.as_array().filter(|values| values.len() == 16) else {
+            continue;
+        };
+        for (component, expected) in AFFINE_LAST_ROW {
+            match values[component].as_f64() {
+                None => faults.push(NodeTransformFault::UnreadableMatrixEntry {
+                    node_index,
+                    component,
+                }),
+                Some(value) if value != expected => {
+                    faults.push(NodeTransformFault::ProjectiveMatrixEntry {
+                        node_index,
+                        component,
+                        value,
+                        expected,
+                    });
+                }
+                Some(_) => {}
+            }
+        }
+    }
+    faults
+}
+
 fn inventory_nodes(
     root: &Map<String, Value>,
     manifest: &mut GltfCapabilityManifest,
@@ -680,18 +893,25 @@ fn inventory_nodes(
     let Some(nodes) = root.get("nodes").and_then(Value::as_array) else {
         return;
     };
+    for fault in node_transform_faults(nodes) {
+        violation(violations, fault.kind(), fault.location());
+    }
     for (node_index, node) in nodes.iter().enumerate() {
-        let Some(node) = node.as_object() else {
+        if !node.is_object() {
             continue;
-        };
-        if node.contains_key("weights") {
+        }
+        // `weights` and `camera` stay key-based: a `null` there is a domain
+        // the conversion cannot preserve either way, so refusing it is the
+        // safe direction. `matrix` below cannot, because there a false
+        // positive refuses a source that converts correctly.
+        if node.get("weights").is_some() {
             violation(
                 violations,
                 GltfCapabilityViolationKind::MorphWeights,
                 format!("/nodes/{node_index}/weights"),
             );
         }
-        if node.contains_key("camera") {
+        if node.get("camera").is_some() {
             violation(
                 violations,
                 GltfCapabilityViolationKind::Camera,
@@ -719,7 +939,9 @@ fn inventory_nodes(
         }
         manifest.nodes.push(GltfNodeCapability {
             node_index,
-            rest_kind: if node.contains_key("matrix") {
+            // A key-based check would report a `"matrix": null` node as
+            // `Matrix` while the typed parse reads it as `Trs`.
+            rest_kind: if declared(node, "matrix").is_some() {
                 GltfNodeRestKind::Matrix
             } else {
                 GltfNodeRestKind::Trs
@@ -981,6 +1203,37 @@ enum AccessorUse {
     Dimensionless,
 }
 
+/// Which source object owns one byte range in the disjointness inspection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum RangeOwner {
+    /// A used accessor's element range.
+    Accessor(usize),
+    /// An `image`'s complete buffer view.
+    ImagePayload(usize),
+}
+
+impl RangeOwner {
+    /// JSON pointer identifying the owner.
+    fn location(self) -> String {
+        match self {
+            Self::Accessor(index) => format!("/accessors/{index}"),
+            Self::ImagePayload(index) => format!("/images/{index}/bufferView"),
+        }
+    }
+
+    /// The violation kind reported when this owner's range is not disjoint
+    /// from a scale-bearing accessor's.
+    fn overlap_kind(self) -> GltfCapabilityViolationKind {
+        match self {
+            Self::Accessor(_) => GltfCapabilityViolationKind::OverlappingAccessorRanges,
+            Self::ImagePayload(_) => GltfCapabilityViolationKind::ImagePayloadOverlap,
+        }
+    }
+}
+
+/// One `(buffer, start, end, owner, scale_bearing)` range entry.
+type OwnedRange = (usize, usize, usize, RangeOwner, bool);
+
 fn inspect_accessor_layouts(
     root: &Value,
     buffers: &[Vec<u8>],
@@ -988,7 +1241,7 @@ fn inspect_accessor_layouts(
     violations: &mut Vec<GltfCapabilityViolation>,
 ) {
     let Some(root) = root.as_object() else { return };
-    let mut ranges: Vec<(usize, usize, usize, usize, bool)> = Vec::new();
+    let mut ranges: Vec<OwnedRange> = Vec::new();
     for (&accessor_index, accessor_uses) in uses {
         let scale_bearing = accessor_uses.contains(&AccessorUse::ScaleBearing);
         let range = if scale_bearing {
@@ -999,7 +1252,13 @@ fn inspect_accessor_layouts(
         };
         match range {
             Some((buffer, start, end)) => {
-                ranges.push((buffer, start, end, accessor_index, scale_bearing));
+                ranges.push((
+                    buffer,
+                    start,
+                    end,
+                    RangeOwner::Accessor(accessor_index),
+                    scale_bearing,
+                ));
             }
             None => violation(
                 violations,
@@ -1008,49 +1267,124 @@ fn inspect_accessor_layouts(
             ),
         }
     }
+    ranges.extend(image_payload_ranges(root));
     ranges.sort_unstable();
 
     let mut overlapping = BTreeSet::new();
-    let mut prior_scale: Option<(usize, usize, usize)> = None;
-    for &(buffer, start, end, accessor, scale_bearing) in &ranges {
-        if let Some((left_buffer, left_end, left_accessor)) = prior_scale
+    let mut prior_scale: Option<(usize, usize, RangeOwner)> = None;
+    for &(buffer, start, end, owner, scale_bearing) in &ranges {
+        if let Some((left_buffer, left_end, left_owner)) = prior_scale
             && left_buffer == buffer
             && start < left_end
         {
-            overlapping.insert(left_accessor);
-            overlapping.insert(accessor);
+            overlapping.insert(left_owner);
+            overlapping.insert(owner);
         }
         if scale_bearing
             && prior_scale
                 .is_none_or(|(left_buffer, left_end, _)| left_buffer != buffer || end > left_end)
         {
-            prior_scale = Some((buffer, end, accessor));
+            prior_scale = Some((buffer, end, owner));
         }
     }
-    let mut later_scale: Option<(usize, usize, usize)> = None;
-    for &(buffer, start, end, accessor, scale_bearing) in ranges.iter().rev() {
-        if let Some((right_buffer, right_start, right_accessor)) = later_scale
+    let mut later_scale: Option<(usize, usize, RangeOwner)> = None;
+    for &(buffer, start, end, owner, scale_bearing) in ranges.iter().rev() {
+        if let Some((right_buffer, right_start, right_owner)) = later_scale
             && right_buffer == buffer
             && right_start < end
         {
-            overlapping.insert(accessor);
-            overlapping.insert(right_accessor);
+            overlapping.insert(owner);
+            overlapping.insert(right_owner);
         }
         if scale_bearing
             && later_scale.is_none_or(|(right_buffer, right_start, _)| {
                 right_buffer != buffer || start < right_start
             })
         {
-            later_scale = Some((buffer, start, accessor));
+            later_scale = Some((buffer, start, owner));
         }
     }
-    for accessor_index in overlapping {
-        violation(
-            violations,
-            GltfCapabilityViolationKind::OverlappingAccessorRanges,
-            format!("/accessors/{accessor_index}"),
-        );
+    for owner in overlapping {
+        violation(violations, owner.overlap_kind(), owner.location());
     }
+}
+
+/// The byte range every `image` reads directly from a buffer view.
+///
+/// # Why images, and why only images
+///
+/// An `image` is the one consumer in the supported subset that reads a
+/// `bufferView` without ever becoming an accessor, so its bytes are invisible
+/// to a disjointness proof built from accessor ranges alone. The complete
+/// enumeration of `bufferView` consumers in glTF 2.0 core is:
+///
+/// | Consumer | Treatment |
+/// |---|---|
+/// | `/accessors/*/bufferView`, referenced by a mesh, skin or sampler | Ranged by [`inspect_accessor_layouts`] above. |
+/// | `/accessors/*/sparse/indices/bufferView`, `/accessors/*/sparse/values/bufferView` | Out of range: [`accessor_range`] refuses every `sparse` accessor, so a *used* sparse accessor is already an `UnsafeAccessorLayout` violation and never reaches a rewrite. |
+/// | `/images/*/bufferView` | Ranged here. |
+/// | Extension payloads such as `EXT_meshopt_compression` or `KHR_draco_mesh_compression` | Out of range: this crate registers no extension handler, so every extension declaration *and* every extension payload is already an `ExtensionDeclaration`/`ExtensionPayload` violation. |
+///
+/// An accessor that **no** mesh, skin or animation sampler references is not
+/// in `uses` and is therefore ranged by neither this function nor the
+/// accessor sweep; nor are its `sparse` buffer views. That gap predates this
+/// inspection and is not closed here.
+///
+/// # Bounds
+///
+/// The range is taken from the declared view, without requiring it to fit the
+/// resolved buffer: a view running past the buffer still aliases whatever real
+/// bytes it starts on. Where `usize` is narrower than `u64`, a declared value
+/// past `usize::MAX` clamps, and neither clamp can hide a real overlap.
+/// [`accessor_range`] admits a range only when its end is within the resolved
+/// buffer's length, so every range compared against ends below `usize::MAX`: a
+/// start large enough to clamp is already past all of them, and a clamped end
+/// only widens the image range.
+fn image_payload_ranges(root: &Map<String, Value>) -> Vec<OwnedRange> {
+    let Some(images) = root.get("images").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let buffer_views = root
+        .get("bufferViews")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let mut out = Vec::new();
+    for (image_index, image) in images.iter().enumerate() {
+        let Some(view_index) = as_index(image.get("bufferView")) else {
+            continue;
+        };
+        // An out-of-range index is an `IndexOutOfBounds` validation error,
+        // which `validate_document` raises before this inspection runs.
+        let Some(view) = buffer_views.get(view_index).and_then(Value::as_object) else {
+            continue;
+        };
+        let Some(buffer) = as_index(view.get("buffer")) else {
+            continue;
+        };
+        let start = clamped_usize(view.get("byteOffset").and_then(Value::as_u64).unwrap_or(0));
+        let end = start.saturating_add(clamped_usize(
+            view.get("byteLength").and_then(Value::as_u64).unwrap_or(0),
+        ));
+        // An empty view shares no byte with anything under the half-open
+        // comparison every range here uses, so it is dropped rather than
+        // ranged. [`crate::scale::reject_image_payload_overlap`] skips the
+        // same shape, so the gate and the guard give one answer for it.
+        if start < end {
+            out.push((
+                buffer,
+                start,
+                end,
+                RangeOwner::ImagePayload(image_index),
+                false,
+            ));
+        }
+    }
+    out
+}
+
+fn clamped_usize(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
 }
 
 fn inspect_accessor_uses(
