@@ -443,57 +443,12 @@ fn node_matrix_document(matrix: [f64; 16], extra: Option<(&str, Value)>) -> Valu
     value
 }
 
-#[test]
-fn a_node_declaring_matrix_alongside_a_trs_member_is_refused() {
-    // glTF 2.0 makes `matrix` and TRS mutually exclusive, but the `gltf`
-    // crate parses the combination, so #280's preflight accepts it. The
-    // rewriter would then emit two rewrites for one node's single transform.
-    for (member, member_value) in [
-        ("translation", json!([1.5, -2.0, 0.25])),
-        ("rotation", json!([0.0, 0.0, 0.0, 1.0])),
-        ("scale", json!([2.0, 2.0, 2.0])),
-    ] {
-        let value = node_matrix_document(IDENTITY_MATRIX, Some((member, member_value)));
-        let source = accepted("matrix-plus-trs.gltf", &value);
-        match rewrite_linear_units(&source, 4.0) {
-            Err(GltfScaleRewriteError::ConflictingNodeTransform { location }) => {
-                assert_eq!(location, format!("/nodes/0/{member}"));
-            }
-            other => panic!("matrix + {member} should be refused, got {other:?}"),
-        }
-    }
-}
-
-#[test]
-fn a_node_matrix_that_is_not_trs_decomposable_is_refused() {
-    // The conversion is `M' = U M U^-1` for a uniform `U = scale(q)`, which
-    // leaves entries 3, 7, 11 and 15 alone only when they are the affine
-    // `(0, 0, 0, 1)`. A projective entry transforms as `1/q`, so converting
-    // such a node would emit a matrix that is not the converted transform.
-    for (component, authored, expected) in [
-        (3usize, 0.5f64, 0.0f64),
-        (7, -1.0, 0.0),
-        (11, 2.0, 0.0),
-        (15, 2.0, 1.0),
-    ] {
-        let mut matrix = IDENTITY_MATRIX;
-        matrix[component] = authored;
-        let value = node_matrix_document(matrix, None);
-        let source = accepted("projective-matrix.gltf", &value);
-        match rewrite_linear_units(&source, 4.0) {
-            Err(GltfScaleRewriteError::NonAffineNodeMatrix {
-                location,
-                value,
-                expected: reported,
-            }) => {
-                assert_eq!(location, format!("/nodes/0/matrix/{component}"));
-                assert_eq!(value, authored);
-                assert_eq!(reported, expected);
-            }
-            other => panic!("matrix[{component}] = {authored} should be refused, got {other:?}"),
-        }
-    }
-}
+// A node combining `matrix` with a TRS member, and a node `matrix` whose
+// last row is not `(0, 0, 0, 1)`, are refused by #280's preflight (#301), so
+// no such source can be built here at all. The located preflight rejections
+// live in `capability_preflight.rs`, and the rewriter's own defence-in-depth
+// guard is exercised directly in `scale.rs`'s unit tests. What remains here
+// is the end-to-end must-not-over-reject direction.
 
 #[test]
 fn an_affine_node_matrix_with_a_translation_column_still_converts() {
@@ -1193,30 +1148,13 @@ fn cameras_lights_and_extensions_are_refused_by_the_empty_handler_registry() {
 }
 
 // --- Image payload aliasing -------------------------------------------------
-
-#[test]
-fn an_image_reading_a_converted_range_is_refused_rather_than_corrupted() {
-    // #280 ranges accessors only, so this buffer view is invisible to its
-    // disjointness proof and the source preflights cleanly.
-    let (mut value, buffer) = minimal_json(&[1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
-    value["bufferViews"] = json!([
-        { "buffer": 0, "byteLength": buffer.len() },
-        { "buffer": 0, "byteOffset": 12, "byteLength": 12 }
-    ]);
-    value["images"] = json!([{ "bufferView": 1, "mimeType": "image/png" }]);
-
-    let source = accepted("image-overlap.gltf", &value);
-    match rewrite_linear_units(&source, 2.0) {
-        Err(GltfScaleRewriteError::ImagePayloadOverlap {
-            location,
-            accessor_index,
-        }) => {
-            assert_eq!(location, "/images/0/bufferView");
-            assert_eq!(accessor_index, 0);
-        }
-        other => panic!("expected ImagePayloadOverlap, got {other:?}"),
-    }
-}
+//
+// An image payload sharing bytes with a converted accessor is refused by
+// #280's preflight (#300), so no such source can be built here. The located
+// preflight rejection lives in `capability_preflight.rs` and the rewriter's
+// defence-in-depth guard in `scale.rs`'s unit tests. What remains here is the
+// end-to-end must-not-over-reject direction, which also proves the image
+// bytes really do survive the conversion untouched.
 
 /// A 48-byte buffer holding one image payload and one `POSITION` accessor,
 /// at caller-chosen offsets, so both sides of the half-open overlap test can
@@ -1280,34 +1218,6 @@ fn an_image_view_exactly_adjacent_to_a_converted_accessor_is_converted() {
             vec![2.0, 4.0, 6.0],
             "{name}: the accessor still converts"
         );
-    }
-}
-
-#[test]
-fn an_image_view_overlapping_a_converted_accessor_by_one_byte_is_refused() {
-    // One byte past adjacency, on either side, the image payload really does
-    // share storage with the converted range.
-    for (name, image_offset, image_length, position_offset) in [
-        (
-            "image runs one byte into the accessor",
-            0usize,
-            13usize,
-            12usize,
-        ),
-        ("accessor runs one byte into the image", 35, 13, 0),
-    ] {
-        let value = image_and_positions(image_offset, image_length, position_offset);
-        let source = accepted("image-one-byte.gltf", &value);
-        match rewrite_linear_units(&source, 2.0) {
-            Err(GltfScaleRewriteError::ImagePayloadOverlap {
-                location,
-                accessor_index,
-            }) => {
-                assert_eq!(location, "/images/0/bufferView", "{name}");
-                assert_eq!(accessor_index, 0, "{name}");
-            }
-            other => panic!("{name}: expected ImagePayloadOverlap, got {other:?}"),
-        }
     }
 }
 

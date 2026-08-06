@@ -80,7 +80,7 @@ mod rules;
 
 use crate::capability::{
     GltfCapabilityManifest, GltfCapabilityViolation, GltfCapabilityViolationKind,
-    GltfContainerKind, GltfScaleSource,
+    GltfContainerKind, GltfScaleSource, NodeTransformFault, node_transform_faults,
 };
 use crate::{LoadError, WriteError};
 use animsmith_core::scale::{
@@ -121,9 +121,20 @@ pub use proof::{GltfScaleArtifactProof, prove_rewritten_artifact};
 /// record are static morph weights on `/nodes/*/weights` and
 /// `/meshes/*/weights`; both are only meaningful alongside morph targets,
 /// which the manifest does record, so a schema-valid source carrying them
-/// still reports `morphs_present`. The preflight's own violation list remains
-/// the authority, and [`rewrite_linear_units`] independently re-resolves every
-/// accessor it touches rather than trusting these flags.
+/// still reports `morphs_present`.
+///
+/// Four preflight violation kinds are **not** re-derivable here at all,
+/// because the manifest records neither resolved byte ranges, nor images, nor
+/// what a node authored beyond its rest kind:
+/// `OverlappingAccessorRanges`, `ImagePayloadOverlap`,
+/// `ConflictingNodeTransform` and `NonAffineNodeMatrix`. A manifest evidencing
+/// one of those can still project to supported facts. That is safe rather than
+/// merely tolerated: a [`GltfScaleSource`] exists only where
+/// [`crate::preflight_scale_source_bytes`] found no violation at all, and
+/// [`rewrite_linear_units`] re-checks each of the four itself. The preflight's
+/// own violation list remains the authority, and [`rewrite_linear_units`]
+/// independently re-resolves every accessor it touches rather than trusting
+/// these flags.
 pub fn capability_facts(manifest: &GltfCapabilityManifest) -> ScaleCapabilityFacts {
     let mut facts = ScaleCapabilityFacts::default();
     facts.coverage = ScaleCapabilityCoverage::Complete;
@@ -168,7 +179,15 @@ fn record_violation(facts: &mut ScaleCapabilityFacts, kind: GltfCapabilityViolat
         | Kind::UnreadableInverseBinds => facts.inverse_bind_issues_present = true,
         Kind::UnsafeAccessorLayout
         | Kind::ConflictingAccessorUse
-        | Kind::OverlappingAccessorRanges => facts.unsafe_accessor_layout_present = true,
+        | Kind::OverlappingAccessorRanges
+        | Kind::ImagePayloadOverlap => facts.unsafe_accessor_layout_present = true,
+        // The typed glTF parse honours `matrix` and silently ignores the TRS
+        // members beside it, and decomposes `matrix` to TRS while dropping a
+        // projective last row: in both shapes the source carries transform
+        // members the normalized model does not represent.
+        Kind::ConflictingNodeTransform | Kind::NonAffineNodeMatrix => {
+            facts.unknown_source_members_present = true;
+        }
     }
 }
 
@@ -617,66 +636,43 @@ pub fn rewrite_linear_units(
     })
 }
 
-/// The last row of a column-major glTF node `matrix`, and the only values
-/// glTF 2.0 permits there.
-const AFFINE_LAST_ROW: [(usize, f64); 4] = [(3, 0.0), (7, 0.0), (11, 0.0), (15, 1.0)];
-
 /// Reject a node whose transform is outside the glTF 2.0 contract.
 ///
-/// The `gltf` crate parses both shapes below, so neither reaches #280's
-/// preflight as a violation and neither is a wrong answer on valid input.
-/// They are refused here because silently converting a document the schema
-/// forbids is the one outcome this boundary must not produce:
-///
-/// * A node declaring `matrix` **and** a TRS member. glTF 2.0 §3.5 makes the
-///   two mutually exclusive. [`rules::collect_json_rewrites`] would emit one
-///   rewrite for each, so a single node's transform would be converted twice
-///   under two different rules and the reader's choice of which to honour
-///   would decide the result.
-/// * A node `matrix` whose last row is not `(0, 0, 0, 1)`. glTF 2.0 requires
-///   `matrix` to be decomposable to translation, rotation and scale, and the
-///   `U M U^-1` identity this conversion rests on holds only for such a
-///   matrix. A projective row transforms as `1/q`, not as a dimensionless
-///   quantity, so treating entries 3, 7 and 11 as invariant would silently
-///   emit a matrix that is not the converted transform.
+/// The classification itself lives in
+/// [`crate::capability::node_transform_faults`], which is also what #280's
+/// preflight reports, so the gate and this guard cannot disagree about which
+/// nodes are out of contract. This guard is kept as defence in depth: it is
+/// the layer that must hold if the preflight is ever relaxed, and it names
+/// the consequence for *this* operation, which is that
+/// [`rules::collect_json_rewrites`] would emit one rewrite for `matrix` and
+/// one for the conflicting TRS member — converting a single node's transform
+/// twice under two different rules — and that `M' = U M U^-1` leaves the last
+/// row alone, which is only the converted transform when that row is affine.
 fn reject_out_of_contract_nodes(root: &Map<String, Value>) -> Result<(), GltfScaleRewriteError> {
     let Some(nodes) = root.get("nodes").and_then(Value::as_array) else {
         return Ok(());
     };
-    for (node_index, node) in nodes.iter().enumerate() {
-        let Some(matrix) = node.get("matrix") else {
-            continue;
-        };
-        for member in ["translation", "rotation", "scale"] {
-            if node.get(member).is_some() {
-                return Err(GltfScaleRewriteError::ConflictingNodeTransform {
-                    location: format!("/nodes/{node_index}/{member}"),
-                });
-            }
+    let Some(fault) = node_transform_faults(nodes).into_iter().next() else {
+        return Ok(());
+    };
+    let location = fault.location();
+    Err(match fault {
+        NodeTransformFault::TrsBesideMatrix { .. } => {
+            GltfScaleRewriteError::ConflictingNodeTransform { location }
         }
-        // A `matrix` of the wrong arity is reported by `rewrite_json_array`
-        // as a malformed source, so shape errors keep one owner.
-        let Some(values) = matrix
-            .as_array()
-            .filter(|values| values.len() == JsonArrayRule::Mat4TranslationColumn.expected_len())
-        else {
-            continue;
-        };
-        for (component, expected) in AFFINE_LAST_ROW {
-            let location = format!("/nodes/{node_index}/matrix/{component}");
-            let value = values[component]
-                .as_f64()
-                .ok_or_else(|| LoadError::Malformed(format!("{location} is not a number")))?;
-            if value != expected {
-                return Err(GltfScaleRewriteError::NonAffineNodeMatrix {
-                    location,
-                    value,
-                    expected,
-                });
-            }
+        NodeTransformFault::ProjectiveMatrixEntry {
+            value, expected, ..
+        } => GltfScaleRewriteError::NonAffineNodeMatrix {
+            location,
+            value,
+            expected,
+        },
+        // A `matrix` entry that is not a number fails the typed glTF parse
+        // before a source reaches here, so shape errors keep one owner.
+        NodeTransformFault::UnreadableMatrixEntry { .. } => {
+            LoadError::Malformed(format!("{location} is not a number")).into()
         }
-    }
-    Ok(())
+    })
 }
 
 /// Reject an `image` whose buffer view shares bytes with a converted accessor.
@@ -981,6 +977,172 @@ mod tests {
             let facts = capability_facts(&manifest);
             assert!(flag(&facts), "{name} did not set its capability flag");
             assert!(!facts.is_supported(), "{name} was still reported supported");
+        }
+    }
+
+    // --- Defence in depth -------------------------------------------------
+    //
+    // #280's preflight now refuses both out-of-contract node transforms
+    // (#301) and image payloads aliasing a converted accessor (#300), so no
+    // `GltfScaleSource` carrying either can be built through the public API
+    // and these guards are unreachable from an integration test. They are
+    // deliberately kept — they are the layer that must hold if the gate is
+    // relaxed — so they are exercised directly here instead.
+
+    /// The identity node `matrix`, column-major.
+    const IDENTITY_MATRIX: [f64; 16] = [
+        1.0, 0.0, 0.0, 0.0, //
+        0.0, 1.0, 0.0, 0.0, //
+        0.0, 0.0, 1.0, 0.0, //
+        0.0, 0.0, 0.0, 1.0,
+    ];
+
+    fn nodes_root(nodes: Value) -> Map<String, Value> {
+        serde_json::json!({ "nodes": nodes })
+            .as_object()
+            .expect("literal JSON object")
+            .clone()
+    }
+
+    #[test]
+    fn the_rewriter_guard_still_refuses_a_matrix_beside_a_trs_member() {
+        for (member, member_value) in [
+            ("translation", serde_json::json!([1.5, -2.0, 0.25])),
+            ("rotation", serde_json::json!([0.0, 0.0, 0.0, 1.0])),
+            ("scale", serde_json::json!([2.0, 2.0, 2.0])),
+        ] {
+            let mut node = serde_json::json!({ "matrix": Vec::from(IDENTITY_MATRIX) });
+            node[member] = member_value;
+            match reject_out_of_contract_nodes(&nodes_root(serde_json::json!([node]))) {
+                Err(GltfScaleRewriteError::ConflictingNodeTransform { location }) => {
+                    assert_eq!(location, format!("/nodes/0/{member}"));
+                }
+                other => panic!("matrix + {member} must be refused, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn the_rewriter_guard_still_refuses_a_projective_node_matrix() {
+        for (component, authored, expected) in [
+            (3usize, 0.5f64, 0.0f64),
+            (7, -1.0, 0.0),
+            (11, 2.0, 0.0),
+            (15, 2.0, 1.0),
+        ] {
+            let mut matrix = IDENTITY_MATRIX;
+            matrix[component] = authored;
+            let node = serde_json::json!({ "matrix": Vec::from(matrix) });
+            match reject_out_of_contract_nodes(&nodes_root(serde_json::json!([node]))) {
+                Err(GltfScaleRewriteError::NonAffineNodeMatrix {
+                    location,
+                    value,
+                    expected: reported,
+                }) => {
+                    assert_eq!(location, format!("/nodes/0/matrix/{component}"));
+                    assert_eq!(value, authored);
+                    assert_eq!(reported, expected);
+                }
+                other => panic!("matrix[{component}] = {authored} must be refused, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn the_rewriter_guard_accepts_an_affine_matrix_with_a_translation_column() {
+        let mut matrix = IDENTITY_MATRIX;
+        matrix[12] = 1.5;
+        matrix[13] = -2.0;
+        matrix[14] = 0.25;
+        let node = serde_json::json!({ "matrix": Vec::from(matrix) });
+        reject_out_of_contract_nodes(&nodes_root(serde_json::json!([node])))
+            .expect("an affine matrix with a translation column is in contract");
+        reject_out_of_contract_nodes(&nodes_root(serde_json::json!([{
+            "translation": [1.5, -2.0, 0.25],
+            "rotation": [0.0, 0.0, 0.0, 1.0],
+            "scale": [2.0, 2.0, 2.0]
+        }])))
+        .expect("TRS without matrix declares no conflict");
+    }
+
+    #[test]
+    fn a_non_numeric_matrix_entry_stays_a_malformed_source_rather_than_a_contract_fault() {
+        let mut matrix: Vec<Value> = Vec::from(IDENTITY_MATRIX)
+            .into_iter()
+            .map(Value::from)
+            .collect();
+        matrix[15] = Value::from("1.0");
+        let node = serde_json::json!({ "matrix": matrix });
+        match reject_out_of_contract_nodes(&nodes_root(serde_json::json!([node]))) {
+            Err(GltfScaleRewriteError::Load(_)) => {}
+            other => panic!("a non-numeric matrix entry is malformed, got {other:?}"),
+        }
+    }
+
+    /// [`reject_image_payload_overlap`] for one image view and one converted
+    /// accessor span, both in buffer 0.
+    fn image_overlap(image: (u64, u64), span: (usize, usize)) -> Result<(), GltfScaleRewriteError> {
+        let root = serde_json::json!({ "images": [{ "bufferView": 0, "mimeType": "image/png" }] })
+            .as_object()
+            .expect("literal JSON object")
+            .clone();
+        let mut manifest = manifest();
+        manifest.buffer_views = vec![GltfBufferViewCapability {
+            buffer_view_index: 0,
+            buffer_index: 0,
+            byte_offset: image.0,
+            byte_length: image.1,
+            byte_stride: None,
+        }];
+        let spans = vec![(
+            AccessorSpan {
+                accessor_index: 0,
+                buffer: 0,
+                start: span.0,
+                end: span.1,
+                components: 3,
+            },
+            AccessorRule::AllComponents,
+        )];
+        reject_image_payload_overlap(&root, &manifest, &spans)
+    }
+
+    #[test]
+    fn the_rewriter_guard_still_refuses_an_image_payload_over_a_converted_span() {
+        for (name, image, span) in [
+            (
+                "image runs one byte into the span",
+                (0u64, 13u64),
+                (12usize, 48usize),
+            ),
+            ("span runs one byte into the image", (35, 13), (0, 36)),
+        ] {
+            match image_overlap(image, span) {
+                Err(GltfScaleRewriteError::ImagePayloadOverlap {
+                    location,
+                    accessor_index,
+                }) => {
+                    assert_eq!(location, "/images/0/bufferView", "{name}");
+                    assert_eq!(accessor_index, 0, "{name}");
+                }
+                other => panic!("{name}: expected ImagePayloadOverlap, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn the_rewriter_guard_accepts_an_image_payload_adjacent_to_a_converted_span() {
+        // Both ranges are half-open, so touching endpoints share no byte.
+        for (name, image, span) in [
+            (
+                "image ends where the span begins",
+                (0u64, 12u64),
+                (12usize, 48usize),
+            ),
+            ("image begins where the span ends", (36, 12), (0, 36)),
+        ] {
+            image_overlap(image, span)
+                .unwrap_or_else(|error| panic!("{name}: adjacency is not an overlap: {error:?}"));
         }
     }
 
