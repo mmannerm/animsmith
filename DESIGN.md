@@ -1096,6 +1096,21 @@ exactly the declared factor within tolerance while dimensionless facts remain
 equal. Both operations prove finite output, the skin equation, deterministic
 artifact bytes, and deterministic evidence bytes.
 
+**Every obligation above is gated on the evidence it needs.** A plan declares
+an obligation only when the planned document carries the payload that
+obligation reads — a transform-only attachment in the closure for the
+full-affine claim, an affected translation track for the key-time claim, an
+affected cubic segment with a translation track to read at its interior times,
+any affected track at all for the sampled trajectories, a skinned instance
+touching the closure for the skin equation and the bounds, a non-empty
+affected closure for the rest facts. A declared obligation whose evidence is
+absent from the documents proof is handed is a typed refusal naming that
+obligation, never a zero residual: the residuals *are* the evidence record, so
+a record stating "residual 0.0" for a claim nothing checked is a false record
+rather than a missing one. This matters most for the transform-only obligation,
+which is justified above precisely as the one ensuring a no-op cannot pass —
+a guarantee an empty probe loop reporting zero would not provide.
+
 Proof cost is bounded, not merely expected to be small. Source and candidate
 world matrices are derived once per sample time and shared across the
 trajectory, skin, and bounds obligations, and the skin and bounds obligations
@@ -1118,6 +1133,42 @@ coverage/results, tool identity, and rejection reason. It is written as an
 atomic artifact/evidence publication pair. Failure leaves no new output; an
 existing pair is restored. The original input is retained so rollback is
 selecting the prior artifact, not attempting an inverse float rewrite.
+
+**Two observed factors, and the divergence between them.** "Observed factor"
+names two independent witnesses of the same quantity, measured from
+deliberately different state: planning classifies the raw source projection's
+node-local rests composed through the raw parent chain, and proof reads the
+normalized skeleton's bone rests composed through its own parent chain.
+Nothing reconciles the two chains, and that independence is the reason both
+witnesses exist. The record therefore carries **both**, plus the relative
+divergence `|planned - proved| / max(|planned|, |proved|)` between them
+explicitly, so a consumer neither mistakes one witness for the other nor has
+to derive the relationship from two separate policy fields.
+
+The expected ceiling on that divergence is **the sum of two bands the policy
+already declares**: the common-factor band plus the postcondition unit-scale
+residual (`1e-5 + 2^-14 = 7.103515625e-5` under `appendix-d-v2`). Planning
+binds its witness to the declared factor within the first band or refuses;
+and for a candidate this operation built from the source under proof, that
+candidate's composed root scale is the proof witness divided by the declared
+factor, so the unit-scale postcondition binds the proof witness to the
+declared factor within the second. The two bands are not stated the same way,
+and the sum is a ceiling only up to that difference: planning's is relative to
+the `max` of its two operands, exactly as the divergence is, while the
+postcondition's is an absolute L∞ deviation from `1` on the *candidate's*
+composed scale — so it bounds `|proved − declared|` as a fraction of the
+declared factor rather than as a fraction of `max(planned, proved)`.
+
+The divergence is **reported, not enforced**. The second step above holds for
+a candidate this operation built from the source it is proved against — which
+proof deliberately does not require — and it costs the binary32 rounding of
+the rebase on the way, so the sum is the ceiling the design guarantees rather
+than a bound proved to the last ulp; refusing at it would refuse documents
+whose two witnesses each honour their own band. A divergence beyond it means
+the source's two parent chains disagree with each other, which is a fact about
+the input that belongs to the chain-agreement validation neither witness
+performs, not to a residual this proof owns. Recording both witnesses and
+their divergence introduces no band of its own and no new policy identity.
 
 Migration is opt-in. `assemble.canonicalize_skin` in recipe v1 remains the
 existing unanimated bind-geometry operation with identity source-to-metre
