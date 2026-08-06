@@ -201,8 +201,10 @@ reparameterization. `plan_scale` is pure and fail-closed against a
 `Document` and a format-neutral `ScaleCapabilityFacts` projection;
 `build_scale_candidate` builds a new candidate document without mutating the
 source; `prove_scale` independently re-derives the plan's claims and reports
-residual maxima against the fixed `ScaleTolerancePolicy::APPENDIX_D_V1`
-tolerance identity. This module does not select CLI arguments, publish
+residual maxima against the fixed `ScaleTolerancePolicy::APPENDIX_D_V2`
+tolerance identity, refusing a document whose sampled proof work exceeds that
+policy's budget rather than sampling a subset of it. This module does not
+select CLI arguments, publish
 artifacts/evidence, or write files — see the crate rustdoc for the exact
 selector, error, and proof-obligation contracts.
 `ScaleOperation::RestBindUniformScale`'s selectors are raw, format-neutral

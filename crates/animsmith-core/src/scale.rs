@@ -31,11 +31,11 @@
 //! the caller's source document mutated — the half-built candidate is
 //! simply dropped. [`prove_scale`] independently re-derives the plan's
 //! claims from the source and candidate documents and reports the observed
-//! residual maxima against the fixed [`ScaleTolerancePolicy::APPENDIX_D_V1`]
+//! residual maxima against the fixed [`ScaleTolerancePolicy::APPENDIX_D_V2`]
 //! tolerance identity.
 
 use crate::model::{
-    BoneId, Clip, Document, Interpolation, MeshInstance, Property, Skeleton,
+    BoneId, Clip, Document, Interpolation, MeshInstance, Primitive, Property, Skeleton,
     SourceInverseBindAccessorStatus, SourceNodeAsset, SourceNodeLocalRest, SourceSkeletonCoverage,
     SourceSkinAsset, Track, TrackValues, Transform, mat4_is_finite, world_rest_matrices,
 };
@@ -48,7 +48,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Fixed Appendix D tolerance identity and thresholds. Classification and
 /// proof share this one versioned policy and compute in `f64`, narrowing
 /// only at the writer model boundary. There is exactly one supported
-/// instance, [`ScaleTolerancePolicy::APPENDIX_D_V1`]: a policy change is a
+/// instance, [`ScaleTolerancePolicy::APPENDIX_D_V2`]: a policy change is a
 /// new policy identity, not a runtime knob.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
@@ -60,6 +60,12 @@ pub struct ScaleTolerancePolicy {
     /// Relative tolerance for equal-length affine columns (uniform scale).
     pub equal_axis: f64,
     /// Relative tolerance for one common factor across an affected domain.
+    ///
+    /// This is the normative input band: it is what an operator's declared
+    /// factor is judged against, and
+    /// [`Self::postcondition_unit_scale_residual`] is derived from it so that
+    /// a plan this band accepts is guaranteed to produce a candidate that
+    /// satisfies the unit-scale postcondition.
     pub common_factor: f64,
     /// `abs(det) <= singular_determinant_relative * product(axis_lengths)`
     /// classifies a linear part as singular.
@@ -70,14 +76,106 @@ pub struct ScaleTolerancePolicy {
     pub scalar_relative: f64,
     /// Maximum shortest-path rotation residual, in radians.
     pub rotation_residual_radians: f64,
-    /// Maximum postcondition unit-scale residual.
+    /// Maximum postcondition unit-scale residual, measured **per axis**
+    /// (L-infinity) as `max(|scale_axis - 1|)` — not as an L2 norm over the
+    /// three axes.
+    ///
+    /// The norm is normative, and it is the same dimensionless per-axis
+    /// relative quantity [`Self::common_factor`] and [`Self::equal_axis`]
+    /// measure, so the input band and this postcondition are directly
+    /// commensurable (DESIGN.md Appendix D §D.1). This value is *derived*
+    /// from [`Self::common_factor`] rather than declared independently: see
+    /// [`Self::APPENDIX_D_V2`] for the composition argument and
+    /// [`Self::UNIT_SCALE_BANDS`] for the multiplier.
     pub postcondition_unit_scale_residual: f64,
+    /// Maximum sampled proof work [`prove_scale`] will perform, in
+    /// per-sample-time work units.
+    ///
+    /// Total work is `sample_time_count * per_sample_work_units`, where the
+    /// per-sample cost counts every pass the sampled obligations actually
+    /// make — bones, skin slots, and skinned vertices, each once per document
+    /// side. See the private `per_sample_work_units` for the exact formula
+    /// and for why the slot term cannot be folded into either of the other
+    /// two. A
+    /// document above this budget is refused with
+    /// [`ScaleError::ProofSamplingBudgetExceeded`] *before* any sampling
+    /// runs; proof never silently samples a subset.
+    ///
+    /// This is part of the versioned policy identity, not a per-run flag —
+    /// DESIGN.md Appendix D §D.6/§D.7 forbid per-run tolerance knobs, and a
+    /// budget that changed per run would make two evidence records carrying
+    /// the same policy id describe different amounts of checking.
+    pub proof_sample_work_budget: u64,
 }
 
 impl ScaleTolerancePolicy {
-    /// The only supported tolerance policy: DESIGN.md Appendix D, version 1.
-    pub const APPENDIX_D_V1: Self = Self {
-        id: "appendix-d-v1",
+    /// How many [`Self::common_factor`] bands
+    /// [`Self::postcondition_unit_scale_residual`] is derived from.
+    ///
+    /// Three of them are analytic and one is float headroom; see
+    /// [`Self::APPENDIX_D_V2`].
+    pub const UNIT_SCALE_BANDS: f64 = 4.0;
+
+    /// The only supported tolerance policy: DESIGN.md Appendix D, version 2.
+    ///
+    /// Version 2 supersedes the `appendix-d-v1` identity. Two things changed
+    /// meaning, which is why it is a new identity rather than a retune:
+    ///
+    /// 1. [`Self::postcondition_unit_scale_residual`] is now a per-axis
+    ///    (L-infinity) residual derived from [`Self::common_factor`], instead
+    ///    of an independently declared `1e-5` L2 norm over three axes. Under
+    ///    v1 the two were incommensurable, and a source whose observed factor
+    ///    had relative error `e` produced a postcondition residual of
+    ///    `sqrt(3) * e`, so every `e` in `(5.77e-6, 1e-5]` was accepted by
+    ///    [`plan_scale`] and then rejected by [`prove_scale`].
+    /// 2. [`Self::proof_sample_work_budget`] is new, and bounds the sampled
+    ///    proof work a document may demand.
+    ///
+    /// `postcondition_unit_scale_residual` is
+    /// `UNIT_SCALE_BANDS * common_factor = 4e-5`, rounded up to the next
+    /// power of two, `2^-14 = 6.103515625e-5`. That value is also
+    /// `512 * 2^-23`, and so lies on the binary32 mantissa grid the
+    /// composed-scale measurement lives on. Landing on that grid is what
+    /// makes §D.1's inclusive "at most" reachable for this obligation: the
+    /// measured residual near unit magnitude is always an integer multiple of
+    /// `2^-23`, so a bound off that grid could never be met with equality and
+    /// would be an exclusive bound wearing an inclusive name.
+    ///
+    /// The four bands are:
+    ///
+    /// - one for [`ScaleError::FactorMismatch`], which binds the domain's
+    ///   observed common factor `s_0` to the caller's declared factor
+    ///   `s_declared`;
+    /// - one for [`ScaleError::MixedFactor`], which binds each affected node's
+    ///   observed factor `s_i` to `s_0`;
+    /// - one for [`AffineDomainViolation::NonUniformScale`], which binds each
+    ///   individual *axis* of node `i` to `s_i`; and
+    /// - one reserved as headroom for the `f32` world-matrix composition and
+    ///   decomposition that produces the measured composed scale.
+    ///
+    /// The first three compose, and the third is easy to miss: `s_i` is the
+    /// *average* of node `i`'s three world axis lengths (the affine
+    /// classifier returns that average), while the postcondition measures an
+    /// individual
+    /// axis, and the equal-axis check permits each axis its own further band
+    /// away from that average. The candidate's composed scale on axis `k` of
+    /// node `i` is `axis_ik / s_declared`, and each of the three bands is
+    /// stated relative to `max` of its operands, so each contributes at most
+    /// `c / (1 - c)` when re-expressed relative to the smaller one. The
+    /// analytic worst case is therefore `(1 - c)^-3 - 1 = 3.00006e-5` for
+    /// `c = 1e-5`.
+    ///
+    /// Three bands rounded up (`2^-15 = 3.0517578125e-5`) would leave that
+    /// worst case only `4` binary32 ulps of room — `2^-15 - 3.00006e-5 =
+    /// 5.17e-7 = 4.34 * 2^-23` — which is not headroom for a float
+    /// measurement, it is a rounding artefact. A fourth band makes the
+    /// reserved-headroom claim above true rather than aspirational, and it
+    /// does not blunt the obligation: every build defect this check exists to
+    /// catch — a dropped rebase, a factor applied twice, a stale no-op — is
+    /// `>= 1e-3`, so `6.1e-5` still leaves better than a `16x` detection
+    /// margin.
+    pub const APPENDIX_D_V2: Self = Self {
+        id: "appendix-d-v2",
         relative_orthogonality: 1e-5,
         equal_axis: 1e-5,
         common_factor: 1e-5,
@@ -85,7 +183,36 @@ impl ScaleTolerancePolicy {
         scalar_absolute: 1e-6,
         scalar_relative: 1e-5,
         rotation_residual_radians: 1e-5,
-        postcondition_unit_scale_residual: 1e-5,
+        // 2^-14, exactly: four `common_factor` bands rounded up onto the
+        // binary32 mantissa grid (`= 512 * 2^-23`).
+        postcondition_unit_scale_residual: 6.103_515_625e-5,
+        // A 200-bone rig carrying a 100k-vertex skinned mesh costs
+        // `2 * 200 + 3 * 200 + 2 * 100_000 = 201_000` units per sample time
+        // and so admits `1_990` of them; the same rig with a 10k-vertex mesh
+        // costs `21_000` and admits `19_047`. A 100k-key track on the
+        // 100k-vertex rig demands `2.01e10` and is refused.
+        //
+        // The value is a wall-time ceiling expressed in work units, measured
+        // rather than assumed. Release timings of `prove_scale` at this
+        // ceiling: `1.54s` for the vertex-dominated shape (10k vertices, one
+        // slot, 19_992 sample times) and `4.77s` for the slot-dominated one
+        // (200 instances of 100 repeated slots, one vertex, 6_620 sample
+        // times) — the same total work costs about three times as much when
+        // it is slot work, so the pathological shape is what sets the
+        // ceiling. Timings are linear in the charge across four doublings
+        // (`1e8` to `8e8`) in both shapes, which is the evidence that the
+        // charge is a proxy for real work rather than a number.
+        //
+        // `1e8` — the first value this policy carried — was too tight, and
+        // the arithmetic that justified it was the pre-both-sides charge. A
+        // 200-bone rig with a 100k-vertex skinned mesh and a 30-second clip
+        // at 30 fps costs `900 * 201_000 = 180_900_000`: a plausible
+        // production asset, refused with no way for a caller to opt into the
+        // work. At `4e8` it is admitted with `2.2x` headroom (about 66
+        // seconds of animation on that rig) and proves in well under a
+        // second, while the worst-shaped document the budget still admits
+        // stays inside five.
+        proof_sample_work_budget: 400_000_000,
     };
 
     /// `abs_error <= scalar_absolute + scalar_relative * max(abs(before), abs(after))`.
@@ -112,11 +239,29 @@ impl ScaleTolerancePolicy {
     /// accept a plan whose candidate then fails its own unit-scale
     /// postcondition.
     ///
-    /// The only floor is [`Self::scalar_absolute`], which exists solely so
-    /// the degenerate `a == b == 0` case compares equal rather than dividing
-    /// a zero tolerance into a zero difference.
+    /// There is **no** floor on the comparison base — not `1.0`, and not
+    /// [`Self::scalar_absolute`] either. A `scalar_absolute` floor is a
+    /// smaller version of the same defect and breaks the same closure
+    /// property, just further down: below `1e-6` the band stops tracking the
+    /// operands and freezes at the constant `1e-5 * 1e-6 = 1e-11`, which is a
+    /// *relative* band of `1e-11 / abs(s)` and therefore widens without limit
+    /// as `s` shrinks. It crosses
+    /// [`Self::postcondition_unit_scale_residual`] at
+    /// `s = 1e-11 / 2^-14 = 1e-11 * 16384 = 1.6384e-7` (`3.2768e-7` against
+    /// the tighter `2^-15` bound an earlier revision declared — halving the
+    /// postcondition bound doubles the crossing point, because the crossing
+    /// point is inversely proportional to it), so every declared factor
+    /// below that had a band of accepted plans whose candidates then failed
+    /// the unit-scale postcondition — at `s = 1e-9` the band admits `1e-2`
+    /// relative error, `1000x` the declared policy.
+    ///
+    /// Nothing needs the floor for the degenerate `a == b == 0` case either:
+    /// that compares `0.0 <= 0.0`, which holds. (Both call sites have already
+    /// proved their operands strictly positive in any case — a declared
+    /// factor by [`plan_rest_bind`]'s range check, an observed one by
+    /// [`classify_affine`].)
     fn relative(&self, tolerance: f64, a: f64, b: f64) -> bool {
-        (a - b).abs() <= tolerance * a.abs().max(b.abs()).max(self.scalar_absolute)
+        (a - b).abs() <= tolerance * a.abs().max(b.abs())
     }
 }
 
@@ -440,6 +585,32 @@ pub enum ScaleError {
         /// Tolerance the residual exceeded.
         tolerance: f64,
     },
+    /// The document's sampled proof work exceeds
+    /// [`ScaleTolerancePolicy::proof_sample_work_budget`].
+    ///
+    /// Raised by [`prove_scale`] *before* any sample time is evaluated, so a
+    /// document whose key count and vertex count multiply out beyond the
+    /// versioned policy's budget is refused outright rather than proved
+    /// against a silently truncated subset of its sample times. The budget is
+    /// a property of the policy identity recorded in evidence, not a per-run
+    /// flag.
+    #[error(
+        "proof sampling work {work} ({sample_times} sample times x {per_sample_cost} work units) exceeds the {policy_id} budget {budget}"
+    )]
+    ProofSamplingBudgetExceeded {
+        /// The tolerance-policy identity whose budget was exceeded.
+        policy_id: &'static str,
+        /// Distinct sample times the plan's obligations would evaluate,
+        /// summed over every clip.
+        sample_times: u64,
+        /// Work units one sample time costs: `bone_count` plus the vertex
+        /// count of every skinned instance inside the affected closure.
+        per_sample_cost: u64,
+        /// `sample_times * per_sample_cost`, saturating.
+        work: u64,
+        /// The policy's [`ScaleTolerancePolicy::proof_sample_work_budget`].
+        budget: u64,
+    },
     /// [`ScalePlan::proof_obligations`] declared a claim provable, but
     /// [`prove_scale`] could not find the evidence to check it (for example
     /// a clip or track present in `source` with no counterpart in
@@ -642,6 +813,17 @@ pub struct ScaleProofObligations {
     pub prove_trajectories: bool,
     /// Prove the skin equation `W_i(t) * B_i` for affected skins, at rest
     /// and at every declared key/cubic-interior sample time.
+    ///
+    /// This flag is one of those that arms [`prove_scale`]'s sampled loop.
+    /// Under every plan the current planners construct it is *co-declared*
+    /// with [`Self::prove_keys`], [`Self::prove_cubic_interiors`] and
+    /// [`Self::prove_trajectories`], so today it never arms that loop alone
+    /// and dropping it from the trigger would change nothing observable. That
+    /// redundancy is a property of the current planners, not of this
+    /// contract: a future plan shape that declares `prove_skin` without those
+    /// siblings must still evaluate the skin equation under animation, and
+    /// `a_skin_only_plan_still_evaluates_its_sampled_obligations` pins
+    /// exactly that shape so the coverage cannot be lost silently.
     pub prove_skin: bool,
     /// Prove skinned mesh bounds, at rest and at every declared
     /// key/cubic-interior sample time.
@@ -976,12 +1158,33 @@ fn validate_scene_assets(document: &Document) -> Result<(), ScaleError> {
     Ok(())
 }
 
-/// Reject `candidate`'s clip/track/instance/mesh/primitive structure when it
-/// does not match `source`'s: every proof comparison in this module pairs
-/// source and candidate structure positionally (by clip/track/instance/mesh
-/// index), which is only sound once the two document shapes are known to
+/// Reject `candidate`'s bone/clip/track/instance/mesh/primitive structure when
+/// it does not match `source`'s: every proof comparison in this module pairs
+/// source and candidate structure positionally (by bone/clip/track/instance/
+/// mesh index), which is only sound once the two document shapes are known to
 /// agree — an extra or missing structure is never silently ignored.
 fn validate_candidate_structure(source: &Document, candidate: &Document) -> Result<(), ScaleError> {
+    // Bone-count parity is checked first, and it is the clause the sampling
+    // budget rests on. [`sample_time_obligations`] poses *both* skeletons at
+    // every sample time, but [`per_sample_work_units`] can only measure the
+    // source — it is called before any candidate is walked, and
+    // [`ScaleCandidate::from_document`] is public, so the candidate's bone
+    // count is caller-supplied. Charging `PROOF_SIDES * bones(source)` is
+    // therefore only an honest charge once the two counts are known equal:
+    // without this clause a two-bone source paired with a candidate padded to
+    // 60_000 identity bones was charged 36_000 units — 0.009% of the budget —
+    // and proved in 3.71s release, more than twice the wall time of the
+    // vertex-dominated document the budget scores at 100%. Parity is the fix
+    // rather than charging both
+    // sides because it is the same class of claim as the mesh and skin-joint
+    // clauses below ("unchanged skeleton/mesh/skin identity", DESIGN.md
+    // Appendix D §D.6), and it makes the single-side charge correct by
+    // construction rather than merely conservative.
+    if source.skeleton.bones.len() != candidate.skeleton.bones.len() {
+        return Err(ScaleError::CandidateStructureMismatch {
+            reason: "bone_count_mismatch",
+        });
+    }
     if source.clips.len() != candidate.clips.len() {
         return Err(ScaleError::CandidateStructureMismatch {
             reason: "clip_count_mismatch",
@@ -1012,6 +1215,30 @@ fn validate_candidate_structure(source: &Document, candidate: &Document) -> Resu
         return Err(ScaleError::CandidateStructureMismatch {
             reason: "instance_count_mismatch",
         });
+    }
+    // Mesh assignment and skin-joint identity are what DESIGN.md Appendix D
+    // §D.6 calls "unchanged mesh/material/skin identity": neither operation
+    // rewrites which mesh an instance draws or which joints it is bound to.
+    // Checking it here rather than inferring it from a residual is also what
+    // lets the skin and bounds obligations share one instance/vertex walk —
+    // the two sides are then known to have the same slots, the same mesh, and
+    // therefore the same per-primitive vertex counts.
+    for (instance, candidate_instance) in source
+        .assets
+        .instances
+        .iter()
+        .zip(candidate.assets.instances.iter())
+    {
+        if instance.mesh != candidate_instance.mesh {
+            return Err(ScaleError::CandidateStructureMismatch {
+                reason: "instance_mesh_mismatch",
+            });
+        }
+        if instance.skin_joints != candidate_instance.skin_joints {
+            return Err(ScaleError::CandidateStructureMismatch {
+                reason: "instance_skin_joints_mismatch",
+            });
+        }
     }
     if source.assets.meshes.len() != candidate.assets.meshes.len() {
         return Err(ScaleError::CandidateStructureMismatch {
@@ -1078,7 +1305,7 @@ fn plan_whole_document(document: &Document, factor: f64) -> Result<ScalePlan, Sc
     let prove_bounds = has_skinned_evidence(document, &affected_nodes.iter().copied().collect());
     Ok(ScalePlan {
         operation: ScaleOperation::WholeDocumentLinearUnits { factor },
-        tolerance_policy: ScaleTolerancePolicy::APPENDIX_D_V1,
+        tolerance_policy: ScaleTolerancePolicy::APPENDIX_D_V2,
         affected_nodes,
         transform_only_attachments: Vec::new(),
         common_factor: factor,
@@ -1140,7 +1367,7 @@ fn plan_rest_bind(
     }
     let scaled_root_bone = bone_of_source[&source_root_node_index];
 
-    let tol = ScaleTolerancePolicy::APPENDIX_D_V1;
+    let tol = ScaleTolerancePolicy::APPENDIX_D_V2;
     let mut world_cache: BTreeMap<usize, Mat4> = BTreeMap::new();
     let mut node_factor: BTreeMap<BoneId, f64> = BTreeMap::new();
     for &source in &domain {
@@ -1518,6 +1745,10 @@ fn classify_affine(linear: Mat3, tol: &ScaleTolerancePolicy) -> Result<f64, Affi
     // `1.0` floor would make this an absolute `1e-5` test for every rig
     // authored below unit magnitude, accepting `(0.01, 0.01, 0.010005)` as
     // uniform.
+    //
+    // The base is `max(average, length)`, not `average`, and the comparison
+    // is `>`, not `>=`; both are pinned exactly on the boundary by
+    // `the_equal_axis_band_is_relative_to_the_longer_axis_and_admits_its_own_edge`.
     if lengths
         .iter()
         .any(|&length| (length - average).abs() > tol.equal_axis * average.max(length))
@@ -1528,12 +1759,35 @@ fn classify_affine(linear: Mat3, tol: &ScaleTolerancePolicy) -> Result<f64, Affi
     let dot02 = columns[0].dot(columns[2]);
     let dot12 = columns[1].dot(columns[2]);
     let orthogonality_tolerance = tol.relative_orthogonality * average * average;
+    // `>`, inclusive, like every other comparison against a policy bound, and
+    // pinned exactly on the boundary — like the equal-axis band above — by
+    // `an_orthogonality_dot_exactly_on_its_tolerance_is_accepted_and_the_next_one_up_is_not`.
+    //
+    // An earlier revision of this comment claimed no binary32 basis could
+    // reach this boundary exactly, on a three-square argument that required
+    // `relative_orthogonality` to be the rational `1/100000` and
+    // `average * average` to be exact. It is neither. `1e-5` in binary64 is
+    // `5_902_958_103_587_057 * 2^-69`, whose numerator is odd, and both
+    // `average` and the two products below it are rounded — so nothing here
+    // is an identity between exact rationals and no such argument applies.
+    // Boundary bases are in fact easy to come by: sweeping the fixture's
+    // shape outward from the identity hits one two binary32 steps in.
     if dot01.abs() > orthogonality_tolerance
         || dot02.abs() > orthogonality_tolerance
         || dot12.abs() > orthogonality_tolerance
     {
         return Err(AffineDomainViolation::Sheared);
     }
+    // `<` rather than `<=`, and the two are indistinguishable here: a zero
+    // determinant can never reach this line. `determinant` is finite by the
+    // guard above, `lengths` are finite and non-negative, so `axis_product` is
+    // non-negative and never `NaN`; `singular_determinant_relative` is `1e-6`
+    // — this function is only ever called with `APPENDIX_D_V2` — so the
+    // singular threshold is non-negative, and `(±0.0).abs() <= threshold`
+    // holds for every non-negative threshold. Both signed zeros are therefore
+    // already `Singular`, and on every determinant that does arrive here
+    // `< 0.0` and `<= 0.0` agree. No fixture can separate them; a test that
+    // appeared to would be asserting on a policy no caller can supply.
     if determinant < 0.0 {
         return Err(AffineDomainViolation::Reflected);
     }
@@ -2042,10 +2296,19 @@ pub fn prove_scale(
             )?;
             if plan.proof_obligations.prove_unit_scale_postcondition {
                 let (after_scale, ..) = after.to_scale_rotation_translation();
-                let residual = ((after_scale.x as f64 - 1.0).powi(2)
-                    + (after_scale.y as f64 - 1.0).powi(2)
-                    + (after_scale.z as f64 - 1.0).powi(2))
-                .sqrt();
+                // Per-axis (L-infinity), per
+                // [`ScaleTolerancePolicy::postcondition_unit_scale_residual`]:
+                // "unit composed scale for every affected node" (DESIGN.md
+                // Appendix D §D.6) is a per-axis claim, and measuring it
+                // per-axis is what makes it commensurable with the scalar
+                // relative common-factor band that gates the input. An L2
+                // norm over the three axes reports `sqrt(3)` times the same
+                // defect and therefore rejected candidates the very same
+                // policy's input band had just accepted.
+                let residual = (after_scale.x as f64 - 1.0)
+                    .abs()
+                    .max((after_scale.y as f64 - 1.0).abs())
+                    .max((after_scale.z as f64 - 1.0).abs());
                 proof.unit_scale_residual = proof.unit_scale_residual.max(residual);
                 check_residual(
                     ProofResidualKind::UnitScale,
@@ -2087,30 +2350,16 @@ pub fn prove_scale(
         }
     }
 
-    if plan.proof_obligations.prove_skin {
-        check_skin_matrices(
-            source,
-            candidate,
-            &source_worlds,
-            &candidate_worlds,
-            &affected,
-            plan,
-            &tol,
-            &mut proof.skin_matrix_residual,
-        )?;
-    }
-    if plan.proof_obligations.prove_bounds {
-        check_bounds(
-            source,
-            candidate,
-            &source_worlds,
-            &candidate_worlds,
-            &affected,
-            plan,
-            &tol,
-            &mut proof.bounds_residual,
-        )?;
-    }
+    check_skin_and_bounds(
+        source,
+        candidate,
+        &source_worlds,
+        &candidate_worlds,
+        &affected,
+        plan,
+        &tol,
+        &mut proof,
+    )?;
 
     let any_sampled_obligation = plan.proof_obligations.prove_keys
         || plan.proof_obligations.prove_cubic_interiors
@@ -2118,6 +2367,22 @@ pub fn prove_scale(
         || plan.proof_obligations.prove_skin
         || plan.proof_obligations.prove_bounds;
     if any_sampled_obligation {
+        // Harvested once, up front, for two reasons: the budget below has to
+        // know the total sample count *before* the first sample is evaluated,
+        // and re-harvesting per clip inside the loop would sort and dedup the
+        // same key times twice.
+        let mut clip_times = Vec::with_capacity(source.clips.len());
+        let mut sample_times: u64 = 0;
+        for clip in &source.clips {
+            let times = clip_sample_times(clip, &affected);
+            sample_times = sample_times
+                .saturating_add(times.0.len() as u64)
+                .saturating_add(times.1.len() as u64);
+            clip_times.push(times);
+        }
+        let per_sample_cost = per_sample_work_units(source, &affected, plan);
+        check_sampling_budget(&tol, sample_times, per_sample_cost)?;
+
         for (clip_index, clip) in source.clips.iter().enumerate() {
             let candidate_clip =
                 candidate
@@ -2127,8 +2392,8 @@ pub fn prove_scale(
                         kind: ProofResidualKind::KeyTranslation,
                         detail: "candidate_clip_missing",
                     })?;
-            let (key_times, interior_times) = clip_sample_times(clip, &affected);
-            for &t in &key_times {
+            let (key_times, interior_times) = &clip_times[clip_index];
+            for &t in key_times {
                 proof.sample_time_count += 1;
                 if plan.proof_obligations.prove_keys {
                     check_track_value_residual(
@@ -2155,7 +2420,7 @@ pub fn prove_scale(
                     &mut proof,
                 )?;
             }
-            for &t in &interior_times {
+            for &t in interior_times {
                 proof.sample_time_count += 1;
                 if plan.proof_obligations.prove_cubic_interiors {
                     check_track_value_residual(
@@ -2188,6 +2453,16 @@ pub fn prove_scale(
     Ok(proof)
 }
 
+/// Every obligation one sample time owes, evaluated against **one** pair of
+/// world-matrix arrays.
+///
+/// The trajectory, skin, and bounds obligations all need the same source and
+/// candidate poses at `t`. Deriving them once here — rather than letting each
+/// obligation call [`world_at_time`] for itself, which recomputed forward
+/// kinematics up to three times per sample per document — is what keeps the
+/// proof's cost linear in the sample count rather than a fixed multiple of
+/// it, and is a precondition for the sampling budget in [`prove_scale`] being
+/// a meaningful bound on real work.
 #[allow(clippy::too_many_arguments)]
 fn sample_time_obligations(
     source: &Document,
@@ -2200,48 +2475,148 @@ fn sample_time_obligations(
     tol: &ScaleTolerancePolicy,
     proof: &mut ScaleProof,
 ) -> Result<(), ScaleError> {
+    if !plan.proof_obligations.prove_trajectories
+        && !plan.proof_obligations.prove_skin
+        && !plan.proof_obligations.prove_bounds
+    {
+        return Ok(());
+    }
+    let source_worlds = world_at_time(&source.skeleton, source_clip, t)?;
+    let candidate_worlds = world_at_time(&candidate.skeleton, candidate_clip, t)?;
     if plan.proof_obligations.prove_trajectories {
         check_trajectory_residual_at(
-            source,
-            candidate,
-            source_clip,
-            candidate_clip,
+            &source_worlds,
+            &candidate_worlds,
             &plan.affected_nodes,
-            t,
             plan,
             tol,
             &mut proof.trajectory_residual,
         )?;
     }
-    if plan.proof_obligations.prove_skin {
-        let source_worlds = world_at_time(&source.skeleton, source_clip, t)?;
-        let candidate_worlds = world_at_time(&candidate.skeleton, candidate_clip, t)?;
-        check_skin_matrices(
-            source,
-            candidate,
-            &source_worlds,
-            &candidate_worlds,
-            affected,
-            plan,
-            tol,
-            &mut proof.skin_matrix_residual,
-        )?;
-    }
-    if plan.proof_obligations.prove_bounds {
-        let source_worlds = world_at_time(&source.skeleton, source_clip, t)?;
-        let candidate_worlds = world_at_time(&candidate.skeleton, candidate_clip, t)?;
-        check_bounds(
-            source,
-            candidate,
-            &source_worlds,
-            &candidate_worlds,
-            affected,
-            plan,
-            tol,
-            &mut proof.bounds_residual,
-        )?;
+    check_skin_and_bounds(
+        source,
+        candidate,
+        &source_worlds,
+        &candidate_worlds,
+        affected,
+        plan,
+        tol,
+        proof,
+    )
+}
+
+/// The two document sides — source and candidate — every sampled obligation
+/// walks. [`sample_time_obligations`] poses both skeletons, and
+/// [`check_skin_and_bounds`] resolves both slot palettes and skins both
+/// vertex arrays, so every term of [`per_sample_work_units`] is charged twice.
+const PROOF_SIDES: u64 = 2;
+
+/// Refuse a document whose total sampled work exceeds
+/// [`ScaleTolerancePolicy::proof_sample_work_budget`], before the first
+/// sample time is evaluated.
+///
+/// A free function rather than an inline comparison in [`prove_scale`] so
+/// that the boundary itself is directly testable on synthetic numbers. The
+/// budget is a ceiling the document may *reach*: the comparison is `>`, not
+/// `>=`, exactly as [`check_residual`]'s is, and for the same reason —
+/// DESIGN.md Appendix D §D.1 states every policy quantity as an inclusive
+/// "at most". Pinning that end to end would mean a document that then costs
+/// `1e8` work units to prove; pinning it here costs nothing and asserts the
+/// same thing.
+///
+/// # Errors
+///
+/// Returns [`ScaleError::ProofSamplingBudgetExceeded`] carrying both factors
+/// and the product, so the caller can see which of the two is oversized.
+fn check_sampling_budget(
+    tol: &ScaleTolerancePolicy,
+    sample_times: u64,
+    per_sample_cost: u64,
+) -> Result<(), ScaleError> {
+    let work = sample_times.saturating_mul(per_sample_cost);
+    if work > tol.proof_sample_work_budget {
+        return Err(ScaleError::ProofSamplingBudgetExceeded {
+            policy_id: tol.id,
+            sample_times,
+            per_sample_cost,
+            work,
+            budget: tol.proof_sample_work_budget,
+        });
     }
     Ok(())
+}
+
+/// Work units one sample time costs, for
+/// [`ScaleTolerancePolicy::proof_sample_work_budget`].
+///
+/// The charge is what [`sample_time_obligations`] and
+/// [`check_skin_and_bounds`] actually perform at one sample time, term by
+/// term. Everything they walk, they walk for **both** document sides, so
+/// every term below carries the [`PROOF_SIDES`] factor:
+///
+/// - one forward-kinematics pass over the skeleton per side, owed by every
+///   sampled obligation — hence `2 * bone_count`, always charged. Only the
+///   *source* skeleton is measured here, which is sound only because
+///   [`validate_candidate_structure`] has already rejected a candidate whose
+///   bone count differs; see the note on its `bone_count_mismatch` clause for
+///   what an unchecked candidate skeleton cost;
+/// - per affected skinned instance, one `world * inverse_bind` product per
+///   [`MeshInstance::skin_joints`] slot per side, plus one residual
+///   comparison per slot when the skin obligation is declared; and
+/// - per affected skinned instance, every vertex of **every** primitive of
+///   its mesh per side, when the bounds obligation is declared.
+///
+/// The slot term is charged explicitly because nothing bounds it and nothing
+/// else stands in for it. An earlier revision charged only `bone_count +
+/// vertices` on the claim that slot work "cannot exceed the bone count",
+/// which is false twice over: [`validate_scene_assets`] only range-checks
+/// joint ids, so `skin_joints` may repeat a joint and be arbitrarily long,
+/// and the instance count is unbounded, so the total is
+/// `sum over instances of len(skin_joints)` with no relation to
+/// `bone_count` at all. A legal 400-instance document with 300 slots each and
+/// one vertex per instance was charged `120_600` while performing `36_000_000`
+/// slot matrix products — a `299x` undercount, and unbounded in general.
+///
+/// This bounds the *sampled* work, which is what grows with the document's
+/// key count. [`prove_scale`] additionally evaluates the rest pose once,
+/// outside the sampled loop and outside this budget; that is one extra pose
+/// of the same shape, not a term that scales with anything.
+fn per_sample_work_units(
+    document: &Document,
+    affected: &BTreeSet<BoneId>,
+    plan: &ScalePlan,
+) -> u64 {
+    let mut units = PROOF_SIDES.saturating_mul(document.skeleton.bones.len() as u64);
+    let prove_skin = plan.proof_obligations.prove_skin;
+    let prove_bounds = plan.proof_obligations.prove_bounds;
+    if !prove_skin && !prove_bounds {
+        return units;
+    }
+    for instance in &document.assets.instances {
+        if !instance
+            .skin_joints
+            .iter()
+            .any(|joint| affected.contains(joint))
+        {
+            continue;
+        }
+        let slots = instance.skin_joints.len() as u64;
+        units = units.saturating_add(PROOF_SIDES.saturating_mul(slots));
+        if prove_skin {
+            units = units.saturating_add(slots);
+        }
+        if !prove_bounds {
+            continue;
+        }
+        let Some(mesh) = document.assets.meshes.get(instance.mesh) else {
+            continue;
+        };
+        for primitive in &mesh.primitives {
+            units =
+                units.saturating_add(PROOF_SIDES.saturating_mul(primitive.positions.len() as u64));
+        }
+    }
+    units
 }
 
 /// Resolve one skin joint's inverse-bind matrix per the documented
@@ -2318,6 +2693,16 @@ fn instance_source_skin<'a>(
 /// factor, or of a comparison against a non-finite source value — as a pass.
 /// A `NaN` tolerance (from a non-finite before/after magnitude) fails the
 /// same way and is rejected for the same reason.
+///
+/// The guard is `!observed.is_finite()` rather than `observed.is_nan()`, and
+/// the difference is narrower than it looks: `+inf > tolerance` is true, so
+/// the comparison alone already rejects a positive infinity. Only a
+/// *negative* non-finite residual needs the wider guard, and no caller in
+/// this module can produce one — every `observed` here is an `abs()`, a
+/// `length()`, or a `max` fold over those. The wider spelling is kept because
+/// this function's contract is the fail-closed one stated above rather than
+/// "whatever today's callers happen to pass", and it is pinned by
+/// `a_non_finite_residual_fails_closed_instead_of_comparing_false`.
 fn check_residual(
     kind: ProofResidualKind,
     observed: f64,
@@ -2688,20 +3073,17 @@ fn check_track_value_residual(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Sampled world-space trajectory residual for one already-derived pose pair
+/// (see [`sample_time_obligations`], which owns the single [`world_at_time`]
+/// evaluation these matrices come from).
 fn check_trajectory_residual_at(
-    source: &Document,
-    candidate: &Document,
-    source_clip: &Clip,
-    candidate_clip: &Clip,
+    source_worlds: &[Mat4],
+    candidate_worlds: &[Mat4],
     affected_nodes: &[BoneId],
-    t: f32,
     plan: &ScalePlan,
     tol: &ScaleTolerancePolicy,
     running_max: &mut f64,
 ) -> Result<(), ScaleError> {
-    let source_worlds = world_at_time(&source.skeleton, source_clip, t)?;
-    let candidate_worlds = world_at_time(&candidate.skeleton, candidate_clip, t)?;
     for &node in affected_nodes {
         let before = *source_worlds
             .get(node)
@@ -2782,8 +3164,22 @@ fn world_at_time(skeleton: &Skeleton, clip: &Clip, t: f32) -> Result<Vec<Mat4>, 
     Ok(worlds)
 }
 
+/// The skin-equation and skinned-bounds obligations, evaluated in **one**
+/// walk over the affected skinned instances.
+///
+/// Both obligations need the same three things per instance: the instance's
+/// joint world matrices, its resolved inverse binds, and — for bounds — its
+/// vertices. Splitting them across two entry points meant resolving the binds
+/// twice and, worse, walking every vertex twice for bounds alone (once for
+/// the source document, once for the candidate). This walks each vertex once
+/// and skins it through both sides.
+///
+/// [`validate_candidate_structure`] has already established that paired
+/// instances agree on `mesh` and `skin_joints` and that paired meshes agree
+/// on primitive and vertex counts, so the two sides are known to have the
+/// same slots and the same vertices to walk.
 #[allow(clippy::too_many_arguments)]
-fn check_skin_matrices(
+fn check_skin_and_bounds(
     source: &Document,
     candidate: &Document,
     source_worlds: &[Mat4],
@@ -2791,8 +3187,29 @@ fn check_skin_matrices(
     affected: &BTreeSet<BoneId>,
     plan: &ScalePlan,
     tol: &ScaleTolerancePolicy,
-    running_max: &mut f64,
+    proof: &mut ScaleProof,
 ) -> Result<(), ScaleError> {
+    let prove_skin = plan.proof_obligations.prove_skin;
+    let prove_bounds = plan.proof_obligations.prove_bounds;
+    if !prove_skin && !prove_bounds {
+        return Ok(());
+    }
+    // A plan only declares `prove_bounds` when its source actually carried a
+    // skinned instance touching the affected closure, so reaching here with
+    // none means the document handed to `prove_scale` is not the one the plan
+    // was computed against. Failing closed here matches how every other
+    // missing-counterpart branch behaves; returning `Ok` instead would report
+    // a `0.0` bounds residual for a claim that was never checked.
+    if prove_bounds && !has_skinned_evidence(source, affected) {
+        return Err(ScaleError::MissingProofEvidence {
+            kind: ProofResidualKind::Bounds,
+            detail: "no_skinned_instance_in_affected_closure",
+        });
+    }
+
+    let mut source_bounds = BoundsAccumulator::default();
+    let mut candidate_bounds = BoundsAccumulator::default();
+
     for (instance_index, instance) in source.assets.instances.iter().enumerate() {
         if instance.skin_joints.is_empty()
             || !instance
@@ -2808,6 +3225,10 @@ fn check_skin_matrices(
                 detail: "candidate_instance_missing",
             },
         )?;
+
+        // Resolved once and reused by both obligations.
+        let mut source_slots = Vec::with_capacity(instance.skin_joints.len());
+        let mut candidate_slots = Vec::with_capacity(instance.skin_joints.len());
         for (slot, &joint) in instance.skin_joints.iter().enumerate() {
             let before_world = *source_worlds
                 .get(joint)
@@ -2817,69 +3238,91 @@ fn check_skin_matrices(
                 .ok_or(ScaleError::BoneIndexOutOfRange { index: joint })?;
             let before_ibm = instance_bind(source, instance, slot, joint)?;
             let after_ibm = instance_bind(candidate, candidate_instance, slot, joint)?;
-            let before = before_world * before_ibm;
-            let after = after_world * after_ibm;
-            // Whole-document conversion scales every affine's translation by
-            // the declared factor while leaving its linear part unchanged
-            // (the same `U M U^-1` conjugation as any other retained
-            // matrix); rest/bind reparameterization analytically preserves
-            // the skin equation exactly.
-            let expected = if plan.is_whole_document() {
-                scale_translation_only(before, plan.common_factor as f32)
-            } else {
-                before
-            };
-            let residual = matrix_residual(expected, after);
-            check_and_track(
-                ProofResidualKind::SkinMatrix,
-                residual,
-                matrix_magnitude(expected),
-                matrix_magnitude(after),
-                tol,
-                running_max,
+            source_slots.push(before_world * before_ibm);
+            candidate_slots.push(after_world * after_ibm);
+        }
+
+        if prove_skin {
+            for (before, after) in source_slots.iter().zip(candidate_slots.iter()) {
+                // Whole-document conversion scales every affine's translation
+                // by the declared factor while leaving its linear part
+                // unchanged (the same `U M U^-1` conjugation as any other
+                // retained matrix); rest/bind reparameterization analytically
+                // preserves the skin equation exactly.
+                let expected = if plan.is_whole_document() {
+                    scale_translation_only(*before, plan.common_factor as f32)
+                } else {
+                    *before
+                };
+                let residual = matrix_residual(expected, *after);
+                check_and_track(
+                    ProofResidualKind::SkinMatrix,
+                    residual,
+                    matrix_magnitude(expected),
+                    matrix_magnitude(*after),
+                    tol,
+                    &mut proof.skin_matrix_residual,
+                )?;
+            }
+        }
+
+        if prove_bounds {
+            let mesh =
+                source
+                    .assets
+                    .meshes
+                    .get(instance.mesh)
+                    .ok_or(ScaleError::InvalidMeshInstance {
+                        instance_index,
+                        reason: "mesh_index_out_of_range",
+                    })?;
+            let candidate_mesh = candidate.assets.meshes.get(candidate_instance.mesh).ok_or(
+                ScaleError::InvalidMeshInstance {
+                    instance_index,
+                    reason: "mesh_index_out_of_range",
+                },
             )?;
+            for (primitive_index, (primitive, candidate_primitive)) in mesh
+                .primitives
+                .iter()
+                .zip(candidate_mesh.primitives.iter())
+                .enumerate()
+            {
+                accumulate_skinned_bounds(
+                    instance_index,
+                    primitive_index,
+                    primitive,
+                    &source_slots,
+                    &mut source_bounds,
+                )?;
+                accumulate_skinned_bounds(
+                    instance_index,
+                    primitive_index,
+                    candidate_primitive,
+                    &candidate_slots,
+                    &mut candidate_bounds,
+                )?;
+            }
         }
     }
-    Ok(())
-}
 
-#[allow(clippy::too_many_arguments)]
-fn check_bounds(
-    source: &Document,
-    candidate: &Document,
-    source_worlds: &[Mat4],
-    candidate_worlds: &[Mat4],
-    affected: &BTreeSet<BoneId>,
-    plan: &ScalePlan,
-    tol: &ScaleTolerancePolicy,
-    running_max: &mut f64,
-) -> Result<(), ScaleError> {
-    // A plan only declares `prove_bounds` when its source actually carried a
-    // skinned instance touching the affected closure, so reaching this
-    // function with none means the document handed to `prove_scale` is not
-    // the one the plan was computed against. Failing closed here matches how
-    // every other missing-counterpart branch behaves (`source_bounds_missing`
-    // below, `candidate_clip_missing` in `prove_scale`); returning `Ok`
-    // instead would report a `0.0` bounds residual for a claim that was
-    // never checked.
-    if !has_skinned_evidence(source, affected) {
-        return Err(ScaleError::MissingProofEvidence {
-            kind: ProofResidualKind::Bounds,
-            detail: "no_skinned_instance_in_affected_closure",
-        });
+    if !prove_bounds {
+        return Ok(());
     }
-    let (before_min, before_max) = skinned_bounds(source, source_worlds, affected)?.ok_or(
-        ScaleError::MissingProofEvidence {
-            kind: ProofResidualKind::Bounds,
-            detail: "source_bounds_missing",
-        },
-    )?;
-    let (after_min, after_max) = skinned_bounds(candidate, candidate_worlds, affected)?.ok_or(
-        ScaleError::MissingProofEvidence {
-            kind: ProofResidualKind::Bounds,
-            detail: "candidate_bounds_missing",
-        },
-    )?;
+    let (before_min, before_max) =
+        source_bounds
+            .finish()
+            .ok_or(ScaleError::MissingProofEvidence {
+                kind: ProofResidualKind::Bounds,
+                detail: "source_bounds_missing",
+            })?;
+    let (after_min, after_max) =
+        candidate_bounds
+            .finish()
+            .ok_or(ScaleError::MissingProofEvidence {
+                kind: ProofResidualKind::Bounds,
+                detail: "candidate_bounds_missing",
+            })?;
     let q = if plan.is_whole_document() {
         plan.common_factor
     } else {
@@ -2899,7 +3342,7 @@ fn check_bounds(
                 expected,
                 a,
                 tol,
-                running_max,
+                &mut proof.bounds_residual,
             )?;
         }
     }
@@ -2918,113 +3361,106 @@ fn has_skinned_evidence(document: &Document, affected: &BTreeSet<BoneId>) -> boo
     })
 }
 
-/// Compute skinned bounds for every instance whose `skin_joints` touches
-/// `affected`, rejecting rather than skipping every malformed input along
-/// the way: an out-of-range `instance.mesh`, a primitive whose per-vertex
-/// `joints`/`weights` are not exactly parallel to `positions`, a non-finite
-/// position or weight, a joint-influence slot outside the instance's
-/// `skin_joints`, or a non-finite skinned result. A vertex whose four
-/// weights are all zero is legitimately unweighted (not malformed) and is
-/// excluded from bounds as before.
-fn skinned_bounds(
-    document: &Document,
-    worlds: &[Mat4],
-    affected: &BTreeSet<BoneId>,
-) -> Result<Option<(Vec3, Vec3)>, ScaleError> {
-    let mut min = Vec3::splat(f32::INFINITY);
-    let mut max = Vec3::splat(f32::NEG_INFINITY);
-    let mut touched = false;
-    for (instance_index, instance) in document.assets.instances.iter().enumerate() {
-        if instance.skin_joints.is_empty()
-            || !instance
-                .skin_joints
-                .iter()
-                .any(|joint| affected.contains(joint))
-        {
-            continue;
+/// Running skinned-bounds extremes for one document side.
+///
+/// `touched` distinguishes "every relevant vertex was unweighted" from "the
+/// bounds happen to be at the origin": the former has no bounds evidence at
+/// all and must be reported as missing, not as a zero residual.
+struct BoundsAccumulator {
+    min: Vec3,
+    max: Vec3,
+    touched: bool,
+}
+
+impl Default for BoundsAccumulator {
+    fn default() -> Self {
+        Self {
+            min: Vec3::splat(f32::INFINITY),
+            max: Vec3::splat(f32::NEG_INFINITY),
+            touched: false,
         }
-        let mesh =
-            document
-                .assets
-                .meshes
-                .get(instance.mesh)
-                .ok_or(ScaleError::InvalidMeshInstance {
-                    instance_index,
-                    reason: "mesh_index_out_of_range",
-                })?;
-        let mut joint_matrices = Vec::with_capacity(instance.skin_joints.len());
-        let mut inverse_binds = Vec::with_capacity(instance.skin_joints.len());
-        for (slot, &joint) in instance.skin_joints.iter().enumerate() {
-            let world = *worlds
-                .get(joint)
-                .ok_or(ScaleError::BoneIndexOutOfRange { index: joint })?;
-            joint_matrices.push(world);
-            inverse_binds.push(instance_bind(document, instance, slot, joint)?);
+    }
+}
+
+impl BoundsAccumulator {
+    fn finish(self) -> Option<(Vec3, Vec3)> {
+        self.touched.then_some((self.min, self.max))
+    }
+}
+
+/// Skin one primitive's vertices through `slots` (already-composed
+/// `W_i * B_i` per skin slot) and fold them into `bounds`, rejecting rather
+/// than skipping every malformed input along the way: a primitive whose
+/// per-vertex `joints`/`weights` are not exactly parallel to `positions`, a
+/// non-finite position or weight, a joint-influence slot outside the
+/// instance's `skin_joints`, or a non-finite skinned result. A vertex whose
+/// four weights are all zero is legitimately unweighted (not malformed) and
+/// is excluded from bounds.
+fn accumulate_skinned_bounds(
+    instance_index: usize,
+    primitive_index: usize,
+    primitive: &Primitive,
+    slots: &[Mat4],
+    bounds: &mut BoundsAccumulator,
+) -> Result<(), ScaleError> {
+    if primitive.joints.len() != primitive.positions.len()
+        || primitive.weights.len() != primitive.positions.len()
+    {
+        return Err(ScaleError::InvalidSkinnedPrimitive {
+            instance_index,
+            primitive_index,
+            reason: "joints_or_weights_length_mismatch",
+        });
+    }
+    for (vertex, &position) in primitive.positions.iter().enumerate() {
+        if !position.is_finite() {
+            return Err(ScaleError::InvalidSkinnedPrimitive {
+                instance_index,
+                primitive_index,
+                reason: "non_finite_position",
+            });
         }
-        for (primitive_index, primitive) in mesh.primitives.iter().enumerate() {
-            if primitive.joints.len() != primitive.positions.len()
-                || primitive.weights.len() != primitive.positions.len()
-            {
+        let joints = primitive.joints[vertex];
+        let weights = primitive.weights[vertex];
+        let mut skinned = Vec3::ZERO;
+        let mut weight_sum = 0.0f32;
+        for slot_index in 0..4 {
+            let weight = weights[slot_index];
+            if weight == 0.0 {
+                continue;
+            }
+            if !weight.is_finite() {
                 return Err(ScaleError::InvalidSkinnedPrimitive {
                     instance_index,
                     primitive_index,
-                    reason: "joints_or_weights_length_mismatch",
+                    reason: "non_finite_weight",
                 });
             }
-            for (vertex, &position) in primitive.positions.iter().enumerate() {
-                if !position.is_finite() {
-                    return Err(ScaleError::InvalidSkinnedPrimitive {
-                        instance_index,
-                        primitive_index,
-                        reason: "non_finite_position",
-                    });
-                }
-                let joints = primitive.joints[vertex];
-                let weights = primitive.weights[vertex];
-                let mut skinned = Vec3::ZERO;
-                let mut weight_sum = 0.0f32;
-                for slot_index in 0..4 {
-                    let weight = weights[slot_index];
-                    if weight == 0.0 {
-                        continue;
-                    }
-                    if !weight.is_finite() {
-                        return Err(ScaleError::InvalidSkinnedPrimitive {
-                            instance_index,
-                            primitive_index,
-                            reason: "non_finite_weight",
-                        });
-                    }
-                    let slot = joints[slot_index] as usize;
-                    let (Some(&joint_matrix), Some(&inverse_bind)) =
-                        (joint_matrices.get(slot), inverse_binds.get(slot))
-                    else {
-                        return Err(ScaleError::InvalidSkinnedPrimitive {
-                            instance_index,
-                            primitive_index,
-                            reason: "joint_influence_slot_out_of_range",
-                        });
-                    };
-                    skinned += weight * (joint_matrix * inverse_bind).transform_point3(position);
-                    weight_sum += weight;
-                }
-                if weight_sum > 0.0 {
-                    skinned /= weight_sum;
-                    if !skinned.is_finite() {
-                        return Err(ScaleError::InvalidSkinnedPrimitive {
-                            instance_index,
-                            primitive_index,
-                            reason: "non_finite_result",
-                        });
-                    }
-                    min = min.min(skinned);
-                    max = max.max(skinned);
-                    touched = true;
-                }
+            let Some(&skin_matrix) = slots.get(joints[slot_index] as usize) else {
+                return Err(ScaleError::InvalidSkinnedPrimitive {
+                    instance_index,
+                    primitive_index,
+                    reason: "joint_influence_slot_out_of_range",
+                });
+            };
+            skinned += weight * skin_matrix.transform_point3(position);
+            weight_sum += weight;
+        }
+        if weight_sum > 0.0 {
+            skinned /= weight_sum;
+            if !skinned.is_finite() {
+                return Err(ScaleError::InvalidSkinnedPrimitive {
+                    instance_index,
+                    primitive_index,
+                    reason: "non_finite_result",
+                });
             }
+            bounds.min = bounds.min.min(skinned);
+            bounds.max = bounds.max.max(skinned);
+            bounds.touched = true;
         }
     }
-    Ok(touched.then_some((min, max)))
+    Ok(())
 }
 
 #[cfg(test)]
@@ -3847,6 +4283,145 @@ mod tests {
     }
 
     #[test]
+    fn the_equal_axis_band_is_relative_to_the_longer_axis_and_admits_its_own_edge() {
+        // `classify_affine` rejects an axis whose length is farther from the
+        // three-axis average than `equal_axis * average.max(length)`. Two
+        // things about that comparison are untested by every other fixture,
+        // because they all sit far from the edge with the long axis on the
+        // same side: the base is the `max` and not the `average`, and the
+        // comparison is `>` and not `>=`.
+        //
+        // One fixture pins both. All three axis lengths are exact in binary32
+        // and the average is exact in binary64:
+        //
+        //   lengths = (99998.5, 99998.5, 100000.0)
+        //   average = 299997.0 / 3           = 99999.0   (exact)
+        //   longest axis deviation           = 100000.0 - 99999.0 = 1.0
+        //   1e-5 * max(average, 100000.0)    = 1e-5 * 100000.0 = 1.0 exactly
+        //   1e-5 * average                   = 1e-5 * 99999.0  = 0.99999
+        //
+        // so `1.0 > 1.0` is false and the basis classifies as uniform, while
+        // an `average` base (`1.0 > 0.99999`) or a `>=` comparison
+        // (`1.0 >= 1.0`) both reject it as `NonUniformScale`. The two short
+        // axes are `0.5` from the average against the same `0.99999`, so
+        // neither of them decides anything here.
+        //
+        // `1e-5 * 100000.0` is exactly `1.0` in binary64: `fl(1e-5)` exceeds
+        // `1e-5` by `8.18e-22`, so the product exceeds one by `8.18e-17`,
+        // inside the `1.11e-16` half-ulp at one.
+        let nodes = vec![
+            RigNode {
+                parent: None,
+                source_node_index: 0,
+                translation: Vec3::ZERO,
+                rotation: Quat::IDENTITY,
+                scale: Vec3::new(99_998.5, 99_998.5, 100_000.0),
+            },
+            rig(Some(0), 1, Vec3::ZERO),
+        ];
+        let doc = rig_document(&nodes, &[1], 0, Mat4::IDENTITY);
+        let capability = complete_capability();
+        let plan = plan_scale(&declared_factor_request(&doc, &capability, 99_999.0))
+            .expect("an axis exactly on the equal-axis edge is uniform");
+        // The declared factor `99_999.0` is exactly the axis-length average
+        // `classify_affine` returns, so the plan is accepted with a zero
+        // factor residual and nothing downstream of the equal-axis check can
+        // be what admitted it. That the average differs from the longest axis
+        // at all is what makes the `max` base observable here.
+        assert_eq!(plan.common_factor(), 99_999.0);
+
+        // One binary32 ulp of the long axis past the edge. At `100_000.0` that
+        // ulp is `2^-7 = 0.0078125`, so the length becomes `100000.0078125`,
+        // the average `99999.0026041666...`, and the deviation
+        // `1.0052083333...` against a `1.000000078125` band.
+        let nodes = vec![
+            RigNode {
+                parent: None,
+                source_node_index: 0,
+                translation: Vec3::ZERO,
+                rotation: Quat::IDENTITY,
+                scale: Vec3::new(99_998.5, 99_998.5, 100_000.0 + 0.007_812_5),
+            },
+            rig(Some(0), 1, Vec3::ZERO),
+        ];
+        let doc = rig_document(&nodes, &[1], 0, Mat4::IDENTITY);
+        assert!(matches!(
+            plan_scale(&declared_factor_request(&doc, &capability, 99_999.0)).unwrap_err(),
+            ScaleError::InvalidAffineDomain {
+                reason: AffineDomainViolation::NonUniformScale,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn an_orthogonality_dot_exactly_on_its_tolerance_is_accepted_and_the_next_one_up_is_not() {
+        // `classify_affine` rejects shear on `dot.abs() > relative_orthogonality
+        // * average * average`. Distinguishing that `>` from `>=` needs a
+        // binary32 basis whose binary64 column dot lands *exactly* on the
+        // tolerance. This is that basis. It was found by search, but the
+        // arithmetic below is what makes it checkable without rerunning one:
+        // every literal is an exact dyadic written as `mantissa * 2^-k`, so
+        // the binary32 bits are readable straight off the page.
+        //
+        //   col0 = (1,  y0, 0)     y0 = 13_826_165 * 2^-69
+        //   col1 = (x1, 1,  0)     x1 = 10_995_118 * 2^-40
+        //   col2 = (0,  0,  c)     c  =  8_388_610 * 2^-23
+        //
+        // Two columns lie in the xy-plane and the third is the z-axis, so
+        // `dot02` and `dot12` are exactly zero and only `dot01` decides.
+        //
+        //   dot01 = 1*x1 + y0*1 + 0*0 = x1 + y0
+        //
+        // and that sum is *exact* in binary64: `x1` is a multiple of `2^-40`,
+        // `y0` a multiple of `2^-69`, and the sum is just under `2^-16`, so it
+        // needs 53 bits and gets them. `y0` is small enough that `y0 * y0`
+        // vanishes against one, so `col0`'s length is exactly `1.0` and moving
+        // `y0` does not move the tolerance at all — it moves only `dot01`, and
+        // one binary32 step of `y0` is `2^-69`, which is exactly one binary64
+        // ulp of `dot01` in its `[2^-17, 2^-16)` binade. The three cases below
+        // are therefore three consecutive representable dot products against
+        // one fixed tolerance.
+        //
+        // Accepting the middle one and rejecting the next proves the middle
+        // one *is* the tolerance rather than merely below it: acceptance gives
+        // `dot <= tolerance`, rejection of `dot + 1ulp` gives
+        // `tolerance < dot + 1ulp`, and the only binary64 in `[dot, dot+1ulp)`
+        // is `dot` itself. So `>=` would reject the middle case, and does.
+        let c = 8_388_610.0_f32 * 2.0_f32.powi(-23);
+        let x1 = 10_995_118.0_f32 * 2.0_f32.powi(-40);
+        let y0 = 13_826_165.0_f32 * 2.0_f32.powi(-69);
+        let y0_up = 13_826_166.0_f32 * 2.0_f32.powi(-69);
+        let y0_down = 13_826_164.0_f32 * 2.0_f32.powi(-69);
+        // The fixture's own claim, checked before it is relied on: the three
+        // dot products are consecutive binary64 values.
+        let dot = f64::from(x1) + f64::from(y0);
+        assert_eq!(
+            (f64::from(x1) + f64::from(y0_up)).to_bits(),
+            dot.to_bits() + 1
+        );
+        assert_eq!(
+            (f64::from(x1) + f64::from(y0_down)).to_bits(),
+            dot.to_bits() - 1
+        );
+
+        let basis = |y: f32| {
+            Mat3::from_cols(
+                Vec3::new(1.0, y, 0.0),
+                Vec3::new(x1, 1.0, 0.0),
+                Vec3::new(0.0, 0.0, c),
+            )
+        };
+        let tol = ScaleTolerancePolicy::APPENDIX_D_V2;
+        assert!(classify_affine(basis(y0_down), &tol).is_ok());
+        assert!(classify_affine(basis(y0), &tol).is_ok());
+        assert_eq!(
+            classify_affine(basis(y0_up), &tol),
+            Err(AffineDomainViolation::Sheared)
+        );
+    }
+
+    #[test]
     fn nonuniform_scale_domain_rejects() {
         let error = reject_case(|rest| *rest = trs_scale(Vec3::new(0.01, 0.02, 0.01)));
         assert!(matches!(
@@ -4029,21 +4604,117 @@ mod tests {
         // only when its measured residual is within the declared tolerance
         // — which §D.1 declares *relative* `1e-5`. The accept/reject deltas
         // are therefore derived from the factor's own magnitude, not from a
-        // floored comparison base:
+        // floored comparison base, and the two fixtures below are the two
+        // *adjacent* binary32 values that straddle the band edge, so the
+        // boundary itself is pinned rather than merely bracketed:
         //
-        //   tolerance = 1e-5 * max(observed, 0.01) = 1.0e-7
-        //   0.010000020 -> residual 2.03e-8, inside that band
-        //   0.010000500 -> residual 5.00e-7, 5x outside it
-        for (scale, should_accept) in [(0.010_000_02_f32, true), (0.010_000_5_f32, false)] {
+        //   accept: 0.010_000_099_f32 == 0.010000099427998065948486328125
+        //           |s - 0.01|            = 9.9427998065948e-8
+        //           1e-5 * max(s, 0.01)   = 1.0000099428e-7  -> inside
+        //   reject: 0.010_000_1_f32   == 0.01000010035932064056396484375
+        //           |s - 0.01|            = 1.0035932064056e-7
+        //           1e-5 * max(s, 0.01)   = 1.0000100359e-7  -> outside
+        //
+        // The two literals differ by exactly one binary32 ulp at this
+        // magnitude (`2^-30 = 9.31322574615478515625e-10`), so no
+        // representable factor sits between them.
+        for (scale, should_accept) in [(0.010_000_099_f32, true), (0.010_000_1_f32, false)] {
             let doc = noisy_factor_document(scale);
             let capability = complete_capability();
             let request = noisy_factor_request(&doc, &capability);
+            let planned = plan_scale(&request);
             assert_eq!(
-                plan_scale(&request).is_ok(),
+                planned.is_ok(),
                 should_accept,
                 "scale {scale} accepted={should_accept}"
             );
+            if !should_accept {
+                assert!(matches!(
+                    planned.unwrap_err(),
+                    ScaleError::FactorMismatch { .. }
+                ));
+            }
         }
+    }
+
+    /// A request whose declared factor is a free `f64`, so a fixture can put
+    /// the observed and declared magnitudes either way round at the band edge
+    /// — the `f32` root scale alone cannot, because one binary32 ulp is far
+    /// wider than the window the two comparison bases disagree over.
+    fn declared_factor_request<'a>(
+        document: &'a Document,
+        capability: &'a ScaleCapabilityFacts,
+        expected_factor: f64,
+    ) -> ScaleRequest<'a> {
+        ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor,
+            },
+            document,
+            capability,
+        }
+    }
+
+    #[test]
+    fn the_common_factor_band_is_relative_to_the_larger_operand_whichever_it_is() {
+        // DESIGN.md Appendix D §D.1 states the band as
+        // `abs(a - b) <= c * max(abs(a), abs(b))` — the base is the `max`, not
+        // whichever operand `relative` happens to receive first. The existing
+        // boundary fixtures all pass the *larger* operand first (an observed
+        // factor slightly above the declared one), so a base of `abs(a)`
+        // agrees with `max` on every one of them and the `max` is untested.
+        //
+        // Both rows below sit exactly on the band edge, in the two operand
+        // orders. `relative` is called as `relative(c, observed, declared)`,
+        // and the observed common factor of a root whose rest scale is a
+        // uniform `s` is `s` itself — `classify_affine` averages three column
+        // lengths that are all exactly `s`. Every value is exact in binary64:
+        //
+        //   1e-5 * 100000.0 == 1.0            (exactly; the f64 product of
+        //                                      fl(1e-5) and 1e5 rounds to 1)
+        //   abs(99999.0 - 100000.0) == 1.0    (exactly)
+        //
+        //   smaller first: a = 99999,  b = 100000
+        //                  max base  -> 1.0 <= 1e-5 * 100000 = 1.0   accept
+        //                  abs(a) base -> 1.0 <= 1e-5 * 99999 = 0.99999
+        //                                                            reject
+        //   larger first:  a = 100000, b = 99999
+        //                  max base  -> 1.0 <= 1e-5 * 100000 = 1.0   accept
+        //
+        // The second row is the `max` in its already-covered order, but both
+        // rows make the *inclusive* `<=` load-bearing: the residual is exactly
+        // the bound, so a strict `<` rejects both of them.
+        let capability = complete_capability();
+        for (observed, declared) in [(99_999.0f32, 100_000.0f64), (100_000.0f32, 99_999.0f64)] {
+            let doc = noisy_factor_document(observed);
+            let request = declared_factor_request(&doc, &capability, declared);
+            let plan = plan_scale(&request).unwrap_or_else(|error| {
+                panic!("observed {observed} declared {declared} must plan, got {error:?}")
+            });
+            // The plan carries the *declared* factor, so this also records
+            // that the two really did differ by the full band width rather
+            // than the fixture having collapsed them onto one value.
+            assert_eq!(plan.common_factor(), declared);
+            assert_eq!((f64::from(observed) - declared).abs(), 1.0);
+        }
+
+        // One `f64` ulp of the declared factor past the edge, in the
+        // smaller-first order, so the row above is a boundary and not merely
+        // a wide band. One ulp at `100_000.0` is `2^-36 =
+        // 1.4551915228366852e-11`, so the residual becomes `1 + 2^-36` while
+        // the base grows by only `1e-5 * 2^-36 = 1.455e-16`, which rounds the
+        // tolerance up to `1 + 2^-52`:
+        //
+        //   1 + 2^-36 = 1.0000000000145519  >  1 + 2^-52 = 1.0000000000000002
+        let doc = noisy_factor_document(99_999.0);
+        let outside =
+            declared_factor_request(&doc, &capability, f64::from_bits(100_000f64.to_bits() + 1));
+        assert!(matches!(
+            plan_scale(&outside).unwrap_err(),
+            ScaleError::FactorMismatch { .. }
+        ));
     }
 
     #[test]
@@ -4054,19 +4725,231 @@ mod tests {
         // accepted a factor `8e-6` relative off, whose candidate then failed
         // its own `UnitScale` postcondition at `1.386e-3` against `1e-5`.
         //
-        // Arithmetic for the value below: the root's composed scale after
-        // the rebase is `observed / expected = 0.010000020 / 0.01`, so the
-        // unit-scale residual is `sqrt(3) * 2.03e-6 = 3.51e-6`, inside the
-        // `1e-5` postcondition.
+        // Arithmetic for the value below, all exact in binary32:
+        //
+        //   s              = 0.010_000_02_f32 = 0.0100000202655792236328125
+        //   1.0f32/0.01f32 = 100.0 exactly, so the rebased root local scale
+        //                    is fl(s * 100) = 1.00000202655792236328125
+        //                                   = 1 + 17 * 2^-23
+        //   per-axis (L-infinity) unit-scale residual
+        //                  = 17 * 2^-23 = 2.02655792236328125e-6
+        //
+        // An L2 norm over the three axes would report `sqrt(3)` times that
+        // (`3.51e-6`), which is why the equality below is exact rather than a
+        // one-sided bound: it pins the *norm*, not just the magnitude.
         let doc = noisy_factor_document(0.010_000_02);
         let capability = complete_capability();
         let request = noisy_factor_request(&doc, &capability);
         let plan = plan_scale(&request).unwrap();
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
-        assert!(
-            proof.unit_scale_residual < 4e-6,
+        assert_eq!(
+            proof.unit_scale_residual,
+            17.0 * 2f64.powi(-23),
             "unit scale residual {}",
+            proof.unit_scale_residual
+        );
+    }
+
+    #[test]
+    fn plan_scale_accepting_a_common_factor_implies_its_candidate_proves() {
+        // The closure property DESIGN.md Appendix D §D.1 now states outright:
+        // a factor `plan_scale` accepts always yields a candidate that
+        // satisfies the unit-scale postcondition. Before the v2 policy the
+        // implication was false over a whole band, because the input check
+        // was a scalar relative comparison and the postcondition was an L2
+        // norm over three axes: every relative error `e` in `(5.77e-6, 1e-5]`
+        // was accepted and then rejected at `sqrt(3) * e > 1e-5`.
+        //
+        // Each fixture is a binary32 value chosen so `fl(s * 100)` lands
+        // exactly on a mantissa grid point `1 + n * 2^-23`, which is exactly
+        // what the rebased root's composed scale becomes (`1.0f32 / 0.01f32`
+        // is `100.0` exactly). The expected residual is therefore the literal
+        // `n * 2^-23`, hand-computable and independent of this module:
+        //
+        //   s                   exact value of s              n   n * 2^-23
+        //   0.010_000_02        0.0100000202655792236328125   17  2.02655792236328125e-6
+        //   0.010_000_061       0.0100000612437725067138671875 51 6.07967376708984375e-6
+        //   0.010_000_08        0.0100000798702239990234375   67  7.98702239990234375e-6
+        //   0.010_000_099       0.010000099427998065948486328125
+        //                                                     83  9.89437103271484375e-6
+        //
+        // The last three all sit in the previously-broken band: under the v1
+        // L2 residual they measured 1.053e-5, 1.383e-5 and 1.714e-5 against a
+        // `1e-5` bound and failed proof outright.
+        let capability = complete_capability();
+        for (scale, expected_residual) in [
+            (0.010_000_02_f32, 17.0 * 2f64.powi(-23)),
+            (0.010_000_061_f32, 51.0 * 2f64.powi(-23)),
+            (0.010_000_08_f32, 67.0 * 2f64.powi(-23)),
+            (0.010_000_099_f32, 83.0 * 2f64.powi(-23)),
+        ] {
+            let doc = noisy_factor_document(scale);
+            let request = noisy_factor_request(&doc, &capability);
+            let plan = plan_scale(&request)
+                .unwrap_or_else(|error| panic!("scale {scale} must plan, got {error:?}"));
+            let candidate = build_scale_candidate(&doc, &plan)
+                .unwrap_or_else(|error| panic!("scale {scale} must build, got {error:?}"));
+            let proof = prove_scale(&doc, &candidate, &plan)
+                .unwrap_or_else(|error| panic!("scale {scale} must prove, got {error:?}"));
+            assert_eq!(
+                proof.unit_scale_residual, expected_residual,
+                "scale {scale} unit-scale residual"
+            );
+            assert!(
+                proof.unit_scale_residual
+                    <= plan.tolerance_policy().postcondition_unit_scale_residual,
+                "scale {scale} residual {} exceeds the declared bound",
+                proof.unit_scale_residual
+            );
+        }
+    }
+
+    #[test]
+    fn the_common_factor_band_stays_relative_below_the_scalar_absolute_floor() {
+        // The band's comparison base carries no floor at all. An earlier
+        // revision floored it at `scalar_absolute = 1e-6`, which is the same
+        // defect as the `1.0` floor above, one thousandth the size: below
+        // `1e-6` the band stopped tracking its operands and froze at the
+        // constant `1e-5 * 1e-6 = 1e-11`, a *relative* band of `1e-11 / s`
+        // that widens without limit as `s` shrinks and crosses the `2^-14`
+        // postcondition bound at `s = 1e-11 / 2^-14 = 1e-11 * 16384 =
+        // 1.6384e-7`. Every declared factor below that had a band of plans
+        // `plan_scale` accepted and `prove_scale` then refused — the closure
+        // property §D.1 states as a theorem, false over a whole regime.
+        // (Measured with the floor restored: the largest declared factor that
+        // still breaks closure is `1.629e-7` and the smallest clean one is
+        // `1.710e-7`, bracketing `1.6384e-7`.)
+        //
+        // `2^-23 = 1.1920928955078125e-7` is well inside that regime and is
+        // exactly representable, as is its reciprocal `2^23`, so every step
+        // below is exact in binary32:
+        //
+        //   s          = 2^-23 * (1 + n * 2^-23)
+        //   candidate root local scale
+        //              = s * (1 / 2^-23) = 1 + n * 2^-23
+        //   residual   = n * 2^-23
+        //
+        // and the band accepts exactly while `n * 2^-23 <= 1e-5 * (1 + n *
+        // 2^-23)`, i.e. `n <= 83`:
+        //
+        //   n = 83: 9.89437103271484375e-6 <= 1.0000098944e-5  -> accept
+        //   n = 84: 1.001358032226562e-5   >  1.0000100136e-5  -> reject
+        //
+        // That is the *same* boundary the `0.01` fixtures above hit, six
+        // orders of magnitude away, which is what "relative" means. Under the
+        // `1e-6` floor the band here admitted every `n` up to 703, and
+        // `n = 600` — the third row below — planned, built, and then failed
+        // its own postcondition at `600 * 2^-23 = 7.152557373046875e-5`.
+        let declared = 2f64.powi(-23);
+        let unit = 2f32.powi(-23);
+        let capability = complete_capability();
+        for n in [83u32, 84, 600] {
+            let doc = noisy_factor_document(unit * (1.0 + n as f32 * unit));
+            let request = ScaleRequest {
+                operation: ScaleOperation::RestBindUniformScale {
+                    source_skin_index: 0,
+                    source_root_node_index: 0,
+                    expected_factor: declared,
+                },
+                document: &doc,
+                capability: &capability,
+            };
+            if n > 83 {
+                assert!(
+                    matches!(plan_scale(&request), Err(ScaleError::FactorMismatch { .. })),
+                    "n = {n} must not be accepted"
+                );
+                continue;
+            }
+            let plan = plan_scale(&request)
+                .unwrap_or_else(|error| panic!("n = {n} must plan, got {error:?}"));
+            let candidate = build_scale_candidate(&doc, &plan)
+                .unwrap_or_else(|error| panic!("n = {n} must build, got {error:?}"));
+            let proof = prove_scale(&doc, &candidate, &plan)
+                .unwrap_or_else(|error| panic!("n = {n} must prove, got {error:?}"));
+            assert_eq!(proof.unit_scale_residual, f64::from(n) * 2f64.powi(-23));
+        }
+    }
+
+    #[test]
+    fn a_plan_loading_all_three_analytic_bands_still_proves() {
+        // Every other closure fixture is a single-node rig, which can only
+        // load the `FactorMismatch` band. This one loads all three bands the
+        // §D.1 derivation composes, at 76.3% of the declared `1e-5` each:
+        //
+        //   u = 2^-17 = 7.62939453125e-6
+        //   root local scale  = 0.5 * (1 + u)      -> s_0 = 0.5 * (1 + u)
+        //   child local scale = (1 + u/2, 1 + u/2, 1 + 2u)
+        //
+        // Every product below is exact in binary32 (the discarded terms are
+        // `2^-36` and `2^-34` against a `2^-24` ulp), so the child's world
+        // axis lengths are
+        //
+        //   x = y = 0.5 * (1 + 1.5u)      z = 0.5 * (1 + 3u)
+        //   average A = (2x + z) / 3 = 0.5 * (1 + 2u)
+        //
+        // and the three bands are:
+        //
+        //   FactorMismatch     |s_0 - 0.5| = 0.5u    vs 1e-5 * 0.5(1 + u)
+        //   MixedFactor        |A - s_0|   = 0.5u    vs 1e-5 * 0.5(1 + 2u)
+        //   NonUniformScale    |z - A|     = 0.5u    vs 1e-5 * 0.5(1 + 3u)
+        //
+        // all of which accept, since `u = 7.63e-6 < 1e-5`. The third band is
+        // the one the two-band derivation missed: `classify_affine` returns
+        // the *average* of the three axis lengths, while the postcondition
+        // measures an individual *axis*, and `equal_axis` permits each axis
+        // its own further band away from that average.
+        //
+        // The candidate's root local scale is `0.5 * (1 + u) * 2 = 1 + u`
+        // exactly, so its composed axes are `2x`, `2x`, `2z`, and with
+        // `u = 64 * 2^-23`:
+        //
+        //   node 0 residual = u    =  64 * 2^-23
+        //   node 1 residual = 3u   = 192 * 2^-23 = 2.288818359375e-5
+        //
+        // `192 * 2^-23` is above `(1 - c)^-2 - 1 = 2.00003e-5`, so this rig
+        // is a *counterexample* to the two-band worst case the policy used to
+        // claim — it is not reachable by composing only the declared-factor
+        // and mixed-factor bands.
+        let u = 2f32.powi(-17);
+        let nodes = vec![
+            RigNode {
+                parent: None,
+                source_node_index: 0,
+                translation: Vec3::ZERO,
+                rotation: Quat::IDENTITY,
+                scale: Vec3::splat(0.5 * (1.0 + u)),
+            },
+            RigNode {
+                parent: Some(0),
+                source_node_index: 1,
+                translation: Vec3::ZERO,
+                rotation: Quat::IDENTITY,
+                scale: Vec3::new(1.0 + u * 0.5, 1.0 + u * 0.5, 1.0 + u * 2.0),
+            },
+        ];
+        let doc = rig_document(&nodes, &[1], 0, Mat4::IDENTITY);
+        let capability = complete_capability();
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 0.5,
+            },
+            document: &doc,
+            capability: &capability,
+        })
+        .unwrap();
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+        assert_eq!(proof.unit_scale_residual, 192.0 * 2f64.powi(-23));
+        let policy = plan.tolerance_policy();
+        assert!(proof.unit_scale_residual <= policy.postcondition_unit_scale_residual);
+        let two_bands = (1.0 - policy.common_factor).powi(-2) - 1.0;
+        assert!(
+            proof.unit_scale_residual > two_bands,
+            "residual {} does not exceed the two-band figure {two_bands}",
             proof.unit_scale_residual
         );
     }
@@ -5409,6 +6292,77 @@ mod tests {
         assert_eq!(observed, std::f64::consts::TAU);
     }
 
+    #[test]
+    fn the_reported_rest_rotation_residual_is_the_maximum_not_the_last_node_seen() {
+        // `ScaleProof::rest_rotation_residual` is a *maximum* over the
+        // affected nodes and, like `unit_scale_residual`, it is folded by hand
+        // at its call site rather than through `check_and_track` — so a proof
+        // that reported the last affected node's residual instead of the
+        // largest would publish a smaller number than it observed. #284 will
+        // freeze this as a published §D.6 evidence field, which is exactly
+        // what makes accept/reject-unchanged-but-record-false a defect.
+        //
+        // An earlier revision left this unpinned on the grounds that no build
+        // path writes `rest.rotation`, so the residual is always zero. That
+        // reasoning is about the *builder*; the obligation exists to catch
+        // candidates the builder did not produce, and this file hand-builds
+        // `ScaleCandidate { document }` in several places, including the two
+        // rotation tests above. The build path has nothing to do with it.
+        //
+        // The rig puts the only nonzero residual on the *first* of two inert
+        // leaves, so the last node folded reports exactly zero:
+        //
+        //   bone 0  root, no rotation error                  residual 0
+        //   bone 1  skinned joint, no rotation error          residual 0
+        //   bone 2  inert leaf, rotated                       residual theta
+        //   bone 3  inert leaf, left identity                 residual 0
+        //
+        // A rotation of `theta` about X is `(sin(theta/2), 0, 0,
+        // cos(theta/2))`; at `theta = 2^-17` the cosine is within `2^-36` of
+        // one and rounds to exactly `1.0f32`, so the authored quaternion is
+        // the literal `(2^-18, 0, 0, 1)`. Against an identity source rotation
+        // the double-cover-aware chord is `|(2^-18, 0, 0, 0)| = 2^-18`
+        // exactly, and the reported angle is
+        //
+        //   4 * asin(2^-18 / 2) = 4 * asin(2^-19) = 2^-17 = 7.62939453125e-6
+        //
+        // to within `2^-58` (the cubic term of `asin`), which is far inside
+        // the `1e-15` band asserted below and comfortably under the `1e-5`
+        // policy bound, so the candidate proves rather than being rejected.
+        let nodes = vec![
+            rig(None, 0, Vec3::ZERO),
+            rig(Some(0), 1, Vec3::new(0.0, 1.0, 0.0)),
+            rig(Some(0), 2, Vec3::new(3.0, 0.0, 0.0)),
+            rig(Some(0), 3, Vec3::new(0.0, 0.0, 3.0)),
+        ];
+        let doc = rig_document(&nodes, &[1], 0, Mat4::IDENTITY);
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        // The order the maximum is folded in: bone 3 is last.
+        assert_eq!(plan.affected_nodes(), &[0, 1, 2, 3]);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+
+        // Bones 2 and 3 are leaves carrying no skin slot, no mesh vertex and
+        // no track, so no descendant origin, skin palette or sampled pose
+        // moves and the rest-rotation obligation is the only one that can see
+        // either of them.
+        let mut broken = candidate.document().clone();
+        broken.skeleton.bones[2].rest.rotation = Quat::from_xyzw(2f32.powi(-18), 0.0, 0.0, 1.0);
+        assert_eq!(broken.skeleton.bones[3].rest.rotation, Quat::IDENTITY);
+        let broken = ScaleCandidate { document: broken };
+
+        let proof = prove_scale(&doc, &broken, &plan).unwrap();
+        assert!(
+            (proof.rest_rotation_residual - 2f64.powi(-17)).abs() < 1e-15,
+            "residual {} is not the 2^-17 radian angle bone 2 carries",
+            proof.rest_rotation_residual
+        );
+        // Stated as its own inequality so the assertion above cannot be read
+        // as "whatever the last node happened to produce": bone 3's residual,
+        // the one a last-node fold would publish, is exactly zero.
+        assert!(proof.rest_rotation_residual > 0.0);
+    }
+
     // --- f32 representability of the declared factor --------------------
 
     #[test]
@@ -5464,9 +6418,19 @@ mod tests {
     fn a_non_finite_residual_fails_closed_instead_of_comparing_false() {
         // `NaN > tolerance` is `false`, so an unguarded comparison reports a
         // `NaN` residual as a pass.
+        //
+        // `-inf` is in the list because it is the *only* case that separates
+        // the `!observed.is_finite()` the guard is written with from the
+        // narrower `observed.is_nan()`: `+inf > tolerance` is true, so the
+        // comparison already rejects a positive infinity with or without a
+        // guard, and a `NaN`-only guard would still pass every other case
+        // here. See `check_residual`'s own note for why the wider spelling is
+        // kept even though no caller in this module can hand it a negative
+        // residual.
         for (observed, tolerance) in [
             (f64::NAN, 1.0),
             (f64::INFINITY, 1.0),
+            (f64::NEG_INFINITY, 1.0),
             (0.0, f64::NAN),
             (0.0, f64::INFINITY),
         ] {
@@ -5511,6 +6475,132 @@ mod tests {
             ),
             "unexpected error {error:?}"
         );
+    }
+
+    /// The column pair a single shear term is aimed at.
+    #[derive(Clone, Copy, Debug)]
+    enum ShearPair {
+        /// `dot01` — `columns[0] · columns[1]`.
+        XY,
+        /// `dot02` — `columns[0] · columns[2]`.
+        XZ,
+        /// `dot12` — `columns[1] · columns[2]`.
+        YZ,
+    }
+
+    /// A basis carrying exactly one shear term `s`, in the named column pair.
+    ///
+    /// Two columns are the unit axes they name; the third adds `s` in one
+    /// foreign axis:
+    ///
+    /// ```text
+    ///   XY: (1, 0, 0) (s, 1, 0) (0, 0, 1)   dot01 = s, dot02 = 0, dot12 = 0
+    ///   XZ: (1, 0, 0) (0, 1, 0) (s, 0, 1)   dot02 = s, dot01 = 0, dot12 = 0
+    ///   YZ: (1, 0, 0) (0, 1, 0) (0, s, 1)   dot12 = s, dot01 = 0, dot02 = 0
+    /// ```
+    ///
+    /// Each zero above is structural — every term of those two dot products
+    /// has a literal `0.0` factor — so the pairs a fixture is *not* aiming at
+    /// stay exactly zero for every `s`, and only the named comparison can
+    /// decide.
+    fn single_shear_basis(pair: ShearPair, s: f32) -> Mat3 {
+        match pair {
+            ShearPair::XY => Mat3::from_cols(
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(s, 1.0, 0.0),
+                Vec3::new(0.0, 0.0, 1.0),
+            ),
+            ShearPair::XZ => Mat3::from_cols(
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, 1.0, 0.0),
+                Vec3::new(s, 0.0, 1.0),
+            ),
+            ShearPair::YZ => Mat3::from_cols(
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, 1.0, 0.0),
+                Vec3::new(0.0, s, 1.0),
+            ),
+        }
+    }
+
+    /// Drive [`single_shear_basis`] through `classify_affine` at both signs of
+    /// both magnitudes, asserting `Sheared` outside the band and acceptance
+    /// inside it.
+    ///
+    /// The shape is chosen so that *no other check in `classify_affine` can
+    /// fire*, at either magnitude and either sign. With `s = ±2^-15`:
+    ///
+    /// * **NonFinite** — every entry is a finite literal.
+    /// * **Singular** — the sheared column is `unit_axis + s * other_axis`,
+    ///   and `other_axis` is one of the two columns left untouched, so the
+    ///   triple product is unchanged from the identity's: `determinant` is
+    ///   exactly `1.0` for all three pairs. `axis_product` is
+    ///   `sqrt(1 + 2^-30) < 1.000000001`, so the singular threshold is
+    ///   `1e-6 * that`, six orders below `1.0`.
+    /// * **NonUniformScale** — the length multiset is
+    ///   `(1, 1, sqrt(1 + 2^-30))` for all three pairs, i.e.
+    ///   `(1, 1, 1.000000000465661…)`. The average is `1.000000000155220…`
+    ///   and the largest deviation is `2/3 * 2^-31 = 3.10e-10`, against a
+    ///   band of `1e-5 * max(average, length) > 1e-5` — four and a half
+    ///   orders of headroom.
+    /// * **Reflected** — the determinant is `+1.0`, so even deleting the
+    ///   orthogonality check outright yields `Ok`, never `Reflected`.
+    ///
+    /// That leaves the orthogonality comparison as the only possible source
+    /// of a `Sheared` verdict. It fires because
+    /// `|s| = 2^-15 = 3.0517578125e-5` and the tolerance is
+    /// `1e-5 * average^2 = 1.0000000003…e-5` — the shear is 3.05x the bound.
+    /// At `s = ±2^-17 = ±7.62939453125e-6` the same arithmetic gives
+    /// `0.76x` the bound (lengths `(1, 1, sqrt(1 + 2^-34))`, tolerance
+    /// `1.0000000000…e-5`), so the in-band cases must be accepted: the
+    /// rejections above are the shear magnitude talking and not the shape.
+    fn assert_only_this_column_pair_decides_shear(pair: ShearPair) {
+        let tol = ScaleTolerancePolicy::APPENDIX_D_V2;
+        // Written as exact dyadics rather than decimal literals, so the
+        // binary32 bits are readable straight off the page: `2^-15` and
+        // `2^-17`.
+        let out_of_band_magnitude = 2.0_f32.powi(-15);
+        let in_band_magnitude = 2.0_f32.powi(-17);
+        for sign in [1.0_f32, -1.0] {
+            let out_of_band = sign * out_of_band_magnitude;
+            assert_eq!(
+                classify_affine(single_shear_basis(pair, out_of_band), &tol),
+                Err(AffineDomainViolation::Sheared),
+                "{pair:?} shear {out_of_band} was not rejected as sheared"
+            );
+            let in_band = sign * in_band_magnitude;
+            assert!(
+                classify_affine(single_shear_basis(pair, in_band), &tol).is_ok(),
+                "{pair:?} shear {in_band} was rejected, so the shape and not \
+                 the magnitude is what the out-of-band case rejects on"
+            );
+        }
+    }
+
+    #[test]
+    fn shear_isolated_to_the_x_y_column_pair_is_sheared_at_either_sign() {
+        // Pins `dot01`'s own clause *and* its `.abs()`: with the absolute
+        // value dropped, `dot01 = -2^-15` is not `> tolerance` and the other
+        // two dot products are structurally zero, so the basis is accepted.
+        assert_only_this_column_pair_decides_shear(ShearPair::XY);
+    }
+
+    #[test]
+    fn shear_isolated_to_the_x_z_column_pair_is_sheared_at_either_sign() {
+        // Pins `dot02`'s clause and its `.abs()`. No other fixture isolates
+        // `x·z`: the two column pairs either side of it stay exactly zero
+        // here, so deleting this clause accepts the basis outright.
+        assert_only_this_column_pair_decides_shear(ShearPair::XZ);
+    }
+
+    #[test]
+    fn shear_isolated_to_the_y_z_column_pair_is_sheared_at_either_sign() {
+        // Pins `dot12`'s clause and its `.abs()`.
+        // `a_shear_only_f64_can_see_is_still_classified_as_sheared` already
+        // reaches this comparison, but through a dense basis in which all
+        // three dot products are nonzero; this one isolates it, so the three
+        // pairs are covered on equal terms.
+        assert_only_this_column_pair_decides_shear(ShearPair::YZ);
     }
 
     // --- Per-value proof of every domain --------------------------------
@@ -5767,11 +6857,19 @@ mod tests {
         let plan = whole_document_plan(&doc, &capability);
         assert!(plan.proof_obligations().prove_bounds);
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
-        // Replay the plan against a document that no longer carries the
-        // skinned instance its bounds obligation was declared from.
+        // Replay the plan against a document pair that no longer carries the
+        // skinned instance its bounds obligation was declared from. Both
+        // sides lose it, so what fails is the bounds obligation for want of
+        // evidence, not the source/candidate skin-identity parity check.
         let mut unskinned = doc.clone();
         unskinned.assets.instances[0].skin_joints.clear();
         unskinned.assets.instances[0].skin_ibms.clear();
+        let mut unskinned_candidate = candidate.into_document();
+        unskinned_candidate.assets.instances[0].skin_joints.clear();
+        unskinned_candidate.assets.instances[0].skin_ibms.clear();
+        let candidate = ScaleCandidate {
+            document: unskinned_candidate,
+        };
         let error = prove_scale(&unskinned, &candidate, &plan).unwrap_err();
         let ScaleError::MissingProofEvidence { kind, detail } = error else {
             panic!("expected missing bounds evidence, got {error:?}");
@@ -6589,11 +7687,16 @@ mod tests {
 
     #[test]
     fn skinned_bounds_blends_and_normalises_multi_joint_weights() {
-        // Hand-written animated joint worlds, so nothing here is recomputed
-        // by the code under test. At these poses the two joint palettes are
+        // Hand-written joint palettes, so nothing here is recomputed by the
+        // code under test. At these poses `multi_joint_document`'s two skin
+        // slots compose to
         //
-        //     M1 = W1 * B1 = [I | (0, 1, 0)]
-        //     M2 = W2 * B2 = [I | (0, 3, 0)]
+        //     M1 = W1 * B1 = [0.01 I | (0, 2, 0)] * [100 I | (0, -100, 0)]
+        //                  = [I | 0.01 * (0, -100, 0) + (0, 2, 0)]
+        //                  = [I | (0, 1, 0)]
+        //     M2 = W2 * B2 = [0.01 I | (0, 5, 0)] * [100 I | (0, -200, 0)]
+        //                  = [I | 0.01 * (0, -200, 0) + (0, 5, 0)]
+        //                  = [I | (0, 3, 0)]
         //
         // and the four vertices skin to
         //
@@ -6603,22 +7706,21 @@ mod tests {
         //     (0, -3, 0) -> (0.4 * (0, -2, 0) + 0.4 * (0, 0, 0)) / 0.8
         //                                                       = ( 0, -1, 0)
         let doc = multi_joint_document();
-        let worlds = vec![
-            Mat4::from_scale(Vec3::splat(0.01)),
-            Mat4::from_scale_rotation_translation(
-                Vec3::splat(0.01),
-                Quat::IDENTITY,
-                Vec3::new(0.0, 2.0, 0.0),
-            ),
-            Mat4::from_scale_rotation_translation(
-                Vec3::splat(0.01),
-                Quat::IDENTITY,
-                Vec3::new(0.0, 5.0, 0.0),
-            ),
+        let slots = [
+            Mat4::from_translation(Vec3::new(0.0, 1.0, 0.0)),
+            Mat4::from_translation(Vec3::new(0.0, 3.0, 0.0)),
         ];
-        let affected: BTreeSet<BoneId> = [0, 1, 2].into_iter().collect();
-        let (min, max) = skinned_bounds(&doc, &worlds, &affected)
-            .unwrap()
+        let mut accumulator = BoundsAccumulator::default();
+        accumulate_skinned_bounds(
+            0,
+            0,
+            &doc.assets.meshes[0].primitives[0],
+            &slots,
+            &mut accumulator,
+        )
+        .unwrap();
+        let (min, max) = accumulator
+            .finish()
             .expect("multi-joint fixture has weighted vertices");
         assert!(
             (min - Vec3::new(-1.0, -1.0, 0.0)).length() < 1e-5,
@@ -6628,6 +7730,173 @@ mod tests {
             (max - Vec3::new(1.0, 4.5, 2.0)).length() < 1e-5,
             "max {max:?}"
         );
+    }
+
+    /// One vertex, one slot, one influence — the smallest primitive that
+    /// exercises [`accumulate_skinned_bounds`]'s per-influence path.
+    fn one_influence_primitive(weight: f32) -> Primitive {
+        Primitive {
+            positions: vec![Vec3::new(1.0, 0.0, 0.0)],
+            joints: vec![[0, 0, 0, 0]],
+            weights: vec![[weight, 0.0, 0.0, 0.0]],
+            ..Primitive::default()
+        }
+    }
+
+    #[test]
+    fn an_infinite_skin_weight_is_rejected_as_a_weight_not_as_a_skinned_result() {
+        // The guard is `!weight.is_finite()`, not `weight.is_nan()`, and the
+        // two differ exactly on the infinities. An infinite weight is not
+        // merely a `NaN` in disguise: it survives `weight != 0.0`, and
+        // `inf * (1, 0, 0)` is `(inf, NaN, NaN)` because `inf * 0` is `NaN`,
+        // so a `NaN`-only guard would let the vertex through and the failure
+        // would surface downstream as `non_finite_result` — blaming the skin
+        // equation for a malformed input attribute. The reason string is the
+        // assertion, not just the fact of an error.
+        let slots = [Mat4::IDENTITY];
+        let mut accumulator = BoundsAccumulator::default();
+        assert_eq!(
+            accumulate_skinned_bounds(
+                7,
+                3,
+                &one_influence_primitive(f32::INFINITY),
+                &slots,
+                &mut accumulator,
+            ),
+            Err(ScaleError::InvalidSkinnedPrimitive {
+                instance_index: 7,
+                primitive_index: 3,
+                reason: "non_finite_weight",
+            })
+        );
+        // `NaN` names the same reason, so the guard is one guard and not two
+        // behaviours that happen to share a spelling.
+        assert_eq!(
+            accumulate_skinned_bounds(
+                7,
+                3,
+                &one_influence_primitive(f32::NAN),
+                &slots,
+                &mut accumulator,
+            ),
+            Err(ScaleError::InvalidSkinnedPrimitive {
+                instance_index: 7,
+                primitive_index: 3,
+                reason: "non_finite_weight",
+            })
+        );
+    }
+
+    #[test]
+    fn a_vertex_whose_influences_sum_negative_is_left_out_of_the_bounds() {
+        // The normalisation guard is `weight_sum > 0.0`, not
+        // `weight_sum != 0.0`. Nothing upstream constrains authored weights to
+        // be non-negative — `validate_scene_assets` range-checks joint ids,
+        // not weights — so a negative sum is reachable, and dividing by it
+        // negates every normalised influence: this vertex would be folded into
+        // the bounds at `(1, 10, 0)`, the *reflection* of where its single
+        // influence actually places it.
+        //
+        //   slot 0 translates by (0, 10, 0), so the influence puts the vertex
+        //   (1, 0, 0) at (1, 10, 0);
+        //   weight -0.5   ->  skinned    = -0.5 * (1, 10, 0) = (-0.5, -5, 0)
+        //                     weight_sum = -0.5
+        //   -0.5 > 0 is false, so the vertex contributes nothing and the
+        //   accumulator is never touched;
+        //   `!= 0.0` instead divides: (-0.5, -5, 0) / -0.5 = (1, 10, 0).
+        let slots = [Mat4::from_translation(Vec3::new(0.0, 10.0, 0.0))];
+        let mut accumulator = BoundsAccumulator::default();
+        accumulate_skinned_bounds(
+            0,
+            0,
+            &one_influence_primitive(-0.5),
+            &slots,
+            &mut accumulator,
+        )
+        .expect("a negative weight is not malformed, only unusable as a blend");
+        assert_eq!(accumulator.finish(), None);
+
+        // The same primitive with the sign flipped does land in the bounds, so
+        // the emptiness above is the sign's doing and not the fixture failing
+        // to reach the accumulator at all.
+        let mut accumulator = BoundsAccumulator::default();
+        accumulate_skinned_bounds(
+            0,
+            0,
+            &one_influence_primitive(0.5),
+            &slots,
+            &mut accumulator,
+        )
+        .unwrap();
+        assert_eq!(
+            accumulator.finish(),
+            Some((Vec3::new(1.0, 10.0, 0.0), Vec3::new(1.0, 10.0, 0.0)))
+        );
+    }
+
+    #[test]
+    fn the_fourth_skin_influence_of_a_vertex_is_walked_like_the_first_three() {
+        // glTF's `JOINTS_0`/`WEIGHTS_0` carry exactly four influences per
+        // vertex, and `accumulate_skinned_bounds` walks `0..4`. No other
+        // fixture in this file gives a vertex a nonzero *fourth* influence, so
+        // a walk that stopped at three would still pass every one of them —
+        // while silently dropping a legal influence from the bounds both sides
+        // of the proof are measured on.
+        //
+        // Dropping it symmetrically is invisible: the same truncated walk runs
+        // over the source and the candidate, so an equally-wrong pair of
+        // bounds still agree. The defect below is therefore one only the
+        // fourth slot carries — a candidate that rebound slot 3 to slot 0's
+        // joint. `validate_candidate_structure` compares mesh identity, skin
+        // joints and per-primitive vertex counts, but not per-vertex joint
+        // indices, and the skin-matrix obligation compares `W * B` per
+        // `skin_joints` slot, which this leaves untouched: the bounds walk is
+        // the only thing that can see it.
+        //
+        // Every joint is a direct child of the root, so with a whole-document
+        // factor of `0.01` the four rest-world skin matrices (identity binds)
+        // are pure translations `0.01 * (0, k, 0)` for `k = 1..4`, and the one
+        // vertex is evenly blended across all four:
+        //
+        //   source skinned    = 0.25 * (W1 + W2 + W3 + W4) * p
+        //   candidate skinned = 0.25 * (W1 + W2 + W3 + W1) * p
+        //   difference        = 0.25 * 0.01 * (0, 1 - 4, 0) = (0, -0.0075, 0)
+        //
+        // against a bounds tolerance of `1e-6 + 1e-5 * O(1)`, so the
+        // rejection is four orders of magnitude clear of the band.
+        let nodes = vec![
+            rig(None, 0, Vec3::ZERO),
+            rig(Some(0), 1, Vec3::new(0.0, 1.0, 0.0)),
+            rig(Some(0), 2, Vec3::new(0.0, 2.0, 0.0)),
+            rig(Some(0), 3, Vec3::new(0.0, 3.0, 0.0)),
+            rig(Some(0), 4, Vec3::new(0.0, 4.0, 0.0)),
+        ];
+        let mut doc = rig_document(&nodes, &[1, 2, 3, 4], 0, Mat4::IDENTITY);
+        doc.assets.meshes[0].primitives[0] = Primitive {
+            positions: vec![Vec3::new(1.0, 0.0, 0.0)],
+            joints: vec![[0, 1, 2, 3]],
+            weights: vec![[0.25, 0.25, 0.25, 0.25]],
+            ..Primitive::default()
+        };
+        assert_eq!(doc.assets.instances[0].skin_joints, vec![1, 2, 3, 4]);
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        assert!(plan.proof_obligations().prove_bounds);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        // The undoctored candidate proves, so the rejection below is the
+        // rebound influence and nothing about the fixture.
+        prove_scale(&doc, &candidate, &plan).unwrap();
+
+        let mut broken = candidate.document().clone();
+        broken.assets.meshes[0].primitives[0].joints[0] = [0, 1, 2, 0];
+        let broken = ScaleCandidate { document: broken };
+        assert!(matches!(
+            prove_scale(&doc, &broken, &plan).unwrap_err(),
+            ScaleError::ProofResidualExceeded {
+                kind: ProofResidualKind::Bounds,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -6787,12 +8056,12 @@ mod tests {
     // --- Tolerance policy identity -----------------------------------------
 
     #[test]
-    fn the_appendix_d_v1_tolerance_identity_is_pinned_through_plan_and_proof() {
+    fn the_appendix_d_v2_tolerance_identity_is_pinned_through_plan_and_proof() {
         // DESIGN.md Appendix D §D.1/§D.6: producers record this identity and
         // these thresholds in evidence, so a change to either is a new policy
         // identity rather than a silent retune.
-        fn assert_appendix_d_v1(policy: ScaleTolerancePolicy) {
-            assert_eq!(policy.id, "appendix-d-v1");
+        fn assert_appendix_d_v2(policy: ScaleTolerancePolicy) {
+            assert_eq!(policy.id, "appendix-d-v2");
             assert_eq!(policy.relative_orthogonality, 1e-5);
             assert_eq!(policy.equal_axis, 1e-5);
             assert_eq!(policy.common_factor, 1e-5);
@@ -6800,20 +8069,64 @@ mod tests {
             assert_eq!(policy.scalar_absolute, 1e-6);
             assert_eq!(policy.scalar_relative, 1e-5);
             assert_eq!(policy.rotation_residual_radians, 1e-5);
-            assert_eq!(policy.postcondition_unit_scale_residual, 1e-5);
+            // `2^-14` exactly: the v2 unit-scale bound, on the binary32
+            // mantissa grid the composed-scale measurement lives on.
+            assert_eq!(policy.postcondition_unit_scale_residual, 6.103_515_625e-5);
+            assert_eq!(policy.proof_sample_work_budget, 400_000_000);
             // `abs_error <= 1e-6 + 1e-5 * max(abs(before), abs(after))`, at a
             // hand-computed operand pair.
             assert!((policy.scalar_tolerance(0.0, 100.0) - 0.001_001).abs() < 1e-12);
+            // The unit-scale bound is *derived* from the common-factor band,
+            // not declared independently: four bands is `4e-5`, and the
+            // declared bound is the next power of two at or above it, which
+            // is also an exact multiple of `2^-23` and therefore a value the
+            // binary32 composed-scale measurement can equal. Pinning every
+            // half of that sentence keeps a future retune of either number
+            // from silently reopening the window §D.1 closes.
+            let bands = ScaleTolerancePolicy::UNIT_SCALE_BANDS * policy.common_factor;
+            assert!((bands - 4e-5).abs() < 1e-20, "four bands {bands}");
+            assert!(policy.postcondition_unit_scale_residual >= bands);
+            assert_eq!(policy.postcondition_unit_scale_residual, 2f64.powi(-14));
+            assert_eq!(
+                policy.postcondition_unit_scale_residual,
+                512.0 * 2f64.powi(-23)
+            );
+            // Rounding onto that grid is a rounding, not an open-ended
+            // loosening: the declared bound is the *next* power of two at or
+            // above four bands, so halving it must fall below them. That
+            // pins "rounded up to the next power of two" exactly, rather
+            // than merely bounding the result from one side.
+            assert!(policy.postcondition_unit_scale_residual / 2.0 < bands);
+            // Three of the four bands are analytic — the declared-factor
+            // match, the mixed-factor match, and the equal-axis match, each
+            // contributing at most `c / (1 - c)` — so the composed analytic
+            // worst case is `(1 - c)^-3 - 1`. The declared bound has to sit
+            // strictly above it with a whole band left over, which is what
+            // makes the fourth band genuine float headroom.
+            let c = policy.common_factor;
+            // `(1 - x)^-3 - 1 = 3x + 6x^2 + 10x^3 + ...`, so at `x = 1e-5`
+            // the first two terms are `3.00006e-5` and everything after them
+            // is below `1.1e-14`.
+            let analytic_worst_case = (1.0 - c).powi(-3) - 1.0;
+            assert!(
+                (analytic_worst_case - 3.00006e-5).abs() < 1e-13,
+                "three composed bands {analytic_worst_case}"
+            );
+            assert!(
+                policy.postcondition_unit_scale_residual - analytic_worst_case > c,
+                "headroom {} is under one band",
+                policy.postcondition_unit_scale_residual - analytic_worst_case
+            );
         }
 
         let doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
         let capability = complete_capability();
 
         let whole_document = whole_document_plan(&doc, &capability);
-        assert_appendix_d_v1(whole_document.tolerance_policy());
+        assert_appendix_d_v2(whole_document.tolerance_policy());
         let candidate = build_scale_candidate(&doc, &whole_document).unwrap();
         let proof = prove_scale(&doc, &candidate, &whole_document).unwrap();
-        assert_appendix_d_v1(proof.tolerance_policy);
+        assert_appendix_d_v2(proof.tolerance_policy);
 
         let rest_bind = plan_scale(&ScaleRequest {
             operation: ScaleOperation::RestBindUniformScale {
@@ -6825,10 +8138,856 @@ mod tests {
             capability: &capability,
         })
         .unwrap();
-        assert_appendix_d_v1(rest_bind.tolerance_policy());
+        assert_appendix_d_v2(rest_bind.tolerance_policy());
         let candidate = build_scale_candidate(&doc, &rest_bind).unwrap();
         let proof = prove_scale(&doc, &candidate, &rest_bind).unwrap();
-        assert_appendix_d_v1(proof.tolerance_policy);
+        assert_appendix_d_v2(proof.tolerance_policy);
+    }
+
+    // --- Tolerance boundary and reported maxima ----------------------------
+
+    #[test]
+    fn a_residual_exactly_at_its_tolerance_is_accepted_and_the_next_one_up_is_not() {
+        // DESIGN.md Appendix D §D.1 states every residual is "at most" its
+        // bound, i.e. the bound is *inclusive*. `check_residual` therefore
+        // rejects on `observed > tolerance`, and nothing else in the module
+        // distinguishes that from `observed >= tolerance` unless a comparison
+        // actually lands on the bound. `next_up` is the immediately larger
+        // `f64`, so the accept/reject pair below straddles the bound with no
+        // representable value in between.
+        let bound = ScaleTolerancePolicy::APPENDIX_D_V2.postcondition_unit_scale_residual;
+        assert_eq!(
+            check_residual(ProofResidualKind::UnitScale, bound, bound),
+            Ok(())
+        );
+        let above = f64::from_bits(bound.to_bits() + 1);
+        assert_eq!(
+            check_residual(ProofResidualKind::UnitScale, above, bound),
+            Err(ScaleError::ProofResidualExceeded {
+                kind: ProofResidualKind::UnitScale,
+                observed: above,
+                tolerance: bound,
+            })
+        );
+    }
+
+    #[test]
+    fn a_unit_scale_residual_exactly_on_the_policy_bound_still_proves() {
+        // The same inclusive boundary, reached end to end rather than by
+        // calling the comparison directly. This is the reason the v2 policy
+        // states its unit-scale bound as `2^-14`: the measured residual is
+        // `after_scale - 1` for a binary32 `after_scale`, hence always an
+        // integer multiple of `2^-23` near unit magnitude, and `2^-14` is
+        // `512 * 2^-23`. A bound off that grid could never be *met*, only
+        // undershot, and the inclusive/exclusive distinction would be
+        // untestable.
+        //
+        // The source is a rig whose whole affected domain has an exact
+        // rest-world factor of `0.5`, so `plan_scale` accepts with a zero
+        // factor residual and every other obligation below is analytically
+        // exact:
+        //
+        //   W0 = W1 = diag(0.5),  B1 = diag(2),  W1 * B1 = I
+        //
+        // The candidate is then hand-built to sit exactly on the bound: its
+        // root local scale is `1 + 2^-14` (exactly representable), and its
+        // inverse bind is `diag(1 - 2^-14)`. Their product rounds to exactly
+        // `1.0` in binary32 — `(1 + 2^-14)(1 - 2^-14) = 1 - 2^-28`, and
+        // `2^-28` is far below the `2^-24` half-ulp below one — so the skin
+        // equation and the skinned bounds both still hold exactly while the
+        // composed scale is off by exactly the declared bound.
+        let nodes = vec![
+            RigNode {
+                parent: None,
+                source_node_index: 0,
+                translation: Vec3::ZERO,
+                rotation: Quat::IDENTITY,
+                scale: Vec3::splat(0.5),
+            },
+            rig(Some(0), 1, Vec3::ZERO),
+        ];
+        let doc = rig_document(&nodes, &[1], 0, Mat4::from_scale(Vec3::splat(2.0)));
+        let capability = complete_capability();
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 0.5,
+            },
+            document: &doc,
+            capability: &capability,
+        })
+        .unwrap();
+        assert!(plan.proof_obligations().prove_unit_scale_postcondition);
+
+        let bound = plan.tolerance_policy().postcondition_unit_scale_residual;
+        let mut boundary = build_scale_candidate(&doc, &plan).unwrap().into_document();
+        boundary.skeleton.bones[0].rest.scale = Vec3::splat(1.0 + 2.0f32.powi(-14));
+        boundary.assets.instances[0].skin_ibms[0] =
+            Mat4::from_scale(Vec3::splat(1.0 - 2.0f32.powi(-14)));
+        let boundary = ScaleCandidate { document: boundary };
+
+        let proof = prove_scale(&doc, &boundary, &plan).unwrap();
+        assert_eq!(proof.unit_scale_residual, bound);
+        assert_eq!(proof.unit_scale_residual, 2f64.powi(-14));
+    }
+
+    #[test]
+    fn a_successful_proof_reports_the_residual_maxima_it_actually_observed() {
+        // `ScaleProof`'s residual fields are exactly what DESIGN.md Appendix
+        // D §D.6 requires producer evidence to serialize, so a proof that
+        // succeeded while reporting `0.0` for a residual that was really
+        // `2.2e-10` would publish a false record. Accept/reject is unaffected
+        // by that confusion, so only an assertion on a *nonzero* maximum from
+        // a *successful* proof can catch it.
+        //
+        // Every value below is the same single quantity, hand-computed:
+        // the whole-document builder narrows the declared `0.01` to binary32
+        // before multiplying, while proof forms its expectation in `f64`.
+        //
+        //   0.01_f32 = 10737418 * 2^-30 = 0.00999999977648258209228515625
+        //   0.01_f64 = 0.010000000000000000208166817117216851...
+        //   residual = 0.01_f64 - 0.01_f32 = 2.2351741811588166e-10
+        //
+        // and the tolerance it passes is `1e-6 + 1e-5 * 0.01 = 1.0001e-6`.
+        //
+        //   rest translation: child rest `(0, 1, 0)` -> `(0, 0.01_f32, 0)`
+        //   mesh position:    vertex `(1, 0, 0)` -> `(0.01_f32, 0, 0)`
+        //   bounds:           the one weighted vertex skins to `(1, 1, 0)`
+        //                     in the source and `(0.01_f32, 0.01_f32, 0)` in
+        //                     the candidate, and min == max
+        let doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+
+        let expected = 0.01_f64 - (0.01_f32 as f64);
+        assert_eq!(expected, 2.235_174_181_158_816_6e-10);
+        assert_eq!(proof.rest_translation_residual, expected);
+        assert_eq!(proof.mesh_position_residual, expected);
+        assert_eq!(proof.bounds_residual, expected);
+        // The skin equation, by contrast, is genuinely exact here: proof
+        // forms its expectation with the same binary32 `scale_translation_only`
+        // the builder used, so there is nothing to round. Pinning it at zero
+        // keeps the three nonzero maxima above attributable.
+        assert_eq!(proof.skin_matrix_residual, 0.0);
+    }
+
+    #[test]
+    fn the_reported_unit_scale_residual_is_the_maximum_not_the_last_node_seen() {
+        // `ScaleProof::unit_scale_residual` is a *maximum* over the affected
+        // nodes, and #284 will freeze it as a published evidence field, so a
+        // proof that reported the last node's residual instead of the largest
+        // would publish a smaller number than it observed — accept/reject
+        // unchanged, record false. Unlike the residuals routed through
+        // `check_and_track`, this one and `rest_rotation_residual` are folded
+        // by hand at their call sites, so for each of them only a fixture
+        // whose maximum is *not* at the last affected node can tell the two
+        // apart — see
+        // `the_reported_rest_rotation_residual_is_the_maximum_not_the_last_node_seen`
+        // for the other.
+        //
+        // `plan.affected_nodes` is ascending `BoneId` order, so the rig puts
+        // the larger residual on node 0. With `u = 2^-17 = 64 * 2^-23` and a
+        // declared factor of `0.5`, every product below is exact in binary32:
+        //
+        //   root local scale  = 0.5 * (1 + u)          -> s_0 = 0.5 * (1 + u)
+        //   child local scale = 1 - u/2
+        //   child world       = 0.5 * (1 + u) * (1 - u/2)
+        //                     = 0.5 * (1 + u/2)        (the `2^-36` term is
+        //                                               below the `2^-24` ulp)
+        //
+        // The mixed-factor band sees `|A_1 - s_0| = 0.5 * u/2` against
+        // `1e-5 * 0.5 * (1 + u)`, so it accepts. The candidate's root local
+        // scale is `0.5 * (1 + u) * 2 = 1 + u`, hence
+        //
+        //   node 0 residual = u   = 64 * 2^-23 = 7.62939453125e-6
+        //   node 1 residual = u/2 = 32 * 2^-23 = 3.814697265625e-6
+        let u = 2f32.powi(-17);
+        let nodes = vec![
+            RigNode {
+                parent: None,
+                source_node_index: 0,
+                translation: Vec3::ZERO,
+                rotation: Quat::IDENTITY,
+                scale: Vec3::splat(0.5 * (1.0 + u)),
+            },
+            RigNode {
+                parent: Some(0),
+                source_node_index: 1,
+                translation: Vec3::ZERO,
+                rotation: Quat::IDENTITY,
+                scale: Vec3::splat(1.0 - u * 0.5),
+            },
+        ];
+        let doc = rig_document(&nodes, &[1], 0, Mat4::IDENTITY);
+        let capability = complete_capability();
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 0.5,
+            },
+            document: &doc,
+            capability: &capability,
+        })
+        .unwrap();
+        // The order the maximum is folded in: node 0 first, node 1 last.
+        assert_eq!(plan.affected_nodes(), &[0, 1]);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+        assert_eq!(proof.unit_scale_residual, 64.0 * 2f64.powi(-23));
+        // Stated as its own inequality so the assertion above cannot be read
+        // as "whatever the last node happened to produce".
+        assert!(proof.unit_scale_residual > 32.0 * 2f64.powi(-23));
+    }
+
+    #[test]
+    fn a_skin_only_plan_still_evaluates_its_sampled_obligations() {
+        // `prove_skin` is one of the flags that arms `prove_scale`'s sampled
+        // loop. Under every plan the two planners construct it is co-declared
+        // with `prove_keys`, `prove_cubic_interiors` and `prove_trajectories`,
+        // so dropping it from that trigger changes nothing observable — see
+        // the note on `ScaleProofObligations::prove_skin`. This synthetic plan
+        // is the shape where it is load-bearing on its own: with every other
+        // sampled flag off, the sample-coverage `prove_scale` reports is
+        // entirely `prove_skin`'s doing.
+        let doc = multi_joint_document();
+        let capability = complete_capability();
+        let planned = multi_joint_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &planned).unwrap();
+
+        let skin_only = ScalePlan {
+            operation: planned.operation(),
+            tolerance_policy: planned.tolerance_policy(),
+            affected_nodes: planned.affected_nodes().to_vec(),
+            transform_only_attachments: Vec::new(),
+            common_factor: planned.common_factor(),
+            domain_rewrites: planned.domain_rewrites(),
+            proof_obligations: ScaleProofObligations {
+                prove_rest: false,
+                prove_unit_scale_postcondition: false,
+                prove_transform_only_affine: false,
+                prove_keys: false,
+                prove_cubic_interiors: false,
+                prove_trajectories: false,
+                prove_skin: true,
+                prove_bounds: false,
+            },
+        };
+
+        let proof = prove_scale(&doc, &candidate, &skin_only).unwrap();
+        // `multi_joint_document`'s clip has key times `{0.0, 1.0}` shared by
+        // both tracks plus the analytic midpoint `0.5` of the single cubic
+        // segment: three sample times, all of them harvested for `prove_skin`
+        // alone.
+        assert_eq!(proof.sample_time_count, 3);
+        // Nothing else was claimed, so nothing else may be reported as
+        // checked.
+        assert_eq!(proof.key_translation_residual, 0.0);
+        assert_eq!(proof.cubic_interior_residual, 0.0);
+        assert_eq!(proof.trajectory_residual, 0.0);
+        assert_eq!(proof.bounds_residual, 0.0);
+    }
+
+    #[test]
+    fn a_bounds_only_plan_still_evaluates_its_sampled_bounds() {
+        // The mirror of the skin-only plan above, for `prove_bounds`. Both of
+        // the guards this refactor introduced — `sample_time_obligations`'s
+        // early return and `check_skin_and_bounds`'s — test `prove_skin ||
+        // prove_bounds`, and under every plan the two planners construct the
+        // two flags are co-declared, so dropping `prove_bounds` from either
+        // guard changes nothing observable on a planner-built plan. This
+        // synthetic plan is the shape where it is load-bearing on its own:
+        // with `prove_skin` off, a dropped `prove_bounds` clause turns the
+        // whole obligation into a silent no-op that still reports a `0.0`
+        // bounds residual.
+        //
+        // The defect is `a_reweighted_vertex_is_named_by_the_bounds
+        // _obligation`'s: per-vertex weights are the one rewritten payload no
+        // other obligation reads, and at rest both joint palettes are the
+        // identity, so it is invisible until the clip drives the two joints
+        // apart — which is what makes it reach the *sampled* bounds walk and
+        // not merely the rest-pose one.
+        let doc = multi_joint_document();
+        let capability = complete_capability();
+        let planned = multi_joint_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &planned).unwrap();
+
+        let bounds_only = ScalePlan {
+            operation: planned.operation(),
+            tolerance_policy: planned.tolerance_policy(),
+            affected_nodes: planned.affected_nodes().to_vec(),
+            transform_only_attachments: Vec::new(),
+            common_factor: planned.common_factor(),
+            domain_rewrites: planned.domain_rewrites(),
+            proof_obligations: ScaleProofObligations {
+                prove_rest: false,
+                prove_unit_scale_postcondition: false,
+                prove_transform_only_affine: false,
+                prove_keys: false,
+                prove_cubic_interiors: false,
+                prove_trajectories: false,
+                prove_skin: false,
+                prove_bounds: true,
+            },
+        };
+
+        // The untouched candidate still proves, and the three sample times
+        // are entirely `prove_bounds`'s doing.
+        let proof = prove_scale(&doc, &candidate, &bounds_only).unwrap();
+        assert_eq!(proof.sample_time_count, 3);
+        assert_eq!(proof.skin_matrix_residual, 0.0);
+
+        let mut broken = candidate.document().clone();
+        broken.assets.meshes[0].primitives[0].weights[2] = [0.75, 0.25, 0.0, 0.0];
+        let broken = ScaleCandidate { document: broken };
+        assert!(matches!(
+            prove_scale(&doc, &broken, &bounds_only).unwrap_err(),
+            ScaleError::ProofResidualExceeded {
+                kind: ProofResidualKind::Bounds,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn each_clip_is_proved_against_its_own_sample_times() {
+        // `prove_scale` harvests each clip's sample times once, up front, into
+        // an index-parallel cache, then reads `clip_times[clip_index]` inside
+        // the per-clip loop. That index is new in this revision — the times
+        // used to be derived inside the loop, where they could not be wrong —
+        // and reading clip 0's times while proving clip 1 is invisible to
+        // every fixture whose clips share a timeline.
+        //
+        // The two clips here deliberately do not. Both drive bone 1, which
+        // together with bone 2 skins the single vertex `(1, 0, 0)` at
+        // `0.5 / 0.5`:
+        //
+        //   clip 0  times {0, 1}     bone 1 at the origin throughout
+        //   clip 1  times {0, 1, 2}  bone 1 at the origin at 0 and 1,
+        //                            and at (0, 10, 0) at 2
+        //
+        // At every time in clip 0 — and at clip 1's first two — both joint
+        // palettes are the identity, so the vertex skins to `(1, 0, 0)`
+        // whatever its weights are. Only at `t = 2` do the palettes differ:
+        //
+        //   source     0.5 * (1, 10, 0) + 0.5 * (1, 0, 0) = (1, 5, 0)
+        //   candidate  1.0 * (1, 10, 0)                   = (1, 10, 0)
+        //
+        // a `5.0` bounds residual against a `1e-6 + 1e-5 * 10` tolerance.
+        // Sampling clip 1 at `{0, 1}` clamps its track to its first key and
+        // never reaches that pose, so the defect goes unseen and the proof
+        // succeeds.
+        let nodes = vec![
+            rig(None, 0, Vec3::ZERO),
+            rig(Some(0), 1, Vec3::ZERO),
+            rig(Some(0), 2, Vec3::ZERO),
+        ];
+        let mut doc = rig_document(&nodes, &[1, 2], 0, Mat4::IDENTITY);
+        doc.assets.meshes[0].primitives[0] = Primitive {
+            positions: vec![Vec3::new(1.0, 0.0, 0.0)],
+            joints: vec![[0, 1, 0, 0]],
+            weights: vec![[0.5, 0.5, 0.0, 0.0]],
+            ..Primitive::default()
+        };
+        let clip = |name: &str, times: Vec<f32>, values: Vec<Vec3>| Clip {
+            name: name.into(),
+            duration_s: f64::from(*times.last().expect("at least one key time")),
+            tracks: vec![Track {
+                bone: 1,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times,
+                values: TrackValues::Vec3s(values),
+            }],
+        };
+        doc.clips = vec![
+            clip("still", vec![0.0, 1.0], vec![Vec3::ZERO; 2]),
+            clip(
+                "lift",
+                vec![0.0, 1.0, 2.0],
+                vec![Vec3::ZERO, Vec3::ZERO, Vec3::new(0.0, 10.0, 0.0)],
+            ),
+        ];
+
+        let capability = complete_capability();
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::WholeDocumentLinearUnits { factor: 1.0 },
+            document: &doc,
+            capability: &capability,
+        })
+        .unwrap();
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+
+        // Two key times from the first clip and three from the second, not
+        // twice the first clip's two.
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+        assert_eq!(proof.sample_time_count, 5);
+
+        let mut broken = candidate.document().clone();
+        broken.assets.meshes[0].primitives[0].weights[0] = [1.0, 0.0, 0.0, 0.0];
+        let broken = ScaleCandidate { document: broken };
+        assert!(matches!(
+            prove_scale(&doc, &broken, &plan).unwrap_err(),
+            ScaleError::ProofResidualExceeded {
+                kind: ProofResidualKind::Bounds,
+                ..
+            }
+        ));
+    }
+
+    // --- Sampling budget ---------------------------------------------------
+
+    /// A whole-document fixture sized in sample times and skinned vertices,
+    /// so a test can name the exact `sample_times * per_sample_work_units`
+    /// work its document demands.
+    ///
+    /// Two bones, one skinned instance with one slot, one primitive, and one
+    /// `Linear` translation track — which contributes `times.len()` key times
+    /// and no cubic-segment interiors. Its per-sample cost is therefore
+    /// `2 * 2 bones + (2 + 1) * 1 slot + 2 * vertices = 7 + 2 * vertices`.
+    fn budget_document(key_times: usize, vertices: usize) -> Document {
+        let mut doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
+        doc.assets.meshes[0].primitives[0] = Primitive {
+            positions: (0..vertices)
+                .map(|v| Vec3::new(v as f32 * 0.5, 1.0, 0.0))
+                .collect(),
+            joints: vec![[0, 0, 0, 0]; vertices],
+            weights: vec![[1.0, 0.0, 0.0, 0.0]; vertices],
+            ..Primitive::default()
+        };
+        let times: Vec<f32> = (0..key_times).map(|i| i as f32 / 1000.0).collect();
+        doc.clips.push(Clip {
+            name: "clip".into(),
+            duration_s: f64::from(*times.last().expect("at least one key time")),
+            tracks: vec![Track {
+                bone: 1,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times,
+                values: TrackValues::Vec3s(vec![Vec3::new(0.0, 1.0, 0.0); key_times]),
+            }],
+        });
+        doc
+    }
+
+    #[test]
+    fn a_document_above_the_sampling_budget_is_refused_with_a_typed_error() {
+        // Hand-computed against
+        // `ScaleTolerancePolicy::proof_sample_work_budget`:
+        //
+        //   per-sample cost = 2 sides * 2 bones                  =     4
+        //                   + (2 sides + 1 skin residual) * 1 slot =    3
+        //                   + 2 sides * 1000 skinned vertices    = 2_000
+        //                                                          -------
+        //                                                            2_007
+        //   sample times    = 200_000 keys, no cubic segments
+        //   work            = 200_000 * 2_007 = 401_400_000
+        //   budget          =                   400_000_000
+        //
+        // The refusal is typed and total: proof never silently samples a
+        // subset, and it is raised before the first sample time is evaluated.
+        let doc = budget_document(200_000, 1_000);
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        assert_eq!(
+            prove_scale(&doc, &candidate, &plan).unwrap_err(),
+            ScaleError::ProofSamplingBudgetExceeded {
+                policy_id: "appendix-d-v2",
+                sample_times: 200_000,
+                per_sample_cost: 2_007,
+                work: 401_400_000,
+                budget: 400_000_000,
+            }
+        );
+    }
+
+    #[test]
+    fn a_representative_in_budget_document_still_proves() {
+        // The same shape at production proportions — a 240-key clip over a
+        // 2000-vertex skinned mesh — costs
+        // `240 * (4 + 3 + 2 * 2000) = 240 * 4_007 = 961_680` work units, two
+        // orders of magnitude inside the budget, and proves.
+        let doc = budget_document(240, 2_000);
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        // The vertices really are walked: both obligations that charge for
+        // them are declared.
+        assert!(plan.proof_obligations().prove_skin);
+        assert!(plan.proof_obligations().prove_bounds);
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+        assert_eq!(proof.sample_time_count, 240);
+    }
+
+    /// A synthetic plan carrying only the two obligations
+    /// [`per_sample_work_units`] branches on, so a work-unit test can vary
+    /// them independently of what either planner happens to declare.
+    fn work_unit_plan(prove_skin: bool, prove_bounds: bool) -> ScalePlan {
+        ScalePlan {
+            operation: ScaleOperation::WholeDocumentLinearUnits { factor: 1.0 },
+            tolerance_policy: ScaleTolerancePolicy::APPENDIX_D_V2,
+            affected_nodes: vec![1, 2],
+            transform_only_attachments: Vec::new(),
+            common_factor: 1.0,
+            domain_rewrites: ScaleDomainRewrites {
+                rest_hierarchy: false,
+                translation_animation: false,
+                inverse_binds: false,
+                base_mesh_positions: false,
+            },
+            proof_obligations: ScaleProofObligations {
+                prove_rest: false,
+                prove_unit_scale_postcondition: false,
+                prove_transform_only_affine: false,
+                prove_keys: false,
+                prove_cubic_interiors: false,
+                prove_trajectories: false,
+                prove_skin,
+                prove_bounds,
+            },
+        }
+    }
+
+    /// Three bones; one mesh whose **two** primitives carry 5 and 7 vertices;
+    /// three instances, one of which repeats a joint across slots and one of
+    /// which is skinned entirely outside the affected closure `{1, 2}`.
+    fn work_unit_document() -> Document {
+        let nodes = vec![
+            rig(None, 0, Vec3::ZERO),
+            rig(Some(0), 1, Vec3::new(0.0, 1.0, 0.0)),
+            rig(Some(1), 2, Vec3::new(0.0, 1.0, 0.0)),
+        ];
+        let mut doc = rig_document(&nodes, &[1, 2], 0, Mat4::IDENTITY);
+        let primitive = |vertices: usize| Primitive {
+            positions: vec![Vec3::new(1.0, 0.0, 0.0); vertices],
+            joints: vec![[0, 0, 0, 0]; vertices],
+            weights: vec![[1.0, 0.0, 0.0, 0.0]; vertices],
+            ..Primitive::default()
+        };
+        doc.assets.meshes[0].primitives = vec![primitive(5), primitive(7)];
+        let instance = |skin_joints: Vec<BoneId>| MeshInstance {
+            source_node_index: 2,
+            node: 1,
+            mesh: 0,
+            skin_ibms: vec![Mat4::IDENTITY; skin_joints.len()],
+            skin_joints,
+        };
+        doc.assets.instances = vec![
+            // Three slots, two of which name the *same* joint: legal input,
+            // and the shape that makes "slot work cannot exceed the bone
+            // count" false.
+            instance(vec![1, 1, 2]),
+            instance(vec![2]),
+            // Outside the affected closure, so neither obligation walks it.
+            instance(vec![0]),
+        ];
+        doc
+    }
+
+    #[test]
+    fn per_sample_work_units_charges_every_slot_primitive_and_document_side() {
+        // Hand-computed, term by term, against what `check_skin_and_bounds`
+        // actually performs at one sample time. The affected closure is
+        // `{1, 2}`, so the third instance is skipped entirely.
+        //
+        //   bones      2 sides * 3 bones                            =  6
+        //   instance 0 3 slots: 2 sides                             =  6
+        //              3 slots: 1 skin residual each                =  3
+        //              (5 + 7) vertices * 2 sides                   = 24
+        //   instance 1 1 slot:  2 sides                             =  2
+        //              1 slot:  1 skin residual                     =  1
+        //              (5 + 7) vertices * 2 sides                   = 24
+        //
+        // The undercount this replaces charged `bones + vertices` — `3 + 24`,
+        // once — and dropped the slot term entirely on the false claim that
+        // it "cannot exceed the bone count": instance 0 alone owes 9 units of
+        // slot work against a 3-bone skeleton.
+        let doc = work_unit_document();
+        let affected: BTreeSet<BoneId> = [1, 2].into_iter().collect();
+        for (prove_skin, prove_bounds, expected) in [
+            (true, true, 6 + 6 + 3 + 24 + 2 + 1 + 24),
+            (true, false, 6 + 6 + 3 + 2 + 1),
+            (false, true, 6 + 6 + 24 + 2 + 24),
+            // Neither obligation walks an instance, so only the two
+            // forward-kinematics passes remain.
+            (false, false, 6),
+        ] {
+            let plan = work_unit_plan(prove_skin, prove_bounds);
+            assert_eq!(
+                per_sample_work_units(&doc, &affected, &plan),
+                expected,
+                "prove_skin={prove_skin} prove_bounds={prove_bounds}"
+            );
+        }
+        // The four literals above, restated as the totals they must be, so a
+        // reader does not have to re-add them.
+        assert_eq!(
+            per_sample_work_units(&doc, &affected, &work_unit_plan(true, true)),
+            66
+        );
+        assert_eq!(
+            per_sample_work_units(&doc, &affected, &work_unit_plan(true, false)),
+            18
+        );
+        assert_eq!(
+            per_sample_work_units(&doc, &affected, &work_unit_plan(false, true)),
+            62
+        );
+    }
+
+    #[test]
+    fn a_document_whose_skin_slots_dominate_its_work_is_refused() {
+        // The shape the old `bones + vertices` charge undercounted without
+        // bound: many instances, many slots each, almost no vertices. Nothing
+        // in `validate_scene_assets` limits either count — it only range-checks
+        // joint ids — so `skin_joints` may repeat a joint and an instance list
+        // may be arbitrarily long.
+        //
+        //   per-sample cost = 2 sides * 2 bones                     =      4
+        //                   + 50 instances * 100 slots * 2 sides    = 10_000
+        //                   + 50 instances * 100 slots * 1 residual =  5_000
+        //                   + 50 instances * 1 vertex * 2 sides     =    100
+        //                                                             -------
+        //                                                             15_104
+        //   sample times    = 26_484 keys, no cubic segments
+        //   work            = 26_484 * 15_104 = 400_014_336
+        //   budget          =                   400_000_000
+        //
+        // `26_484` is the *first* key count this document cannot afford:
+        // `26_483 * 15_104 = 399_999_232` is inside the budget. The old charge
+        // read the same document as `2 bones + 50 vertices = 52` units per
+        // sample — `1_377_168` work, 0.34% of the budget — while proof went on
+        // to perform `26_484 * 50 * 100 * 2 = 264_840_000` slot matrix
+        // products.
+        let mut doc = budget_document(26_484, 1);
+        let instance = MeshInstance {
+            source_node_index: 1,
+            node: 1,
+            mesh: 0,
+            skin_joints: vec![1; 100],
+            skin_ibms: vec![Mat4::IDENTITY; 100],
+        };
+        doc.assets.instances = vec![instance; 50];
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        assert!(plan.proof_obligations().prove_skin);
+        assert!(plan.proof_obligations().prove_bounds);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        assert_eq!(
+            prove_scale(&doc, &candidate, &plan).unwrap_err(),
+            ScaleError::ProofSamplingBudgetExceeded {
+                policy_id: "appendix-d-v2",
+                sample_times: 26_484,
+                per_sample_cost: 15_104,
+                work: 400_014_336,
+                budget: 400_000_000,
+            }
+        );
+    }
+
+    #[test]
+    fn cubic_segment_interior_times_count_toward_the_sampling_budget() {
+        // `prove_scale` evaluates every cubic segment's analytic interior in
+        // addition to its keys, so the budget has to count both. A
+        // `CubicSpline` track with `k` keys contributes `k` key times and
+        // `k - 1` interiors.
+        //
+        //   per-sample cost = 2 sides * 2 bones                     =      4
+        //                   + 1 slot * (2 sides + 1 skin residual)  =      3
+        //                   + 2 sides * 10_000 vertices             = 20_000
+        //                                                             -------
+        //                                                             20_007
+        //   sample times    = 9_998 keys + 9_997 interiors = 19_995
+        //   work            = 19_995 * 20_007 = 400_039_965
+        //   budget          =                   400_000_000
+        //
+        // Counting keys alone would report `9_998` sample times here — and
+        // `9_998 * 20_007 = 200_029_986`, comfortably inside the budget, so
+        // the document would be sampled rather than refused.
+        let mut doc = budget_document(9_998, 10_000);
+        let keys = doc.clips[0].tracks[0].times.len();
+        assert_eq!(keys, 9_998);
+        doc.clips[0].tracks[0].interpolation = Interpolation::CubicSpline;
+        doc.clips[0].tracks[0].values =
+            TrackValues::Vec3s(vec![Vec3::new(0.0, 1.0, 0.0); keys * 3]);
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        assert_eq!(
+            prove_scale(&doc, &candidate, &plan).unwrap_err(),
+            ScaleError::ProofSamplingBudgetExceeded {
+                policy_id: "appendix-d-v2",
+                sample_times: 19_995,
+                per_sample_cost: 20_007,
+                work: 400_039_965,
+                budget: 400_000_000,
+            }
+        );
+    }
+
+    #[test]
+    fn the_sampling_budget_is_a_ceiling_a_document_may_reach() {
+        // DESIGN.md Appendix D §D.1 states every policy quantity as an
+        // inclusive "at most", so the budget comparison is `>` and a document
+        // whose work lands exactly on the budget is sampled, not refused.
+        // Nothing else in the module distinguishes `>` from `>=` unless a
+        // document's work lands exactly on the ceiling, and a document that
+        // does costs `4e8` work units to prove. Pinned here on synthetic
+        // factors instead: `check_sampling_budget` takes the two numbers and
+        // the policy, and nothing about the comparison depends on where they
+        // came from.
+        //
+        // `400_000_000 = 20_000 * 20_000`, so the exact-ceiling pair is
+        // literal, and `20_001 * 20_000 = 400_020_000` is the next
+        // representable step up in `sample_times` — one more sample time of
+        // the same document.
+        let tol = ScaleTolerancePolicy::APPENDIX_D_V2;
+        assert_eq!(tol.proof_sample_work_budget, 400_000_000);
+        assert_eq!(check_sampling_budget(&tol, 20_000, 20_000), Ok(()));
+        assert_eq!(
+            check_sampling_budget(&tol, 20_001, 20_000),
+            Err(ScaleError::ProofSamplingBudgetExceeded {
+                policy_id: "appendix-d-v2",
+                sample_times: 20_001,
+                per_sample_cost: 20_000,
+                work: 400_020_000,
+                budget: 400_000_000,
+            })
+        );
+        // One unit over, reached from the other factor, so neither operand's
+        // role is assumed: `400_000_001 = 400_000_001 * 1`.
+        assert_eq!(
+            check_sampling_budget(&tol, 400_000_001, 1),
+            Err(ScaleError::ProofSamplingBudgetExceeded {
+                policy_id: "appendix-d-v2",
+                sample_times: 400_000_001,
+                per_sample_cost: 1,
+                work: 400_000_001,
+                budget: 400_000_000,
+            })
+        );
+    }
+
+    #[test]
+    fn an_overflowing_work_product_saturates_instead_of_wrapping_under_the_budget() {
+        // The budget is `sample_times * per_sample_cost` in `u64`, and neither
+        // factor is bounded by anything but the document. `saturating_mul` is
+        // what makes the overflow fail *closed*: a wrapping product of two
+        // enormous factors lands on a small number that sails under the
+        // ceiling, which is precisely the refusal this check exists to make.
+        //
+        // `2^63 * 2 = 2^64`, which is `0` when wrapped — the most hostile case
+        // there is, because zero passes any ceiling. Synthetic factors, for
+        // the same reason `the_sampling_budget_is_a_ceiling_a_document_may_reach`
+        // uses them: `check_sampling_budget` takes the two numbers and the
+        // policy, and nothing about the arithmetic depends on where they came
+        // from.
+        let tol = ScaleTolerancePolicy::APPENDIX_D_V2;
+        let sample_times = 9_223_372_036_854_775_808; // 2^63
+        assert_eq!(
+            check_sampling_budget(&tol, sample_times, 2),
+            Err(ScaleError::ProofSamplingBudgetExceeded {
+                policy_id: "appendix-d-v2",
+                sample_times,
+                per_sample_cost: 2,
+                work: u64::MAX,
+                budget: 400_000_000,
+            })
+        );
+    }
+
+    #[test]
+    fn duplicate_key_and_interior_times_across_tracks_are_charged_and_sampled_once() {
+        // `clip_sample_times` harvests every affected track's key times into
+        // one list and every cubic segment's interior into another, and both
+        // are sorted and deduplicated. Two tracks on affected bones sharing a
+        // time do not make proof evaluate that time twice, and — because
+        // `sample_times` is one of the two factors `check_sampling_budget`
+        // multiplies — must not be charged twice either.
+        //
+        // Two `CubicSpline` tracks, on two different affected bones, carrying
+        // the *same* four key times (cloned, so they agree bit for bit):
+        //
+        //   keys      = {0, 0.001, 0.002, 0.003}                     = 4
+        //   interiors = {0.0005, 0.0015, 0.0025}                     = 3
+        //                                                              ---
+        //   sample times                                                7
+        //
+        // Undeduplicated the same clip yields `8` keys and `6` interiors, so
+        // dropping either `dedup` moves the count off `7`: `11` without the
+        // key dedup, `10` without the interior dedup, `14` without both. No
+        // interior coincides with a key, so the two lists never overlap and
+        // `7` is not an accident of one list absorbing the other.
+        let mut doc = budget_document(4, 1);
+        let track = &mut doc.clips[0].tracks[0];
+        assert_eq!(track.bone, 1);
+        track.interpolation = Interpolation::CubicSpline;
+        track.values = TrackValues::Vec3s(vec![Vec3::new(0.0, 1.0, 0.0); 4 * 3]);
+        let mut twin = track.clone();
+        twin.bone = 0;
+        doc.clips[0].tracks.push(twin);
+
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        // Both bones the two tracks target are inside the affected domain, so
+        // both tracks really are harvested and the duplication is real.
+        assert_eq!(plan.affected_nodes(), &[0, 1]);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+        assert_eq!(proof.sample_time_count, 7);
+    }
+
+    #[test]
+    fn a_candidate_skeleton_may_not_carry_bones_the_budget_never_charged() {
+        // `per_sample_work_units` measures the *source* skeleton, but
+        // `sample_time_obligations` calls `world_at_time` on **both**, and
+        // `ScaleCandidate::from_document` is public — so without the
+        // `bone_count_mismatch` parity clause the candidate's bone count is
+        // caller-supplied work that nothing charges for.
+        //
+        // Measured before the clause existed, on exactly this shape: the
+        // source's charge is
+        //
+        //   per-sample cost = 2 sides * 2 bones                       =    4
+        //                   + (2 sides + 1 skin residual) * 1 slot    =    3
+        //                   + 2 sides * 1 skinned vertex              =    2
+        //                                                                ----
+        //                                                                   9
+        //   work            = 4_000 keys * 9 = 36_000
+        //   budget          =                  400_000_000
+        //
+        // — 0.009% of the budget — while proof posed a 60_002-bone candidate
+        // skeleton 4_000 times and took `3.71s` in release, more than twice
+        // the wall time of a vertex-dominated document the budget scores at
+        // 100%. The refusal below is raised before any of that work starts.
+        let doc = budget_document(4_000, 1);
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        let affected = plan.affected_set();
+        assert_eq!(per_sample_work_units(&doc, &affected, &plan), 9);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+
+        let mut padded = candidate.document().clone();
+        let root = padded.skeleton.bones[0].clone();
+        padded
+            .skeleton
+            .bones
+            .extend(std::iter::repeat_n(root, 60_000));
+        assert_eq!(padded.skeleton.bones.len(), 60_002);
+        let padded = ScaleCandidate { document: padded };
+        assert_eq!(
+            prove_scale(&doc, &padded, &plan).unwrap_err(),
+            ScaleError::CandidateStructureMismatch {
+                reason: "bone_count_mismatch",
+            }
+        );
+        // The unpadded candidate still proves, so the rejection is the bone
+        // count and not something the padding happened to break.
+        prove_scale(&doc, &candidate, &plan).unwrap();
     }
 
     // --- Invalid declared rest/bind factor ---------------------------------
@@ -7093,7 +9252,17 @@ mod tests {
         let plan = whole_document_plan(&doc, &capability);
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
 
-        let cases: [StructureMismatchCase; 8] = [
+        let cases: [StructureMismatchCase; 11] = [
+            // The extra bone is a parentless copy of the root, so it passes
+            // `validate_document_shape` (which runs first) and reaches the
+            // parity clause rather than a shape guard. This is the row the
+            // sampling budget depends on: `per_sample_work_units` measures
+            // only the source skeleton while `sample_time_obligations` poses
+            // both, so an unrejected candidate skeleton is unbilled work.
+            ("bone_count_mismatch", |d| {
+                let root = d.skeleton.bones[0].clone();
+                d.skeleton.bones.push(root);
+            }),
             ("track_count_mismatch", |d| {
                 d.clips[0].tracks.push(Track {
                     bone: 1,
@@ -7118,6 +9287,19 @@ mod tests {
             ("instance_count_mismatch", |d| {
                 let extra = d.assets.instances[0].clone();
                 d.assets.instances.push(extra);
+            }),
+            // "Unchanged mesh/material/skin identity" (DESIGN.md Appendix D
+            // §D.6). The extra mesh keeps `instance.mesh = 1` in range, so
+            // this reaches the parity check rather than the document-shape
+            // guard; the mesh-count clause is checked *after* it, so the
+            // reason below is still attributable to the instance clause.
+            ("instance_mesh_mismatch", |d| {
+                let extra = d.assets.meshes[0].clone();
+                d.assets.meshes.push(extra);
+                d.assets.instances[0].mesh = 1;
+            }),
+            ("instance_skin_joints_mismatch", |d| {
+                d.assets.instances[0].skin_joints = vec![0];
             }),
             ("mesh_count_mismatch", |d| {
                 let extra = d.assets.meshes[0].clone();

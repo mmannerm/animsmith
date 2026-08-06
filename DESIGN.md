@@ -709,15 +709,130 @@ near-singular matrices, non-finite values, and mixed effective factors in the
 selected domain fail before any output is written.
 
 Classification and proof share one versioned tolerance policy and compute in
-`f64`, narrowing only at the writer model boundary. Initial relative
-orthogonality, equal-axis, and common-factor tolerance is `1e-5`; a determinant
-is singular when `abs(det) <= 1e-6 * product(axis_lengths)`; scalar/vector
-comparison uses `abs_error <= 1e-6 + 1e-5 * max(abs(before), abs(after))`;
-shortest-path rotation residual is at most `1e-5` radians; and postcondition
-unit-scale residual is at most `1e-5`. Exact float equality is forbidden. The
-implementation records every threshold and observed maximum residual in
-evidence, so noisy values such as `100.000015` can be accepted for an explicit,
-reviewable reason rather than by implementation accident.
+`f64`, narrowing only at the writer model boundary. The current policy identity
+is `appendix-d-v2`. Relative orthogonality, equal-axis, and common-factor
+tolerance is `1e-5`; an axis is unequal when
+`abs(length - average) > 1e-5 * max(average, length)`, relative to the longer
+of the two and to nothing else; a determinant is singular when
+`abs(det) <= 1e-6 * product(axis_lengths)`; scalar/vector comparison uses
+`abs_error <= 1e-6 + 1e-5 * max(abs(before), abs(after))`; and shortest-path
+rotation residual is at most `1e-5` radians. Every bound is inclusive: a
+residual exactly equal to its bound is accepted. Exact float equality is
+forbidden. The implementation records every threshold and observed maximum
+residual in evidence, so noisy values such as `100.000015` can be accepted for
+an explicit, reviewable reason rather than by implementation accident.
+
+**Normative residual norm for the unit-scale postcondition.** The postcondition
+"unit composed scale for every affected node" is measured **per axis**, as
+`max(abs(scale_axis - 1))` over the three axes — an L-infinity norm, not an L2
+norm over the three axes together. This is normative. Per-axis is what the
+claim means, it is how the equal-axis check already measures, and it is the
+same dimensionless relative quantity the scalar common-factor check compares,
+so the input band and the postcondition are directly commensurable.
+
+**How the common-factor band relates to it.** The common-factor band is the
+normative *input* contract, and the unit-scale postcondition bound is *derived*
+from it rather than declared independently. For an affected node `i` with
+observed rest-world factor `s_i`, a domain common factor `s_0`, and a declared
+factor `s_declared`, the candidate's composed scale on axis `k` of node `i` is
+`axis_ik / s_declared`. Three independently bounded relative comparisons stand
+between those two numbers, and an affected chain composes all three:
+
+- the declared-factor match binds `s_0` to `s_declared` within `c = 1e-5`;
+- the mixed-factor check binds every other affected node's `s_i` to `s_0`
+  within the same `c`; and
+- the equal-axis check binds each individual axis length `axis_ik` to `s_i`
+  within the same `c`.
+
+The third band is the easiest to lose sight of and cannot be dropped: `s_i` is
+the *average* of node `i`'s three rest-world axis lengths, while the
+postcondition measures an individual axis, so an axis is permitted a further
+band away from the very number the mixed-factor check compared. A rig whose
+root is off-factor, whose leaf is off-common-factor, and whose leaf axes are
+non-uniform within the equal-axis band loads all three at once.
+
+Each comparison is stated relative to `max` of its operands, so each
+contributes at most `c / (1 - c)` when re-expressed relative to the smaller
+one, and the composed worst case is `(1 - c)^-3 - 1 = 3.00006e-5`. The policy
+therefore sets the postcondition bound to four common-factor bands — `4e-5` —
+rounded up to the next power of two, `2^-14 = 6.103515625e-5`. Three of those
+bands are the analytic composition above; the fourth is headroom for the `f32`
+world-matrix composition and decomposition that produces the measured composed
+scale. `2^-14` is also `512 * 2^-23`, and so lies on the binary32 mantissa grid
+the measurement lives on, which is what makes the inclusive "at most" above
+reachable rather than vacuous for this obligation.
+
+Three bands rounded up (`2^-15 = 3.0517578125e-5`) would leave that analytic
+worst case only four binary32 ulps of room — `5.17e-7`, or `4.34 * 2^-23`.
+That is a rounding artefact, not headroom, and it would make the reserved
+float-headroom band above a claim rather than a fact. The fourth band buys the
+claim honestly, and it does not blunt the obligation: every build defect this
+postcondition exists to catch — a dropped rebase, a factor applied twice, a
+stale no-op candidate — is at least `1e-3`, so `6.1e-5` still leaves better
+than a `16x` detection margin.
+
+**No floor on the comparison base.** The common-factor and mixed-factor
+comparisons are `abs(a - b) <= c * max(abs(a), abs(b))`, with nothing else
+inside the `max`. Flooring that base — at `1.0`, at the `1e-6` absolute scalar
+term, or at anything else — turns the band into an absolute tolerance below the
+floor, which is a *relative* band of `floor * c / abs(s)` that widens without
+limit as the declared factor shrinks. It therefore breaks the closure property
+below `floor * c / 2^-14`; at a `1e-6` floor that is
+`1e-11 * 16384 = 1.6384e-7` (the crossing point is *inversely* proportional to
+the postcondition bound, so the `2^-15` bound an earlier revision declared put
+it at twice that, `3.2768e-7`), and at a declared factor of `1e-9` such a band
+admits `1e-2` relative error, `1000x` the declared policy. The degenerate
+`a == b == 0` case needs no floor either: it compares `0 <= 0`.
+
+What the derivation guarantees is the closure property: **any plan the
+common-factor band accepts yields a candidate whose every affected node
+satisfies the unit-scale postcondition** — at every declared factor the policy
+admits, not merely near unit magnitude — with a full band to spare
+(`6.1035e-5 - 3.00006e-5 = 3.1035e-5`). The guarantee is stated for the single
+closed affected domain this record admits — one common factor, one declared
+factor, hence exactly the three composed bands above. Admitting a second
+independently classified factor in one plan would compose a fourth band and
+require a new policy identity, not a wider bound at this one.
+
+**Sampling budget.** The policy also bounds the total sampled proof work a
+document may demand, as `sample_time_count * per_sample_work_units` against a
+budget of `4e8` work units. The per-sample cost is every pass the sampled
+obligations actually make, and each is charged once per document *side*, since
+proof walks the source and the candidate:
+
+```text
+2 * bone_count
+  + sum over affected skinned instances of
+        (2 + [prove_skin]) * len(skin_joints)
+      + [prove_bounds] * 2 * (vertices over every primitive of its mesh)
+```
+
+Every sampled obligation poses both skeletons, hence the bone term. Only the
+*source* bone count is measured, which is sound because proof rejects a
+candidate whose bone count differs (`bone_count_mismatch`) before it charges
+anything: the candidate document is caller-supplied, so an unchecked candidate
+skeleton is proof work nothing has billed. The slot term is charged explicitly,
+per instance: nothing bounds the instance count, and nothing bounds
+`skin_joints`, which may repeat a joint, so slot work bears no relation to the
+bone count and must not be folded into it. `sample_time_count` counts key times
+*and* cubic-segment interior times, because both are evaluated. Exceeding the
+budget is a typed refusal raised before the first sample time is evaluated;
+proof never silently samples a subset. The comparison is `>`, so the budget is
+a ceiling a document may reach, matching the inclusive "at most" every other
+policy quantity is stated with. The budget is part of the policy identity for
+the same reason every tolerance is: it is recorded in evidence, and two
+evidence records carrying the same policy id must describe the same amount of
+checking.
+
+`4e8` is a wall-time ceiling expressed in work units. Measured in release at
+that ceiling, `prove_scale` takes `1.54s` on a vertex-dominated document and
+`4.77s` on a slot-dominated one — the same charge costs about three times as
+much when it is slot work, so the pathological shape sets the ceiling — and the
+measured time is linear in the charge across four doublings in both shapes. The
+value has to clear real assets as well as bound bad ones: a 200-bone rig with a
+100k-vertex skinned mesh costs `201_000` units per sample time, so a 30-second
+clip at 30 fps costs `180_900_000`. A budget that refuses that refuses a
+plausible production asset, with no way for a caller to opt into the work.
 
 ### D.2 Algebra and rewrite rules
 
@@ -916,8 +1031,11 @@ reparameterization it must prove, within versioned tolerances:
 - equal sampled animated trajectories, root motion, and derived velocities;
 - equal skinned vertex positions and bounds for analytic one-joint and
   multi-joint fixtures plus deterministic sampled production evidence;
-- unchanged mesh/material/skin identity and declared unaffected payloads;
-- unit composed scale for every affected node; and
+- unchanged mesh/material/skin identity and declared unaffected payloads —
+  including that each candidate mesh instance draws the same mesh and binds the
+  same skin joints as its source counterpart, which neither operation rewrites;
+- unit composed scale for every affected node, measured per axis against the
+  derived bound of §D.1; and
 - the analytically expected full world affine of a transform-only attached
   child: preserved origin/orientation and unit linear scale, so a no-op cannot
   pass.
@@ -926,6 +1044,20 @@ For whole-document conversion, the corresponding length facts must differ by
 exactly the declared factor within tolerance while dimensionless facts remain
 equal. Both operations prove finite output, the skin equation, deterministic
 artifact bytes, and deterministic evidence bytes.
+
+Proof cost is bounded, not merely expected to be small. Source and candidate
+world matrices are derived once per sample time and shared across the
+trajectory, skin, and bounds obligations, and the skin and bounds obligations
+share one walk over the affected instances and their vertices. The remaining
+work is `sample_time_count * per_sample_work_units` with the per-sample cost
+spelled out in §D.1 — bones, skin slots, and skinned vertices, each charged
+once per document side — which the tolerance policy of §D.1 caps. A document
+above that cap is refused with a
+typed error naming the policy identity, the sample count, the per-sample cost,
+the computed work, and the budget. It is never proved against a truncated
+sample set: a bounded proof of a subset would publish evidence for claims it
+did not check. Because the budget lives in the policy identity, it is not a
+per-run flag, and the producer's fixed-policy rule below covers it.
 
 The future producer evidence is a new immutable versioned contract containing
 the operation kind, declared and observed factors, tolerance policy and
