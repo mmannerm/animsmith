@@ -869,6 +869,12 @@ fn every_skin_inverse_bind_scales_only_its_translation_column() {
     let (_, buffers) = artifact_parts(&artifact);
 
     assert_eq!(artifact.rewritten_accessors(), [0, 1, 2]);
+    // This operation's closure is the whole document, so every declared node
+    // and skin is affected — including node 1, which authors no transform at
+    // all, and both skins. Reporting only the nodes whose JSON changed would
+    // understate what a whole-document conversion claims about the artifact.
+    assert_eq!(artifact.affected_source_nodes(), [0, 1, 2, 3]);
+    assert_eq!(artifact.affected_source_skins(), [0, 1]);
     assert_eq!(
         read_f32(&buffers[0][36..100]),
         vec![

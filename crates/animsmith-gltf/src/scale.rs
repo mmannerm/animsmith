@@ -367,6 +367,8 @@ pub struct GltfScaleArtifact {
     rewritten_accessors: Vec<usize>,
     rewritten_json_pointers: Vec<String>,
     reencoded_buffers: Vec<usize>,
+    affected_source_nodes: Vec<usize>,
+    affected_source_skins: Vec<usize>,
     declared_factor: f64,
     operation: ScaleOperation,
 }
@@ -404,6 +406,39 @@ impl GltfScaleArtifact {
     /// GLB whose only buffer is the BIN chunk.
     pub fn reencoded_buffers(&self) -> &[usize] {
         &self.reencoded_buffers
+    }
+
+    /// The affected closure as **source-node array indices**, ascending.
+    ///
+    /// Reported in the raw glTF index space the operation's own selectors use
+    /// — `/nodes/{i}` — not as normalized [`animsmith_core::BoneId`]s. A
+    /// producer recording which identities an artifact affected must name
+    /// them in the space the request named, and a consumer holding the
+    /// original file can resolve these directly against its `nodes` array.
+    /// [`animsmith_core::scale::ScalePlan::affected_nodes`] reports the same
+    /// closure in the normalized space; the frontend already proves the two
+    /// describe one tree before it writes a byte.
+    ///
+    /// For [`ScaleOperation::RestBindUniformScale`] this is the closed
+    /// connected hierarchy of DESIGN.md Appendix D §D.2. For
+    /// [`ScaleOperation::WholeDocumentLinearUnits`] it is every node the
+    /// source declares, that operation's closure being the whole document.
+    pub fn affected_source_nodes(&self) -> &[usize] {
+        &self.affected_source_nodes
+    }
+
+    /// The affected skins as **source-skin array indices**, ascending, in the
+    /// same raw index space as [`Self::affected_source_nodes`].
+    ///
+    /// For [`ScaleOperation::RestBindUniformScale`] a skin is affected when at
+    /// least one of its joints lies inside the closure — which is exactly the
+    /// condition under which its `inverseBindMatrices` accessor is rebased in
+    /// at least one slot. A skin straddling the closure boundary is listed:
+    /// it *is* affected, in the slots whose joints are. For
+    /// [`ScaleOperation::WholeDocumentLinearUnits`] it is every skin the
+    /// source declares.
+    pub fn affected_source_skins(&self) -> &[usize] {
+        &self.affected_source_skins
     }
 
     /// The factor the caller declared: the conversion factor `q` for a
@@ -724,9 +759,22 @@ pub fn rewrite_linear_units(
         rewritten_accessors: accessor_rules.keys().copied().collect(),
         rewritten_json_pointers,
         reencoded_buffers,
+        // This operation's closure is the whole document, so every declared
+        // node and skin is affected. Counted from the raw arrays rather than
+        // from the manifest's own vectors: the manifest inventories the same
+        // arrays, but the closure is a claim about the source JSON and is
+        // read from it.
+        affected_source_nodes: (0..raw_array_len(root, "nodes")).collect(),
+        affected_source_skins: (0..raw_array_len(root, "skins")).collect(),
         declared_factor: factor,
         operation: ScaleOperation::WholeDocumentLinearUnits { factor },
     })
+}
+
+/// Length of a top-level glTF array member, zero when it is absent or is not
+/// an array.
+fn raw_array_len(root: &Map<String, Value>, key: &str) -> usize {
+    root.get(key).and_then(Value::as_array).map_or(0, Vec::len)
 }
 
 /// Reject a node whose transform is outside the glTF 2.0 contract.

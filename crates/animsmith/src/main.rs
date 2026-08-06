@@ -1,7 +1,8 @@
 //! The animsmith CLI binary.
 //!
 //! This crate publishes the `animsmith` command: inspect, measure, lint,
-//! report, transform, fix, convert, assemble, and diff skeletal animation clips. It
+//! report, transform, fix, convert, assemble, scale, and diff skeletal
+//! animation clips. It
 //! is not the Rust library API; use `animsmith-core` plus the loader
 //! crates (`animsmith-gltf`, `animsmith-fbx`) and `animsmith-report` from
 //! library code.
@@ -9,7 +10,8 @@
 //! Feature gates mirror the installed binary surface. The default build
 //! includes FBX input and HTML reports; `--no-default-features` leaves a
 //! pure-Rust glTF-only binary with report generation, FBX conversion, and
-//! multi-source assembly omitted.
+//! multi-source assembly omitted. `scale` is present in both: it is the
+//! minimal binary's evidence-emitting producer.
 //!
 //! The GitHub [pipeline scenario guide] maps these commands to marketplace
 //! intake, mocap cleanup, outsourced acceptance, CI, and artifact-storage
@@ -39,7 +41,9 @@ use std::process::ExitCode;
 mod assembly;
 #[cfg(feature = "fbx")]
 mod material_recipe;
+mod publish;
 mod render;
+mod scale;
 #[cfg(feature = "fbx")]
 mod texture_processing;
 
@@ -209,6 +213,14 @@ enum Cmd {
         #[arg(long)]
         evidence: PathBuf,
     },
+    /// Rewrite declared linear scale and publish versioned evidence.
+    #[command(
+        long_about = "Rewrite one self-contained glTF/GLB asset's declared linear scale on its own raw bytes and publish the artifact and its versioned evidence as one atomic pair. `whole-document` converts every represented length by a declared factor; `rest-bind` removes one compensating inherited scale from a selected skinned hierarchy. Every factor and source selector is required: nothing is inferred from bounds, height, joint lengths, inverse-bind magnitude, filename, or asset category, there is no in-place mode, and the tolerance policy is fixed and recorded rather than exposed as a flag. Input, output, and evidence paths must be distinct. A refusal publishes nothing, leaves any prior pair byte-identical, and exits 1; an operator error exits 2."
+    )]
+    Scale {
+        #[command(subcommand)]
+        operation: ScaleCmd,
+    },
     /// Compare animation measurements.
     #[command(
         long_about = "Compare the measurements of two inputs (asset files or prior single-file `measure` or `lint` JSON) and report movement beyond significance thresholds. Exits 1 on significant movement."
@@ -218,6 +230,58 @@ enum Cmd {
         a: PathBuf,
         /// After input: asset file or single-file v5 `measure`/`lint` JSON report.
         b: PathBuf,
+        #[arg(long, value_enum, default_value_t = Format::Text)]
+        format: Format,
+    },
+}
+
+/// The two accepted scale operations of DESIGN.md Appendix D §D.7, as
+/// distinct subcommands rather than one flag whose meaning depends on the
+/// input. They rewrite different domains, so a factor alone does not
+/// identify the operation.
+#[derive(Subcommand)]
+enum ScaleCmd {
+    /// Convert every represented length by a declared factor.
+    #[command(
+        long_about = "Convert every represented length in a self-contained glTF/GLB document by the declared finite positive factor: node translations, animated translation tracks, inverse-bind translations, and base mesh positions. Physical size changes; this is appropriate only when the source was authored in a different linear unit. The factor is never inferred."
+    )]
+    WholeDocument {
+        /// Input .glb or .gltf file.
+        input: PathBuf,
+        /// Output path; must keep the input's container extension.
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Declared linear-unit conversion factor.
+        #[arg(long)]
+        factor: f64,
+        /// Versioned JSON evidence output path.
+        #[arg(long)]
+        evidence: PathBuf,
+        #[arg(long, value_enum, default_value_t = Format::Text)]
+        format: Format,
+    },
+    /// Remove one compensating inherited scale from a skinned hierarchy.
+    #[command(
+        long_about = "Reparameterize a restricted skinned rest/bind hierarchy so a compensating inherited scale is removed while world joint transforms, sampled trajectories, and skinned vertex positions are preserved. Both source selectors are required raw source-array indices, and the expected common factor is declared and checked against the source rather than inferred."
+    )]
+    RestBind {
+        /// Input .glb or .gltf file.
+        input: PathBuf,
+        /// Output path; must keep the input's container extension.
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Source-skin array index whose joints anchor the affected domain.
+        #[arg(long)]
+        source_skin_index: usize,
+        /// Source-node array index of the scaled ancestor root.
+        #[arg(long)]
+        source_root_node_index: usize,
+        /// Declared expected common factor, checked against the source.
+        #[arg(long)]
+        expected_factor: f64,
+        /// Versioned JSON evidence output path.
+        #[arg(long)]
+        evidence: PathBuf,
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
     },
@@ -839,6 +903,43 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 result.materials,
             );
             Ok(ExitCode::SUCCESS)
+        }
+        Cmd::Scale { operation } => {
+            let request = match operation {
+                ScaleCmd::WholeDocument {
+                    input,
+                    output,
+                    factor,
+                    evidence,
+                    format,
+                } => scale::Request {
+                    operation: scale::Operation::WholeDocument { factor },
+                    input,
+                    output,
+                    evidence,
+                    format,
+                },
+                ScaleCmd::RestBind {
+                    input,
+                    output,
+                    source_skin_index,
+                    source_root_node_index,
+                    expected_factor,
+                    evidence,
+                    format,
+                } => scale::Request {
+                    operation: scale::Operation::RestBind {
+                        source_skin_index,
+                        source_root_node_index,
+                        expected_factor,
+                    },
+                    input,
+                    output,
+                    evidence,
+                    format,
+                },
+            };
+            scale::run(&request, current_tool())
         }
         Cmd::Diff { a, b, format } => {
             let config = load_config(cli.config.as_deref())?;
