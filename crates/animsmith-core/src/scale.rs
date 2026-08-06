@@ -1759,37 +1759,35 @@ fn classify_affine(linear: Mat3, tol: &ScaleTolerancePolicy) -> Result<f64, Affi
     let dot02 = columns[0].dot(columns[2]);
     let dot12 = columns[1].dot(columns[2]);
     let orthogonality_tolerance = tol.relative_orthogonality * average * average;
-    // `>`, inclusive, like every other comparison against a policy bound —
-    // but unlike the equal-axis band above, this one has **no** exact-boundary
-    // fixture, because none exists over the `f32` bases this function is ever
-    // called with. Sketch, so the gap is a known one rather than an oversight:
+    // `>`, inclusive, like every other comparison against a policy bound, and
+    // pinned exactly on the boundary — like the equal-axis band above — by
+    // `an_orthogonality_dot_exactly_on_its_tolerance_is_accepted_and_the_next_one_up_is_not`.
     //
-    // A fixture that distinguishes `>` from `>=` needs `dot == tolerance`
-    // exactly. For `average` to be an exactly-known `f64` the three column
-    // lengths must be exact, and the tractable case is all three equal to some
-    // `L`, giving `tolerance = 1e-5 * L * L`. Binary32 components are dyadic,
-    // so clearing the common power of two turns the columns into integer
-    // vectors with `|v0|^2 = |v1|^2 = L^2` and `v0 . v1 = T = L^2 * 1e-5`,
-    // which must be an integer for an integer dot to reach it. Then
-    // `v0 x v1` is an integer vector of *squared* norm `L^4 - T^2`, so that
-    // value must be a sum of three integer squares. It never is: `T` integral
-    // forces
-    // `1000 | L`, and `L^4 - T^2 = (L^4 / 10^10) * (10^10 - 1)` then has an
-    // even power of two, an odd part `= 1 (mod 8)` in the first factor, and
-    // `10^10 - 1 = 7 (mod 8)` in the second — so the product is
-    // `4^a * (8b + 7)`, exactly the form Legendre's three-square theorem
-    // excludes. Rescaling by any power of two multiplies it by `4^2k` and
-    // preserves the form. (Dropping the equal-length simplification leaves
-    // only a numerically *searched* pair of 53-bit coincidences, which is a
-    // literal no reader could check, so it is not a fixture this file will
-    // carry.) The `>` here is therefore pinned by symmetry with
-    // `check_residual` and the equal-axis band, not by its own fixture.
+    // An earlier revision of this comment claimed no binary32 basis could
+    // reach this boundary exactly, on a three-square argument that required
+    // `relative_orthogonality` to be the rational `1/100000` and
+    // `average * average` to be exact. It is neither. `1e-5` in binary64 is
+    // `5_902_958_103_587_057 * 2^-69`, whose numerator is odd, and both
+    // `average` and the two products below it are rounded — so nothing here
+    // is an identity between exact rationals and no such argument applies.
+    // Boundary bases are in fact easy to come by: sweeping the fixture's
+    // shape outward from the identity hits one two binary32 steps in.
     if dot01.abs() > orthogonality_tolerance
         || dot02.abs() > orthogonality_tolerance
         || dot12.abs() > orthogonality_tolerance
     {
         return Err(AffineDomainViolation::Sheared);
     }
+    // `<` rather than `<=`, and the two are indistinguishable here: a zero
+    // determinant can never reach this line. `determinant` is finite by the
+    // guard above, `lengths` are finite and non-negative, so `axis_product` is
+    // non-negative and never `NaN`; `singular_determinant_relative` is `1e-6`
+    // — this function is only ever called with `APPENDIX_D_V2` — so the
+    // singular threshold is non-negative, and `(±0.0).abs() <= threshold`
+    // holds for every non-negative threshold. Both signed zeros are therefore
+    // already `Singular`, and on every determinant that does arrive here
+    // `< 0.0` and `<= 0.0` agree. No fixture can separate them; a test that
+    // appeared to would be asserting on a policy no caller can supply.
     if determinant < 0.0 {
         return Err(AffineDomainViolation::Reflected);
     }
@@ -2695,6 +2693,16 @@ fn instance_source_skin<'a>(
 /// factor, or of a comparison against a non-finite source value — as a pass.
 /// A `NaN` tolerance (from a non-finite before/after magnitude) fails the
 /// same way and is rejected for the same reason.
+///
+/// The guard is `!observed.is_finite()` rather than `observed.is_nan()`, and
+/// the difference is narrower than it looks: `+inf > tolerance` is true, so
+/// the comparison alone already rejects a positive infinity. Only a
+/// *negative* non-finite residual needs the wider guard, and no caller in
+/// this module can produce one — every `observed` here is an `abs()`, a
+/// `length()`, or a `max` fold over those. The wider spelling is kept because
+/// this function's contract is the fail-closed one stated above rather than
+/// "whatever today's callers happen to pass", and it is pinned by
+/// `a_non_finite_residual_fails_closed_instead_of_comparing_false`.
 fn check_residual(
     kind: ProofResidualKind,
     observed: f64,
@@ -4344,6 +4352,73 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn an_orthogonality_dot_exactly_on_its_tolerance_is_accepted_and_the_next_one_up_is_not() {
+        // `classify_affine` rejects shear on `dot.abs() > relative_orthogonality
+        // * average * average`. Distinguishing that `>` from `>=` needs a
+        // binary32 basis whose binary64 column dot lands *exactly* on the
+        // tolerance. This is that basis. It was found by search, but the
+        // arithmetic below is what makes it checkable without rerunning one:
+        // every literal is an exact dyadic written as `mantissa * 2^-k`, so
+        // the binary32 bits are readable straight off the page.
+        //
+        //   col0 = (1,  y0, 0)     y0 = 13_826_165 * 2^-69
+        //   col1 = (x1, 1,  0)     x1 = 10_995_118 * 2^-40
+        //   col2 = (0,  0,  c)     c  =  8_388_610 * 2^-23
+        //
+        // Two columns lie in the xy-plane and the third is the z-axis, so
+        // `dot02` and `dot12` are exactly zero and only `dot01` decides.
+        //
+        //   dot01 = 1*x1 + y0*1 + 0*0 = x1 + y0
+        //
+        // and that sum is *exact* in binary64: `x1` is a multiple of `2^-40`,
+        // `y0` a multiple of `2^-69`, and the sum is just under `2^-16`, so it
+        // needs 53 bits and gets them. `y0` is small enough that `y0 * y0`
+        // vanishes against one, so `col0`'s length is exactly `1.0` and moving
+        // `y0` does not move the tolerance at all — it moves only `dot01`, and
+        // one binary32 step of `y0` is `2^-69`, which is exactly one binary64
+        // ulp of `dot01` in its `[2^-17, 2^-16)` binade. The three cases below
+        // are therefore three consecutive representable dot products against
+        // one fixed tolerance.
+        //
+        // Accepting the middle one and rejecting the next proves the middle
+        // one *is* the tolerance rather than merely below it: acceptance gives
+        // `dot <= tolerance`, rejection of `dot + 1ulp` gives
+        // `tolerance < dot + 1ulp`, and the only binary64 in `[dot, dot+1ulp)`
+        // is `dot` itself. So `>=` would reject the middle case, and does.
+        let c = 8_388_610.0_f32 * 2.0_f32.powi(-23);
+        let x1 = 10_995_118.0_f32 * 2.0_f32.powi(-40);
+        let y0 = 13_826_165.0_f32 * 2.0_f32.powi(-69);
+        let y0_up = 13_826_166.0_f32 * 2.0_f32.powi(-69);
+        let y0_down = 13_826_164.0_f32 * 2.0_f32.powi(-69);
+        // The fixture's own claim, checked before it is relied on: the three
+        // dot products are consecutive binary64 values.
+        let dot = f64::from(x1) + f64::from(y0);
+        assert_eq!(
+            (f64::from(x1) + f64::from(y0_up)).to_bits(),
+            dot.to_bits() + 1
+        );
+        assert_eq!(
+            (f64::from(x1) + f64::from(y0_down)).to_bits(),
+            dot.to_bits() - 1
+        );
+
+        let basis = |y: f32| {
+            Mat3::from_cols(
+                Vec3::new(1.0, y, 0.0),
+                Vec3::new(x1, 1.0, 0.0),
+                Vec3::new(0.0, 0.0, c),
+            )
+        };
+        let tol = ScaleTolerancePolicy::APPENDIX_D_V2;
+        assert!(classify_affine(basis(y0_down), &tol).is_ok());
+        assert!(classify_affine(basis(y0), &tol).is_ok());
+        assert_eq!(
+            classify_affine(basis(y0_up), &tol),
+            Err(AffineDomainViolation::Sheared)
+        );
     }
 
     #[test]
@@ -6343,9 +6418,19 @@ mod tests {
     fn a_non_finite_residual_fails_closed_instead_of_comparing_false() {
         // `NaN > tolerance` is `false`, so an unguarded comparison reports a
         // `NaN` residual as a pass.
+        //
+        // `-inf` is in the list because it is the *only* case that separates
+        // the `!observed.is_finite()` the guard is written with from the
+        // narrower `observed.is_nan()`: `+inf > tolerance` is true, so the
+        // comparison already rejects a positive infinity with or without a
+        // guard, and a `NaN`-only guard would still pass every other case
+        // here. See `check_residual`'s own note for why the wider spelling is
+        // kept even though no caller in this module can hand it a negative
+        // residual.
         for (observed, tolerance) in [
             (f64::NAN, 1.0),
             (f64::INFINITY, 1.0),
+            (f64::NEG_INFINITY, 1.0),
             (0.0, f64::NAN),
             (0.0, f64::INFINITY),
         ] {
@@ -7521,6 +7606,108 @@ mod tests {
         );
     }
 
+    /// One vertex, one slot, one influence — the smallest primitive that
+    /// exercises [`accumulate_skinned_bounds`]'s per-influence path.
+    fn one_influence_primitive(weight: f32) -> Primitive {
+        Primitive {
+            positions: vec![Vec3::new(1.0, 0.0, 0.0)],
+            joints: vec![[0, 0, 0, 0]],
+            weights: vec![[weight, 0.0, 0.0, 0.0]],
+            ..Primitive::default()
+        }
+    }
+
+    #[test]
+    fn an_infinite_skin_weight_is_rejected_as_a_weight_not_as_a_skinned_result() {
+        // The guard is `!weight.is_finite()`, not `weight.is_nan()`, and the
+        // two differ exactly on the infinities. An infinite weight is not
+        // merely a `NaN` in disguise: it survives `weight != 0.0`, and
+        // `inf * (1, 0, 0)` is `(inf, NaN, NaN)` because `inf * 0` is `NaN`,
+        // so a `NaN`-only guard would let the vertex through and the failure
+        // would surface downstream as `non_finite_result` — blaming the skin
+        // equation for a malformed input attribute. The reason string is the
+        // assertion, not just the fact of an error.
+        let slots = [Mat4::IDENTITY];
+        let mut accumulator = BoundsAccumulator::default();
+        assert_eq!(
+            accumulate_skinned_bounds(
+                7,
+                3,
+                &one_influence_primitive(f32::INFINITY),
+                &slots,
+                &mut accumulator,
+            ),
+            Err(ScaleError::InvalidSkinnedPrimitive {
+                instance_index: 7,
+                primitive_index: 3,
+                reason: "non_finite_weight",
+            })
+        );
+        // `NaN` names the same reason, so the guard is one guard and not two
+        // behaviours that happen to share a spelling.
+        assert_eq!(
+            accumulate_skinned_bounds(
+                7,
+                3,
+                &one_influence_primitive(f32::NAN),
+                &slots,
+                &mut accumulator,
+            ),
+            Err(ScaleError::InvalidSkinnedPrimitive {
+                instance_index: 7,
+                primitive_index: 3,
+                reason: "non_finite_weight",
+            })
+        );
+    }
+
+    #[test]
+    fn a_vertex_whose_influences_sum_negative_is_left_out_of_the_bounds() {
+        // The normalisation guard is `weight_sum > 0.0`, not
+        // `weight_sum != 0.0`. Nothing upstream constrains authored weights to
+        // be non-negative — `validate_scene_assets` range-checks joint ids,
+        // not weights — so a negative sum is reachable, and dividing by it
+        // negates every normalised influence: this vertex would be folded into
+        // the bounds at `(1, 10, 0)`, the *reflection* of where its single
+        // influence actually places it.
+        //
+        //   slot 0 translates by (0, 10, 0), so the influence puts the vertex
+        //   (1, 0, 0) at (1, 10, 0);
+        //   weight -0.5   ->  skinned    = -0.5 * (1, 10, 0) = (-0.5, -5, 0)
+        //                     weight_sum = -0.5
+        //   -0.5 > 0 is false, so the vertex contributes nothing and the
+        //   accumulator is never touched;
+        //   `!= 0.0` instead divides: (-0.5, -5, 0) / -0.5 = (1, 10, 0).
+        let slots = [Mat4::from_translation(Vec3::new(0.0, 10.0, 0.0))];
+        let mut accumulator = BoundsAccumulator::default();
+        accumulate_skinned_bounds(
+            0,
+            0,
+            &one_influence_primitive(-0.5),
+            &slots,
+            &mut accumulator,
+        )
+        .expect("a negative weight is not malformed, only unusable as a blend");
+        assert_eq!(accumulator.finish(), None);
+
+        // The same primitive with the sign flipped does land in the bounds, so
+        // the emptiness above is the sign's doing and not the fixture failing
+        // to reach the accumulator at all.
+        let mut accumulator = BoundsAccumulator::default();
+        accumulate_skinned_bounds(
+            0,
+            0,
+            &one_influence_primitive(0.5),
+            &slots,
+            &mut accumulator,
+        )
+        .unwrap();
+        assert_eq!(
+            accumulator.finish(),
+            Some((Vec3::new(1.0, 10.0, 0.0), Vec3::new(1.0, 10.0, 0.0)))
+        );
+    }
+
     #[test]
     fn the_fourth_skin_influence_of_a_vertex_is_walked_like_the_first_three() {
         // glTF's `JOINTS_0`/`WEIGHTS_0` carry exactly four influences per
@@ -8557,6 +8744,75 @@ mod tests {
                 budget: 400_000_000,
             })
         );
+    }
+
+    #[test]
+    fn an_overflowing_work_product_saturates_instead_of_wrapping_under_the_budget() {
+        // The budget is `sample_times * per_sample_cost` in `u64`, and neither
+        // factor is bounded by anything but the document. `saturating_mul` is
+        // what makes the overflow fail *closed*: a wrapping product of two
+        // enormous factors lands on a small number that sails under the
+        // ceiling, which is precisely the refusal this check exists to make.
+        //
+        // `2^63 * 2 = 2^64`, which is `0` when wrapped — the most hostile case
+        // there is, because zero passes any ceiling. Synthetic factors, for
+        // the same reason `the_sampling_budget_is_a_ceiling_a_document_may_reach`
+        // uses them: `check_sampling_budget` takes the two numbers and the
+        // policy, and nothing about the arithmetic depends on where they came
+        // from.
+        let tol = ScaleTolerancePolicy::APPENDIX_D_V2;
+        let sample_times = 9_223_372_036_854_775_808; // 2^63
+        assert_eq!(
+            check_sampling_budget(&tol, sample_times, 2),
+            Err(ScaleError::ProofSamplingBudgetExceeded {
+                policy_id: "appendix-d-v2",
+                sample_times,
+                per_sample_cost: 2,
+                work: u64::MAX,
+                budget: 400_000_000,
+            })
+        );
+    }
+
+    #[test]
+    fn duplicate_key_and_interior_times_across_tracks_are_charged_and_sampled_once() {
+        // `clip_sample_times` harvests every affected track's key times into
+        // one list and every cubic segment's interior into another, and both
+        // are sorted and deduplicated. Two tracks on affected bones sharing a
+        // time do not make proof evaluate that time twice, and — because
+        // `sample_times` is one of the two factors `check_sampling_budget`
+        // multiplies — must not be charged twice either.
+        //
+        // Two `CubicSpline` tracks, on two different affected bones, carrying
+        // the *same* four key times (cloned, so they agree bit for bit):
+        //
+        //   keys      = {0, 0.001, 0.002, 0.003}                     = 4
+        //   interiors = {0.0005, 0.0015, 0.0025}                     = 3
+        //                                                              ---
+        //   sample times                                                7
+        //
+        // Undeduplicated the same clip yields `8` keys and `6` interiors, so
+        // dropping either `dedup` moves the count off `7`: `11` without the
+        // key dedup, `10` without the interior dedup, `14` without both. No
+        // interior coincides with a key, so the two lists never overlap and
+        // `7` is not an accident of one list absorbing the other.
+        let mut doc = budget_document(4, 1);
+        let track = &mut doc.clips[0].tracks[0];
+        assert_eq!(track.bone, 1);
+        track.interpolation = Interpolation::CubicSpline;
+        track.values = TrackValues::Vec3s(vec![Vec3::new(0.0, 1.0, 0.0); 4 * 3]);
+        let mut twin = track.clone();
+        twin.bone = 0;
+        doc.clips[0].tracks.push(twin);
+
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        // Both bones the two tracks target are inside the affected domain, so
+        // both tracks really are harvested and the duplication is real.
+        assert_eq!(plan.affected_nodes(), &[0, 1]);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+        assert_eq!(proof.sample_time_count, 7);
     }
 
     #[test]
