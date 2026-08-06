@@ -382,10 +382,22 @@ fn expected_rebases(
 
     let mut out: BTreeMap<usize, ExpectedRebase> = BTreeMap::new();
     let mut record = |accessor_index: usize, rebase: ExpectedRebase| {
-        // A second claimant that agrees changes nothing; one that disagrees
-        // cannot reach here, because `rewrite_rest_bind` refuses such a
-        // source with `ConflictingRestBindFactor` before emitting an
-        // artifact.
+        // First claimant wins — and this scan visits meshes, then skins, then
+        // animations, which is exactly `collect_rest_bind_claims`'s order. So
+        // on a *shared* accessor this is not a second opinion: it necessarily
+        // keeps the claimant the rewriter kept, and would agree with a wrong
+        // choice as readily as with a right one.
+        //
+        // What this scan is independent about is *which* accessors are
+        // rebased and by *what* factors: both are re-derived here from the
+        // raw JSON and §D.2's table rather than read back from the rewriter.
+        // Conflict resolution is not in that set. It rests entirely on
+        // `ConflictingRestBindFactor` having fired first — `rewrite_rest_bind`
+        // refuses every source whose claimants disagree, so no artifact
+        // reaches this proof needing an accessor arbitrated at all. That is a
+        // dependency on the rewriter, stated here rather than assumed, and
+        // the four refusal fixtures in `tests/scale_rest_bind.rs` are what
+        // hold it up.
         out.entry(accessor_index).or_insert(rebase);
     };
 
@@ -728,10 +740,19 @@ mod tests {
     //! Each corrupts exactly one thing about an otherwise valid artifact and
     //! asserts the exact claim that must catch it. These live here rather
     //! than in `tests/scale_rest_bind.rs` because
-    //! [`super::super::GltfScaleArtifact`]'s fields are private, and three of
-    //! the claims — the two cross-checks and the stale-candidate case — can
-    //! only be falsified by making the artifact's own report or its own bytes
-    //! disagree with what the rewriter produced.
+    //! [`super::super::GltfScaleArtifact`]'s fields are private, and four of
+    //! the claims — the accessor, pointer and operation cross-checks and the
+    //! stale-candidate case — can only be falsified by making the artifact's
+    //! own report or its own bytes disagree with what the rewriter produced.
+    //!
+    //! Two are not corruption tests, and say so where they stand. The
+    //! node-member residuals are exercised by calling
+    //! [`check_node_transforms`] directly, because every node member this
+    //! fixture rebases is also modelled by `prove_scale`, which runs first
+    //! and would report its own residual instead. The inverse-bind
+    //! joint-count claim is a classification test over a doctored raw tree,
+    //! because `rewrite_rest_bind` refuses such a source before an artifact
+    //! exists — the same position its mirror in `rest_bind` is in.
     //!
     //! The fixture is the DESIGN.md Appendix D §D.3 case 2 rig of
     //! `tests/scale_rest_bind.rs`, restated here as the smallest thing that
@@ -755,9 +776,11 @@ mod tests {
         pub const TRANSLATION: usize = 180; // 24
         /// Reached by no `bufferView`, so a byte can be flipped outside every
         /// rewritten range without disturbing anything the normalized
-        /// `Document` models.
-        pub const SPARE: usize = 204; // 4
-        pub const LENGTH: usize = 208;
+        /// `Document` models. Wide enough to also hold a displaced copy of
+        /// the translation output, which is what makes the span-layout claim
+        /// falsifiable.
+        pub const SPARE: usize = 204; // 28
+        pub const LENGTH: usize = 232;
     }
 
     const FACTOR: f64 = 0.01;
@@ -837,7 +860,11 @@ mod tests {
                 { "name": "root", "scale": [0.01, 0.01, 0.01], "children": [1] },
                 { "name": "joint", "translation": [0.0, 100.0, 0.0], "children": [2] },
                 { "name": "attach", "translation": [1.0, 0.0, 0.0] },
-                { "name": "holder", "mesh": 0, "skin": 0 }
+                // The holder is outside the closure, so both its multipliers
+                // are one and its authored translation is the fixture's only
+                // node member that must come through *invariant* rather than
+                // rebased.
+                { "name": "holder", "translation": [4.0, 0.0, 0.0], "mesh": 0, "skin": 0 }
             ],
             "scenes": [{ "nodes": [0, 3] }],
             "scene": 0,
@@ -955,6 +982,44 @@ mod tests {
         assert_eq!(domain.root, 0);
         assert_eq!(domain.closure, BTreeSet::from([0, 1, 2]));
         assert_eq!(domain.factor, FACTOR);
+    }
+
+    #[test]
+    fn a_skin_whose_joints_outnumber_its_inverse_binds_fails_the_proofs_own_scan() {
+        // The proof's mirror of `collect_rest_bind_claims`'s joint-count
+        // guard. The rewriter refuses such a source first, so no artifact
+        // carrying it ever reaches `prove_rewritten_rest_bind`; the scan is
+        // module-private, so the claim is falsified where it lives rather
+        // than left as one nothing evaluates.
+        let (source, _, plan) = fixture();
+        let domain =
+            domain_from_skeleton(source.document(), &plan, 0, FACTOR).expect("ordinary document");
+        let mut value = source.raw_json().clone();
+        value["skins"][0]["joints"] = json!([1, 2]);
+        let root = object(&value).expect("source root").clone();
+        match expected_rebases(&root, &domain, 0) {
+            Err(GltfScaleRewriteError::ArtifactProofFailed {
+                claim,
+                observed,
+                tolerance,
+            }) => {
+                assert_eq!(
+                    claim,
+                    "a skin's inverse-bind accessor has one matrix per declared joint"
+                );
+                assert_eq!(observed, 2.0, "two declared joints");
+                assert_eq!(tolerance, 1.0, "one inverse bind");
+            }
+            other => panic!("expected a joint-count refusal, got {other:?}"),
+        }
+        // And the selector must name a skin at all, which is the other way
+        // this scan can silently derive no inverse-bind expectation.
+        match expected_rebases(&root, &domain, 1) {
+            Err(GltfScaleRewriteError::ArtifactProofFailed { claim, .. }) => {
+                assert_eq!(claim, "the declared skin selector names a source skin");
+            }
+            other => panic!("expected a skin-selector refusal, got {other:?}"),
+        }
     }
 
     #[test]
@@ -1140,6 +1205,144 @@ mod tests {
             &artifact,
             &plan,
             "the artifact declares no node transform member the source did not",
+        );
+    }
+
+    #[test]
+    fn a_node_member_the_source_declared_and_the_artifact_dropped_is_refused() {
+        // The mirror of the test above. The root's rebased `scale` is
+        // `[1, 1, 1]`, which is glTF's own default — so dropping the member
+        // leaves the reloaded `Document` identical and every model-level
+        // obligation satisfied. Only the raw-JSON member comparison can
+        // notice that an authored member stopped being authored.
+        let (source, mut artifact, plan) = fixture();
+        let mut value = artifact_value(&artifact);
+        value["nodes"][0]
+            .as_object_mut()
+            .expect("the root is an object")
+            .remove("scale")
+            .expect("the artifact declares the rebased root scale");
+        put_artifact_value(&mut artifact, &value);
+        expect_claim(
+            &source,
+            &artifact,
+            &plan,
+            "the artifact keeps every node transform member the source declared",
+        );
+    }
+
+    #[test]
+    fn a_node_member_value_that_is_not_its_multiplier_times_the_source_is_refused() {
+        // `check_node_transforms` is exercised directly here rather than
+        // through `prove_rewritten_rest_bind`, because every node member this
+        // fixture rebases is *also* modelled by `prove_scale` — the root's
+        // composed scale, the joint's rest translation, the attachment's
+        // world affine — and `prove_scale` runs first, so an end-to-end
+        // corruption would be reported as a core residual and this claim
+        // would stay unevaluated. The residual accumulator is the uncorrupted
+        // run's, so the only thing that differs in each case below is the one
+        // doctored member.
+        let (source, artifact, plan) = fixture();
+        let mut proof =
+            prove_rewritten_rest_bind(&source, &artifact, &plan).expect("artifact proof");
+        let domain =
+            domain_from_skeleton(source.document(), &plan, 0, FACTOR).expect("ordinary document");
+        let tolerance = plan.tolerance_policy();
+        let source_root = object(source.raw_json()).expect("source root").clone();
+        let mut check = |doctored: &Value| -> GltfScaleRewriteError {
+            let artifact_root = object(doctored).expect("artifact root").clone();
+            check_node_transforms(
+                &source_root,
+                &artifact_root,
+                &domain,
+                &tolerance,
+                &mut BTreeSet::new(),
+                &mut proof,
+            )
+            .expect_err("a doctored node member must be refused")
+        };
+
+        // The joint's authored `(0, 100, 0)` rebases to `100 * s == 1`.
+        // Doubling that entry is off by exactly one length unit.
+        let mut value = artifact_value(&artifact);
+        value["nodes"][1]["translation"] = json!([0.0, 2.0, 0.0]);
+        match check(&value) {
+            GltfScaleRewriteError::ArtifactProofFailed {
+                claim, observed, ..
+            } => {
+                assert_eq!(
+                    claim,
+                    "every converted length differs from the source by exactly the declared factor"
+                );
+                assert_eq!(observed, 1.0, "abs(2 - 100 * s)");
+            }
+            other => panic!("expected a length-factor residual, got {other:?}"),
+        }
+
+        // And the invariant direction: the holder is outside the closure, so
+        // its multiplier is one and its translation must come through
+        // untouched. Nothing in the analytic table would ever scale it, which
+        // is exactly why a proof that skipped the check would look correct.
+        let mut value = artifact_value(&artifact);
+        value["nodes"][3]["translation"] = json!([4.5, 0.0, 0.0]);
+        match check(&value) {
+            GltfScaleRewriteError::ArtifactProofFailed {
+                claim, observed, ..
+            } => {
+                assert_eq!(
+                    claim,
+                    "every dimensionless value inside a converted range is invariant"
+                );
+                assert_eq!(observed, 0.5, "abs(4.5 - 4)");
+            }
+            other => panic!("expected a dimensionless residual, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_rewritten_accessor_moved_to_different_bytes_fails_the_span_layout_claim() {
+        // The artifact carries the *same* rebased translation values, at a
+        // different offset in the same buffer. The reloaded `Document` is
+        // therefore identical and every model-level obligation still holds;
+        // so does every array identity, since no array changed length. What
+        // must reject it is the claim that a rewritten accessor keeps its
+        // source byte layout — without which the byte-preservation walk below
+        // would be comparing the wrong ranges.
+        let (source, mut artifact, plan) = fixture();
+        let mut value = artifact_value(&artifact);
+        let mut buffer = artifact_buffer(&value);
+        let (payload, spare) = (at::TRANSLATION, at::SPARE);
+        let displaced: Vec<u8> = buffer[payload..payload + 24].to_vec();
+        buffer[spare..spare + 24].copy_from_slice(&displaced);
+        put_artifact_buffer(&mut value, &buffer);
+        value["bufferViews"][5]["byteOffset"] = json!(spare);
+        put_artifact_value(&mut artifact, &value);
+        expect_claim(
+            &source,
+            &artifact,
+            &plan,
+            "rewritten accessors keep their source byte layout",
+        );
+    }
+
+    #[test]
+    fn an_artifact_whose_declared_operation_differs_from_the_plans_is_refused() {
+        // Both are rest/bind reparameterizations, so the `let ... else` that
+        // `the_two_operations_cannot_be_proved_against_each_others_plans`
+        // exercises does not fire; the selectors disagree, and the two
+        // operations rewrite different closures. Only the equality of the
+        // whole operation catches it.
+        let (source, mut artifact, plan) = fixture();
+        artifact.operation = ScaleOperation::RestBindUniformScale {
+            source_skin_index: 0,
+            source_root_node_index: 1,
+            expected_factor: FACTOR,
+        };
+        expect_claim(
+            &source,
+            &artifact,
+            &plan,
+            "plan operation equals the artifact's declared operation",
         );
     }
 

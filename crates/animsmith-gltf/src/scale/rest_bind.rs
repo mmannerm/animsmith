@@ -81,7 +81,7 @@
 //! [`super::container`]'s no-length-change invariant at once. This module
 //! therefore documents the case rather than mirroring core's materialization.
 
-use super::bytes::{self, AccessorSpan};
+use super::bytes;
 use super::{GltfScaleArtifact, GltfScaleRewriteError};
 use crate::LoadError;
 use crate::capability::{GltfScaleSource, declared};
@@ -549,9 +549,19 @@ pub(crate) fn collect_rest_bind_claims(
             })?;
             factors.push(domain.node_factor(joint));
         }
-        // #280 refuses a skin whose inverse-bind count differs from its joint
-        // count, so this cannot fire through the public gate; without it a
-        // shorter joint list would silently leave the tail slots at `1`.
+        // Without this a joint list longer than the accessor drops the
+        // surplus factors and a shorter one leaves the tail slots at `1`.
+        //
+        // It cannot fire through `rewrite_rest_bind`, and the gate-bypass
+        // seam does not change that. `manifest_violations` re-derives
+        // `InverseBindCountMismatch` from the manifest's own joint and
+        // inverse-bind counts, so `capability_facts` sets
+        // `inverse_bind_issues_present` for a bypassed source too and the
+        // rewriter refuses it with `Capability` before it reads a skin. The
+        // two #282 guards are reachable past the gate precisely because their
+        // violations are inventory-time only and leave no manifest trace.
+        // `a_skin_whose_joints_outnumber_its_inverse_binds_is_refused` pins
+        // what this names; nothing can pin that it is wired.
         if factors.len() != count {
             return Err(GltfScaleRewriteError::UnrewritableAccessor {
                 accessor_index,
@@ -794,8 +804,20 @@ pub fn rewrite_rest_bind(
 
     let mut spans = Vec::with_capacity(rewritten.len());
     for (&accessor_index, claim) in &rewritten {
+        // `accessor_span_typed` resolves the dense `f32` range and checks the
+        // accessor `type` the claim requires. It also asserts that the range
+        // holds exactly `count * components` floats — reading `count` from
+        // this same `/accessors/{i}/count`, which is where `RestBindClaim`'s
+        // own `count` came from. A second check of `span.float_count()`
+        // against `claim.count * span.components` here would compare that
+        // assertion with itself, so there is not one.
         spans.push((
-            accessor_span(root, source.resolved_buffers(), accessor_index, claim)?,
+            bytes::accessor_span_typed(
+                root,
+                source.resolved_buffers(),
+                accessor_index,
+                claim.components.required_accessor_type(),
+            )?,
             claim,
         ));
     }
@@ -850,29 +872,6 @@ pub fn rewrite_rest_bind(
         declared_factor: expected_factor,
         operation,
     })
-}
-
-/// Resolve one claimed accessor's dense `f32` span, checking the accessor
-/// type the claim requires.
-pub(crate) fn accessor_span(
-    root: &Map<String, Value>,
-    buffers: &[Vec<u8>],
-    accessor_index: usize,
-    claim: &RestBindClaim,
-) -> Result<AccessorSpan, GltfScaleRewriteError> {
-    let span = bytes::accessor_span_typed(
-        root,
-        buffers,
-        accessor_index,
-        claim.components.required_accessor_type(),
-    )?;
-    if span.float_count() != claim.count * span.components {
-        return Err(GltfScaleRewriteError::UnrewritableAccessor {
-            accessor_index,
-            location: format!("/accessors/{accessor_index}"),
-        });
-    }
-    Ok(span)
 }
 
 /// Rebase one node transform member in place, materializing an absent
@@ -969,15 +968,29 @@ mod tests {
     //! writes a byte: what the affected hierarchy *is*, and whether the three
     //! independent descriptions of it agree.
     //!
-    //! The agreement checks cannot be falsified through the public API. The
-    //! raw child arrays, `SourceNodeAsset::parent_source_node_index` and
+    //! The agreement checks cannot be falsified by any glTF byte sequence.
+    //! The raw child arrays, `SourceNodeAsset::parent_source_node_index` and
     //! `Skeleton::parent` are all derived by this crate's own `topology` from
-    //! one parsed document, so no glTF byte sequence makes them disagree —
-    //! which is exactly why issue #309 is a latent gap rather than a live
-    //! bug, and exactly why these are classification tests over a mutated
-    //! `Document` rather than end-to-end ones. What they pin is that each
-    //! disagreement is *named*, and — the direction that has caught more in
-    //! this lane — that the unmutated document still passes all three.
+    //! one parsed document, so no source makes them disagree — which is
+    //! exactly why issue #309 is a latent gap rather than a live bug, and
+    //! exactly why these are classification tests over a mutated `Document`
+    //! rather than end-to-end ones. What they pin is that each disagreement
+    //! is *named*, and — the direction that has caught more in this lane —
+    //! that the unmutated document still passes all three. Their *wiring* is
+    //! pinned separately, through `capability::scale_source_with_document`:
+    //! the seam hands the rewriter a real source whose normalized projection
+    //! contradicts its own bytes, which is the one relaxation gate bypass
+    //! cannot supply.
+    //!
+    //! One check in this module has neither. `collect_rest_bind_claims`'s
+    //! joint-count guard is unreachable behind #280's
+    //! `InverseBindCountMismatch`, which `manifest_violations` re-derives
+    //! from the manifest — so `rewrite_rest_bind`'s own `Capability` re-check
+    //! refuses such a source before it reads a skin whether or not the gate
+    //! was bypassed. It is classification-tested only, and said so here
+    //! rather than left looking end-to-end. Its mirror in
+    //! `rest_bind_proof::expected_rebases` is in the same position and
+    //! documented there.
 
     use super::*;
     use crate::preflight_scale_source_bytes;
@@ -1305,6 +1318,77 @@ mod tests {
         let source = past_the_gate("image-disjoint.gltf", &value);
         rewrite_rest_bind(&source, 0, 0, 0.01)
             .expect("an image view disjoint from every rewritten span rebases");
+    }
+
+    #[test]
+    fn rewrite_rest_bind_still_calls_the_hierarchy_cross_check() {
+        // The classification tests above call `cross_check_domain` directly,
+        // which pins *what* each disagreement is named and leaves the call
+        // site unevaluated: deleting `cross_check_domain(...)?` from
+        // `rewrite_rest_bind` changes no observable behaviour without this.
+        // `capability::scale_source_with_document` is the `cfg(test)`-only
+        // seam that supplies the relaxation no glTF byte sequence can — a
+        // source whose normalized skeleton contradicts its own raw children.
+        let source = source();
+        let mut document = source.document().clone();
+        // Bone 2 is source node 2, whose raw parent is node 1 (bone 1).
+        document.skeleton.bones[2].parent = Some(0);
+        let contradicting = crate::capability::scale_source_with_document(source, document);
+        match rewrite_rest_bind(&contradicting, 0, 0, 0.01) {
+            Err(GltfScaleRewriteError::ParentChainDisagreement { source_node_index }) => {
+                assert_eq!(source_node_index, 2);
+            }
+            other => {
+                panic!("the wired cross-check must refuse a contradicting skeleton, got {other:?}")
+            }
+        }
+    }
+
+    #[test]
+    fn the_wired_cross_check_still_accepts_an_untouched_document() {
+        // The seam must not make every source refusable: the same source with
+        // its own document handed back rebases. This is what keeps the test
+        // above from passing for the wrong reason.
+        let source = source();
+        let document = source.document().clone();
+        let unchanged = crate::capability::scale_source_with_document(source, document);
+        rewrite_rest_bind(&unchanged, 0, 0, 0.01)
+            .expect("a source whose document is its own still rebases");
+    }
+
+    #[test]
+    fn a_skin_whose_joints_outnumber_its_inverse_binds_is_refused() {
+        // The fourth check of this module that no input can reach, and for
+        // the same reason as the three above: it is one layer's defence
+        // against another layer being relaxed. Unlike the two #282 guards the
+        // gate-bypass seam does not help — `InverseBindCountMismatch` is
+        // re-derivable from the manifest, so `rewrite_rest_bind`'s own
+        // `Capability` re-check refuses a bypassed source too. So this pins
+        // what the guard names over a doctored raw tree, and nothing pins
+        // that it is wired.
+        let source = source();
+        let root = root_object(&source);
+        let parents = raw_parents(&root).expect("raw parents");
+        let domain = RestBindDomain {
+            root: 0,
+            closure: raw_closure(&root, &parents, 0, 0).expect("raw closure"),
+            factor: 0.01,
+        };
+        let mut doctored = root.clone();
+        doctored["skins"][0]["joints"] = json!([1, 2]);
+        match collect_rest_bind_claims(&doctored, &domain) {
+            Err(GltfScaleRewriteError::UnrewritableAccessor {
+                accessor_index,
+                location,
+            }) => {
+                assert_eq!(accessor_index, 3);
+                assert_eq!(location, "/accessors/3");
+            }
+            other => panic!("expected UnrewritableAccessor, got {other:?}"),
+        }
+        // The must-not-over-reject direction, without which the above could
+        // be a guard that refuses every skin.
+        collect_rest_bind_claims(&root, &domain).expect("the fixture's own skin claims cleanly");
     }
 
     #[test]

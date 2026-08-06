@@ -755,6 +755,125 @@ fn a_matrix_authored_hierarchy_rebases_its_linear_part_at_the_root_and_its_trans
 }
 
 #[test]
+fn an_affected_non_root_node_declaring_no_translation_gains_none() {
+    // Every other fixture here declares a `translation` on every affected
+    // non-root node, so `collect_node_rebases`'s `declared(node,
+    // "translation")` test is never the reason a rebase is skipped. Dropping
+    // it emits a `Translation` rebase for this node; `rewrite_node_member`
+    // then writes nothing — glTF's default `(0, 0, 0)` is fixed under
+    // multiplication and only `scale` is materialized — while the artifact
+    // still *reports* `/nodes/4/translation` as rewritten.
+    let (mut value, _) = rig("LINEAR");
+    value["nodes"][2]["children"] = json!([4]);
+    value["nodes"]
+        .as_array_mut()
+        .expect("nodes")
+        .push(json!({ "name": "bare" }));
+
+    let (source, artifact, plan) = rebased("bare-node.gltf", &value);
+    let (json, _) = artifact_parts(&artifact);
+    assert_eq!(
+        json["nodes"][4],
+        json!({ "name": "bare" }),
+        "an affected node with no authored transform members gains none"
+    );
+    assert_eq!(
+        artifact.rewritten_json_pointers(),
+        [
+            "/nodes/0/scale",
+            "/nodes/1/translation",
+            "/nodes/2/translation"
+        ],
+        "and no pointer is reported for a member the node does not declare"
+    );
+    prove_rewritten_rest_bind(&source, &artifact, &plan).expect("artifact proof");
+}
+
+#[test]
+fn a_loose_authored_bound_on_a_rebased_output_is_converted_not_re_derived() {
+    // Every other fixture's authored bound *equals* the observed extremum of
+    // its payload, which makes "a rewritten bound still bounds the rewritten
+    // payload" vacuous: both directions of the comparison hold. Here the
+    // authored bounds are deliberately looser than the data — the translation
+    // values span `(0, 100, 0)..(0, 300, 0)` — so the emitted bound is the
+    // authored one times `s` and is *strictly* outside the payload's extrema
+    // in both directions.
+    let (mut value, _) = rig("LINEAR");
+    value["accessors"][5]["min"] = json!([-10.0, 50.0, -10.0]);
+    value["accessors"][5]["max"] = json!([10.0, 400.0, 10.0]);
+
+    let (source, artifact, plan) = rebased("loose-bounds.gltf", &value);
+    let (json, _) = artifact_parts(&artifact);
+    // The authored bound times `s`, exact in `f64` and again in `f32` — not
+    // the rebased payload's own extrema, which are `(0, 1, 0)` and
+    // `(0, 3, 0)`. A single shared factor converts an authored bound; only a
+    // claim with mixed per-slot factors re-derives one.
+    assert_eq!(json["accessors"][5]["min"], json!([-0.1, 0.5, -0.1]));
+    assert_eq!(json["accessors"][5]["max"], json!([0.1, 4.0, 0.1]));
+    prove_rewritten_rest_bind(&source, &artifact, &plan).expect("artifact proof");
+}
+
+#[test]
+fn the_skin_selector_decides_which_skins_joints_the_closure_is_built_from() {
+    // Every other fixture here has one skin, at index 0, so resolving
+    // `skins[0]` regardless of the declared selector is indistinguishable
+    // from honouring it. Here skin 0's only joint is the mesh holder — a
+    // sibling scene root with no ancestor path to the declared root — so a
+    // closure built from skin 0 cannot be derived at all, while skin 1 is the
+    // §D.3 case 2 chain. This is also what makes "both selectors are required
+    // raw source identity" evidenced rather than merely stated.
+    let (mut value, mut buffer) = rig("LINEAR");
+    buffer[at::SPARE..at::SPARE + 64].copy_from_slice(&f32_bytes(&IDENTITY_MAT4));
+    value["buffers"][0]["uri"] = json!(data_uri(&buffer));
+    value["bufferViews"]
+        .as_array_mut()
+        .expect("bufferViews")
+        .push(json!({ "buffer": 0, "byteOffset": at::SPARE, "byteLength": 64 }));
+    value["accessors"]
+        .as_array_mut()
+        .expect("accessors")
+        .push(json!({ "bufferView": 7, "componentType": 5126, "count": 1, "type": "MAT4" }));
+    value["skins"] = json!([
+        { "joints": [3], "inverseBindMatrices": 7 },
+        { "joints": [1], "skeleton": 0, "inverseBindMatrices": 3 }
+    ]);
+    value["nodes"][3]["skin"] = json!(1);
+
+    let source = accepted("second-skin.gltf", &value);
+    let plan = plan_scale(&ScaleRequest {
+        operation: ScaleOperation::RestBindUniformScale {
+            source_skin_index: 1,
+            source_root_node_index: 0,
+            expected_factor: 0.01,
+        },
+        document: source.document(),
+        capability: &capability_facts(source.manifest()),
+    })
+    .expect("plan");
+    let artifact = rewrite_rest_bind(&source, 1, 0, 0.01).expect("skin 1 rebases");
+    let (json, buffers) = artifact_parts(&artifact);
+
+    assert_eq!(json["nodes"][0]["scale"], json!([1.0, 1.0, 1.0]));
+    assert_eq!(json["nodes"][1]["translation"], json!([0.0, 1.0, 0.0]));
+    assert_eq!(
+        read_f32(&buffers[0][at::INVERSE_BIND..at::INVERSE_BIND + 64]),
+        REBASED_INVERSE_BIND.to_vec(),
+        "skin 1's inverse bind takes s"
+    );
+    assert_eq!(
+        read_f32(&buffers[0][at::SPARE..at::SPARE + 64]),
+        IDENTITY_MAT4.to_vec(),
+        "skin 0's joint is outside the closure, so its bind is byte-identical"
+    );
+    assert_eq!(
+        artifact.rewritten_accessors(),
+        [3, 5],
+        "accessor 7 is skin 0's, whose only slot is unaffected"
+    );
+    prove_rewritten_rest_bind(&source, &artifact, &plan).expect("artifact proof");
+}
+
+#[test]
 fn an_absent_root_scale_is_materialized_rather_than_left_at_the_gltf_default() {
     // A closure root that inherits the compensating factor from an ancestor
     // *outside* the closure declares no `scale` of its own. glTF's default is
