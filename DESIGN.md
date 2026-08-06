@@ -711,7 +711,9 @@ selected domain fail before any output is written.
 Classification and proof share one versioned tolerance policy and compute in
 `f64`, narrowing only at the writer model boundary. The current policy identity
 is `appendix-d-v2`. Relative orthogonality, equal-axis, and common-factor
-tolerance is `1e-5`; a determinant is singular when
+tolerance is `1e-5`; an axis is unequal when
+`abs(length - average) > 1e-5 * max(average, length)`, relative to the longer
+of the two and to nothing else; a determinant is singular when
 `abs(det) <= 1e-6 * product(axis_lengths)`; scalar/vector comparison uses
 `abs_error <= 1e-6 + 1e-5 * max(abs(before), abs(after))`; and shortest-path
 rotation residual is at most `1e-5` radians. Every bound is inclusive: a
@@ -775,10 +777,12 @@ inside the `max`. Flooring that base — at `1.0`, at the `1e-6` absolute scalar
 term, or at anything else — turns the band into an absolute tolerance below the
 floor, which is a *relative* band of `floor * c / abs(s)` that widens without
 limit as the declared factor shrinks. It therefore breaks the closure property
-below `floor * c / 2^-14`; at a `1e-6` floor that is `6.5536e-7`, and at a
-declared factor of `1e-9` such a band admits `1e-2` relative error, `1000x` the
-declared policy. The degenerate `a == b == 0` case needs no floor either: it
-compares `0 <= 0`.
+below `floor * c / 2^-14`; at a `1e-6` floor that is
+`1e-11 * 16384 = 1.6384e-7` (the crossing point is *inversely* proportional to
+the postcondition bound, so the `2^-15` bound an earlier revision declared put
+it at twice that, `3.2768e-7`), and at a declared factor of `1e-9` such a band
+admits `1e-2` relative error, `1000x` the declared policy. The degenerate
+`a == b == 0` case needs no floor either: it compares `0 <= 0`.
 
 What the derivation guarantees is the closure property: **any plan the
 common-factor band accepts yields a candidate whose every affected node
@@ -792,7 +796,7 @@ require a new policy identity, not a wider bound at this one.
 
 **Sampling budget.** The policy also bounds the total sampled proof work a
 document may demand, as `sample_time_count * per_sample_work_units` against a
-budget of `1e8` work units. The per-sample cost is every pass the sampled
+budget of `4e8` work units. The per-sample cost is every pass the sampled
 obligations actually make, and each is charged once per document *side*, since
 proof walks the source and the candidate:
 
@@ -803,16 +807,32 @@ proof walks the source and the candidate:
       + [prove_bounds] * 2 * (vertices over every primitive of its mesh)
 ```
 
-Every sampled obligation poses both skeletons, hence the bone term. The slot
-term is charged explicitly, per instance: nothing bounds the instance count,
-and nothing bounds `skin_joints`, which may repeat a joint, so slot work bears
-no relation to the bone count and must not be folded into it. `sample_time_count`
-counts key times *and* cubic-segment interior times, because both are
-evaluated. Exceeding the budget is a typed refusal raised before the first
-sample time is evaluated; proof never silently samples a subset. The budget is
-part of the policy identity for the same reason every tolerance is: it is
-recorded in evidence, and two evidence records carrying the same policy id must
-describe the same amount of checking.
+Every sampled obligation poses both skeletons, hence the bone term. Only the
+*source* bone count is measured, which is sound because proof rejects a
+candidate whose bone count differs (`bone_count_mismatch`) before it charges
+anything: the candidate document is caller-supplied, so an unchecked candidate
+skeleton is proof work nothing has billed. The slot term is charged explicitly,
+per instance: nothing bounds the instance count, and nothing bounds
+`skin_joints`, which may repeat a joint, so slot work bears no relation to the
+bone count and must not be folded into it. `sample_time_count` counts key times
+*and* cubic-segment interior times, because both are evaluated. Exceeding the
+budget is a typed refusal raised before the first sample time is evaluated;
+proof never silently samples a subset. The comparison is `>`, so the budget is
+a ceiling a document may reach, matching the inclusive "at most" every other
+policy quantity is stated with. The budget is part of the policy identity for
+the same reason every tolerance is: it is recorded in evidence, and two
+evidence records carrying the same policy id must describe the same amount of
+checking.
+
+`4e8` is a wall-time ceiling expressed in work units. Measured in release at
+that ceiling, `prove_scale` takes `1.54s` on a vertex-dominated document and
+`4.77s` on a slot-dominated one — the same charge costs about three times as
+much when it is slot work, so the pathological shape sets the ceiling — and the
+measured time is linear in the charge across four doublings in both shapes. The
+value has to clear real assets as well as bound bad ones: a 200-bone rig with a
+100k-vertex skinned mesh costs `201_000` units per sample time, so a 30-second
+clip at 30 fps costs `180_900_000`. A budget that refuses that refuses a
+plausible production asset, with no way for a caller to opt into the work.
 
 ### D.2 Algebra and rewrite rules
 
