@@ -64,13 +64,19 @@ pure-Rust glTF-only binary:
 
 ```console
 $ cargo test -p animsmith --test cli_contract --no-default-features
+$ cargo test -p animsmith --test scale_cli --no-default-features
 $ cargo build -p animsmith --no-default-features
 $ cargo build -p animsmith --release --no-default-features
 ```
 
-In that build, glTF inspect, measure, lint, transform, fix, and diff stay
-available. HTML reports require the `report` feature; FBX input and
-`convert` require the `fbx` feature.
+In that build, glTF inspect, measure, lint, transform, fix, scale, and diff
+stay available. HTML reports require the `report` feature; FBX input,
+`convert`, and `assemble` require the `fbx` feature.
+
+`scale` is the minimal build's evidence-emitting producer, so the atomic
+artifact/evidence publication helpers live in `crates/animsmith/src/publish.rs`
+rather than inside the feature-gated `assembly` module, and `scale_cli` is part
+of the no-default-features gate.
 
 ## Golden Tests
 

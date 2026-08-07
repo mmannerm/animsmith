@@ -422,6 +422,13 @@ fn the_compensated_hierarchy_rebases_to_the_appendix_d3_case_2_literals() {
             expected_factor: 0.01,
         }
     );
+
+    // Affected identity is reported in the raw source-node space the
+    // selectors use, not as normalized bone ids: the scaled root, the skin's
+    // joint, and the transform-only attachment. Node 3, the mesh holder, is
+    // outside the closure and is not named.
+    assert_eq!(artifact.affected_source_nodes(), [0, 1, 2]);
+    assert_eq!(artifact.affected_source_skins(), [0]);
 }
 
 #[test]
@@ -603,6 +610,11 @@ fn a_skin_straddling_the_closure_rebases_per_slot_and_re_derives_its_bounds() {
             .rewritten_json_pointers()
             .contains(&"/accessors/7/min".to_owned())
     );
+    assert_eq!(
+        artifact.affected_source_skins(),
+        [0, 1],
+        "a skin straddling the boundary is affected: its slot 0 joint is inside"
+    );
     prove_rewritten_rest_bind(&source, &artifact, &plan).expect("artifact proof");
 }
 
@@ -637,6 +649,11 @@ fn a_skin_slot_outside_the_closure_keeps_its_bind_byte_identical() {
         artifact.rewritten_accessors(),
         [3, 5],
         "accessor 7 is not in the rewrite set"
+    );
+    assert_eq!(
+        artifact.affected_source_skins(),
+        [0],
+        "skin 1's only joint is the mesh holder, outside the closure"
     );
     let proof = prove_rewritten_rest_bind(&source, &artifact, &plan).expect("artifact proof");
     assert_eq!(proof.core.unaffected_inverse_bind_residual, 0.0);

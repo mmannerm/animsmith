@@ -7,6 +7,10 @@
 use crate::material_recipe::{
     MaterialTextureRecipeEvidence, apply_material_texture_recipe_in_root,
 };
+use crate::publish::{
+    destination_identity, parent_or_current, publish_pair, read_digest,
+    require_writable_destination,
+};
 use animsmith_core::model::{
     Clip, Document, Interpolation, MaterialAsset, MeshAsset, Property, Skeleton, TrackValues,
 };
@@ -229,12 +233,6 @@ impl InputResolver {
     }
 }
 
-fn parent_or_current(path: &Path) -> &Path {
-    path.parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."))
-}
-
 fn validate_relative_path(path: &Path, label: &str) -> Result<(), String> {
     if path.as_os_str().is_empty() || path.is_absolute() {
         return Err(format!("{label} must be a non-empty relative path"));
@@ -336,13 +334,6 @@ fn unique_nonempty(values: &[String], label: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn read_digest(path: &Path) -> Result<(String, u64), String> {
-    let bytes =
-        fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-    let size = u64::try_from(bytes.len()).map_err(|_| "input size exceeds u64".to_owned())?;
-    Ok((format!("{:x}", Sha256::digest(&bytes)), size))
-}
-
 fn input_evidence(
     role: &'static str,
     declared: &Path,
@@ -382,8 +373,8 @@ pub(crate) fn assemble(
     }
     let output_parent = parent_or_current(output);
     let evidence_parent = parent_or_current(evidence_output);
-    require_output_parent(output_parent, output)?;
-    require_output_parent(evidence_parent, evidence_output)?;
+    require_writable_destination(output)?;
+    require_writable_destination(evidence_output)?;
     let output_identity = destination_identity(output)?;
     let evidence_identity = destination_identity(evidence_output)?;
     if output_identity == evidence_identity {
@@ -684,19 +675,6 @@ pub(crate) fn assemble(
         meshes: summary.meshes,
         materials: summary.materials,
     })
-}
-
-fn require_output_parent(parent: &Path, output: &Path) -> Result<(), String> {
-    if !parent.is_dir() {
-        return Err(format!(
-            "output directory for {} does not exist",
-            output.display()
-        ));
-    }
-    if output.exists() && !output.is_file() {
-        return Err(format!("output {} is not a regular file", output.display()));
-    }
-    Ok(())
 }
 
 fn artifact_evidence(
@@ -1021,93 +999,6 @@ fn prune_assets(doc: &mut Document) -> Result<(), String> {
     Ok(())
 }
 
-fn backup_destination(path: &Path) -> Result<Option<tempfile::TempPath>, String> {
-    if !path.exists() {
-        return Ok(None);
-    }
-    let parent = parent_or_current(path);
-    let backup = tempfile::Builder::new()
-        .prefix(".animsmith-assemble-backup-")
-        .tempfile_in(parent)
-        .map_err(|error| format!("cannot reserve backup for {}: {error}", path.display()))?
-        .into_temp_path();
-    fs::remove_file(&backup)
-        .map_err(|error| format!("cannot prepare backup for {}: {error}", path.display()))?;
-    fs::rename(path, &backup)
-        .map_err(|error| format!("cannot back up {}: {error}", path.display()))?;
-    Ok(Some(backup))
-}
-
-fn destination_identity(path: &Path) -> Result<PathBuf, String> {
-    let parent = parent_or_current(path);
-    let parent = fs::canonicalize(parent).map_err(|error| {
-        format!(
-            "cannot resolve output directory {}: {error}",
-            parent.display()
-        )
-    })?;
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| format!("output {} has no file name", path.display()))?;
-    Ok(parent.join(file_name))
-}
-
-fn restore_destination(path: &Path, backup: Option<&tempfile::TempPath>) -> Result<(), String> {
-    if path.exists() {
-        fs::remove_file(path)
-            .map_err(|error| format!("cannot remove partial {}: {error}", path.display()))?;
-    }
-    if let Some(backup) = backup {
-        fs::rename(backup, path)
-            .map_err(|error| format!("cannot restore {}: {error}", path.display()))?;
-    }
-    Ok(())
-}
-
-fn publish_pair(
-    artifact_temp: &Path,
-    artifact: &Path,
-    evidence_temp: &Path,
-    evidence: &Path,
-    fail_after_first_for_test: bool,
-) -> Result<(), String> {
-    let artifact_backup = backup_destination(artifact)?;
-    let evidence_backup = match backup_destination(evidence) {
-        Ok(backup) => backup,
-        Err(error) => {
-            restore_destination(artifact, artifact_backup.as_ref())?;
-            return Err(error);
-        }
-    };
-    let promote = || -> Result<(), String> {
-        fs::rename(artifact_temp, artifact)
-            .map_err(|error| format!("cannot publish {}: {error}", artifact.display()))?;
-        if fail_after_first_for_test {
-            return Err("injected evidence publication failure".into());
-        }
-        fs::rename(evidence_temp, evidence)
-            .map_err(|error| format!("cannot publish {}: {error}", evidence.display()))?;
-        Ok(())
-    };
-    if let Err(error) = promote() {
-        let artifact_restore = restore_destination(artifact, artifact_backup.as_ref());
-        let evidence_restore = restore_destination(evidence, evidence_backup.as_ref());
-        let rollback_errors = [artifact_restore.err(), evidence_restore.err()]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
-        return if rollback_errors.is_empty() {
-            Err(error)
-        } else {
-            Err(format!(
-                "{error}; rollback also failed: {}",
-                rollback_errors.join("; ")
-            ))
-        };
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1172,38 +1063,6 @@ mod tests {
         };
         assert!((values[0].length() - 1.0).abs() < 1e-6);
         assert!(values[0].dot(values[1]) >= 0.0);
-    }
-
-    #[test]
-    fn failed_second_publish_restores_both_previous_outputs() {
-        let dir = tempfile::tempdir().unwrap();
-        let artifact = dir.path().join("out.glb");
-        let evidence = dir.path().join("out.json");
-        let artifact_temp = dir.path().join("new.glb");
-        let evidence_temp = dir.path().join("new.json");
-        fs::write(&artifact, b"old artifact").unwrap();
-        fs::write(&evidence, b"old evidence").unwrap();
-        fs::write(&artifact_temp, b"new artifact").unwrap();
-        fs::write(&evidence_temp, b"new evidence").unwrap();
-
-        let error =
-            publish_pair(&artifact_temp, &artifact, &evidence_temp, &evidence, true).unwrap_err();
-        assert!(error.contains("injected evidence publication failure"));
-        assert_eq!(fs::read(&artifact).unwrap(), b"old artifact");
-        assert_eq!(fs::read(&evidence).unwrap(), b"old evidence");
-    }
-
-    #[test]
-    fn output_identity_rejects_lexical_aliases() {
-        let dir = tempfile::tempdir().unwrap();
-        fs::create_dir(dir.path().join("nested")).unwrap();
-        let direct = dir.path().join("same.glb");
-        let alias = dir.path().join("nested/../same.glb");
-        assert_ne!(direct, alias);
-        assert_eq!(
-            destination_identity(&direct).unwrap(),
-            destination_identity(&alias).unwrap()
-        );
     }
 
     #[test]

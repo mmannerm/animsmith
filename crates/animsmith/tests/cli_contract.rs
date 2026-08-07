@@ -1240,6 +1240,7 @@ fn help_matches_compiled_feature_set() {
     assert!(out.contains("lint"));
     assert!(out.contains("transform"));
     assert!(out.contains("fix"));
+    assert!(out.contains("scale"));
     assert!(out.contains("diff"));
 
     // One-line summaries come from the doc comments (clap derives
@@ -1248,6 +1249,10 @@ fn help_matches_compiled_feature_set() {
     assert!(out.contains("Repair safe mechanical glTF/GLB defects"));
     assert!(out.contains("Apply mechanical clip transforms"));
     assert!(out.contains("Compare animation measurements"));
+    // `scale` is unconditional: it is the minimal binary's only
+    // evidence-emitting producer, so a feature gate on it would silently
+    // remove that surface.
+    assert!(out.contains("Rewrite declared linear scale and publish versioned evidence"));
 
     assert_eq!(out.contains("\n  convert "), cfg!(feature = "fbx"), "{out}");
     assert_eq!(
@@ -1270,6 +1275,76 @@ fn help_matches_compiled_feature_set() {
         "{}",
         stdout(&transform)
     );
+}
+
+#[test]
+fn scale_help_requires_every_factor_and_selector_of_appendix_d7() {
+    let root = animsmith()
+        .args(["scale", "--help"])
+        .output()
+        .expect("runs scale help");
+    assert!(root.status.success(), "stderr:\n{}", stderr(&root));
+    let out = stdout(&root);
+    assert!(out.contains("whole-document"), "{out}");
+    assert!(out.contains("rest-bind"), "{out}");
+
+    let whole = animsmith()
+        .args(["scale", "whole-document", "--help"])
+        .output()
+        .expect("runs whole-document help");
+    assert!(whole.status.success(), "stderr:\n{}", stderr(&whole));
+    let out = stdout(&whole);
+    // Required, not optional: clap renders an optional argument in square
+    // brackets, so `<FACTOR>` bare is what pins "no inferred factor".
+    assert!(out.contains("--factor <FACTOR>"), "{out}");
+    assert!(out.contains("--evidence <EVIDENCE>"), "{out}");
+    assert!(out.contains("--format <FORMAT>"), "{out}");
+    assert!(out.contains("[default: text]"), "{out}");
+    assert!(out.contains("[possible values: text, json]"), "{out}");
+    assert!(
+        !out.contains("--in-place") && !out.contains("--tolerance"),
+        "there is no in-place mode and no per-run tolerance flag: {out}"
+    );
+
+    let rest_bind = animsmith()
+        .args(["scale", "rest-bind", "--help"])
+        .output()
+        .expect("runs rest-bind help");
+    assert!(
+        rest_bind.status.success(),
+        "stderr:\n{}",
+        stderr(&rest_bind)
+    );
+    let out = stdout(&rest_bind);
+    assert!(
+        out.contains("--source-skin-index <SOURCE_SKIN_INDEX>"),
+        "{out}"
+    );
+    assert!(
+        out.contains("--source-root-node-index <SOURCE_ROOT_NODE_INDEX>"),
+        "{out}"
+    );
+    assert!(out.contains("--expected-factor <EXPECTED_FACTOR>"), "{out}");
+    assert!(out.contains("--evidence <EVIDENCE>"), "{out}");
+
+    // Omitting any required selector is a usage error, not a default.
+    let missing = animsmith()
+        .args(["scale", "rest-bind", "rig.glb", "-o", "out.glb"])
+        .output()
+        .expect("runs rest-bind without selectors");
+    assert_eq!(missing.status.code(), Some(2), "{}", stderr(&missing));
+    for required in [
+        "--source-skin-index",
+        "--source-root-node-index",
+        "--expected-factor",
+        "--evidence",
+    ] {
+        assert!(
+            stderr(&missing).contains(required),
+            "{required} is not reported as required:\n{}",
+            stderr(&missing)
+        );
+    }
 }
 
 #[cfg(feature = "fbx")]

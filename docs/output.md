@@ -34,6 +34,26 @@ required `--evidence` path. Its immutable identity is
 The paired GLB and evidence are prepared before publication, so an operator
 failure emits neither new destination and restores any prior pair.
 
+`scale` writes a separate scale-evidence v1 document to its required
+`--evidence` path, and prints the same record to stdout under
+`--format json`. Its immutable identity is
+`urn:animsmith:schema:scale-evidence:1`; its retrievable schema is
+[`scale-evidence-v1.schema.json`](schemas/scale-evidence-v1.schema.json). The
+artifact and its evidence are prepared as temporaries and published as one
+pair, so a refusal or an operator failure emits neither destination and
+restores any prior pair.
+
+Publication promotes the two temporaries with two renames, which are
+individually atomic but not atomic together. Only the artifact destination is
+moved aside first, so a process killed between the renames leaves the new
+artifact beside the *previous* evidence — a complete pair whose members
+disagree, which the evidence's own record of the artifact digest makes
+detectable. Backing the evidence up as well would turn that same window into
+a new artifact with no evidence at all. Both members are promoted from
+temporary files and therefore land with mode `0600` rather than the `0644` a
+plain create under the process umask would produce; this is shared by every
+producer that publishes a pair.
+
 Conversion evidence v1 remains a historical immutable contract at
 `urn:animsmith:schema:conversion-evidence:1`. The current CLI emits v2
 exclusively; regenerate v1 evidence when a v2 consumer is required.
@@ -214,6 +234,60 @@ and
 [`character-assembly-evidence-v1.schema.json`](schemas/character-assembly-evidence-v1.schema.json).
 See [multi-source character assembly](character-assembly.md) for operation and
 consumer-boundary semantics.
+
+## `scale`
+
+`scale` writes scale evidence v1 beside its artifact. One record serves both
+outcomes, discriminated by `outcome`:
+
+| `outcome` | `result` | `rejection` | Published | Exit |
+|---|---|---|---|---|
+| `"published"` | the record | `null` | the pair, atomically | 0 |
+| `"rejected"` | `null` | the typed reason | nothing | 1 |
+
+A refused run's record is printed by `--format json` and is never written to
+the `--evidence` path: publication is an artifact/evidence *pair*, and a
+refusal has no artifact. This follows `lint --format json`, which prints its
+machine-readable result to stdout and exits 1 when the asset has a problem.
+
+The record binds the operation and its declared selectors, the operator's
+declared paths verbatim, the input digest and byte count, and the complete raw
+capability manifest of the source. `capability` is `null` only for a refusal
+raised before an inventory existed — bytes that never parsed. A published
+record always carries the manifest, because publication is reachable only
+through a preflight that built one. A published run adds the fixed tolerance
+policy by identity and in full, both observed-factor witnesses with the
+divergence between them and the ceiling the design expects of it, the affected
+node and skin identities in the raw source index space the selectors use, the
+rewritten model domains, proof coverage and results, the artifact-level
+residuals, and the artifact's own digest, byte count, rewritten accessors and
+rewritten JSON pointers.
+
+**Residuals are never published flat.** Each is `{ "evaluated": bool, "max":
+number|null }`, with `max` null exactly when the plan's obligations and the
+source's own payloads gave that claim nothing to check. A residual reported as
+`0.0` for a claim nothing evaluated would be a false record rather than a
+missing one, which Appendix D §D.6 forbids.
+
+Every number in the record is guarded for finiteness before serialization.
+`serde_json` renders `NaN` and both infinities as `null`, which in a residual
+field would read as a checked-but-unmeasurable claim; the producer fails
+instead, and publishes nothing.
+
+`proof.read_back_digest_matches` records the producer's own third artifact
+check: the staged artifact was re-read from disk and its digest compared with
+the bytes that were proved. The two frontend proofs already reload the
+candidate, re-run the shared core proof, and re-run the whole rewrite to
+byte-compare for determinism; what they cannot see is the write path, which is
+what this closes.
+
+Paths are recorded exactly as the operator wrote them. Canonical host paths are
+computed only for the three-way input/output/evidence distinctness check and
+are deliberately not serialized, so identical arguments produce byte-identical
+evidence. Nothing in the record carries a timestamp.
+
+The normative contract is
+[`scale-evidence-v1.schema.json`](schemas/scale-evidence-v1.schema.json).
 
 ## `measure` and `lint`
 

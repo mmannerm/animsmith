@@ -862,6 +862,7 @@ pub fn rewrite_rest_bind(
             })
         })
         .collect();
+    let affected_source_skins = affected_skins(root, &domain)?;
     let out = super::container::assemble(manifest, &json, &buffers, &modified)?;
     Ok(GltfScaleArtifact {
         container: manifest.container,
@@ -869,9 +870,40 @@ pub fn rewrite_rest_bind(
         rewritten_accessors: rewritten.keys().copied().collect(),
         rewritten_json_pointers,
         reencoded_buffers,
+        // The raw closure this rewrite was driven by, in the same source-node
+        // index space `source_root_node_index` selected it with.
+        affected_source_nodes: domain.closure.iter().copied().collect(),
+        affected_source_skins,
         declared_factor: expected_factor,
         operation,
     })
+}
+
+/// Source-skin indices with at least one joint inside `domain`, ascending.
+///
+/// This is the same predicate [`collect_rest_bind_claims`] applies per slot:
+/// a skin is affected exactly when some slot of its `inverseBindMatrices`
+/// takes a factor other than one. A skin the closure does not reach at all is
+/// left out, which is what makes its binds provably untouched evidence rather
+/// than an unexplained absence.
+fn affected_skins(
+    root: &Map<String, Value>,
+    domain: &RestBindDomain,
+) -> Result<Vec<usize>, GltfScaleRewriteError> {
+    let mut affected = Vec::new();
+    for (skin_index, skin) in array(root, "skins").iter().enumerate() {
+        let mut touched = false;
+        for joint in skin.get("joints").map_or(&[][..], value_array) {
+            let joint = as_index(Some(joint)).ok_or_else(|| {
+                LoadError::Malformed(format!("/skins/{skin_index}/joints entry is not an index"))
+            })?;
+            touched |= domain.closure.contains(&joint);
+        }
+        if touched {
+            affected.push(skin_index);
+        }
+    }
+    Ok(affected)
 }
 
 /// Rebase one node transform member in place, materializing an absent

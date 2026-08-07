@@ -54,6 +54,8 @@ animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hol
 animsmith fix <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
 animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb|out.gltf> [--material-texture-recipe recipe.toml] [--animation-only|--bake-static-mesh-transforms] [--format text|json]
 animsmith assemble <recipe.toml> -o <out.glb> --evidence <out.json>
+animsmith scale whole-document <in.glb|in.gltf> -o <out.glb|out.gltf> --factor N --evidence <out.json> [--format text|json]
+animsmith scale rest-bind <in.glb|in.gltf> -o <out.glb|out.gltf> --source-skin-index N --source-root-node-index N --expected-factor N --evidence <out.json> [--format text|json]
 animsmith diff <before> <after> [--format text|json]
 ```
 
@@ -64,6 +66,60 @@ when authoring `assemble` or material texture recipes.
 
 `--config animsmith.toml` is global. Without it, the CLI auto-loads
 `./animsmith.toml` when present and otherwise uses built-in defaults.
+
+`scale` is the atomic linear-scale producer. It has two distinct
+subcommands because the two operations rewrite different domains and a factor
+alone does not identify which one was meant: `whole-document` converts every
+represented length by a declared factor (physical size changes; use it only
+when the source was authored in a different linear unit), and `rest-bind`
+removes one compensating inherited scale from the skinned hierarchy anchored
+at a declared source skin and source root node, preserving world joint
+transforms, sampled trajectories, and skinned vertex positions.
+
+Every numeric and source-identity argument is required. Nothing is inferred
+from mesh bounds, character height, joint lengths, inverse-bind magnitude,
+filename, or asset category; there is no implicit first skin or root, no
+`animsmith.toml` key, no plan file, no in-place mode, and no per-run tolerance
+flag — the tolerance policy is fixed and its identity is recorded in the
+evidence. Input, output, and evidence paths must all be distinct, and the
+output must keep the input's container extension because the rewrite operates
+on the source's own bytes.
+
+Support is **self-contained** glTF/GLB only. The preflight refuses external
+resources, so a `.gltf` with a sidecar `.bin` or an external image is refused
+rather than partially converted. It also refuses morph targets, cameras,
+lights, GPU instancing, unregistered extensions, `extras`, non-triangle
+primitives, secondary skin influence sets, and accessor layouts outside the
+dense `f32` subset — the complete list of what a run refused is in the
+evidence record's `rejection.violations`.
+
+One invocation plans, rewrites, reloads and proves the candidate, re-runs the
+whole rewrite to check the bytes are deterministic, and re-reads the staged
+artifact to check its digest against the bytes that were proved. On a
+production-sized rig that is seconds of work, not milliseconds. Identical
+inputs and arguments produce byte-identical artifact and evidence: the record
+carries no timestamp, and the declared paths are recorded verbatim rather than
+canonicalized.
+
+`scale` splits its two failure codes by what the failure is a property of, not
+by how far the run got. A refusal that is a property of the **input asset**
+publishes nothing, leaves any prior pair byte-identical, and exits 1 — with
+the typed reason as prose on stderr under `--format text` and as the same
+evidence record with `outcome: "rejected"` on stdout under `--format json`.
+That includes bytes that do not parse as the glTF/GLB the extension declares,
+and a document whose size puts the sampled proof over the policy's work
+budget. A failure that is a property of the **invocation** or of the
+operator's filesystem exits 2 with prose on stderr: a declared factor that is
+not finite and positive, an input that cannot be opened, a wrong extension, a
+container the extension disagrees with, two arguments naming one file, or a
+missing output directory.
+
+The three paths must name three different files, and each is compared by the
+file it actually reaches: the input is resolved through a symbolic link,
+because reading follows one, while a destination is not, because publishing
+renames *over* a link rather than through it. Passing a symlinked input
+alongside a destination naming its target is refused before anything is
+written. A symlinked input that aliases neither destination is accepted.
 
 `transform --drop-duplicate-loop-endpoint` is the narrow mechanical transform
 for an inclusive DCC cycle export that copied frame 0 to the final frame. It
@@ -107,8 +163,8 @@ tangents.
 | Code | Meaning |
 |---:|---|
 | 0 | No failing findings: clean, warnings-only, notes-only, or coverage gaps only. |
-| 1 | At least one failing finding, a significant `diff`, or pending repairs under `fix --dry-run`. |
-| 2 | Operator/tool error: unreadable input, bad config, unsupported format, or invalid flags. |
+| 1 | At least one failing finding, a significant `diff`, pending repairs under `fix --dry-run`, or a `scale` refusal that is a property of the input asset. |
+| 2 | Operator/tool error: unopenable input, bad config, unsupported format, or invalid flags. |
 
 A role-dependent check with missing prerequisites reports a typed coverage
 gap and does not fail the run — exit `0` means no failing findings among the
@@ -135,8 +191,8 @@ cargo install animsmith --no-default-features
 ```
 
 The no-default-features build has no C toolchain dependency and keeps the
-glTF-only workflow: `inspect`, `measure`, `lint`, `transform`, `fix`, and
-`diff`. The HTML `report` command is controlled by the `report` feature.
+glTF-only workflow: `inspect`, `measure`, `lint`, `transform`, `fix`, `scale`,
+and `diff`. `scale` is the minimal build's evidence-emitting producer. The HTML `report` command is controlled by the `report` feature.
 `convert` accepts FBX or glTF input (a glTF input is re-emitted,
 carrying its geometry) but is compiled only with the `fbx` feature.
 `assemble` is gated by the same feature because its maintained boundary accepts
@@ -234,6 +290,13 @@ texture recipe is used. `text` is the default human-readable write summary.
 `assemble` writes evidence v1 to its required `--evidence` path, with immutable
 identity `urn:animsmith:schema:character-assembly-evidence:1`; see
 [`character-assembly-evidence-v1.schema.json`](schemas/character-assembly-evidence-v1.schema.json).
+
+`scale` writes scale evidence v1 to its required `--evidence` path, with
+immutable identity `urn:animsmith:schema:scale-evidence:1`; see
+[output.md](output.md) and
+[`scale-evidence-v1.schema.json`](schemas/scale-evidence-v1.schema.json). The
+same record is what `scale --format json` prints to stdout, for a refusal as
+well as for a published pair.
 
 Machine-readable lint rejects `--allow` so it cannot erase evidence. The flag
 remains a presentation and exit-policy convenience for text and Markdown.

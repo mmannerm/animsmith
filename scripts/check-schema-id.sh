@@ -42,6 +42,7 @@ check_schema docs/schemas/measurements-v10.schema.json urn:animsmith:schema:meas
 check_schema docs/schemas/measurements-v11.schema.json urn:animsmith:schema:measurements:11 crates/animsmith-core/src/contract.rs docs/output.md
 check_schema docs/schemas/conversion-evidence-v1.schema.json urn:animsmith:schema:conversion-evidence:1 docs/output.md
 check_schema docs/schemas/conversion-evidence-v2.schema.json urn:animsmith:schema:conversion-evidence:2 docs/output.md docs/cli.md
+check_schema docs/schemas/scale-evidence-v1.schema.json urn:animsmith:schema:scale-evidence:1 crates/animsmith/src/scale.rs docs/output.md docs/cli.md
 
 # Current-contract descriptions must not send readers back to the immutable
 # output-v2 schema. Keep these exact statements aligned with the current outer

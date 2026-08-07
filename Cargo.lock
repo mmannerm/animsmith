@@ -92,6 +92,7 @@ dependencies = [
  "glam",
  "gltf",
  "image",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror",
@@ -112,6 +113,7 @@ name = "animsmith-testkit"
 version = "0.1.0"
 dependencies = [
  "animsmith-core",
+ "base64",
  "glam",
  "libm",
 ]

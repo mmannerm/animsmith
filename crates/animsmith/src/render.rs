@@ -822,6 +822,46 @@ pub(crate) fn render_write_summary(output: &Path, summary: &WriteSummary) -> Str
     out
 }
 
+/// Render the `scale` publication summary for stdout.
+///
+/// The pair is named first because the operator's next action is on those
+/// two files; the operation, factor, affected counts, and proof sample count
+/// follow as the smallest summary of what the evidence file now holds.
+pub(crate) fn render_scale_published(
+    output: &Path,
+    evidence: &Path,
+    operation: &str,
+    factor: f64,
+    affected_nodes: usize,
+    affected_skins: usize,
+    sample_times: usize,
+) -> String {
+    format!(
+        "wrote {} and {} ({operation} factor {factor}, {affected_nodes} affected node(s), {affected_skins} affected skin(s), {sample_times} proof sample time(s))\n",
+        text_atom(&output.display().to_string()),
+        text_atom(&evidence.display().to_string()),
+    )
+}
+
+/// Render one `scale` refusal for stderr.
+///
+/// Prefixed like an operator error because it shares that stream, but it
+/// names the machine-readable rejection kind so a reader can find the same
+/// refusal in `--format json` output.
+pub(crate) fn render_scale_rejected(
+    input: &Path,
+    operation: &str,
+    kind: &str,
+    detail: &str,
+) -> String {
+    format!(
+        "animsmith: scale {operation} refused {}: [{}] {}\n",
+        text_atom(&input.display().to_string()),
+        text_atom(kind),
+        text_atom(detail),
+    )
+}
+
 /// Render human-readable one-line-per-finding text output for `lint`.
 pub(crate) fn render_text(reports: &[LintFileReport], suppressed: &[String]) -> String {
     use std::fmt::Write as _;

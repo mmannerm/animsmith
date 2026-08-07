@@ -10,6 +10,7 @@ use crate::{
     validate_glb_framing,
 };
 use animsmith_core::Document;
+use serde::Serialize;
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -18,7 +19,8 @@ const GLB_MAGIC: &[u8; 4] = b"glTF";
 const GLB_JSON_CHUNK: u32 = 0x4e4f_534a;
 
 /// Whether the captured top-level source is JSON glTF or a binary GLB.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum GltfContainerKind {
     /// A plain JSON `.gltf` document.
     Gltf,
@@ -27,7 +29,8 @@ pub enum GltfContainerKind {
 }
 
 /// How one source buffer was declared.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum GltfBufferSourceKind {
     /// The GLB BIN chunk.
     BinaryChunk,
@@ -38,7 +41,7 @@ pub enum GltfBufferSourceKind {
 }
 
 /// One source buffer recorded before normalized loading.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GltfBufferCapability {
     /// Stable source buffer index.
     pub buffer_index: usize,
@@ -49,7 +52,8 @@ pub struct GltfBufferCapability {
 }
 
 /// Whether a node authored decomposed TRS or a matrix.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum GltfNodeRestKind {
     /// No matrix was declared, so the node uses glTF TRS properties/defaults.
     Trs,
@@ -58,7 +62,7 @@ pub enum GltfNodeRestKind {
 }
 
 /// One source node identity and authored rest representation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GltfNodeCapability {
     /// Stable source node index.
     pub node_index: usize,
@@ -71,7 +75,7 @@ pub struct GltfNodeCapability {
 }
 
 /// One animation channel and its exact accessor identities.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GltfAnimationChannelCapability {
     /// Stable source animation index.
     pub animation_index: usize,
@@ -90,7 +94,7 @@ pub struct GltfAnimationChannelCapability {
 }
 
 /// One vertex attribute declaration and its source accessor.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GltfAttributeCapability {
     /// glTF attribute semantic such as `POSITION` or `JOINTS_0`.
     pub semantic: String,
@@ -99,7 +103,7 @@ pub struct GltfAttributeCapability {
 }
 
 /// One source primitive and every declared attribute semantic.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GltfPrimitiveCapability {
     /// Stable source mesh index.
     pub mesh_index: usize,
@@ -116,7 +120,7 @@ pub struct GltfPrimitiveCapability {
 }
 
 /// One raw `EXT_mesh_gpu_instancing` declaration and its accessor identities.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GltfInstancingCapability {
     /// Stable source node index carrying the instancing payload.
     pub node_index: usize,
@@ -125,7 +129,7 @@ pub struct GltfInstancingCapability {
 }
 
 /// One raw accessor layout required by a future exact-source rewrite.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GltfAccessorCapability {
     /// Stable source accessor index.
     pub accessor_index: usize,
@@ -146,7 +150,7 @@ pub struct GltfAccessorCapability {
 }
 
 /// One raw buffer-view layout.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GltfBufferViewCapability {
     /// Stable source buffer-view index.
     pub buffer_view_index: usize,
@@ -161,7 +165,7 @@ pub struct GltfBufferViewCapability {
 }
 
 /// Read-side inverse-bind declaration for one source skin.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GltfSkinCapability {
     /// Stable source skin index.
     pub skin_index: usize,
@@ -174,7 +178,7 @@ pub struct GltfSkinCapability {
 }
 
 /// Deterministic facts captured from the original glTF/GLB source.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GltfCapabilityManifest {
     /// Top-level container kind.
     pub container: GltfContainerKind,
@@ -209,8 +213,9 @@ pub struct GltfCapabilityManifest {
 }
 
 /// Stable machine identity for one fail-closed capability violation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[non_exhaustive]
+#[serde(rename_all = "snake_case")]
 pub enum GltfCapabilityViolationKind {
     /// A source buffer or image uses an external URI.
     ExternalResource,
@@ -265,7 +270,7 @@ pub enum GltfCapabilityViolationKind {
 }
 
 /// One deterministic, source-indexed preflight rejection.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct GltfCapabilityViolation {
     /// JSON pointer or stable source identity for the rejected domain.
     pub location: String,

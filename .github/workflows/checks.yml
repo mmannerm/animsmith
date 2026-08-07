@@ -103,6 +103,9 @@ jobs:
       - name: Mesh measurement tests without default features
         run: cargo test -p animsmith --test measure_mesh --no-default-features
 
+      - name: Scale producer CLI tests without default features
+        run: cargo test -p animsmith --test scale_cli --no-default-features
+
       - name: Check publishable crate package readiness
         run: bash scripts/check-package-inventory.sh
 
