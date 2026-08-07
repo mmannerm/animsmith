@@ -1256,6 +1256,37 @@ fn a_sparse_accessor_with_a_nonzero_count_still_loads() {
 }
 
 #[test]
+fn a_view_extent_that_lands_exactly_on_usize_max_still_loads() {
+    // The over-rejection boundary of `view_end`. `byteOffset + byteLength`
+    // here is `usize::MAX` *exactly*: the last sum that still has an answer,
+    // so `checked_add` says `Some` and the file is not refused. The read
+    // then finds no bytes there and the slot loads empty, which is the
+    // documented short-read behaviour, not a refusal. Tightening `view_end`
+    // to `<` would turn this document into an error.
+    let primitive = positions_with_own_view()
+        .view_extent(ViewExtent {
+            byte_offset: Some(1 << 63),
+            byte_length: Some((1 << 63) - 1),
+        })
+        .expect_primitive();
+    assert!(primitive.positions.is_empty());
+}
+
+#[test]
+fn a_byte_offset_whose_trailing_element_lands_exactly_on_usize_max_still_loads() {
+    // The over-rejection boundary of the extent chain, one unit below
+    // `loader_refuses_a_byte_offset_whose_trailing_element_overflows`.
+    // `count` 1 contributes no stride multiply, so the whole extent is
+    // `byteOffset + 12` — `usize::MAX` exactly. Shifting the chain by one
+    // (`checked_sub(1)` to `checked_add(0)`, say) refuses this document.
+    let primitive = positions_with_own_view()
+        .attribute("POSITION", "VEC3", FLOAT, 1, f32s(&[0.0, 0.0, 0.0]))
+        .byte_offset(u64::MAX - 12)
+        .expect_primitive();
+    assert!(primitive.positions.is_empty());
+}
+
+#[test]
 fn a_count_that_overruns_its_buffer_view_still_loads_empty() {
     // Pins the documented non-guarantee: only extent arithmetic that
     // *overflows* is refused. A `count` that merely exceeds its 36-byte

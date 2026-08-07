@@ -210,8 +210,24 @@ Two other shapes are refused with the same `mesh N primitive M` message: an
 accessor typed for a different element than the slot that references it (a
 `VEC3` `TEXCOORD_0`), and one whose buffer layout the reader cannot walk (a
 `byteStride` shorter than its own element, or a `sparse` block of count 0).
-Those are invalid glTF rather than an unsupported feature — a glTF validator
-will name the same accessor, and the fix belongs at the source.
+Those are invalid glTF rather than an unsupported feature, and the fix
+belongs at the source. The [Khronos
+glTF-Validator](https://github.com/KhronosGroup/glTF-Validator) names the
+same accessor — `ACCESSOR_SMALL_BYTESTRIDE` for the stride, and the schema's
+`minimum: 1` on `sparse.count` for the sparse block — so run it on the file
+to see the defect in its own vocabulary. AnimSmith still has to check these
+itself, because the `gltf` crate it parses with does not: that crate's JSON
+validation bounds `byteStride` to `4..=252` without ever relating it to the
+accessor's element, so an unwalkable layout passes parsing and reaches the
+reader.
+
+The same layout defect on an **animation sampler** is refused too, naming
+the clip and channel instead of a mesh:
+
+```console
+$ animsmith lint poisoned-track.gltf
+animsmith: clip 'walk' node 3 sampler input: accessor 0 reads its elements from buffer view 0, whose byteOffset 18446744073709551615 plus byteLength 12 is a byte extent that overflows
+```
 
 ## Feature Flags
 

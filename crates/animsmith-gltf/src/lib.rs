@@ -182,6 +182,30 @@ pub enum LoadError {
         /// it strides over`.
         problem: String,
     },
+    /// An animation sampler's `input` or `output` accessor addresses its
+    /// bytes in a way the reader cannot walk — the same four shapes
+    /// [`Self::PrimitiveAccessorLayout`] names, reached through
+    /// `read_inputs`/`read_outputs` instead of through a primitive.
+    ///
+    /// This is the sampler's *layout*, not its *encoding*: an accessor
+    /// typed for a different element than the sampler's reader decodes is a
+    /// separate class and is not judged here.
+    #[error("clip '{clip}' node {node} sampler {slot}: accessor {accessor} {problem}")]
+    AnimationAccessorLayout {
+        /// Name the clip loads under, as reported by every other animation
+        /// diagnostic.
+        clip: String,
+        /// glTF index of the node the offending channel targets.
+        node: usize,
+        /// Sampler slot the accessor fills: `input` or `output`.
+        slot: &'static str,
+        /// Index of the offending accessor.
+        accessor: usize,
+        /// What the reader could not walk, such as `reads its sparse indices
+        /// from buffer view 2, whose byteOffset 18446744073709551615 plus
+        /// byteLength 12 is a byte extent that overflows`.
+        problem: String,
+    },
 }
 
 /// `fix` errors are classified by defect, not by phase: [`LoadError`]
@@ -614,6 +638,43 @@ fn check_primitive_accessor(
     Ok(())
 }
 
+/// One sampler accessor of one animation channel the loader reads: its
+/// bytes must be laid out so the channel's reader can walk them.
+///
+/// `read_inputs` and `read_outputs` each build their own `Iter` over their
+/// own accessor, so an `input` and an `output` are judged separately and
+/// both before either reader exists. The four shapes are exactly the ones
+/// [`unreadable_layout`] names for a primitive slot — the panic is in the
+/// shared accessor iterator, not in anything primitive-specific.
+///
+/// **Layout only.** This judges *how* a sampler accessor addresses its
+/// bytes: its view's extent, its `byteStride`, its `sparse` count, and the
+/// extent its own `count` walks. It deliberately does not judge *what*
+/// element the accessor declares. A sampler typed for an element its reader
+/// cannot decode — a `VEC3` rotation output against `read_outputs`'
+/// `[f32; 4]`, or a `componentType` its `match` has no arm for — is the
+/// separate encoding class tracked in issue #327, and reaches its own
+/// panics through a different door ([`encoding_matches`] is what would
+/// close it, as it does for a primitive in [`check_primitive_accessor`]).
+/// Refusing the layout class here neither covers nor blocks that.
+fn check_sampler_accessor(
+    clip: &str,
+    node: usize,
+    slot: &'static str,
+    accessor: &gltf::Accessor<'_>,
+) -> Result<(), LoadError> {
+    match unreadable_layout(accessor) {
+        Some(problem) => Err(LoadError::AnimationAccessorLayout {
+            clip: clip.to_owned(),
+            node,
+            slot,
+            accessor: accessor.index(),
+            problem,
+        }),
+        None => Ok(()),
+    }
+}
+
 /// Why `gltf`'s reader cannot walk an accessor's bytes, independent of the
 /// element it declares — or `None` when it can.
 ///
@@ -632,15 +693,29 @@ fn check_primitive_accessor(
 /// - **A `byteStride` shorter than the element.** `Stride`'s validator
 ///   accepts any `4..=252`, so a `VEC3` of `FLOAT` `POSITION` on a stride-4
 ///   view validates and then trips `debug_assert!(stride >=
-///   size_of::<T>())`. The sparse path compiles no such assertion, so a
-///   short-strided sparse *values* view reaches `Item::from_slice`, which
-///   asserts on the truncated slice instead.
+///   size_of::<T>())`. Losing that assertion in a release build does not
+///   make the shortfall survivable: the truncated slice reaches
+///   `Item::from_slice`, whose `assert!(slice.len() >= N *
+///   size_of::<T>())` is a *hard* assert, and it fires on the ordinary
+///   dense path just as it does on the sparse one — which compiles no
+///   stride assertion at all, in either profile. Deleting this branch and
+///   running the suite under `--release` panics a dense `POSITION` at
+///   `util.rs:266`. This is the one shape here that still panics with
+///   `overflow-checks` off; the other three go quiet instead, which is
+///   worse.
 /// - **`sparse.count` of 0.** `sparse_count - 1` underflows, with or
 ///   without a base `bufferView`. Every count-zero guard in this loader
 ///   reads `Accessor::count()`; none of them sees this one.
 /// - **An extent that overflows `usize`.** Nothing bounds `count` or
 ///   `sparse.count`, so `stride * (count - 1)` overflows on a large enough
 ///   declaration.
+///
+/// "`gltf-json`'s `Validate` catches none of them" is a claim about this
+/// crate's own JSON validation, which is all that stands between
+/// `from_slice` and the reader — not about the Khronos glTF-Validator,
+/// which does name several of these (`ACCESSOR_SMALL_BYTESTRIDE`, and a
+/// `sparse.count` of 0 against the schema's `minimum: 1`). That separate
+/// tool is what `docs/cli.md` points authors at; this loader never runs it.
 ///
 /// Two near neighbours are deliberately *not* refused. `Accessor::count()`
 /// of 0 stays loadable: every read site already treats a count-zero
@@ -686,9 +761,16 @@ fn unreadable_layout(accessor: &gltf::Accessor<'_>) -> Option<String> {
 /// Where a buffer view's declared extent ends, or `None` when it has no
 /// end: `byteOffset` and `byteLength` are both file-derived, and nothing in
 /// `gltf-json` relates them to each other or to the buffer, so their sum
-/// overflows on arbitrary input. Every read of a view's bytes goes through
-/// this, because the overflow is a panic in a debug build and a wrong
+/// overflows on arbitrary input — a panic in a debug build, and a wrong
 /// extent in a release one.
+///
+/// No read of a view's bytes in this loader escapes that answer. The image
+/// path slices through this function directly. Every reader-driven read is
+/// gated instead: the reader would perform the same unchecked add itself,
+/// so [`unwalkable`] asks this before the reader is ever built — for a
+/// primitive slot in [`check_primitive_accessor`], for a skin's
+/// `inverseBindMatrices` in [`inverse_bind_is_readable`], and for an
+/// animation sampler's `input` and `output` in [`check_sampler_accessor`].
 fn view_end(view: &gltf::buffer::View<'_>) -> Option<usize> {
     view.offset().checked_add(view.length())
 }
@@ -850,8 +932,9 @@ fn validate_track_lengths(
 /// Returns [`LoadError`] for unreadable files, unsafe or missing external
 /// buffers, malformed GLB framing, parser rejection, structurally invalid
 /// animation channels, geometry accessors typed for an element the reader
-/// cannot decode or laid out so it cannot walk them, or node graphs that
-/// cannot be represented as a skeleton forest.
+/// cannot decode or laid out so it cannot walk them, animation sampler
+/// accessors laid out so it cannot walk them, or node graphs that cannot be
+/// represented as a skeleton forest.
 pub fn load(path: &Path) -> Result<Document, LoadError> {
     let bytes = std::fs::read(path).map_err(|source| LoadError::Io {
         path: path.display().to_string(),
@@ -871,8 +954,9 @@ pub fn load(path: &Path) -> Result<Document, LoadError> {
 /// Returns [`LoadError`] for unsafe or missing external buffers, malformed
 /// GLB framing, parser rejection, structurally invalid animation channels,
 /// geometry accessors typed for an element the reader cannot decode or laid
-/// out so it cannot walk them, or node graphs that cannot be represented as
-/// a skeleton forest.
+/// out so it cannot walk them, animation sampler accessors laid out so it
+/// cannot walk them, or node graphs that cannot be represented as a
+/// skeleton forest.
 pub fn load_bytes(path: &Path, bytes: &[u8]) -> Result<Document, LoadError> {
     // Parse from the supplied slice rather than via `Gltf::open`: the reader
     // path (`Glb::from_reader`) trusts the GLB header's declared length and
@@ -1020,17 +1104,25 @@ fn build_document(
             let Some(bone) = bone_of_node[channel.target().node().index()] else {
                 continue;
             };
-            // Reject zero-count sampler accessors before reading: the
-            // `gltf` reader underflows on a count-0 accessor (panics in
-            // its accessor iterator), so this guard is what keeps a
-            // hostile file from crashing the loader.
+            // Nothing below this point may build a channel reader that has
+            // not been judged first: `read_inputs` and `read_outputs` each
+            // hand their own accessor to `Iter::new`, which panics on
+            // arbitrary input in two independent ways.
+            //
+            // A count-0 accessor underflows in that iterator, and is
+            // malformed animation rather than an unwalkable layout, so it
+            // keeps its own message.
             let sampler = channel.sampler();
+            let node = channel.target().node().index();
             if sampler.input().count() == 0 || sampler.output().count() == 0 {
                 return Err(LoadError::Malformed(format!(
-                    "clip '{name}' node {}: animation channel with zero keyframes",
-                    channel.target().node().index()
+                    "clip '{name}' node {node}: animation channel with zero keyframes"
                 )));
             }
+            // The layout the accessor declares is the other way, and each
+            // half of the reader has to be judged on its own accessor.
+            check_sampler_accessor(&name, node, "input", &sampler.input())?;
+            check_sampler_accessor(&name, node, "output", &sampler.output())?;
             let reader = channel.reader(|buffer| buffers.get(buffer.index()).map(Vec::as_slice));
             let Some(times) = reader.read_inputs().map(|it| it.collect::<Vec<f32>>()) else {
                 continue;
@@ -1057,13 +1149,7 @@ fn build_document(
                 gltf::animation::Interpolation::Step => Interpolation::Step,
                 gltf::animation::Interpolation::CubicSpline => Interpolation::CubicSpline,
             };
-            validate_track_lengths(
-                &name,
-                channel.target().node().index(),
-                interpolation,
-                &times,
-                &values,
-            )?;
+            validate_track_lengths(&name, node, interpolation, &times, &values)?;
             duration = times
                 .iter()
                 .copied()
