@@ -1399,13 +1399,20 @@ fn validate_candidate_structure(source: &Document, candidate: &Document) -> Resu
     //
     // `node` and `source_node_index` are the *placement* half of that same
     // identity, and neither is reachable from any residual. `node` is what
-    // attaches the instance to a bone — an unskinned prop's node is the only
-    // thing positioning it, so moving one from a bone outside the affected
-    // closure onto a rebased one relocates it in world space while every
-    // residual this module measures stays exactly zero. `source_node_index`
-    // is what [`instance_source_skin`] matches attachments against, so
-    // re-pointing it changes whether a missing bind resolves to glTF's
-    // format-defined identity default or is refused as missing evidence.
+    // attaches the instance to a bone — holding the skeleton fixed, it is what
+    // positions an unskinned prop, so moving one from a bone outside the
+    // affected closure onto a rebased one relocates it in world space while
+    // every residual this module measures stays exactly zero.
+    // `source_node_index` is what [`instance_source_skin`] matches attachments
+    // against, so re-pointing it changes whether a missing bind resolves to
+    // glTF's format-defined identity default or is refused as missing
+    // evidence.
+    //
+    // What these two clauses prove is therefore instance identity *against a
+    // fixed skeleton*, not world placement. A bone outside the affected
+    // closure has neither its `rest` nor its `parent` compared anywhere in
+    // this module, so the same prop can still be relocated by rewriting the
+    // bone it names, with every residual zero. Issue #325 tracks that gap.
     // Comparing them positionally also fixes instance *order*: two instances
     // identical in every payload but attached to different nodes cannot be
     // swapped without one of these two clauses firing.
@@ -12075,11 +12082,22 @@ mod tests {
     #[test]
     fn a_candidate_that_relocates_a_mesh_instance_is_refused_field_by_field() {
         // Placement is the half of "unchanged mesh/material/skin identity"
-        // no residual can reach. The fixture's one instance hangs off bone 1
-        // and names source node 1, and bone 0 / source node 0 both exist, so
-        // every doctoring below stays in range and can only be caught by the
-        // parity clause named beside it.
-        let doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
+        // no residual can reach. The rig is three bones deliberately: the one
+        // instance hangs off the *middle* one and names source node 1, so
+        // every field can be doctored both down (to 0) and up (to 2) while
+        // staying in range. An ordering comparison rather than a parity one
+        // would refuse one direction and let the other through.
+        let doc = rig_document(
+            &[
+                rig(None, 0, Vec3::ZERO),
+                rig(Some(0), 1, Vec3::new(0.0, 1.0, 0.0)),
+                rig(Some(1), 2, Vec3::new(0.0, 1.0, 0.0)),
+            ],
+            &[1],
+            0,
+            Mat4::IDENTITY,
+        );
+        assert_eq!(doc.skeleton.bones.len(), 3);
         assert_eq!(doc.assets.instances[0].node, 1);
         assert_eq!(doc.assets.instances[0].source_node_index, 1);
         let capability = complete_capability();
@@ -12089,7 +12107,7 @@ mod tests {
         // to its doctoring rather than to a fixture that never proved.
         prove_scale(&doc, &candidate, &plan).unwrap();
 
-        let refuse = |doctor: fn(&mut MeshInstance)| {
+        let refuse = |doctor: &dyn Fn(&mut MeshInstance)| {
             let mut broken = candidate.document().clone();
             doctor(&mut broken.assets.instances[0]);
             prove_scale(&doc, &ScaleCandidate { document: broken }, &plan).unwrap_err()
@@ -12097,26 +12115,34 @@ mod tests {
 
         // `node` alone: the bone the instance hangs off, which is what the
         // glTF writer attaches it to and what measurement poses it with.
-        assert_eq!(
-            refuse(|instance| instance.node = 0),
-            ScaleError::CandidateStructureMismatch {
-                reason: "instance_node_mismatch"
-            }
-        );
+        // Both directions, because either one alone is a relocation.
+        for doctored in [0, 2] {
+            assert_eq!(
+                refuse(&|instance| instance.node = doctored),
+                ScaleError::CandidateStructureMismatch {
+                    reason: "instance_node_mismatch"
+                },
+                "moving the instance onto bone {doctored} must be refused"
+            );
+        }
         // `source_node_index` alone: what `instance_source_skin` matches a
         // source skin's attachments against, and so what decides whether a
-        // missing bind is glTF's format-defined identity default.
-        assert_eq!(
-            refuse(|instance| instance.source_node_index = 0),
-            ScaleError::CandidateStructureMismatch {
-                reason: "instance_source_node_index_mismatch"
-            }
-        );
+        // missing bind is glTF's format-defined identity default. Again both
+        // directions.
+        for doctored in [0, 2] {
+            assert_eq!(
+                refuse(&|instance| instance.source_node_index = doctored),
+                ScaleError::CandidateStructureMismatch {
+                    reason: "instance_source_node_index_mismatch"
+                },
+                "re-pointing the instance at source node {doctored} must be refused"
+            );
+        }
         // Both together — the whole-document construction that used to
         // return `Ok(0.0)`. The `node` clause is checked first, so that is
         // the reason reported.
         assert_eq!(
-            refuse(|instance| {
+            refuse(&|instance| {
                 instance.node = 0;
                 instance.source_node_index = 0;
             }),
@@ -12167,8 +12193,8 @@ mod tests {
     ///
     /// Unskinned is what makes this the sharp fixture. Skinning ignores an
     /// instance's node transform — a skinned instance deforms identically
-    /// wherever it is attached — so only for an unskinned prop is `node` the
-    /// sole thing placing its geometry in the world.
+    /// wherever it is attached — so only for an unskinned prop does `node`
+    /// alone decide where its geometry lands, given the bone it names.
     fn compensated_document_with_unskinned_prop() -> (Document, BoneId) {
         let mut doc = compensated_document();
         let bone = doc.skeleton.bones.len();
@@ -12273,18 +12299,26 @@ mod tests {
     fn a_mesh_instance_node_outside_the_skeleton_is_refused_on_either_document() {
         // `node` is resolved downstream without a second bounds test, so an
         // index past the end of the skeleton has to be refused here or it
-        // reaches the writer.
-        let doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
+        // reaches the writer. Doctored on the *second* of two instances, so
+        // the check is proved to walk the whole list and to report the slot
+        // that actually carries the bad index rather than a fixed 0.
+        let mut doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
+        let twin = MeshInstance {
+            source_node_index: 0,
+            node: 0,
+            ..doc.assets.instances[0].clone()
+        };
+        doc.assets.instances.push(twin);
         let capability = complete_capability();
         let plan = whole_document_plan(&doc, &capability);
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
         let expected = ScaleError::InvalidMeshInstance {
-            instance_index: 0,
+            instance_index: 1,
             reason: "node_index_out_of_range",
         };
 
         let mut broken_source = doc.clone();
-        broken_source.assets.instances[0].node = doc.skeleton.bones.len();
+        broken_source.assets.instances[1].node = doc.skeleton.bones.len();
         assert_eq!(
             plan_scale(&ScaleRequest {
                 operation: ScaleOperation::WholeDocumentLinearUnits { factor: 0.01 },
@@ -12300,7 +12334,7 @@ mod tests {
         );
 
         let mut broken_candidate = candidate.document().clone();
-        broken_candidate.assets.instances[0].node = doc.skeleton.bones.len();
+        broken_candidate.assets.instances[1].node = doc.skeleton.bones.len();
         assert_eq!(
             prove_scale(
                 &doc,
