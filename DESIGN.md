@@ -710,7 +710,7 @@ selected domain fail before any output is written.
 
 Classification and proof share one versioned tolerance policy and compute in
 `f64`, narrowing only at the writer model boundary. The current policy identity
-is `appendix-d-v2`. Relative orthogonality, equal-axis, and common-factor
+is `appendix-d-v3`. Relative orthogonality, equal-axis, and common-factor
 tolerance is `1e-5`; an axis is unequal when
 `abs(length - average) > 1e-5 * max(average, length)`, relative to the longer
 of the two and to nothing else; a determinant is singular when
@@ -721,6 +721,112 @@ residual exactly equal to its bound is accepted. Exact float equality is
 forbidden. The implementation records every threshold and observed maximum
 residual in evidence, so noisy values such as `100.000015` can be accepted for
 an explicit, reviewable reason rather than by implementation accident.
+
+**The `f32`-rounding term, per obligation.** The scalar band above is stated
+relative to the quantity being *compared*. For three of proof's obligations
+that quantity is not the magnitude the arithmetic ran on, and a rotation can
+separate the two without limit: a bound component near zero on a mesh four
+thousand units across, or a near-identity `W * B` whose translation column is
+the difference of two terms of magnitude `abs(W)`. The compared number is
+then small and the absolute rounding error it carries is large, so a purely
+relative band derives the tolerance from the small number and the error from
+the big one — and `plan_scale` accepts a plan whose candidate `prove_scale`
+then refuses. Sweeping a rotating rig at a declared factor of `3190`, that
+happened on `86 %` of rotations before this policy, with residuals up to
+`9.8e-4` against a `6.1e-5` band.
+
+`appendix-d-v3` therefore declares one further quantity, `f32_rounding_ulps =
+4`, and the three obligations that compare `f32`-rounded arithmetic use
+
+```text
+abs_error <= 1e-6 + 1e-5 * max(abs(before), abs(after))
+             + f32_rounding_ulps * magnitude * 2^-23
+```
+
+where `magnitude` is named per obligation below. The added term is *absolute*
+in `magnitude`, never relative to the compared quantity, which is what makes
+it incapable of loosening a comparison whose operands already are its own
+magnitude: there it contributes `4 * 2^-23 = 4.77e-7` of them, twenty times
+below the `1e-5` the relative band already allows. The `2^-23` is
+`f32::EPSILON`, because every one of these residuals is the difference of two
+`f32` quantities even though the subtraction itself is done in `f64`.
+
+- **Skinned bounds** takes `magnitude` as the larger of two things, maxed over
+  every contributing vertex of *both* documents: the magnitude of each skinned
+  point, which covers the `W * B * p` transform, and the magnitude the
+  contributing slot's `W * B` composition ran on, which covers the
+  cancellation that composition performs. Neither alone is sufficient. The
+  skinned points alone miss a joint placed far from the geometry it carries —
+  a `1000`-unit local translation under a `3190` root puts the joint `3.2e6`
+  from the origin while its vertices skin to within one unit of it, and the
+  bound inherits `1.6e-1` of error from a `9.7e-1` extreme. Measured over
+  30_000 correct candidates, the skinned magnitude alone left residuals up to
+  `1.0e7` of its own ulp; the max of the two left `2.27`.
+
+  `magnitude` is deliberately *not* read off the bound corner being compared.
+  A per-axis extreme is contributed by whichever vertex happened to be
+  furthest along that axis, so three vertices at `(3000, .001, .002)`,
+  `(.001, 3000, .003)` and `(.002, .003, 3000)` build a corner of magnitude
+  `2.4e-3` out of vertices of magnitude `3000`. A corner-derived band is a
+  million times tighter than the error the corner carries, and — read the
+  other way, as a base for the *relative* term — a corner-derived tolerance
+  admits `4.2e-2` on a component of magnitude `5.98`, which is `0.71 %`
+  relative error and no longer a rounding allowance at all.
+
+- **The skin equation** and **the inverse binds of an unaffected instance**
+  take `magnitude` as the largest quantity any entry of the compared product
+  was summed from: `max over (i, j) of sum over k of abs(a_ik) * abs(b_kj)`.
+  For `W * B` that is `6.4e3` on the rig above, not the near-identity
+  product's `1.0`: the residual there is `1.8e-4` against the `1.1e-5` band
+  the product magnitude buys, a `16x` shortfall, and `2.50` ulps of the
+  operand magnitude after it. It is also not
+  `matrix_magnitude(a) * matrix_magnitude(b)`, which replaces the sum over
+  `k` with a product of two independent maxima and reads `7.6e6` where the
+  arithmetic ran on `6.4e3` — a tolerance from that would accept a matrix
+  that is entirely wrong, and it is what the over-acceptance fixtures below
+  refuse.
+
+  For an unaffected instance's binds the two operands are the stored matrix
+  and the declared factor, and scaling a column cancels nothing, so the term
+  is inert there: the residual is exactly zero on every path a candidate
+  reaches this comparison by, because both sides evaluate the same `f32`
+  expression on the same stored inputs. It is stated rather than omitted so
+  that the policy quantity means one thing across every obligation that
+  compares `f32` matrices.
+
+`4` is measured, not assumed. Across 30_000 correct rest/bind candidates —
+2_000 random rotation pairs per cell, over declared factors
+`{3190, 100, 7.3, 0.01, 1e-4}` crossed with joint local translations of
+magnitude `{1000, 1, 0.001}`, mesh points spanning five decades, and two
+blended skin slots — the worst residual observed was `2.27` ulps of the bounds
+magnitude and `2.50` ulps of the skin magnitude. `4` is the next power of two
+above both, and it is also the analytic worst case for the arithmetic
+involved, since composing `W * B` accumulates a four-term inner product per
+entry.
+
+The cost is bounded and is the direction that matters: on the rig above the
+smallest *real* error still refused is `3.1e-3` for skinned bounds and
+`3.1e-3` for the skin equation, against `6.1e-5` and `1.1e-5` before. Every
+build defect these obligations exist to catch — a dropped rebase, a factor
+applied twice, a stale no-op candidate, a regenerated bind that came out wrong
+— moves a bound or a skin matrix by a fraction of its own magnitude, not by
+three ulps of it.
+
+**Transform-only affine is not in this class.** It compares a probe point
+transformed through the complete expected and actual world affines as a vector
+L2 residual against a vector-magnitude base, so its comparison base is already
+the magnitude its arithmetic ran on and it takes no rounding term.
+
+**Overflow is not `NaN`.** A skinned position that leaves the `f32` range is
+reported as `InvalidSkinnedPrimitive { reason: "skinned_magnitude_overflow" }`,
+separately from the `"non_finite_result"` a `NaN` still reports. Both fail
+closed, and neither is bounded by a documented magnitude domain, because
+there is no constant a document could be checked against ahead of time:
+skinning accumulates a dot product per axis, so where it overflows depends on
+the rotation and on the operand magnitudes rather than on the magnitude of
+the result. The gap this closes is that the two failures were previously
+reported under one reason string, which told an operator nothing about which
+one they had.
 
 **Normative residual norm for the unit-scale postcondition.** The postcondition
 "unit composed scale for every affected node" is measured **per axis**, as
@@ -1161,7 +1267,7 @@ relationship from two separate policy fields.
 
 The expected ceiling on that divergence is **the sum of two bands the policy
 already declares**: the common-factor band plus the postcondition unit-scale
-residual (`1e-5 + 2^-14 = 7.103515625e-5` under `appendix-d-v2`). Planning
+residual (`1e-5 + 2^-14 = 7.103515625e-5` under `appendix-d-v3`). Planning
 binds its witness to the declared factor within the first band or refuses;
 and for a candidate this operation built from the source under proof, that
 candidate's composed root scale is the proof witness divided by the declared
