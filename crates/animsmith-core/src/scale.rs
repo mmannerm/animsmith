@@ -2366,9 +2366,9 @@ fn rebase_matrix(matrix: Mat4, s_parent: f32, s_node: f32) -> Mat4 {
 /// rather than as a checked zero.
 ///
 /// The counts are measurements, not obligation flags, and are not derived
-/// from any: each is written by the same statement that writes its maximum,
-/// in the single private funnel every comparison in [`prove_scale`] passes
-/// through. No comparison can raise a residual without being counted, and
+/// from any: each is written beside its maximum, by the single private
+/// recording method every comparison in [`prove_scale`] funnels through.
+/// No comparison can raise a residual without being counted, and
 /// no count can rise without a comparison having been checked against the
 /// tolerance policy. That also covers the residuals no obligation flag gates
 /// — [`Self::track_value_residual`], [`Self::mesh_position_residual`] and
@@ -3230,16 +3230,21 @@ fn check_residual(
     Ok(())
 }
 
-/// One residual's maximum and comparison count, borrowed **together** so
-/// neither can be written without the other.
+/// One residual's maximum and comparison count, borrowed **together** so a
+/// comparison site that reaches one has already reached the other.
 ///
 /// [`ScaleProof`] publishes the two as separate flat fields, because that is
 /// what a `#[non_exhaustive]` additive change permits and what the evidence
-/// schema reads. Handing out a pair of mutable references, and recording
-/// through [`Self::record`] rather than through either of them, is what makes
-/// "the count and the maximum are written by the same statement" a property
-/// of the code rather than a convention: there is no way to reach a residual
-/// field from a comparison site except through the pair.
+/// schema reads. Pairing them here, and recording through [`Self::record`]
+/// rather than through either reference, makes "a maximum is never raised
+/// without its count" the single intended route to a residual field — not an
+/// enforced one: Rust privacy is module-scoped and this module is one file,
+/// so `*tally.max` or `*tally.comparisons` written on their own still
+/// compile. What enforces the convention is the hand-derived count vectors
+/// the tests state, starting with
+/// `a_whole_document_proof_counts_and_measures_every_comparison_it_makes`:
+/// they name every residual's count as a fact, so a comparison that skips
+/// its count and a count that skips its comparison each move them.
 struct ResidualTally<'a> {
     max: &'a mut f64,
     comparisons: &'a mut usize,
@@ -11697,6 +11702,12 @@ mod tests {
         let plan = compensated_rest_bind_plan(&doc, &capability);
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+        // The count, not the residual, is what this test turns on. A slot
+        // neither side records is out of the proof's scope, and DESIGN.md
+        // Appendix D §D.6 requires that to read as an absence — a count of
+        // zero. A zero *residual* is also what comparing two identities
+        // would publish, so it cannot tell the two apart on its own.
+        assert_eq!(proof.unaffected_inverse_bind_comparisons, 0);
         assert_eq!(proof.unaffected_inverse_bind_residual, 0.0);
     }
 

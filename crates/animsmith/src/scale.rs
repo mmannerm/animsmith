@@ -642,8 +642,8 @@ fn rewrite_failure(stage: Stage, error: GltfScaleRewriteError) -> Failure {
 /// comparison counts it publishes.
 ///
 /// **Measured, not re-derived.** Each `evaluated` is `count > 0` for the
-/// count [`ScaleProof`] writes at the point of comparison, in the same
-/// statement that writes the maximum beside it. Nothing here inspects the
+/// count [`ScaleProof`] writes at the point of comparison, beside the
+/// maximum that same comparison raises. Nothing here inspects the
 /// plan's obligations or the source's payloads: an obligation flag is at
 /// best a proxy for "the loop ran", exact for the nine obligations
 /// `plan_scale` gates on evidence and unavailable for the three
