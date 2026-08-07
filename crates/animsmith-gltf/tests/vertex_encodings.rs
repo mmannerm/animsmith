@@ -21,6 +21,10 @@ struct Accessor {
     count: usize,
     bytes: Vec<u8>,
     bounds: Option<(Vec<f32>, Vec<f32>)>,
+    /// Emitted as `"normalized": true`. glTF requires it of an integer
+    /// `TEXCOORD_n` or `WEIGHTS_n`, so a fixture claiming to be one has to
+    /// carry it — see `a_normalized_attribute_really_declares_the_flag`.
+    normalized: bool,
 }
 
 fn f32s(values: &[f32]) -> Vec<u8> {
@@ -62,6 +66,7 @@ impl Primitive {
             count: 3,
             bytes: f32s(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
             bounds: Some((vec![0.0, 0.0, 0.0], vec![1.0, 1.0, 0.0])),
+            normalized: false,
         });
         primitive.attributes.push(("POSITION".into(), positions));
         primitive
@@ -72,15 +77,42 @@ impl Primitive {
         self.accessors.len() - 1
     }
 
-    /// Declare `semantic` with the given encoding, replacing any existing
-    /// declaration of it so the default `POSITION` can be re-encoded.
+    /// Declare `semantic` with the given encoding and a bare accessor,
+    /// replacing any existing declaration of it so the default `POSITION`
+    /// can be re-encoded.
     fn attribute(
+        self,
+        semantic: &str,
+        accessor_type: &'static str,
+        component_type: u32,
+        count: usize,
+        bytes: Vec<u8>,
+    ) -> Self {
+        self.declare(semantic, accessor_type, component_type, count, bytes, false)
+    }
+
+    /// Declare `semantic` on an accessor that also carries
+    /// `"normalized": true` — the only spec-legal way to give an integer
+    /// `TEXCOORD_n` or `WEIGHTS_n`.
+    fn normalized_attribute(
+        self,
+        semantic: &str,
+        accessor_type: &'static str,
+        component_type: u32,
+        count: usize,
+        bytes: Vec<u8>,
+    ) -> Self {
+        self.declare(semantic, accessor_type, component_type, count, bytes, true)
+    }
+
+    fn declare(
         mut self,
         semantic: &str,
         accessor_type: &'static str,
         component_type: u32,
         count: usize,
         bytes: Vec<u8>,
+        normalized: bool,
     ) -> Self {
         // `gltf`'s own validation requires a three-element POSITION
         // min/max whatever the accessor `type` says, which is why no test
@@ -93,6 +125,7 @@ impl Primitive {
             count,
             bytes,
             bounds,
+            normalized,
         });
         self.attributes.retain(|(name, _)| name != semantic);
         self.attributes.push((semantic.to_owned(), index));
@@ -112,6 +145,7 @@ impl Primitive {
             count,
             bytes,
             bounds: None,
+            normalized: false,
         });
         self.indices = Some(index);
         self
@@ -130,6 +164,7 @@ impl Primitive {
             count,
             bytes,
             bounds: None,
+            normalized: false,
         });
         self.inverse_bind = Some(index);
         self
@@ -163,6 +198,9 @@ impl Primitive {
             if let Some((min, max)) = &accessor.bounds {
                 json["min"] = json!(min);
                 json["max"] = json!(max);
+            }
+            if accessor.normalized {
+                json["normalized"] = json!(true);
             }
             accessors.push(json);
         }
@@ -350,6 +388,11 @@ fn loader_refuses_unsigned_int_normals_that_would_be_reinterpreted() {
 /// exactly: 255/255 and 65535/65535 are both 1.0.
 const EXPECTED_UVS: [[f32; 2]; 3] = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]];
 
+/// The `UNSIGNED_BYTE` spelling of [`EXPECTED_UVS`], full-scale.
+const UV_BYTES: [u8; 6] = [0, 0, 255, 0, 0, 255];
+/// The `UNSIGNED_SHORT` spelling of [`EXPECTED_UVS`], full-scale.
+const UV_SHORTS: [u16; 6] = [0, 0, 65535, 0, 0, 65535];
+
 #[test]
 fn float_tex_coords_load() {
     let primitive = Primitive::new()
@@ -367,13 +410,7 @@ fn float_tex_coords_load() {
 #[test]
 fn normalized_unsigned_byte_tex_coords_load_as_the_float_equivalent() {
     let primitive = Primitive::new()
-        .attribute(
-            "TEXCOORD_0",
-            "VEC2",
-            UNSIGNED_BYTE,
-            3,
-            u8s(&[0, 0, 255, 0, 0, 255]),
-        )
+        .normalized_attribute("TEXCOORD_0", "VEC2", UNSIGNED_BYTE, 3, u8s(&UV_BYTES))
         .expect_primitive();
     assert_eq!(primitive.uvs, EXPECTED_UVS);
 }
@@ -381,15 +418,31 @@ fn normalized_unsigned_byte_tex_coords_load_as_the_float_equivalent() {
 #[test]
 fn normalized_unsigned_short_tex_coords_load_as_the_float_equivalent() {
     let primitive = Primitive::new()
-        .attribute(
-            "TEXCOORD_0",
-            "VEC2",
-            UNSIGNED_SHORT,
-            3,
-            u16s(&[0, 0, 65535, 0, 0, 65535]),
-        )
+        .normalized_attribute("TEXCOORD_0", "VEC2", UNSIGNED_SHORT, 3, u16s(&UV_SHORTS))
         .expect_primitive();
     assert_eq!(primitive.uvs, EXPECTED_UVS);
+}
+
+#[test]
+fn integer_tex_coords_without_the_normalized_flag_still_load() {
+    // glTF requires `"normalized": true` on an integer `TEXCOORD_n`, so
+    // these two documents are invalid — but they are invalid in a way the
+    // reader decodes perfectly well, and this loader is not a spec
+    // validator (see `attributes_no_reader_touches_are_not_refused`).
+    // Refusing them would reject files that measure fine, so they load.
+    //
+    // They decode to the same values as the flagged fixtures above because
+    // `gltf`'s `into_f32()` rescales `UNSIGNED_BYTE`/`UNSIGNED_SHORT` from
+    // full scale whatever the flag says — the flag is behaviourally inert
+    // on the read path. That is `gltf`'s extraction behaviour, pinned here
+    // as what this loader currently hands checks, not a claim that it is
+    // the authored value.
+    for primitive in [
+        Primitive::new().attribute("TEXCOORD_0", "VEC2", UNSIGNED_BYTE, 3, u8s(&UV_BYTES)),
+        Primitive::new().attribute("TEXCOORD_0", "VEC2", UNSIGNED_SHORT, 3, u16s(&UV_SHORTS)),
+    ] {
+        assert_eq!(primitive.expect_primitive().uvs, EXPECTED_UVS);
+    }
 }
 
 /// Joint indices and weights the loader must read identically from either
@@ -401,6 +454,8 @@ const EXPECTED_WEIGHTS: [[f32; 4]; 3] = [
     [0.0, 0.0, 1.0, 0.0],
 ];
 
+/// A skinned triangle whose `WEIGHTS_0` accessor carries no `normalized`
+/// flag — correct only when the weights are `FLOAT`.
 fn skinned(
     joint_type: u32,
     joint_bytes: Vec<u8>,
@@ -412,8 +467,31 @@ fn skinned(
         .attribute("WEIGHTS_0", "VEC4", weight_type, 3, weight_bytes)
 }
 
+/// The same triangle with `"normalized": true` on `WEIGHTS_0`, which glTF
+/// requires of an integer weight accessor. `JOINTS_0` never carries it:
+/// joint indices are indices, not a normalized range.
+fn skinned_normalized_weights(
+    joint_type: u32,
+    joint_bytes: Vec<u8>,
+    weight_type: u32,
+    weight_bytes: Vec<u8>,
+) -> Primitive {
+    Primitive::new()
+        .attribute("JOINTS_0", "VEC4", joint_type, 3, joint_bytes)
+        .normalized_attribute("WEIGHTS_0", "VEC4", weight_type, 3, weight_bytes)
+}
+
 const JOINT_VALUES: [u16; 12] = [0, 1, 2, 3, 1, 2, 3, 0, 2, 3, 0, 1];
 const WEIGHT_FLOATS: [f32; 12] = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+
+/// The `UNSIGNED_BYTE` spelling of [`WEIGHT_FLOATS`], full-scale.
+fn weight_bytes() -> Vec<u8> {
+    u8s(&WEIGHT_FLOATS.map(|weight| (weight * 255.0) as u8))
+}
+/// The `UNSIGNED_SHORT` spelling of [`WEIGHT_FLOATS`], full-scale.
+fn weight_shorts() -> Vec<u8> {
+    u16s(&WEIGHT_FLOATS.map(|weight| (weight * 65535.0) as u16))
+}
 
 #[test]
 fn unsigned_byte_joints_load() {
@@ -438,20 +516,97 @@ fn unsigned_short_joints_load_as_the_byte_equivalent() {
 
 #[test]
 fn normalized_unsigned_byte_weights_load_as_the_float_equivalent() {
-    let weights = u8s(&WEIGHT_FLOATS.map(|weight| (weight * 255.0) as u8));
-    let primitive =
-        skinned(UNSIGNED_SHORT, u16s(&JOINT_VALUES), UNSIGNED_BYTE, weights).expect_primitive();
+    let primitive = skinned_normalized_weights(
+        UNSIGNED_SHORT,
+        u16s(&JOINT_VALUES),
+        UNSIGNED_BYTE,
+        weight_bytes(),
+    )
+    .expect_primitive();
     assert_eq!(primitive.joints, EXPECTED_JOINTS);
     assert_eq!(primitive.weights, EXPECTED_WEIGHTS);
 }
 
 #[test]
 fn normalized_unsigned_short_weights_load_as_the_float_equivalent() {
-    let weights = u16s(&WEIGHT_FLOATS.map(|weight| (weight * 65535.0) as u16));
-    let primitive =
-        skinned(UNSIGNED_SHORT, u16s(&JOINT_VALUES), UNSIGNED_SHORT, weights).expect_primitive();
+    let primitive = skinned_normalized_weights(
+        UNSIGNED_SHORT,
+        u16s(&JOINT_VALUES),
+        UNSIGNED_SHORT,
+        weight_shorts(),
+    )
+    .expect_primitive();
     assert_eq!(primitive.joints, EXPECTED_JOINTS);
     assert_eq!(primitive.weights, EXPECTED_WEIGHTS);
+}
+
+#[test]
+fn integer_weights_without_the_normalized_flag_still_load() {
+    // The `WEIGHTS_0` counterpart of
+    // `integer_tex_coords_without_the_normalized_flag_still_load`: invalid
+    // glTF that the reader decodes, so the loader does not refuse it, and
+    // `into_f32()` rescales it from full scale regardless of the flag.
+    for primitive in [
+        skinned(
+            UNSIGNED_SHORT,
+            u16s(&JOINT_VALUES),
+            UNSIGNED_BYTE,
+            weight_bytes(),
+        ),
+        skinned(
+            UNSIGNED_SHORT,
+            u16s(&JOINT_VALUES),
+            UNSIGNED_SHORT,
+            weight_shorts(),
+        ),
+    ] {
+        let primitive = primitive.expect_primitive();
+        assert_eq!(primitive.joints, EXPECTED_JOINTS);
+        assert_eq!(primitive.weights, EXPECTED_WEIGHTS);
+    }
+}
+
+/// The fixtures above are the only witness that a *normalized* integer
+/// accessor loads, so they have to really be normalized. No loaded value
+/// can prove it: `gltf`'s `into_f32()` rescales `UNSIGNED_BYTE`/
+/// `UNSIGNED_SHORT` irrespective of the `normalized` metadata, so the
+/// flagged and unflagged fixtures decode identically. Only the document
+/// distinguishes them — so assert on the document, and the "normalized"
+/// tests above cannot silently decay into duplicates of the unflagged ones.
+#[test]
+fn a_normalized_attribute_really_declares_the_flag() {
+    let flag_of = |primitive: &Primitive, semantic: &str| -> Option<Value> {
+        let document: Value =
+            serde_json::from_slice(&primitive.to_json()).expect("fixture is JSON");
+        let index = document["meshes"][0]["primitives"][0]["attributes"][semantic]
+            .as_u64()
+            .expect("semantic is declared");
+        document["accessors"][index as usize]
+            .get("normalized")
+            .cloned()
+    };
+
+    let uvs = Primitive::new().normalized_attribute(
+        "TEXCOORD_0",
+        "VEC2",
+        UNSIGNED_BYTE,
+        3,
+        u8s(&UV_BYTES),
+    );
+    assert_eq!(flag_of(&uvs, "TEXCOORD_0"), Some(json!(true)));
+
+    let weights = skinned_normalized_weights(
+        UNSIGNED_SHORT,
+        u16s(&JOINT_VALUES),
+        UNSIGNED_BYTE,
+        weight_bytes(),
+    );
+    assert_eq!(flag_of(&weights, "WEIGHTS_0"), Some(json!(true)));
+    // Joint indices and the bare builder must stay unflagged, or the
+    // "without the flag" tests would not be testing what they claim.
+    assert_eq!(flag_of(&weights, "JOINTS_0"), None);
+    let bare = Primitive::new().attribute("TEXCOORD_0", "VEC2", UNSIGNED_BYTE, 3, u8s(&UV_BYTES));
+    assert_eq!(flag_of(&bare, "TEXCOORD_0"), None);
 }
 
 #[test]

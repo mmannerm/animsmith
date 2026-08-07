@@ -389,6 +389,13 @@ const NORMAL_ENCODING: ReaderEncoding = ReaderEncoding {
 };
 /// `read_tex_coords` dispatches over the three encodings glTF permits for
 /// `TEXCOORD_n`: `FLOAT`, or normalized `UNSIGNED_BYTE`/`UNSIGNED_SHORT`.
+///
+/// The accessor's `normalized` flag is neither checked here nor honoured on
+/// the read path: `gltf`'s `into_f32()` rescales `UNSIGNED_BYTE`/
+/// `UNSIGNED_SHORT` from full scale whatever the flag says. So an integer
+/// `TEXCOORD_0` missing the flag — invalid glTF, but decodable — loads
+/// rescaled rather than refused, and an integer UV never reaches a check as
+/// its authored integer.
 const TEX_COORD_ENCODING: ReaderEncoding = ReaderEncoding {
     accessor_type: AccessorType::Vec2,
     component_types: &[ComponentType::U8, ComponentType::U16, ComponentType::F32],
@@ -400,7 +407,8 @@ const JOINTS_ENCODING: ReaderEncoding = ReaderEncoding {
     component_types: &[ComponentType::U8, ComponentType::U16],
 };
 /// `read_weights` dispatches over the three encodings glTF permits for
-/// `WEIGHTS_n`: `FLOAT`, or normalized `UNSIGNED_BYTE`/`UNSIGNED_SHORT`.
+/// `WEIGHTS_n`: `FLOAT`, or normalized `UNSIGNED_BYTE`/`UNSIGNED_SHORT`,
+/// with the same inert-`normalized` caveat as [`TEX_COORD_ENCODING`].
 const WEIGHTS_ENCODING: ReaderEncoding = ReaderEncoding {
     accessor_type: AccessorType::Vec4,
     component_types: &[ComponentType::U8, ComponentType::U16, ComponentType::F32],
@@ -466,8 +474,15 @@ fn required_attribute_encoding(semantic: &gltf::Semantic) -> Option<&'static Rea
 /// it, nothing fires and the bytes are silently reinterpreted. A `VEC3` of
 /// `UNSIGNED_INT` `NORMAL` is 12 bytes just like `[f32; 3]`, so every normal
 /// would load as the float reading of an integer's bits. Refusing that too
-/// is what keeps invariant-9 honest: the loader hands checks the file's real
-/// data or nothing.
+/// is what keeps invariant-9 honest: a slot the loader reads is decoded as
+/// the encoding it declares, or the file is refused — never reinterpreted.
+///
+/// That is a narrower claim than "the loader preserves every authored
+/// value", and deliberately so. Where glTF itself defines an encoding as a
+/// scaling of the authored integers, `gltf` applies it: `into_f32()`
+/// rescales an `UNSIGNED_BYTE`/`UNSIGNED_SHORT` `TEXCOORD_0` or `WEIGHTS_0`
+/// from full scale (see [`TEX_COORD_ENCODING`]). Checks therefore see those
+/// slots as floats, not as the integers on disk.
 ///
 /// Only what the loader actually reads is checked. Non-triangle primitives
 /// are skipped whole by `extract_assets`, so their accessors are never
