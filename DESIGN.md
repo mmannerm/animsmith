@@ -1222,7 +1222,9 @@ distinct `WholeDocumentLinearUnits { factor }` and
 expected_factor }` variants, carried by a `ScaleRequest`. Pure planning returns
 either a typed `ScalePlan` (affected closure, per-domain rewrites, tolerance
 policy, and proof obligations) or a typed `ScaleError`; proof returns a
-`ScaleProof` with the residual maxima that producer evidence serializes.
+`ScaleProof` with the residual maxima that producer evidence serializes, each
+paired with the number of comparisons that produced it so a residual nothing
+walked is distinguishable from a measured zero (issue #319).
 Planning and proof take format-neutral node, track, bind, and capability facts.
 They do not accept paths, glTF/ufbx types, config parsers, or publication
 policy. The format frontend owns raw inventory and exact source rewriting; the

@@ -252,12 +252,12 @@ fn rest_bind_publishes_a_pair_whose_evidence_names_the_appendix_d3_case_2_rewrit
 
     assert_eq!(result["tolerance"]["policy_id"], "appendix-d-v2");
 
-    // The two residuals `prove_scale` evaluates unconditionally, gated here
-    // on the source's own payloads rather than on a plan obligation. The rig
-    // has animation tracks, so the per-element comparison ran; its only
-    // skinned instance has its joint *inside* the closure, so the
-    // outside-the-closure bind comparison had nothing to walk and reports an
-    // absence rather than a zero.
+    // Two of the three residuals `prove_scale` evaluates unconditionally,
+    // whose `evaluated` is the proof's own comparison count rather than any
+    // predicate re-derived here. The rig has animation tracks, so the
+    // per-element comparison ran; its only skinned instance has its joint
+    // *inside* the closure, so the outside-the-closure bind comparison had
+    // nothing to walk and reports an absence rather than a zero.
     let residuals = &result["proof"]["residuals"];
     assert_eq!(residuals["track_value"]["evaluated"], true);
     assert_eq!(residuals["track_value"]["max"], 0.0);
@@ -482,14 +482,14 @@ fn an_unevaluated_obligation_publishes_null_rather_than_a_zero_residual() {
 
 #[test]
 fn a_rig_with_no_meshes_and_no_clips_reports_absences_for_what_it_cannot_evaluate() {
-    // Three of the twelve residual predicates are `true` on every other
-    // fixture here, so nothing distinguishes them from a constant `true`:
-    // `track_value`'s and `mesh_position`'s, which are re-derived from the
-    // source's own payloads because `prove_scale` evaluates those two claims
+    // Three of the twelve residuals are `evaluated` on every other fixture
+    // here, so nothing distinguishes them from a constant `true`:
+    // `track_value` and `mesh_position`, which `prove_scale` compares
     // unconditionally, and the rest obligation behind `rest_translation` and
     // `rest_rotation`. This rig has no mesh and no clip, which separates
-    // them: the first two have nothing to walk while the rest obligation is
-    // still declared and still measured.
+    // them: the first two have nothing to walk — and their published
+    // comparison counts are zero — while the rest obligation is still
+    // declared and still measured.
     let fixture = Fixture::new();
     std::fs::write(fixture.path("nodes.glb"), nodes_only_scale_rig_glb()).unwrap();
     let run = rest_bind_paths(&fixture, "nodes.glb", "out.glb", "out.json");

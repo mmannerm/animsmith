@@ -924,12 +924,25 @@ pub struct ScaleProofObligations {
     /// closure — the same instance walk [`Self::prove_bounds`] needs, and so
     /// the same predicate.
     ///
-    /// This flag is one of those that arms [`prove_scale`]'s sampled loop,
-    /// and its evidence predicate is independent of the three clip-driven
-    /// flags': a document with a skinned instance and no clips declares this
-    /// one and none of them. `a_skin_only_plan_still_evaluates_its_sampled
-    /// _obligations` pins the shape where it arms that loop alone, so the
-    /// coverage cannot be lost silently.
+    /// **This flag arms two walks, not one.** [`prove_scale`] evaluates the
+    /// skin equation once at the **rest** pose, outside the sampled loop and
+    /// outside the sampling budget, and again at each sample time; both go
+    /// through the same `check_skin_and_bounds`, which has exactly those two
+    /// call sites. So a skinned document with no clips at all still proves
+    /// this obligation — it reports `sample_time_count == 0` and a
+    /// [`ScaleProof::skin_matrix_comparisons`] above zero — and a corrupted
+    /// bind in such a document is caught. Reading this flag as arming only
+    /// the sampled loop is what led #317 to be filed against a defect that
+    /// does not exist.
+    ///
+    /// Its evidence predicate is likewise independent of the three
+    /// clip-driven flags': a document with a skinned instance and no clips
+    /// declares this one and none of them.
+    /// `a_skin_only_plan_still_evaluates_its_sampled_obligations` pins the
+    /// shape where it arms the sampled loop alone, and
+    /// `an_unanimated_skinned_document_still_compares_its_skin_at_rest` pins
+    /// the rest-pose walk on a document with no sample times at all, so
+    /// neither half of the coverage can be lost silently.
     pub prove_skin: bool,
     /// Prove skinned mesh bounds, at rest and at every declared
     /// key/cubic-interior sample time.
@@ -2339,10 +2352,28 @@ fn rebase_matrix(matrix: Mat4, s_parent: f32, s_node: f32) -> Mat4 {
 // --- Proof -------------------------------------------------------------
 
 /// Observed residual maxima from [`prove_scale`], reported against
-/// [`ScalePlan::tolerance_policy`].
+/// [`ScalePlan::tolerance_policy`], each paired with the number of
+/// comparisons that produced it.
 ///
-/// A field for an obligation the plan does not require (see
-/// [`ScaleProofObligations`]) reports `0.0`.
+/// **Read the count before the residual.** A maximum alone cannot
+/// distinguish "compared, no deviation" from "nothing to compare": both read
+/// `0.0`, because every maximum starts there and is raised only by a loop
+/// that may have zero iterations. So a field for an obligation the plan does
+/// not require (see [`ScaleProofObligations`]) reports `0.0` — and reports a
+/// companion count of `0` that says so. A `0.0` with a count above zero is a
+/// measurement; a `0.0` with a count of zero is an absence, which DESIGN.md
+/// Appendix D §D.6 requires an evidence record to publish as an absence
+/// rather than as a checked zero.
+///
+/// The counts are measurements, not obligation flags, and are not derived
+/// from any: each is written by the same statement that writes its maximum,
+/// in the single private funnel every comparison in [`prove_scale`] passes
+/// through. No comparison can raise a residual without being counted, and
+/// no count can rise without a comparison having been checked against the
+/// tolerance policy. That also covers the residuals no obligation flag gates
+/// — [`Self::track_value_residual`], [`Self::mesh_position_residual`] and
+/// [`Self::unaffected_inverse_bind_residual`], which are proved
+/// unconditionally — for which no flag could serve as a proxy.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub struct ScaleProof {
@@ -2350,6 +2381,9 @@ pub struct ScaleProof {
     pub tolerance_policy: ScaleTolerancePolicy,
     /// Maximum rest-world translation residual across affected nodes.
     pub rest_translation_residual: f64,
+    /// Comparisons behind [`Self::rest_translation_residual`]: one per
+    /// affected node.
+    pub rest_translation_comparisons: usize,
     /// Maximum rest-world rotation residual, in radians, directly comparable
     /// to [`ScaleTolerancePolicy::rotation_residual_radians`].
     ///
@@ -2358,31 +2392,72 @@ pub struct ScaleProof {
     /// `theta = 4 * asin(chord / 2)` that chord represents, so this value and
     /// the tolerance it is checked against carry the same unit.
     pub rest_rotation_residual: f64,
+    /// Comparisons behind [`Self::rest_rotation_residual`]: one per affected
+    /// node.
+    pub rest_rotation_comparisons: usize,
     /// Maximum postcondition unit-scale residual (rest/bind only).
     pub unit_scale_residual: f64,
+    /// Comparisons behind [`Self::unit_scale_residual`]: one per affected
+    /// node, and zero unless the plan declares the postcondition.
+    pub unit_scale_comparisons: usize,
     /// Maximum transform-only attachment full-affine residual (rest/bind
     /// only).
     pub transform_only_affine_residual: f64,
+    /// Comparisons behind [`Self::transform_only_affine_residual`]: one
+    /// probe point per transform-only attachment.
+    pub transform_only_affine_comparisons: usize,
     /// Maximum per-element animation-track value residual, across rewritten
     /// translation elements and every retained rotation/scale element.
     pub track_value_residual: f64,
+    /// Comparisons behind [`Self::track_value_residual`]: one per track
+    /// element of every clip, so a document with no clips — or with clips
+    /// whose tracks carry no values — reports zero.
+    pub track_value_comparisons: usize,
     /// Maximum per-vertex base mesh `POSITION` residual.
     pub mesh_position_residual: f64,
+    /// Comparisons behind [`Self::mesh_position_residual`]: one per vertex
+    /// of every mesh primitive, so a document with no mesh positions reports
+    /// zero.
+    pub mesh_position_comparisons: usize,
     /// Maximum residual at any affected-track keyframe time.
     pub key_translation_residual: f64,
+    /// Comparisons behind [`Self::key_translation_residual`]: one per
+    /// affected translation track per key time.
+    pub key_translation_comparisons: usize,
     /// Maximum residual at any bounded cubic-segment interior time.
     pub cubic_interior_residual: f64,
+    /// Comparisons behind [`Self::cubic_interior_residual`]: one per
+    /// affected translation track per cubic-segment interior time.
+    pub cubic_interior_comparisons: usize,
     /// Maximum sampled world-space trajectory residual.
     pub trajectory_residual: f64,
+    /// Comparisons behind [`Self::trajectory_residual`]: one per affected
+    /// node per sample time.
+    pub trajectory_comparisons: usize,
     /// Maximum skin-matrix (`W * B`) component residual, across rest and
     /// every sampled key/cubic-interior time.
     pub skin_matrix_residual: f64,
+    /// Comparisons behind [`Self::skin_matrix_residual`]: one per skin slot
+    /// of every affected skinned instance, at rest and again at every sample
+    /// time — so a skinned document with no clips still reports a count
+    /// above zero, from the rest-pose walk alone.
+    pub skin_matrix_comparisons: usize,
     /// Maximum skinned mesh bounds residual, across rest and every sampled
     /// key/cubic-interior time.
     pub bounds_residual: f64,
+    /// Comparisons behind [`Self::bounds_residual`]: six per evaluated pose
+    /// (three axes of each of the two extreme corners), at rest and again at
+    /// every sample time.
+    pub bounds_comparisons: usize,
     /// Maximum stored inverse-bind residual over every skin slot outside the
     /// affected closure (see [`ProofResidualKind::UnaffectedInverseBind`]).
     pub unaffected_inverse_bind_residual: f64,
+    /// Comparisons behind [`Self::unaffected_inverse_bind_residual`]: one
+    /// per skin slot of every instance outside the affected closure that
+    /// stores a bind on both sides. A document whose every skin is inside
+    /// the closure reports zero, as does a slot neither side records — which
+    /// §D.6 places outside this proof's scope rather than proving.
+    pub unaffected_inverse_bind_comparisons: usize,
     /// The operation's observed factor, re-derived by this proof from the
     /// documents it was handed rather than copied from
     /// [`ScalePlan::observed_factor`], so evidence does not depend on
@@ -2497,12 +2572,18 @@ pub struct ScaleProof {
 /// [`ScaleError::MissingProofEvidence`] if an obligation the plan declares
 /// provable has no counterpart evidence in `candidate`.
 ///
-/// Two of the claims checked here are not gated by
-/// [`ScaleProofObligations`], because they are about payloads the plan
-/// declares it does *not* rewrite: base mesh `POSITION`
+/// Three of the claims checked here are not gated by
+/// [`ScaleProofObligations`]: the per-element animation-track values
+/// ([`ProofResidualKind::TrackValue`]), base mesh `POSITION`
 /// ([`ProofResidualKind::MeshPosition`]) and the stored inverse binds of
 /// skins outside the affected closure
-/// ([`ProofResidualKind::UnaffectedInverseBind`]).
+/// ([`ProofResidualKind::UnaffectedInverseBind`]). The latter two are about
+/// payloads the plan declares it does *not* rewrite, where an obligation
+/// flag would make "unaffected" opt-out; the first compares every element of
+/// every track against its own domain's analytic expectation, rewritten or
+/// retained, and so is owed by every plan. None of the three admits an
+/// obligation flag as a proxy for having run — see [`ScaleProof`], whose
+/// comparison counts report what each of them actually walked.
 ///
 /// [`ScaleProof::observed_factor`] is re-derived here from `source` rather
 /// than copied from [`ScalePlan::observed_factor`]; it is reported as
@@ -2516,6 +2597,28 @@ pub fn prove_scale(
     candidate: &ScaleCandidate,
     plan: &ScalePlan,
 ) -> Result<ScaleProof, ScaleError> {
+    // The unit-scale postcondition is evaluated inside the `prove_rest` walk
+    // — it reads the same affected node's candidate world matrix — so a plan
+    // declaring it without `prove_rest` claims a postcondition nothing would
+    // walk. Refused here rather than proved vacuously, for the same reason
+    // every other declared-but-unevidenced obligation is: a `0.0` residual
+    // for a claim nothing checked is a false record (DESIGN.md Appendix D
+    // §D.6), and `prove_unit_scale_postcondition`'s own rustdoc states the
+    // nesting as normative rather than incidental.
+    //
+    // This is a property of the plan alone, so it is checked before either
+    // document is validated: no document can make the combination coherent,
+    // and a caller holding such a plan should be told about it rather than
+    // about whichever document defect happens to be found first. Neither
+    // planner emits it — `plan_whole_document` leaves the postcondition off,
+    // `plan_rest_bind` sets both — and `ScalePlan`'s fields are private, so
+    // this closes a latent gap rather than a reachable one.
+    if plan.proof_obligations.prove_unit_scale_postcondition && !plan.proof_obligations.prove_rest {
+        return Err(ScaleError::MissingProofEvidence {
+            kind: ProofResidualKind::UnitScale,
+            detail: "unit_scale_postcondition_without_rest",
+        });
+    }
     let candidate = candidate.document();
     validate_document_shape(source)?;
     validate_document_shape(candidate)?;
@@ -2529,17 +2632,29 @@ pub fn prove_scale(
     let mut proof = ScaleProof {
         tolerance_policy: tol,
         rest_translation_residual: 0.0,
+        rest_translation_comparisons: 0,
         rest_rotation_residual: 0.0,
+        rest_rotation_comparisons: 0,
         unit_scale_residual: 0.0,
+        unit_scale_comparisons: 0,
         transform_only_affine_residual: 0.0,
+        transform_only_affine_comparisons: 0,
         track_value_residual: 0.0,
+        track_value_comparisons: 0,
         mesh_position_residual: 0.0,
+        mesh_position_comparisons: 0,
         key_translation_residual: 0.0,
+        key_translation_comparisons: 0,
         cubic_interior_residual: 0.0,
+        cubic_interior_comparisons: 0,
         trajectory_residual: 0.0,
+        trajectory_comparisons: 0,
         skin_matrix_residual: 0.0,
+        skin_matrix_comparisons: 0,
         bounds_residual: 0.0,
+        bounds_comparisons: 0,
         unaffected_inverse_bind_residual: 0.0,
+        unaffected_inverse_bind_comparisons: 0,
         observed_factor,
         planned_observed_factor: plan.observed_factor,
         observed_factor_divergence: relative_divergence(plan.observed_factor, observed_factor),
@@ -2572,7 +2687,7 @@ pub fn prove_scale(
                 before_mag,
                 after_mag,
                 &tol,
-                &mut proof.rest_translation_residual,
+                &mut proof,
             )?;
             // Both operations leave every node's *local* rotation field
             // byte-identical (translation and scale are the only rewritten
@@ -2611,11 +2726,11 @@ pub fn prove_scale(
             // reported or compared (see [`quat_residual_radians`]).
             let rotation_residual =
                 quat_residual_radians(quat_equality_residual(source_rotation, candidate_rotation));
-            proof.rest_rotation_residual = proof.rest_rotation_residual.max(rotation_residual);
-            check_residual(
+            record_and_check(
                 ProofResidualKind::RestRotation,
                 rotation_residual,
                 tol.rotation_residual_radians,
+                &mut proof,
             )?;
             if plan.proof_obligations.prove_unit_scale_postcondition {
                 let (after_scale, ..) = after.to_scale_rotation_translation();
@@ -2632,11 +2747,11 @@ pub fn prove_scale(
                     .abs()
                     .max((after_scale.y as f64 - 1.0).abs())
                     .max((after_scale.z as f64 - 1.0).abs());
-                proof.unit_scale_residual = proof.unit_scale_residual.max(residual);
-                check_residual(
+                record_and_check(
                     ProofResidualKind::UnitScale,
                     residual,
                     tol.postcondition_unit_scale_residual,
+                    &mut proof,
                 )?;
             }
         }
@@ -2680,7 +2795,7 @@ pub fn prove_scale(
                 expected_point.length(),
                 actual_point.length(),
                 &tol,
-                &mut proof.transform_only_affine_residual,
+                &mut proof,
             )?;
         }
     }
@@ -2767,7 +2882,7 @@ pub fn prove_scale(
                         t,
                         plan,
                         &tol,
-                        &mut proof.key_translation_residual,
+                        &mut proof,
                     )?;
                 }
                 sample_time_obligations(
@@ -2794,7 +2909,7 @@ pub fn prove_scale(
                         t,
                         plan,
                         &tol,
-                        &mut proof.cubic_interior_residual,
+                        &mut proof,
                     )?;
                 }
                 sample_time_obligations(
@@ -2852,7 +2967,7 @@ fn sample_time_obligations(
             &plan.affected_nodes,
             plan,
             tol,
-            &mut proof.trajectory_residual,
+            proof,
         )?;
     }
     check_skin_and_bounds(
@@ -3115,7 +3230,115 @@ fn check_residual(
     Ok(())
 }
 
-/// Track `observed` into `running_max` and check it against the
+/// One residual's maximum and comparison count, borrowed **together** so
+/// neither can be written without the other.
+///
+/// [`ScaleProof`] publishes the two as separate flat fields, because that is
+/// what a `#[non_exhaustive]` additive change permits and what the evidence
+/// schema reads. Handing out a pair of mutable references, and recording
+/// through [`Self::record`] rather than through either of them, is what makes
+/// "the count and the maximum are written by the same statement" a property
+/// of the code rather than a convention: there is no way to reach a residual
+/// field from a comparison site except through the pair.
+struct ResidualTally<'a> {
+    max: &'a mut f64,
+    comparisons: &'a mut usize,
+}
+
+impl ResidualTally<'_> {
+    /// Record one comparison of `observed`.
+    fn record(&mut self, observed: f64) {
+        *self.max = self.max.max(observed);
+        *self.comparisons += 1;
+    }
+}
+
+impl ScaleProof {
+    /// The maximum/count pair this residual kind reports into.
+    ///
+    /// The single mapping from a [`ProofResidualKind`] to the fields it
+    /// writes. Every comparison site names its kind and nothing else, so a
+    /// site cannot report one kind's residual into another kind's field —
+    /// which was previously possible wherever a `&mut f64` and a `kind` were
+    /// passed as independent arguments.
+    ///
+    /// [`ProofResidualKind::ObservedFactor`] is not a residual — it names a
+    /// source whose scaled root could not be resolved, and is only ever
+    /// reported as [`ScaleError::MissingProofEvidence`] — so it has no pair
+    /// and no comparison site reaches here with it.
+    fn tally(&mut self, kind: ProofResidualKind) -> Option<ResidualTally<'_>> {
+        let (max, comparisons) = match kind {
+            ProofResidualKind::RestTranslation => (
+                &mut self.rest_translation_residual,
+                &mut self.rest_translation_comparisons,
+            ),
+            ProofResidualKind::RestRotation => (
+                &mut self.rest_rotation_residual,
+                &mut self.rest_rotation_comparisons,
+            ),
+            ProofResidualKind::UnitScale => (
+                &mut self.unit_scale_residual,
+                &mut self.unit_scale_comparisons,
+            ),
+            ProofResidualKind::TransformOnlyAffine => (
+                &mut self.transform_only_affine_residual,
+                &mut self.transform_only_affine_comparisons,
+            ),
+            ProofResidualKind::TrackValue => (
+                &mut self.track_value_residual,
+                &mut self.track_value_comparisons,
+            ),
+            ProofResidualKind::MeshPosition => (
+                &mut self.mesh_position_residual,
+                &mut self.mesh_position_comparisons,
+            ),
+            ProofResidualKind::KeyTranslation => (
+                &mut self.key_translation_residual,
+                &mut self.key_translation_comparisons,
+            ),
+            ProofResidualKind::CubicInterior => (
+                &mut self.cubic_interior_residual,
+                &mut self.cubic_interior_comparisons,
+            ),
+            ProofResidualKind::Trajectory => (
+                &mut self.trajectory_residual,
+                &mut self.trajectory_comparisons,
+            ),
+            ProofResidualKind::SkinMatrix => (
+                &mut self.skin_matrix_residual,
+                &mut self.skin_matrix_comparisons,
+            ),
+            ProofResidualKind::Bounds => (&mut self.bounds_residual, &mut self.bounds_comparisons),
+            ProofResidualKind::UnaffectedInverseBind => (
+                &mut self.unaffected_inverse_bind_residual,
+                &mut self.unaffected_inverse_bind_comparisons,
+            ),
+            ProofResidualKind::ObservedFactor => return None,
+        };
+        Some(ResidualTally { max, comparisons })
+    }
+}
+
+/// Record one comparison of `observed` for `kind` and check it against
+/// `tolerance`.
+///
+/// The single point at which a residual maximum moves. Recording and
+/// checking here — rather than at each of the twelve obligations' loops —
+/// is what makes [`ScaleProof`]'s counts describe exactly the comparisons
+/// its maxima were taken over.
+fn record_and_check(
+    kind: ProofResidualKind,
+    observed: f64,
+    tolerance: f64,
+    proof: &mut ScaleProof,
+) -> Result<(), ScaleError> {
+    if let Some(mut tally) = proof.tally(kind) {
+        tally.record(observed);
+    }
+    check_residual(kind, observed, tolerance)
+}
+
+/// Record `observed` for `kind` and check it against the
 /// before/after-derived tolerance for this specific comparison — never a
 /// proxy such as the plan's declared factor.
 fn check_and_track(
@@ -3124,10 +3347,9 @@ fn check_and_track(
     before: f64,
     after: f64,
     tol: &ScaleTolerancePolicy,
-    running_max: &mut f64,
+    proof: &mut ScaleProof,
 ) -> Result<(), ScaleError> {
-    *running_max = running_max.max(observed);
-    check_residual(kind, observed, tol.scalar_tolerance(before, after))
+    record_and_check(kind, observed, tol.scalar_tolerance(before, after), proof)
 }
 
 /// Rest-world translation residual for one node, plus the expected/actual
@@ -3250,7 +3472,7 @@ fn check_candidate_values(
                             expected.length(),
                             actual.length(),
                             tol,
-                            &mut proof.track_value_residual,
+                            proof,
                         )?;
                     }
                 }
@@ -3263,7 +3485,7 @@ fn check_candidate_values(
                             before.length() as f64,
                             after.length() as f64,
                             tol,
-                            &mut proof.track_value_residual,
+                            proof,
                         )?;
                     }
                 }
@@ -3313,7 +3535,7 @@ fn check_candidate_values(
                     expected.length(),
                     actual.length(),
                     tol,
-                    &mut proof.mesh_position_residual,
+                    proof,
                 )?;
             }
         }
@@ -3431,7 +3653,7 @@ fn check_track_value_residual(
     t: f32,
     plan: &ScalePlan,
     tol: &ScaleTolerancePolicy,
-    running_max: &mut f64,
+    proof: &mut ScaleProof,
 ) -> Result<(), ScaleError> {
     // Paired positionally, not by a `(bone, property)` lookup:
     // `validate_candidate_structure` already established that `source_clip`
@@ -3464,7 +3686,7 @@ fn check_track_value_residual(
             expected.length(),
             actual.length(),
             tol,
-            running_max,
+            proof,
         )?;
     }
     Ok(())
@@ -3479,7 +3701,7 @@ fn check_trajectory_residual_at(
     affected_nodes: &[BoneId],
     plan: &ScalePlan,
     tol: &ScaleTolerancePolicy,
-    running_max: &mut f64,
+    proof: &mut ScaleProof,
 ) -> Result<(), ScaleError> {
     for &node in affected_nodes {
         let before = *source_worlds
@@ -3496,7 +3718,7 @@ fn check_trajectory_residual_at(
             before_mag,
             after_mag,
             tol,
-            running_max,
+            proof,
         )?;
     }
     Ok(())
@@ -3794,7 +4016,7 @@ fn check_unaffected_instance_binds(
                 matrix_magnitude(expected),
                 matrix_magnitude(after),
                 tol,
-                &mut proof.unaffected_inverse_bind_residual,
+                proof,
             )?;
         }
     }
@@ -3909,7 +4131,7 @@ fn check_skin_and_bounds(
                     matrix_magnitude(expected),
                     matrix_magnitude(*after),
                     tol,
-                    &mut proof.skin_matrix_residual,
+                    proof,
                 )?;
             }
         }
@@ -3984,14 +4206,7 @@ fn check_skin_and_bounds(
             let a = after[axis] as f64;
             let expected = b * q;
             let residual = (a - expected).abs();
-            check_and_track(
-                ProofResidualKind::Bounds,
-                residual,
-                expected,
-                a,
-                tol,
-                &mut proof.bounds_residual,
-            )?;
+            check_and_track(ProofResidualKind::Bounds, residual, expected, a, tol, proof)?;
         }
     }
     Ok(())
@@ -7740,12 +7955,15 @@ mod tests {
     #[test]
     fn the_reported_rest_rotation_residual_is_the_maximum_not_the_last_node_seen() {
         // `ScaleProof::rest_rotation_residual` is a *maximum* over the
-        // affected nodes and, like `unit_scale_residual`, it is folded by hand
-        // at its call site rather than through `check_and_track` — so a proof
-        // that reported the last affected node's residual instead of the
-        // largest would publish a smaller number than it observed. #284 will
-        // freeze this as a published §D.6 evidence field, which is exactly
-        // what makes accept/reject-unchanged-but-record-false a defect.
+        // affected nodes — so a proof that reported the last affected node's
+        // residual instead of the largest would publish a smaller number than
+        // it observed. #284 will freeze this as a published §D.6 evidence
+        // field, which is exactly what makes
+        // accept/reject-unchanged-but-record-false a defect. Like
+        // `unit_scale_residual`, this one is checked against a fixed policy
+        // bound rather than a before/after-derived tolerance, so it reaches
+        // the shared fold through `record_and_check` rather than
+        // `check_and_track`.
         //
         // An earlier revision left this unpinned on the grounds that no build
         // path writes `rest.rotation`, so the residual is always zero. That
@@ -10304,11 +10522,12 @@ mod tests {
         // nodes, and #284 will freeze it as a published evidence field, so a
         // proof that reported the last node's residual instead of the largest
         // would publish a smaller number than it observed — accept/reject
-        // unchanged, record false. Unlike the residuals routed through
-        // `check_and_track`, this one and `rest_rotation_residual` are folded
-        // by hand at their call sites, so for each of them only a fixture
-        // whose maximum is *not* at the last affected node can tell the two
-        // apart — see
+        // unchanged, record false. This one and `rest_rotation_residual` are
+        // the two checked against a fixed policy bound rather than a
+        // before/after-derived tolerance, so they reach the shared fold
+        // through `record_and_check` rather than `check_and_track`; for each
+        // of them only a fixture whose maximum is *not* at the last affected
+        // node can tell a maximum from a last-write — see
         // `the_reported_rest_rotation_residual_is_the_maximum_not_the_last_node_seen`
         // for the other.
         //
@@ -11786,5 +12005,458 @@ mod tests {
                 ScaleError::CandidateStructureMismatch { reason: expected }
             );
         }
+    }
+
+    // --- Per-residual comparison counts (issue #319) ----------------------
+
+    /// Every residual's comparison count, named, in the order [`ScaleProof`]
+    /// declares them.
+    ///
+    /// Named rather than a bare `[usize; 12]` so a failing vector says which
+    /// residual moved, and taken as a whole rather than one field per
+    /// assertion so a document's coverage is stated as one hand-derived fact
+    /// — including the zeros, which are the half a per-field assertion tends
+    /// to leave out.
+    fn comparison_counts(proof: &ScaleProof) -> [(&'static str, usize); 12] {
+        [
+            ("rest_translation", proof.rest_translation_comparisons),
+            ("rest_rotation", proof.rest_rotation_comparisons),
+            ("unit_scale", proof.unit_scale_comparisons),
+            (
+                "transform_only_affine",
+                proof.transform_only_affine_comparisons,
+            ),
+            ("track_value", proof.track_value_comparisons),
+            ("mesh_position", proof.mesh_position_comparisons),
+            ("key_translation", proof.key_translation_comparisons),
+            ("cubic_interior", proof.cubic_interior_comparisons),
+            ("trajectory", proof.trajectory_comparisons),
+            ("skin_matrix", proof.skin_matrix_comparisons),
+            ("bounds", proof.bounds_comparisons),
+            (
+                "unaffected_inverse_bind",
+                proof.unaffected_inverse_bind_comparisons,
+            ),
+        ]
+    }
+
+    /// The one binary32 rounding a `0.01` factor costs at a coordinate of
+    /// `1.0`, which is the largest source magnitude in the fixtures below
+    /// whose product with `0.01` is not exactly representable:
+    ///
+    /// ```text
+    /// f32(0.01) = 0.00999999977648258209228515625
+    /// f64(0.01) = 0.010000000000000000208166817117216851...
+    /// difference  2.2351741811588166e-10
+    /// ```
+    ///
+    /// Every builder in this module narrows to `f32` exactly once per
+    /// element, and every proof-side expectation is formed in `f64` from the
+    /// unrounded source, so this is the residual a *correct* candidate
+    /// carries — not a defect, and not something a rest/bind plan can
+    /// produce, whose expectation for these domains is `before` exactly.
+    const NARROWING_AT_ONE: f64 = 2.2351741811588166e-10;
+
+    /// `payload_document` plus an affected **cubic** translation track, so
+    /// one whole-document plan declares all five sampled obligations at once
+    /// and every domain a whole-document conversion rewrites is measured.
+    ///
+    /// The track is deliberately constant with zero tangents: at `u = 0.5`
+    /// the glTF Hermite basis is `h00 = h01 = 0.5` and `h10 = h11 = 0`, so
+    /// the interior sample is `0.5 * p + 0.5 * p = p` **exactly** on both
+    /// sides, in `f32`, and the interior-time residual is the same single
+    /// narrowing as the key-time one rather than an accumulation of spline
+    /// arithmetic this test would have to re-derive.
+    fn sampled_payload_document() -> Document {
+        let mut doc = payload_document();
+        doc.clips[0].tracks.push(Track {
+            bone: 1,
+            property: Property::Translation,
+            interpolation: Interpolation::CubicSpline,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Vec3s(vec![
+                Vec3::ZERO,               // in-tangent @0
+                Vec3::new(0.0, 1.0, 0.0), // value @0
+                Vec3::ZERO,               // out-tangent @0
+                Vec3::ZERO,               // in-tangent @1
+                Vec3::new(0.0, 1.0, 0.0), // value @1
+                Vec3::ZERO,               // out-tangent @1
+            ]),
+        });
+        doc
+    }
+
+    #[test]
+    fn a_whole_document_proof_counts_and_measures_every_comparison_it_makes() {
+        let doc = sampled_payload_document();
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+
+        // Two bones, three mesh vertices, one skin slot; a rotation track and
+        // a cubic translation track sharing key times `{0, 1}`, whose single
+        // cubic segment contributes the interior time `0.5`.
+        assert_eq!(proof.sample_time_count, 3);
+        assert_eq!(
+            comparison_counts(&proof),
+            [
+                // One per affected node, and a whole-document closure is
+                // every bone.
+                ("rest_translation", 2),
+                ("rest_rotation", 2),
+                // A whole-document plan declares neither the rest/bind
+                // postcondition nor a transform-only attachment, so both
+                // report the `0.0` that only a count distinguishes from a
+                // measured one.
+                ("unit_scale", 0),
+                ("transform_only_affine", 0),
+                // Two rotation values, plus the cubic track's six elements
+                // (two values and four tangents).
+                ("track_value", 8),
+                ("mesh_position", 3),
+                // One affected translation track, read at each of the two
+                // key times and at the one interior time.
+                ("key_translation", 2),
+                ("cubic_interior", 1),
+                // Both affected nodes, posed at each of the three sample
+                // times.
+                ("trajectory", 6),
+                // One skin slot, at rest and at each of the three sample
+                // times. The rest pose is what makes this four rather than
+                // three.
+                ("skin_matrix", 4),
+                // Six per pose: three axes of each of the two extreme
+                // corners.
+                ("bounds", 24),
+                // The document's only skinned instance is bound to bone 1,
+                // which a whole-document closure contains.
+                ("unaffected_inverse_bind", 0),
+            ]
+        );
+
+        // Hand-computed residuals, from the fixture's own coordinates. Each
+        // is the narrowing above at the magnitude that comparison reads.
+        //
+        // Bone 1 sits at `(0, 1, 0)`; the candidate holds `(0, f32(0.01), 0)`
+        // against an `f64` expectation of `(0, 0.01, 0)`, and a vector with
+        // one non-zero component has that component's magnitude for a length.
+        assert_eq!(proof.rest_translation_residual, NARROWING_AT_ONE);
+        // The same node, posed through the clip: its own rotation track does
+        // not move its translation column, and the translation track samples
+        // to the same `(0, 1, 0)` at every one of the three times.
+        assert_eq!(proof.trajectory_residual, NARROWING_AT_ONE);
+        // The track's own elements: the four tangents are `0` (exact under
+        // any factor) and both values are `(0, 1, 0)`.
+        assert_eq!(proof.track_value_residual, NARROWING_AT_ONE);
+        assert_eq!(proof.key_translation_residual, NARROWING_AT_ONE);
+        assert_eq!(proof.cubic_interior_residual, NARROWING_AT_ONE);
+        // `mesh_position` is a per-vertex L2 norm, and this rig's extreme
+        // vertices are `(1, 1, 1)` and `(-1, -1, -1)`: three components each
+        // carrying the same narrowing, so `sqrt(3 * e^2)`.
+        assert_eq!(proof.mesh_position_residual, 3.871435245533232e-10);
+        // Bounds are per axis, and the skinned maximum is at `y = 2`: the
+        // vertex `(1, 1, 1)` skinned through `W = translate(0, 1, 0)`. Both
+        // `0.02` and `2 * f32(0.01)` are exact doublings of their `y = 1`
+        // counterparts, so the residual there is exactly twice the
+        // narrowing — which is also what makes this a maximum over the six
+        // axis comparisons rather than the only non-zero one.
+        assert_eq!(proof.bounds_residual, 2.0 * NARROWING_AT_ONE);
+        // A *measured* zero, and the reason the counts exist. The skin
+        // equation's expectation is `scale_translation_only(W * B, f32(q))`
+        // and the candidate composes `W' * B'` out of the same two `f32`
+        // products, so the two sides agree bit for bit — an exact zero that
+        // `skin_matrix_comparisons = 4` distinguishes from the four residuals
+        // above it that nothing walked.
+        assert_eq!(proof.skin_matrix_residual, 0.0);
+        // Likewise exact, and structurally so: neither builder writes
+        // `Bone::rest.rotation`, and `quat_equality_residual` of a
+        // bit-identical pair is `0.0` by construction. No correct candidate
+        // can make this one non-zero; `a_genuinely_rewritten_rest_rotation
+        // _still_fails_proof` covers the incorrect ones.
+        assert_eq!(proof.rest_rotation_residual, 0.0);
+    }
+
+    #[test]
+    fn an_unanimated_skinned_document_still_compares_its_skin_at_rest() {
+        // The permanent pin for what #317 was closed over: `prove_skin` and
+        // `prove_bounds` arm a **rest-pose** walk as well as the sampled
+        // loop, so a skinned document with no clips at all still compares its
+        // skin matrices and its bounds. Gating those two obligations on the
+        // presence of sample times — which that issue proposed — would leave
+        // this document's only check unperformed while still publishing a
+        // `0.0` for it.
+        let doc = compensated_document();
+        assert!(doc.clips.is_empty());
+        let capability = complete_capability();
+        let plan = compensated_rest_bind_plan(&doc, &capability);
+        assert_eq!(plan.affected_nodes(), &[0, 1, 2]);
+        assert_eq!(plan.transform_only_attachments(), &[2]);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+
+        assert_eq!(proof.sample_time_count, 0);
+        assert_eq!(
+            comparison_counts(&proof),
+            [
+                ("rest_translation", 3),
+                ("rest_rotation", 3),
+                // Rest/bind declares the postcondition, over the same three
+                // nodes.
+                ("unit_scale", 3),
+                // One probe point through node 2's expected world affine.
+                ("transform_only_affine", 1),
+                // No clips, so nothing to compare element-wise and no sample
+                // time to pose either skeleton at.
+                ("track_value", 0),
+                ("mesh_position", 1),
+                ("key_translation", 0),
+                ("cubic_interior", 0),
+                ("trajectory", 0),
+                // The whole point: one skin slot and one bounding box,
+                // compared at rest, with no sample time in the document.
+                ("skin_matrix", 1),
+                ("bounds", 6),
+                // The document's only skin is inside the closure.
+                ("unaffected_inverse_bind", 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_rest_bind_proof_counts_the_comparisons_its_own_obligations_walk() {
+        let doc = multi_joint_document();
+        let capability = complete_capability();
+        let plan = multi_joint_plan(&doc, &capability);
+        assert_eq!(plan.affected_nodes(), &[0, 1, 2]);
+        // Both non-root nodes are skin joints, so the closure holds no
+        // transform-only attachment and that obligation is not declared.
+        assert!(plan.transform_only_attachments().is_empty());
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+
+        // Key times `{0, 1}` shared by both tracks, plus the cubic track's
+        // one interior time `0.5`.
+        assert_eq!(proof.sample_time_count, 3);
+        assert_eq!(
+            comparison_counts(&proof),
+            [
+                ("rest_translation", 3),
+                ("rest_rotation", 3),
+                ("unit_scale", 3),
+                ("transform_only_affine", 0),
+                // Two linear translation values plus six cubic elements.
+                ("track_value", 8),
+                ("mesh_position", 4),
+                // Two affected translation tracks, at each of the two key
+                // times and at the one interior time.
+                ("key_translation", 4),
+                ("cubic_interior", 2),
+                // Three affected nodes at each of the three sample times.
+                ("trajectory", 9),
+                // Two skin slots, at rest and at each of the three sample
+                // times.
+                ("skin_matrix", 8),
+                ("bounds", 24),
+                ("unaffected_inverse_bind", 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_clipless_plan_compares_no_track_value_while_still_comparing_its_mesh() {
+        // The `track_value` half of the pair no obligation flag can gate.
+        // This document carries a mesh and a skin but no clip, so the
+        // per-element track comparison has nothing to walk while every other
+        // unconditional comparison still does — which is what separates
+        // `track_value`'s count from `mesh_position`'s rather than leaving
+        // both to move together.
+        let doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
+        assert!(doc.clips.is_empty());
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+
+        assert_eq!(proof.sample_time_count, 0);
+        assert_eq!(
+            comparison_counts(&proof),
+            [
+                ("rest_translation", 2),
+                ("rest_rotation", 2),
+                ("unit_scale", 0),
+                ("transform_only_affine", 0),
+                ("track_value", 0),
+                ("mesh_position", 1),
+                ("key_translation", 0),
+                ("cubic_interior", 0),
+                ("trajectory", 0),
+                ("skin_matrix", 1),
+                ("bounds", 6),
+                ("unaffected_inverse_bind", 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_meshless_plan_compares_no_mesh_position_while_still_comparing_its_tracks() {
+        // The other half: clips but no mesh. The two documents together are
+        // what make `track_value` and `mesh_position` independently
+        // observable — on every other fixture in this module they are either
+        // both walked or both empty.
+        let mut doc = payload_document();
+        doc.assets.meshes.clear();
+        doc.assets.instances.clear();
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+
+        assert_eq!(proof.sample_time_count, 2);
+        assert_eq!(
+            comparison_counts(&proof),
+            [
+                ("rest_translation", 2),
+                ("rest_rotation", 2),
+                ("unit_scale", 0),
+                ("transform_only_affine", 0),
+                // The rotation track's two values.
+                ("track_value", 2),
+                ("mesh_position", 0),
+                // A rotation track evidences trajectories but neither key
+                // translations nor cubic interiors.
+                ("key_translation", 0),
+                ("cubic_interior", 0),
+                ("trajectory", 4),
+                // With the instance gone there is no skinned evidence, so
+                // neither obligation is declared.
+                ("skin_matrix", 0),
+                ("bounds", 0),
+                ("unaffected_inverse_bind", 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_skin_outside_the_closure_is_the_only_source_of_an_unaffected_bind_comparison() {
+        // The third residual no obligation flag gates, and the one whose
+        // producer-side predicate used to hand-mirror `stored_instance_bind`'s
+        // private resolution order across a crate boundary. Counting at the
+        // point of comparison is what removes that mirror: this document's
+        // second instance is bound to bone 3, outside the closure, and stores
+        // a bind on both sides.
+        let doc =
+            compensated_document_with_unrelated_skin(Some(Mat4::from_scale(Vec3::splat(2.0))));
+        let capability = complete_capability();
+        let plan = compensated_rest_bind_plan(&doc, &capability);
+        assert_eq!(plan.affected_nodes(), &[0, 1, 2]);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+
+        // One slot of one instance outside the closure.
+        assert_eq!(proof.unaffected_inverse_bind_comparisons, 1);
+        // A measured zero: rest/bind must leave an unrelated skin's stored
+        // bind exactly as it found it, so the correct candidate's residual
+        // here is `0.0` — indistinguishable, without the count, from the `0.0`
+        // `compensated_document` reports for having no such skin at all.
+        assert_eq!(proof.unaffected_inverse_bind_residual, 0.0);
+        // The extra bone is outside the closure, so the rest walk is
+        // unchanged, and the extra instance is not the skin obligation's.
+        assert_eq!(proof.rest_translation_comparisons, 3);
+        assert_eq!(proof.skin_matrix_comparisons, 1);
+    }
+
+    #[test]
+    fn an_unskinned_document_compares_neither_skin_matrices_nor_bounds() {
+        let doc = unskinned_document();
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        assert!(!plan.proof_obligations().prove_skin);
+        assert!(!plan.proof_obligations().prove_bounds);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+
+        assert_eq!(
+            comparison_counts(&proof),
+            [
+                ("rest_translation", 1),
+                ("rest_rotation", 1),
+                ("unit_scale", 0),
+                ("transform_only_affine", 0),
+                ("track_value", 0),
+                // The unskinned instance's base positions are still proved
+                // directly, which is the claim `prove_bounds` cannot make.
+                ("mesh_position", 1),
+                ("key_translation", 0),
+                ("cubic_interior", 0),
+                ("trajectory", 0),
+                ("skin_matrix", 0),
+                ("bounds", 0),
+                ("unaffected_inverse_bind", 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_boneless_whole_document_plan_compares_nothing_at_all() {
+        // The zero row of the matrix, all twelve at once: an empty document
+        // plans an empty closure, declares no obligation, and carries no
+        // payload for the three ungated comparisons to walk. Every residual
+        // it publishes is `0.0`, and every count says why.
+        let doc = Document::default();
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+
+        assert_eq!(proof.sample_time_count, 0);
+        assert_eq!(
+            comparison_counts(&proof).map(|(_, count)| count),
+            [0usize; 12]
+        );
+    }
+
+    // --- The unit-scale postcondition's own gate (issue #316) -------------
+
+    #[test]
+    fn a_plan_declaring_the_unit_scale_postcondition_without_the_rest_walk_is_refused() {
+        // The postcondition is evaluated inside the `prove_rest` walk, so
+        // this combination would prove `Ok` and publish `unit_scale_residual:
+        // 0.0` having compared nothing. Not reachable through `plan_scale` —
+        // `ScalePlan`'s fields are private and neither planner emits it — so
+        // it is constructed here, in-crate, exactly as the boneless
+        // rest-obligation case above is.
+        let doc = compensated_document();
+        let capability = complete_capability();
+        let plan = compensated_rest_bind_plan(&doc, &capability);
+        assert!(plan.proof_obligations().prove_rest);
+        assert!(plan.proof_obligations().prove_unit_scale_postcondition);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+
+        let declared = ScalePlan {
+            operation: plan.operation(),
+            tolerance_policy: plan.tolerance_policy(),
+            affected_nodes: plan.affected_nodes().to_vec(),
+            transform_only_attachments: plan.transform_only_attachments().to_vec(),
+            common_factor: plan.common_factor(),
+            observed_factor: plan.observed_factor(),
+            domain_rewrites: plan.domain_rewrites(),
+            proof_obligations: ScaleProofObligations {
+                prove_rest: false,
+                prove_unit_scale_postcondition: true,
+                ..plan.proof_obligations()
+            },
+        };
+        let error = prove_scale(&doc, &candidate, &declared).unwrap_err();
+        let ScaleError::MissingProofEvidence { kind, detail } = error else {
+            panic!("expected a missing unit-scale gate, got {error:?}");
+        };
+        assert_eq!(kind, ProofResidualKind::UnitScale);
+        assert_eq!(detail, "unit_scale_postcondition_without_rest");
+
+        // The guard reads both flags, not just the postcondition: the same
+        // plan with `prove_rest` restored is the one `plan_scale` emits and
+        // still proves.
+        prove_scale(&doc, &candidate, &plan).unwrap();
     }
 }
