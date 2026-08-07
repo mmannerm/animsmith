@@ -31,8 +31,12 @@
 //! `SourceNodeAsset::bone` projection, and derives every node's `s_parent`
 //! from `Skeleton::parent` rather than from the raw child arrays. So the two
 //! agree only when the raw hierarchy, the source-node projection and the
-//! normalized skeleton all describe the same tree — the disagreement issue
-//! #309 records, which nothing in `animsmith_core` checks.
+//! normalized skeleton all describe the same tree. `animsmith_core`'s
+//! document-shape validation covers the second and third of those — under
+//! `Complete` coverage, which rest/bind planning requires, a projection that
+//! contradicts its skeleton is refused by `plan_scale`. The raw child arrays
+//! are the description it cannot reach: they live in JSON that never becomes
+//! a `Document` field, so their agreement is checked only in this crate.
 //!
 //! The accessor scan below is likewise a second implementation of §D.2's
 //! domain table rather than a call into the rewriter's. A proof that asks the

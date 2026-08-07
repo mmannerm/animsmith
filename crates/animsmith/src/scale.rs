@@ -319,10 +319,11 @@ impl From<ScaleTolerancePolicy> for ToleranceRecord {
 /// Both observed-factor witnesses and the divergence between them, per §D.6.
 ///
 /// The two witnesses are measured from deliberately different state — the raw
-/// source projection's parent chain and the normalized skeleton's — and
-/// nothing reconciles them, which is why both are recorded. The divergence is
-/// reported, never enforced; `divergence_ceiling` is what the design expects
-/// of it.
+/// source projection's parent chain and the normalized skeleton's. Those two
+/// chains are validated to describe the same tree, but nothing reconciles the
+/// two *readings*: each composes its own stored transforms, which is why both
+/// are recorded. The divergence is reported, never enforced;
+/// `divergence_ceiling` is what the design expects of it.
 #[derive(Debug, Clone, Copy, Serialize)]
 struct FactorsRecord {
     declared: Finite,

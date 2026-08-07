@@ -265,8 +265,14 @@ impl ScaleTolerancePolicy {
     /// against, which [`prove_scale`] deliberately does not require, and it
     /// costs the binary32 rounding of the rebase on the way — so the sum is
     /// the ceiling the design guarantees, not a bound proved to the last ulp.
-    /// A divergence beyond it means the source's two parent chains disagree
-    /// with each other, which nothing here validates.
+    /// A divergence beyond it means the two witnesses were composed from state
+    /// that does not agree — most often differing *stored* transforms, since
+    /// [`crate::model::SourceNodeAsset::local_rest`] and
+    /// [`crate::model::Bone::rest`] are separately stored descriptions of the
+    /// same rest pose. It is not evidence of disagreeing parent chains: under
+    /// [`crate::model::SourceSkeletonCoverage::Complete`] coverage the two
+    /// chains are required to describe the same tree, and every entry point in
+    /// this module refuses a document where they do not.
     ///
     /// Derived from two bands this policy already declares rather than
     /// introduced as a third, so it adds no tolerance and no policy identity —
@@ -2793,10 +2799,17 @@ pub struct ScaleProof {
     ///
     /// **Reported, not checked.** Nothing refuses a document for exceeding
     /// the ceiling; see that method for what the ceiling does and does not
-    /// guarantee. A divergence beyond it means the source's raw projection
-    /// parent chain and its skeleton parent chain disagree — nothing in this
-    /// module reconciles the two, by construction — and that is a fact about
-    /// the input worth surfacing, not a residual this proof owns.
+    /// guarantee. The two *chains* the witnesses compose through are already
+    /// required to agree: under
+    /// [`crate::model::SourceSkeletonCoverage::Complete`] coverage a document
+    /// whose projection and skeleton describe different trees is refused
+    /// before either witness is taken. What nothing reconciles is the two
+    /// *readings* — [`crate::model::SourceNodeAsset::local_rest`] and
+    /// [`crate::model::Bone::rest`] stay separately stored and separately
+    /// composed, which is why both witnesses exist at all. A divergence
+    /// beyond the ceiling is therefore a fact about how far apart the input's
+    /// two stored descriptions of one rest pose are, worth surfacing, not a
+    /// residual this proof owns.
     pub observed_factor_divergence: f64,
     /// Number of distinct times sampled across all clips.
     pub sample_time_count: usize,

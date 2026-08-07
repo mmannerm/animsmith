@@ -144,7 +144,7 @@
       "additionalProperties": false
     },
     "factors": {
-      "description": "Both observed-factor witnesses and the divergence between them. planned_observed is measured from the raw source projection's parent chain, proved_observed from the normalized skeleton's; nothing reconciles the two, which is why both are recorded. The divergence is reported, never enforced.",
+      "description": "Both observed-factor witnesses and the divergence between them. planned_observed is measured from the raw source projection's parent chain, proved_observed from the normalized skeleton's; the two chains are validated to describe the same tree, but nothing reconciles the two readings, since each composes its own stored transforms. That is why both are recorded. The divergence is reported, never enforced.",
       "type": "object",
       "required": ["declared", "planned_observed", "proved_observed", "divergence", "divergence_ceiling"],
       "properties": {

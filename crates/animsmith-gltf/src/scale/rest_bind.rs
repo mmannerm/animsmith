@@ -274,8 +274,11 @@ fn bone_projection(document: &Document) -> Result<BoneProjection, GltfScaleRewri
         bone_of_source.insert(node.source_node_index, bone);
         // Two source nodes claiming one bone makes the inverse map
         // last-write-wins, which would silently rewrite the wrong node's
-        // JSON. `animsmith_core` validates that `source_node_index` is
-        // unique; nothing validates `bone`.
+        // JSON. `animsmith_core` validates both keys — `source_node_index`
+        // for every document, `bone` as part of the chain-agreement injection
+        // it requires under `Complete` coverage — and rest/bind planning runs
+        // before this, so the refusal below is a second guard on the map this
+        // function is the one to build, not the only one.
         if source_of_bone
             .insert(bone, node.source_node_index)
             .is_some()
@@ -1011,18 +1014,20 @@ mod tests {
     //! is *named*, and — the direction that has caught more in this lane —
     //! that the unmutated document still passes all three.
     //!
-    //! Each mutation has to stay inside what `animsmith_core`'s own
-    //! chain-agreement validation accepts. A `Document` whose projection
-    //! contradicts its skeleton is refused by `plan_scale`, so a mutation that
-    //! broke both descriptions at once would never reach this layer and would
-    //! be attributed to the wrong check. The mutations that need the skeleton
-    //! and the projection to disagree with the *raw children* therefore move
-    //! those two together, leaving the raw child arrays — the one description
-    //! `animsmith_core` cannot see — as the sole dissenter. Their *wiring* is
-    //! pinned separately, through `capability::scale_source_with_document`:
-    //! the seam hands the rewriter a real source whose normalized projection
-    //! contradicts its own bytes, which is the one relaxation gate bypass
-    //! cannot supply.
+    //! Every mutation goes to the `Document` handed straight to the checks,
+    //! never through a re-plan, because `animsmith_core`'s own
+    //! chain-agreement validation refuses most of these shapes first: under
+    //! `Complete` coverage a projection that contradicts its skeleton, or one
+    //! that sends two source nodes to a single bone, never survives
+    //! `plan_scale`. So a mutation that needs the skeleton and the projection
+    //! to disagree with the *raw children* moves those two together, leaving
+    //! the raw child arrays — the one description `animsmith_core` cannot
+    //! see — as the sole dissenter; and a mutation core would itself refuse
+    //! pins nothing about reachability, only that this layer's second guard
+    //! on the same fact still names it. Their *wiring* is pinned separately,
+    //! through `capability::scale_source_with_document`: the seam hands the
+    //! rewriter a real source whose normalized projection contradicts its own
+    //! bytes, which is the one relaxation gate bypass cannot supply.
     //!
     //! One check in this module has neither. `collect_rest_bind_claims`'s
     //! joint-count guard is unreachable behind #280's

@@ -593,8 +593,9 @@ pub enum GltfScaleRewriteError {
     /// closure [`animsmith_core::scale::plan_scale`] planned.
     ///
     /// The plan walks `SourceNodeAsset::parent_source_node_index`; this crate
-    /// walks `/nodes/*/children`. Nothing in `animsmith_core` requires those
-    /// to agree, so a projection that contradicts the source it projects
+    /// walks `/nodes/*/children`. `animsmith_core` requires the projection to
+    /// agree with the normalized skeleton, but it never sees the raw child
+    /// arrays, so a projection that contradicts the JSON it was derived from
     /// plans, builds and proves cleanly there.
     #[error(
         "the plan's affected closure {planned:?} is not the closure {derived:?} derived from the raw node hierarchy"
