@@ -190,7 +190,14 @@ fn restore_destination(path: &Path, backup: Option<&tempfile::TempPath>) -> Resu
 /// deliberate: the callers build their temps through different writers, and
 /// `fsync` is defined on the file, not on the handle that wrote it.
 fn flush_file(path: &Path) -> Result<(), String> {
-    fs::File::open(path)
+    // Opened for writing, not merely for reading: Windows backs `sync_all` with
+    // `FlushFileBuffers`, which requires write access and fails with "Access is
+    // denied" on a read-only handle. A read-only open works on Unix and would
+    // make every publication on Windows fail at its first step.
+    fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
         .and_then(|file| file.sync_all())
         .map_err(|error| format!("cannot flush {}: {error}", path.display()))
 }
