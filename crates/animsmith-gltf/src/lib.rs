@@ -101,6 +101,7 @@ use animsmith_core::model::{
 };
 use base64::Engine as _;
 use glam::{Mat4, Quat, Vec3};
+use gltf::accessor::{DataType as ComponentType, Dimensions as AccessorType};
 use image::{ColorType, ImageError, ImageFormat, ImageReader, Limits};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read};
@@ -134,6 +135,77 @@ pub enum LoadError {
     /// The node graph is not a forest that can become a skeleton.
     #[error("malformed node graph: {0}")]
     Topology(String),
+    /// A primitive's vertex-attribute or index accessor declares an element
+    /// encoding the loader cannot read. Either the file contradicts the glTF
+    /// vertex-attribute rules (a `VEC3` `TEXCOORD_0`), or it uses a
+    /// spec-permitted encoding the `gltf` crate's reader has no decoder for
+    /// (a `KHR_mesh_quantization` `POSITION`). The message reports the
+    /// encodings that slot accepts.
+    #[error(
+        "mesh {mesh} primitive {primitive} {attribute}: accessor {accessor} is {found}, but the loader reads {expected}"
+    )]
+    PrimitiveEncoding {
+        /// glTF index of the mesh holding the primitive.
+        mesh: usize,
+        /// Index of the primitive within that mesh.
+        primitive: usize,
+        /// Attribute semantic or slot name, such as `TEXCOORD_0`.
+        attribute: String,
+        /// Index of the offending accessor.
+        accessor: usize,
+        /// Declared encoding, such as `VEC3 of FLOAT`.
+        found: String,
+        /// Encodings the reader accepts, such as
+        /// `VEC2 of UNSIGNED_BYTE, UNSIGNED_SHORT, or FLOAT`.
+        expected: String,
+    },
+    /// A primitive's vertex-attribute or index accessor declares an element
+    /// the loader does read, but addresses its bytes in a way the reader
+    /// cannot walk: a buffer view whose own `byteOffset` plus `byteLength`
+    /// overflows, a `byteStride` shorter than the element it strides over,
+    /// a `sparse` block of count 0, or a `count` whose byte extent
+    /// overflows. `gltf`'s `Validate` relates an accessor to none of these,
+    /// so each is an assertion, an underflow, or an overflow inside the
+    /// reader rather than a parse failure.
+    #[error("mesh {mesh} primitive {primitive} {attribute}: accessor {accessor} {problem}")]
+    PrimitiveAccessorLayout {
+        /// glTF index of the mesh holding the primitive.
+        mesh: usize,
+        /// Index of the primitive within that mesh.
+        primitive: usize,
+        /// Attribute semantic or slot name, such as `TEXCOORD_0`.
+        attribute: String,
+        /// Index of the offending accessor.
+        accessor: usize,
+        /// What the reader could not walk, such as `reads its elements from
+        /// buffer view 0 at byteStride 4, shorter than the 12-byte element
+        /// it strides over`.
+        problem: String,
+    },
+    /// An animation sampler's `input` or `output` accessor addresses its
+    /// bytes in a way the reader cannot walk — the same four shapes
+    /// [`Self::PrimitiveAccessorLayout`] names, reached through
+    /// `read_inputs`/`read_outputs` instead of through a primitive.
+    ///
+    /// This is the sampler's *layout*, not its *encoding*: an accessor
+    /// typed for a different element than the sampler's reader decodes is a
+    /// separate class and is not judged here.
+    #[error("clip '{clip}' node {node} sampler {slot}: accessor {accessor} {problem}")]
+    AnimationAccessorLayout {
+        /// Name the clip loads under, as reported by every other animation
+        /// diagnostic.
+        clip: String,
+        /// glTF index of the node the offending channel targets.
+        node: usize,
+        /// Sampler slot the accessor fills: `input` or `output`.
+        slot: &'static str,
+        /// Index of the offending accessor.
+        accessor: usize,
+        /// What the reader could not walk, such as `reads its sparse indices
+        /// from buffer view 2, whose byteOffset 18446744073709551615 plus
+        /// byteLength 12 is a byte extent that overflows`.
+        problem: String,
+    },
 }
 
 /// `fix` errors are classified by defect, not by phase: [`LoadError`]
@@ -307,7 +379,6 @@ pub(crate) fn validate_glb_framing(bytes: &[u8]) -> Result<(), LoadError> {
 ///   rejected by the derived accessor validation `from_slice` runs; only
 ///   this spec-valid-but-nonsensical one leaks through.)
 pub(crate) fn validate_animation_channels(root: &gltf::json::Root) -> Result<(), LoadError> {
-    use gltf::json::accessor::ComponentType;
     use gltf::json::validation::Checked;
     let node_count = root.nodes.len();
     for (ai, anim) in root.animations.iter().enumerate() {
@@ -338,6 +409,479 @@ pub(crate) fn validate_animation_channels(root: &gltf::json::Root) -> Result<(),
         }
     }
     Ok(())
+}
+
+/// The element encoding one `gltf` reader can decode: the single accessor
+/// `type` its element matches, and the `componentType`s it dispatches on.
+struct ReaderEncoding {
+    /// Accessor `type` whose element size the reader's element type equals.
+    accessor_type: AccessorType,
+    /// Accepted `componentType`s, in glTF enum order.
+    component_types: &'static [ComponentType],
+}
+
+/// `read_positions` is `Iter<[f32; 3]>` with no dispatch on the accessor.
+/// `KHR_mesh_quantization` also permits normalized `BYTE`/`SHORT` here; the
+/// `gltf` reader has no decoder for those, so they are refused rather than
+/// misread.
+const POSITION_ENCODING: ReaderEncoding = ReaderEncoding {
+    accessor_type: AccessorType::Vec3,
+    component_types: &[ComponentType::F32],
+};
+/// `read_normals` is `Iter<[f32; 3]>`, with the same quantization caveat as
+/// [`POSITION_ENCODING`].
+const NORMAL_ENCODING: ReaderEncoding = ReaderEncoding {
+    accessor_type: AccessorType::Vec3,
+    component_types: &[ComponentType::F32],
+};
+/// `read_tex_coords` dispatches over the three encodings glTF permits for
+/// `TEXCOORD_n`: `FLOAT`, or normalized `UNSIGNED_BYTE`/`UNSIGNED_SHORT`.
+///
+/// The accessor's `normalized` flag is neither checked here nor honoured
+/// **on the load path**: `gltf`'s `into_f32()` rescales `UNSIGNED_BYTE`/
+/// `UNSIGNED_SHORT` from full scale whatever the flag says. So an integer
+/// `TEXCOORD_0` missing the flag — invalid glTF, but decodable — loads
+/// rescaled rather than refused, and an integer UV never reaches a check as
+/// its authored integer.
+///
+/// The flag is inert on that path only, not in this crate: the `scale`
+/// preflight reads it and raises `UnsafeAccessorLayout` for a normalized
+/// accessor it would otherwise rewrite (see `scale.rs`). Any claim that
+/// `normalized` changes nothing has to be qualified to loading.
+const TEX_COORD_ENCODING: ReaderEncoding = ReaderEncoding {
+    accessor_type: AccessorType::Vec2,
+    component_types: &[ComponentType::U8, ComponentType::U16, ComponentType::F32],
+};
+/// `read_joints` dispatches over both encodings glTF permits for `JOINTS_n`.
+/// Joint indices are never `FLOAT` and never normalized.
+const JOINTS_ENCODING: ReaderEncoding = ReaderEncoding {
+    accessor_type: AccessorType::Vec4,
+    component_types: &[ComponentType::U8, ComponentType::U16],
+};
+/// `read_weights` dispatches over the three encodings glTF permits for
+/// `WEIGHTS_n`: `FLOAT`, or normalized `UNSIGNED_BYTE`/`UNSIGNED_SHORT`,
+/// with the same load-path-only inert-`normalized` caveat as
+/// [`TEX_COORD_ENCODING`].
+const WEIGHTS_ENCODING: ReaderEncoding = ReaderEncoding {
+    accessor_type: AccessorType::Vec4,
+    component_types: &[ComponentType::U8, ComponentType::U16, ComponentType::F32],
+};
+/// `read_indices` dispatches over the three index encodings glTF permits.
+const INDEX_ENCODING: ReaderEncoding = ReaderEncoding {
+    accessor_type: AccessorType::Scalar,
+    component_types: &[ComponentType::U8, ComponentType::U16, ComponentType::U32],
+};
+/// `read_inverse_bind_matrices` is `Iter<[[f32; 4]; 4]>`; glTF permits only
+/// `MAT4` of `FLOAT` there.
+const INVERSE_BIND_ENCODING: ReaderEncoding = ReaderEncoding {
+    accessor_type: AccessorType::Mat4,
+    component_types: &[ComponentType::F32],
+};
+
+/// The encoding the loader requires of one attribute semantic, or `None`
+/// when no reader is ever built for it.
+///
+/// The match is exhaustive over `gltf::Semantic` so that a **new variant in
+/// `gltf`** has to be answered here before this crate compiles. That is the
+/// whole of what the compiler enforces, and it is worth stating what it
+/// does *not*: `gltf::Semantic` is a plain enum, so an exhaustive match
+/// cannot notice a new *read site*. Adding `reader.read_tangents()` or
+/// `reader.read_tex_coords(1)` to `extract_assets` compiles unchanged
+/// against the `None` arms below and reinstates the panic this module
+/// exists to prevent — a `TANGENT` declared `VEC3` of `FLOAT` would go
+/// straight into `Iter::<[f32; 4]>::new`.
+///
+/// So each `None` is a claim about `extract_assets` as written — "no reader
+/// is ever built for this semantic" — that only this comment and the reason
+/// recorded on each arm keep true. Turning one into a read means giving it
+/// an encoding here first.
+fn required_attribute_encoding(semantic: &gltf::Semantic) -> Option<&'static ReaderEncoding> {
+    match semantic {
+        gltf::Semantic::Positions => Some(&POSITION_ENCODING),
+        gltf::Semantic::Normals => Some(&NORMAL_ENCODING),
+        // Only set 0 of each of these reaches a reader; the core model
+        // carries one UV channel and one influence set.
+        gltf::Semantic::TexCoords(0) => Some(&TEX_COORD_ENCODING),
+        gltf::Semantic::Joints(0) => Some(&JOINTS_ENCODING),
+        gltf::Semantic::Weights(0) => Some(&WEIGHTS_ENCODING),
+        // Not read. `TANGENT` and `COLOR_n` have no core-model slot, and
+        // `TEXCOORD_n`/`JOINTS_n`/`WEIGHTS_n` above set 0 are recorded from
+        // `Accessor::count()` alone (see `additional_influence_sets`), which
+        // never builds a reader and so cannot panic on a mistyped accessor.
+        gltf::Semantic::Tangents
+        | gltf::Semantic::Colors(_)
+        | gltf::Semantic::TexCoords(_)
+        | gltf::Semantic::Joints(_)
+        | gltf::Semantic::Weights(_) => None,
+    }
+}
+
+/// Reject primitive accessors the reader that will decode them cannot
+/// decode. `gltf`'s `Validate` checks each accessor in isolation, never
+/// cross-checks it against the slot that references it, and never relates
+/// it to the buffer view it reads — so a `VEC3` `TEXCOORD_0` and a
+/// `POSITION` on a stride-4 view both parse cleanly and then trip a
+/// `debug_assert`, an `unreachable!()`, or an arithmetic overflow inside
+/// the reader: a panic on arbitrary input (invariant-1).
+///
+/// Two shapes of *element encoding* leak through, both fatal:
+///
+/// - **Wrong `type`.** `Iter::<T>::new` asserts `size_of::<T>() ==
+///   accessor.size()`. A `VEC3` `TEXCOORD_0` is 12 bytes against
+///   `[f32; 2]`'s 8, so `read_tex_coords` panics.
+/// - **Wrong `componentType`.** The dispatching readers (`read_tex_coords`,
+///   `read_joints`, `read_weights`, `read_indices`) have an `unreachable!()`
+///   arm for the component types they cannot decode, so a `BYTE`
+///   `TEXCOORD_0` panics there instead.
+///
+/// A third shape is worse than a panic: when the wrong `componentType`
+/// happens to preserve the element size and the reader does not dispatch on
+/// it, nothing fires and the bytes are silently reinterpreted. A `VEC3` of
+/// `UNSIGNED_INT` `NORMAL` is 12 bytes just like `[f32; 3]`, so every normal
+/// would load as the float reading of an integer's bits. Refusing that too
+/// is what keeps invariant-9 honest for these slots: what the loader reads
+/// is decoded as the encoding it declares, or the file is refused — never
+/// reinterpreted as a different element.
+///
+/// [`unreadable_layout`] covers the rest: an accessor whose element the
+/// loader does read, addressed in a way the reader cannot walk.
+///
+/// ## What this does not promise
+///
+/// "Never reinterpreted" is narrower than "every authored value survives",
+/// and deliberately so, in two directions.
+///
+/// *Values are rescaled where glTF defines the encoding as a scaling.*
+/// `into_f32()` rescales an `UNSIGNED_BYTE`/`UNSIGNED_SHORT` `TEXCOORD_0` or
+/// `WEIGHTS_0` from full scale (see [`TEX_COORD_ENCODING`]). Checks
+/// therefore see those slots as floats, not as the integers on disk.
+///
+/// *A short read is not a refusal.* Nothing here relates an accessor's
+/// `count` to the length of the buffer view it reads, and `Iter::new`
+/// answers `None` when the two disagree. `read_positions()` and
+/// `read_indices()` are `.unwrap_or_default()`, so a `POSITION` declaring
+/// `count` 100 over a 36-byte view yields an **empty** position vector and
+/// the primitive is still pushed — checks see a primitive with no geometry,
+/// not an error and not the file's 3 vertices. That is a value question
+/// rather than a panic, so it stays loadable; only the extent arithmetic
+/// that *overflows* is refused, in [`unreadable_layout`].
+///
+/// ## Scope
+///
+/// Only what the loader actually reads is checked. Non-triangle primitives
+/// are skipped whole by `extract_assets`, so their accessors are never
+/// decoded and are not judged here. Within an ingested primitive the check
+/// is deliberately independent of the count-zero and `JOINTS_0`/`WEIGHTS_0`
+/// pairing guards that decide whether a particular read happens: those
+/// guards are free to move without opening a hole.
+///
+/// A skin's `inverseBindMatrices` accessor has the same panics, but not the
+/// same answer — see [`inverse_bind_is_readable`].
+fn validate_primitive_accessors(doc: &gltf::Document) -> Result<(), LoadError> {
+    for mesh in doc.meshes() {
+        for primitive in mesh.primitives() {
+            if primitive.mode() != gltf::mesh::Mode::Triangles {
+                continue;
+            }
+            for (semantic, accessor) in primitive.attributes() {
+                let Some(required) = required_attribute_encoding(&semantic) else {
+                    continue;
+                };
+                check_primitive_accessor(
+                    &mesh,
+                    &primitive,
+                    &semantic.to_string(),
+                    &accessor,
+                    required,
+                )?;
+            }
+            if let Some(accessor) = primitive.indices() {
+                check_primitive_accessor(&mesh, &primitive, "indices", &accessor, &INDEX_ENCODING)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// One slot of one ingested primitive: the element must be one the reader
+/// decodes, and its bytes must be laid out so the reader can walk them.
+fn check_primitive_accessor(
+    mesh: &gltf::Mesh<'_>,
+    primitive: &gltf::Primitive<'_>,
+    attribute: &str,
+    accessor: &gltf::Accessor<'_>,
+    required: &ReaderEncoding,
+) -> Result<(), LoadError> {
+    if !encoding_matches(accessor, required) {
+        return Err(LoadError::PrimitiveEncoding {
+            mesh: mesh.index(),
+            primitive: primitive.index(),
+            attribute: attribute.to_owned(),
+            accessor: accessor.index(),
+            found: format!(
+                "{} of {}",
+                accessor_type_name(accessor.dimensions()),
+                component_type_name(accessor.data_type())
+            ),
+            expected: describe_encoding(required),
+        });
+    }
+    if let Some(problem) = unreadable_layout(accessor) {
+        return Err(LoadError::PrimitiveAccessorLayout {
+            mesh: mesh.index(),
+            primitive: primitive.index(),
+            attribute: attribute.to_owned(),
+            accessor: accessor.index(),
+            problem,
+        });
+    }
+    Ok(())
+}
+
+/// One sampler accessor of one animation channel the loader reads: its
+/// bytes must be laid out so the channel's reader can walk them.
+///
+/// `read_inputs` and `read_outputs` each build their own `Iter` over their
+/// own accessor, so an `input` and an `output` are judged separately and
+/// both before either reader exists. The four shapes are exactly the ones
+/// [`unreadable_layout`] names for a primitive slot — the panic is in the
+/// shared accessor iterator, not in anything primitive-specific.
+///
+/// **Layout only.** This judges *how* a sampler accessor addresses its
+/// bytes: its view's extent, its `byteStride`, its `sparse` count, and the
+/// extent its own `count` walks. It deliberately does not judge *what*
+/// element the accessor declares. A sampler typed for an element its reader
+/// cannot decode — a `VEC3` rotation output against `read_outputs`'
+/// `[f32; 4]`, or a `componentType` its `match` has no arm for — is the
+/// separate encoding class tracked in issue #327, and reaches its own
+/// panics through a different door ([`encoding_matches`] is what would
+/// close it, as it does for a primitive in [`check_primitive_accessor`]).
+/// Refusing the layout class here neither covers nor blocks that.
+fn check_sampler_accessor(
+    clip: &str,
+    node: usize,
+    slot: &'static str,
+    accessor: &gltf::Accessor<'_>,
+) -> Result<(), LoadError> {
+    match unreadable_layout(accessor) {
+        Some(problem) => Err(LoadError::AnimationAccessorLayout {
+            clip: clip.to_owned(),
+            node,
+            slot,
+            accessor: accessor.index(),
+            problem,
+        }),
+        None => Ok(()),
+    }
+}
+
+/// Why `gltf`'s reader cannot walk an accessor's bytes, independent of the
+/// element it declares — or `None` when it can.
+///
+/// `Iter::new` first slices a buffer view as `view.byteOffset +
+/// view.byteLength`, then steps the accessor inside it as `byteOffset +
+/// byteStride * (count - 1) + size` — over the accessor's own buffer view
+/// and, for a sparse accessor, over its index and value views too. Four
+/// shapes of that are a panic on arbitrary input, and `gltf-json`'s
+/// `Validate` catches none of them:
+///
+/// - **A buffer view whose own extent overflows.** `USize64`'s validator
+///   only rejects a value past `usize`, and `View`'s derived `Validate`
+///   relates `byteOffset` neither to `byteLength` nor to the buffer, so
+///   `buffer_view_slice` adds the two unchecked before any accessor
+///   arithmetic runs (see [`view_end`]).
+/// - **A `byteStride` shorter than the element.** `Stride`'s validator
+///   accepts any `4..=252`, so a `VEC3` of `FLOAT` `POSITION` on a stride-4
+///   view validates and then trips `debug_assert!(stride >=
+///   size_of::<T>())`. Losing that assertion in a release build does not
+///   make the shortfall survivable: the truncated slice reaches
+///   `Item::from_slice`, whose `assert!(slice.len() >= N *
+///   size_of::<T>())` is a *hard* assert, and it fires on the ordinary
+///   dense path just as it does on the sparse one — which compiles no
+///   stride assertion at all, in either profile. Deleting this branch and
+///   running the suite under `--release` panics a dense `POSITION` at
+///   `util.rs:266`. This is the one shape here that still panics with
+///   `overflow-checks` off; the other three go quiet instead, which is
+///   worse.
+/// - **`sparse.count` of 0.** `sparse_count - 1` underflows, with or
+///   without a base `bufferView`. Every count-zero guard in this loader
+///   reads `Accessor::count()`; none of them sees this one.
+/// - **An extent that overflows `usize`.** Nothing bounds `count` or
+///   `sparse.count`, so `stride * (count - 1)` overflows on a large enough
+///   declaration.
+///
+/// "`gltf-json`'s `Validate` catches none of them" is a claim about this
+/// crate's own JSON validation, which is all that stands between
+/// `from_slice` and the reader — not about the Khronos glTF-Validator,
+/// which does name several of these (`ACCESSOR_SMALL_BYTESTRIDE`, and a
+/// `sparse.count` of 0 against the schema's `minimum: 1`). That separate
+/// tool is what `docs/cli.md` points authors at; this loader never runs it.
+///
+/// Two near neighbours are deliberately *not* refused. `Accessor::count()`
+/// of 0 stays loadable: every read site already treats a count-zero
+/// accessor as absent, so no reader is built and the arithmetic is never
+/// reached. And a `count` that merely exceeds its buffer view stays
+/// loadable too — `Iter::new` answers `None` and the slot loads empty (see
+/// [`validate_primitive_accessors`]).
+fn unreadable_layout(accessor: &gltf::Accessor<'_>) -> Option<String> {
+    let size = accessor.size();
+    if let Some(view) = accessor.view()
+        && let Some(problem) =
+            unwalkable("elements", &view, accessor.offset(), accessor.count(), size)
+    {
+        return Some(problem);
+    }
+    let sparse = accessor.sparse()?;
+    if sparse.count() == 0 {
+        return Some("declares a sparse block of count 0, which its reader cannot walk".to_owned());
+    }
+    let indices = sparse.indices();
+    let values = sparse.values();
+    // A sparse index is 1, 2, or 4 bytes and `byteStride` is validated into
+    // `4..=252`, so an index view can never stride shorter than the element
+    // it strides over; only its extent can overflow.
+    unwalkable(
+        "sparse indices",
+        &indices.view(),
+        indices.offset(),
+        sparse.count(),
+        indices.index_type().size(),
+    )
+    .or_else(|| {
+        unwalkable(
+            "sparse values",
+            &values.view(),
+            values.offset(),
+            sparse.count(),
+            size,
+        )
+    })
+}
+
+/// Where a buffer view's declared extent ends, or `None` when it has no
+/// end: `byteOffset` and `byteLength` are both file-derived, and nothing in
+/// `gltf-json` relates them to each other or to the buffer, so their sum
+/// overflows on arbitrary input — a panic in a debug build, and a wrong
+/// extent in a release one.
+///
+/// No read of a view's bytes in this loader escapes that answer. The image
+/// path slices through this function directly. Every reader-driven read is
+/// gated instead: the reader would perform the same unchecked add itself,
+/// so [`unwalkable`] asks this before the reader is ever built — for a
+/// primitive slot in [`check_primitive_accessor`], for a skin's
+/// `inverseBindMatrices` in [`inverse_bind_is_readable`], and for an
+/// animation sampler's `input` and `output` in [`check_sampler_accessor`].
+fn view_end(view: &gltf::buffer::View<'_>) -> Option<usize> {
+    view.offset().checked_add(view.length())
+}
+
+/// Whether one strided walk of `count` elements of `size` bytes is one
+/// `Iter::new` can perform, phrased for the refusal message when it is not.
+fn unwalkable(
+    subject: &str,
+    view: &gltf::buffer::View<'_>,
+    offset: usize,
+    count: usize,
+    size: usize,
+) -> Option<String> {
+    // `Iter::new` slices the view before it strides over anything, so the
+    // view's own extent is judged before the accessor's.
+    if view_end(view).is_none() {
+        return Some(format!(
+            "reads its {subject} from buffer view {}, whose byteOffset {} plus byteLength {} \
+             is a byte extent that overflows",
+            view.index(),
+            view.offset(),
+            view.length()
+        ));
+    }
+    let stride = view.stride().unwrap_or(size);
+    if stride < size {
+        return Some(format!(
+            "reads its {subject} from buffer view {} at byteStride {stride}, \
+             shorter than the {size}-byte element it strides over",
+            view.index()
+        ));
+    }
+    let overflows = count
+        .checked_sub(1)
+        .and_then(|last| stride.checked_mul(last))
+        .and_then(|span| span.checked_add(offset))
+        .and_then(|end| end.checked_add(size))
+        .is_none();
+    // `count` 0 never reaches that arithmetic: no read site builds a reader
+    // for a count-zero accessor, so its underflow is unreachable rather than
+    // refused.
+    (count > 0 && overflows).then(|| {
+        format!(
+            "walks {count} {subject} of {size} bytes at byteStride {stride} \
+             from byteOffset {offset}, a byte extent that overflows"
+        )
+    })
+}
+
+/// Whether a skin's `inverseBindMatrices` accessor is one
+/// `read_inverse_bind_matrices` can decode — both the element it declares
+/// and the layout it declares it in.
+///
+/// An unreadable one panics exactly like an unreadable vertex attribute,
+/// but it is not a load error: the loader's contract is that an unusable
+/// inverse-bind declaration is *source evidence* — the skin's accessor
+/// state is reported as [`SourceInverseBindAccessorStatus::Unreadable`] and
+/// the rest of the file still measures. Refusing the document would replace
+/// that evidence with an exit code. So the three inverse-bind read sites
+/// gate on this instead, and never build the reader when it is false.
+fn inverse_bind_is_readable(accessor: &gltf::Accessor<'_>) -> bool {
+    encoding_matches(accessor, &INVERSE_BIND_ENCODING) && unreadable_layout(accessor).is_none()
+}
+
+fn encoding_matches(accessor: &gltf::Accessor<'_>, required: &ReaderEncoding) -> bool {
+    accessor.dimensions() == required.accessor_type
+        && required.component_types.contains(&accessor.data_type())
+}
+
+/// Render an accepted encoding in the file's own vocabulary, so the refusal
+/// reads as the glTF the author would have to write.
+fn describe_encoding(required: &ReaderEncoding) -> String {
+    let names: Vec<&str> = required
+        .component_types
+        .iter()
+        .copied()
+        .map(component_type_name)
+        .collect();
+    let components = match names.as_slice() {
+        [] => String::new(),
+        [only] => (*only).to_owned(),
+        [first, last] => format!("{first} or {last}"),
+        [rest @ .., last] => format!("{}, or {last}", rest.join(", ")),
+    };
+    format!(
+        "{} of {components}",
+        accessor_type_name(required.accessor_type)
+    )
+}
+
+fn accessor_type_name(accessor_type: AccessorType) -> &'static str {
+    match accessor_type {
+        AccessorType::Scalar => "SCALAR",
+        AccessorType::Vec2 => "VEC2",
+        AccessorType::Vec3 => "VEC3",
+        AccessorType::Vec4 => "VEC4",
+        AccessorType::Mat2 => "MAT2",
+        AccessorType::Mat3 => "MAT3",
+        AccessorType::Mat4 => "MAT4",
+    }
+}
+
+fn component_type_name(component_type: ComponentType) -> &'static str {
+    match component_type {
+        ComponentType::I8 => "BYTE",
+        ComponentType::U8 => "UNSIGNED_BYTE",
+        ComponentType::I16 => "SHORT",
+        ComponentType::U16 => "UNSIGNED_SHORT",
+        ComponentType::U32 => "UNSIGNED_INT",
+        ComponentType::F32 => "FLOAT",
+    }
 }
 
 /// Structural validation for one animation channel: key/value counts
@@ -387,8 +931,10 @@ fn validate_track_lengths(
 ///
 /// Returns [`LoadError`] for unreadable files, unsafe or missing external
 /// buffers, malformed GLB framing, parser rejection, structurally invalid
-/// animation channels, or node graphs that cannot be represented as a
-/// skeleton forest.
+/// animation channels, geometry accessors typed for an element the reader
+/// cannot decode or laid out so it cannot walk them, animation sampler
+/// accessors laid out so it cannot walk them, or node graphs that cannot be
+/// represented as a skeleton forest.
 pub fn load(path: &Path) -> Result<Document, LoadError> {
     let bytes = std::fs::read(path).map_err(|source| LoadError::Io {
         path: path.display().to_string(),
@@ -407,7 +953,10 @@ pub fn load(path: &Path) -> Result<Document, LoadError> {
 ///
 /// Returns [`LoadError`] for unsafe or missing external buffers, malformed
 /// GLB framing, parser rejection, structurally invalid animation channels,
-/// or node graphs that cannot be represented as a skeleton forest.
+/// geometry accessors typed for an element the reader cannot decode or laid
+/// out so it cannot walk them, animation sampler accessors laid out so it
+/// cannot walk them, or node graphs that cannot be represented as a
+/// skeleton forest.
 pub fn load_bytes(path: &Path, bytes: &[u8]) -> Result<Document, LoadError> {
     // Parse from the supplied slice rather than via `Gltf::open`: the reader
     // path (`Glb::from_reader`) trusts the GLB header's declared length and
@@ -419,6 +968,7 @@ pub fn load_bytes(path: &Path, bytes: &[u8]) -> Result<Document, LoadError> {
     validate_glb_framing(bytes)?;
     let gltf = gltf::Gltf::from_slice(bytes)?;
     validate_animation_channels(gltf.document.as_json())?;
+    validate_primitive_accessors(&gltf.document)?;
     let buffers = resolve_buffers(&gltf, path.parent())?;
     // Derive the node topology once and share it: the skeleton build and
     // asset extraction must agree on which bone each node became, and it is
@@ -513,10 +1063,12 @@ fn build_document(
     // retains the complete per-skin source evidence for measurements.
     for skin in doc.skins() {
         // Skip a count-0 IBM accessor: gltf 1.4's reader underflows and
-        // panics iterating one (the same guard the asset path uses).
+        // panics iterating one. An accessor that is not `MAT4` of `FLOAT`
+        // panics in that reader too; both are skipped here and recorded as
+        // source evidence by `extract_source_skeleton`.
         if skin
             .inverse_bind_matrices()
-            .is_none_or(|accessor| accessor.count() == 0)
+            .is_none_or(|accessor| accessor.count() == 0 || !inverse_bind_is_readable(&accessor))
         {
             continue;
         }
@@ -552,17 +1104,25 @@ fn build_document(
             let Some(bone) = bone_of_node[channel.target().node().index()] else {
                 continue;
             };
-            // Reject zero-count sampler accessors before reading: the
-            // `gltf` reader underflows on a count-0 accessor (panics in
-            // its accessor iterator), so this guard is what keeps a
-            // hostile file from crashing the loader.
+            // Nothing below this point may build a channel reader that has
+            // not been judged first: `read_inputs` and `read_outputs` each
+            // hand their own accessor to `Iter::new`, which panics on
+            // arbitrary input in two independent ways.
+            //
+            // A count-0 accessor underflows in that iterator, and is
+            // malformed animation rather than an unwalkable layout, so it
+            // keeps its own message.
             let sampler = channel.sampler();
+            let node = channel.target().node().index();
             if sampler.input().count() == 0 || sampler.output().count() == 0 {
                 return Err(LoadError::Malformed(format!(
-                    "clip '{name}' node {}: animation channel with zero keyframes",
-                    channel.target().node().index()
+                    "clip '{name}' node {node}: animation channel with zero keyframes"
                 )));
             }
+            // The layout the accessor declares is the other way, and each
+            // half of the reader has to be judged on its own accessor.
+            check_sampler_accessor(&name, node, "input", &sampler.input())?;
+            check_sampler_accessor(&name, node, "output", &sampler.output())?;
             let reader = channel.reader(|buffer| buffers.get(buffer.index()).map(Vec::as_slice));
             let Some(times) = reader.read_inputs().map(|it| it.collect::<Vec<f32>>()) else {
                 continue;
@@ -589,13 +1149,7 @@ fn build_document(
                 gltf::animation::Interpolation::Step => Interpolation::Step,
                 gltf::animation::Interpolation::CubicSpline => Interpolation::CubicSpline,
             };
-            validate_track_lengths(
-                &name,
-                channel.target().node().index(),
-                interpolation,
-                &times,
-                &values,
-            )?;
+            validate_track_lengths(&name, node, interpolation, &times, &values)?;
             duration = times
                 .iter()
                 .copied()
@@ -826,6 +1380,14 @@ fn extract_source_skeleton(
                 declared_count: Some(0),
                 matrices: Vec::new(),
             },
+            // An accessor the matrix reader cannot decode is unreadable
+            // evidence, not a load error; building the reader for it would
+            // panic (see `inverse_bind_is_readable`).
+            Some(accessor) if !inverse_bind_is_readable(&accessor) => SourceInverseBindAccessor {
+                status: SourceInverseBindAccessorStatus::Unreadable,
+                declared_count: Some(accessor.count()),
+                matrices: Vec::new(),
+            },
             Some(accessor) => {
                 let declared_count = accessor.count();
                 let reader = skin.reader(|buffer| buffers.get(buffer.index()).map(Vec::as_slice));
@@ -971,6 +1533,13 @@ fn extract_assets(
             if prim.mode() != gltf::mesh::Mode::Triangles {
                 continue;
             }
+            // Every accessor read below has already had its `type`,
+            // `componentType`, and buffer layout checked against what its
+            // reader decodes; see `validate_primitive_accessors`, which
+            // `load_bytes` runs before any reader exists. Adding a read here
+            // for a semantic `required_attribute_encoding` answers `None` —
+            // `read_tangents`, or any set index above 0 — compiles fine and
+            // reopens the panic, so give it an encoding there first.
             let reader = prim.reader(|b| buffers.get(b.index()).map(Vec::as_slice));
             // Never iterate a count-0 accessor: gltf 1.4's reader
             // underflows and panics on one (invariant: hostile input must
@@ -1096,8 +1665,9 @@ fn extract_assets(
         let skin_ibms = skin
             .as_ref()
             .filter(|skin| {
-                skin.inverse_bind_matrices()
-                    .is_some_and(|accessor| accessor.count() > 0)
+                skin.inverse_bind_matrices().is_some_and(|accessor| {
+                    accessor.count() > 0 && inverse_bind_is_readable(&accessor)
+                })
             })
             .map(|skin| {
                 let reader = skin.reader(|buffer| buffers.get(buffer.index()).map(Vec::as_slice));
@@ -1169,12 +1739,10 @@ fn extract_source_images(
             let (source_kind, declared_mime_type, raw, unavailable_reason) = match image.source() {
                 gltf::image::Source::View { view, mime_type } => {
                     let bytes = buffers.get(view.buffer().index()).and_then(|buffer| {
-                        // `offset`/`length` are file-derived. A checked add
-                        // keeps malformed views from panicking in debug
-                        // builds; failed ranges are explicit source gaps.
-                        view.offset()
-                            .checked_add(view.length())
-                            .and_then(|end| buffer.get(view.offset()..end))
+                        // A view with no `view_end` has no bytes here: an
+                        // image is source evidence, so a failed range is an
+                        // explicit source gap rather than a refusal.
+                        view_end(&view).and_then(|end| buffer.get(view.offset()..end))
                     });
                     let (raw, reason) = match bytes {
                         Some(bytes) if !retain_raw && bytes.len() > MAX_IMAGE_ENCODED_BYTES => {

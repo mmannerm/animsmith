@@ -181,6 +181,54 @@ reflects repairs `fix` would actually perform: tracks it cannot patch
 `skipped[...]` but do not fail the check — gate on `lint` (the
 `quat-norm` or `quat-flip` checks) when detection alone should fail CI.
 
+## Unsupported glTF Encodings
+
+AnimSmith reads a narrower slice of glTF than the specification permits. A
+mesh accessor it cannot decode exactly as declared is refused with exit `2`
+rather than read as something else, so a run never reports numbers derived
+from bytes it misread.
+
+The common case is **`KHR_mesh_quantization`**: gltfpack and similar mesh
+optimizers store `POSITION` and `NORMAL` as `BYTE`/`SHORT` instead of
+`FLOAT`, and AnimSmith has no decoder for those. Which message you get
+depends on how the file declares the extension:
+
+```console
+$ animsmith lint quantized.glb
+animsmith: glTF parse error: invalid glTF: extensionsRequired[0] = "KHR_mesh_quantization": Unsupported extension;
+
+$ animsmith lint quantized-declared-used-only.glb
+animsmith: mesh 0 primitive 0 POSITION: accessor 0 is VEC3 of SHORT, but the loader reads VEC3 of FLOAT
+```
+
+Re-export without quantization — `gltfpack -noq`, or turn off the
+quantization option in whichever exporter produced the file — and the same
+asset loads. AnimSmith measures rigs and animation, so the unquantized
+source is the right input for it; keep the quantized build for shipping.
+
+Two other shapes are refused with the same `mesh N primitive M` message: an
+accessor typed for a different element than the slot that references it (a
+`VEC3` `TEXCOORD_0`), and one whose buffer layout the reader cannot walk (a
+`byteStride` shorter than its own element, or a `sparse` block of count 0).
+Those are invalid glTF rather than an unsupported feature, and the fix
+belongs at the source. The [Khronos
+glTF-Validator](https://github.com/KhronosGroup/glTF-Validator) names the
+same accessor — `ACCESSOR_SMALL_BYTESTRIDE` for the stride, and the schema's
+`minimum: 1` on `sparse.count` for the sparse block — so run it on the file
+to see the defect in its own vocabulary. AnimSmith still has to check these
+itself, because the `gltf` crate it parses with does not: that crate's JSON
+validation bounds `byteStride` to `4..=252` without ever relating it to the
+accessor's element, so an unwalkable layout passes parsing and reaches the
+reader.
+
+The same layout defect on an **animation sampler** is refused too, naming
+the clip and channel instead of a mesh:
+
+```console
+$ animsmith lint poisoned-track.gltf
+animsmith: clip 'walk' node 3 sampler input: accessor 0 reads its elements from buffer view 0, whose byteOffset 18446744073709551615 plus byteLength 12 is a byte extent that overflows
+```
+
 ## Feature Flags
 
 The default binary enables `fbx` and `report`.
