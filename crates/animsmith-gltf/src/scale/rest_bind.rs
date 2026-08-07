@@ -295,10 +295,12 @@ fn bone_projection(document: &Document) -> Result<BoneProjection, GltfScaleRewri
 /// The plan speaks [`BoneId`] and walks
 /// `SourceNodeAsset::parent_source_node_index`; this rewriter speaks source
 /// node index and walks `/nodes/*/children`; sampling and proof walk
-/// `Skeleton::parent`. Nothing in `animsmith_core` compares the last two, so
-/// a document whose projection contradicts its own skeleton plans, builds and
-/// proves cleanly today (issue #309). It must not also *rewrite* cleanly, so
-/// all three are required to agree here before a byte is written.
+/// `Skeleton::parent`. `animsmith_core`'s document-shape validation relates
+/// the projection to the skeleton — a document whose two parent chains
+/// disagree is refused there — but it cannot see the raw child arrays, which
+/// live in the JSON this crate parses and never become a [`Document`] field.
+/// That third description is the one only this layer can check, so all three
+/// are required to agree here before a byte is written.
 fn cross_check_domain(
     document: &Document,
     plan: &ScalePlan,
@@ -1004,11 +1006,19 @@ mod tests {
     //! The raw child arrays, `SourceNodeAsset::parent_source_node_index` and
     //! `Skeleton::parent` are all derived by this crate's own `topology` from
     //! one parsed document, so no source makes them disagree — which is
-    //! exactly why issue #309 is a latent gap rather than a live bug, and
     //! exactly why these are classification tests over a mutated `Document`
     //! rather than end-to-end ones. What they pin is that each disagreement
     //! is *named*, and — the direction that has caught more in this lane —
-    //! that the unmutated document still passes all three. Their *wiring* is
+    //! that the unmutated document still passes all three.
+    //!
+    //! Each mutation has to stay inside what `animsmith_core`'s own
+    //! chain-agreement validation accepts. A `Document` whose projection
+    //! contradicts its skeleton is refused by `plan_scale`, so a mutation that
+    //! broke both descriptions at once would never reach this layer and would
+    //! be attributed to the wrong check. The mutations that need the skeleton
+    //! and the projection to disagree with the *raw children* therefore move
+    //! those two together, leaving the raw child arrays — the one description
+    //! `animsmith_core` cannot see — as the sole dissenter. Their *wiring* is
     //! pinned separately, through `capability::scale_source_with_document`:
     //! the seam hands the rewriter a real source whose normalized projection
     //! contradicts its own bytes, which is the one relaxation gate bypass
@@ -1169,11 +1179,19 @@ mod tests {
 
     #[test]
     fn a_plan_closure_the_raw_hierarchy_does_not_produce_is_refused() {
-        // Re-point the attachment's source parent at the holder, so the
-        // plan's closure loses node 2 while the raw child arrays keep it.
+        // Drop the attachment from the projection, so the plan's closure
+        // loses node 2 while the raw child arrays keep it. A bone with no
+        // projecting source node is not a chain disagreement — `animsmith_core`
+        // requires the projection to be an injection, not a bijection — so
+        // this reaches the rewriter as a plan whose closure is genuinely
+        // smaller than the one the bytes describe.
         let source = source();
         let mut document = source.document().clone();
-        document.assets.source_skeleton.nodes[2].parent_source_node_index = Some(3);
+        document
+            .assets
+            .source_skeleton
+            .nodes
+            .retain(|node| node.source_node_index != 2);
         let plan = plan_scale(&ScaleRequest {
             operation: ScaleOperation::RestBindUniformScale {
                 source_skin_index: 0,
@@ -1183,7 +1201,7 @@ mod tests {
             document: &document,
             capability: &super::super::capability_facts(source.manifest()),
         })
-        .expect("the contradicting projection still plans cleanly — that is issue #309");
+        .expect("a projection missing a node still plans, over a smaller closure");
         match check(&document, &plan) {
             Err(GltfScaleRewriteError::ClosureMismatch { planned, derived }) => {
                 assert_eq!(planned, vec![0, 1]);
@@ -1364,7 +1382,12 @@ mod tests {
         let source = source();
         let mut document = source.document().clone();
         // Bone 2 is source node 2, whose raw parent is node 1 (bone 1).
+        // Skeleton *and* projection are moved together onto node 0, so
+        // `animsmith_core`'s chain-agreement validation is satisfied and the
+        // raw child arrays are the only description left disagreeing — which
+        // is the disagreement only this layer can see.
         document.skeleton.bones[2].parent = Some(0);
+        document.assets.source_skeleton.nodes[2].parent_source_node_index = Some(0);
         let contradicting = crate::capability::scale_source_with_document(source, document);
         match rewrite_rest_bind(&contradicting, 0, 0, 0.01) {
             Err(GltfScaleRewriteError::ParentChainDisagreement { source_node_index }) => {
