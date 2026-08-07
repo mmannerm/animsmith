@@ -123,12 +123,56 @@ struct Sampler {
     layout: Layout,
 }
 
+/// The document's node array, the node the single channel targets, and the
+/// scene's root list.
+///
+/// Every fixture but one leaves this at a lone node 0, where that node's
+/// glTF index, the bone id it maps to, and a literal `0` are all the same
+/// number — and so indistinguishable in a refusal message.
+#[derive(Clone)]
+struct Nodes {
+    declared: Value,
+    target: usize,
+    roots: Vec<usize>,
+}
+
+impl Default for Nodes {
+    fn default() -> Self {
+        Self {
+            declared: json!([{ "name": "root" }]),
+            target: 0,
+            roots: vec![0],
+        }
+    }
+}
+
+impl Nodes {
+    /// Three nodes the loader's DFS numbers as bones 0, 2, 1: node 0 is the
+    /// first root and owns node 2, so node 2 takes bone 1, and node 1 — a
+    /// second root, visited only after that subtree — takes bone 2.
+    ///
+    /// The channel targets node 1, whose glTF index differs both from the
+    /// bone id it maps to and from 0.
+    fn where_node_1_is_bone_2() -> Self {
+        Self {
+            declared: json!([
+                { "name": "root", "children": [2] },
+                { "name": "target" },
+                { "name": "child" }
+            ]),
+            target: 1,
+            roots: vec![0, 1],
+        }
+    }
+}
+
 /// A single-channel rotation clip over one node, whose two sampler
 /// accessors are individually replaceable — so one test changes exactly one
 /// accessor's layout and nothing else.
 struct Clip {
     input: Sampler,
     output: Sampler,
+    nodes: Nodes,
 }
 
 impl Clip {
@@ -150,7 +194,15 @@ impl Clip {
                 bounds: None,
                 layout: Layout::default(),
             },
+            nodes: Nodes::default(),
         }
+    }
+
+    /// Re-target the clip's one channel onto a different node of a larger
+    /// node array.
+    fn nodes(mut self, nodes: Nodes) -> Self {
+        self.nodes = nodes;
+        self
     }
 
     /// Apply a layout override to the sampler's `input` accessor.
@@ -210,13 +262,16 @@ impl Clip {
             }],
             "bufferViews": views,
             "accessors": accessors,
-            "nodes": [{ "name": "root" }],
+            "nodes": self.nodes.declared,
             "animations": [{
                 "name": "poisoned",
                 "samplers": [{ "input": 0, "output": 1, "interpolation": "LINEAR" }],
-                "channels": [{ "sampler": 0, "target": { "node": 0, "path": "rotation" } }]
+                "channels": [{
+                    "sampler": 0,
+                    "target": { "node": self.nodes.target, "path": "rotation" }
+                }]
             }],
-            "scenes": [{ "nodes": [0] }],
+            "scenes": [{ "nodes": self.nodes.roots }],
             "scene": 0
         });
         serde_json::to_vec(&document).expect("serializes synthetic glTF")
@@ -411,6 +466,27 @@ fn sampler_output_on_short_strided_sparse_values_is_refused() {
         .expect_layout_refusal(
             "clip 'poisoned' node 0 sampler output: accessor 1 reads its sparse values from \
              buffer view 3 at byteStride 4, shorter than the 16-byte element it strides over",
+        );
+}
+
+// --- Which channel the refusal names ----------------------------------
+
+/// Every other fixture here declares one node, targeted at index 0, so its
+/// refusal cannot tell the channel's glTF node index from the bone id that
+/// node maps to — or from a hardcoded 0. This one targets node 1 of three,
+/// which the loader's DFS numbers as bone 2, so the message can only read
+/// `node 1` if it reports the index the channel actually names.
+///
+/// The counterpart of `a_refusal_names_the_mesh_and_primitive_it_found` on
+/// the primitive side, for the same reason.
+#[test]
+fn a_refusal_names_the_node_the_channel_targets() {
+    Clip::new()
+        .nodes(Nodes::where_node_1_is_bone_2())
+        .output(|layout| layout.stride = Some(4))
+        .expect_layout_refusal(
+            "clip 'poisoned' node 1 sampler output: accessor 1 reads its elements from buffer \
+             view 1 at byteStride 4, shorter than the 16-byte element it strides over",
         );
 }
 
