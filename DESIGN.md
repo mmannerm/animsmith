@@ -1149,11 +1149,15 @@ names two independent witnesses of the same quantity, measured from
 deliberately different state: planning classifies the raw source projection's
 node-local rests composed through the raw parent chain, and proof reads the
 normalized skeleton's bone rests composed through its own parent chain.
-Nothing reconciles the two chains, and that independence is the reason both
-witnesses exist. The record therefore carries **both**, plus the relative
-divergence `|planned - proved| / max(|planned|, |proved|)` between them
-explicitly, so a consumer neither mistakes one witness for the other nor has
-to derive the relationship from two separate policy fields.
+Document-shape validation requires the two chains to *agree* — under
+`Complete` source-skeleton coverage, which this operation requires anyway, a
+projection that contradicts its own skeleton is refused before either witness
+is taken — but nothing reconciles the two *readings*: each is still composed
+from its own stored state, and that independence is the reason both witnesses
+exist. The record therefore carries **both**, plus the relative divergence
+`|planned - proved| / max(|planned|, |proved|)` between them explicitly, so a
+consumer neither mistakes one witness for the other nor has to derive the
+relationship from two separate policy fields.
 
 The expected ceiling on that divergence is **the sum of two bands the policy
 already declares**: the common-factor band plus the postcondition unit-scale
@@ -1174,10 +1178,12 @@ a candidate this operation built from the source it is proved against — which
 proof deliberately does not require — and it costs the binary32 rounding of
 the rebase on the way, so the sum is the ceiling the design guarantees rather
 than a bound proved to the last ulp; refusing at it would refuse documents
-whose two witnesses each honour their own band. A divergence beyond it means
-the source's two parent chains disagree with each other, which is a fact about
-the input that belongs to the chain-agreement validation neither witness
-performs, not to a residual this proof owns. Recording both witnesses and
+whose two witnesses each honour their own band. A divergence beyond it is not
+evidence that the two parent chains disagree — those are validated to agree,
+above — but that the state each witness reads differs: most often the raw
+node-local rests against the normalized bone rests, two separately stored
+descriptions of one rest pose. How far apart those are is a fact about the
+input, not a residual this proof owns. Recording both witnesses and
 their divergence introduces no band of its own and no new policy identity.
 
 Migration is opt-in. `assemble.canonicalize_skin` in recipe v1 remains the
@@ -1279,8 +1285,11 @@ domains and a factor alone does not distinguish them. Beyond the shared
 plan/proof rejections, the frontend owns three refusals the format-neutral
 layer cannot state: the disagreeing-multiplier refusal of §D.2, and two
 agreement checks over the raw node hierarchy, the loader's source-node
-projection, and the normalized skeleton's parent links — nothing in
-`animsmith-core` requires those three to describe the same tree.
+projection, and the normalized skeleton's parent links. `animsmith-core`
+requires the last two of those three to describe the same tree — that is the
+document-shape validation of §D.6 — but the raw `/nodes/*/children` arrays
+live in JSON that never becomes a `Document` field, so bringing the third
+description into the comparison is only possible here.
 
 ### D.8 Ownership choice and deferred slices
 
