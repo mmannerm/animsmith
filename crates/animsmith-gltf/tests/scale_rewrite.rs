@@ -5,6 +5,7 @@
 //! literals are the arithmetic truth rather than a rounding of it, and no
 //! assertion is derived from a value the code under test produced.
 
+use animsmith_core::model::Document;
 use animsmith_core::scale::{
     ScaleCandidate, ScaleError, ScaleOperation, ScalePlan, ScaleRequest, plan_scale, prove_scale,
 };
@@ -106,6 +107,24 @@ fn rejected(name: &str, value: &Value) -> Vec<GltfCapabilityViolation> {
 }
 
 use animsmith_gltf::GltfCapabilityViolation;
+
+/// Every mesh instance's identity, in document order: where it hangs, which
+/// source node it came from, which mesh it draws, and which joints it binds.
+fn instance_identity(document: &Document) -> Vec<(usize, usize, usize, Vec<usize>)> {
+    document
+        .assets
+        .instances
+        .iter()
+        .map(|instance| {
+            (
+                instance.node,
+                instance.source_node_index,
+                instance.mesh,
+                instance.skin_joints.clone(),
+            )
+        })
+        .collect()
+}
 
 fn kinds(violations: &[GltfCapabilityViolation]) -> Vec<GltfCapabilityViolationKind> {
     let mut kinds: Vec<_> = violations.iter().map(|violation| violation.kind).collect();
@@ -1363,6 +1382,17 @@ fn the_full_composition_proves_both_layers_for_a_skinned_animated_source() {
     .expect("plan");
     let artifact = rewrite_linear_units(&source, factor).expect("rewrite");
     let reloaded = load_bytes(Path::new("composition.gltf"), artifact.bytes()).expect("reload");
+    // Mesh-instance *placement* identity, read off the reloaded artifact
+    // rather than assumed from the rewriter's shape. The conversion clones
+    // the source JSON and patches numbers in place, so `nodes`, `children`,
+    // `scenes` and every mesh/skin attachment come through untouched and the
+    // loader re-derives the same bone ids from the same DFS. The mesh holder
+    // is node 1 on both sides.
+    assert_eq!(
+        instance_identity(&reloaded),
+        instance_identity(source.document())
+    );
+    assert_eq!(instance_identity(&reloaded), vec![(1, 1, 0, vec![0])]);
     let core = prove_scale(
         source.document(),
         &ScaleCandidate::from_document(reloaded),
