@@ -1283,7 +1283,7 @@ fn validate_source_skeleton_identity(document: &Document) -> Result<(), ScaleErr
 /// `Armature`/transform node that is not itself a joint is the ordinary case,
 /// and pruned intermediates and camera or mesh nodes between two joints are
 /// the same shape. The walk still fails closed if the chain leaves the table
-/// (`parent_source_node_is_not_projected`) or never terminates
+/// (`parent_source_node_is_missing`) or never terminates
 /// (`cyclic_unprojected_source_parent_chain`) — the projection has to name
 /// *some* determinate ancestor for the comparison to mean anything.
 ///
@@ -1299,7 +1299,13 @@ fn validate_source_skeleton_identity(document: &Document) -> Result<(), ScaleErr
 /// unprojected side rather than the disagreeing one. Requiring closure and not
 /// surjectivity is also what keeps two candidate-structure refusals reachable:
 /// an empty projection under `Complete` coverage stays accepted, as does a
-/// skeleton carrying whole extra roots the projection does not describe.
+/// skeleton carrying whole extra roots the projection does not describe. The
+/// mirror of the closure rule is *not* accepted, though: a **projected** bone
+/// whose `Bone::parent` is an **unprojected** bone is refused as
+/// `projection_and_skeleton_parents_differ`, since the nearest-ancestor walk
+/// can only ever yield a bone the projection names — fail-closed on a shape
+/// the displacement above does not motivate, and emitted by no in-tree
+/// producer.
 ///
 /// The displacement is what *motivates* the closure rule, not the scope it is
 /// applied at. Under [`ScaleOperation::WholeDocumentLinearUnits`] the
@@ -1368,6 +1374,9 @@ fn validate_parent_chain_agreement(document: &Document) -> Result<(), ScaleError
     }
 
     let by_source_index = source_node_index_map(document);
+    // Every row carries a distinct `source_node_index`, so this is exactly the
+    // number of rows the ancestor walk below is allowed to step over.
+    let unprojected_rows = source_skeleton.nodes.len() - bone_of_source.len();
     for (node, skeleton_parent) in skeleton_parents {
         // The projection's *nearest projected ancestor*, not its immediate
         // parent row. Rows that name no bone never became bones, so they are
@@ -1376,8 +1385,9 @@ fn validate_parent_chain_agreement(document: &Document) -> Result<(), ScaleError
         // joint, a pruned intermediate, a camera or mesh node between two
         // joints. Skipping them is what makes those ordinary shapes legal;
         // stopping at them would refuse every rig whose joints hang under an
-        // `Armature`. The walk is bounded by the table size, so a chain that
-        // never reaches a projected node or `None` fails closed.
+        // `Armature`. The walk is bounded by the number of unprojected rows,
+        // so a chain that never reaches a projected node or `None` fails
+        // closed.
         let mut cursor = node.parent_source_node_index;
         let mut steps = 0usize;
         let projected_parent = loop {
@@ -1387,19 +1397,24 @@ fn validate_parent_chain_agreement(document: &Document) -> Result<(), ScaleError
             if let Some(&bone) = bone_of_source.get(&parent_source_node_index) {
                 break Some(bone);
             }
+            let parent = by_source_index.get(&parent_source_node_index).ok_or(
+                ScaleError::ParentChainDisagreement {
+                    source_node_index: node.source_node_index,
+                    reason: "parent_source_node_is_missing",
+                },
+            )?;
+            // Counted after the lookup, so a step is only ever charged for an
+            // unprojected row the walk actually stepped *over* — a dangling
+            // final link costs nothing. Each row has one parent, so an acyclic
+            // chain meets each unprojected row at most once: exceeding their
+            // count means one was met twice, which is a cycle.
             steps += 1;
-            if steps > source_skeleton.nodes.len() {
+            if steps > unprojected_rows {
                 return Err(ScaleError::ParentChainDisagreement {
                     source_node_index: node.source_node_index,
                     reason: "cyclic_unprojected_source_parent_chain",
                 });
             }
-            let parent = by_source_index.get(&parent_source_node_index).ok_or(
-                ScaleError::ParentChainDisagreement {
-                    source_node_index: node.source_node_index,
-                    reason: "parent_source_node_is_not_projected",
-                },
-            )?;
             cursor = parent.parent_source_node_index;
         };
         if projected_parent != skeleton_parent {
@@ -6509,8 +6524,23 @@ mod tests {
             // shape, whose honest coverage declaration is `Unavailable`. The
             // ancestor walk steps over unprojected *rows*, but it cannot step
             // over an index that names nothing.
-            ("parent_source_node_is_not_projected", 2, |doc| {
+            ("parent_source_node_is_missing", 2, |doc| {
                 doc.assets.source_skeleton.nodes[2].parent_source_node_index = Some(9);
+            }),
+            // The same refusal at the walk's exact bound, which needs the
+            // whole table rather than one field: bones 0 and 1 stop being
+            // projected (legal — neither is the child of a projected bone),
+            // so node 2 is the only projected row and the two rows above it
+            // are the only steps the walk may take. Its chain then leaves the
+            // table, and the step that discovers that must not be charged
+            // against the bound: the walk spends exactly `unprojected_rows`
+            // steps and still has to report the dangling index rather than a
+            // cycle. Pins the off-by-one a `>=` bound would introduce.
+            ("parent_source_node_is_missing", 2, |doc| {
+                let nodes = &mut doc.assets.source_skeleton.nodes;
+                nodes[0].bone = None;
+                nodes[1].bone = None;
+                nodes[0].parent_source_node_index = Some(9);
             }),
             // Unprojected rows the walk can never leave: 5 and 6 name each
             // other, so node 2's chain has no nearest projected ancestor and
@@ -7815,7 +7845,7 @@ mod tests {
             rest_bind_reject_reason(&doc),
             ScaleError::ParentChainDisagreement {
                 source_node_index: 2,
-                reason: "parent_source_node_is_not_projected",
+                reason: "parent_source_node_is_missing",
             }
         );
     }
@@ -12961,7 +12991,7 @@ mod tests {
             rest_bind_reject_reason(&doc),
             ScaleError::ParentChainDisagreement {
                 source_node_index: 0,
-                reason: "parent_source_node_is_not_projected",
+                reason: "parent_source_node_is_missing",
             }
         );
     }
