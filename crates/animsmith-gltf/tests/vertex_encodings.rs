@@ -52,6 +52,12 @@ impl Default for Accessor {
 struct Layout {
     /// `byteStride` on the buffer view this accessor owns.
     stride: Option<u64>,
+    /// Written to the accessor's own `byteOffset` verbatim, whatever its
+    /// buffer view holds.
+    byte_offset: Option<u64>,
+    /// Overwrites the declared extent of the buffer view this accessor
+    /// owns.
+    view_extent: ViewExtent,
     /// Written to the accessor's `count` verbatim, replacing the element
     /// count the fixture's bytes actually hold.
     declared_count: Option<u64>,
@@ -73,6 +79,10 @@ struct Sparse {
     values: Vec<u8>,
     /// `byteStride` on the view holding those replacement elements.
     values_stride: Option<u64>,
+    /// Overwrites the declared extent of the index view.
+    indices_view_extent: ViewExtent,
+    /// Overwrites the declared extent of the value view.
+    values_view_extent: ViewExtent,
 }
 
 impl Sparse {
@@ -83,6 +93,8 @@ impl Sparse {
             indices: vec![0],
             values,
             values_stride: None,
+            indices_view_extent: ViewExtent::default(),
+            values_view_extent: ViewExtent::default(),
         }
     }
 
@@ -94,6 +106,37 @@ impl Sparse {
     fn values_stride(mut self, stride: u64) -> Self {
         self.values_stride = Some(stride);
         self
+    }
+
+    fn indices_view_extent(mut self, extent: ViewExtent) -> Self {
+        self.indices_view_extent = extent;
+        self
+    }
+
+    fn values_view_extent(mut self, extent: ViewExtent) -> Self {
+        self.values_view_extent = extent;
+        self
+    }
+}
+
+/// A `byteOffset`/`byteLength` pair written onto a buffer view verbatim,
+/// whatever bytes it actually holds. `gltf-json` relates the two fields to
+/// each other no more than it relates them to the buffer, which is the
+/// only way to declare a view whose own extent has no end.
+#[derive(Default, Clone, Copy)]
+struct ViewExtent {
+    byte_offset: Option<u64>,
+    byte_length: Option<u64>,
+}
+
+impl ViewExtent {
+    fn apply(self, view: &mut Value) {
+        if let Some(byte_offset) = self.byte_offset {
+            view["byteOffset"] = json!(byte_offset);
+        }
+        if let Some(byte_length) = self.byte_length {
+            view["byteLength"] = json!(byte_length);
+        }
     }
 }
 
@@ -284,6 +327,17 @@ impl Primitive {
         self.layout(|layout| layout.declared_count = Some(count))
     }
 
+    /// Write `byte_offset` into the accessor verbatim, whatever its buffer
+    /// view holds.
+    fn byte_offset(self, byte_offset: u64) -> Self {
+        self.layout(|layout| layout.byte_offset = Some(byte_offset))
+    }
+
+    /// Overwrite the declared extent of the buffer view that accessor owns.
+    fn view_extent(self, extent: ViewExtent) -> Self {
+        self.layout(|layout| layout.view_extent = extent)
+    }
+
     fn sparse(self, sparse: Sparse) -> Self {
         self.layout(|layout| layout.sparse = Some(sparse))
     }
@@ -318,12 +372,14 @@ impl Primitive {
             } else if let Some((owner, _)) = accessor.layout.shared_view {
                 view_of[owner]
             } else {
-                Some(push_view(
+                let index = push_view(
                     &mut blob,
                     &mut views,
                     &accessor.bytes,
                     accessor.layout.stride,
-                ))
+                );
+                accessor.layout.view_extent.apply(&mut views[index]);
+                Some(index)
             };
             view_of.push(view);
             let mut json = json!({
@@ -334,7 +390,11 @@ impl Primitive {
             if let Some(view) = view {
                 json["bufferView"] = json!(view);
             }
-            if let Some((_, byte_offset)) = accessor.layout.shared_view {
+            if let Some(byte_offset) = accessor
+                .layout
+                .byte_offset
+                .or(accessor.layout.shared_view.map(|(_, offset)| offset))
+            {
                 json["byteOffset"] = json!(byte_offset);
             }
             if let Some((min, max)) = &accessor.bounds {
@@ -346,7 +406,9 @@ impl Primitive {
             }
             if let Some(sparse) = &accessor.layout.sparse {
                 let indices = push_view(&mut blob, &mut views, &u16s(&sparse.indices), None);
+                sparse.indices_view_extent.apply(&mut views[indices]);
                 let values = push_view(&mut blob, &mut views, &sparse.values, sparse.values_stride);
+                sparse.values_view_extent.apply(&mut views[values]);
                 json["sparse"] = json!({
                     "count": sparse.declared_count,
                     "indices": {
@@ -1068,6 +1130,80 @@ fn loader_refuses_a_sparse_count_whose_byte_extent_overflows() {
         .expect_layout_refusal(
             "mesh 0 primitive 0 POSITION: accessor 1 walks 18446744073709551615 sparse indices \
              of 2 bytes at byteStride 2 from byteOffset 0, a byte extent that overflows",
+        );
+}
+
+#[test]
+fn loader_refuses_a_buffer_view_whose_own_extent_overflows() {
+    // `Iter::new` calls `buffer_view_slice` before it strides over
+    // anything, and that adds `view.offset() + view.length()` unchecked.
+    // Nothing relates a view's `byteOffset` to its `byteLength`: `USize64`
+    // only rejects values past `usize`, and `View`'s derived `Validate`
+    // relates the two fields to nothing. Both halves are poisonable.
+    positions_with_own_view()
+        .view_extent(ViewExtent {
+            byte_offset: Some(u64::MAX),
+            byte_length: None,
+        })
+        .expect_layout_refusal(
+            "mesh 0 primitive 0 POSITION: accessor 1 reads its elements from buffer view 1, \
+             whose byteOffset 18446744073709551615 plus byteLength 36 is a byte extent \
+             that overflows",
+        );
+    positions_with_own_view()
+        .view_extent(ViewExtent {
+            byte_offset: Some(1),
+            byte_length: Some(u64::MAX),
+        })
+        .expect_layout_refusal(
+            "mesh 0 primitive 0 POSITION: accessor 1 reads its elements from buffer view 1, \
+             whose byteOffset 1 plus byteLength 18446744073709551615 is a byte extent \
+             that overflows",
+        );
+}
+
+#[test]
+fn loader_refuses_a_sparse_buffer_view_whose_own_extent_overflows() {
+    // The sparse index and value views are sliced the same way, and are
+    // reached even when the accessor's own view is well formed.
+    positions_with_own_view()
+        .sparse(
+            Sparse::replacing_first(f32s(&[9.0, 9.0, 9.0])).indices_view_extent(ViewExtent {
+                byte_offset: Some(u64::MAX),
+                byte_length: None,
+            }),
+        )
+        .expect_layout_refusal(
+            "mesh 0 primitive 0 POSITION: accessor 1 reads its sparse indices from buffer \
+             view 2, whose byteOffset 18446744073709551615 plus byteLength 2 is a byte \
+             extent that overflows",
+        );
+    positions_with_own_view()
+        .sparse(
+            Sparse::replacing_first(f32s(&[9.0, 9.0, 9.0])).values_view_extent(ViewExtent {
+                byte_offset: Some(1),
+                byte_length: Some(u64::MAX),
+            }),
+        )
+        .expect_layout_refusal(
+            "mesh 0 primitive 0 POSITION: accessor 1 reads its sparse values from buffer \
+             view 3, whose byteOffset 1 plus byteLength 18446744073709551615 is a byte \
+             extent that overflows",
+        );
+}
+
+#[test]
+fn loader_refuses_a_byte_offset_whose_trailing_element_overflows() {
+    // The last term of the extent chain, on its own. With `count` 1 the
+    // stride multiply contributes nothing, so only `byteOffset + size`
+    // crosses the boundary — the one shape a `count`-driven fixture leaves
+    // uncovered.
+    Primitive::new()
+        .attribute("POSITION", "VEC3", FLOAT, 1, f32s(&[0.0, 0.0, 0.0]))
+        .byte_offset(u64::MAX - 4)
+        .expect_layout_refusal(
+            "mesh 0 primitive 0 POSITION: accessor 1 walks 1 elements of 12 bytes at \
+             byteStride 12 from byteOffset 18446744073709551611, a byte extent that overflows",
         );
 }
 

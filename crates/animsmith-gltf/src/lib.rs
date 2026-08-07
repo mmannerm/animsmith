@@ -161,8 +161,9 @@ pub enum LoadError {
     },
     /// A primitive's vertex-attribute or index accessor declares an element
     /// the loader does read, but addresses its bytes in a way the reader
-    /// cannot walk: a `byteStride` shorter than the element it strides
-    /// over, a `sparse` block of count 0, or a `count` whose byte extent
+    /// cannot walk: a buffer view whose own `byteOffset` plus `byteLength`
+    /// overflows, a `byteStride` shorter than the element it strides over,
+    /// a `sparse` block of count 0, or a `count` whose byte extent
     /// overflows. `gltf`'s `Validate` relates an accessor to none of these,
     /// so each is an assertion, an underflow, or an overflow inside the
     /// reader rather than a parse failure.
@@ -616,11 +617,18 @@ fn check_primitive_accessor(
 /// Why `gltf`'s reader cannot walk an accessor's bytes, independent of the
 /// element it declares — or `None` when it can.
 ///
-/// `Iter::new` steps an accessor as `byteOffset + byteStride * (count - 1) +
-/// size`, over the accessor's own buffer view and, for a sparse accessor,
-/// over its index and value views too. Three shapes of that are a panic on
-/// arbitrary input, and `gltf-json`'s `Validate` catches none of them:
+/// `Iter::new` first slices a buffer view as `view.byteOffset +
+/// view.byteLength`, then steps the accessor inside it as `byteOffset +
+/// byteStride * (count - 1) + size` — over the accessor's own buffer view
+/// and, for a sparse accessor, over its index and value views too. Four
+/// shapes of that are a panic on arbitrary input, and `gltf-json`'s
+/// `Validate` catches none of them:
 ///
+/// - **A buffer view whose own extent overflows.** `USize64`'s validator
+///   only rejects a value past `usize`, and `View`'s derived `Validate`
+///   relates `byteOffset` neither to `byteLength` nor to the buffer, so
+///   `buffer_view_slice` adds the two unchecked before any accessor
+///   arithmetic runs (see [`view_end`]).
 /// - **A `byteStride` shorter than the element.** `Stride`'s validator
 ///   accepts any `4..=252`, so a `VEC3` of `FLOAT` `POSITION` on a stride-4
 ///   view validates and then trips `debug_assert!(stride >=
@@ -675,6 +683,16 @@ fn unreadable_layout(accessor: &gltf::Accessor<'_>) -> Option<String> {
     })
 }
 
+/// Where a buffer view's declared extent ends, or `None` when it has no
+/// end: `byteOffset` and `byteLength` are both file-derived, and nothing in
+/// `gltf-json` relates them to each other or to the buffer, so their sum
+/// overflows on arbitrary input. Every read of a view's bytes goes through
+/// this, because the overflow is a panic in a debug build and a wrong
+/// extent in a release one.
+fn view_end(view: &gltf::buffer::View<'_>) -> Option<usize> {
+    view.offset().checked_add(view.length())
+}
+
 /// Whether one strided walk of `count` elements of `size` bytes is one
 /// `Iter::new` can perform, phrased for the refusal message when it is not.
 fn unwalkable(
@@ -684,6 +702,17 @@ fn unwalkable(
     count: usize,
     size: usize,
 ) -> Option<String> {
+    // `Iter::new` slices the view before it strides over anything, so the
+    // view's own extent is judged before the accessor's.
+    if view_end(view).is_none() {
+        return Some(format!(
+            "reads its {subject} from buffer view {}, whose byteOffset {} plus byteLength {} \
+             is a byte extent that overflows",
+            view.index(),
+            view.offset(),
+            view.length()
+        ));
+    }
     let stride = view.stride().unwrap_or(size);
     if stride < size {
         return Some(format!(
@@ -1624,12 +1653,10 @@ fn extract_source_images(
             let (source_kind, declared_mime_type, raw, unavailable_reason) = match image.source() {
                 gltf::image::Source::View { view, mime_type } => {
                     let bytes = buffers.get(view.buffer().index()).and_then(|buffer| {
-                        // `offset`/`length` are file-derived. A checked add
-                        // keeps malformed views from panicking in debug
-                        // builds; failed ranges are explicit source gaps.
-                        view.offset()
-                            .checked_add(view.length())
-                            .and_then(|end| buffer.get(view.offset()..end))
+                        // A view with no `view_end` has no bytes here: an
+                        // image is source evidence, so a failed range is an
+                        // explicit source gap rather than a refusal.
+                        view_end(&view).and_then(|end| buffer.get(view.offset()..end))
                     });
                     let (raw, reason) = match bytes {
                         Some(bytes) if !retain_raw && bytes.len() > MAX_IMAGE_ENCODED_BYTES => {
