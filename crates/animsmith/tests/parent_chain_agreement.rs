@@ -146,9 +146,16 @@ fn the_synthesizing_producers_carry_no_projection_to_disagree_with() {
     // `static_bake` and `skinned_canonical` build their own rig and emit
     // `SourceSkeletonAssets::default()` — an empty projection under
     // `Unavailable` coverage. That is not a document whose two chains
-    // disagree; it is a document with one chain. The coverage gate is what
-    // keeps a strict isomorphism check from refusing every one of them, and
-    // these assertions are what would fail if that gate were dropped.
+    // disagree; it is a document with one chain.
+    //
+    // Note what these assertions do *not* rest on. They are not the coverage
+    // gate's justification: an empty projection is accepted with the gate open
+    // too, since injectivity and parent preservation quantify over nothing and
+    // downward closure is vacuous when no bone has a projecting node. Verified
+    // by deleting the gate, and pinned in `animsmith_core` by
+    // `an_empty_projection_under_complete_coverage_is_accepted`. What these
+    // assertions catch is a check that grew a surjectivity requirement, which
+    // would refuse every document below.
     let mut source = load_gltf_bytes(
         "testkit rest_bind_scale_rig_glb",
         "sweep.glb",

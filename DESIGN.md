@@ -1149,8 +1149,10 @@ names two independent witnesses of the same quantity, measured from
 deliberately different state: planning classifies the raw source projection's
 node-local rests composed through the raw parent chain, and proof reads the
 normalized skeleton's bone rests composed through its own parent chain.
-Nothing reconciles the two chains, and that independence is the reason both
-witnesses exist. The record therefore carries **both**, plus the relative
+Document-shape validation requires the two chains to *agree* — a projection
+that contradicts its own skeleton is refused before either witness is taken —
+but nothing reconciles the two *readings*: each is still composed from its own
+stored state, and that independence is the reason both witnesses exist. The record therefore carries **both**, plus the relative
 divergence `|planned - proved| / max(|planned|, |proved|)` between them
 explicitly, so a consumer neither mistakes one witness for the other nor has
 to derive the relationship from two separate policy fields.

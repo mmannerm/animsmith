@@ -1179,19 +1179,19 @@ mod tests {
 
     #[test]
     fn a_plan_closure_the_raw_hierarchy_does_not_produce_is_refused() {
-        // Drop the attachment from the projection, so the plan's closure
-        // loses node 2 while the raw child arrays keep it. A bone with no
-        // projecting source node is not a chain disagreement — `animsmith_core`
-        // requires the projection to be an injection, not a bijection — so
-        // this reaches the rewriter as a plan whose closure is genuinely
+        // Re-root the attachment in both normalized descriptions at once, so
+        // the plan's closure loses node 2 while the raw child arrays still
+        // hang it off node 1. Moving `Skeleton::parent` alongside
+        // `parent_source_node_index` is what keeps `animsmith_core`'s
+        // chain-agreement validation satisfied — dropping node 2 from the
+        // projection instead would be refused there, as an unprojected bone
+        // below a projected one — so the raw children stay the sole dissenter
+        // and this reaches the rewriter as a plan whose closure is genuinely
         // smaller than the one the bytes describe.
         let source = source();
         let mut document = source.document().clone();
-        document
-            .assets
-            .source_skeleton
-            .nodes
-            .retain(|node| node.source_node_index != 2);
+        document.assets.source_skeleton.nodes[2].parent_source_node_index = None;
+        document.skeleton.bones[2].parent = None;
         let plan = plan_scale(&ScaleRequest {
             operation: ScaleOperation::RestBindUniformScale {
                 source_skin_index: 0,
