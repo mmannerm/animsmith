@@ -207,10 +207,13 @@ policy's budget rather than sampling a subset of it. Every proof obligation is
 evidence-gated: a plan declares one only when the planned document carries the
 payload that obligation reads, and a declared obligation whose evidence is
 missing at proof time is a typed `MissingProofEvidence` refusal rather than a
-zero residual. `ScaleProof` records both observed-factor witnesses — the
-plan's, measured from the raw source projection, and the proof's, measured
-from the normalized skeleton — plus the relative divergence between them and
-the ceiling that divergence is expected to stay under
+zero residual. `ScaleProof` publishes each residual maximum beside the number
+of comparisons it was taken over, both written at the point of comparison, so
+a `0.0` that was measured is distinguishable from one that nothing walked —
+read the count before the residual. `ScaleProof` records both observed-factor
+witnesses — the plan's, measured from the raw source projection, and the
+proof's, measured from the normalized skeleton — plus the relative divergence
+between them and the ceiling that divergence is expected to stay under
 (`ScaleTolerancePolicy::observed_factor_divergence_ceiling`). This module does
 not select CLI arguments, publish
 artifacts/evidence, or write files — see the crate rustdoc for the exact

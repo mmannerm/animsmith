@@ -65,10 +65,10 @@ use crate::publish::{
 };
 use crate::{Format, render};
 use animsmith_core::scale::{
-    ScaleDomainRewrites, ScaleError, ScaleOperation, ScalePlan, ScaleProof, ScaleProofObligations,
-    ScaleRequest, ScaleTolerancePolicy, plan_scale,
+    ScaleDomainRewrites, ScaleError, ScaleOperation, ScalePlan, ScaleProof, ScaleRequest,
+    ScaleTolerancePolicy, plan_scale,
 };
-use animsmith_core::{Document, InputIdentity, ToolInfo};
+use animsmith_core::{InputIdentity, ToolInfo};
 use animsmith_gltf::{
     GltfCapabilityManifest, GltfCapabilityViolation, GltfContainerKind, GltfScaleArtifact,
     GltfScaleArtifactProof, GltfScalePreflightError, GltfScaleRewriteError, GltfScaleSource,
@@ -233,14 +233,14 @@ struct PathsRecord {
     evidence: String,
 }
 
-/// One residual, and whether the proof that reports it actually evaluated
+/// One residual, and whether the proof that reports it actually compared
 /// anything.
 ///
-/// [`ScaleProof`] reports `0.0` for an obligation the plan does not require,
-/// which §D.6 calls a false record: "a record stating residual 0.0 for a
-/// claim nothing checked". So the residual is never published flat. `max` is
-/// `null` exactly when `evaluated` is false, and a consumer that reads only
-/// `max` therefore sees an absence rather than a fabricated zero.
+/// [`ScaleProof`] reports `0.0` for a residual nothing walked, which §D.6
+/// calls a false record: "a record stating residual 0.0 for a claim nothing
+/// checked". So the residual is never published flat. `max` is `null`
+/// exactly when `evaluated` is false, and a consumer that reads only `max`
+/// therefore sees an absence rather than a fabricated zero.
 #[derive(Debug, Clone, Copy, Serialize)]
 struct Residual {
     evaluated: bool,
@@ -248,7 +248,14 @@ struct Residual {
 }
 
 impl Residual {
-    fn new(evaluated: bool, max: f64) -> Self {
+    /// Publish `max` iff the proof's own count says it compared something.
+    ///
+    /// Takes the comparison count rather than a `bool` so the only way to
+    /// publish a residual is to hold the number of comparisons that produced
+    /// it: there is no constructor a caller could hand a predicate of its
+    /// own.
+    fn measured(comparisons: usize, max: f64) -> Self {
+        let evaluated = comparisons > 0;
         Self {
             evaluated,
             max: evaluated.then_some(Finite(max)),
@@ -256,8 +263,8 @@ impl Residual {
     }
 }
 
-/// Every residual [`ScaleProof`] reports, each gated by the evidence its
-/// obligation reads.
+/// Every residual [`ScaleProof`] reports, each carrying whether the proof
+/// compared anything to produce it.
 #[derive(Debug, Clone, Copy, Serialize)]
 struct ResidualsRecord {
     rest_translation: Residual,
@@ -629,111 +636,61 @@ fn rewrite_failure(stage: Stage, error: GltfScaleRewriteError) -> Failure {
     })
 }
 
-// --- Evidence-gated residuals -----------------------------------------------
+// --- Measured residual coverage ----------------------------------------------
 
-/// Which residuals this plan's obligations, and the source it was planned
-/// against, actually caused proof to evaluate.
+/// Which residuals `prove_scale` actually evaluated, read from the
+/// comparison counts it publishes.
 ///
-/// Nine of the twelve are gated by [`ScaleProofObligations`], whose flags
-/// [`plan_scale`] already sets from the evidence each obligation reads. The
-/// other three — `track_value`, `mesh_position` and `unaffected_inverse_bind`
-/// — are proved unconditionally by `prove_scale`, because they are claims
-/// about payloads the plan declares it does *not* rewrite and an obligation
-/// flag would make "unaffected" unfalsifiable. Their loops can still have
-/// zero iterations, so their evidence predicate is re-derived here from the
-/// source document. Issues #316, #317 and #319 refine these predicates; the
-/// `{evaluated, max}` shape is what makes that a refinement rather than a
-/// contract change.
-fn residuals(source: &Document, plan: &ScalePlan, proof: &ScaleProof) -> ResidualsRecord {
-    let ScaleProofObligations {
-        prove_rest,
-        prove_unit_scale_postcondition,
-        prove_transform_only_affine,
-        prove_keys,
-        prove_cubic_interiors,
-        prove_trajectories,
-        prove_skin,
-        prove_bounds,
-        ..
-    } = plan.proof_obligations();
+/// **Measured, not re-derived.** Each `evaluated` is `count > 0` for the
+/// count [`ScaleProof`] writes at the point of comparison, beside the
+/// maximum that same comparison raises. Nothing here inspects the
+/// plan's obligations or the source's payloads: an obligation flag is at
+/// best a proxy for "the loop ran", exact for the nine obligations
+/// `plan_scale` gates on evidence and unavailable for the three
+/// `prove_scale` proves unconditionally — and a source-side predicate for
+/// those three would have to restate, across a crate boundary and enforced
+/// by nothing, private resolution rules that belong to `prove_scale`.
+///
+/// The published `{evaluated, max}` shape is unchanged; only the source of
+/// `evaluated` is. `max` is still `null` exactly when nothing was compared,
+/// which is what keeps §D.6's "a record stating residual 0.0 for a claim
+/// nothing checked" out of the record.
+fn residuals(proof: &ScaleProof) -> ResidualsRecord {
     ResidualsRecord {
-        rest_translation: Residual::new(prove_rest, proof.rest_translation_residual),
-        rest_rotation: Residual::new(prove_rest, proof.rest_rotation_residual),
-        unit_scale: Residual::new(prove_unit_scale_postcondition, proof.unit_scale_residual),
-        transform_only_affine: Residual::new(
-            prove_transform_only_affine,
+        rest_translation: Residual::measured(
+            proof.rest_translation_comparisons,
+            proof.rest_translation_residual,
+        ),
+        rest_rotation: Residual::measured(
+            proof.rest_rotation_comparisons,
+            proof.rest_rotation_residual,
+        ),
+        unit_scale: Residual::measured(proof.unit_scale_comparisons, proof.unit_scale_residual),
+        transform_only_affine: Residual::measured(
+            proof.transform_only_affine_comparisons,
             proof.transform_only_affine_residual,
         ),
-        track_value: Residual::new(has_track_values(source), proof.track_value_residual),
-        mesh_position: Residual::new(has_mesh_positions(source), proof.mesh_position_residual),
-        key_translation: Residual::new(prove_keys, proof.key_translation_residual),
-        cubic_interior: Residual::new(prove_cubic_interiors, proof.cubic_interior_residual),
-        trajectory: Residual::new(prove_trajectories, proof.trajectory_residual),
-        skin_matrix: Residual::new(prove_skin, proof.skin_matrix_residual),
-        bounds: Residual::new(prove_bounds, proof.bounds_residual),
-        unaffected_inverse_bind: Residual::new(
-            has_unaffected_stored_binds(source, plan),
+        track_value: Residual::measured(proof.track_value_comparisons, proof.track_value_residual),
+        mesh_position: Residual::measured(
+            proof.mesh_position_comparisons,
+            proof.mesh_position_residual,
+        ),
+        key_translation: Residual::measured(
+            proof.key_translation_comparisons,
+            proof.key_translation_residual,
+        ),
+        cubic_interior: Residual::measured(
+            proof.cubic_interior_comparisons,
+            proof.cubic_interior_residual,
+        ),
+        trajectory: Residual::measured(proof.trajectory_comparisons, proof.trajectory_residual),
+        skin_matrix: Residual::measured(proof.skin_matrix_comparisons, proof.skin_matrix_residual),
+        bounds: Residual::measured(proof.bounds_comparisons, proof.bounds_residual),
+        unaffected_inverse_bind: Residual::measured(
+            proof.unaffected_inverse_bind_comparisons,
             proof.unaffected_inverse_bind_residual,
         ),
     }
-}
-
-/// Whether any clip track carries a value element for the per-element
-/// comparison to read.
-fn has_track_values(source: &Document) -> bool {
-    use animsmith_core::model::TrackValues;
-    source.clips.iter().any(|clip| {
-        clip.tracks.iter().any(|track| match &track.values {
-            TrackValues::Vec3s(values) => !values.is_empty(),
-            TrackValues::Quats(values) => !values.is_empty(),
-        })
-    })
-}
-
-/// Whether any mesh primitive carries a base `POSITION` to compare.
-fn has_mesh_positions(source: &Document) -> bool {
-    source
-        .assets
-        .meshes
-        .iter()
-        .flat_map(|mesh| &mesh.primitives)
-        .any(|primitive| !primitive.positions.is_empty())
-}
-
-/// Whether any skin slot *outside* the affected closure has stored
-/// inverse-bind evidence on both the instance and the bone fallback the
-/// model contract defines.
-///
-/// Mirrors the resolution order `prove_scale` uses for that obligation: the
-/// instance's own `skin_ibms` when non-empty, else the bone's own
-/// `inverse_bind`. An instance with any affected joint is skipped there, so
-/// it is skipped here.
-fn has_unaffected_stored_binds(source: &Document, plan: &ScalePlan) -> bool {
-    let affected: std::collections::BTreeSet<usize> =
-        plan.affected_nodes().iter().copied().collect();
-    source.assets.instances.iter().any(|instance| {
-        if instance
-            .skin_joints
-            .iter()
-            .any(|joint| affected.contains(joint))
-        {
-            return false;
-        }
-        instance
-            .skin_joints
-            .iter()
-            .enumerate()
-            .any(|(slot, joint)| {
-                if !instance.skin_ibms.is_empty() {
-                    return instance.skin_ibms.get(slot).is_some();
-                }
-                source
-                    .skeleton
-                    .bones
-                    .get(*joint)
-                    .is_some_and(|bone| bone.inverse_bind.is_some())
-            })
-    })
 }
 
 // --- Argument validation ----------------------------------------------------
@@ -1051,7 +1008,7 @@ fn publish(
             domain_rewrites: plan.domain_rewrites().into(),
             proof: ProofRecord {
                 sample_time_count: proof.core.sample_time_count,
-                residuals: residuals(source.document(), &plan, &proof.core),
+                residuals: residuals(&proof.core),
                 artifact: ArtifactProofRecord {
                     length_factor_residual: Finite(proof.length_factor_residual),
                     dimensionless_residual: Finite(proof.dimensionless_residual),
@@ -1202,8 +1159,9 @@ mod tests {
 
     #[test]
     fn an_unevaluated_residual_publishes_null_rather_than_zero() {
-        let evaluated = Residual::new(true, 0.25);
-        let unevaluated = Residual::new(false, 0.0);
+        // One comparison that found `0.25`, and a residual nothing compared.
+        let evaluated = Residual::measured(1, 0.25);
+        let unevaluated = Residual::measured(0, 0.0);
         assert_eq!(
             serde_json::to_string(&evaluated).unwrap(),
             r#"{"evaluated":true,"max":0.25}"#
