@@ -1,7 +1,9 @@
-//! A primitive accessor typed for a different element than its `gltf`
-//! reader decodes must produce a `LoadError`, never a panic (invariant-1) —
-//! and every encoding glTF legitimately permits for a slot the loader reads
-//! must still load, with the same values its `FLOAT` equivalent produces.
+//! A primitive accessor its `gltf` reader cannot decode must produce a
+//! `LoadError`, never a panic (invariant-1) — whether it is typed for a
+//! different element than the reader's, or addressed in a buffer layout the
+//! reader cannot walk. The other half is over-rejection: every encoding and
+//! every layout glTF legitimately permits for a slot the loader reads must
+//! still load, with the same values its plainest equivalent produces.
 
 use animsmith_gltf::LoadError;
 use base64::Engine as _;
@@ -25,6 +27,74 @@ struct Accessor {
     /// `TEXCOORD_n` or `WEIGHTS_n`, so a fixture claiming to be one has to
     /// carry it — see `a_normalized_attribute_really_declares_the_flag`.
     normalized: bool,
+    layout: Layout,
+}
+
+impl Default for Accessor {
+    fn default() -> Self {
+        Self {
+            accessor_type: "SCALAR",
+            component_type: FLOAT,
+            count: 0,
+            bytes: Vec::new(),
+            bounds: None,
+            normalized: false,
+            layout: Layout::default(),
+        }
+    }
+}
+
+/// How an accessor addresses its bytes, as distinct from what element it
+/// declares. Everything here is a way to make `gltf`'s reader walk memory
+/// the accessor's `type`/`componentType` alone do not describe, which is
+/// the second half of "an encoding the reader can decode".
+#[derive(Default, Clone)]
+struct Layout {
+    /// `byteStride` on the buffer view this accessor owns.
+    stride: Option<u64>,
+    /// Written to the accessor's `count` verbatim, replacing the element
+    /// count the fixture's bytes actually hold.
+    declared_count: Option<u64>,
+    /// Read another accessor's buffer view at this byte offset instead of
+    /// owning one — what interleaving looks like in the file.
+    shared_view: Option<(usize, u64)>,
+    /// Emit no `bufferView`, which glTF permits only for a sparse accessor.
+    omit_view: bool,
+    sparse: Option<Sparse>,
+}
+
+/// A `sparse` block, always with `UNSIGNED_SHORT` indices.
+#[derive(Clone)]
+struct Sparse {
+    /// Written to `sparse.count` verbatim.
+    declared_count: u64,
+    indices: Vec<u16>,
+    /// Replacement elements, in the accessor's own encoding.
+    values: Vec<u8>,
+    /// `byteStride` on the view holding those replacement elements.
+    values_stride: Option<u64>,
+}
+
+impl Sparse {
+    /// A well-formed block replacing element 0 with `values`.
+    fn replacing_first(values: Vec<u8>) -> Self {
+        Self {
+            declared_count: 1,
+            indices: vec![0],
+            values,
+            values_stride: None,
+        }
+    }
+
+    fn declaring_count(mut self, count: u64) -> Self {
+        self.declared_count = count;
+        self
+    }
+
+    fn values_stride(mut self, stride: u64) -> Self {
+        self.values_stride = Some(stride);
+        self
+    }
 }
 
 fn f32s(values: &[f32]) -> Vec<u8> {
@@ -48,6 +118,11 @@ struct Primitive {
     attributes: Vec<(String, usize)>,
     indices: Option<usize>,
     inverse_bind: Option<usize>,
+    /// Filler meshes emitted ahead of this one, so the mesh index a refusal
+    /// reports is something other than 0.
+    preceding_meshes: usize,
+    /// Filler primitives emitted ahead of this one inside its own mesh.
+    preceding_primitives: usize,
 }
 
 impl Primitive {
@@ -59,6 +134,8 @@ impl Primitive {
             attributes: Vec::new(),
             indices: None,
             inverse_bind: None,
+            preceding_meshes: 0,
+            preceding_primitives: 0,
         };
         let positions = primitive.push(Accessor {
             accessor_type: "VEC3",
@@ -67,6 +144,7 @@ impl Primitive {
             bytes: f32s(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
             bounds: Some((vec![0.0, 0.0, 0.0], vec![1.0, 1.0, 0.0])),
             normalized: false,
+            ..Accessor::default()
         });
         primitive.attributes.push(("POSITION".into(), positions));
         primitive
@@ -126,6 +204,7 @@ impl Primitive {
             bytes,
             bounds,
             normalized,
+            ..Accessor::default()
         });
         self.attributes.retain(|(name, _)| name != semantic);
         self.attributes.push((semantic.to_owned(), index));
@@ -146,6 +225,7 @@ impl Primitive {
             bytes,
             bounds: None,
             normalized: false,
+            ..Accessor::default()
         });
         self.indices = Some(index);
         self
@@ -165,6 +245,7 @@ impl Primitive {
             bytes,
             bounds: None,
             normalized: false,
+            ..Accessor::default()
         });
         self.inverse_bind = Some(index);
         self
@@ -175,32 +256,106 @@ impl Primitive {
         self
     }
 
+    /// Emit this primitive as mesh `mesh`, primitive `primitive`, padding
+    /// with copies of the default `POSITION`-only triangle. Every other
+    /// fixture is mesh 0 primitive 0, which is exactly what lets a refusal
+    /// report a constant and go unnoticed.
+    fn at(mut self, mesh: usize, primitive: usize) -> Self {
+        self.preceding_meshes = mesh;
+        self.preceding_primitives = primitive;
+        self
+    }
+
+    /// Apply a layout override to the accessor most recently declared, so
+    /// it attaches to exactly the slot the test just named.
+    fn layout(mut self, edit: impl FnOnce(&mut Layout)) -> Self {
+        let accessor = self.accessors.last_mut().expect("an accessor is declared");
+        edit(&mut accessor.layout);
+        self
+    }
+
+    /// Put `byteStride` on the buffer view that accessor owns.
+    fn stride(self, stride: u64) -> Self {
+        self.layout(|layout| layout.stride = Some(stride))
+    }
+
+    /// Write `count` into the accessor verbatim, whatever its bytes hold.
+    fn declared_count(self, count: u64) -> Self {
+        self.layout(|layout| layout.declared_count = Some(count))
+    }
+
+    fn sparse(self, sparse: Sparse) -> Self {
+        self.layout(|layout| layout.sparse = Some(sparse))
+    }
+
+    /// Drop the accessor's `bufferView`, leaving its `sparse` block the only
+    /// source of values.
+    fn without_buffer_view(self) -> Self {
+        self.layout(|layout| layout.omit_view = true)
+    }
+
+    /// Read `semantic`'s buffer view at `byte_offset` instead of owning one.
+    fn interleaved_with(self, semantic: &str, byte_offset: u64) -> Self {
+        let owner = self
+            .attributes
+            .iter()
+            .find(|(name, _)| name == semantic)
+            .map(|(_, index)| *index)
+            .expect("the interleaved-with semantic is declared");
+        self.layout(|layout| layout.shared_view = Some((owner, byte_offset)))
+    }
+
     fn to_json(&self) -> Vec<u8> {
         let mut blob = Vec::new();
         let mut views = Vec::new();
         let mut accessors = Vec::new();
+        // Which buffer view each accessor reads, so an interleaved accessor
+        // can point at the view an earlier one owns.
+        let mut view_of: Vec<Option<usize>> = Vec::new();
         for accessor in &self.accessors {
-            while blob.len() % 4 != 0 {
-                blob.push(0);
-            }
-            views.push(json!({
-                "buffer": 0,
-                "byteOffset": blob.len(),
-                "byteLength": accessor.bytes.len()
-            }));
-            blob.extend_from_slice(&accessor.bytes);
+            let view = if accessor.layout.omit_view {
+                None
+            } else if let Some((owner, _)) = accessor.layout.shared_view {
+                view_of[owner]
+            } else {
+                Some(push_view(
+                    &mut blob,
+                    &mut views,
+                    &accessor.bytes,
+                    accessor.layout.stride,
+                ))
+            };
+            view_of.push(view);
             let mut json = json!({
-                "bufferView": views.len() - 1,
                 "componentType": accessor.component_type,
-                "count": accessor.count,
+                "count": accessor.layout.declared_count.unwrap_or(accessor.count as u64),
                 "type": accessor.accessor_type
             });
+            if let Some(view) = view {
+                json["bufferView"] = json!(view);
+            }
+            if let Some((_, byte_offset)) = accessor.layout.shared_view {
+                json["byteOffset"] = json!(byte_offset);
+            }
             if let Some((min, max)) = &accessor.bounds {
                 json["min"] = json!(min);
                 json["max"] = json!(max);
             }
             if accessor.normalized {
                 json["normalized"] = json!(true);
+            }
+            if let Some(sparse) = &accessor.layout.sparse {
+                let indices = push_view(&mut blob, &mut views, &u16s(&sparse.indices), None);
+                let values = push_view(&mut blob, &mut views, &sparse.values, sparse.values_stride);
+                json["sparse"] = json!({
+                    "count": sparse.declared_count,
+                    "indices": {
+                        "bufferView": indices,
+                        "byteOffset": 0,
+                        "componentType": UNSIGNED_SHORT
+                    },
+                    "values": { "bufferView": values, "byteOffset": 0 }
+                });
             }
             accessors.push(json);
         }
@@ -213,7 +368,15 @@ impl Primitive {
         if let Some(indices) = self.indices {
             primitive["indices"] = json!(indices);
         }
-        let mut node = json!({ "name": "mesh-node", "mesh": 0 });
+        // The filler carries the same POSITION accessor this fixture's own
+        // default does, so padding adds meshes and primitives without adding
+        // anything else a check could trip over.
+        let filler = json!({ "mode": 4, "attributes": { "POSITION": 0 } });
+        let mut siblings = vec![filler.clone(); self.preceding_primitives];
+        siblings.push(primitive);
+        let mut meshes = vec![json!({ "primitives": [filler] }); self.preceding_meshes];
+        meshes.push(json!({ "primitives": siblings }));
+        let mut node = json!({ "name": "mesh-node", "mesh": self.preceding_meshes });
         let mut document = json!({
             "asset": { "version": "2.0" },
             "buffers": [{
@@ -225,7 +388,7 @@ impl Primitive {
             }],
             "bufferViews": views,
             "accessors": accessors,
-            "meshes": [{ "primitives": [primitive] }],
+            "meshes": meshes,
             "scenes": [{ "nodes": [0] }],
             "scene": 0
         });
@@ -250,10 +413,48 @@ impl Primitive {
         assert_eq!(error.to_string(), expected);
     }
 
+    fn expect_layout_refusal(&self, expected: &str) {
+        let error = self
+            .load()
+            .expect_err("an accessor the reader cannot walk must be refused");
+        assert!(
+            matches!(error, LoadError::PrimitiveAccessorLayout { .. }),
+            "expected a PrimitiveAccessorLayout refusal, got {error:?}"
+        );
+        assert_eq!(error.to_string(), expected);
+    }
+
     fn expect_primitive(&self) -> animsmith_core::model::Primitive {
         let document = self.load().expect("valid encoding must load");
-        document.assets.meshes[0].primitives[0].clone()
+        document.assets.meshes[self.preceding_meshes].primitives[self.preceding_primitives].clone()
     }
+}
+
+/// Append `bytes` to the buffer as a fresh 4-byte-aligned buffer view.
+/// glTF forbids a zero-length view, so an empty one still gets a byte.
+fn push_view(
+    blob: &mut Vec<u8>,
+    views: &mut Vec<Value>,
+    bytes: &[u8],
+    stride: Option<u64>,
+) -> usize {
+    while !blob.len().is_multiple_of(4) {
+        blob.push(0);
+    }
+    let mut view = json!({
+        "buffer": 0,
+        "byteOffset": blob.len(),
+        "byteLength": bytes.len().max(1)
+    });
+    if let Some(stride) = stride {
+        view["byteStride"] = json!(stride);
+    }
+    blob.extend_from_slice(bytes);
+    if bytes.is_empty() {
+        blob.push(0);
+    }
+    views.push(view);
+    views.len() - 1
 }
 
 // --- Refusals: wrong `type` -------------------------------------------
@@ -434,9 +635,10 @@ fn integer_tex_coords_without_the_normalized_flag_still_load() {
     // They decode to the same values as the flagged fixtures above because
     // `gltf`'s `into_f32()` rescales `UNSIGNED_BYTE`/`UNSIGNED_SHORT` from
     // full scale whatever the flag says — the flag is behaviourally inert
-    // on the read path. That is `gltf`'s extraction behaviour, pinned here
-    // as what this loader currently hands checks, not a claim that it is
-    // the authored value.
+    // on the load path, and only there: the `scale` preflight reads it to
+    // raise `UnsafeAccessorLayout`. That is `gltf`'s extraction behaviour,
+    // pinned here as what this loader currently hands checks, not a claim
+    // that it is the authored value.
     for primitive in [
         Primitive::new().attribute("TEXCOORD_0", "VEC2", UNSIGNED_BYTE, 3, u8s(&UV_BYTES)),
         Primitive::new().attribute("TEXCOORD_0", "VEC2", UNSIGNED_SHORT, 3, u16s(&UV_SHORTS)),
@@ -573,6 +775,12 @@ fn integer_weights_without_the_normalized_flag_still_load() {
 /// flagged and unflagged fixtures decode identically. Only the document
 /// distinguishes them — so assert on the document, and the "normalized"
 /// tests above cannot silently decay into duplicates of the unflagged ones.
+///
+/// Every normalized fixture is listed here by name, not a representative
+/// one: the flag is emitted per accessor, so a serializer that emitted it
+/// for `UNSIGNED_BYTE` only would leave both `UNSIGNED_SHORT` fixtures
+/// silently unflagged — duplicates of the "without the flag" tests, with
+/// nothing left proving a normalized accessor loads at all.
 #[test]
 fn a_normalized_attribute_really_declares_the_flag() {
     let flag_of = |primitive: &Primitive, semantic: &str| -> Option<Value> {
@@ -586,27 +794,91 @@ fn a_normalized_attribute_really_declares_the_flag() {
             .cloned()
     };
 
-    let uvs = Primitive::new().normalized_attribute(
-        "TEXCOORD_0",
-        "VEC2",
-        UNSIGNED_BYTE,
-        3,
-        u8s(&UV_BYTES),
-    );
-    assert_eq!(flag_of(&uvs, "TEXCOORD_0"), Some(json!(true)));
+    // One row per fixture the "normalized ... load as the float equivalent"
+    // tests build, across both integer widths and both slots that take one.
+    let flagged: [(&str, &str, Primitive); 4] = [
+        (
+            "UNSIGNED_BYTE TEXCOORD_0",
+            "TEXCOORD_0",
+            Primitive::new().normalized_attribute(
+                "TEXCOORD_0",
+                "VEC2",
+                UNSIGNED_BYTE,
+                3,
+                u8s(&UV_BYTES),
+            ),
+        ),
+        (
+            "UNSIGNED_SHORT TEXCOORD_0",
+            "TEXCOORD_0",
+            Primitive::new().normalized_attribute(
+                "TEXCOORD_0",
+                "VEC2",
+                UNSIGNED_SHORT,
+                3,
+                u16s(&UV_SHORTS),
+            ),
+        ),
+        (
+            "UNSIGNED_BYTE WEIGHTS_0",
+            "WEIGHTS_0",
+            skinned_normalized_weights(
+                UNSIGNED_SHORT,
+                u16s(&JOINT_VALUES),
+                UNSIGNED_BYTE,
+                weight_bytes(),
+            ),
+        ),
+        (
+            "UNSIGNED_SHORT WEIGHTS_0",
+            "WEIGHTS_0",
+            skinned_normalized_weights(
+                UNSIGNED_SHORT,
+                u16s(&JOINT_VALUES),
+                UNSIGNED_SHORT,
+                weight_shorts(),
+            ),
+        ),
+    ];
+    for (name, semantic, primitive) in &flagged {
+        assert_eq!(
+            flag_of(primitive, semantic),
+            Some(json!(true)),
+            "the {name} fixture must really carry the flag"
+        );
+    }
 
-    let weights = skinned_normalized_weights(
-        UNSIGNED_SHORT,
-        u16s(&JOINT_VALUES),
-        UNSIGNED_BYTE,
-        weight_bytes(),
-    );
-    assert_eq!(flag_of(&weights, "WEIGHTS_0"), Some(json!(true)));
     // Joint indices and the bare builder must stay unflagged, or the
     // "without the flag" tests would not be testing what they claim.
-    assert_eq!(flag_of(&weights, "JOINTS_0"), None);
-    let bare = Primitive::new().attribute("TEXCOORD_0", "VEC2", UNSIGNED_BYTE, 3, u8s(&UV_BYTES));
-    assert_eq!(flag_of(&bare, "TEXCOORD_0"), None);
+    let unflagged: [(&str, &str, Primitive); 3] = [
+        (
+            "JOINTS_0 alongside a normalized WEIGHTS_0",
+            "JOINTS_0",
+            skinned_normalized_weights(
+                UNSIGNED_SHORT,
+                u16s(&JOINT_VALUES),
+                UNSIGNED_BYTE,
+                weight_bytes(),
+            ),
+        ),
+        (
+            "UNSIGNED_BYTE TEXCOORD_0 declared bare",
+            "TEXCOORD_0",
+            Primitive::new().attribute("TEXCOORD_0", "VEC2", UNSIGNED_BYTE, 3, u8s(&UV_BYTES)),
+        ),
+        (
+            "UNSIGNED_SHORT TEXCOORD_0 declared bare",
+            "TEXCOORD_0",
+            Primitive::new().attribute("TEXCOORD_0", "VEC2", UNSIGNED_SHORT, 3, u16s(&UV_SHORTS)),
+        ),
+    ];
+    for (name, semantic, primitive) in &unflagged {
+        assert_eq!(
+            flag_of(primitive, semantic),
+            None,
+            "the {name} fixture must stay unflagged"
+        );
+    }
 }
 
 #[test]
@@ -686,4 +958,297 @@ fn a_well_formed_inverse_bind_accessor_still_loads() {
         .load()
         .expect("a MAT4 of FLOAT inverse-bind accessor loads");
     assert_eq!(document.assets.instances[0].skin_ibms.len(), 1);
+}
+
+// --- Refusals: a layout the reader cannot walk ------------------------
+
+/// The default triangle's positions, for fixtures that re-encode
+/// `POSITION` rather than take the builder's own.
+const TRIANGLE_POSITIONS: [f32; 9] = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+
+fn identity_matrix() -> Vec<u8> {
+    f32s(&[
+        1.0, 0.0, 0.0, 0.0, //
+        0.0, 1.0, 0.0, 0.0, //
+        0.0, 0.0, 1.0, 0.0, //
+        0.0, 0.0, 0.0, 1.0,
+    ])
+}
+
+/// A `POSITION` on the builder's own buffer view, so a `byteStride` can be
+/// put on it.
+fn positions_with_own_view() -> Primitive {
+    Primitive::new().attribute("POSITION", "VEC3", FLOAT, 3, f32s(&TRIANGLE_POSITIONS))
+}
+
+#[test]
+fn loader_refuses_a_byte_stride_shorter_than_its_element() {
+    // `gltf-json`'s `Stride` validator accepts any 4..=252, so a stride
+    // below the element size passes `Validate` and then trips
+    // `debug_assert!(stride >= size_of::<T>())` inside `Iter::new`.
+    for stride in [4, 8] {
+        positions_with_own_view()
+            .stride(stride)
+            .expect_layout_refusal(&format!(
+                "mesh 0 primitive 0 POSITION: accessor 1 reads its elements from buffer view 1 \
+             at byteStride {stride}, shorter than the 12-byte element it strides over"
+            ));
+    }
+}
+
+#[test]
+fn loader_refuses_a_short_byte_stride_on_every_slot_it_reads() {
+    // The same hole on the other read slots, so deleting the check from any
+    // one of them is caught: NORMAL and TEXCOORD_0 assert in `Iter::new`,
+    // and WEIGHTS_0 only reaches its reader because JOINTS_0 is present.
+    Primitive::new()
+        .attribute("NORMAL", "VEC3", FLOAT, 3, f32s(&[0.0; 9]))
+        .stride(8)
+        .expect_layout_refusal(
+            "mesh 0 primitive 0 NORMAL: accessor 1 reads its elements from buffer view 1 \
+             at byteStride 8, shorter than the 12-byte element it strides over",
+        );
+    Primitive::new()
+        .attribute("TEXCOORD_0", "VEC2", FLOAT, 3, f32s(&[0.0; 6]))
+        .stride(4)
+        .expect_layout_refusal(
+            "mesh 0 primitive 0 TEXCOORD_0: accessor 1 reads its elements from buffer view 1 \
+             at byteStride 4, shorter than the 8-byte element it strides over",
+        );
+    Primitive::new()
+        .attribute("JOINTS_0", "VEC4", UNSIGNED_SHORT, 3, u16s(&JOINT_VALUES))
+        .attribute("WEIGHTS_0", "VEC4", FLOAT, 3, f32s(&WEIGHT_FLOATS))
+        .stride(12)
+        .expect_layout_refusal(
+            "mesh 0 primitive 0 WEIGHTS_0: accessor 2 reads its elements from buffer view 2 \
+             at byteStride 12, shorter than the 16-byte element it strides over",
+        );
+}
+
+#[test]
+fn loader_refuses_a_sparse_block_of_count_zero() {
+    // `sparse_count - 1` underflows in `Iter::new` before either branch
+    // reads a byte, so it panics with and without a base `bufferView`.
+    // Every count-zero guard in the loader reads `Accessor::count()`, which
+    // is 3 here and says nothing about the sparse block.
+    positions_with_own_view()
+        .sparse(Sparse::replacing_first(f32s(&[9.0, 9.0, 9.0])).declaring_count(0))
+        .expect_layout_refusal(
+            "mesh 0 primitive 0 POSITION: accessor 1 declares a sparse block of count 0, \
+             which its reader cannot walk",
+        );
+    Primitive::new()
+        .attribute("TEXCOORD_0", "VEC2", FLOAT, 3, Vec::new())
+        .without_buffer_view()
+        .sparse(Sparse::replacing_first(f32s(&[9.0, 9.0])).declaring_count(0))
+        .expect_layout_refusal(
+            "mesh 0 primitive 0 TEXCOORD_0: accessor 1 declares a sparse block of count 0, \
+             which its reader cannot walk",
+        );
+}
+
+#[test]
+fn loader_refuses_a_count_whose_byte_extent_overflows() {
+    // Nothing relates `count` to the view it reads, so `stride * (count - 1)`
+    // overflows `usize` outright on a large enough declaration.
+    positions_with_own_view()
+        .declared_count(u64::MAX)
+        .expect_layout_refusal(
+            "mesh 0 primitive 0 POSITION: accessor 1 walks 18446744073709551615 elements \
+             of 12 bytes at byteStride 12 from byteOffset 0, a byte extent that overflows",
+        );
+}
+
+#[test]
+fn loader_refuses_a_sparse_count_whose_byte_extent_overflows() {
+    // `sparse.count` is unbounded in exactly the same way, and is walked
+    // over the index view before the accessor's own is touched.
+    positions_with_own_view()
+        .sparse(Sparse::replacing_first(f32s(&[9.0, 9.0, 9.0])).declaring_count(u64::MAX))
+        .expect_layout_refusal(
+            "mesh 0 primitive 0 POSITION: accessor 1 walks 18446744073709551615 sparse indices \
+             of 2 bytes at byteStride 2 from byteOffset 0, a byte extent that overflows",
+        );
+}
+
+#[test]
+fn loader_refuses_sparse_values_strided_shorter_than_their_element() {
+    // The sparse branch of `Iter::new` compiles no stride assertion, so a
+    // short-strided values view reaches `Item::from_slice`, which asserts
+    // on the truncated slice instead. Same defect, different panic site.
+    positions_with_own_view()
+        .sparse(Sparse::replacing_first(f32s(&[9.0, 9.0, 9.0])).values_stride(4))
+        .expect_layout_refusal(
+            "mesh 0 primitive 0 POSITION: accessor 1 reads its sparse values from buffer view 3 \
+             at byteStride 4, shorter than the 12-byte element it strides over",
+        );
+}
+
+// --- Layouts that must keep loading -----------------------------------
+
+#[test]
+fn an_interleaved_buffer_view_still_decodes_every_attribute_on_it() {
+    // The over-rejection risk of the stride check: a correctly-sized
+    // interleaved view is what real exporters emit. POSITION and
+    // TEXCOORD_0 share one stride-20 view at offsets 0 and 12.
+    let mut bytes = Vec::new();
+    for vertex in 0..3 {
+        bytes.extend(f32s(&TRIANGLE_POSITIONS[vertex * 3..vertex * 3 + 3]));
+        bytes.extend(f32s(&EXPECTED_UVS[vertex]));
+    }
+    let primitive = Primitive::new()
+        .attribute("POSITION", "VEC3", FLOAT, 3, bytes)
+        .stride(20)
+        .attribute("TEXCOORD_0", "VEC2", FLOAT, 3, Vec::new())
+        .interleaved_with("POSITION", 12)
+        .expect_primitive();
+    assert_eq!(primitive.positions.len(), 3);
+    assert_eq!(primitive.positions[1].x, 1.0);
+    assert_eq!(primitive.uvs, EXPECTED_UVS);
+}
+
+#[test]
+fn a_sparse_accessor_with_a_nonzero_count_still_loads() {
+    // The over-rejection risk of the sparse checks. The block really is
+    // applied: vertex 0 comes from the sparse values, not the base view.
+    let primitive = positions_with_own_view()
+        .sparse(Sparse::replacing_first(f32s(&[9.0, 9.0, 9.0])))
+        .expect_primitive();
+    assert_eq!(primitive.positions.len(), 3);
+    assert_eq!(primitive.positions[0].x, 9.0);
+    assert_eq!(primitive.positions[1].x, 1.0);
+}
+
+#[test]
+fn a_count_that_overruns_its_buffer_view_still_loads_empty() {
+    // Pins the documented non-guarantee: only extent arithmetic that
+    // *overflows* is refused. A `count` that merely exceeds its 36-byte
+    // view makes `Iter::new` answer `None`, and `read_positions` is
+    // `unwrap_or_default()`, so the primitive is pushed with no geometry
+    // rather than refused. Changing that is a behaviour change, not a
+    // tightening of this check.
+    let primitive = positions_with_own_view()
+        .declared_count(100)
+        .expect_primitive();
+    assert!(primitive.positions.is_empty());
+}
+
+// --- The refusal names the slot it found ------------------------------
+
+#[test]
+fn a_refusal_names_the_mesh_and_primitive_it_found() {
+    // Every other fixture is mesh 0 primitive 0, which is exactly what lets
+    // a hard-coded 0 in either field go unnoticed. Naming the primitive is
+    // an acceptance criterion of #312.
+    Primitive::new()
+        .at(1, 2)
+        .attribute("TEXCOORD_0", "VEC3", FLOAT, 3, f32s(&[0.0; 9]))
+        .expect_refusal(
+            "mesh 1 primitive 2 TEXCOORD_0: accessor 1 is VEC3 of FLOAT, \
+             but the loader reads VEC2 of UNSIGNED_BYTE, UNSIGNED_SHORT, or FLOAT",
+        );
+    positions_with_own_view()
+        .at(2, 1)
+        .stride(4)
+        .expect_layout_refusal(
+            "mesh 2 primitive 1 POSITION: accessor 1 reads its elements from buffer view 1 \
+             at byteStride 4, shorter than the 12-byte element it strides over",
+        );
+}
+
+#[test]
+fn a_refusal_spells_the_matrix_accessor_types() {
+    // `MAT2` and `MAT3` reach a message only through a slot that refuses
+    // them, so nothing else in this file would notice the two names being
+    // swapped.
+    Primitive::new()
+        .attribute("TEXCOORD_0", "MAT2", FLOAT, 3, f32s(&[0.0; 12]))
+        .expect_refusal(
+            "mesh 0 primitive 0 TEXCOORD_0: accessor 1 is MAT2 of FLOAT, \
+             but the loader reads VEC2 of UNSIGNED_BYTE, UNSIGNED_SHORT, or FLOAT",
+        );
+    Primitive::new()
+        .attribute("TEXCOORD_0", "MAT3", FLOAT, 3, f32s(&[0.0; 27]))
+        .expect_refusal(
+            "mesh 0 primitive 0 TEXCOORD_0: accessor 1 is MAT3 of FLOAT, \
+             but the loader reads VEC2 of UNSIGNED_BYTE, UNSIGNED_SHORT, or FLOAT",
+        );
+}
+
+#[test]
+fn a_count_zero_accessor_is_still_judged() {
+    // The check is deliberately independent of the count-zero guards that
+    // decide whether a read happens, so that moving one of those guards
+    // cannot open a hole. A count-0 `TEXCOORD_0` is treated as absent by
+    // the loader and would never reach a reader — and is refused anyway.
+    Primitive::new()
+        .attribute("TEXCOORD_0", "VEC3", FLOAT, 0, f32s(&[0.0; 9]))
+        .expect_refusal(
+            "mesh 0 primitive 0 TEXCOORD_0: accessor 1 is VEC3 of FLOAT, \
+             but the loader reads VEC2 of UNSIGNED_BYTE, UNSIGNED_SHORT, or FLOAT",
+        );
+}
+
+// --- Inverse binds: the same judgement, a different answer ------------
+
+/// `inverseBindMatrices` is unreadable for `reason`, and stays source
+/// evidence rather than refusing the document.
+fn expect_unreadable_inverse_bind(primitive: Primitive, reason: &str) {
+    use animsmith_core::model::SourceInverseBindAccessorStatus;
+    let document = primitive
+        .load()
+        .unwrap_or_else(|error| panic!("{reason} must not refuse the document: {error}"));
+    let skin = &document.assets.source_skeleton.skins[0];
+    assert_eq!(
+        skin.inverse_bind_accessor.status,
+        SourceInverseBindAccessorStatus::Unreadable,
+        "{reason}"
+    );
+    assert!(skin.inverse_bind_accessor.matrices.is_empty(), "{reason}");
+    assert!(
+        document.assets.instances[0].skin_ibms.is_empty(),
+        "{reason}"
+    );
+    assert!(
+        document.skeleton.bones[0].inverse_bind.is_none(),
+        "{reason}"
+    );
+}
+
+#[test]
+fn an_unsigned_int_inverse_bind_stays_unreadable() {
+    // The silent-misread class for this slot: a MAT4 of UNSIGNED_INT is 64
+    // bytes exactly like `[[f32; 4]; 4]`, so nothing asserts and every
+    // inverse bind would load as the float reading of an integer's bits.
+    // The other inverse-bind refusal test uses a VEC4, which exercises only
+    // the dimension half of the check.
+    expect_unreadable_inverse_bind(
+        Primitive::new().inverse_bind("MAT4", UNSIGNED_INT, 1, u32s(&[1; 16])),
+        "a MAT4 of UNSIGNED_INT inverse bind",
+    );
+}
+
+#[test]
+fn an_inverse_bind_the_reader_cannot_walk_stays_unreadable() {
+    // Layout is judged for this slot too, and with the same answer: a
+    // stride-4 view under a 64-byte element panics in `Iter::new` exactly
+    // as a vertex attribute would.
+    expect_unreadable_inverse_bind(
+        Primitive::new()
+            .inverse_bind("MAT4", FLOAT, 1, identity_matrix())
+            .stride(4),
+        "an inverse bind on a stride-4 view",
+    );
+    expect_unreadable_inverse_bind(
+        Primitive::new()
+            .inverse_bind("MAT4", FLOAT, 1, identity_matrix())
+            .declared_count(u64::MAX),
+        "an inverse bind whose byte extent overflows",
+    );
+    expect_unreadable_inverse_bind(
+        Primitive::new()
+            .inverse_bind("MAT4", FLOAT, 1, identity_matrix())
+            .sparse(Sparse::replacing_first(identity_matrix()).declaring_count(0)),
+        "an inverse bind with a sparse block of count 0",
+    );
 }
