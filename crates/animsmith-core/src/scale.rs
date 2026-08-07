@@ -711,11 +711,20 @@ pub enum ScaleError {
     /// source-node projection is not a downward-closed parent-preserving
     /// injection into `document.skeleton`: a projected node names a bone the
     /// skeleton does not have, shares its bone with another projected node,
-    /// names a parent that is not itself projected, or disagrees with
-    /// [`crate::model::Bone::parent`] about who its parent is — or a bone the
-    /// projection describes has a [`crate::model::Bone::parent`] child it does
-    /// not. A source node naming *no* bone is not one of these: it never
-    /// became a bone, so nothing can displace it.
+    /// names a parent chain that leaves the table or never terminates, or
+    /// disagrees with [`crate::model::Bone::parent`] about who its parent is —
+    /// or a bone the projection describes has a
+    /// [`crate::model::Bone::parent`] child it does not.
+    ///
+    /// A source node naming *no* bone is none of these by itself: it never
+    /// became a bone, so nothing can displace it, and it is not in the
+    /// skeleton for [`crate::model::Bone::parent`] to name. Such a row *on*
+    /// the chain is stepped over rather than refused — the glTF container node
+    /// above the first joint is the ordinary case — so the comparison is
+    /// against the nearest projected ancestor. It still fails if that walk
+    /// leaves the table or cycles, and an unprojected row does not exempt a
+    /// *bone*: the downward-closure case above is reported at the projected
+    /// parent regardless.
     ///
     /// `source_node_index` names the projected node that failed, which for the
     /// downward-closure case is the projected *parent* — the unprojected child
@@ -1253,9 +1262,10 @@ fn validate_source_skeleton_identity(document: &Document) -> Result<(), ScaleErr
 ///   nodes mapping onto one bone makes "the bone this selector resolves to"
 ///   ambiguous, and every resolution in this module would silently take
 ///   whichever it met first;
-/// - **parent-preserving** — for a node that names a bone, `bone(parent(n))`
-///   equals `skeleton.bones[bone(n)].parent`, including the root case where
-///   both sides must be `None`;
+/// - **parent-preserving** — for a node that names a bone,
+///   `bone(nearest projected ancestor of n)` equals
+///   `skeleton.bones[bone(n)].parent`, including the root case where both
+///   sides must be `None`;
 /// - **downward-closed** — a bone with no projecting node must not be the
 ///   `Bone::parent` child of a bone that has one.
 ///
@@ -1266,10 +1276,23 @@ fn validate_source_skeleton_identity(document: &Document) -> Result<(), ScaleErr
 /// therefore validated over the projected nodes only, and a table carrying
 /// bare source-node evidence alongside them stays legal.
 ///
+/// This is why *parent-preserving* compares against the nearest projected
+/// ancestor rather than the immediate parent row. An unprojected row on the
+/// chain is not a bone, so `Bone::parent` cannot name it and it cannot be the
+/// value the comparison wants; the glTF shape where the joints hang under an
+/// `Armature`/transform node that is not itself a joint is the ordinary case,
+/// and pruned intermediates and camera or mesh nodes between two joints are
+/// the same shape. The walk still fails closed if the chain leaves the table
+/// (`parent_source_node_is_not_projected`) or never terminates
+/// (`cyclic_unprojected_source_parent_chain`) — the projection has to name
+/// *some* determinate ancestor for the comparison to mean anything.
+///
 /// Full surjectivity is deliberately *not* required either, but downward
 /// closure is, and the difference is the whole of the mechanism above. An
-/// unprojected bone with no projected ancestor is genuinely unreachable by a
-/// rebase: nothing puts it in `plan.affected_nodes` and nothing above it moves.
+/// unprojected bone with no projected ancestor is genuinely unreachable by the
+/// displacement: a rest/bind closure never reaches it, and the whole-document
+/// operation puts every bone in `plan.affected_nodes` and rebases it with the
+/// rest, so in neither case does something above it move while it stays put.
 /// An unprojected bone whose *parent* is projected is the opposite case — the
 /// parent can be affected while the child is not, which is precisely the
 /// world-rest displacement this function exists to refuse, reached from the
@@ -1277,6 +1300,20 @@ fn validate_source_skeleton_identity(document: &Document) -> Result<(), ScaleErr
 /// surjectivity is also what keeps two candidate-structure refusals reachable:
 /// an empty projection under `Complete` coverage stays accepted, as does a
 /// skeleton carrying whole extra roots the projection does not describe.
+///
+/// The displacement is what *motivates* the closure rule, not the scope it is
+/// applied at. Under [`ScaleOperation::WholeDocumentLinearUnits`] the
+/// displacement is impossible — `plan_whole_document` affects every bone, so
+/// nothing is left behind while its parent moves — and the same is true of
+/// the parent-preserving comparison. Both are still enforced there, because
+/// this is one predicate about a *document*, evaluated identically wherever
+/// [`validate_document_shape`] runs: whether the projection and the skeleton
+/// describe the same tree is a fact about the input, not about what a caller
+/// intends to do with it, and this module reads both hierarchies in the same
+/// run either way. Scoping the rules per operation would make the invariant
+/// below conditional and would silently exempt the next partial-domain
+/// operation that forgets to opt in. The price is refusing a shape no
+/// in-tree producer emits — see `crates/animsmith/tests/parent_chain_agreement.rs`.
 ///
 /// Together these give the property the rest of this module relies on: the
 /// rest/bind closure is downward-closed in source-node space, so its image
@@ -1330,17 +1367,40 @@ fn validate_parent_chain_agreement(document: &Document) -> Result<(), ScaleError
         skeleton_parents.push((node, skeleton_parent));
     }
 
+    let by_source_index = source_node_index_map(document);
     for (node, skeleton_parent) in skeleton_parents {
-        let projected_parent = match node.parent_source_node_index {
-            None => None,
-            Some(parent_source_node_index) => {
-                Some(*bone_of_source.get(&parent_source_node_index).ok_or(
-                    ScaleError::ParentChainDisagreement {
-                        source_node_index: node.source_node_index,
-                        reason: "parent_source_node_is_not_projected",
-                    },
-                )?)
+        // The projection's *nearest projected ancestor*, not its immediate
+        // parent row. Rows that name no bone never became bones, so they are
+        // not in the skeleton to be named by `Bone::parent` and cannot break
+        // the chain by sitting on it: the glTF container node above the first
+        // joint, a pruned intermediate, a camera or mesh node between two
+        // joints. Skipping them is what makes those ordinary shapes legal;
+        // stopping at them would refuse every rig whose joints hang under an
+        // `Armature`. The walk is bounded by the table size, so a chain that
+        // never reaches a projected node or `None` fails closed.
+        let mut cursor = node.parent_source_node_index;
+        let mut steps = 0usize;
+        let projected_parent = loop {
+            let Some(parent_source_node_index) = cursor else {
+                break None;
+            };
+            if let Some(&bone) = bone_of_source.get(&parent_source_node_index) {
+                break Some(bone);
             }
+            steps += 1;
+            if steps > source_skeleton.nodes.len() {
+                return Err(ScaleError::ParentChainDisagreement {
+                    source_node_index: node.source_node_index,
+                    reason: "cyclic_unprojected_source_parent_chain",
+                });
+            }
+            let parent = by_source_index.get(&parent_source_node_index).ok_or(
+                ScaleError::ParentChainDisagreement {
+                    source_node_index: node.source_node_index,
+                    reason: "parent_source_node_is_not_projected",
+                },
+            )?;
+            cursor = parent.parent_source_node_index;
         };
         if projected_parent != skeleton_parent {
             return Err(ScaleError::ParentChainDisagreement {
@@ -6446,25 +6506,53 @@ mod tests {
                 doc.assets.source_skeleton.nodes[2].bone = Some(1);
             }),
             // A parent index naming no row of the table at all: the subtree
-            // shape, whose honest coverage declaration is `Unavailable`.
+            // shape, whose honest coverage declaration is `Unavailable`. The
+            // ancestor walk steps over unprojected *rows*, but it cannot step
+            // over an index that names nothing.
             ("parent_source_node_is_not_projected", 2, |doc| {
                 doc.assets.source_skeleton.nodes[2].parent_source_node_index = Some(9);
             }),
-            // And the other way to be unprojected: the parent row is present
-            // but names no bone, so `bone(parent(n))` has no value to compare.
-            // Node 1 itself is skipped; node 2 is what fails.
-            ("parent_source_node_is_not_projected", 2, |doc| {
-                doc.assets.source_skeleton.nodes[1].bone = None;
+            // Unprojected rows the walk can never leave: 5 and 6 name each
+            // other, so node 2's chain has no nearest projected ancestor and
+            // no root either. Bounded rather than hung.
+            ("cyclic_unprojected_source_parent_chain", 2, |doc| {
+                let nodes = &mut doc.assets.source_skeleton.nodes;
+                nodes[2].parent_source_node_index = Some(5);
+                for (index, parent) in [(5, 6), (6, 5)] {
+                    let mut evidence =
+                        SourceNodeAsset::new(index, SourceNodeLocalRest::Matrix(Mat4::IDENTITY));
+                    evidence.parent_source_node_index = Some(parent);
+                    nodes.push(evidence);
+                }
             }),
             // Re-parented within the projection: node 2's projected parent
             // becomes node 0 while `Skeleton::parent` still says bone 1.
             ("projection_and_skeleton_parents_differ", 2, |doc| {
                 doc.assets.source_skeleton.nodes[2].parent_source_node_index = Some(0);
             }),
-            // The root case, which a comparison that skipped `None` on either
-            // side would miss: the skeleton root acquires a projected parent.
+            // The root case in the direction `Some` vs `None`: the skeleton
+            // root acquires a projected parent.
             ("projection_and_skeleton_parents_differ", 0, |doc| {
                 doc.assets.source_skeleton.nodes[0].parent_source_node_index = Some(2);
+            }),
+            // And the root case in the *other* direction, `None` vs `Some`:
+            // the projection calls node 2 a root while `Skeleton::parent`
+            // gives bone 2 a parent. Both directions are pinned because a
+            // comparison guarded on either side being present survives the
+            // other row — and this is the one that reproduces #309, so
+            // `a_projection_root_of_a_skeleton_child_is_refused` exhibits the
+            // false proof it would otherwise allow.
+            ("projection_and_skeleton_parents_differ", 2, |doc| {
+                doc.assets.source_skeleton.nodes[2].parent_source_node_index = None;
+            }),
+            // Stepping over an unprojected row is not the same as accepting
+            // whatever is above it: dropping node 1's bone leaves node 2's
+            // nearest projected ancestor at bone 0 while `Skeleton::parent`
+            // still says bone 1. (Bone 1 also loses its projecting node, which
+            // the downward-closure pass below would refuse — the parent pass
+            // reaches node 2 first.)
+            ("projection_and_skeleton_parents_differ", 2, |doc| {
+                doc.assets.source_skeleton.nodes[1].bone = None;
             }),
             // Downward closure, reported at the projected *parent*: bone 2
             // stops being projected while its skeleton parent bone 1 still is,
@@ -6745,6 +6833,156 @@ mod tests {
             capability: &capability,
         })
         .expect("an unprojected bone with no projected ancestor is not a disagreement");
+    }
+
+    /// `unprojected_skeleton_child_document`'s displacement reached from the
+    /// *projected* side: bone 2 keeps its source node, but that node calls
+    /// itself a projection root while `Skeleton::parent` makes bone 2 a child
+    /// of bone 0.
+    ///
+    /// Planned at source node 0 the closure is again `{0, 1}` — node 2 is not
+    /// a source-node descendant of node 0, so nothing puts it there — while
+    /// the rebase divides bone 0's local rest by `s` and leaves bone 2's
+    /// alone. Bone 2's world rest is multiplied by `1 / s` and every
+    /// obligation looks away for the same three reasons. This is the exhibit
+    /// for the `None` vs `Some` direction of the parent comparison: with that
+    /// direction unguarded the document below plans, builds and *proves*, with
+    /// every §D.6 residual `0.0`, while bone 2's world translation moves from
+    /// `(0.05, 0, 0)` to `(5, 0, 0)`.
+    fn projection_root_of_a_skeleton_child_document() -> Document {
+        let mut doc = unprojected_skeleton_child_document();
+        let mut evidence = SourceNodeAsset::new(
+            2,
+            SourceNodeLocalRest::Trs {
+                translation: Vec3::new(5.0, 0.0, 0.0),
+                rotation: Quat::IDENTITY,
+                scale: Vec3::ONE,
+            },
+        );
+        evidence.bone = Some(2);
+        evidence.scene_root_indices = vec![0];
+        doc.assets.source_skeleton.nodes.push(evidence);
+        doc
+    }
+
+    #[test]
+    fn a_projection_root_of_a_skeleton_child_is_refused() {
+        // The direction M9 unguards. A comparison that fires only when the
+        // projected parent is present accepts this document, and accepting it
+        // is issue #309 verbatim: planned, built, *proved*, every residual
+        // `0.0`, bone 2 displaced a hundredfold.
+        let capability = complete_capability();
+        let doc = projection_root_of_a_skeleton_child_document();
+        let expected = ScaleError::ParentChainDisagreement {
+            source_node_index: 2,
+            reason: "projection_and_skeleton_parents_differ",
+        };
+        // A document-shape fact, so every entry point gets it...
+        assert_eq!(
+            plan_scale(&ScaleRequest {
+                operation: ScaleOperation::WholeDocumentLinearUnits { factor: 0.01 },
+                document: &doc,
+                capability: &capability,
+            })
+            .unwrap_err(),
+            expected
+        );
+        // ...including the rest/bind operation that would otherwise plan,
+        // build and prove the false proof this fixture documents.
+        assert_eq!(
+            plan_scale(&ScaleRequest {
+                operation: ScaleOperation::RestBindUniformScale {
+                    source_skin_index: 0,
+                    source_root_node_index: 0,
+                    expected_factor: 0.01,
+                },
+                document: &doc,
+                capability: &capability,
+            })
+            .unwrap_err(),
+            expected
+        );
+    }
+
+    #[test]
+    fn a_container_node_above_the_first_joint_is_not_a_disagreement() {
+        // The ordinary glTF export shape, and the one an immediate-parent
+        // comparison refuses: an `Armature`/transform node that is not a joint
+        // sits above the first joint, so it carries no bone, while the
+        // skeleton makes that first joint a root. `bone(parent(n))` has no
+        // value, but the projection is not thereby contradicting anything —
+        // the node it names never became a bone, so `Bone::parent` could not
+        // have named it. The comparison is against the nearest projected
+        // ancestor, which here is correctly `None`.
+        //
+        // Refusing this would refuse both operations on a document that is
+        // otherwise legal, including the whole-document conversion, which
+        // never reads `bone` at all.
+        let capability = complete_capability();
+        let mut doc = compensated_document();
+        let mut container = SourceNodeAsset::new(7, SourceNodeLocalRest::Matrix(Mat4::IDENTITY));
+        container.name = Some("Armature".into());
+        container.scene_root_indices = vec![0];
+        doc.assets.source_skeleton.nodes.push(container);
+        doc.assets.source_skeleton.nodes[0].parent_source_node_index = Some(7);
+        doc.assets.source_skeleton.nodes[0].scene_root_indices = Vec::new();
+        assert_eq!(doc.skeleton.bones[0].parent, None);
+
+        for operation in [
+            ScaleOperation::WholeDocumentLinearUnits { factor: 0.01 },
+            ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 0.01,
+            },
+        ] {
+            let plan = plan_scale(&ScaleRequest {
+                operation,
+                document: &doc,
+                capability: &capability,
+            })
+            .expect("a container node above the first joint is not a disagreement");
+            let candidate = build_scale_candidate(&doc, &plan).expect("the rewrite is buildable");
+            prove_scale(&doc, &candidate, &plan).expect("and the rewrite proves");
+        }
+
+        // A *chain* of container nodes is the same shape, and a deeper one
+        // still terminates: 8 above 7, both unprojected.
+        let mut container = SourceNodeAsset::new(8, SourceNodeLocalRest::Matrix(Mat4::IDENTITY));
+        container.scene_root_indices = vec![0];
+        doc.assets.source_skeleton.nodes.push(container);
+        let count = doc.assets.source_skeleton.nodes.len();
+        doc.assets.source_skeleton.nodes[count - 2].parent_source_node_index = Some(8);
+        doc.assets.source_skeleton.nodes[count - 2].scene_root_indices = Vec::new();
+        plan_scale(&ScaleRequest {
+            operation: ScaleOperation::WholeDocumentLinearUnits { factor: 0.01 },
+            document: &doc,
+            capability: &capability,
+        })
+        .expect("a chain of container nodes above the first joint is not a disagreement either");
+    }
+
+    #[test]
+    fn an_unprojected_node_between_two_joints_is_not_a_disagreement() {
+        // The same step-over, in the middle of the chain rather than above it:
+        // node 5 carries no bone and sits between node 1 (bone 1) and node 2
+        // (bone 2), while `Skeleton::parent` still makes bone 1 the parent of
+        // bone 2. A pruned intermediate or a camera hung between two joints
+        // reaches this shape, and the nearest projected ancestor is bone 1
+        // either way.
+        let capability = complete_capability();
+        let mut doc = compensated_document();
+        let mut middle = SourceNodeAsset::new(5, SourceNodeLocalRest::Matrix(Mat4::IDENTITY));
+        middle.parent_source_node_index = Some(1);
+        doc.assets.source_skeleton.nodes.push(middle);
+        doc.assets.source_skeleton.nodes[2].parent_source_node_index = Some(5);
+        assert_eq!(doc.skeleton.bones[2].parent, Some(1));
+        plan_scale(&ScaleRequest {
+            operation: ScaleOperation::WholeDocumentLinearUnits { factor: 0.01 },
+            document: &doc,
+            capability: &capability,
+        })
+        .expect("an unprojected node between two joints is not a disagreement");
     }
 
     #[test]
@@ -12508,17 +12746,28 @@ mod tests {
     /// by calling the helper directly rather than through [`plan_scale`].
     ///
     /// Its *malformed-projection* guards — a cyclic or unbounded ancestor
-    /// walk, a dangling `parent_source_node_index` — are no longer reachable
-    /// through the public API. Rest/bind planning requires
-    /// [`SourceSkeletonCoverage::Complete`], and under that coverage
-    /// [`validate_parent_chain_agreement`] has already established that the
-    /// projection is a parent-preserving injection into a skeleton that is
-    /// acyclic, orders every parent before its child, and has a counterpart
-    /// for every projected parent. The guards remain because this is a
-    /// private helper walking caller-supplied indices, not because a
-    /// [`Document`] can still reach them — and the tests below pin both
-    /// halves: the guard's own reason here, and the public refusal that now
+    /// walk, a dangling `parent_source_node_index` — are reached here from a
+    /// *projected* node's chain, and from that direction they are shadowed:
+    /// rest/bind planning requires [`SourceSkeletonCoverage::Complete`], and
+    /// under that coverage [`validate_parent_chain_agreement`] has already
+    /// established that every projected node's ancestor chain terminates,
+    /// stays inside the table, and agrees with a skeleton that is acyclic and
+    /// orders every parent before its child. Each test below pins both halves:
+    /// the guard's own reason through this helper, and the public refusal that
     /// shadows it.
+    ///
+    /// They are *not* dead through the public API, and must not be described
+    /// as such. Validation quantifies over projected nodes only —
+    /// deliberately, since a node that never became a bone cannot be displaced
+    /// — while this closure walks the ancestor chain of every node named in
+    /// [`SourceSkinAsset::joint_source_node_indices`], projected or not. An
+    /// unprojected skin joint therefore reaches both guards through
+    /// [`plan_scale`], which
+    /// `an_unprojected_skin_joint_with_a_dangling_parent_is_refused_by_planning`
+    /// and `an_unprojected_skin_joint_on_a_cyclic_chain_is_refused_by_planning`
+    /// pin. That ordering is not incidental: the closure runs before the
+    /// domain's `SourceNodeNotNormalized` check, so the malformed chain is
+    /// what the caller is told about.
     ///
     /// The guards whose cause is *not* a parent-chain fact — a skin joint
     /// with no projection, a descendant joint owned by another skin,
@@ -12532,8 +12781,16 @@ mod tests {
     }
 
     /// The reason [`source_world_matrix`] names for `start` in `document`,
-    /// reached by calling the helper directly. Shadowed publicly for the same
-    /// reason as [`closure_reject_reason`].
+    /// reached by calling the helper directly.
+    ///
+    /// These two guards — `cyclic_source_parent_chain` and
+    /// `missing_source_node` — *are* unreachable through [`plan_scale`], and
+    /// unlike the closure's the claim survives the projected/unprojected
+    /// split: [`plan_rest_bind`] resolves every domain node's bone, refusing
+    /// an unprojected one with [`ScaleError::SourceNodeNotNormalized`], before
+    /// composing a single world matrix. So this walk only ever starts at a
+    /// projected node, whose whole chain
+    /// [`validate_parent_chain_agreement`] has already accepted.
     fn source_world_reject_reason(document: &Document, start: usize) -> ScaleError {
         let by_source_index = source_node_index_map(document);
         let mut cache = BTreeMap::new();
@@ -12551,6 +12808,55 @@ mod tests {
             rest_bind_reject_reason(&doc),
             ScaleError::IncompleteClosure {
                 reason: "skin_joint_source_node_missing"
+            }
+        );
+    }
+
+    /// `unit_rig` plus one unprojected source node listed as a skin joint —
+    /// the shape that keeps the closure's malformed-projection guards live
+    /// through [`plan_scale`], because chain validation covers projected nodes
+    /// only while the closure walks every declared joint.
+    fn unprojected_skin_joint_document(chain: &[(usize, Option<usize>)]) -> Document {
+        let mut doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
+        for &(source_node_index, parent) in chain {
+            let mut evidence = SourceNodeAsset::new(
+                source_node_index,
+                SourceNodeLocalRest::Matrix(Mat4::IDENTITY),
+            );
+            evidence.parent_source_node_index = parent;
+            assert_eq!(evidence.bone, None);
+            doc.assets.source_skeleton.nodes.push(evidence);
+        }
+        doc.assets.source_skeleton.skins[0]
+            .joint_source_node_indices
+            .push(chain[0].0);
+        doc
+    }
+
+    #[test]
+    fn an_unprojected_skin_joint_with_a_dangling_parent_is_refused_by_planning() {
+        // Node 5 names no bone, so `validate_parent_chain_agreement` skips it
+        // — and the skin names it a joint, so the closure walks its chain and
+        // finds node 99 absent. The guard is not shadowed here; it is the
+        // refusal.
+        let doc = unprojected_skin_joint_document(&[(5, Some(99))]);
+        assert_eq!(
+            rest_bind_reject_reason(&doc),
+            ScaleError::IncompleteClosure {
+                reason: "dangling_source_parent_node_index"
+            }
+        );
+    }
+
+    #[test]
+    fn an_unprojected_skin_joint_on_a_cyclic_chain_is_refused_by_planning() {
+        // The same gap, reached by the other guard: nodes 5 and 6 name each
+        // other and neither names a bone.
+        let doc = unprojected_skin_joint_document(&[(5, Some(6)), (6, Some(5))]);
+        assert_eq!(
+            rest_bind_reject_reason(&doc),
+            ScaleError::IncompleteClosure {
+                reason: "cyclic_or_unbounded_source_parent_chain"
             }
         );
     }

@@ -114,6 +114,24 @@ fn the_gltf_loader_never_produces_a_disagreeing_parent_chain() {
             SourceSkeletonCoverage::Complete,
             "{label} declares complete coverage, so the check is not skipped"
         );
+        // Why this sweep cannot see the whole check: the loader makes every
+        // reachable node a bone, so it never emits an unprojected row and the
+        // ancestor walk never has one to step over. The glTF container-node
+        // shape — an `Armature` above the first joint that is *not* a joint —
+        // reaches this crate as bone 0 rather than as `bone: None`. An
+        // embedder that prunes such a node produces the unprojected form, and
+        // `animsmith_core`'s
+        // `a_container_node_above_the_first_joint_is_not_a_disagreement` is
+        // what covers it. Asserted so a loader that starts pruning lands here.
+        assert!(
+            document
+                .assets
+                .source_skeleton
+                .nodes
+                .iter()
+                .all(|node| node.bone.is_some()),
+            "{label}: the glTF loader projects every source node it carries"
+        );
         accepts(label, &document);
     }
 }
