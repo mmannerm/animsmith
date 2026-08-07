@@ -1075,12 +1075,18 @@ reparameterization it must prove, within versioned tolerances:
 - equal skinned vertex positions and bounds for analytic one-joint and
   multi-joint fixtures plus deterministic sampled production evidence;
 - unchanged mesh/material/skin identity and declared unaffected payloads —
-  including that each candidate mesh instance draws the same mesh and binds the
-  same skin joints as its source counterpart, which neither operation rewrites,
-  and that a skin *outside* the affected closure keeps the inverse binds each
-  side stores. That last comparison is over stored evidence, in the resolution
-  order the model defines (per-instance array, then the bone convenience
-  value). A slot exactly one side records is a rewritten skin and is refused;
+  including that each candidate mesh instance draws the same mesh, binds the
+  same skin joints, hangs off the same node, and names the same source node as
+  its source counterpart, none of which either operation rewrites, and that a
+  skin *outside* the affected closure keeps the inverse binds each side stores.
+  Identity here covers *placement*, not only what an instance is: the node is
+  the only thing positioning an unskinned prop, and the source node is what
+  resolves the skin whose absent bind accessor stands for the format-defined
+  identity default. Both are compared positionally, so the instance list must
+  also agree in length and order. The unaffected-bind comparison is over
+  stored evidence, in the resolution order the model defines (per-instance
+  array, then the bone convenience value). A slot exactly one side records is
+  a rewritten skin and is refused;
   a slot neither side records is reported as out of the proof's scope, never
   as proven — a document carrying an unrelated skin with no bind evidence at
   all is not an operation this record touches, and must not be refused for

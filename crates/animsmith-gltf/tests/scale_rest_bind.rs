@@ -34,14 +34,15 @@
 //! `100 * 0.01 == 1.0`, `300 * 0.01 == 3.0`, `0.01 * (1/0.01) == 1.0`, and
 //! `1 * 0.01` is the `f32` whose shortest round-tripping spelling is `0.01`.
 
+use animsmith_core::model::Document;
 use animsmith_core::scale::{
     AffineDomainViolation, ScaleError, ScaleOperation, ScalePlan, ScaleRequest,
     ScaleTolerancePolicy, plan_scale,
 };
 use animsmith_gltf::{
     GltfCapabilityViolationKind, GltfScaleArtifact, GltfScalePreflightError, GltfScaleRewriteError,
-    GltfScaleSource, capability_facts, preflight_scale_source_bytes, prove_rewritten_rest_bind,
-    rewrite_rest_bind,
+    GltfScaleSource, capability_facts, load_bytes, preflight_scale_source_bytes,
+    prove_rewritten_rest_bind, rewrite_rest_bind,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
@@ -320,6 +321,24 @@ fn rebased(name: &str, value: &Value) -> (GltfScaleSource, GltfScaleArtifact, Sc
     (source, artifact, plan)
 }
 
+/// Every mesh instance's identity, in document order: where it hangs, which
+/// source node it came from, which mesh it draws, and which joints it binds.
+fn instance_identity(document: &Document) -> Vec<(usize, usize, usize, Vec<usize>)> {
+    document
+        .assets
+        .instances
+        .iter()
+        .map(|instance| {
+            (
+                instance.node,
+                instance.source_node_index,
+                instance.mesh,
+                instance.skin_joints.clone(),
+            )
+        })
+        .collect()
+}
+
 /// Assert that planning or rewriting `value` fails, and hand back the error.
 fn refused(name: &str, value: &Value, factor: f64) -> GltfScaleRewriteError {
     let source = accepted(name, value);
@@ -470,6 +489,19 @@ fn the_rebased_artifact_proves_and_reports_its_evidence() {
     assert_eq!(plan.transform_only_attachments().len(), 1);
     assert!(plan.proof_obligations().prove_transform_only_affine);
     assert!(plan.proof_obligations().prove_bounds);
+
+    // Mesh-instance *placement* identity, read off the reloaded artifact
+    // rather than assumed from the rewriter's shape. The rebase clones the
+    // source JSON and patches numbers in place, so `nodes`, `children`,
+    // `scenes` and every mesh/skin attachment come through untouched and the
+    // loader re-derives the same bone ids from the same DFS. The holder is
+    // node 3 on both sides.
+    let reloaded = load_bytes(Path::new("case2-proof.gltf"), artifact.bytes()).expect("reload");
+    assert_eq!(
+        instance_identity(&reloaded),
+        instance_identity(source.document())
+    );
+    assert_eq!(instance_identity(&reloaded), vec![(3, 3, 0, vec![1])]);
 }
 
 #[test]
