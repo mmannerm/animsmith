@@ -131,13 +131,42 @@ fn assert_schema_valid(instance: &Value) {
     assert!(errors.is_empty(), "schema errors: {}", errors.join("; "));
 }
 
-fn rest_bind_scale_rig_with_negative_weight_glb() -> Vec<u8> {
+fn rest_bind_scale_rig_with_negative_weight_glb(
+    vertex_index: usize,
+    influence_index: usize,
+) -> Vec<u8> {
     let mut asset = rest_bind_scale_rig_glb();
     let json_length = u32::from_le_bytes(asset[12..16].try_into().unwrap()) as usize;
-    // GLB header + JSON chunk header/payload + BIN chunk header, followed by
-    // the fixture's WEIGHTS_0 accessor at byte 60 of its BIN payload.
-    let first_weight = 12 + 8 + json_length + 8 + 60;
-    asset[first_weight..first_weight + 4].copy_from_slice(&(-0.5f32).to_le_bytes());
+    let json: Value = serde_json::from_slice(&asset[20..20 + json_length])
+        .expect("the synthetic GLB has a JSON chunk");
+    let accessor_index = json["meshes"][0]["primitives"][0]["attributes"]["WEIGHTS_0"]
+        .as_u64()
+        .expect("the rig has WEIGHTS_0") as usize;
+    let accessor = &json["accessors"][accessor_index];
+    assert_eq!(accessor["componentType"], 5126, "WEIGHTS_0 is f32");
+    assert_eq!(accessor["type"], "VEC4", "WEIGHTS_0 has four influences");
+    assert!(
+        vertex_index < accessor["count"].as_u64().expect("an accessor count") as usize,
+        "requested vertex is in WEIGHTS_0"
+    );
+    assert!(influence_index < 4, "requested influence is in a VEC4");
+
+    let view_index = accessor["bufferView"]
+        .as_u64()
+        .expect("WEIGHTS_0 has a buffer view") as usize;
+    let view = &json["bufferViews"][view_index];
+    assert_eq!(view["buffer"].as_u64(), Some(0), "the GLB has one buffer");
+    let view_offset = view["byteOffset"].as_u64().unwrap_or(0) as usize;
+    let accessor_offset = accessor["byteOffset"].as_u64().unwrap_or(0) as usize;
+    let stride = view["byteStride"].as_u64().unwrap_or(16) as usize;
+    let bin_payload = 20 + json_length + 8;
+    let weight_offset = bin_payload
+        + view_offset
+        + accessor_offset
+        + vertex_index * stride
+        + influence_index * size_of::<f32>();
+    asset[weight_offset..weight_offset + size_of::<f32>()]
+        .copy_from_slice(&(-0.5f32).to_le_bytes());
     asset
 }
 
@@ -690,7 +719,7 @@ fn a_refused_run_publishes_nothing_and_leaves_a_prior_pair_byte_identical() {
 
 #[test]
 fn a_negative_primary_skin_weight_is_a_typed_plan_refusal_and_publishes_nothing() {
-    let fixture = Fixture::with_asset(rest_bind_scale_rig_with_negative_weight_glb());
+    let fixture = Fixture::with_asset(rest_bind_scale_rig_with_negative_weight_glb(2, 3));
     let output = fixture.rest_bind("0.01", "json");
 
     assert_eq!(
@@ -713,7 +742,7 @@ fn a_negative_primary_skin_weight_is_a_typed_plan_refusal_and_publishes_nothing(
         record["rejection"]["detail"]
             .as_str()
             .expect("a rejection detail")
-            .contains("vertex 0 primary skin influence 0"),
+            .contains("vertex 2 primary skin influence 3"),
         "record: {record}"
     );
 }

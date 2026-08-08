@@ -11802,12 +11802,12 @@ mod tests {
         let plan = multi_joint_plan(&doc, &capability);
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
         let mut signed = doc.clone();
-        signed.assets.meshes[0].primitives[0].weights[0][0] = -0.5;
+        signed.assets.meshes[0].primitives[0].weights[3][3] = -0.5;
         let expected = ScaleError::NegativeSkinWeight {
             mesh_index: 0,
             primitive_index: 0,
-            vertex_index: 0,
-            influence_index: 0,
+            vertex_index: 3,
+            influence_index: 3,
         };
 
         assert_eq!(
