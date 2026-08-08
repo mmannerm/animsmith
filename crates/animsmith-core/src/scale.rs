@@ -306,8 +306,8 @@ impl ScaleTolerancePolicy {
         // a worst case under `4` measured this way is under `4` however the two
         // terms are split.
         //
-        // Worst over the population: `1.994` for `Bounds`, `2.052` for
-        // `SkinMatrix`, `2.274` for `RestTranslation`, and no correct candidate
+        // Worst over the population: `2.632` for `Bounds`, `2.065` for
+        // `SkinMatrix`, `2.400` for `RestTranslation`, and no correct candidate
         // refused in any cell.
         //
         // The sweep carries two joints and no clips, so `Trajectory` and chains
@@ -328,24 +328,33 @@ impl ScaleTolerancePolicy {
         // that cancel" with a worst `Bounds` demand of `0.92`. The shape it did
         // not carry is a composed slot with `abs(W * B) != 1`, and against the
         // base this policy shipped at the time that shape refuses correct
-        // candidates in twelve of the seventy-two cells above and demands
-        // `58.7`. A figure a reader cannot re-derive is a figure nobody can
+        // candidates in fifteen of the seventy-two cells above and demands
+        // `47.7`. A figure a reader cannot re-derive is a figure nobody can
         // check.
         //
-        // `4` is the next power of two above every figure above, and it is
-        // also the analytic worst case for the arithmetic involved: composing
-        // `W * B` accumulates a four-term inner product per entry. That — not
-        // any one of the measured demands being the largest reachable — is
-        // what this constant rests on.
+        // `4` is the next power of two above every figure above, **measured
+        // over that population**. It is not an analytic bound. An earlier
+        // revision of this comment said it was — "the analytic worst case for
+        // the arithmetic involved, since composing `W * B` accumulates a
+        // four-term inner product per entry" — and that argument covers one
+        // composition, not a chain of them. `WorldPose::translation_chain`
+        // takes `translation_chain[parent].max(...)`, so the base is a `max`
+        // over the links while the composed world translation accumulates one
+        // link's rounding per link. The demand therefore grows with depth:
+        // `a_chain_deep_enough_to_accumulate_its_link_errors_passes_the_count_and_is_refused`
+        // is an ordinary straight chain that demands `0.685` ulps at depth `8`
+        // and `4.833` at `256`, and is refused from depth `180` up. The count
+        // is calibrated to the depths this sweep and the named fixtures reach
+        // — three — and that fixture is where it stops holding.
         //
         // Under the base this policy carried before the parent chain was
         // folded into it, a correct candidate demanded up to `41` — see
         // [`translation_operand_magnitude`], and
         // `a_parent_chain_whose_translations_cancel_still_proves_its_skin`
         // for a rig that demands `524288`. Dropping the chain from the base
-        // today refuses correct candidates in fourteen of the sweep's cells at
-        // up to `42.3` ulps of what remains, and narrowing the vertex stage to
-        // `abs(p)` alone refuses in twelve at up to `58.7`: the pattern every
+        // today refuses correct candidates in fifty-six of the sweep's cells at
+        // up to `62.6` ulps of what remains, and narrowing the vertex stage to
+        // `abs(p)` alone refuses in fifteen at up to `47.7`: the pattern every
         // time is a wrong magnitude, not a count that is too small.
         //
         // The detection cost is **not** bounded, and stating it as
@@ -5049,15 +5058,15 @@ fn check_skin_and_bounds(
                 // scale with `q` — survive into the residual.
                 // `calibrate_f32_rounding_ulps` measures both bases with the
                 // rebased source side dropped over its whole 360_000-candidate
-                // population and asserts the result: `1.994` of the four ulps
-                // for `Bounds` and `2.052` for `SkinMatrix`, which are the same
+                // population and asserts the result: `2.632` of the four ulps
+                // for `Bounds` and `2.065` for `SkinMatrix`, which are the same
                 // two figures the shipped bases produce.
                 //
                 // The `Bounds` half of that was **false** under the base this
                 // proof shipped before the vertex stage was corrected to the
                 // transform's operand product: against the earlier `abs(p)`
                 // stage the same sweep's worst `Bounds` demand with the source
-                // side dropped is `521.7`. The claim is true again only because
+                // side dropped is `444.4`. The claim is true again only because
                 // the base is right. `SkinMatrix`'s half was never affected —
                 // its base was already an operand product.
                 //
@@ -5312,23 +5321,31 @@ impl SkinSlot {
 /// two terms of magnitude `abs(W)`, and the parent chain that produced `W`,
 /// whose translation column may have cancelled two terms larger still.
 ///
-/// Three of the four dominate the others by an unbounded ratio on some rig:
-/// two slots whose composed `W * B` oppose for the first, a joint far from the
-/// geometry it carries for the third, a joint whose local offset points back
-/// along its parent's world translation for the fourth. Dropping the first
-/// makes `calibrate_f32_rounding_ulps` refuse correct candidates in fifteen of
-/// its seventy-two cells and dropping the third in fourteen.
+/// Every one of the four dominates the others by an unbounded ratio on some
+/// rig: two slots whose composed `W * B` oppose for the first, a blend whose
+/// *weights* nearly cancel for the second, a joint far from the geometry it
+/// carries for the third, a joint whose local offset points back along its
+/// parent's world translation for the fourth. Dropping the first makes
+/// `calibrate_f32_rounding_ulps` refuse correct candidates in thirty-four of
+/// its seventy-two cells and dropping the third in fifty-six.
 ///
-/// The *blended point* is the exception and is a documented survivor: it is a
-/// convex combination of the per-slot transformed points, so it is bounded by
-/// `sqrt(3)` times the first stage, and wherever it is the larger of the two
-/// the blend did not cancel — which is exactly where the demand is `O(1)`.
-/// Dropping it moves the sweep's worst `Bounds` demand from `1.994` to
-/// `2.122`, both inside the count, so no test kills it and none can. It is
-/// kept because it is a distinct quantity rather than a redundant one, and
-/// because
+/// The *blended point* is the one the sweep cannot see — dropping it leaves
+/// every cell's demand unchanged — and it was recorded here as an unkillable
+/// survivor on the argument that the blend is a **convex** combination of the
+/// per-slot transformed points and so bounded by `sqrt(3)` times the first
+/// stage. That argument is false. The only guard on the normalisation is
+/// `weight_sum > 0.0`, nothing constrains authored weights to be non-negative
+/// (`a_vertex_whose_influences_sum_negative_is_left_out_of_the_bounds` is the
+/// test that says so), and `skinned /= weight_sum` over a mixed-sign blend is
+/// an **affine** combination, which is unbounded: weights of `1.0` and
+/// `-0.99999` sum to `9.999e-6` and multiply the summed point by `1.0e5`.
+/// `a_blend_whose_weights_nearly_cancel_amplifies_a_vertex_and_still_proves_its_bounds`
+/// is that rig — stage 1 reads `1.000e3`, stage 3 `1.000e0`, and the blended
+/// point `1.997e8` — and dropping this stage refuses it outright at
+/// `observed: 8.929` against `tolerance: 5.969e-4`.
 /// `a_rig_whose_skinned_extent_passes_the_square_root_of_f32_max_still_proves`
-/// holds its `f32` overflow domain. See DESIGN.md Appendix D §D.1.
+/// additionally holds its `f32` overflow domain. See DESIGN.md Appendix D
+/// §D.1.
 struct BoundsAccumulator {
     min: Vec3,
     max: Vec3,
@@ -12166,6 +12183,33 @@ mod tests {
         )
     }
 
+    /// The same two opposed slots as [`cancelling_blend_document`], but with
+    /// the *weights* nearly cancelling instead of the transformed points:
+    /// `1.0` and `-0.99999`, which sum to `9.999e-6`.
+    ///
+    /// Nothing constrains authored weights to be non-negative — see
+    /// `a_vertex_whose_influences_sum_negative_is_left_out_of_the_bounds`, and
+    /// `validate_scene_assets` range-checks joint ids rather than weights — so
+    /// a weight sum far below `1` is reachable, and `skinned /= weight_sum`
+    /// then makes the blend an **affine** combination rather than a convex
+    /// one. The two terms sum to `(1999.99, 0, 0)` and the division by
+    /// `9.999e-6` throws that to `1.997e8`: five decades *above* the `1e3` the
+    /// per-slot transform ran on, and eight above the near-unit joints.
+    ///
+    /// This is the rig that stops the blended point being a stage no test can
+    /// reach. It is the mirror image of [`cancelling_blend_document`], where
+    /// the same two slots drive the blended point to zero.
+    fn amplifying_blend_document() -> Document {
+        composed_slot_document(
+            CANCELLING_BLEND_ROTATIONS,
+            3190.0,
+            CANCELLING_BLEND_LOCALS,
+            [Mat4::IDENTITY, HALF_TURN_Z],
+            &[Vec3::new(1000.0, 0.0, 0.0)],
+            &[[1.0, -0.99999, 0.0, 0.0]],
+        )
+    }
+
     /// The reproducer's two rotations, reused by every cancelling-blend rig.
     const CANCELLING_BLEND_ROTATIONS: [Quat; 2] = [
         Quat::from_xyzw(-0.81788284, 0.343121, -0.45392478, -0.085369624),
@@ -12335,6 +12379,68 @@ mod tests {
             proof.bounds_residual > 4.0 * stages_without_the_transform * f64::from(f32::EPSILON),
             "bounds residual {} no longer exceeds four ulps of every stage but the transform's \
              own operand product",
+            proof.bounds_residual
+        );
+    }
+
+    #[test]
+    fn a_blend_whose_weights_nearly_cancel_amplifies_a_vertex_and_still_proves_its_bounds() {
+        // The blended skinned point — stage 2 of the bounds base — was
+        // recorded as an unkillable survivor, on the argument that the blend
+        // is a *convex* combination of the per-slot transformed points and so
+        // bounded by `sqrt(3)` times stage 1. It is not convex. Nothing
+        // constrains authored weights to be non-negative
+        // (`a_vertex_whose_influences_sum_negative_is_left_out_of_the_bounds`
+        // is the test that says so), and the only guard is `weight_sum > 0.0`,
+        // so a weight sum of `1.0 - 0.99999 = 9.999e-6` passes it and
+        // `skinned /= weight_sum` multiplies the summed point by `1.0e5`. The
+        // combination is affine, and an affine combination is unbounded.
+        //
+        // Here stage 1 reads `1.000e3` and stage 3 `1.000e0`, while the
+        // blended point the bound is actually built from is `1.997e8`. With
+        // stage 2 dropped this correct candidate is refused outright:
+        // `ProofResidualExceeded { kind: Bounds, observed: 8.929,
+        // tolerance: 5.969e-4 }`.
+        let doc = amplifying_blend_document();
+        let plan = rest_bind_plan(&doc, 3190.0);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+
+        // The amplification is the fixture, so it is asserted before what it
+        // costs: a rig whose weights stopped nearly cancelling passes below
+        // for want of a defect rather than because the base names the blend.
+        let slots = rig_skin_slots(&doc);
+        let primitive = &doc.assets.meshes[0].primitives[0];
+        let position = primitive.positions[0];
+        let weights = primitive.weights[0];
+        let mut summed = Vec3::ZERO;
+        let mut weight_sum = 0.0f32;
+        let mut stages_without_the_blend = 0.0f64;
+        for (slot_index, slot) in slots.iter().enumerate() {
+            summed += weights[slot_index] * slot.matrix.transform_point3(position);
+            weight_sum += weights[slot_index];
+            stages_without_the_blend = stages_without_the_blend
+                .max(column_operand_magnitude(
+                    slot.absolute,
+                    position.extend(1.0),
+                ))
+                .max(slot.rounding_magnitude);
+        }
+        let blended = f64::from((summed / weight_sum).length());
+        assert!(
+            weight_sum > 0.0 && blended > 1e4 * stages_without_the_blend,
+            "the weights no longer nearly cancel (sum {weight_sum}) or the blended point \
+             {blended} no longer dominates every other stage ({stages_without_the_blend}): \
+             the bound is then covered by a stage that is not the blend",
+        );
+
+        let proof = prove_scale(&doc, &candidate, &plan).expect(
+            "a correct candidate whose weight sum amplifies the blend must still prove: the \
+             bound is built from the blended point, and that is what the base must name",
+        );
+        assert!(
+            proof.bounds_residual > 4.0 * stages_without_the_blend * f64::from(f32::EPSILON),
+            "bounds residual {} no longer exceeds four ulps of every stage but the blend, so \
+             this fixture no longer kills a base that drops the blended point",
             proof.bounds_residual
         );
     }
@@ -12553,8 +12659,8 @@ mod tests {
         // translation and vertex terms, which do scale, survive into the
         // residual. `calibrate_f32_rounding_ulps` measures the same thing over
         // 360_000 candidates and asserts it: with the rebased source side
-        // dropped from both bases the worst demand is `1.994` of the four ulps
-        // for bounds and `2.052` for the skin matrix. No correct candidate is
+        // dropped from both bases the worst demand is `2.632` of the four ulps
+        // for bounds and `2.065` for the skin matrix. No correct candidate is
         // refused without the excess, which is why it is written as a bound
         // that can be argued from the operands rather than one measured from a
         // population.
@@ -13032,6 +13138,129 @@ mod tests {
         let inside = ScaleCandidate { document: inside };
         prove_scale(&doc, &inside, &plan)
             .expect("an error inside the chain-derived band is admitted, by construction");
+    }
+
+    /// A straight chain of `depth` bones under a root, each `(10, 0, 0)` from
+    /// its parent and carrying [`DEEP_CHAIN_ROTATION`].
+    ///
+    /// `WorldPose::translation_chain` takes a `max` along the chain, so this
+    /// rig's magnitude is flat in `depth` — every link composes the same
+    /// `10`-unit local against a world of about the same size — while the
+    /// composed world translation accumulates one link's rounding per link.
+    /// That is the shape that separates "the worst case for one composition"
+    /// from "the worst case for a chain of them".
+    fn deep_chain_document(depth: usize) -> Document {
+        let mut nodes = vec![RigNode {
+            parent: None,
+            source_node_index: 0,
+            translation: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
+        }];
+        for index in 1..=depth {
+            nodes.push(RigNode {
+                parent: Some(index - 1),
+                source_node_index: index,
+                translation: Vec3::new(10.0, 0.0, 0.0),
+                rotation: DEEP_CHAIN_ROTATION,
+                scale: Vec3::ONE,
+            });
+        }
+        rig_document(&nodes, &[depth], 0, Mat4::IDENTITY)
+    }
+
+    /// `170` degrees about `z`, as a literal for this section's reason:
+    /// `Quat::from_rotation_z` runs `f32` `sin`/`cos`, which is not
+    /// bit-identical across platforms, and the depth at which this rig crosses
+    /// the count is the thing being pinned.
+    ///
+    /// Near a half turn is where each link's composed translation is smallest
+    /// relative to the terms it was summed from, so it is where a link
+    /// contributes the most rounding per unit of chain magnitude.
+    const DEEP_CHAIN_ROTATION: Quat = Quat::from_xyzw(0.0, 0.0, 0.996_194_7, 0.087_155_804);
+
+    /// [`deep_chain_document`] converted at `1.5`, the operation that rewrites
+    /// every joint translation in the chain.
+    fn deep_chain_conversion(depth: usize) -> (Document, ScalePlan, ScaleCandidate) {
+        let doc = deep_chain_document(depth);
+        let capability = complete_capability();
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::WholeDocumentLinearUnits { factor: 1.5 },
+            document: &doc,
+            capability: &capability,
+        })
+        .expect("a whole-document conversion plans at any positive factor");
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        (doc, plan, candidate)
+    }
+
+    /// The raw ulp count [`ProofResidualKind::RestTranslation`] asked of its
+    /// own comparison base, in `calibrate_f32_rounding_ulps`'s units.
+    fn deep_chain_demand(depth: usize) -> (f64, Result<ScaleProof, ScaleError>) {
+        let (doc, plan, candidate) = deep_chain_conversion(depth);
+        let chain = rig_chain_magnitude(candidate.document(), &plan);
+        let proof = prove_scale(&doc, &candidate, &plan);
+        let residual = match &proof {
+            Ok(proof) => proof.rest_translation_residual,
+            Err(ScaleError::ProofResidualExceeded { observed, .. }) => *observed,
+            Err(error) => panic!("the deep chain rig must prove or exceed, got {error:?}"),
+        };
+        (residual / (chain * f64::from(f32::EPSILON)), proof)
+    }
+
+    #[test]
+    fn a_chain_deep_enough_to_accumulate_its_link_errors_passes_the_count_and_is_refused() {
+        // `f32_rounding_ulps = 4` is calibrated over the population the
+        // calibration sweep and the named fixtures reach, and that population
+        // is shallow: the sweep carries two joints under a root, and the
+        // deepest named fixture is three. This fixture is where the count
+        // stops holding, checked in rather than left to be discovered.
+        //
+        // `translation_chain` takes a `max` along the chain — it is the
+        // magnitude *one* link's composition ran on — while the composed world
+        // translation accumulates one link's rounding per link. The base is
+        // therefore flat in depth and the residual is not, so the demand grows
+        // with depth and no fixed count survives an arbitrary chain. Measured
+        // on this rig: `0.685` ulps at depth `8`, `3.258` at `128`, `4.833` at
+        // `256`. It is refused from depth `180` up — the demand passes `4`
+        // before that, at depth `172`, because the scalar band is paid first.
+        //
+        // This is pre-existing rather than introduced here, and this PR
+        // narrows it: with `f32_rounding_ulps = 0` — which is `main`'s
+        // behaviour — the same rig is refused from depth `64`.
+        let (shallow_demand, shallow) = deep_chain_demand(8);
+        shallow.expect("a shallow chain is inside the count and must still prove");
+        assert!(
+            shallow_demand < 1.0,
+            "the shallow end of this rig now demands {shallow_demand} ulps, so the fixture no \
+             longer brackets where the count stops holding",
+        );
+
+        let (deep_demand, deep) = deep_chain_demand(256);
+        assert!(
+            deep_demand > f64::from(ScaleTolerancePolicy::APPENDIX_D_V3.f32_rounding_ulps),
+            "a 256-link chain now demands only {deep_demand} ulps, inside the count. If the \
+             chain magnitude has been widened to cover the links it accumulates, this fixture \
+             should be replaced by an acceptance one — and DESIGN.md Appendix D section D.1's \
+             statement that the count is calibrated only to the depths the sweep and the \
+             fixtures reach must change with it.",
+        );
+        let error = deep.expect_err(
+            "a 256-link chain asks more of the count than it allows, and this fixture exists to \
+             say where that starts",
+        );
+        let ScaleError::ProofResidualExceeded {
+            kind: ProofResidualKind::RestTranslation,
+            observed,
+            tolerance,
+        } = error
+        else {
+            panic!("expected a refused rest translation, got {error:?}");
+        };
+        assert!(
+            observed > tolerance,
+            "rest translation band moved: observed {observed}, tolerance {tolerance}",
+        );
     }
 
     /// [`cancelling_chain_conversion`]'s rig with an ordinary two-key linear
@@ -16273,6 +16502,16 @@ mod tests {
     /// a crate whose whole dependency set is `glam + serde + sha2 + thiserror`.
     /// Determinism is the point — a calibration whose population changes per
     /// run is a number no reader can re-derive.
+    ///
+    /// The *bit stream* is platform-independent; the rigs drawn from it are
+    /// not quite. [`Self::decades`] runs `f64::powf`, [`Self::direction`] runs
+    /// `f64::sin`/`cos`, and [`Self::rotation`] runs glam's `f32` sine and
+    /// cosine, none of which is required to be correctly rounded. Two machines
+    /// can therefore differ in the last ulp of a joint local or a rotation, and
+    /// the worst demand each reports can differ in its last printed digit. That
+    /// is the resolution at which these figures are re-derivable — at `2.6`
+    /// against a count of `4` it cannot move a verdict, and the assertions
+    /// below are thresholds rather than equalities for that reason.
     struct SweepRng(u64);
 
     impl SweepRng {
@@ -16353,6 +16592,40 @@ mod tests {
         conversion: Option<f64>,
         composition: SweepComposition,
         blend: SweepBlend,
+    }
+
+    impl SweepCell {
+        /// A seed derived from every coordinate of the cell, so a cell's
+        /// population is a function of what the cell *is* and does not move
+        /// when a neighbouring cell is added, removed, or reordered.
+        ///
+        /// An earlier revision mixed the running loop ordinal and the
+        /// conversion factor only, and claimed this property while not having
+        /// it: swapping the two blends, or dropping a composition, moved the
+        /// population of every cell after the change and so silently
+        /// re-measured the whole sweep.
+        fn seed(self) -> u64 {
+            // Each coordinate is folded through the generator's own mixing
+            // step rather than xored in, so no two cells can collide on a
+            // seed by an accident of how the coordinates are encoded.
+            let mut state = 0x5EED_0000_0000_0000u64;
+            for word in [
+                self.conversion.unwrap_or(0.0).to_bits(),
+                match self.composition {
+                    SweepComposition::Analytic => 0,
+                    // Offset past the `Analytic` marker, and biased so a
+                    // negative exponent stays inside the `u64`.
+                    SweepComposition::Scaled(exponent) => 1 + (i64::from(exponent) + 1024) as u64,
+                },
+                match self.blend {
+                    SweepBlend::Cancelling => 0,
+                    SweepBlend::Independent => 1,
+                },
+            ] {
+                state = SweepRng(state ^ word).next_u64();
+            }
+            state
+        }
     }
 
     /// The worst ulp count a cell asked of the rounding term, per obligation.
@@ -16548,11 +16821,35 @@ mod tests {
     ///
     /// The assertions are the calibration: no cell may refuse a correct
     /// candidate, no residual may ask more of its base than
-    /// [`ScaleTolerancePolicy::f32_rounding_ulps`] allows, the two products'
-    /// bases must stay inside the count with the rebased source side dropped,
-    /// and every cell must actually produce candidates — a sweep that silently
-    /// measured nothing is the failure mode this test exists to make
-    /// impossible.
+    /// [`ScaleTolerancePolicy::f32_rounding_ulps`] allows, and the two
+    /// products' bases must stay inside the count with the rebased source side
+    /// dropped.
+    ///
+    /// Three more assertions are the sweep's *floor*, because a sweep that
+    /// silently measured nothing would otherwise report `0.000` in every
+    /// column and pass: the cell count and the candidate count are checked
+    /// against literals rather than against the swept arrays' own lengths, and
+    /// the worst demand of each obligation must be above `0.5`. An earlier
+    /// revision had none of these and claimed all of them. It compared `cells`
+    /// against `conversions.len() * compositions.len() * blends.len()`, which
+    /// holds however far those arrays are cut back — deleting every
+    /// composition but [`SweepComposition::Analytic`], which is exactly the
+    /// blindness that hid the transform stage, killed no assertion at all, and
+    /// neither did `TRIALS = 1`.
+    ///
+    /// What the floor does *not* buy is the over-acceptance direction. Every
+    /// base here is a `max` over stages, so loosening one lowers the measured
+    /// demand toward zero rather than raising it: a base widened inside
+    /// [`accumulate_skinned_bounds`] is caught by the `0.5` floor (it reports
+    /// `bounds 0.000`), but one widened at the *call site*, where this sweep's
+    /// own helpers do not read it, moves nothing this test measures. That
+    /// direction is held by the named bracket fixtures instead —
+    /// `the_rounding_term_still_refuses_a_bounds_error_three_ulps_above_it`,
+    /// `the_far_joint_rig_admits_a_four_unit_bind_shift_and_refuses_the_next_one_up`,
+    /// `the_rest_translation_chain_term_still_refuses_an_error_a_few_ulps_above_it`
+    /// and `a_shrinking_conversion_rebases_the_bounds_magnitude_by_the_factor`,
+    /// each of which names the smallest real error its obligation still
+    /// refuses. This sweep is a one-directional instrument and says so.
     #[test]
     #[ignore = "calibration sweep: tens of thousands of proofs. See the doc comment."]
     fn calibrate_f32_rounding_ulps() {
@@ -16591,14 +16888,7 @@ mod tests {
                         composition,
                         blend,
                     };
-                    // Seeded per cell from the cell itself, so a cell's
-                    // population does not move when a neighbouring cell is
-                    // added, removed, or reordered.
-                    let mut rng = SweepRng(
-                        0x5EED_0000_0000_0000
-                            ^ (cells as u64).wrapping_mul(0x1000_0000_0000_0001)
-                            ^ conversion.unwrap_or(0.0).to_bits(),
-                    );
+                    let mut rng = SweepRng(cell.seed());
                     let mut worst = SweepWorst::default();
                     let mut refused = 0usize;
                     for _ in 0..TRIALS {
@@ -16648,7 +16938,45 @@ mod tests {
             refusals.is_empty(),
             "the sweep refused correct candidates, one per cell shown: {refusals:#?}",
         );
-        assert_eq!(cells, conversions.len() * compositions.len() * blends.len());
+        // The population's own floor, as literals. Comparing `cells` against
+        // `conversions.len() * compositions.len() * blends.len()` — which is
+        // what an earlier revision did — compares the loop counter against the
+        // mutated arrays' own lengths and so holds under every shrinkage of
+        // them: deleting every composition but `Analytic`, which removes the
+        // whole `abs(W * B) != 1` population that the transform-stage defect
+        // hid in, left it passing. So did `TRIALS = 1`.
+        assert_eq!(
+            cells, 72,
+            "the sweep no longer runs the 72 cells DESIGN.md Appendix D section D.1 names. If a \
+             dimension was deliberately added or removed, this literal and the prose that quotes \
+             it move together.",
+        );
+        assert_eq!(
+            cells * TRIALS,
+            360_000,
+            "the sweep no longer draws the 360_000 candidates DESIGN.md Appendix D section D.1 \
+             names, so the figures below are not the ones that section quotes.",
+        );
+        // A floor on what the sweep *measured*, not only on what it refused.
+        // Every base in this proof is a `max` over stages, so loosening any
+        // one of them drives the measured demand toward zero rather than
+        // toward the count: without this, a mutation that inflates a base
+        // reports `0.000` in every column and passes. The over-acceptance
+        // direction proper is covered by named fixtures — the bracket tests
+        // that pin the smallest error each obligation still refuses — and this
+        // is only the floor that stops the sweep from reporting silence as
+        // success. `0.5` is an order of magnitude below the worst figures the
+        // section quotes and an order above nothing.
+        assert!(
+            overall.bounds > 0.5 && overall.skin_matrix > 0.5 && overall.rest_translation > 0.5,
+            "the sweep measured almost no demand at all: bounds {:.3}, skin matrix {:.3}, rest \
+             translation {:.3}. A base has been loosened, or the population no longer reaches \
+             the cancellations it is built to reach — either way these figures are not a \
+             calibration of anything.",
+            overall.bounds,
+            overall.skin_matrix,
+            overall.rest_translation,
+        );
         let allowed = f64::from(ScaleTolerancePolicy::APPENDIX_D_V3.f32_rounding_ulps);
         assert!(
             overall.bounds < allowed

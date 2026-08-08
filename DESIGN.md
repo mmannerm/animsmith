@@ -779,9 +779,9 @@ below the `1e-5` the relative band already allows. The `2^-23` is
   root puts the joint `3.2e6` from the origin while its vertices skin to within
   one unit of it, and the bound inherits `1.6e-1` of error from a `9.7e-1`
   extreme. Dropping stage 3 makes the calibration sweep below refuse correct
-  candidates in fourteen of its seventy-two cells, at up to `42.3` ulps of the
-  base that remains; dropping stage 1 outright refuses in fifteen, and
-  narrowing it to `abs(p)` alone refuses in twelve at up to `58.7`.
+  candidates in fifty-six of its seventy-two cells, at up to `62.6` ulps of the
+  base that remains; dropping stage 1 outright refuses in thirty-four, and
+  narrowing it to `abs(p)` alone refuses in fifteen at up to `47.7`.
 
   **Stage 1 has been wrong twice, in the same place.** It first read the
   *skinned* point's magnitude and claimed that covered the transform; the
@@ -818,17 +818,35 @@ below the `1e-5` the relative band already allows. The `2^-23` is
   slots at `abs(W * B) = {1e-3, 1, 1e3}` so a third factor of the same kind is
   visible to a measurement rather than only to a reviewer.
 
-  **Stage 2 is a survivor, and provably so.** No test kills it and none can.
-  The blended point is a convex combination of the per-slot transformed points,
-  so `abs(skinned)` is bounded by `sqrt(3)` times stage 1 — and wherever it is
-  the larger of the two the blend did *not* cancel, which is exactly the regime
-  where the demand is `O(1)`. Dropping it moves the sweep's worst skinned-bounds
-  demand from `1.994` to `2.122`, both inside the count. It is kept because it
-  is a distinct quantity rather than a redundant one — it is the magnitude of
-  what is actually folded into the bound, and it can exceed stage 1 — and
-  because `a_rig_whose_skinned_extent_passes_the_square_root_of_f32_max_still_proves`
-  holds its `f32` overflow domain. It is recorded here rather than left as an
-  unexplained survivor.
+  **Stage 2 is needed because the blend is affine, not convex.** An earlier
+  revision of this section called it a survivor "and provably so — no test
+  kills it and none can", on the argument that the blended point is a *convex*
+  combination of the per-slot transformed points and therefore bounded by
+  `sqrt(3)` times stage 1. The premise is false. The only guard on the
+  normalisation is `weight_sum > 0.0`, and nothing constrains authored weights
+  to be non-negative — `validate_scene_assets` range-checks joint ids, not
+  weights, and
+  `a_vertex_whose_influences_sum_negative_is_left_out_of_the_bounds` is the
+  test that records it. With mixed-sign weights whose sum is positive but
+  small, `skinned /= weight_sum` is an **affine** combination, and an affine
+  combination amplifies without bound: weights of `1.0` and `-0.99999` sum to
+  `9.999e-6` and multiply the summed point by `1.0e5`.
+
+  `a_blend_whose_weights_nearly_cancel_amplifies_a_vertex_and_still_proves_its_bounds`
+  is that rig — the same two opposed slots as the cancellation fixture, with
+  the weights nearly cancelling instead of the points. Stage 1 reads `1.000e3`
+  and stage 3 `1.000e0` while the blended point the bound is actually built
+  from is `1.997e8`, and dropping stage 2 refuses that correct candidate at
+  `observed: 8.929` against `tolerance: 5.969e-4`. So all four stages dominate
+  the others by an unbounded ratio on some rig, and none of the four is a
+  survivor.
+
+  The calibration sweep cannot see this stage — dropping it leaves every cell's
+  demand unchanged, because the sweep draws non-negative weights — which is why
+  it is held by a named fixture and why the sweep's silence about it is
+  recorded here rather than read as evidence.
+  `a_rig_whose_skinned_extent_passes_the_square_root_of_f32_max_still_proves`
+  additionally holds this stage's `f32` overflow domain.
 
   `magnitude` is deliberately *not* read off the bound corner being compared.
   A per-axis extreme is contributed by whichever vertex happened to be
@@ -927,7 +945,7 @@ measured as such: the unscaled floor describes arithmetic whose rounding is
 bit-for-bit unchanged, so the linear block's error cancels out of `a - q * b`
 instead of accumulating into it. Measured by the calibration sweep below over
 its whole population, dropping the rebased source side from both bases leaves
-the worst demand at `1.994` of the four ulps for skinned bounds and `2.052` for
+the worst demand at `2.632` of the four ulps for skinned bounds and `2.065` for
 the skin equation — the same two figures the shipped bases produce, because in
 every cell the worst case is one where the candidate is already the larger
 side. Reading the candidate alone is therefore an equivalent mutation, recorded
@@ -940,7 +958,7 @@ fails in both places.
 That equivalence was false for skinned bounds under the base this section
 shipped before stage 1 was corrected, and is recorded as having been so:
 against the earlier `abs(p)` stage the sweep's worst skinned-bounds demand with
-the source side dropped is `521.7` of the four ulps rather than `1.994`. It is
+the source side dropped is `444.4` of the four ulps rather than `2.632`. It is
 true again only because stage 1 now names the transform's operand product. The
 skin equation's half was never affected — its base was already an operand
 product.
@@ -965,14 +983,26 @@ slots that oppose on the swept vertex and cancel it to the origin, and two
 independent slots that do not). Joint locals and vertex positions are drawn
 log-uniformly over six and eight decades in random directions, every joint
 carries a random rotation, and half of every cell's trials carry a parent chain
-that cancels. The generator is a written-out SplitMix64 seeded per cell, so the
-population is identical on every machine and every run.
+that cancels. The generator is a written-out SplitMix64 whose seed is derived
+from each cell's own coordinates — conversion, composition and blend — rather
+than from its position in the loop, so a cell's population does not move when a
+neighbouring cell is added, removed or reordered.
+
+The *bit stream* is identical on every machine and every run; the rigs drawn
+from it are not quite. The draws run `f64::powf` for the magnitude decades,
+`f64::sin`/`cos` for the directions, and glam's `f32` sine and cosine for the
+rotations, none of which any platform is required to round identically. Two
+machines can therefore differ in the last ulp of a joint local and in the last
+printed digit of the worst demand. That is the resolution at which these
+figures are re-derivable; at `2.6` against a count of `4` it cannot move a
+verdict, and every assertion in the sweep is a threshold rather than an
+equality for that reason.
 
 | quantity | worst over the population |
 |---|---|
-| skinned bounds | `1.994` |
-| the skin equation | `2.052` |
-| rest translation | `2.274` |
+| skinned bounds | `2.632` |
+| the skin equation | `2.065` |
+| rest translation | `2.400` |
 | refused correct candidates | `0` of `360_000` |
 
 The quantity is `residual / (magnitude * 2^-23)`: the raw ulp count, *not* net
@@ -994,10 +1024,32 @@ cancellation the rest chain reaches, at `524288` ulps of the composition's own
 base and `0.08` of the chain's. An unaffected instance's binds demand `0`, and
 always will.
 
-`4` is the next power of two above every figure above, and it is also the
-analytic worst case for the arithmetic involved, since composing `W * B`
-accumulates a four-term inner product per entry. That — rather than any one
-measured demand being the largest reachable — is what the count rests on.
+`4` is the next power of two above every figure above, **measured over this
+population**. It is not an analytic bound, and an earlier revision of this
+section claimed it was: "also the analytic worst case for the arithmetic
+involved, since composing `W * B` accumulates a four-term inner product per
+entry". A four-term inner product is the worst case for *one* composition. A
+chain performs one per link, and the link errors accumulate while the
+comparison base does not: `WorldPose::translation_chain` takes
+`translation_chain[parent].max(translation_operand_magnitude(...))`, so the
+base is a `max` over the links — flat in depth on a uniform chain — while the
+composed world translation carries one link's rounding per link.
+
+The demand therefore grows with depth, and the count is calibrated only to the
+depths this sweep and the named fixtures reach, which is three.
+`a_chain_deep_enough_to_accumulate_its_link_errors_passes_the_count_and_is_refused`
+pins where it stops holding: an ordinary straight chain of bones `10` units
+apart, each rotated `170` degrees about `z`, under a whole-document conversion
+at `1.5`, demands `0.685` ulps at depth `8`, `3.258` at `128` and `4.833` at
+`256`, and is refused from depth `180` up with
+`ProofResidualExceeded { kind: RestTranslation, observed: 1.728e-5,
+tolerance: 1.531e-5 }`.
+
+That limit is pre-existing rather than introduced by the rounding term, and the
+term narrows it: at `f32_rounding_ulps = 0` the same rig is refused from depth
+`64`. Widening the count is not the fix — the base is what fails to describe
+the arithmetic, exactly as in the three revisions below — and a chain-aware
+base is future work rather than something this section claims.
 
 A residual above the count is evidence about the *magnitude* before it is
 evidence about the count. Three revisions have now found the magnitude wrong
@@ -1065,10 +1117,17 @@ residual would then permit — those two are approximate, being measurements of
 a composition this tree does not perform and so not pinned by any test here. The term covers a quantization the file itself
 already performed, and no amount of proof-side precision can undo it.
 
-What the term does buy is the direction that matters: each obligation still
-refuses any error larger than the rounding its own arithmetic genuinely
-incurs, and none of them was ever sound holding a quantity to a band tighter
-than its own rounding error.
+What the term does buy is the direction that matters: no obligation is held to
+a band tighter than the rounding its own arithmetic genuinely incurs, which
+none of them was ever sound doing. The converse — that each obligation still
+*refuses* any error larger than that rounding — is a stronger claim than
+anything here establishes, and an earlier revision of this section made it. The
+count is a fixed number of ulps of a base that describes one composition, so on
+a chain deep enough for the link errors to accumulate it is exceeded by
+rounding alone: see the depth bracket under **The calibration sweep** above.
+What is pinned is a bracket per obligation, not a general guarantee — the
+smallest real error each one still refuses is measured and checked in, and it
+is `4.09375` units of bind shift on the far-joint rig.
 
 **Transform-only affine is not in this class.** It compares a probe point
 transformed through the complete expected and actual world affines as a vector
@@ -1218,7 +1277,17 @@ slot-dominated shape is what sets the ceiling. Both shapes are fully specified
 here, so a reader can rebuild them and measure their own machine: the
 slot-dominated one is 200 instances of a 99-joint skin list with one vertex
 each, and the vertex-dominated one is a single instance of that skin list with
-a 10_000-vertex primitive, each with as many sample times as `4e8` admits.
+a 10_000-vertex primitive, each with as many sample times as `4e8` admits, and
+**every vertex in both carries exactly one non-zero influence**.
+
+That last number is part of the shape and not an incidental detail. The budget
+charges per *vertex*, but the `f32`-rounding term's stage-1 work runs once per
+non-zero *influence* — the skinning loop `continue`s on a zero weight — so a
+rig whose vertices carry four influences pays that stage four times per vertex
+against the same charge. The seconds below therefore describe a one-influence
+shape and understate a four-influence one; the work units are identical for
+both, which is exactly the discrepancy §D.1 has to name rather than leave a
+rebuilder to discover.
 
 On one developer machine the slot-dominated shape at the ceiling measures
 `6.7s` and the vertex-dominated one `3.3s`, a ratio of `2.0`. Neither number
@@ -1238,9 +1307,24 @@ work.
 **What the `f32`-rounding term costs at that ceiling.** Deriving each
 obligation's magnitude is per-slot and per-vertex work that the tree before
 `appendix-d-v3` did not do, and the vertex-dominated shape is where it shows.
-On one machine, over twelve runs of each shape and taking minima, that shape
-went from `2.02s` to `3.31s` — `+64 %` — for the same 1_932_084 skin and
-117_096 bounds comparisons. The cost is dominated by taking the length of
+Two baselines are quoted here and they are not the same baseline, so both are
+named. Against **no rounding term at all** — the `appendix-d-v2` tree — on one
+machine, over twelve runs of each shape and taking minima, that shape went from
+`2.02s` to `3.31s`, `+64 %`, for the same 1_932_084 skin and 117_096 bounds
+comparisons.
+
+Against **the term with stage 1 read as `abs(p)`** — the form this design
+carried mid-revision, before stage 1 was corrected to the transform's operand
+product — the correction alone costs `+27 %`. Measured in one session on the
+same shape and machine, minimum of five runs: `2.57s` with no stage-1 term at
+all, `2.87s` reading `position.length()`, `3.64s` reading
+`column_operand_magnitude`. That is `+12 %` for having any stage-1 term,
+`+27 %` for correcting it, and `+42 %` for both together. The absolute seconds
+differ from the paragraph above because they are a different session of the
+same shape on the same machine; only ratios within one session are
+comparable.
+
+Within the first baseline, the cost is dominated by taking the length of
 each skinned position, 390 million of them at the ceiling. Widening that
 length unconditionally to `f64` cost `+83 %` instead; making the `f64` square
 a fallback behind a finite `f32` one recovers about a quarter of the
