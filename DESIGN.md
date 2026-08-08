@@ -837,9 +837,28 @@ below the `1e-5` the relative band already allows. The `2^-23` is
   read off the rest pose and off the sampled pose respectively. There is no
   product to sum here: the comparison is between two composed world
   translations, and the only way one of them can be small while its error is
-  large is the chain cancellation. The chain magnitude is maxed over both
-  documents for skinned bounds' reason, since whole-document conversion puts
-  the two sides a factor apart.
+  large is the chain cancellation.
+
+  The chain is the **candidate's**, not the source's and not the max of the
+  two. Whole-document conversion scales every translation by the factor and
+  leaves every linear part alone, so the two documents' chains are exactly
+  that factor apart, and the source's rounding is rebased by the same factor
+  before it is compared — so the residual scales with the candidate's chain at
+  either end of the factor range, and under rest/bind the two chains are equal
+  outright. A max over the two sides is therefore never *needed*, and under a
+  shrinking conversion it is strictly worse: at a factor of `0.01` the source
+  chain is `100x` the candidate's, so the max freezes the band at the source
+  rig's size while the candidate it is spent on keeps shrinking, and the
+  smallest genuinely wrong candidate either obligation refuses stops tracking
+  the factor at all. On the cancelling-chain rig that costs `89x` of
+  discriminating power at `0.01` and `648x` at `1e-4`. Unlike skinned bounds
+  and the skin equation — whose magnitudes are products whose linear part does
+  not scale with the factor, so the two sides are not related by it — this one
+  has an exact relation between the sides and needs only one of them.
+  `a_shrinking_conversion_holds_rest_translation_to_the_candidate_s_own_chain`
+  and `a_shrinking_conversion_holds_trajectory_to_the_candidate_s_own_chain`
+  pin the tightening; the two `..._holds_..._to_the_candidate_side` fixtures
+  pin the growing direction, where the candidate's chain is also the larger.
 
 `4` is measured, not assumed, over 2_390_000 correct candidates in four
 populations: 120_000 rest/bind candidates over declared factors

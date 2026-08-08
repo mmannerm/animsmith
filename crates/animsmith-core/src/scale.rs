@@ -3258,7 +3258,7 @@ pub fn prove_scale(
             });
         }
         for &node in &plan.affected_nodes {
-            let (before, before_chain) = source_worlds.bone(node)?;
+            let (before, _) = source_worlds.bone(node)?;
             let (after, after_chain) = candidate_worlds.bone(node)?;
             let (translation_residual, before_mag, after_mag) =
                 rest_node_residual(before, after, plan.is_whole_document(), plan.common_factor);
@@ -3266,34 +3266,35 @@ pub fn prove_scale(
             // translation's: a joint whose local offset points back along its
             // parent's world translation leaves a world translation the
             // difference of two much larger terms, carrying their rounding
-            // error into a comparison whose own operands are small. Maxed
-            // over both sides for `check_skin_and_bounds`'s reason — the two
-            // documents' chains differ by the factor under whole-document
-            // conversion, and the larger side's arithmetic is what both need
-            // room for.
+            // error into a comparison whose own operands are small.
             //
-            // `a_cancelling_chain_under_conversion_holds_rest_translation_to_the_larger_side`
+            // The *candidate's* chain, not the source's and not the `max` of
+            // the two. The residual is measured against the candidate's
+            // arithmetic: whole-document conversion scales every translation
+            // by the factor and leaves every linear part alone, so the two
+            // chains are exactly that factor apart, and the source's rounding
+            // is rebased by the same factor before it is compared. The
+            // residual therefore scales with `after_chain` at either end of
+            // the factor range, and under rest/bind the two chains are equal
+            // outright. `before_chain` can only ever over-provide — and under
+            // a *shrinking* conversion it over-provides by `1/factor`, freezing
+            // the band at the source rig's size while the candidate the band
+            // is spent on gets smaller without limit.
+            //
+            // `a_cancelling_chain_under_conversion_holds_rest_translation_to_the_candidate_side`
             // pins that reading the *source* side alone refuses a correct
-            // candidate, and
+            // candidate under a growing conversion;
+            // `a_shrinking_conversion_holds_rest_translation_to_the_candidate_s_own_chain`
+            // pins the opposite direction, where the source side is the larger
+            // one and reading it admits a `100x` larger build error; and
             // `the_rest_translation_chain_term_still_refuses_an_error_a_few_ulps_above_it`
             // pins the size of the term from above.
-            //
-            // Replacing the `max` with `after_chain` alone is an **equivalent
-            // mutation**, and is listed here rather than left as an unexplained
-            // survivor. Whole-document conversion scales every translation by
-            // the factor and leaves every linear part alone, so the two chains
-            // are exactly that factor apart; the source's rounding is rebased
-            // by the same factor before it is compared, so the residual scales
-            // with `after_chain` at either end of the factor range and
-            // `before_chain` can only ever over-provide. Under rest/bind the
-            // two chains are equal outright. No candidate can distinguish the
-            // two expressions, so no fixture can either.
             check_and_track_f32_rounded(
                 ProofResidualKind::RestTranslation,
                 translation_residual,
                 before_mag,
                 after_mag,
-                before_chain.max(after_chain),
+                after_chain,
                 &tol,
                 &mut proof,
             )?;
@@ -4484,30 +4485,34 @@ fn check_trajectory_residual_at(
     proof: &mut ScaleProof,
 ) -> Result<(), ScaleError> {
     for &node in affected_nodes {
-        let (before, before_chain) = source_worlds.bone(node)?;
+        let (before, _) = source_worlds.bone(node)?;
         let (after, after_chain) = candidate_worlds.bone(node)?;
         let (translation_residual, before_mag, after_mag) =
             rest_node_residual(before, after, plan.is_whole_document(), plan.common_factor);
         // The same magnitude the unanimated `RestTranslation` comparison
-        // takes, read off the sampled pose this residual was composed from
-        // rather than the rest pose: the two obligations differ only in which
-        // locals the chain ran on. Its `max` is equivalent-under-mutation for
-        // the same reason and in the same direction — see the note there.
+        // takes — the *candidate's* sampled parent chain, read off the sampled
+        // pose this residual was composed from rather than the rest pose: the
+        // two obligations differ only in which locals the chain ran on, and
+        // the argument for reading the candidate side alone is the one stated
+        // there.
         //
         // Reaching this term at all needs a rig whose *sampled* parent chain
         // cancels, which a clip over a rest pose that already cancels is the
         // simplest way to build:
         // `a_sampled_pose_whose_parent_chain_cancels_still_proves_its_trajectory`
         // and `the_trajectory_chain_term_still_refuses_an_error_a_few_ulps_above_it`
-        // are those fixtures. Without one the only comparison this obligation
-        // makes has `chain = 0` on both sides, and every mutation of the term
-        // is a no-op on a quantity that is arithmetically absent.
+        // are those fixtures, and
+        // `a_shrinking_conversion_holds_trajectory_to_the_candidate_s_own_chain`
+        // is the one that separates the candidate's chain from the source's.
+        // Without such a rig the only comparison this obligation makes has
+        // `chain = 0` on both sides, and every mutation of the term is a no-op
+        // on a quantity that is arithmetically absent.
         check_and_track_f32_rounded(
             ProofResidualKind::Trajectory,
             translation_residual,
             before_mag,
             after_mag,
-            before_chain.max(after_chain),
+            after_chain,
             tol,
             proof,
         )?;
@@ -12301,19 +12306,21 @@ mod tests {
         );
     }
 
-    /// [`cancelling_chain_document`] under whole-document conversion, which is
-    /// the only operation that puts the two documents' chain magnitudes a
-    /// factor apart: rest/bind moves the factor from the root's scale into the
-    /// joint translations, so both sides compose the same `3.19e6` and every
-    /// rest/bind fixture is blind to which side the `max` reads.
+    /// [`cancelling_chain_document`] under whole-document conversion at
+    /// `factor`, which is the only operation that puts the two documents'
+    /// chain magnitudes apart: rest/bind moves the factor from the root's
+    /// scale into the joint translations, so both sides compose the same
+    /// `3.19e6` and every rest/bind fixture is blind to which side the
+    /// magnitude is read from.
     ///
-    /// Here the source chain is `2000` and the candidate's is `6.38e6`, and the
-    /// residual the larger side's rounding leaves is `0.197`.
-    fn cancelling_chain_conversion() -> (Document, ScalePlan, ScaleCandidate) {
+    /// The source chain is `2000` at every factor and the candidate's is
+    /// `2000 * factor`, so the growing and shrinking directions are the same
+    /// rig with the sign of `log(factor)` flipped.
+    fn cancelling_chain_conversion_at(factor: f64) -> (Document, ScalePlan, ScaleCandidate) {
         let doc = cancelling_chain_document(1.0);
         let capability = complete_capability();
         let plan = plan_scale(&ScaleRequest {
-            operation: ScaleOperation::WholeDocumentLinearUnits { factor: 3190.0 },
+            operation: ScaleOperation::WholeDocumentLinearUnits { factor },
             document: &doc,
             capability: &capability,
         })
@@ -12322,20 +12329,32 @@ mod tests {
         (doc, plan, candidate)
     }
 
+    /// [`cancelling_chain_conversion_at`] at `3190`, where the candidate's
+    /// chain is `6.38e6` against the source's `2000` and the residual the
+    /// candidate's rounding leaves is `0.197`.
+    fn cancelling_chain_conversion() -> (Document, ScalePlan, ScaleCandidate) {
+        cancelling_chain_conversion_at(3190.0)
+    }
+
     #[test]
-    fn a_cancelling_chain_under_conversion_holds_rest_translation_to_the_larger_side() {
-        // `RestTranslation`'s magnitude is the parent chain's, maxed over the
-        // two documents, and this is the fixture that pins both halves of that
-        // sentence. The chain cancels, so the surviving world translation is
-        // `6.1e-5` on the source side and the residual between the two
-        // documents is `0.197` — nothing the compared translations' own
-        // magnitudes could ever buy. And the two chains are `3190x` apart, so
-        // reading the source side alone buys the candidate's arithmetic a band
-        // derived from a rig `3190` times smaller.
+    fn a_cancelling_chain_under_conversion_holds_rest_translation_to_the_candidate_side() {
+        // `RestTranslation`'s magnitude is the *candidate's* parent chain, and
+        // this is the fixture that pins it is a chain at all and that it is
+        // read from the candidate. The chain cancels, so the surviving world
+        // translation is `6.1e-5` on the source side and the residual between
+        // the two documents is `0.197` — nothing the compared translations'
+        // own magnitudes could ever buy. And the two chains are `3190x` apart,
+        // so reading the source side instead buys the candidate's arithmetic a
+        // band derived from a rig `3190` times smaller.
         //
-        // Measured: the residual is `0.197` against `3.04` from the larger
-        // chain, `9.58e-4` from the smaller, and `3.92e-6` with no chain term
+        // Measured: the residual is `0.197` against `3.04` from the candidate's
+        // chain, `9.58e-4` from the source's, and `3.92e-6` with no chain term
         // at all. Only the first admits this correct candidate.
+        //
+        // This is the growing direction, where the candidate's chain is also
+        // the larger of the two;
+        // `a_shrinking_conversion_holds_rest_translation_to_the_candidate_s_own_chain`
+        // is the direction that separates "the candidate's" from "the larger".
         let (doc, plan, candidate) = cancelling_chain_conversion();
         let source_chain = rest_world_pose(&doc.skeleton).unwrap().translation_chain[2];
         let candidate_chain = rest_world_pose(&candidate.document().skeleton)
@@ -12348,15 +12367,78 @@ mod tests {
         );
 
         let proof = prove_scale(&doc, &candidate, &plan).expect(
-            "the two documents' chain magnitudes are 3190x apart, and the larger side's \
+            "the two documents' chain magnitudes are 3190x apart, and the candidate's \
              arithmetic is what this obligation must be given room for",
         );
         let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
         assert!(
             proof.rest_translation_residual > policy.f32_rounded_tolerance(0.0, 0.0, source_chain),
-            "rest translation residual {} no longer exceeds what the smaller side's chain \
+            "rest translation residual {} no longer exceeds what the source side's chain \
              buys, so this fixture no longer separates the two sides",
             proof.rest_translation_residual
+        );
+    }
+
+    #[test]
+    fn a_shrinking_conversion_holds_rest_translation_to_the_candidate_s_own_chain() {
+        // The other end of the factor range, and the fixture the equivalence
+        // argument for `max(before_chain, after_chain)` used to stand in for.
+        //
+        // At `0.01` the *source* chain is the larger of the two — `2000`
+        // against the candidate's `20` — so a `max` over the two sides hands
+        // this obligation a band derived from a rig `100x` bigger than the one
+        // the residual was measured on. It is not merely redundant there, it
+        // is loose by `1/factor`: the band freezes at the source rig's size
+        // while the candidate the band is spent on keeps shrinking.
+        //
+        // Measured: with the `max` the smallest refused displacement of the
+        // affected joint is `9.54e-4` at `0.01` and `9.55e-4` at `1e-4` —
+        // pinned to the source rig at both. With the candidate's chain alone
+        // it is `1.07e-5` and `1.47e-6`: `89x` and `648x` tighter, and it
+        // tracks the factor as it should.
+        let (doc, plan, candidate) = cancelling_chain_conversion_at(0.01);
+        let source_chain = rest_world_pose(&doc.skeleton).unwrap().translation_chain[2];
+        let candidate_chain = rest_world_pose(&candidate.document().skeleton)
+            .unwrap()
+            .translation_chain[2];
+        assert!(
+            source_chain > 50.0 * candidate_chain,
+            "the source side is no longer the larger one, so this fixture no longer \
+             separates the candidate's chain from the max: {source_chain} / {candidate_chain}",
+        );
+
+        // The equivalence half: a correct candidate still proves on the
+        // candidate's chain alone, at the end of the range where that chain is
+        // the *smaller* of the two.
+        prove_scale(&doc, &candidate, &plan)
+            .expect("a correct candidate under a shrinking conversion must still prove");
+
+        // And the tightening half. `1e-4` sits between the two bands: above
+        // the `1.05e-5` the candidate's chain buys, below the `9.54e-4` the
+        // source's would. Reading the source side — or the `max`, which is the
+        // source side here — admits this wrong candidate.
+        let mut broken = candidate.document().clone();
+        broken.skeleton.bones[2].rest.translation.x += 1e-4;
+        let broken = ScaleCandidate { document: broken };
+        let error = prove_scale(&doc, &broken, &plan)
+            .expect_err("a 1e-4 joint displacement must be refused on the candidate's chain");
+        let ScaleError::ProofResidualExceeded {
+            kind: ProofResidualKind::RestTranslation,
+            observed,
+            tolerance,
+        } = error
+        else {
+            panic!("expected a refused rest translation, got {error:?}");
+        };
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
+        assert!(
+            observed > tolerance,
+            "rest translation band moved: observed {observed}, tolerance {tolerance}"
+        );
+        assert!(
+            observed < policy.f32_rounded_tolerance(0.0, 0.0, source_chain),
+            "rest translation residual {observed} now exceeds what the source chain buys too, \
+             so this fixture no longer kills the source-side reading",
         );
     }
 
@@ -12409,7 +12491,7 @@ mod tests {
     /// Without a track like this the only `Trajectory` comparison any fixture
     /// in this section makes has `chain = 0` on both sides, which makes the
     /// term arithmetically absent and every mutation of it a no-op.
-    fn cancelling_chain_clip_conversion() -> (Document, ScalePlan, ScaleCandidate) {
+    fn cancelling_chain_clip_conversion_at(factor: f64) -> (Document, ScalePlan, ScaleCandidate) {
         let mut doc = cancelling_chain_document(1.0);
         doc.clips.push(Clip {
             name: "clip".into(),
@@ -12427,7 +12509,7 @@ mod tests {
         });
         let capability = complete_capability();
         let plan = plan_scale(&ScaleRequest {
-            operation: ScaleOperation::WholeDocumentLinearUnits { factor: 3190.0 },
+            operation: ScaleOperation::WholeDocumentLinearUnits { factor },
             document: &doc,
             capability: &capability,
         })
@@ -12435,6 +12517,11 @@ mod tests {
         assert!(plan.proof_obligations().prove_trajectories);
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
         (doc, plan, candidate)
+    }
+
+    /// [`cancelling_chain_clip_conversion_at`] at `3190`.
+    fn cancelling_chain_clip_conversion() -> (Document, ScalePlan, ScaleCandidate) {
+        cancelling_chain_clip_conversion_at(3190.0)
     }
 
     #[test]
@@ -12447,7 +12534,7 @@ mod tests {
         // rounding artefact of `6.38e6`.
         //
         // Measured: the trajectory residual is `0.197` against `3.04` from the
-        // larger side's sampled chain, `9.58e-4` from the smaller, and `3.92e-6`
+        // candidate's sampled chain, `9.58e-4` from the source's, and `3.92e-6`
         // with no chain term. It is the rest residual to the digit, because at
         // this sample the two poses are the same pose — which is the point:
         // the two obligations differ only in which locals the chain ran on.
@@ -12459,9 +12546,62 @@ mod tests {
         let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
         assert!(
             proof.trajectory_residual > policy.f32_rounded_tolerance(0.0, 0.0, source_chain),
-            "trajectory residual {} no longer exceeds what the smaller side's chain buys, so \
+            "trajectory residual {} no longer exceeds what the source side's chain buys, so \
              this fixture no longer exercises the sampled chain term",
             proof.trajectory_residual
+        );
+    }
+
+    #[test]
+    fn a_shrinking_conversion_holds_trajectory_to_the_candidate_s_own_chain() {
+        // `a_shrinking_conversion_holds_rest_translation_to_the_candidate_s_own_chain`
+        // for the sampled obligation, on the same rig with the same clip: at
+        // `0.01` the sampled source chain is `2000` against the candidate's
+        // `20`, so a `max` over the two sides is the source side and is loose
+        // by `100x`.
+        //
+        // `5e-5` is the bracket, and it is a narrow one because `TrackValue`
+        // closes in from above as the factor shrinks: it compares the key
+        // values themselves, which are `10` units here, against a `1.01e-4`
+        // band. Below that and above the `1.05e-5` the candidate's sampled
+        // chain buys, `Trajectory` is the only obligation that can refuse this
+        // candidate — and with the source side's `9.54e-4` it does not.
+        //
+        // Measured: with the `max`, the smallest refused track displacement at
+        // `0.01` is `1.01e-4` and it is refused by `TrackValue`, not by
+        // `Trajectory` — this obligation contributed nothing. With the
+        // candidate's chain alone it is `1.04e-5`, refused by `Trajectory`.
+        let (doc, plan, candidate) = cancelling_chain_clip_conversion_at(0.01);
+        prove_scale(&doc, &candidate, &plan)
+            .expect("a correct candidate under a shrinking conversion must still prove");
+
+        let mut broken = candidate.document().clone();
+        let TrackValues::Vec3s(values) = &mut broken.clips[0].tracks[0].values else {
+            panic!("expected a vec3 track");
+        };
+        values[0].x += 5e-5;
+        values[1].x += 5e-5;
+        let broken = ScaleCandidate { document: broken };
+        let error = prove_scale(&doc, &broken, &plan)
+            .expect_err("a 5e-5 sampled displacement must be refused on the candidate's chain");
+        let ScaleError::ProofResidualExceeded {
+            kind: ProofResidualKind::Trajectory,
+            observed,
+            tolerance,
+        } = error
+        else {
+            panic!("expected a refused trajectory, got {error:?}");
+        };
+        let source_chain = rest_world_pose(&doc.skeleton).unwrap().translation_chain[2];
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
+        assert!(
+            observed > tolerance,
+            "trajectory band moved: observed {observed}, tolerance {tolerance}"
+        );
+        assert!(
+            observed < policy.f32_rounded_tolerance(0.0, 0.0, source_chain),
+            "trajectory residual {observed} now exceeds what the source chain buys too, so \
+             this fixture no longer kills the source-side reading",
         );
     }
 
