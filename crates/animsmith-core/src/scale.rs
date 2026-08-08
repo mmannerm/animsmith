@@ -11916,7 +11916,10 @@ mod tests {
         let mut doc = multi_joint_document();
         doc.assets.meshes.push(MeshAsset {
             name: "later mesh".into(),
-            source_mesh_index: 1,
+            // Deliberately differs from this asset's vector index (`1`): the
+            // typed error reports the normalized mesh-array coordinate, not
+            // the source format's stable mesh id.
+            source_mesh_index: 99,
             primitives: vec![
                 Primitive::default(),
                 Primitive::default(),
