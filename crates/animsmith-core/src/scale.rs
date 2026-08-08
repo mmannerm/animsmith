@@ -11862,6 +11862,29 @@ mod tests {
             prove_scale(&negative_zero, &candidate, &plan)
                 .expect("proof accepts negative zero in source and candidate");
         }
+
+        // This PR owns finite-negative classification only. Non-finite
+        // weights retain their existing bounds-path reason instead of being
+        // reclassified merely because negative infinity compares below zero.
+        let mut non_finite = doc.clone();
+        non_finite.assets.meshes[0].primitives[0].weights[3][3] = f32::NEG_INFINITY;
+        for operation in operations {
+            let plan = plan_scale(&ScaleRequest {
+                operation,
+                document: &non_finite,
+                capability: &capability,
+            })
+            .expect("negative infinity is not a finite-negative plan refusal");
+            let candidate = build_scale_candidate(&non_finite, &plan)
+                .expect("candidate construction preserves non-finite routing");
+            assert!(matches!(
+                prove_scale(&non_finite, &candidate, &plan),
+                Err(ScaleError::InvalidSkinnedPrimitive {
+                    reason: "non_finite_weight",
+                    ..
+                })
+            ));
+        }
     }
 
     #[test]
@@ -11898,6 +11921,8 @@ mod tests {
                 Primitive::default(),
                 Primitive::default(),
                 Primitive {
+                    positions: vec![Vec3::ZERO],
+                    joints: vec![[0, 0, 0, 0]],
                     weights: vec![[0.0, 0.0, -f32::from_bits(1), 0.0]],
                     ..Primitive::default()
                 },
@@ -14182,13 +14207,15 @@ mod tests {
 
     #[test]
     fn the_bounds_rounding_magnitude_is_the_max_of_the_points_and_the_composition() {
-        // Both halves are load-bearing and neither dominates the other, so
-        // the accumulator maxes them rather than picking one. A slot that
-        // composed nothing (`M * I`) leaves the skinned points to set the
-        // magnitude; a slot that cancelled two large terms sets it itself
-        // even when every skinned point is near the origin.
+        // Both halves are part of appendix-d-v3, so the accumulator maxes
+        // them rather than picking one. The diagonal point specifically pins
+        // the retained stage-2 L2 length: stage 1's per-component bound is
+        // only `300`, while the blended length is `sqrt(3) * 300`. Removing
+        // that conservative stage without changing the policy identity must
+        // fail this test. A slot that cancelled two large terms still sets the
+        // magnitude itself even when every skinned point is near the origin.
         let primitive = Primitive {
-            positions: vec![Vec3::new(300.0, 0.0, 0.0)],
+            positions: vec![Vec3::splat(300.0)],
             joints: vec![[0, 0, 0, 0]],
             weights: vec![[1.0, 0.0, 0.0, 0.0]],
             ..Primitive::default()
@@ -14203,7 +14230,8 @@ mod tests {
             &mut points_dominate,
         )
         .unwrap();
-        assert!((points_dominate.rounding_magnitude() - 300.0).abs() < 1e-3);
+        let blended_length = f64::from(Vec3::splat(300.0).length());
+        assert!((points_dominate.rounding_magnitude() - blended_length).abs() < 1e-3);
 
         // `W = [I | (5000, 0, 0)]` against `B = W^-1`: the product is the
         // identity, so `matrix_magnitude` of it is `1`, but the translation
