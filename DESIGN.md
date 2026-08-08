@@ -1484,9 +1484,11 @@ and the three translation entries (`12, 13, 14`) by `s_parent`. Components
 `3, 7, 11, 15` are written back exactly as authored, which is the correct
 rebase only because the §D.4 gate has already proved them exactly
 `(0, 0, 0, 1)`: the basis change multiplies `3, 7, 11` by `1 / s_i`, a no-op
-on an exact zero and on nothing else, and leaves `15` alone, which is the
-whole transform only when the node is affine. §D.3 case 4 records why that
-gate compares exactly rather than within tolerance.
+on an exact zero and on nothing else, and leaves `15` alone at any value, so
+what the gate buys there is not the arithmetic but the premise — a `matrix`
+is the node's whole transform, with no projective divide this record models,
+only when `15` is exactly one. §D.3 case 4 records why that gate compares
+exactly rather than within tolerance.
 
 Mesh positions, morph deltas, and normals remain unchanged because their world
 geometry is already correct. Each inverse bind is regenerated from the
@@ -1608,7 +1610,7 @@ inspect the raw input or a loader-supplied complete inventory before mutation.
 | Cameras/lights | Node transform only; typed fields are not modeled | Reject until all length fields have handlers | Reject when attached to the affected domain until preservation is proven |
 | Collision/custom data | No semantic model for extras or extensions | Reject unless a registered handler covers every length | Reject when affected unless exact preservation is proven |
 | Other vertex/source data | Several attributes, non-triangle modes, and extension payloads are not writer-preserved | Reject on the normalized-model route | Reject on the normalized-model route |
-| Out-of-contract node transforms | A `matrix` beside a TRS member, or a `matrix` whose last row is not **exactly** `(0, 0, 0, 1)` — compared exactly at the gate, never within tolerance (§D.3 case 4) — parses but is not glTF 2.0 | Reject: which transform the author meant is unknowable, and `U M U^-1` leaves a projective row unconverted | Reject for the same reason |
+| Out-of-contract node transforms | A `matrix` beside a TRS member, or a `matrix` whose last row is not **exactly** `(0, 0, 0, 1)` — compared exactly at the gate, never within tolerance (§D.3 case 4) — parses but is not glTF 2.0 | Reject: which transform the author meant is unknowable, and `U M U^-1` leaves `3, 7, 11` unconverted where the basis change owes them `1 / q`, while a `15` other than one is invariant under the rewrite and so would be published still asserting a projective divide (§D.2) | Reject for the same reason, with `1 / s_i` for `1 / q` |
 | Aliased buffer payloads | An `image` reads a `bufferView` directly and never becomes an accessor | Reject when its bytes overlap a scale-bearing accessor | Reject when its bytes overlap a rewritten accessor |
 | Shared scale-bearing payloads | One accessor reached by several logical uses; the preflight classifies use kinds, not identities | Convert once per unique accessor: every use takes the same `q` | Reject when two uses demand different multipliers (§D.2); convert once when they agree |
 

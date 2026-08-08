@@ -430,6 +430,37 @@ fn rejects_a_node_matrix_whose_last_row_is_not_affine() {
         );
     }
 
+    // The comparison is exact, so the near-valid band is refused too: each of
+    // these is inside every tolerance this workspace declares — `1e-5` for
+    // `equal_axis` and `common_factor` — and none of them reaches one. This is
+    // the claim DESIGN.md Appendix D §D.3 case 4 makes in prose, pinned here
+    // so loosening the gate to a tolerance comparison fails a test rather than
+    // silently publishing an unconverted `3, 7, 11` or a projective `15`.
+    for (component, authored) in [
+        (15usize, 1.000_000_1_f64),
+        (15, 1.0 + f64::EPSILON),
+        (3, 1e-12),
+    ] {
+        let mut matrix = IDENTITY_MATRIX;
+        matrix[component] = authored;
+        let value = node_matrix_document(matrix, &[]);
+        let (violations, _) = unsupported(&value);
+        assert_eq!(
+            locations(
+                &violations,
+                GltfCapabilityViolationKind::NonAffineNodeMatrix
+            ),
+            vec![format!("/nodes/0/matrix/{component}")],
+            "matrix[{component}] = {authored:?}"
+        );
+        assert_eq!(
+            violations.len(),
+            1,
+            "matrix[{component}] = {authored:?}: the near-valid entry is the \
+             only thing wrong with the document"
+        );
+    }
+
     // One matrix breaking all four entries reports all four, and the sorted
     // order is lexical over the JSON pointers rather than numeric.
     let mut matrix = IDENTITY_MATRIX;
