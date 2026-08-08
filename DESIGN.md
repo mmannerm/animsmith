@@ -759,10 +759,12 @@ below the `1e-5` the relative band already allows. The `2^-23` is
   reason given after this list. There are four stages, and each is a
   cancellation the stage after it can no longer see:
 
-  1. the magnitude of the vertex position `p` itself, which covers the
-     `W * B * p` transform — that transform runs on terms of size
-     `abs(W * B) * abs(p)`, and the weighted sum over slots that follows can
-     cancel them against each other;
+  1. the magnitude the `W * B * p` transform runs on, which is
+     `max over i of sum over k of abs((W * B)_ik) * abs(p_k)` with `p` extended
+     by the homogeneous `1` that `transform_point3` sums the translation column
+     in with — the *product* `abs(W * B) * abs(p)` and not either factor alone
+     — because the weighted sum over slots that follows can cancel those terms
+     against each other;
   2. the magnitude of the *blended* skinned point, which is what that sum
      produced and therefore covers nothing the sum cancelled;
   3. the magnitude the contributing slot's `W * B` composition ran on, which
@@ -771,30 +773,62 @@ below the `1e-5` the relative band already allows. The `2^-23` is
      from along its parent chain, which covers the cancellation performed one
      composition earlier.
 
-  No three of the four are sufficient. The skinned points alone miss a joint
-  placed far from the geometry it carries — a `1000`-unit local translation
-  under a `3190` root puts the joint `3.2e6` from the origin while its
-  vertices skin to within one unit of it, and the bound inherits `1.6e-1` of
-  error from a `9.7e-1` extreme. Measured over 30_000 correct candidates, the
-  skinned magnitude alone left residuals up to `1.0e7` of its own ulp; adding
-  the composition left `2.27`; adding the chain leaves `1.26` over 2_390_000.
+  Stages 1, 3 and 4 are each load-bearing, and each dominates the others by an
+  unbounded ratio on some rig. The skinned points alone miss a joint placed far
+  from the geometry it carries — a `1000`-unit local translation under a `3190`
+  root puts the joint `3.2e6` from the origin while its vertices skin to within
+  one unit of it, and the bound inherits `1.6e-1` of error from a `9.7e-1`
+  extreme. Dropping stage 3 makes the calibration sweep below refuse correct
+  candidates in fourteen of its seventy-two cells, at up to `42.3` ulps of the
+  base that remains; dropping stage 1 outright refuses in fifteen, and
+  narrowing it to `abs(p)` alone refuses in twelve at up to `58.7`.
 
-  The first stage is the one an earlier revision of this section got wrong,
-  and it claimed the opposite: that the skinned point's magnitude "covers the
-  `W * B * p` transform". It does not, and the two coincide only while no two
-  slots oppose. Two slots whose composed `W * B` differ by a half turn send a
-  vertex `1000` units out to a blended origin, so stage 2 reads `0` while
-  every term summed to produce it carried that vertex's own ulp; put the
-  joints near the origin as well and stages 3 and 4 read `1`. The residual is
-  then `6.1e-5` — one ulp of `1000` — against a `1.5e-6` band, a demand of
-  `503` ulps, rising to `65_527` at `abs(p) = 1e5`. Reaching it requires only
-  that the bind pose is not the rest pose, which is ordinary content: with
-  `W * B` the identity on every slot there is nothing for the blend to
-  cancel, which is why a section's worth of fixtures built on analytic
-  inverse binds could not express the case at all.
-  `two_slots_whose_composed_binds_cancel_a_vertex_still_prove_its_bounds`
-  pins it, and builds its binds independently of the rest world for that
-  reason.
+  **Stage 1 has been wrong twice, in the same place.** It first read the
+  *skinned* point's magnitude and claimed that covered the transform; the
+  correction read the vertex position `abs(p)` and claimed the same. Both name
+  one term of a product of two, and each was exact only on the rigs that
+  happened to be built.
+
+  - The skinned point coincides with the transform only while no two slots
+    oppose. Two slots whose composed `W * B` differ by a half turn send a
+    vertex `1000` units out to a blended origin, so stage 2 reads `0` while
+    every term summed to produce it carried that vertex's own ulp; put the
+    joints near the origin as well and stages 3 and 4 read `1`. The residual is
+    then `6.1e-5` — one ulp of `1000` — against a `1.5e-6` band, a demand of
+    `503` ulps, rising to `65_527` at `abs(p) = 1e5`.
+  - `abs(p)` coincides with the transform only while `abs(W * B)` is `1`, and
+    the one rig that reached the cancellation composed `W * B` from a *pure
+    rotation*, where it is `1` by construction. Give those same two slots a
+    uniform scale of `k` and the sum still cancels while each term carries the
+    rounding of a `k * abs(p)`-magnitude transform: at `k = 1024` and
+    `abs(p) = 65536` the residual is `4.0` against a `0.0313` band, a demand of
+    `512` ulps, and the rig refuses from `min(k, abs(p)) > 8` upward with the
+    shortfall growing as `min(k, abs(p))`.
+
+  Both need only that the bind pose is not the rest pose, which is ordinary
+  content: with `W * B` the identity on every slot there is nothing for a blend
+  to cancel *and* nothing but `1` for `abs(W * B)` to be, which is why a
+  section's worth of fixtures built on analytic inverse binds could express
+  neither case.
+  `two_slots_whose_composed_binds_cancel_a_vertex_still_prove_its_bounds` pins
+  the cancellation and
+  `two_slots_with_a_scaled_composition_cancel_a_vertex_and_still_prove_its_bounds`
+  pins the second factor; both build their binds independently of the rest
+  world for that reason, and the calibration sweep below now carries composed
+  slots at `abs(W * B) = {1e-3, 1, 1e3}` so a third factor of the same kind is
+  visible to a measurement rather than only to a reviewer.
+
+  **Stage 2 is a survivor, and provably so.** No test kills it and none can.
+  The blended point is a convex combination of the per-slot transformed points,
+  so `abs(skinned)` is bounded by `sqrt(3)` times stage 1 — and wherever it is
+  the larger of the two the blend did *not* cancel, which is exactly the regime
+  where the demand is `O(1)`. Dropping it moves the sweep's worst skinned-bounds
+  demand from `1.994` to `2.122`, both inside the count. It is kept because it
+  is a distinct quantity rather than a redundant one — it is the magnitude of
+  what is actually folded into the bound, and it can exceed stage 1 — and
+  because `a_rig_whose_skinned_extent_passes_the_square_root_of_f32_max_still_proves`
+  holds its `f32` overflow domain. It is recorded here rather than left as an
+  unexplained survivor.
 
   `magnitude` is deliberately *not* read off the bound corner being compared.
   A per-axis extreme is contributed by whichever vertex happened to be
@@ -845,10 +879,14 @@ below the `1e-5` the relative band already allows. The `2^-23` is
 
   The chain is the **candidate's**, not the source's and not the max of the
   two. Whole-document conversion scales every translation by the factor and
-  leaves every linear part alone, so the two documents' chains are exactly
-  that factor apart, and the source's rounding is rebased by the same factor
-  before it is compared — so the residual scales with the candidate's chain at
-  either end of the factor range, and under rest/bind the two chains are equal
+  leaves every linear part alone, so the two documents' chains are that factor
+  apart — subject to the candidate's `f32` narrowing of the factor, since the
+  build scales by `factor as f32` while the proof rebases by the `f64` factor,
+  a relative difference of at most `2^-24` (`1.49e-8` at `q = 0.1`, whose
+  `f32` is `0.10000000149011612`) that this very rounding term covers many
+  times over — and the source's rounding is rebased by the same factor before
+  it is compared, so the residual scales with the candidate's chain at either
+  end of the factor range, and under rest/bind the two chains are equal
   outright. A max over the two sides is therefore never *needed*, and under a
   shrinking conversion it is strictly worse: at a factor of `0.01` the source
   chain is `100x` the candidate's, so the max freezes the band at the source
@@ -887,56 +925,74 @@ to the whole factor. That excess is provisioning rather than a rescue, and it is
 measured as such: the unscaled floor describes arithmetic whose rounding is
 *identical* on the two sides, since conversion leaves every linear part
 bit-for-bit unchanged, so the linear block's error cancels out of `a - q * b`
-instead of accumulating into it. Over 5760 rigs per factor at
-`{1.5, 7.3, 100, 3190, 1e6}` spanning twelve decades of joint and vertex
-magnitude, and hill-climbed on the winners, the worst demand made of the
-candidate's magnitude alone inside that regime was `1.02` of the four ulps for
-skinned bounds and `1.95` for the skin equation. Reading the candidate alone is
-therefore an equivalent mutation, recorded here and at the call site rather than
-left as an unexplained survivor;
-`a_growing_conversion_provisions_a_rebased_source_magnitude_it_never_needs` pins
-that the excess stays non-load-bearing, so a rig that ever needs it fails there.
+instead of accumulating into it. Measured by the calibration sweep below over
+its whole population, dropping the rebased source side from both bases leaves
+the worst demand at `1.994` of the four ulps for skinned bounds and `2.052` for
+the skin equation — the same two figures the shipped bases produce, because in
+every cell the worst case is one where the candidate is already the larger
+side. Reading the candidate alone is therefore an equivalent mutation, recorded
+here and at the call site rather than left as an unexplained survivor; the
+sweep asserts it, and
+`a_growing_conversion_provisions_a_rebased_source_magnitude_it_never_needs`
+pins it on the one rig where the excess is `1776x`, so a rig that ever needs it
+fails in both places.
 
-`4` is measured, not assumed, over 2_390_000 correct candidates in four
-populations: 120_000 rest/bind candidates over declared factors
-`{3190, 100, 7.3, 0.01, 1e-4}` crossed with joint local translations of
-magnitude `{1000, 1, 0.001}`, both joints at the cell magnitude in
-independently random directions; 270_000 with the two joints' magnitudes drawn
-independently from that set, under whole-document conversion as well as
-rest/bind; 400_000 with continuous log-uniform joint magnitudes over
-`[1e-3, 1e3]`, so no cell structure survives; and 1_600_000 over chains of
-three to six joints, where a parent chain has the most room to cancel. All
-four carry random rotations per joint, mesh points spanning five decades in
-random directions, and two blended skin slots.
+That equivalence was false for skinned bounds under the base this section
+shipped before stage 1 was corrected, and is recorded as having been so:
+against the earlier `abs(p)` stage the sweep's worst skinned-bounds demand with
+the source side dropped is `521.7` of the four ulps rather than `1.994`. It is
+true again only because stage 1 now names the transform's operand product. The
+skin equation's half was never affected — its base was already an operand
+product.
 
-The quantity measured is what each residual *demands* of the count —
-`(observed - scalar_tolerance) / (magnitude * 2^-23)` — rather than its raw
-ulp count, because the scalar band pays first. The worst observed **in these
-populations** was `2.67` for the skin equation, `1.26` for skinned bounds and
-`0.42` for rest translation, with `0` for the sampled trajectory over a
-further 320_000 candidates carrying a two-key translation track — which is
-what makes the sampled obligations run at all. An unaffected instance's binds
-demanded `0`, and always will.
+### The calibration sweep
 
-Those figures are population maxima, and this section states them as such
-rather than as maxima of the obligations. Every rig in all five populations
-takes its inverse binds as the analytic inverse of its own rest world and is
-converted under rest/bind, and each choice removes a class of rig outright:
-with `W * B` the identity on every slot no two slots can cancel a vertex
-between them, and under rest/bind the two documents' chain magnitudes are
-equal, so the `max` over document sides never separates. Measured
-independently outside those populations the demands reach `2.49` for the skin
-equation, `1.72` for skinned bounds, `1.35` for rest translation and `1.02`
-for the sampled trajectory.
+`4` is measured, not assumed, and the measurement is checked in:
+`calibrate_f32_rounding_ulps` in `crates/animsmith-core/src/scale.rs`. Run it
+with
 
-The `0` for the sampled trajectory is the clearest artefact of the population
-rather than a property of the obligation: none of those 320_000 rigs builds a
-sampled parent chain that cancels, so the only trajectory comparison they make
-has `chain = 0` on both sides and the term is arithmetically absent. An
-ordinary two-key translation track over a cancelling chain demands `0.26` of
-the count, and
-`a_sampled_pose_whose_parent_chain_cancels_still_proves_its_trajectory` pins
-that the term is reached at all.
+```text
+cargo test -p animsmith-core --release --lib \
+    calibrate_f32_rounding_ulps -- --ignored --nocapture
+```
+
+It builds and proves 360_000 correct candidates over 72 cells: the cross
+product of nine operations (rest/bind at root scale `3190`, and whole-document
+conversion at `{1e-4, 0.01, 0.1, 1.5, 7.3, 100, 3190, 1e6}` — both directions
+of the factor), four slot compositions (analytic binds, where `abs(W * B)` is
+`1`, and composed slots at `abs(W * B) = {1e-3, 1, 1e3}`), and two blends (two
+slots that oppose on the swept vertex and cancel it to the origin, and two
+independent slots that do not). Joint locals and vertex positions are drawn
+log-uniformly over six and eight decades in random directions, every joint
+carries a random rotation, and half of every cell's trials carry a parent chain
+that cancels. The generator is a written-out SplitMix64 seeded per cell, so the
+population is identical on every machine and every run.
+
+| quantity | worst over the population |
+|---|---|
+| skinned bounds | `1.994` |
+| the skin equation | `2.052` |
+| rest translation | `2.274` |
+| refused correct candidates | `0` of `360_000` |
+
+The quantity is `residual / (magnitude * 2^-23)`: the raw ulp count, *not* net
+of the scalar band that is paid first. It therefore overstates what the count
+is actually asked for, by the whole scalar band, and a worst case under `4`
+measured this way is a worst case under `4` however the two terms are split. An
+earlier revision of this section reported the net demand instead, from
+populations that were never checked in and so could not be re-derived; the
+figures above replace them.
+
+What the sweep does not reach is stated so a reader knows its edge: two joints
+under a root and no clips, so chains deeper than three and the **sampled
+trajectory** obligation are pinned by named fixtures rather than by it.
+`a_sampled_pose_whose_parent_chain_cancels_still_proves_its_trajectory` demands
+`0.26` of the count from an ordinary two-key translation track over a
+cancelling chain, and is what pins that the trajectory term is reached at all;
+`a_parent_chain_whose_translations_cancel_still_proves_its_skin` is the worst
+cancellation the rest chain reaches, at `524288` ulps of the composition's own
+base and `0.08` of the chain's. An unaffected instance's binds demand `0`, and
+always will.
 
 `4` is the next power of two above every figure above, and it is also the
 analytic worst case for the arithmetic involved, since composing `W * B`
@@ -944,15 +1000,16 @@ accumulates a four-term inner product per entry. That — rather than any one
 measured demand being the largest reachable — is what the count rests on.
 
 A residual above the count is evidence about the *magnitude* before it is
-evidence about the count. Two revisions have now found the magnitude wrong
-rather than the count too small — first the skinned extent alone, which missed
-the `W * B` composition, then `abs(W) * abs(B)` alone, which missed what the
-parent chain had already cancelled — and in both the measured excess was
-hundreds of thousands of ulps, not a factor of two. A calibration population
-that cannot separate the stages cannot distinguish the two cases: the first
-three populations above were built for the rotation, not for the chain, and
-none of them refused often enough to make the chain visible until the joint
-directions were drawn independently.
+evidence about the count. Three revisions have now found the magnitude wrong
+rather than the count too small — the skinned extent alone, which missed the
+`W * B` composition; `abs(W) * abs(B)` alone, which missed what the parent
+chain had already cancelled; and `abs(p)` alone, which missed the other factor
+of the transform it was named for — and in all three the measured excess was
+hundreds or hundreds of thousands of ulps, not a factor of two. Each was
+invisible because the calibration population could not express the shape:
+no rig in it composed a slot to anything but the identity. That is what the
+checked-in sweep is for, and why its cells name the shapes rather than only
+the magnitudes.
 
 **The cost is real and it is not bounded.** On the rig above, the smallest
 *real* error still refused is `3.1e-3` for skinned bounds and `3.1e-3` for the
@@ -983,21 +1040,22 @@ carry, `SkinMatrix` and `Bounds` lose discriminating power in proportion to
 Folding the parent chain into the magnitude does not move that number: on the
 far-joint rig `abs(W) * abs(B)` already reads `6.4e6` against the chain's
 `3.2e6`, so the max is unchanged and the floor is still `4.09375` units.
-Across 2_000_000 skin slots of the populations above the chain
-leaves the magnitude exactly as it was on `96.2 %` of them, and where it does
-bind it widens by `1.26x` at the 99th percentile, `2.67x` at the 99.9th and
-`27x` at the worst slot seen — always in proportion to what that rig's chain
-actually cancelled. Buying the same admissions by raising the count to `42`
-instead would have cost `10x` on *every* slot, including the `96 %` that lost
-nothing, which is why the correction is to the magnitude and the count stays
-at `4`.
+The chain widens the magnitude only where a chain
+actually cancelled, always in proportion to what it cancelled, and leaves it
+untouched everywhere else. Buying the same admissions by raising the count
+instead would have cost the whole factor on *every* slot, including the ones
+that lost nothing, which is why the correction is to the magnitude and the
+count stays at `4`. That is the general rule this section applies each time:
+`a_parent_chain_whose_translations_cancel_still_proves_its_skin` needs
+`524288` ulps of the base without the chain and `0.08` of it with, and no
+count between those two is a policy anyone could defend.
 
 **This is a property of the `f32` inputs, not of the policy, and precision
 does not fix it.** The dominant error is not the composition's own rounding.
 It is the stored inverse bind's translation column — accurate only to its own
 ulp — amplified by `W`'s linear part into a product that cancellation has made
 near-identity. Composing `W * B` in `f64` from the same `f32` stored values
-was measured over the same 30_000 correct candidates: it moves the worst skin
+was measured over a 30_000-candidate rest/bind population: it moves the worst skin
 residual from `2.50` to `2.06` ulps and the worst bounds residual from `1.68`
 to `0.90`, an improvement of under a factor of two, and leaves the worst
 residual at `86 %` of the compared product's own magnitude against a `1e-5`

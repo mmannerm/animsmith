@@ -281,67 +281,56 @@ impl ScaleTolerancePolicy {
         // work. At `4e8` it is admitted with `2.2x` headroom — about 66
         // seconds of animation on that rig.
         proof_sample_work_budget: 400_000_000,
-        // Measured, not assumed, over 2_390_000 correct candidates in four
-        // populations, none of which the earlier calibration covered:
+        // Measured, not assumed, and the measurement is **checked in**:
+        // `calibrate_f32_rounding_ulps` builds and proves 360_000 correct
+        // candidates over 72 cells and asserts every figure below. Run it with
         //
-        // - 120_000 rest/bind candidates over declared factors
-        //   `{3190, 100, 7.3, 0.01, 1e-4}` crossed with joint local
-        //   translations of magnitude `{1000, 1, 0.001}`, both joints at the
-        //   cell magnitude in independently random directions;
-        // - 270_000 with the two joints' magnitudes drawn independently from
-        //   that set, under whole-document conversion as well as rest/bind;
-        // - 400_000 with continuous log-uniform joint magnitudes over
-        //   `[1e-3, 1e3]`, so no cell structure survives at all; and
-        // - 1_600_000 over chains of three to six joints, which is where a
-        //   parent chain has the most room to cancel.
+        //   cargo test -p animsmith-core --release --lib \
+        //       calibrate_f32_rounding_ulps -- --ignored --nocapture
         //
-        // All four carry random rotations per joint, mesh points spanning
-        // five decades in random directions, and two blended skin slots. The
-        // quantity measured is what each residual actually *demands* of this
-        // count — `(observed - scalar_tolerance) / (magnitude * 2^-23)` — not
-        // its raw ulp count, because the scalar band pays first.
+        // The cells are the cross product of nine operations — rest/bind at
+        // root scale `3190`, and whole-document conversion at
+        // `{1e-4, 0.01, 0.1, 1.5, 7.3, 100, 3190, 1e6}`, so both directions of
+        // the factor — four slot compositions — analytic binds, where
+        // `abs(W * B)` is `1`, and composed slots at
+        // `abs(W * B) = {1e-3, 1, 1e3}` — and two blends: two slots that oppose
+        // on the swept vertex and cancel it to the origin, against two that do
+        // not. Joint locals and vertex positions are drawn log-uniformly over
+        // six and eight decades in random directions, every joint carries a
+        // random rotation, and half of every cell's trials carry a parent chain
+        // that cancels.
         //
-        // The worst seen **in these populations** was `2.67` for
-        // `SkinMatrix`, `1.26` for `Bounds` and `0.42` for `RestTranslation`,
-        // with `0` for `Trajectory` over a further 320_000 candidates
-        // carrying a two-key translation track — which is what makes the
-        // sampled obligations run at all. `UnaffectedInverseBind` demanded
-        // `0`, and always will: its two sides are the identical `f32`
-        // expression on identical stored inputs.
+        // The quantity is `residual / (magnitude * 2^-23)`: the raw ulp count,
+        // *not* net of the scalar band that is paid first. It therefore
+        // overstates what this count is asked for, by the whole scalar band, so
+        // a worst case under `4` measured this way is under `4` however the two
+        // terms are split.
         //
-        // Those are population maxima and are recorded as such, not as maxima
-        // of the obligations. Every rig in all five populations takes its
-        // binds as the analytic inverse of its own rest world and is converted
-        // under rest/bind, and each choice removes a class: identity `W * B`
-        // on every slot means no two slots can cancel a vertex between them,
-        // and rest/bind leaves the two documents' magnitudes equal, so nothing
-        // that reads one side rather than the other ever separates. Measured
-        // independently outside them the demands reach `2.49` for
-        // `SkinMatrix`, `1.72` for `Bounds`, `1.35` for `RestTranslation` and
-        // `1.02` for `Trajectory`.
+        // Worst over the population: `1.994` for `Bounds`, `2.052` for
+        // `SkinMatrix`, `2.274` for `RestTranslation`, and no correct candidate
+        // refused in any cell.
         //
-        // Recalibrated across both factor directions after `SkinMatrix` and
-        // `Bounds` began rebasing the source magnitude by the factor, which
-        // *tightens* their base on the shrinking half and so raises what a
-        // correct candidate demands there. 5760 whole-document conversions per
-        // factor over `{1e-4, 1e-3, 0.01, 0.1, 1, 1.5, 7.3, 100, 3190, 1e6}`,
-        // spanning twelve decades of joint and vertex magnitude with
-        // anisotropic bone scales, binds that are not the rest pose, and blends
-        // that cancel: no correct candidate refused at any factor, and the
-        // worst demand is `1.60` for `SkinMatrix` and `0.92` for `Bounds`. The
-        // shrinking half is where the tightening shows — `Bounds` demanded
-        // `0.0059` of the old base at `0.01` and demands `0.59` of the new one,
-        // which is the `100x` of discriminating power the rebasing recovers —
-        // and at its worst it still sits a factor of two below the count.
-        //
-        // The `0` for `Trajectory` is the clearest artefact of the population
-        // rather than a property of the obligation: those 320_000 rigs never
-        // build a sampled chain that cancels, so the only `Trajectory`
-        // comparison they make has `chain = 0` on both sides and the term is
-        // arithmetically absent.
+        // The sweep carries two joints and no clips, so `Trajectory` and chains
+        // deeper than three are pinned by fixtures rather than by it:
         // `a_sampled_pose_whose_parent_chain_cancels_still_proves_its_trajectory`
-        // demands `0.26` of the count from an ordinary two-key translation
-        // track, and pins that the term is reached at all.
+        // demands `0.26` from an ordinary two-key translation track over a
+        // cancelling chain and pins that the term is reached at all, and
+        // `a_parent_chain_whose_translations_cancel_still_proves_its_skin` is
+        // the worst cancellation the rest chain reaches.
+        // `UnaffectedInverseBind` demands `0`, and always will: its two sides
+        // are the identical `f32` expression on identical stored inputs.
+        //
+        // What this replaced, and why it is a test now. Earlier revisions of
+        // this comment quoted maxima from sweeps that were never checked in —
+        // 2_390_000 candidates in four populations, then 5760 whole-document
+        // conversions per factor — and one of those claims was false. It said
+        // its population carried "binds that are not the rest pose, and blends
+        // that cancel" with a worst `Bounds` demand of `0.92`. The shape it did
+        // not carry is a composed slot with `abs(W * B) != 1`, and against the
+        // base this policy shipped at the time that shape refuses correct
+        // candidates in twelve of the seventy-two cells above and demands
+        // `58.7`. A figure a reader cannot re-derive is a figure nobody can
+        // check.
         //
         // `4` is the next power of two above every figure above, and it is
         // also the analytic worst case for the arithmetic involved: composing
@@ -350,10 +339,14 @@ impl ScaleTolerancePolicy {
         // what this constant rests on.
         //
         // Under the base this policy carried before the parent chain was
-        // folded into it, the same populations demanded up to `41` — see
+        // folded into it, a correct candidate demanded up to `41` — see
         // [`translation_operand_magnitude`], and
         // `a_parent_chain_whose_translations_cancel_still_proves_its_skin`
-        // for a rig that demands `524288`.
+        // for a rig that demands `524288`. Dropping the chain from the base
+        // today refuses correct candidates in fourteen of the sweep's cells at
+        // up to `42.3` ulps of what remains, and narrowing the vertex stage to
+        // `abs(p)` alone refuses in twelve at up to `58.7`: the pattern every
+        // time is a wrong magnitude, not a count that is too small.
         //
         // The detection cost is **not** bounded, and stating it as
         // `4.77e-7` of the compared quantity would be wrong. `4 * 2^-23` is
@@ -380,14 +373,15 @@ impl ScaleTolerancePolicy {
         // Folding the parent chain into that magnitude does not move this
         // number: on that fixture `abs(W) * abs(B)` already reads `6.38e6`
         // against the chain's `3.19e6`, so the `max` is unchanged and the
-        // floor is still `4.09375` units. Across 2_000_000 skin
-        // slots of the sweep populations above the chain leaves the base
-        // exactly as it was on `96.2 %` of them, and where it does bind it
-        // widens by `1.26x` at the 99th percentile, `2.67x` at the 99.9th,
-        // and `27x` at the worst slot seen — always in proportion to what
-        // that rig's chain actually cancelled. Buying the same admissions by
-        // raising the count instead would have cost `10x` on *every* slot,
-        // including the `96 %` that lost nothing.
+        // floor is still `4.09375` units. The chain widens the base only where
+        // a chain actually cancelled, in proportion to what it cancelled, and
+        // leaves it untouched everywhere else. Buying the same admissions by
+        // raising the count instead would have cost the whole factor on
+        // *every* slot, including the ones that lost nothing:
+        // `a_parent_chain_whose_translations_cancel_still_proves_its_skin`
+        // needs `524288` ulps of the base without the chain and `0.08` of it
+        // with, and no count between those two is a policy anyone could
+        // defend.
         //
         // So for a rig whose joints sit `k` times further from the origin
         // than the geometry they carry, `SkinMatrix` and `Bounds` lose
@@ -397,7 +391,7 @@ impl ScaleTolerancePolicy {
         // its own ulp, and composing it against `W` amplifies that
         // quantization by `W`'s linear part into a product the cancellation
         // has made near-identity. Composing in `f64` does not remove it —
-        // measured over the first 30_000 of the candidates above, an `f64`
+        // measured over a 30_000-candidate rest/bind population, an `f64`
         // composition moves the worst skin residual from `2.50` to `2.06`
         // ulps and the worst bounds residual from `1.68` to `0.90`, leaving
         // the worst residual at `86 %` of the compared product's own
@@ -3287,8 +3281,13 @@ pub fn prove_scale(
             // the two. The residual is measured against the candidate's
             // arithmetic: whole-document conversion scales every translation
             // by the factor and leaves every linear part alone, so the two
-            // chains are exactly that factor apart, and the source's rounding
-            // is rebased by the same factor before it is compared. The
+            // chains are that factor apart — subject to the candidate's `f32`
+            // narrowing of the factor, since the build scales by
+            // `factor as f32` while this proof rebases by the `f64` factor, a
+            // relative difference of at most `2^-24` (`1.49e-8` at `q = 0.1`,
+            // whose `f32` is `0.10000000149011612`) that the rounding term
+            // covers many times over — and the source's rounding is rebased by
+            // the same factor before it is compared. The
             // residual therefore scales with `after_chain` at either end of
             // the factor range, and under rest/bind the two chains are equal
             // outright. `before_chain` can only ever over-provide — and under
@@ -4351,32 +4350,48 @@ fn product_operand_magnitude_f64(a: Mat4, b: Mat4) -> f64 {
 /// The translation column is the one place a *previous* composition's
 /// cancellation is carried forward as an operand.
 fn translation_operand_magnitude(parent_world: Mat4, local: Mat4) -> f64 {
+    column_operand_magnitude(mat4_abs(parent_world), local.w_axis)
+}
+
+/// The magnitude `matrix * column` is summed from:
+/// `max over i of sum over k of abs(matrix_ik) * abs(column_k)`.
+///
+/// [`product_operand_magnitude`] for one column, and the quantity both callers
+/// that transform a single vector need: a parent world composing a local
+/// translation, and a composed `W * B` transforming a vertex position.
+///
+/// `absolute` is [`mat4_abs`] of the matrix, taken by the caller rather than
+/// here. The skinned-bounds caller runs this once per weighted vertex per slot
+/// — the hottest loop in this proof — against a matrix that is constant across
+/// the whole primitive, so recomputing sixteen `abs` per vertex would be work
+/// the slot already did once.
+fn column_operand_magnitude(absolute: Mat4, column: Vec4) -> f64 {
     // Every term is non-negative, so a finite maximum means no term
     // overflowed and the `f32` lane result is exact enough to use — the same
     // argument [`product_operand_magnitude`] makes, and it needs the same
     // fallback for the operands whose sums leave the `f32` range while the
-    // composed world stays inside it.
-    let lanes = f64::from((mat4_abs(parent_world) * local.w_axis.abs()).max_element());
+    // transformed result stays inside it.
+    let lanes = f64::from((absolute * column.abs()).max_element());
     if lanes.is_finite() {
         return lanes;
     }
-    translation_operand_magnitude_f64(parent_world, local)
+    column_operand_magnitude_f64(absolute, column)
 }
 
-/// [`translation_operand_magnitude`] recomputed as a scalar `f64` fold, for
-/// the operands whose `f32` sums overflow.
+/// [`column_operand_magnitude`] recomputed as a scalar `f64` fold, for the
+/// operands whose `f32` sums overflow.
 ///
 /// Cannot overflow in turn, for [`product_operand_magnitude_f64`]'s reason:
 /// four terms, each a product of two `f32` magnitudes, is at most `4.63e77`.
 #[cold]
 #[inline(never)]
-fn translation_operand_magnitude_f64(parent_world: Mat4, local: Mat4) -> f64 {
-    let translation = local.w_axis.abs();
+fn column_operand_magnitude_f64(absolute: Mat4, column: Vec4) -> f64 {
+    let column = column.abs();
     let mut largest = 0.0f64;
     for row in 0..4 {
         let mut sum = 0.0f64;
         for inner in 0..4 {
-            sum += f64::from(parent_world.col(inner)[row].abs()) * f64::from(translation[inner]);
+            sum += f64::from(absolute.col(inner)[row]) * f64::from(column[inner]);
         }
         largest = largest.max(sum);
     }
@@ -5031,12 +5046,20 @@ fn check_skin_and_bounds(
                 // part bit-for-bit unchanged, so the linear block's error
                 // cancels out of `after - q * before` instead of accumulating
                 // into it, and only the translation and vertex terms — which do
-                // scale with `q` — survive into the residual. Searched over
-                // 5760 rigs per factor at `{1.5, 7.3, 100, 3190, 1e6}` spanning
-                // twelve decades of joint and vertex magnitude, and
-                // hill-climbed on the winners, the worst demand made of the
-                // candidate's magnitude alone inside this regime was `1.02` of
-                // the four ulps for `Bounds` and `1.95` for `SkinMatrix`.
+                // scale with `q` — survive into the residual.
+                // `calibrate_f32_rounding_ulps` measures both bases with the
+                // rebased source side dropped over its whole 360_000-candidate
+                // population and asserts the result: `1.994` of the four ulps
+                // for `Bounds` and `2.052` for `SkinMatrix`, which are the same
+                // two figures the shipped bases produce.
+                //
+                // The `Bounds` half of that was **false** under the base this
+                // proof shipped before the vertex stage was corrected to the
+                // transform's operand product: against the earlier `abs(p)`
+                // stage the same sweep's worst `Bounds` demand with the source
+                // side dropped is `521.7`. The claim is true again only because
+                // the base is right. `SkinMatrix`'s half was never affected —
+                // its base was already an operand product.
                 //
                 // `q * before` is written anyway because it is the bound that
                 // can be argued from the operands rather than measured from a
@@ -5232,6 +5255,13 @@ fn sampled_evidence(document: &Document, affected: &BTreeSet<BoneId>) -> Sampled
 #[derive(Debug, Clone, Copy)]
 struct SkinSlot {
     matrix: Mat4,
+    /// [`mat4_abs`] of [`Self::matrix`], for
+    /// [`column_operand_magnitude`]'s per-vertex use.
+    ///
+    /// Held here rather than taken per vertex because it is constant across
+    /// every vertex the slot influences and the loop that reads it is the
+    /// hottest in this proof.
+    absolute: Mat4,
     rounding_magnitude: f64,
 }
 
@@ -5249,8 +5279,10 @@ impl SkinSlot {
     /// carries, `product_operand_magnitude` alone by up to `41` binary32 ulps
     /// of its own base (see [`translation_operand_magnitude`]).
     fn compose(world: Mat4, inverse_bind: Mat4, world_translation_chain: f64) -> Self {
+        let matrix = world * inverse_bind;
         Self {
-            matrix: world * inverse_bind,
+            matrix,
+            absolute: mat4_abs(matrix),
             rounding_magnitude: product_operand_magnitude(world, inverse_bind)
                 .max(world_translation_chain),
         }
@@ -5269,22 +5301,34 @@ impl SkinSlot {
 /// [`ProofResidualKind::Bounds`], and it is a max over every stage of the
 /// chain that produced the bound, not over the bound itself. There are four
 /// stages, and each is a cancellation the stage after it can no longer see:
-/// the contributing vertex position `p`, which covers the `W * B * p`
-/// transform, since that transform runs on terms of size `abs(W * B) * abs(p)`
-/// and the weighted sum over slots that follows can cancel them; the blended
-/// skinned position that sum produced, which therefore covers nothing the sum
-/// cancelled; and the contributing slot's [`SkinSlot::rounding_magnitude`],
-/// which covers the two stages before those — the composition that produced
-/// `W * B`, whose translation column cancelled two terms of magnitude
-/// `abs(W)`, and the parent chain that produced `W`, whose translation column
-/// may have cancelled two terms larger still.
+/// the magnitude the `W * B * p` transform ran on, which is
+/// [`column_operand_magnitude`] of the composed slot against `p` extended by
+/// the homogeneous `1` — the *product* `abs(W * B) * abs(p)` and not either
+/// factor alone — since the weighted sum over slots that follows can cancel
+/// those terms; the blended skinned position that sum produced, which
+/// therefore covers nothing the sum cancelled; and the contributing slot's
+/// [`SkinSlot::rounding_magnitude`], which covers the two stages before those —
+/// the composition that produced `W * B`, whose translation column cancelled
+/// two terms of magnitude `abs(W)`, and the parent chain that produced `W`,
+/// whose translation column may have cancelled two terms larger still.
 ///
-/// Each stage dominates the others by an unbounded ratio on some rig: two
-/// slots whose composed `W * B` oppose for the first, a joint far from the
+/// Three of the four dominate the others by an unbounded ratio on some rig:
+/// two slots whose composed `W * B` oppose for the first, a joint far from the
 /// geometry it carries for the third, a joint whose local offset points back
-/// along its parent's world translation for the fourth. Measured over 30_000
-/// correct candidates, the skinned magnitude alone left residuals up to
-/// `1.07e7` of its own ulp; the full max leaves `1.26` over 2_390_000.
+/// along its parent's world translation for the fourth. Dropping the first
+/// makes `calibrate_f32_rounding_ulps` refuse correct candidates in fifteen of
+/// its seventy-two cells and dropping the third in fourteen.
+///
+/// The *blended point* is the exception and is a documented survivor: it is a
+/// convex combination of the per-slot transformed points, so it is bounded by
+/// `sqrt(3)` times the first stage, and wherever it is the larger of the two
+/// the blend did not cancel — which is exactly where the demand is `O(1)`.
+/// Dropping it moves the sweep's worst `Bounds` demand from `1.994` to
+/// `2.122`, both inside the count, so no test kills it and none can. It is
+/// kept because it is a distinct quantity rather than a redundant one, and
+/// because
+/// `a_rig_whose_skinned_extent_passes_the_square_root_of_f32_max_still_proves`
+/// holds its `f32` overflow domain. See DESIGN.md Appendix D §D.1.
 struct BoundsAccumulator {
     min: Vec3,
     max: Vec3,
@@ -5371,6 +5415,30 @@ fn accumulate_skinned_bounds(
             };
             skinned += weight * slot.matrix.transform_point3(position);
             weight_sum += weight;
+            // The magnitude `slot.matrix.transform_point3(position)` runs on,
+            // which is `abs(W * B) * abs(p)` and not either factor alone.
+            //
+            // `abs(p)` alone — which is what this stage read before — names one
+            // of the two. It is the right number only while `abs(W * B)` is
+            // `1`, which is every rig whose slots are a pure rotation of the
+            // bind pose, and that is the whole of what the fixtures below build:
+            // `cancelling_blend_document` composes with `HALF_TURN_Z`, so its
+            // stage was accidentally exact and no test could see the gap. Give
+            // the composed slot a scale of `k` and the transform runs on
+            // `k * abs(p)` while the base reads `abs(p)`, short by `k`; the
+            // weighted sum over slots can then cancel the result to nothing
+            // while every term still carries `k * abs(p)`'s ulp.
+            // `two_slots_with_a_scaled_composition_cancel_a_vertex_and_still_prove_its_bounds`
+            // is that rig, and it is refused outright — `observed: 1.53e-5`
+            // against `tolerance: 8.63e-6` at `k = 16` — without this term.
+            //
+            // The homogeneous `1` is included because `transform_point3` sums
+            // the translation column in with the rest, so that column's entries
+            // are terms of the same dot product.
+            vertex_magnitude = vertex_magnitude.max(column_operand_magnitude(
+                slot.absolute,
+                position.extend(1.0),
+            ));
             vertex_magnitude = vertex_magnitude.max(slot.rounding_magnitude);
         }
         if weight_sum > 0.0 {
@@ -5428,38 +5496,7 @@ fn accumulate_skinned_bounds(
             } else {
                 skinned.as_dvec3().length()
             };
-            // The *unblended* vertex position is a fourth stage, and `length`
-            // does not cover it. `slot.matrix.transform_point3(position)` runs
-            // on terms of magnitude `abs(W * B) * abs(p)`, and the weighted sum
-            // over slots that follows can cancel those terms against each other
-            // — two slots whose composed `W * B` differ by a half turn send a
-            // `1000`-unit point to a blended `0` while each term still carries
-            // that point's own ulp. `skinned` is the sum *after* the
-            // cancellation, so its length shrinks with the result and not with
-            // the arithmetic, exactly as the composed `W * B`'s own magnitude
-            // does one stage earlier. Only a bind pose that is not the rest
-            // pose can reach this — with `W * B = I` on every slot there is
-            // nothing to cancel — which is why the fixtures of this section had
-            // to grow one that sets binds independently of the rest world:
-            // `two_slots_whose_composed_binds_cancel_a_vertex_still_prove_its_bounds`.
-            //
-            // Taken with the same fast-path/fallback shape as `length` above,
-            // and for the same reason: a plain `f32` `Vec3::length` here
-            // reintroduces the `sqrt(f32::MAX)` refusal boundary that
-            // `a_rig_whose_skinned_extent_passes_the_square_root_of_f32_max_still_proves`
-            // pins against, since that fixture's extent comes from a position
-            // past the boundary in the first place.
-            let plen = position.length();
-            let plen = if plen.is_finite() {
-                f64::from(plen)
-            } else {
-                position.as_dvec3().length()
-            };
-            bounds.rounding_magnitude = bounds
-                .rounding_magnitude
-                .max(vertex_magnitude)
-                .max(length)
-                .max(plen);
+            bounds.rounding_magnitude = bounds.rounding_magnitude.max(vertex_magnitude).max(length);
             bounds.touched = true;
         }
     }
@@ -12078,17 +12115,20 @@ mod tests {
     ///
     /// The joints themselves sit within `3.2e-3` of the origin, so neither
     /// the composition magnitude nor the parent chain can stand in for the
-    /// vertex: every stage *except* the vertex is small here, which is what
-    /// isolates the stage under test.
+    /// vertex transform: every stage *except* that transform is small here,
+    /// which is what isolates the stage under test.
     ///
     /// Unlike every other fixture in this section this one does **not** take
     /// `skin_ibms` from [`rotating_rig_document`], whose binds are the
     /// analytic inverse of the rest world and therefore make `W * B` the
     /// identity on every slot. Identity slots cannot cancel against each
-    /// other at all, which is precisely why no fixture here caught this: a
-    /// bind pose that is not the rest pose is ordinary content, and it is the
-    /// only way to reach the cancellation. The binds are inverted in `f64`
-    /// for [`far_joint_overflow_document`]'s reason.
+    /// other at all, which is precisely why no fixture here caught the
+    /// cancellation: a bind pose that is not the rest pose is ordinary
+    /// content, and it is the only way to reach it. The binds are inverted in
+    /// `f64` for [`far_joint_overflow_document`]'s reason.
+    ///
+    /// It composes to a *rotation*, so `abs(W * B)` is `1` — see
+    /// [`scaled_cancelling_blend_document`] for why that mattered.
     fn cancelling_blend_document() -> Document {
         cancelling_blend_document_reaching(1000.0)
     }
@@ -12101,46 +12141,100 @@ mod tests {
     /// large enough to hold two bands apart sets it here rather than building
     /// a second rig.
     fn cancelling_blend_document_reaching(reach: f32) -> Document {
-        let rotations = [
-            Quat::from_xyzw(-0.81788284, 0.343121, -0.45392478, -0.085369624),
-            Quat::from_xyzw(-0.12301501, 0.043325406, -0.015209139, 0.991342),
-        ];
-        let locals = [Vec3::new(0.0, 1e-6, 0.0), Vec3::new(0.3e-6, 0.4e-6, 0.5e-6)];
-        let mut doc = rotating_rig_document(
-            rotations,
+        scaled_cancelling_blend_document(1.0, reach)
+    }
+
+    /// [`cancelling_blend_document_reaching`] with both composed slots carrying
+    /// a uniform scale of `scale`, so `abs(W * B)` is `scale` rather than `1`.
+    ///
+    /// The blend still cancels — the two slots are `scale * I` and
+    /// `scale * HALF_TURN_Z`, which send `(reach, 0, 0)` to
+    /// `(scale * reach, 0, 0)` and its negation — but each term of the
+    /// cancelled sum now carries the rounding of a `scale * reach`-magnitude
+    /// transform rather than a `reach`-magnitude one. That product is the
+    /// magnitude the transform ran on, and `scale = 1` is the only value at
+    /// which reading `abs(p)` alone happens to name it.
+    fn scaled_cancelling_blend_document(scale: f32, reach: f32) -> Document {
+        let composed = Mat4::from_scale(Vec3::splat(scale));
+        composed_slot_document(
+            CANCELLING_BLEND_ROTATIONS,
             3190.0,
-            locals,
+            CANCELLING_BLEND_LOCALS,
+            [composed, composed * HALF_TURN_Z],
             &[Vec3::new(reach, 0.0, 0.0)],
             &[[0.5, 0.5, 0.0, 0.0]],
-        );
-        let first = Mat4::from_scale(Vec3::splat(3190.0))
+        )
+    }
+
+    /// The reproducer's two rotations, reused by every cancelling-blend rig.
+    const CANCELLING_BLEND_ROTATIONS: [Quat; 2] = [
+        Quat::from_xyzw(-0.81788284, 0.343121, -0.45392478, -0.085369624),
+        Quat::from_xyzw(-0.12301501, 0.043325406, -0.015209139, 0.991342),
+    ];
+
+    /// Joint locals small enough that every joint sits within `3.2e-3` of the
+    /// origin at root scale `3190`, so the composition magnitude and the parent
+    /// chain are both near-unit and cannot stand in for the vertex transform.
+    const CANCELLING_BLEND_LOCALS: [Vec3; 2] =
+        [Vec3::new(0.0, 1e-6, 0.0), Vec3::new(0.3e-6, 0.4e-6, 0.5e-6)];
+
+    /// A two-joint rig at root scale `factor` whose composed `W_i * B_i` is
+    /// exactly `composed[i]`, by taking each inverse bind as
+    /// `W_i^-1 * composed[i]` in `f64`.
+    ///
+    /// [`rotating_rig_document`] takes each bind as the analytic inverse of its
+    /// own rest world, so every slot composes to the identity and no two slots
+    /// can cancel a vertex between them. This builder is how a fixture states
+    /// what the slots compose *to*, which is the only way to reach either the
+    /// cancellation or a composed magnitude that is not `1`.
+    ///
+    /// With [`CANCELLING_BLEND_LOCALS`] the joints sit within `3.2e-3` of the
+    /// origin, so the composition magnitude and the parent chain are both
+    /// near-unit and every stage of the bounds base except the vertex transform
+    /// is small by construction. The binds are inverted in `f64` for
+    /// [`far_joint_overflow_document`]'s reason.
+    fn composed_slot_document(
+        rotations: [Quat; 2],
+        factor: f32,
+        locals: [Vec3; 2],
+        composed: [Mat4; 2],
+        points: &[Vec3],
+        weights: &[[f32; 4]],
+    ) -> Document {
+        let mut doc = rotating_rig_document(rotations, factor, locals, points, weights);
+        let first = Mat4::from_scale(Vec3::splat(factor))
             * Mat4::from_rotation_translation(rotations[0], locals[0]);
         let second = first * Mat4::from_rotation_translation(rotations[1], locals[1]);
-        // `W_0 * B_0 = I` and `W_1 * B_1` a half turn about `z`, so the two
-        // slots send `(reach, 0, 0)` to `(reach, 0, 0)` and `(-reach, 0, 0)`.
-        doc.assets.instances[0].skin_ibms = vec![
-            first.as_dmat4().inverse().as_mat4(),
-            (second.as_dmat4().inverse() * HALF_TURN_Z.as_dmat4()).as_mat4(),
-        ];
+        doc.assets.instances[0].skin_ibms = [first, second]
+            .into_iter()
+            .zip(composed)
+            .map(|(world, composed)| (world.as_dmat4().inverse() * composed.as_dmat4()).as_mat4())
+            .collect();
         doc
     }
 
     #[test]
     fn two_slots_whose_composed_binds_cancel_a_vertex_still_prove_its_bounds() {
-        // The blended skinned point is a fourth stage of the chain the bounds
-        // magnitude maxes over, and the blend can cancel just as the
-        // composition and the parent chain can. Here it cancels completely:
+        // The blend can cancel just as the composition and the parent chain
+        // can, and here it cancels completely:
         // `0.5 * (1000, 0, 0) + 0.5 * (-1000, 0, 0)` is the origin, so the
         // skinned extent's length is `0` and contributes nothing, while the
         // joints are within `3.2e-3` of the origin so the composition and
-        // chain magnitudes are near `1`. Every stage the magnitude knew about
-        // is therefore small, and the arithmetic still ran on `1000`.
+        // chain magnitudes are near `1`. Every stage downstream of the vertex
+        // transform is therefore small, and that transform still ran on
+        // `1000`.
         //
-        // Without the vertex position in the base this correct candidate is
+        // Without the transform stage in the base this correct candidate is
         // refused at `observed: 6.1e-5` — one ulp of `1000` — against a
         // `1.48e-6` tolerance, a demand of `503` ulps. At `abs(p) = 1e5` the
         // same rig demands `65_527`, so this is not a count that could have
         // been raised.
+        //
+        // `abs(W * B)` is `1` on both slots here, because the two compose to a
+        // rotation. That is what
+        // `two_slots_with_a_scaled_composition_cancel_a_vertex_and_still_prove_its_bounds`
+        // exists to stop being the only case reached: with it `1`, a base that
+        // reads `abs(p)` alone is accidentally exact.
         let doc = cancelling_blend_document();
         let plan = rest_bind_plan(&doc, 3190.0);
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
@@ -12177,6 +12271,70 @@ mod tests {
         assert!(
             proof.bounds_residual > 4.0 * slot_magnitude.max(1.0) * f64::from(f32::EPSILON),
             "bounds residual {} no longer exceeds four ulps of every stage but the vertex",
+            proof.bounds_residual
+        );
+    }
+
+    #[test]
+    fn two_slots_with_a_scaled_composition_cancel_a_vertex_and_still_prove_its_bounds() {
+        // The stage above names the vertex, and the vertex alone is only half
+        // of what its own transform runs on. `W * B * p` sums terms of size
+        // `abs(W * B) * abs(p)`, and every rig in this module that reaches the
+        // cancellation composes `W * B` from a *rotation* — `HALF_TURN_Z` — so
+        // `abs(W * B)` is `1` and reading `abs(p)` alone was accidentally
+        // exact. Nothing here could see the other factor.
+        //
+        // This rig supplies it: the two slots compose to `1024 * I` and
+        // `1024 * HALF_TURN_Z`, so they still cancel a vertex to the origin,
+        // and each term of the cancelled sum now carries the rounding of a
+        // `1024 * 65536 = 6.7e7`-magnitude transform. Every stage the base
+        // knew about is still small — the blend is `0`, the joints are within
+        // `3.2e-3` of the origin, and the vertex itself is `65536`.
+        //
+        // With `abs(p)` alone in the base this correct candidate is refused at
+        // `observed: 4.0` against `tolerance: 0.0313`, a demand of `512` ulps.
+        // The gap is `min(abs(W * B), abs(p))` and grows without bound with it:
+        // the same rig refuses from `min(scale, reach) > 8` upward.
+        let doc = scaled_cancelling_blend_document(1024.0, 65536.0);
+        let plan = rest_bind_plan(&doc, 3190.0);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+
+        // The rig's shape is the fixture, so it is asserted before what it
+        // costs: a composition that stopped scaling, or a blend that stopped
+        // cancelling, passes below for want of a defect rather than because
+        // the base covers the transform.
+        let slots = rig_skin_slots(&doc);
+        let position = doc.assets.meshes[0].primitives[0].positions[0];
+        let blended: Vec3 = slots
+            .iter()
+            .map(|slot| 0.5 * slot.matrix.transform_point3(position))
+            .sum();
+        let composed_scale = slots[0].matrix.x_axis.truncate().length();
+        let stages_without_the_transform = slots
+            .iter()
+            .map(|slot| slot.rounding_magnitude)
+            .fold(0.0, f64::max)
+            .max(f64::from(position.length()))
+            .max(f64::from(blended.length()));
+        assert!(
+            composed_scale > 512.0 && blended.length() < 0.01 * position.length(),
+            "the composition no longer scales ({composed_scale}) or the blend no longer cancels \
+             ({blended}): the transform's operand product is then covered by another stage",
+        );
+        assert!(
+            stages_without_the_transform < 1e5,
+            "some stage other than the transform now reaches {stages_without_the_transform}, so \
+             this fixture no longer isolates the transform's operand product",
+        );
+
+        let proof = prove_scale(&doc, &candidate, &plan).expect(
+            "a correct candidate whose scaled slots cancel a vertex must still prove: the \
+             transform ran on abs(W * B) * abs(p), and that is what the base must name",
+        );
+        assert!(
+            proof.bounds_residual > 4.0 * stages_without_the_transform * f64::from(f32::EPSILON),
+            "bounds residual {} no longer exceeds four ulps of every stage but the transform's \
+             own operand product",
             proof.bounds_residual
         );
     }
@@ -12393,12 +12551,11 @@ mod tests {
         // bit-for-bit unchanged — so the linear block's error cancels out of
         // `after - q * before` instead of accumulating into it, and only the
         // translation and vertex terms, which do scale, survive into the
-        // residual. Searched over 5760 rigs per factor at `{1.5, 7.3, 100,
-        // 3190, 1e6}` spanning twelve decades of joint and vertex magnitude,
-        // and hill-climbed on the winners, the worst demand made of the
-        // candidate's magnitude alone inside this regime was `1.02` of the four
-        // ulps for bounds and `1.95` for the skin matrix. No correct candidate
-        // is refused without the excess, which is why it is written as a bound
+        // residual. `calibrate_f32_rounding_ulps` measures the same thing over
+        // 360_000 candidates and asserts it: with the rebased source side
+        // dropped from both bases the worst demand is `1.994` of the four ulps
+        // for bounds and `2.052` for the skin matrix. No correct candidate is
+        // refused without the excess, which is why it is written as a bound
         // that can be argued from the operands rather than one measured from a
         // population.
         //
@@ -16103,5 +16260,419 @@ mod tests {
         // plan with `prove_rest` restored is the one `plan_scale` emits and
         // still proves.
         prove_scale(&doc, &candidate, &plan).unwrap();
+    }
+
+    // ----------------------------------------------------------------------
+    // The calibration sweep behind `ScaleTolerancePolicy::f32_rounding_ulps`.
+    // ----------------------------------------------------------------------
+
+    /// A deterministic 64-bit generator for [`calibrate_f32_rounding_ulps`].
+    ///
+    /// SplitMix64, written out rather than depended on: one `u64` of state, the
+    /// same stream on every platform and every run, and no dependency added to
+    /// a crate whose whole dependency set is `glam + serde + sha2 + thiserror`.
+    /// Determinism is the point — a calibration whose population changes per
+    /// run is a number no reader can re-derive.
+    struct SweepRng(u64);
+
+    impl SweepRng {
+        fn next_u64(&mut self) -> u64 {
+            self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = self.0;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        }
+
+        /// Uniform in `[0, 1)`.
+        fn unit(&mut self) -> f64 {
+            (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
+        }
+
+        /// Log-uniform in `[10^lo, 10^hi]`, which is how a magnitude sweep
+        /// covers decades rather than covering the top decade twelve times.
+        fn decades(&mut self, lo: f64, hi: f64) -> f32 {
+            10f64.powf(lo + self.unit() * (hi - lo)) as f32
+        }
+
+        /// Uniform on the unit sphere.
+        fn direction(&mut self) -> Vec3 {
+            let z = 2.0 * self.unit() - 1.0;
+            let angle = core::f64::consts::TAU * self.unit();
+            let radius = (1.0 - z * z).max(0.0).sqrt();
+            Vec3::new(
+                (radius * angle.cos()) as f32,
+                (radius * angle.sin()) as f32,
+                z as f32,
+            )
+            .normalize()
+        }
+
+        /// Uniform on the rotation group.
+        fn rotation(&mut self) -> Quat {
+            Quat::from_axis_angle(
+                self.direction(),
+                (core::f64::consts::TAU * self.unit()) as f32,
+            )
+        }
+    }
+
+    /// What a sweep cell composes each skin slot to.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum SweepComposition {
+        /// Each bind is the analytic inverse of its own rest world, so every
+        /// `W * B` is the identity. This is what every fixture built before
+        /// this sweep existed, and it is the shape that cannot cancel.
+        Analytic,
+        /// Each slot composes to `10^exponent` times a random rotation, so
+        /// `abs(W * B)` is `10^exponent` and not `1`. Both signs of the
+        /// exponent are swept, because a composed slot that *shrinks* the
+        /// geometry it carries is as reachable as one that grows it.
+        Scaled(i32),
+    }
+
+    /// Whether a cell's two slots oppose on the swept vertex.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum SweepBlend {
+        /// The second slot is the first composed with [`HALF_TURN_Z`] and the
+        /// vertex lies along `x`, so the two terms of the weighted sum are
+        /// exact negations and the blend cancels to the origin. Every stage
+        /// downstream of the transform then reads a number the transform's own
+        /// operands are not in.
+        Cancelling,
+        /// The two slots are independent, so the blend keeps the magnitude it
+        /// was built from.
+        Independent,
+    }
+
+    /// One sweep cell: an operation, a slot composition, and a blend.
+    #[derive(Debug, Clone, Copy)]
+    struct SweepCell {
+        /// `None` for rest/bind at root scale `3190`; `Some(q)` for a
+        /// whole-document conversion at `q` from a root scale of `1`.
+        conversion: Option<f64>,
+        composition: SweepComposition,
+        blend: SweepBlend,
+    }
+
+    /// The worst ulp count a cell asked of the rounding term, per obligation.
+    #[derive(Debug, Clone, Copy, Default)]
+    struct SweepWorst {
+        bounds: f64,
+        skin_matrix: f64,
+        rest_translation: f64,
+        /// The same two products' bases with the rebased source side dropped —
+        /// `candidate` alone rather than `candidate.max(q * source)`. §D.1
+        /// records that reading as an equivalent mutation, and this is the
+        /// measurement that entitles it to.
+        bounds_candidate_only: f64,
+        skin_matrix_candidate_only: f64,
+    }
+
+    impl SweepWorst {
+        fn fold(&mut self, other: Self) {
+            self.bounds = self.bounds.max(other.bounds);
+            self.skin_matrix = self.skin_matrix.max(other.skin_matrix);
+            self.rest_translation = self.rest_translation.max(other.rest_translation);
+            self.bounds_candidate_only =
+                self.bounds_candidate_only.max(other.bounds_candidate_only);
+            self.skin_matrix_candidate_only = self
+                .skin_matrix_candidate_only
+                .max(other.skin_matrix_candidate_only);
+        }
+    }
+
+    /// The candidate-side parent-chain magnitude
+    /// [`ProofResidualKind::RestTranslation`] takes, read through the same
+    /// [`rest_world_pose`] the proof reads it through.
+    fn rig_chain_magnitude(document: &Document, plan: &ScalePlan) -> f64 {
+        let worlds = rest_world_pose(&document.skeleton).expect("the rig composes");
+        plan.affected_nodes
+            .iter()
+            .map(|&node| worlds.translation_chain[node])
+            .fold(0.0, f64::max)
+    }
+
+    /// Build one sweep candidate, prove it, and return the ulps each residual
+    /// asked of its own comparison base.
+    ///
+    /// The bases are read through [`rig_bounds_magnitude`],
+    /// [`rig_slot_magnitude`] and [`rig_chain_magnitude`], which compose the
+    /// slots and skin the vertices through the same helpers
+    /// [`check_skin_and_bounds`] does — so a base that moves in the proof moves
+    /// here, and the sweep cannot go on quoting a base the code stopped using.
+    ///
+    /// The quantity is `residual / (base * 2^-23)`: the raw ulp count, *not*
+    /// net of the scalar band that is paid first. It therefore overstates what
+    /// the count is actually asked for, by the whole scalar band, and a worst
+    /// case under `4` measured this way is a worst case under `4` however the
+    /// two terms are split.
+    fn sweep_one(rng: &mut SweepRng, cell: SweepCell) -> Result<SweepWorst, ScaleError> {
+        let root = if cell.conversion.is_some() {
+            1.0
+        } else {
+            3190.0
+        };
+        let rotations = [rng.rotation(), rng.rotation()];
+        let mut locals = [
+            rng.direction() * rng.decades(-3.0, 3.0),
+            rng.direction() * rng.decades(-3.0, 3.0),
+        ];
+        // Half of every cell's trials cancel the parent chain: the second
+        // joint's local offset points back along its parent's world
+        // translation, so its world translation is the difference of two terms
+        // of the first local's magnitude and the surviving translation is a
+        // rounding artefact of it. That is the shape `RestTranslation` and the
+        // chain half of `SkinSlot::rounding_magnitude` exist for, and swept
+        // inside every cell rather than as a cell of its own so it crosses
+        // every operation and every composition.
+        if rng.unit() < 0.5 {
+            locals[1] = -(rotations[0].inverse() * locals[0]);
+        }
+        // One vertex along `x` — the axis `HALF_TURN_Z` negates, so a
+        // cancelling cell cancels exactly — and one in a random direction, so
+        // no cell is a pure `x`-axis population.
+        let reach = rng.decades(-3.0, 5.0);
+        let points = [
+            Vec3::new(reach, 0.0, 0.0),
+            rng.direction() * rng.decades(-3.0, 5.0),
+        ];
+        let weights = [[0.5, 0.5, 0.0, 0.0]; 2];
+
+        let doc = match cell.composition {
+            SweepComposition::Analytic => {
+                rotating_rig_document(rotations, root, locals, &points, &weights)
+            }
+            SweepComposition::Scaled(exponent) => {
+                let first = Mat4::from_scale(Vec3::splat(10f32.powi(exponent)))
+                    * Mat4::from_quat(rng.rotation());
+                let second = match cell.blend {
+                    SweepBlend::Cancelling => first * HALF_TURN_Z,
+                    SweepBlend::Independent => {
+                        Mat4::from_scale(Vec3::splat(10f32.powi(exponent)))
+                            * Mat4::from_quat(rng.rotation())
+                    }
+                };
+                composed_slot_document(rotations, root, locals, [first, second], &points, &weights)
+            }
+        };
+        // An analytic cell composes every slot to the identity, so its blend
+        // cannot be made to cancel and the two blend values name the same
+        // population. Swept anyway rather than special-cased, because "the
+        // shape that cannot cancel" is a claim the sweep should be able to
+        // contradict if it ever stops being true.
+        let plan = match cell.conversion {
+            None => rest_bind_plan(&doc, f64::from(root)),
+            Some(factor) => plan_scale(&ScaleRequest {
+                operation: ScaleOperation::WholeDocumentLinearUnits { factor },
+                document: &doc,
+                capability: &complete_capability(),
+            })
+            .expect("a whole-document conversion plans at any positive factor"),
+        };
+        let candidate = build_scale_candidate(&doc, &plan).expect("a planned rig builds");
+        let proof = prove_scale(&doc, &candidate, &plan)?;
+
+        let q = cell.conversion.unwrap_or(1.0);
+        let ulp = f64::from(f32::EPSILON);
+        let per = |residual: f64, base: f64| {
+            if base > 0.0 {
+                residual / (base * ulp)
+            } else {
+                0.0
+            }
+        };
+        let bounds_candidate = rig_bounds_magnitude(candidate.document());
+        let skin_candidate = rig_slot_magnitude(candidate.document());
+        Ok(SweepWorst {
+            bounds: per(
+                proof.bounds_residual,
+                bounds_candidate.max(q * rig_bounds_magnitude(&doc)),
+            ),
+            skin_matrix: per(
+                proof.skin_matrix_residual,
+                skin_candidate.max(q * rig_slot_magnitude(&doc)),
+            ),
+            rest_translation: per(
+                proof.rest_translation_residual,
+                rig_chain_magnitude(candidate.document(), &plan),
+            ),
+            bounds_candidate_only: per(proof.bounds_residual, bounds_candidate),
+            skin_matrix_candidate_only: per(proof.skin_matrix_residual, skin_candidate),
+        })
+    }
+
+    /// The sweep [`ScaleTolerancePolicy::f32_rounding_ulps`] is calibrated
+    /// from, checked in so the count is re-derivable rather than a constant a
+    /// reader has to take on trust.
+    ///
+    /// Run it with
+    ///
+    /// ```text
+    /// cargo test -p animsmith-core --release --lib \
+    ///     calibrate_f32_rounding_ulps -- --ignored --nocapture
+    /// ```
+    ///
+    /// `#[ignore]`d because it builds and proves 360_000 candidates — seconds
+    /// in `--release` and minutes in the debug profile `cargo test` uses, where
+    /// the rest of this module costs milliseconds. It is still *compiled* by
+    /// every `cargo test`, so it cannot rot away from the code it measures.
+    ///
+    /// The population is the cross product of
+    ///
+    /// - nine operations: rest/bind at root scale `3190`, and whole-document
+    ///   conversion at `{1e-4, 0.01, 0.1, 1.5, 7.3, 100, 3190, 1e6}` — both
+    ///   directions of the factor, which is what separates a base read off the
+    ///   candidate from one read off the source;
+    /// - four slot compositions: analytic binds (`abs(W * B) = 1`, the only
+    ///   shape the pre-sweep fixtures could build) and composed slots at
+    ///   `abs(W * B) = {1e-3, 1, 1e3}`; and
+    /// - two blends: two slots that oppose on the swept vertex and cancel it
+    ///   to the origin, and two independent slots that do not.
+    ///
+    /// with joint locals and vertex positions drawn log-uniformly over six and
+    /// eight decades in random directions, a random rotation per joint, and
+    /// half of every cell's trials carrying a parent chain that cancels.
+    /// Every candidate is *correct* — [`build_scale_candidate`] produced it —
+    /// so every refusal is a false negative and every ulp count is a demand a
+    /// correct document made of the count.
+    ///
+    /// What it does **not** cover is stated so a reader knows the edge of it:
+    /// two joints under a root and no clips, so chains deeper than three and
+    /// the [`ProofResidualKind::Trajectory`] obligation are pinned by named
+    /// fixtures rather than by this sweep —
+    /// `a_sampled_pose_whose_parent_chain_cancels_still_proves_its_trajectory`
+    /// for the sampled chain, and
+    /// `a_parent_chain_whose_translations_cancel_still_proves_its_skin` for the
+    /// worst cancellation the rest chain reaches.
+    ///
+    /// The assertions are the calibration: no cell may refuse a correct
+    /// candidate, no residual may ask more of its base than
+    /// [`ScaleTolerancePolicy::f32_rounding_ulps`] allows, the two products'
+    /// bases must stay inside the count with the rebased source side dropped,
+    /// and every cell must actually produce candidates — a sweep that silently
+    /// measured nothing is the failure mode this test exists to make
+    /// impossible.
+    #[test]
+    #[ignore = "calibration sweep: tens of thousands of proofs. See the doc comment."]
+    fn calibrate_f32_rounding_ulps() {
+        const TRIALS: usize = 5_000;
+        let conversions = [
+            None,
+            Some(1e-4),
+            Some(0.01),
+            Some(0.1),
+            Some(1.5),
+            Some(7.3),
+            Some(100.0),
+            Some(3190.0),
+            Some(1e6),
+        ];
+        let compositions = [
+            SweepComposition::Analytic,
+            SweepComposition::Scaled(-3),
+            SweepComposition::Scaled(0),
+            SweepComposition::Scaled(3),
+        ];
+        let blends = [SweepBlend::Cancelling, SweepBlend::Independent];
+
+        let mut overall = SweepWorst::default();
+        let mut refusals = Vec::new();
+        let mut cells = 0usize;
+        println!(
+            "{:>8}  {:>10}  {:>12}  {:>8}  {:>8}  {:>8}  {:>8}",
+            "conv", "abs(W*B)", "blend", "refused", "bounds", "skin", "rest"
+        );
+        for &conversion in &conversions {
+            for &composition in &compositions {
+                for &blend in &blends {
+                    let cell = SweepCell {
+                        conversion,
+                        composition,
+                        blend,
+                    };
+                    // Seeded per cell from the cell itself, so a cell's
+                    // population does not move when a neighbouring cell is
+                    // added, removed, or reordered.
+                    let mut rng = SweepRng(
+                        0x5EED_0000_0000_0000
+                            ^ (cells as u64).wrapping_mul(0x1000_0000_0000_0001)
+                            ^ conversion.unwrap_or(0.0).to_bits(),
+                    );
+                    let mut worst = SweepWorst::default();
+                    let mut refused = 0usize;
+                    for _ in 0..TRIALS {
+                        match sweep_one(&mut rng, cell) {
+                            Ok(measured) => worst.fold(measured),
+                            Err(error) => {
+                                refused += 1;
+                                if refused == 1 {
+                                    refusals.push(format!("{cell:?}: {error:?}"));
+                                }
+                            }
+                        }
+                    }
+                    println!(
+                        "{:>8}  {:>10}  {:>12}  {:>8}  {:>8.3}  {:>8.3}  {:>8.3}",
+                        conversion.map_or("rest/bind".into(), |q| format!("{q:e}")),
+                        match composition {
+                            SweepComposition::Analytic => "1 (exact)".into(),
+                            SweepComposition::Scaled(e) => format!("1e{e}"),
+                        },
+                        format!("{blend:?}"),
+                        format!("{refused}/{TRIALS}"),
+                        worst.bounds,
+                        worst.skin_matrix,
+                        worst.rest_translation,
+                    );
+                    overall.fold(worst);
+                    cells += 1;
+                }
+            }
+        }
+        let total = cells * TRIALS;
+        println!(
+            "\n{total} correct candidates over {cells} cells; worst ulps of the comparison base: \
+             bounds {:.3}, skin matrix {:.3}, rest translation {:.3}; \
+             f32_rounding_ulps = {}\nwith the rebased source side dropped from the two products' \
+             bases: bounds {:.3}, skin matrix {:.3}",
+            overall.bounds,
+            overall.skin_matrix,
+            overall.rest_translation,
+            ScaleTolerancePolicy::APPENDIX_D_V3.f32_rounding_ulps,
+            overall.bounds_candidate_only,
+            overall.skin_matrix_candidate_only,
+        );
+
+        assert!(
+            refusals.is_empty(),
+            "the sweep refused correct candidates, one per cell shown: {refusals:#?}",
+        );
+        assert_eq!(cells, conversions.len() * compositions.len() * blends.len());
+        let allowed = f64::from(ScaleTolerancePolicy::APPENDIX_D_V3.f32_rounding_ulps);
+        assert!(
+            overall.bounds < allowed
+                && overall.skin_matrix < allowed
+                && overall.rest_translation < allowed,
+            "a correct candidate asked more of f32_rounding_ulps than the count allows: \
+             bounds {:.3}, skin matrix {:.3}, rest translation {:.3} against {allowed}. \
+             That is evidence about the comparison base before it is evidence about the count \
+             — read DESIGN.md Appendix D section D.1 before raising anything.",
+            overall.bounds,
+            overall.skin_matrix,
+            overall.rest_translation,
+        );
+        // The equivalence §D.1 and the two call sites record. Asserted rather
+        // than merely printed, so the day a correct candidate needs the rebased
+        // source side is the day this fails and says which obligation.
+        assert!(
+            overall.bounds_candidate_only < allowed && overall.skin_matrix_candidate_only < allowed,
+            "the rebased source magnitude has become load-bearing: bounds {:.3}, skin matrix \
+             {:.3} against {allowed} with it dropped. `candidate.max(q * source)` is no longer \
+             an equivalent mutation, and the call-site comments that say it is must change with \
+             this number.",
+            overall.bounds_candidate_only,
+            overall.skin_matrix_candidate_only,
+        );
     }
 }
