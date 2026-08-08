@@ -11864,6 +11864,37 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_negative_weight_reports_its_nonzero_mesh_and_primitive_location() {
+        let mut doc = multi_joint_document();
+        doc.assets.meshes.push(MeshAsset {
+            name: "later mesh".into(),
+            source_mesh_index: 1,
+            primitives: vec![
+                Primitive::default(),
+                Primitive {
+                    weights: vec![[0.0, 0.0, -f32::from_bits(1), 0.0]],
+                    ..Primitive::default()
+                },
+            ],
+        });
+        let capability = complete_capability();
+        assert_eq!(
+            plan_scale(&ScaleRequest {
+                operation: ScaleOperation::WholeDocumentLinearUnits { factor: 2.0 },
+                document: &doc,
+                capability: &capability,
+            })
+            .unwrap_err(),
+            ScaleError::NegativeSkinWeight {
+                mesh_index: 1,
+                primitive_index: 1,
+                vertex_index: 0,
+                influence_index: 2,
+            }
+        );
+    }
+
     // --- f32 rounding under rotation (`f32_rounding_ulps`) ---------------
 
     /// A rotating skinned rig: a uniformly scaled root, two rotated joints in
