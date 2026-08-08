@@ -11844,6 +11844,24 @@ mod tests {
                 expected
             );
         }
+
+        // IEEE negative zero is numerically zero, not a negative influence.
+        // Pin it across the same public boundaries so an implementation based
+        // on `is_sign_negative()` cannot narrow the accepted domain.
+        let mut negative_zero = doc.clone();
+        negative_zero.assets.meshes[0].primitives[0].weights[3][3] = -0.0;
+        for operation in operations {
+            let plan = plan_scale(&ScaleRequest {
+                operation,
+                document: &negative_zero,
+                capability: &capability,
+            })
+            .expect("negative zero is a zero skin influence");
+            let candidate = build_scale_candidate(&negative_zero, &plan)
+                .expect("candidate construction accepts negative zero");
+            prove_scale(&negative_zero, &candidate, &plan)
+                .expect("proof accepts negative zero in source and candidate");
+        }
     }
 
     #[test]
