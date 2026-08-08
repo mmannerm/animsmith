@@ -12252,9 +12252,10 @@ mod tests {
     /// and which nothing bounds.
     ///
     /// [`amplifying_blend_document`] escapes this only because its two slots
-    /// are *opposed*: that inflates stage 2 to `1.997e8` and buys the base the
-    /// same `1.0e5` the accumulation needs. Aligning them — the one change
-    /// here — collapses stage 2 back onto stage 1 and the base with it.
+    /// are *opposed*: that inflates stage 2 to `1.997e8` and so raises the base
+    /// by `stage 2 / stage 1`, which is `2.0e5` — the same figure the shortfall
+    /// above is, which is exactly why that rig proves. Aligning them — the one
+    /// change here — collapses stage 2 back onto stage 1 and the base with it.
     fn cancelling_numerator_blend_document() -> Document {
         composed_slot_document(
             CANCELLING_BLEND_ROTATIONS,

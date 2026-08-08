@@ -873,7 +873,8 @@ below the `1e-5` the relative band already allows. The `2^-23` is
 
   `a_blend_whose_weights_nearly_cancel_amplifies_a_vertex_and_still_proves_its_bounds`
   escapes only because its slots are *opposed*, which inflates stage 2 to
-  `1.997e8` and buys the base exactly the `1.0e5` the accumulation needs;
+  `1.997e8` and so raises the base by `stage 2 / stage 1` — `2.0e5`, the same
+  figure the shortfall above is, which is exactly why that rig proves;
   aligning them collapses stage 2 onto stage 1. This is pre-existing rather
   than introduced by the per-axis work, and narrowed by it — at
   `f32_rounding_ulps = 0` the same rig is refused at `q = 1.5` as well, where
