@@ -3188,9 +3188,9 @@ pub struct ScaleProof {
 /// every track and every base mesh against that element's own domain's
 /// analytic expectation — the declared multiplier where the plan rewrites
 /// that domain, the retained value where it does not — and so are owed by
-/// every plan. Base `POSITION` belongs to that second group and not the
-/// first, which is worth naming because it is easy to get backwards: a
-/// whole-document plan *does* rewrite it
+/// every plan. Base `POSITION` belongs with the track-value comparison, not
+/// with the unaffected binds, which is worth naming because it is easy to get
+/// backwards: a whole-document plan *does* rewrite it
 /// (`domain_rewrites.base_mesh_positions`), so its comparison is a
 /// rewritten-value check, and it is unconditional because skinned bounds
 /// would otherwise be its only witness — and they report a zero residual for
