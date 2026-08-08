@@ -13716,6 +13716,197 @@ mod tests {
         );
     }
 
+    /// The bone [`inherited_chain_document`] adds: a child of the cancellation
+    /// point, `1e-3` from it, and the only bone in the tree whose own link
+    /// composes on nothing while its ancestors composed on `6.38e6`.
+    const INHERITED_CHAIN_LEAF: BoneId = 3;
+
+    /// [`cancelling_chain_document`] with [`INHERITED_CHAIN_LEAF`] hanging off
+    /// the joint whose world translation cancelled.
+    ///
+    /// Every other chain fixture compares the bone *at* the cancellation
+    /// point, where `translation_operand_magnitude(world[parent], local)`
+    /// contains the parent's own world translation and so already names the
+    /// terms that cancelled. The inherited `translation_chain[parent].max(..)`
+    /// is redundant there. One bone further down it is not: the leaf's parent
+    /// world translation is the `(0.125, 0, -0.125)` the cancellation left, so
+    /// the leaf's own link composes on `2.84` while the rounding its world
+    /// translation carries is still `6.38e6`'s.
+    fn inherited_chain_document() -> Document {
+        let mut doc = cancelling_chain_document(1.0);
+        let rest = Transform {
+            translation: Vec3::new(1e-3, 0.0, 0.0),
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
+        };
+        doc.skeleton.bones.push(Bone {
+            name: "bone3".into(),
+            parent: Some(2),
+            rest,
+            inverse_bind: None,
+        });
+        doc.assets.source_skeleton.nodes.push(SourceNodeAsset {
+            source_node_index: 3,
+            name: None,
+            parent_source_node_index: Some(2),
+            scene_root_indices: Vec::new(),
+            local_rest: SourceNodeLocalRest::Trs {
+                translation: rest.translation,
+                rotation: rest.rotation,
+                scale: rest.scale,
+            },
+            bone: Some(INHERITED_CHAIN_LEAF),
+        });
+        doc
+    }
+
+    /// [`inherited_chain_document`] under whole-document conversion at `3190`,
+    /// optionally carrying [`cancelling_chain_clip_conversion_at`]'s track so
+    /// the *sampled* walk runs too.
+    fn inherited_chain_conversion(animated: bool) -> (Document, ScalePlan, ScaleCandidate) {
+        let mut doc = inherited_chain_document();
+        if animated {
+            doc.clips.push(Clip {
+                name: "clip".into(),
+                duration_s: 1.0,
+                tracks: vec![Track {
+                    bone: 1,
+                    property: Property::Translation,
+                    interpolation: Interpolation::Linear,
+                    times: vec![0.0, 1.0],
+                    values: TrackValues::Vec3s(vec![
+                        Vec3::new(0.0, 1000.0, 0.0),
+                        Vec3::new(0.0, 2000.0, 0.0),
+                    ]),
+                }],
+            });
+        }
+        let capability = complete_capability();
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::WholeDocumentLinearUnits { factor: 3190.0 },
+            document: &doc,
+            capability: &capability,
+        })
+        .expect("a whole-document conversion plans at any positive factor");
+        assert_eq!(plan.proof_obligations().prove_trajectories, animated);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        (doc, plan, candidate)
+    }
+
+    /// The magnitude the leaf's *parent* composed on and the magnitude the
+    /// leaf's own link composes on, off `pose` — the two numbers
+    /// `translation_chain[parent].max(..)` picks between at the leaf.
+    ///
+    /// Deliberately read off bone `2`'s chain rather than the leaf's own. The
+    /// leaf's chain *is* the expression under test, so a shape assertion built
+    /// on it would fire when that expression is mutated and pre-empt the
+    /// refusal this fixture exists to catch. Bone `2`'s chain is the rig's own
+    /// geometry — it is that bone's per-link term either way — so a guard on
+    /// it says only what it means to say.
+    fn inherited_chain_terms(skeleton: &Skeleton, pose: &WorldPose) -> (f64, f64) {
+        let own_link = translation_operand_magnitude(
+            pose.matrices[2],
+            skeleton.bones[INHERITED_CHAIN_LEAF].rest.to_mat4(),
+        );
+        (pose.translation_chain[2], own_link)
+    }
+
+    #[test]
+    fn a_bone_below_a_cancelling_chain_inherits_its_parent_s_magnitude_and_still_proves() {
+        // The fixture for the *inherited* half of the chain magnitude —
+        // `translation_chain[parent].max(..)` in `rest_world_pose` — as
+        // distinct from the per-link half every other chain fixture reaches.
+        // The mutation it kills is that `max` deleted, leaving each bone with
+        // only `translation_operand_magnitude(world[parent], local)`: without
+        // this fixture that mutation survives the whole suite.
+        //
+        // It survives because every other chain fixture compares the bone at
+        // the cancellation point, and there the per-link term already contains
+        // the parent's world translation — the very terms that cancelled — so
+        // the inherited value it is maxed against is never the larger one. The
+        // leaf here is one bone further down. Its parent's world translation is
+        // the `(0.125, 0, -0.125)` the cancellation left behind, so its own
+        // link composes on `2.84` while the `6.38e6` its world translation
+        // still carries the rounding of reaches it only by inheritance.
+        //
+        // Measured: the candidate's chain is `6.38e6` at the leaf with the
+        // inheritance and `2.84` without, against a residual of `0.197`. The
+        // correct candidate below proves today and is refused by
+        // `RestTranslation` at `observed: 0.19679` against
+        // `tolerance: 3.4982e-5` with the `max` removed — a false refusal by
+        // `5600x`. Removing it at that one site kills two tests, this and the
+        // sampled fixture below, whose rest obligation runs on the same rig;
+        // before the two of them it killed nothing in the suite.
+        let (doc, plan, candidate) = inherited_chain_conversion(false);
+        let pose = rest_world_pose(&candidate.document().skeleton).unwrap();
+        let (chain, own_link) = inherited_chain_terms(&candidate.document().skeleton, &pose);
+
+        // The rig's shape is the fixture: a chain that stopped cancelling, or
+        // a leaf whose own link grew to name its ancestors' magnitude, proves
+        // below whether the inheritance is there or not.
+        assert!(
+            chain > 1e5 * own_link,
+            "the leaf's own link now composes on {own_link} against a parent chain of {chain}, \
+             so this fixture no longer separates the two halves of the chain magnitude",
+        );
+
+        let proof = prove_scale(&doc, &candidate, &plan).expect(
+            "a correct candidate whose leaf sits below a cancelling chain must still prove: the \
+             rounding its world translation carries is its ancestors', and only the inherited \
+             chain magnitude names it",
+        );
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
+        assert!(
+            proof.rest_translation_residual > policy.f32_rounded_tolerance(0.0, 0.0, own_link),
+            "rest translation residual {} no longer exceeds what the leaf's own link buys, so \
+             dropping the inherited term would no longer refuse this correct candidate",
+            proof.rest_translation_residual,
+        );
+    }
+
+    #[test]
+    fn a_sampled_bone_below_a_cancelling_chain_inherits_its_parent_s_magnitude_and_still_proves() {
+        // The same separation for the *sampled* walk's copy of the inherited
+        // term, in `world_at_time` rather than `rest_world_pose`. The two are
+        // separate lines of code, and the rest fixture above covers only the
+        // first: removing the `max` in `world_at_time` alone leaves every
+        // other test in the suite green and kills this one, by `Trajectory`,
+        // which is the only obligation that reads that walk's chain.
+        //
+        // On `cancelling_chain_clip_conversion_at`'s track for that fixture's
+        // reason: at `t = 0` it drives the first joint to its own rest
+        // translation, so the sampled chain cancels exactly as the rest chain
+        // does and the sampled leaf inherits the same `6.38e6`.
+        //
+        // Measured: refused at `observed: 0.19679` against
+        // `tolerance: 3.4982e-5` with the sampled `max` removed — the rest
+        // fixture's numbers to the digit, because at this sample the two poses
+        // are the same pose.
+        let (doc, plan, candidate) = inherited_chain_conversion(true);
+        let skeleton = &candidate.document().skeleton;
+        let pose = world_at_time(skeleton, &candidate.document().clips[0], 0.0).unwrap();
+        let (chain, own_link) = inherited_chain_terms(skeleton, &pose);
+        assert!(
+            chain > 1e5 * own_link,
+            "the sampled leaf's own link now composes on {own_link} against a parent chain of \
+             {chain}, so this fixture no longer separates the two halves of the sampled chain",
+        );
+
+        let proof = prove_scale(&doc, &candidate, &plan).expect(
+            "a correct candidate whose sampled leaf sits below a cancelling chain must still \
+             prove, for the rest fixture's reason",
+        );
+        assert_eq!(proof.sample_time_count, 2);
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
+        assert!(
+            proof.trajectory_residual > policy.f32_rounded_tolerance(0.0, 0.0, own_link),
+            "trajectory residual {} no longer exceeds what the sampled leaf's own link buys, so \
+             dropping the inherited term in `world_at_time` would no longer refuse this correct \
+             candidate",
+            proof.trajectory_residual,
+        );
+    }
+
     #[test]
     fn a_shrinking_conversion_holds_trajectory_to_the_candidate_s_own_chain() {
         // `a_shrinking_conversion_holds_rest_translation_to_the_candidate_s_own_chain`
