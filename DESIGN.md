@@ -963,6 +963,18 @@ sweep asserts it, and
 pins it on the one rig where the excess is `1776x`, so a rig that ever needs it
 fails in both places.
 
+Flipping that `max` to a `min` is likewise an equivalent mutation over this
+population, and is declared here on the same evidence rather than left as an
+unexplained zero in a mutation table. `min` only ever *tightens*, so it has no
+over-acceptance direction and no bracket fixture can reach it; the only way it
+can be wrong is by refusing a correct candidate, which is exactly what the
+sweep measures. With the `max` flipped to a `min` the worst demand is `2.632`
+and `2.065` — the shipped figures to the digit, because in every cell's worst
+case the two sides coincide — and the sweep asserts it. That measurement also
+bounds reading `q * source` alone, since `min` is never the larger of the two,
+which is what entitles dropping the candidate side of the skin base to be
+declared equivalent too.
+
 That equivalence was false for skinned bounds under the base this section
 shipped before stage 1 was corrected, and is recorded as having been so:
 against the earlier `abs(p)` stage the sweep's worst skinned-bounds demand with
@@ -1027,6 +1039,12 @@ trajectory** obligation are pinned by named fixtures rather than by it.
 `a_sampled_pose_whose_parent_chain_cancels_still_proves_its_trajectory` demands
 `0.26` of the count from an ordinary two-key translation track over a
 cancelling chain, and is what pins that the trajectory term is reached at all;
+the four brackets that hold the two chain terms *from above* run on
+`unskinned_sibling_document`, a rig whose defect bone is inside the affected
+closure and in no skin joint list — because on a skinned joint a displacement
+moves the composed `W * B` as well as the world translation, `SkinMatrix`
+refuses first, and the bracket measures that obligation instead of the one it
+names;
 `a_parent_chain_whose_translations_cancel_still_proves_its_skin` is the worst
 cancellation the rest chain reaches, at `524288` ulps of the composition's own
 base and `0.08` of the chain's. An unaffected instance's binds demand `0`, and

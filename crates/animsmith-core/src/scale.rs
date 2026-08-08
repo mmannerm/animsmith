@@ -13066,11 +13066,20 @@ mod tests {
         // pinned to the source rig at both. With the candidate's chain alone
         // it is `1.07e-5` and `1.47e-6`: `89x` and `648x` tighter, and it
         // tracks the factor as it should.
-        let (doc, plan, candidate) = cancelling_chain_conversion_at(0.01);
-        let source_chain = rest_world_pose(&doc.skeleton).unwrap().translation_chain[2];
+        //
+        // The defect goes on `unskinned_sibling_document`'s unskinned bone,
+        // not on a skin joint. An earlier revision put it on joint `2` and
+        // read as killing both mutations; it did not. Displacing a skin joint
+        // moves `W * B` too, `SkinMatrix` refuses at `8.0e-5` against its own
+        // band before this obligation's band decides anything, and the
+        // `expect_err` below then panics on the wrong kind — a coincidental
+        // death, not a detection.
+        let (doc, plan, candidate) = unskinned_sibling_conversion(false, 0.01);
+        let source_chain =
+            rest_world_pose(&doc.skeleton).unwrap().translation_chain[UNSKINNED_SIBLING_BONE];
         let candidate_chain = rest_world_pose(&candidate.document().skeleton)
             .unwrap()
-            .translation_chain[2];
+            .translation_chain[UNSKINNED_SIBLING_BONE];
         assert!(
             source_chain > 50.0 * candidate_chain,
             "the source side is no longer the larger one, so this fixture no longer \
@@ -13079,16 +13088,29 @@ mod tests {
 
         // The equivalence half: a correct candidate still proves on the
         // candidate's chain alone, at the end of the range where that chain is
-        // the *smaller* of the two.
-        prove_scale(&doc, &candidate, &plan)
-            .expect("a correct candidate under a shrinking conversion must still prove");
+        // the *smaller* of the two. Asserted together with the isolation, on a
+        // `1e-5` displacement of the same axis that both bands admit.
+        let mut nudged = candidate.document().clone();
+        nudged.skeleton.bones[UNSKINNED_SIBLING_BONE]
+            .rest
+            .translation
+            .x += 1e-5;
+        assert_the_defect_axis_is_invisible_to_the_skin(
+            &doc,
+            &plan,
+            &candidate,
+            &ScaleCandidate { document: nudged },
+        );
 
         // And the tightening half. `1e-4` sits between the two bands: above
         // the `1.05e-5` the candidate's chain buys, below the `9.54e-4` the
         // source's would. Reading the source side — or the `max`, which is the
         // source side here — admits this wrong candidate.
         let mut broken = candidate.document().clone();
-        broken.skeleton.bones[2].rest.translation.x += 1e-4;
+        broken.skeleton.bones[UNSKINNED_SIBLING_BONE]
+            .rest
+            .translation
+            .x += 1e-4;
         let broken = ScaleCandidate { document: broken };
         let error = prove_scale(&doc, &broken, &plan)
             .expect_err("a 1e-4 joint displacement must be refused on the candidate's chain");
@@ -13121,11 +13143,21 @@ mod tests {
         // `10`-unit displacement of an affected joint is refused and a `1`-unit
         // one is not. That is the price the cancellation buys, stated as a
         // bracket: any inflation of the magnitude by more than `6.4x` admits a
-        // `10`-unit build error on a rig whose geometry spans one unit.
-        let (doc, plan, candidate) = cancelling_chain_conversion();
+        // `10`-unit build error on a rig whose geometry spans one unit. `x 64`
+        // is such an inflation, which is what this fixture is the only killer
+        // of once the coincidental deaths are discounted.
+        //
+        // On `unskinned_sibling_document`'s unskinned bone, for the reason
+        // that rig exists: on a skin joint, `SkinMatrix` refuses a `10`-unit
+        // displacement at `7.97` against its own band and this bracket never
+        // reaches the chain term at all.
+        let (doc, plan, candidate) = unskinned_sibling_conversion(false, 3190.0);
 
         let mut broken = candidate.document().clone();
-        broken.skeleton.bones[2].rest.translation.x += 10.0;
+        broken.skeleton.bones[UNSKINNED_SIBLING_BONE]
+            .rest
+            .translation
+            .x += 10.0;
         let broken = ScaleCandidate { document: broken };
         let error = prove_scale(&doc, &broken, &plan)
             .expect_err("a 10-unit joint displacement must still be refused");
@@ -13144,12 +13176,155 @@ mod tests {
 
         // And the band really is a band: an error inside it is admitted, which
         // is the cost of admitting the correct candidate above rather than an
-        // accident of this fixture.
+        // accident of this fixture. That admitted candidate is also what pins
+        // the isolation — its skinned residuals must be the correct
+        // candidate's to the bit, or the refusal above was `SkinMatrix`'s.
         let mut inside = candidate.document().clone();
-        inside.skeleton.bones[2].rest.translation.x += 1.0;
-        let inside = ScaleCandidate { document: inside };
-        prove_scale(&doc, &inside, &plan)
-            .expect("an error inside the chain-derived band is admitted, by construction");
+        inside.skeleton.bones[UNSKINNED_SIBLING_BONE]
+            .rest
+            .translation
+            .x += 1.0;
+        assert_the_defect_axis_is_invisible_to_the_skin(
+            &doc,
+            &plan,
+            &candidate,
+            &ScaleCandidate { document: inside },
+        );
+    }
+
+    /// The bone [`unskinned_sibling_document`] adds, and the whole point of
+    /// that rig: it is inside the affected closure, so `RestTranslation` and
+    /// `Trajectory` compare it, and it is in no instance's `skin_joints`, so
+    /// `check_skin_and_bounds` never reaches it.
+    const UNSKINNED_SIBLING_BONE: BoneId = 3;
+
+    /// [`cancelling_chain_document`] at root scale `1` plus a fourth bone that
+    /// **no vertex is weighted to**, carrying the same local as the skinned
+    /// second joint and hanging off the same parent — so its parent chain
+    /// cancels identically and its world translation lands within `0.2` of the
+    /// origin while the terms behind it are `2000`.
+    ///
+    /// This rig exists because the chain brackets cannot be written on a
+    /// skinned joint. A displacement injected on one moves the composed
+    /// `W * B` as well as the world translation, and `SkinMatrix` — whose band
+    /// is derived from a different magnitude entirely — refuses it first. The
+    /// bracket then reports `kind: SkinMatrix` and its `expect_err` on
+    /// `RestTranslation` or `Trajectory` panics on the wrong kind, which looks
+    /// like a killed mutant and is not one: the chain band was never what
+    /// decided. Every earlier revision of the four brackets below did exactly
+    /// that, and four mutation rows were credited to fixtures that had not
+    /// detected them.
+    ///
+    /// With `with_clip` the same bone carries an ordinary two-key translation
+    /// track whose value at `t = 0` is its own rest translation, so the
+    /// *sampled* chain cancels exactly as the rest chain does and the sampled
+    /// obligations run on a bone the skin still cannot see.
+    fn unskinned_sibling_document(with_clip: bool) -> Document {
+        // The same local as `cancelling_chain_document`'s second joint —
+        // `-R0^-1 (0, 1000, 0)` as literals — so this bone cancels against the
+        // same parent world and needs no rotation of its own.
+        let local = Vec3::new(483.7628, 749.96, 451.14697);
+        let mut doc = cancelling_chain_document(1.0);
+        doc.skeleton.bones.push(Bone {
+            name: "unskinned_sibling".into(),
+            parent: Some(1),
+            rest: Transform {
+                translation: local,
+                rotation: Quat::IDENTITY,
+                scale: Vec3::ONE,
+            },
+            inverse_bind: None,
+        });
+        doc.assets.source_skeleton.nodes.push(SourceNodeAsset {
+            source_node_index: 3,
+            name: None,
+            parent_source_node_index: Some(1),
+            scene_root_indices: Vec::new(),
+            local_rest: SourceNodeLocalRest::Trs {
+                translation: local,
+                rotation: Quat::IDENTITY,
+                scale: Vec3::ONE,
+            },
+            bone: Some(UNSKINNED_SIBLING_BONE),
+        });
+        if with_clip {
+            doc.clips.push(Clip {
+                name: "clip".into(),
+                duration_s: 1.0,
+                tracks: vec![Track {
+                    bone: UNSKINNED_SIBLING_BONE,
+                    property: Property::Translation,
+                    interpolation: Interpolation::Linear,
+                    times: vec![0.0, 1.0],
+                    values: TrackValues::Vec3s(vec![local, local * 2.0]),
+                }],
+            });
+        }
+        doc
+    }
+
+    /// [`unskinned_sibling_document`] under whole-document conversion at
+    /// `factor`, the only operation that puts the two documents' chain
+    /// magnitudes apart.
+    fn unskinned_sibling_conversion(
+        with_clip: bool,
+        factor: f64,
+    ) -> (Document, ScalePlan, ScaleCandidate) {
+        let doc = unskinned_sibling_document(with_clip);
+        let capability = complete_capability();
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::WholeDocumentLinearUnits { factor },
+            document: &doc,
+            capability: &capability,
+        })
+        .expect("a whole-document conversion plans at any positive factor");
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        (doc, plan, candidate)
+    }
+
+    /// The isolation each chain bracket rests on, asserted rather than
+    /// assumed: the defect's own bone is in the affected closure and in no
+    /// skin joint list, and a displacement along the same axis that the bands
+    /// admit leaves every skinned residual **bit-identical**.
+    ///
+    /// An edit that wires this bone back into the skin — or a defect injected
+    /// somewhere that does move it — fails here, loudly, instead of silently
+    /// restoring the coincidental `SkinMatrix` death the brackets were written
+    /// to escape.
+    fn assert_the_defect_axis_is_invisible_to_the_skin(
+        doc: &Document,
+        plan: &ScalePlan,
+        candidate: &ScaleCandidate,
+        nudged: &ScaleCandidate,
+    ) {
+        assert!(
+            plan.affected_nodes().contains(&UNSKINNED_SIBLING_BONE),
+            "the defect's bone is outside the affected closure, so no obligation compares it",
+        );
+        for instance in &doc.assets.instances {
+            assert!(
+                !instance.skin_joints.contains(&UNSKINNED_SIBLING_BONE),
+                "the defect's bone is a skin joint again, so SkinMatrix and Bounds see the                  displacement and these brackets stop bracketing the chain term",
+            );
+        }
+        let clean = prove_scale(doc, candidate, plan).expect("the correct candidate proves");
+        let nudged = prove_scale(doc, nudged, plan)
+            .expect("a displacement the bands admit must still prove");
+        assert_eq!(
+            (
+                clean.skin_matrix_residual,
+                clean.skin_matrix_comparisons,
+                clean.bounds_residual,
+                clean.bounds_comparisons,
+            ),
+            (
+                nudged.skin_matrix_residual,
+                nudged.skin_matrix_comparisons,
+                nudged.bounds_residual,
+                nudged.bounds_comparisons,
+            ),
+            "the defect axis moved a skinned residual, so SkinMatrix can refuse it and these              brackets no longer isolate the chain term",
+        );
     }
 
     /// A straight chain of `depth` bones under a root, each `(10, 0, 0)` from
@@ -13368,19 +13543,35 @@ mod tests {
         // `0.01` is `1.01e-4` and it is refused by `TrackValue`, not by
         // `Trajectory` — this obligation contributed nothing. With the
         // candidate's chain alone it is `1.04e-5`, refused by `Trajectory`.
-        let (doc, plan, candidate) = cancelling_chain_clip_conversion_at(0.01);
-        prove_scale(&doc, &candidate, &plan)
-            .expect("a correct candidate under a shrinking conversion must still prove");
+        //
+        // On `unskinned_sibling_document`'s track, so that the displacement
+        // moves the sampled world translation of a bone the skin cannot see.
+        // An earlier revision animated joint `1`, which is a skin joint: the
+        // sampled `W * B` moved with it and `SkinMatrix` refused at `5.0e-5`
+        // before `Trajectory`'s band decided anything.
+        let (doc, plan, candidate) = unskinned_sibling_conversion(true, 0.01);
+        let mut nudged = candidate.document().clone();
+        let TrackValues::Vec3s(values) = &mut nudged.clips[0].tracks[0].values else {
+            panic!("expected a vec3 track");
+        };
+        values[0].x += 1e-6;
+        values[1].x += 1e-6;
+        assert_the_defect_axis_is_invisible_to_the_skin(
+            &doc,
+            &plan,
+            &candidate,
+            &ScaleCandidate { document: nudged },
+        );
 
         let mut broken = candidate.document().clone();
         let TrackValues::Vec3s(values) = &mut broken.clips[0].tracks[0].values else {
             panic!("expected a vec3 track");
         };
-        values[0].x += 5e-5;
-        values[1].x += 5e-5;
+        values[0].x += 3e-5;
+        values[1].x += 3e-5;
         let broken = ScaleCandidate { document: broken };
         let error = prove_scale(&doc, &broken, &plan)
-            .expect_err("a 5e-5 sampled displacement must be refused on the candidate's chain");
+            .expect_err("a 3e-5 sampled displacement must be refused on the candidate's chain");
         let ScaleError::ProofResidualExceeded {
             kind: ProofResidualKind::Trajectory,
             observed,
@@ -13389,7 +13580,8 @@ mod tests {
         else {
             panic!("expected a refused trajectory, got {error:?}");
         };
-        let source_chain = rest_world_pose(&doc.skeleton).unwrap().translation_chain[2];
+        let source_chain =
+            rest_world_pose(&doc.skeleton).unwrap().translation_chain[UNSKINNED_SIBLING_BONE];
         let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
         assert!(
             observed > tolerance,
@@ -13413,7 +13605,25 @@ mod tests {
         // that obligation compares the key values themselves against a `31.9`
         // band here — so a larger displacement would stop testing this
         // obligation at all.
-        let (doc, plan, candidate) = cancelling_chain_clip_conversion();
+        //
+        // On `unskinned_sibling_document`'s track for that rig's reason: this
+        // fixture is the only killer of `Trajectory`'s chain magnitude `x 64`,
+        // and on a skin joint it never gets to be — `SkinMatrix` refuses a
+        // `10`-unit sampled displacement at `10.03` first.
+        let (doc, plan, candidate) = unskinned_sibling_conversion(true, 3190.0);
+
+        let mut nudged = candidate.document().clone();
+        let TrackValues::Vec3s(values) = &mut nudged.clips[0].tracks[0].values else {
+            panic!("expected a vec3 track");
+        };
+        values[0].x += 1.0;
+        values[1].x += 1.0;
+        assert_the_defect_axis_is_invisible_to_the_skin(
+            &doc,
+            &plan,
+            &candidate,
+            &ScaleCandidate { document: nudged },
+        );
 
         let mut broken = candidate.document().clone();
         let TrackValues::Vec3s(values) = &mut broken.clips[0].tracks[0].values else {
@@ -16656,6 +16866,19 @@ mod tests {
         /// measurement that entitles it to.
         bounds_candidate_only: f64,
         skin_matrix_candidate_only: f64,
+        /// The same two bases with the `max` over the two document sides
+        /// flipped to a `min`.
+        ///
+        /// `min` only ever *tightens*, so it has no over-acceptance direction
+        /// and cannot be killed by a bracket fixture; the only thing that
+        /// could kill it is a correct candidate it refuses. That is precisely
+        /// what this sweep is for, and measuring it here is what entitles §D.1
+        /// to declare the mutation equivalent over this population instead of
+        /// listing it as a bare unexplained zero. It also bounds the
+        /// `q * source` alone reading, since `min` is never the larger of the
+        /// two.
+        bounds_min_of_sides: f64,
+        skin_matrix_min_of_sides: f64,
     }
 
     impl SweepWorst {
@@ -16668,6 +16891,10 @@ mod tests {
             self.skin_matrix_candidate_only = self
                 .skin_matrix_candidate_only
                 .max(other.skin_matrix_candidate_only);
+            self.bounds_min_of_sides = self.bounds_min_of_sides.max(other.bounds_min_of_sides);
+            self.skin_matrix_min_of_sides = self
+                .skin_matrix_min_of_sides
+                .max(other.skin_matrix_min_of_sides);
         }
     }
 
@@ -16773,21 +17000,22 @@ mod tests {
         };
         let bounds_candidate = rig_bounds_magnitude(candidate.document());
         let skin_candidate = rig_slot_magnitude(candidate.document());
+        let bounds_source = q * rig_bounds_magnitude(&doc);
+        let skin_source = q * rig_slot_magnitude(&doc);
         Ok(SweepWorst {
-            bounds: per(
-                proof.bounds_residual,
-                bounds_candidate.max(q * rig_bounds_magnitude(&doc)),
-            ),
-            skin_matrix: per(
-                proof.skin_matrix_residual,
-                skin_candidate.max(q * rig_slot_magnitude(&doc)),
-            ),
+            bounds: per(proof.bounds_residual, bounds_candidate.max(bounds_source)),
+            skin_matrix: per(proof.skin_matrix_residual, skin_candidate.max(skin_source)),
             rest_translation: per(
                 proof.rest_translation_residual,
                 rig_chain_magnitude(candidate.document(), &plan),
             ),
             bounds_candidate_only: per(proof.bounds_residual, bounds_candidate),
             skin_matrix_candidate_only: per(proof.skin_matrix_residual, skin_candidate),
+            bounds_min_of_sides: per(proof.bounds_residual, bounds_candidate.min(bounds_source)),
+            skin_matrix_min_of_sides: per(
+                proof.skin_matrix_residual,
+                skin_candidate.min(skin_source),
+            ),
         })
     }
 
@@ -16941,13 +17169,16 @@ mod tests {
             "\n{total} correct candidates over {cells} cells; worst ulps of the comparison base: \
              bounds {:.3}, skin matrix {:.3}, rest translation {:.3}; \
              f32_rounding_ulps = {}\nwith the rebased source side dropped from the two products' \
-             bases: bounds {:.3}, skin matrix {:.3}",
+             bases: bounds {:.3}, skin matrix {:.3}\nwith the `max` over the two document \
+             sides flipped to a `min`: bounds {:.3}, skin matrix {:.3}",
             overall.bounds,
             overall.skin_matrix,
             overall.rest_translation,
             ScaleTolerancePolicy::APPENDIX_D_V3.f32_rounding_ulps,
             overall.bounds_candidate_only,
             overall.skin_matrix_candidate_only,
+            overall.bounds_min_of_sides,
+            overall.skin_matrix_min_of_sides,
         );
 
         assert!(
@@ -17017,6 +17248,26 @@ mod tests {
              this number.",
             overall.bounds_candidate_only,
             overall.skin_matrix_candidate_only,
+        );
+        // The two `max` over document sides -> `min` mutations, which no
+        // bracket fixture can kill because `min` only tightens: the only way
+        // it can be wrong is by refusing a correct candidate, and this is the
+        // 360_000-candidate measurement of exactly that. Asserted rather than
+        // printed, so the day the two sides come apart far enough for `min` to
+        // matter is the day this fails and says which product. It bounds the
+        // `q * source` alone reading too, since `min` is never the larger of
+        // the two — which is what entitles "skin base drops
+        // `after.rounding_magnitude`" to be declared equivalent rather than
+        // listed as an unexplained survivor.
+        assert!(
+            overall.bounds_min_of_sides < allowed && overall.skin_matrix_min_of_sides < allowed,
+            "flipping the `max` over the two document sides to a `min` now refuses a correct \
+             candidate: bounds {:.3}, skin matrix {:.3} against {allowed}. The two sides have \
+             come apart far enough for the choice between them to matter, and DESIGN.md \
+             Appendix D section D.1's declaration that `min` is an equivalent mutation must \
+             change with this number.",
+            overall.bounds_min_of_sides,
+            overall.skin_matrix_min_of_sides,
         );
     }
 }
