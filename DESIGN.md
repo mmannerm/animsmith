@@ -754,8 +754,10 @@ below the `1e-5` the relative band already allows. The `2^-23` is
 
 - **Skinned bounds** takes `magnitude` as the largest of the magnitudes every
   stage of the chain that produced the bound ran on, maxed over every
-  contributing vertex of *both* documents. There are four stages, and each is
-  a cancellation the stage after it can no longer see:
+  contributing vertex — read off the candidate, and maxed against the source's
+  own *rebased by the conversion factor*: `candidate.max(q * source)`, for the
+  reason given after this list. There are four stages, and each is a
+  cancellation the stage after it can no longer see:
 
   1. the magnitude of the vertex position `p` itself, which covers the
      `W * B * p` transform — that transform runs on terms of size
@@ -816,7 +818,9 @@ below the `1e-5` the relative band already allows. The `2^-23` is
   it already cancelled. A joint whose local offset points back along its
   parent's world translation leaves `abs(W) * abs(B)` at `1.0` while the
   residual it must admit is `6.25e-2` — `524288` ulps of that base, and `0.08`
-  of the chain's. It is also not
+  of the chain's. The skin equation reads that quantity off the candidate and
+  maxes it against the source's rebased by the factor, exactly as skinned
+  bounds does, and for the same reason. It is also not
   `matrix_magnitude(a) * matrix_magnitude(b)`, which replaces the sum over
   `k` with a product of two independent maxima and reads `7.6e6` where the
   arithmetic ran on `6.4e3` — a tolerance from that would accept a matrix
@@ -851,14 +855,47 @@ below the `1e-5` the relative band already allows. The `2^-23` is
   rig's size while the candidate it is spent on keeps shrinking, and the
   smallest genuinely wrong candidate either obligation refuses stops tracking
   the factor at all. On the cancelling-chain rig that costs `89x` of
-  discriminating power at `0.01` and `648x` at `1e-4`. Unlike skinned bounds
-  and the skin equation — whose magnitudes are products whose linear part does
-  not scale with the factor, so the two sides are not related by it — this one
-  has an exact relation between the sides and needs only one of them.
+  discriminating power at `0.01` and `648x` at `1e-4`.
   `a_shrinking_conversion_holds_rest_translation_to_the_candidate_s_own_chain`
   and `a_shrinking_conversion_holds_trajectory_to_the_candidate_s_own_chain`
   pin the tightening; the two `..._holds_..._to_the_candidate_side` fixtures
   pin the growing direction, where the candidate's chain is also the larger.
+
+**Why the source side is rebased.** Every residual above is `|a - q * b|` for
+the candidate quantity `a` and the source quantity `b`, so the source operand
+enters the comparison multiplied by the factor and its *rounding* is multiplied
+by the factor with it: a source quantity accurate to `k` ulps of its own
+magnitude contributes `q * k` ulps of that magnitude to the residual. A base
+that reads the source side unrebased — which `max(source, candidate)` did for
+skinned bounds and the skin equation — therefore states the source's error in
+the wrong units by a factor of `q`. Under a shrinking conversion that is the
+whole defect, and it is loose by exactly `1/q`: the band freezes at the source
+rig's size while the candidate it is spent on keeps shrinking. Measured on the
+far-joint rig, the smallest inverse-bind shift the skin equation refuses goes
+from `1.9e-3` under the max to `1.3e-5` at `0.01` and `1.3e-7` at `1e-4`; the
+smallest bounds error refused goes from `4.8e-1` to `4.8e-3` and `4.9e-5`.
+`a_shrinking_conversion_rebases_the_skin_matrix_magnitude_by_the_factor` and
+`a_shrinking_conversion_rebases_the_bounds_magnitude_by_the_factor` pin both.
+
+Unlike the parent chain this does *not* reduce to the candidate's magnitude
+alone, because these two magnitudes are products: only the terms carrying a
+translation are a factor apart, and both sides retain an unscaled `O(1)` floor
+from the composition's linear block and from the exact `1.0` the homogeneous
+row contributes to every chain. Where that floor dominates the source,
+`q * source` exceeds the candidate's magnitude under a growing conversion by up
+to the whole factor. That excess is provisioning rather than a rescue, and it is
+measured as such: the unscaled floor describes arithmetic whose rounding is
+*identical* on the two sides, since conversion leaves every linear part
+bit-for-bit unchanged, so the linear block's error cancels out of `a - q * b`
+instead of accumulating into it. Over 5760 rigs per factor at
+`{1.5, 7.3, 100, 3190, 1e6}` spanning twelve decades of joint and vertex
+magnitude, and hill-climbed on the winners, the worst demand made of the
+candidate's magnitude alone inside that regime was `1.02` of the four ulps for
+skinned bounds and `1.95` for the skin equation. Reading the candidate alone is
+therefore an equivalent mutation, recorded here and at the call site rather than
+left as an unexplained survivor;
+`a_growing_conversion_provisions_a_rebased_source_magnitude_it_never_needs` pins
+that the excess stays non-load-bearing, so a rig that ever needs it fails there.
 
 `4` is measured, not assumed, over 2_390_000 correct candidates in four
 populations: 120_000 rest/bind candidates over declared factors

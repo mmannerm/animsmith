@@ -314,10 +314,25 @@ impl ScaleTolerancePolicy {
         // binds as the analytic inverse of its own rest world and is converted
         // under rest/bind, and each choice removes a class: identity `W * B`
         // on every slot means no two slots can cancel a vertex between them,
-        // and rest/bind leaves the two documents' chain magnitudes equal, so
-        // the `max` over sides never separates. Measured independently outside
-        // them the demands reach `2.49` for `SkinMatrix`, `1.72` for `Bounds`,
-        // `1.35` for `RestTranslation` and `1.02` for `Trajectory`.
+        // and rest/bind leaves the two documents' magnitudes equal, so nothing
+        // that reads one side rather than the other ever separates. Measured
+        // independently outside them the demands reach `2.49` for
+        // `SkinMatrix`, `1.72` for `Bounds`, `1.35` for `RestTranslation` and
+        // `1.02` for `Trajectory`.
+        //
+        // Recalibrated across both factor directions after `SkinMatrix` and
+        // `Bounds` began rebasing the source magnitude by the factor, which
+        // *tightens* their base on the shrinking half and so raises what a
+        // correct candidate demands there. 5760 whole-document conversions per
+        // factor over `{1e-4, 1e-3, 0.01, 0.1, 1, 1.5, 7.3, 100, 3190, 1e6}`,
+        // spanning twelve decades of joint and vertex magnitude with
+        // anisotropic bone scales, binds that are not the rest pose, and blends
+        // that cancel: no correct candidate refused at any factor, and the
+        // worst demand is `1.60` for `SkinMatrix` and `0.92` for `Bounds`. The
+        // shrinking half is where the tightening shows — `Bounds` demanded
+        // `0.0059` of the old base at `0.01` and demands `0.59` of the new one,
+        // which is the `100x` of discriminating power the rebasing recovers —
+        // and at its worst it still sits a factor of two below the count.
         //
         // The `0` for `Trajectory` is the clearest artefact of the population
         // rather than a property of the obligation: those 320_000 rigs never
@@ -4925,6 +4940,18 @@ fn check_skin_and_bounds(
     let mut source_bounds = BoundsAccumulator::default();
     let mut candidate_bounds = BoundsAccumulator::default();
 
+    // The factor the source side is rebased by before it is compared, and so
+    // the factor its *rounding* is rebased by too. Both obligations below take
+    // their comparison base as `candidate.max(q * source)` for this reason —
+    // see the note at the skin-matrix call. `1.0` for rest/bind, where the two
+    // documents state the same world in the same units and the rebasing is a
+    // no-op.
+    let q = if plan.is_whole_document() {
+        plan.common_factor
+    } else {
+        1.0
+    };
+
     for (instance_index, instance) in source.assets.instances.iter().enumerate() {
         if instance.skin_joints.is_empty()
             || !instance
@@ -4966,12 +4993,66 @@ fn check_skin_and_bounds(
                     before.matrix
                 };
                 let residual = matrix_residual(expected, after.matrix);
+                // The candidate's own composition magnitude, and the source's
+                // *rebased by the factor*. The residual is `|after - q *
+                // before|`, so the source operand enters the comparison
+                // multiplied by `q` and its rounding is multiplied by `q` with
+                // it: a source slot accurate to `k` ulps of its own magnitude
+                // contributes `q * k` ulps of that magnitude here. A base that
+                // reads the source side unrebased — which `max(before, after)`
+                // did — therefore states the source's error in the wrong units
+                // by a factor of `q`.
+                //
+                // Under a *shrinking* conversion that is the whole defect: the
+                // unrebased source magnitude is `1/q` times too large, so the
+                // band freezes at the source rig's size while the candidate it
+                // is spent on keeps shrinking. Measured over the sweep
+                // populations below the recovered discriminating power is the
+                // factor exactly — `100x` at `0.01`, `10_000x` at `1e-4`.
+                //
+                // Unlike the parent-chain case this does **not** reduce to the
+                // candidate's magnitude alone, because `q * before` is not
+                // bounded by `after`: the two magnitudes are a factor apart
+                // only in the terms that carry a translation, and both retain
+                // an unscaled `O(1)` floor from the composition's linear block
+                // and the homogeneous row. Where that floor dominates the
+                // source — small joints carrying small geometry — `q * before`
+                // exceeds `after` by up to the full factor under a growing
+                // conversion.
+                //
+                // That excess is provisioning and not a rescue, and it is
+                // measured as such: no correct candidate needs it. Dropping
+                // the whole `max` and reading `after.rounding_magnitude` alone
+                // is therefore an **equivalent mutation** for both obligations,
+                // and is listed here rather than left as an unexplained
+                // survivor. The reason it cannot be killed is that the unscaled
+                // floor describes arithmetic whose rounding is *identical* on
+                // the two sides: whole-document conversion leaves every linear
+                // part bit-for-bit unchanged, so the linear block's error
+                // cancels out of `after - q * before` instead of accumulating
+                // into it, and only the translation and vertex terms — which do
+                // scale with `q` — survive into the residual. Searched over
+                // 5760 rigs per factor at `{1.5, 7.3, 100, 3190, 1e6}` spanning
+                // twelve decades of joint and vertex magnitude, and
+                // hill-climbed on the winners, the worst demand made of the
+                // candidate's magnitude alone inside this regime was `1.02` of
+                // the four ulps for `Bounds` and `1.95` for `SkinMatrix`.
+                //
+                // `q * before` is written anyway because it is the bound that
+                // can be argued from the operands rather than measured from a
+                // population: a source slot accurate to the count's own budget
+                // contributes `q` times that budget here, whatever cancels.
+                // `a_growing_conversion_provisions_a_rebased_source_magnitude_it_never_needs`
+                // is the rig where the excess is `1776x`, and it pins that the
+                // residual still sits inside the candidate-only band — so a
+                // future rig that does need the excess fails it and says so.
+                let magnitude = after.rounding_magnitude.max(q * before.rounding_magnitude);
                 check_and_track_f32_rounded(
                     ProofResidualKind::SkinMatrix,
                     residual,
                     matrix_magnitude(expected),
                     matrix_magnitude(after.matrix),
-                    before.rounding_magnitude.max(after.rounding_magnitude),
+                    magnitude,
                     tol,
                     proof,
                 )?;
@@ -5037,20 +5118,22 @@ fn check_skin_and_bounds(
                 kind: ProofResidualKind::Bounds,
                 detail: "candidate_bounds_missing",
             })?;
-    let q = if plan.is_whole_document() {
-        plan.common_factor
-    } else {
-        1.0
-    };
-    // One magnitude for all six comparisons, maxed over both documents: the
-    // corner a residual lands on is not evidence about the arithmetic that
-    // produced it. A per-axis extreme is contributed by whichever vertex
-    // happened to be furthest along that axis, and three vertices at
-    // `(3000, .001, .002)`, `(.001, 3000, .003)` and `(.002, .003, 3000)`
-    // build a corner of magnitude `2.4e-3` out of vertices of magnitude
-    // `3000` — so a base read off the corner would be a million times
-    // smaller than the rounding error the corner carries.
-    let magnitude = source_bounds_magnitude.max(candidate_bounds_magnitude);
+    // One magnitude for all six comparisons, never the corner a residual lands
+    // on: that corner is not evidence about the arithmetic that produced it. A
+    // per-axis extreme is contributed by whichever vertex happened to be
+    // furthest along that axis, and three vertices at `(3000, .001, .002)`,
+    // `(.001, 3000, .003)` and `(.002, .003, 3000)` build a corner of magnitude
+    // `2.4e-3` out of vertices of magnitude `3000` — so a base read off the
+    // corner would be a million times smaller than the rounding error the
+    // corner carries.
+    //
+    // The candidate's magnitude against the source's *rebased by the factor*,
+    // for the reason the skin-matrix call states in full: the comparison below
+    // is `|a - q * b|`, so the source bound's rounding enters it multiplied by
+    // `q`. `max(source, candidate)` stated that rounding in the source rig's
+    // units and was loose by `1/q` under a shrinking conversion — `100x` at
+    // `0.01` and `10_000x` at `1e-4`, both recovered here.
+    let magnitude = candidate_bounds_magnitude.max(q * source_bounds_magnitude);
     for (before, after) in [(before_min, after_min), (before_max, after_max)] {
         let before = before.to_array();
         let after = after.to_array();
@@ -11874,6 +11957,71 @@ mod tests {
         )
     }
 
+    /// One document side's composed skin slots, through the same helpers
+    /// [`check_skin_and_bounds`] composes them with.
+    ///
+    /// The fixtures that separate the two documents' comparison bases have to
+    /// name both bases as numbers, and a base restated by hand in a fixture is
+    /// a base that stops describing the code the moment either moves.
+    fn rig_skin_slots(document: &Document) -> Vec<SkinSlot> {
+        let worlds = rest_world_pose(&document.skeleton).expect("the rig composes");
+        let instance = &document.assets.instances[0];
+        instance
+            .skin_joints
+            .iter()
+            .enumerate()
+            .map(|(slot, &joint)| {
+                SkinSlot::compose(
+                    worlds.matrices[joint],
+                    instance_bind(document, instance, slot, joint).expect("the rig binds"),
+                    worlds.translation_chain[joint],
+                )
+            })
+            .collect()
+    }
+
+    /// The magnitude [`ProofResidualKind::SkinMatrix`] reads off one side.
+    fn rig_slot_magnitude(document: &Document) -> f64 {
+        rig_skin_slots(document)
+            .iter()
+            .map(|slot| slot.rounding_magnitude)
+            .fold(0.0, f64::max)
+    }
+
+    /// The magnitude [`ProofResidualKind::Bounds`] reads off one side.
+    fn rig_bounds_magnitude(document: &Document) -> f64 {
+        let slots = rig_skin_slots(document);
+        let instance = &document.assets.instances[0];
+        let mut accumulator = BoundsAccumulator::default();
+        for (primitive_index, primitive) in document.assets.meshes[instance.mesh]
+            .primitives
+            .iter()
+            .enumerate()
+        {
+            accumulate_skinned_bounds(0, primitive_index, primitive, &slots, &mut accumulator)
+                .expect("the rig skins");
+        }
+        accumulator.rounding_magnitude()
+    }
+
+    /// [`far_joint_document`] under whole-document conversion at `factor`,
+    /// which is the operation that puts the two sides' magnitudes a factor
+    /// apart: the joints stay `3.2e6` from the origin on the source side and
+    /// move to `3.2e6 * factor` on the candidate's, while the root's `3190`
+    /// linear part is untouched on both.
+    fn far_joint_conversion_at(factor: f64) -> (Document, ScalePlan, ScaleCandidate) {
+        let doc = far_joint_document();
+        let capability = complete_capability();
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::WholeDocumentLinearUnits { factor },
+            document: &doc,
+            capability: &capability,
+        })
+        .expect("a whole-document conversion plans at any positive factor");
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        (doc, plan, candidate)
+    }
+
     #[test]
     fn the_far_joint_rig_admits_a_four_unit_bind_shift_and_refuses_the_next_one_up() {
         // The documented cost of the rounding term, pinned rather than
@@ -11942,6 +12090,17 @@ mod tests {
     /// only way to reach the cancellation. The binds are inverted in `f64`
     /// for [`far_joint_overflow_document`]'s reason.
     fn cancelling_blend_document() -> Document {
+        cancelling_blend_document_reaching(1000.0)
+    }
+
+    /// [`cancelling_blend_document`] with the vertex `reach` units out.
+    ///
+    /// The reach is this rig's whole magnitude — every joint sits within
+    /// `3.2e-3` of the origin and the blend cancels to nothing — so it is what
+    /// the bounds comparison base reads, and a fixture that needs that base
+    /// large enough to hold two bands apart sets it here rather than building
+    /// a second rig.
+    fn cancelling_blend_document_reaching(reach: f32) -> Document {
         let rotations = [
             Quat::from_xyzw(-0.81788284, 0.343121, -0.45392478, -0.085369624),
             Quat::from_xyzw(-0.12301501, 0.043325406, -0.015209139, 0.991342),
@@ -11951,14 +12110,14 @@ mod tests {
             rotations,
             3190.0,
             locals,
-            &[Vec3::new(1000.0, 0.0, 0.0)],
+            &[Vec3::new(reach, 0.0, 0.0)],
             &[[0.5, 0.5, 0.0, 0.0]],
         );
         let first = Mat4::from_scale(Vec3::splat(3190.0))
             * Mat4::from_rotation_translation(rotations[0], locals[0]);
         let second = first * Mat4::from_rotation_translation(rotations[1], locals[1]);
         // `W_0 * B_0 = I` and `W_1 * B_1` a half turn about `z`, so the two
-        // slots send `(1000, 0, 0)` to `(1000, 0, 0)` and `(-1000, 0, 0)`.
+        // slots send `(reach, 0, 0)` to `(reach, 0, 0)` and `(-reach, 0, 0)`.
         doc.assets.instances[0].skin_ibms = vec![
             first.as_dmat4().inverse().as_mat4(),
             (second.as_dmat4().inverse() * HALF_TURN_Z.as_dmat4()).as_mat4(),
@@ -12023,30 +12182,244 @@ mod tests {
     }
 
     #[test]
-    fn a_whole_document_conversion_takes_the_larger_side_s_magnitude_not_the_smaller() {
-        // Both magnitudes are maxed over the *two documents*, and every
-        // rest/bind fixture above is blind to which way the `max` goes:
+    fn a_growing_conversion_reads_the_candidate_s_magnitude_not_the_source_s_unrebased() {
+        // Both obligations take `candidate.max(q * source)`, and every
+        // rest/bind fixture above is blind to where that magnitude comes from:
         // rest/bind moves the factor from the root's scale into the joint
-        // translations, so the source composes `3190 * 1000` where the
-        // candidate composes `1 * 3.19e6` and the two sides' magnitudes
-        // coincide by construction.
+        // translations and leaves `q = 1`, so the source composes `3190 * 1000`
+        // where the candidate composes `1 * 3.19e6` and the two sides coincide
+        // by construction.
         //
-        // Whole-document conversion separates them. It scales every
-        // translation by the factor and leaves every linear part alone, so
-        // the candidate's composition magnitude is the source's times the
-        // factor — here `3190x` apart. Taking the `min` of the two sides,
-        // or dropping either side from the `max`, buys the larger side a
-        // tolerance derived from the smaller side's arithmetic, and this
-        // correct candidate is refused.
+        // Whole-document conversion separates them. Here the source's
+        // composition magnitude is `9.30e6` and the candidate's `2.97e10`,
+        // `3190x` apart, and both residuals sit far above what the source side
+        // alone would buy: `798` and `1595` against a source-derived band of
+        // `4.44`. Reading the source magnitude unrebased refuses this correct
+        // candidate by three orders of magnitude.
+        //
+        // What this fixture cannot do is separate `candidate` from
+        // `q * source`. At a growing factor the two sides are exactly the
+        // factor apart, so `q * source` and `candidate` are the same number to
+        // the digit — which is why an earlier revision of this test claimed
+        // that dropping *either* side of a `max(source, candidate)` refused the
+        // correct candidate, and why that claim was false: flipping both
+        // obligations to the candidate side alone left every test in this
+        // module passing.
+        // `a_shrinking_conversion_rebases_the_skin_matrix_magnitude_by_the_factor`
+        // and `a_shrinking_conversion_rebases_the_bounds_magnitude_by_the_factor`
+        // are the direction where the two do come apart, and they are what
+        // holds the rebasing in place.
+        let (doc, plan, candidate) = far_joint_conversion_at(3190.0);
+        let source_slot = rig_slot_magnitude(&doc);
+        let candidate_slot = rig_slot_magnitude(candidate.document());
+        assert!(
+            candidate_slot > 1000.0 * source_slot,
+            "the candidate is no longer the larger side, so this fixture no longer refuses \
+             the source-side reading: {candidate_slot} / {source_slot}",
+        );
+
+        let proof = prove_scale(&doc, &candidate, &plan).expect(
+            "the two documents' composition magnitudes are 3190x apart, and the candidate's \
+             arithmetic is what both obligations must be given room for",
+        );
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
+        let source_band = policy.f32_rounded_tolerance(0.0, 0.0, source_slot);
+        assert!(
+            proof.skin_matrix_residual > source_band,
+            "skin matrix residual {} no longer exceeds the {source_band} the source side buys, \
+             so this fixture no longer kills the unrebased source reading",
+            proof.skin_matrix_residual,
+        );
+        assert!(
+            proof.bounds_residual
+                > policy.f32_rounded_tolerance(0.0, 0.0, rig_bounds_magnitude(&doc)),
+            "bounds residual {} no longer exceeds what the source side buys",
+            proof.bounds_residual,
+        );
+    }
+
+    #[test]
+    fn a_shrinking_conversion_rebases_the_skin_matrix_magnitude_by_the_factor() {
+        // The direction that separates the candidate's magnitude from the
+        // source's, and the one the `max` over the two sides was loose in.
+        //
+        // The far-joint rig composes `W * B` on `9.30e6` at every factor —
+        // the joints are `3.2e6` out and the root's `3190` linear part is
+        // untouched by conversion — while the candidate composes it on
+        // `9.30e6 * factor`. Under a shrinking conversion the source is
+        // therefore the *larger* side, and a `max` hands this obligation a
+        // band derived from a rig `1/factor` times bigger than the one the
+        // residual was measured on. It is not merely redundant there, it is
+        // loose by exactly `1/factor`: the band freezes at `4.44` while the
+        // candidate it is spent on keeps shrinking.
+        //
+        // Measured: the smallest inverse-bind shift this obligation refuses is
+        // `1.3e-5` at `0.01` and `1.3e-7` at `1e-4`, against `1.9e-3` under the
+        // `max` at both — `100x` and `10_000x` of recovered discriminating
+        // power, tracking the factor as it should.
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
+        for (factor, shift) in [(0.01f64, 1e-4f32), (1e-4, 1e-6)] {
+            let (doc, plan, candidate) = far_joint_conversion_at(factor);
+            let source_slot = rig_slot_magnitude(&doc);
+            let candidate_slot = rig_slot_magnitude(candidate.document());
+            assert!(
+                source_slot > 50.0 * candidate_slot,
+                "the source side is no longer the larger one at {factor}, so this fixture no \
+                 longer separates the rebased magnitude from the max: {source_slot} / \
+                 {candidate_slot}",
+            );
+
+            // The equivalence half: a correct candidate still proves against
+            // the rebased base, at the end of the range where it is the
+            // *smaller* of the two.
+            prove_scale(&doc, &candidate, &plan)
+                .expect("a correct candidate under a shrinking conversion must still prove");
+
+            // And the tightening half. The shift sits between the two bands:
+            // above what the candidate's own composition buys, below the
+            // `4.44` the source's would.
+            let mut broken = candidate.document().clone();
+            broken.assets.instances[0].skin_ibms[0].w_axis.x += shift;
+            let broken = ScaleCandidate { document: broken };
+            let error = prove_scale(&doc, &broken, &plan)
+                .expect_err("a bind shift above the rebased band must be refused");
+            let ScaleError::ProofResidualExceeded {
+                kind: ProofResidualKind::SkinMatrix,
+                observed,
+                tolerance,
+            } = error
+            else {
+                panic!("expected a refused skin matrix at {factor}, got {error:?}");
+            };
+            assert!(
+                observed > tolerance,
+                "skin matrix band moved at {factor}: observed {observed}, tolerance {tolerance}"
+            );
+            assert!(
+                observed < policy.f32_rounded_tolerance(0.0, 0.0, source_slot),
+                "skin matrix residual {observed} now exceeds what the unrebased source \
+                 magnitude buys too, so this fixture no longer kills the max at {factor}",
+            );
+        }
+    }
+
+    #[test]
+    fn a_shrinking_conversion_rebases_the_bounds_magnitude_by_the_factor() {
+        // The same direction for the bounds obligation, on the rig whose
+        // magnitude *is* its geometry: two slots a half turn apart cancel a
+        // `1e6`-unit vertex to the origin, so the source's bounds base is
+        // `1e6` and the candidate's is `1e6 * factor` while every joint stays
+        // within `3.2e-3` of the origin.
+        //
+        // The defect is a weight, not a position: whole-document conversion
+        // rewrites mesh positions, so a moved vertex is refused by
+        // `MeshPosition` before the bounds comparison is ever reached. A
+        // reweighted vertex is a build that blended the same two slots
+        // differently, which the bounds obligation is the only one that sees.
+        // `0.5 +/- 1e-6` unbalances the cancellation by `2e-6` of the reach.
+        //
+        // Measured: the smallest bounds error refused is `4.77e-3` at `0.01`
+        // and `4.87e-5` at `1e-4`, against `4.77e-1` under the `max` at both.
+        // That is `100x` and `9797x` of recovered discriminating power — the
+        // second short of `10_000x` only because the `1e-6` absolute band
+        // starts to pay at that size.
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
+        for &factor in &[0.01f64, 1e-4] {
+            let doc = cancelling_blend_document_reaching(1e6);
+            let capability = complete_capability();
+            let plan = plan_scale(&ScaleRequest {
+                operation: ScaleOperation::WholeDocumentLinearUnits { factor },
+                document: &doc,
+                capability: &capability,
+            })
+            .expect("a whole-document conversion plans at any positive factor");
+            let candidate = build_scale_candidate(&doc, &plan).unwrap();
+            let source_bounds = rig_bounds_magnitude(&doc);
+            let candidate_bounds = rig_bounds_magnitude(candidate.document());
+            assert!(
+                source_bounds > 50.0 * candidate_bounds,
+                "the source side is no longer the larger one at {factor}: {source_bounds} / \
+                 {candidate_bounds}",
+            );
+
+            prove_scale(&doc, &candidate, &plan)
+                .expect("a correct candidate under a shrinking conversion must still prove");
+
+            let mut broken = candidate.document().clone();
+            broken.assets.meshes[0].primitives[0].weights[0] = [0.5 + 1e-6, 0.5 - 1e-6, 0.0, 0.0];
+            let broken = ScaleCandidate { document: broken };
+            let error = prove_scale(&doc, &broken, &plan)
+                .expect_err("a reweighted blend above the rebased band must be refused");
+            let ScaleError::ProofResidualExceeded {
+                kind: ProofResidualKind::Bounds,
+                observed,
+                tolerance,
+            } = error
+            else {
+                panic!("expected a refused bound at {factor}, got {error:?}");
+            };
+            assert!(
+                observed > tolerance,
+                "bounds band moved at {factor}: observed {observed}, tolerance {tolerance}"
+            );
+            assert!(
+                observed < policy.f32_rounded_tolerance(0.0, 0.0, source_bounds),
+                "bounds residual {observed} now exceeds what the unrebased source magnitude \
+                 buys too, so this fixture no longer kills the max at {factor}",
+            );
+        }
+    }
+
+    #[test]
+    fn a_growing_conversion_provisions_a_rebased_source_magnitude_it_never_needs() {
+        // `candidate.max(q * source)` does not collapse to `candidate` as an
+        // expression: under a growing conversion `q * source` can exceed the
+        // candidate's own magnitude, because the two sides are a factor apart
+        // only in the terms that carry a translation. Both retain an unscaled
+        // `O(1)` floor — the composition's linear block, and the exact `1.0`
+        // the homogeneous row contributes to every parent chain — and where
+        // that floor is what dominates the source, `q * source` runs away from
+        // `candidate` by up to the whole factor.
+        //
+        // This rig is that regime: joints within `3e-4` of the origin carrying
+        // geometry within `4e-4` of themselves, so both sides read `1.00` and
+        // `1.80` while `3190 * source` is `3190` — a `1776x` excess.
+        //
+        // The excess is provisioning, not a rescue, and this fixture pins that
+        // it is: both residuals still sit inside what the candidate's own
+        // magnitude buys. That is not an accident of this rig. The unscaled
+        // floor describes arithmetic whose rounding is *identical* on the two
+        // sides — whole-document conversion leaves every linear part
+        // bit-for-bit unchanged — so the linear block's error cancels out of
+        // `after - q * before` instead of accumulating into it, and only the
+        // translation and vertex terms, which do scale, survive into the
+        // residual. Searched over 5760 rigs per factor at `{1.5, 7.3, 100,
+        // 3190, 1e6}` spanning twelve decades of joint and vertex magnitude,
+        // and hill-climbed on the winners, the worst demand made of the
+        // candidate's magnitude alone inside this regime was `1.02` of the four
+        // ulps for bounds and `1.95` for the skin matrix. No correct candidate
+        // is refused without the excess, which is why it is written as a bound
+        // that can be argued from the operands rather than one measured from a
+        // population.
+        //
+        // If this assertion ever fails, the excess has become load-bearing and
+        // `candidate` alone is a real over-rejection — read the comment at the
+        // skin-matrix call site before widening anything.
         let doc = rotating_rig_document(
             [
-                Quat::from_xyzw(0.84815156, -0.23002678, -0.2828825, -0.3843229),
-                Quat::from_xyzw(0.6066518, -0.10115066, -0.7511764, 0.23974188),
+                Quat::from_xyzw(-0.4142528, 0.36644182, -0.4827506, -0.67901903),
+                Quat::from_xyzw(0.4266807, 0.07081859, 0.56996834, -0.698616),
             ],
             1.0,
-            [Vec3::new(0.0, 1000.0, 0.0), Vec3::new(200.0, -300.0, 400.0)],
-            &[Vec3::new(0.5, -0.25, 0.125), Vec3::new(-0.75, 0.5, -0.25)],
-            &[[1.0, 0.0, 0.0, 0.0], [0.5, 0.5, 0.0, 0.0]],
+            [
+                Vec3::new(-1.0505125e-7, 2.1474386e-6, 1.2482113e-6),
+                Vec3::new(-2.8671836e-4, -6.197663e-5, -3.234957e-5),
+            ],
+            &[
+                Vec3::new(6.400283e-6, -6.33053e-6, -1.0025909e-6),
+                Vec3::new(9.629462e-5, -4.045991e-5, 4.1240072e-4),
+            ],
+            &[[0.5, 0.5, 0.0, 0.0]; 2],
         );
         let capability = complete_capability();
         let plan = plan_scale(&ScaleRequest {
@@ -12056,9 +12429,31 @@ mod tests {
         })
         .expect("a whole-document conversion plans at any positive factor");
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
-        prove_scale(&doc, &candidate, &plan).expect(
-            "the two documents' composition magnitudes are 3190x apart, and the larger side's \
-             arithmetic is what both obligations must be given room for",
+
+        let source_slot = rig_slot_magnitude(&doc);
+        let candidate_slot = rig_slot_magnitude(candidate.document());
+        let source_bounds = rig_bounds_magnitude(&doc);
+        let candidate_bounds = rig_bounds_magnitude(candidate.document());
+        assert!(
+            3190.0 * source_slot > 100.0 * candidate_slot
+                && 3190.0 * source_bounds > 100.0 * candidate_bounds,
+            "the rebased source magnitude no longer runs away from the candidate's, so this \
+             rig no longer reaches the regime: slots {source_slot} / {candidate_slot}, bounds \
+             {source_bounds} / {candidate_bounds}",
+        );
+
+        let proof = prove_scale(&doc, &candidate, &plan)
+            .expect("a correct candidate under a growing conversion must prove");
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
+        assert!(
+            proof.skin_matrix_residual < policy.f32_rounded_tolerance(0.0, 0.0, candidate_slot)
+                && proof.bounds_residual < policy.f32_rounded_tolerance(0.0, 0.0, candidate_bounds),
+            "the rebased source magnitude has become load-bearing: skin {} and bounds {} \
+             against candidate-only bands of {} and {}",
+            proof.skin_matrix_residual,
+            proof.bounds_residual,
+            policy.f32_rounded_tolerance(0.0, 0.0, candidate_slot),
+            policy.f32_rounded_tolerance(0.0, 0.0, candidate_bounds),
         );
     }
 
