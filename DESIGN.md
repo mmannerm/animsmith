@@ -1663,10 +1663,32 @@ record but does not replace tolerance-aware semantic comparison.
 
 ### D.6 Proof, evidence, publication, and rollback
 
-The proof runs on the in-memory candidate before publication and then repeats
-the artifact-level checks after write/reload. It evaluates rest, every key time,
-and analytic or sufficiently bounded interior times for cubic segments. For
-reparameterization it must prove, within versioned tolerances:
+The candidate is serialized before it is proved, and the proof runs **once**,
+on the document reloaded from the exact artifact bytes — never on a separately
+built in-memory candidate, which would prove a document the rewriter did not
+emit. That single pass has two layers over the same reload: the
+normalized-document layer, which produces the residuals below, and the
+artifact layer, which re-derives directly from the container bytes every claim
+the normalized model cannot represent. Publication carries the proof to the
+file by digest, not by a second proof: the bytes are staged, read back, and
+refused unless their SHA-256 equals that of the proved bytes. A second proof
+would be redundant, the proof being deterministic over byte-identical input.
+
+The artifact layer's claims are stated over raw source bytes — preservation of
+every raw JSON location and every buffer byte outside the rewritten set, array
+and index identity, honest reporting of the rewritten locations, container
+framing, bounds consistency, and single-step narrowing — and presuppose a
+rewriter that edits the source container in place. A frontend without one,
+which rebuilds the file from the normalized model as an FBX writer would,
+cannot make these claims and is **not** thereby exempt from the obligation
+they discharge: that declared-unaffected payloads are unchanged. Such a
+frontend owes that obligation by the other route — a complete loader-supplied
+inventory of every §D.4 domain — and may enable an operation only over the
+domains that inventory covers.
+
+The proof evaluates rest, every key time, and analytic or sufficiently bounded
+interior times for cubic segments. For reparameterization it must prove,
+within versioned tolerances:
 
 - equal world joint translations and orientations before/after;
 - equal sampled animated trajectories, root motion, and derived velocities;
@@ -1718,6 +1740,15 @@ a record stating "residual 0.0" for a claim nothing checked is a false record
 rather than a missing one. This matters most for the transform-only obligation,
 which is justified above precisely as the one ensuring a no-op cannot pass —
 a guarantee an empty probe loop reporting zero would not provide.
+Three comparisons are deliberately ungated and run unconditionally:
+per-element track values, base mesh positions, and the stored inverse binds of
+skins outside the affected closure. The last two are about payloads the plan
+declares it does *not* rewrite, where gating them would make the plan's own
+"this domain is untouched" claim unfalsifiable; the first compares every
+element of every track against its own domain's analytic expectation,
+rewritten or retained, and so is owed by every plan. For all three the
+published comparison counts, not an obligation flag, are what distinguish a
+measured zero from an unmeasured one.
 
 Proof cost is bounded, not merely expected to be small. Source and candidate
 world matrices are derived once per sample time and shared across the
