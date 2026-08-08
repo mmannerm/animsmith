@@ -11868,7 +11868,13 @@ mod tests {
     fn representative_finite_negative_weights_are_all_refused() {
         let doc = multi_joint_document();
         let capability = complete_capability();
-        for weight in [-f32::from_bits(1), -f32::MIN_POSITIVE, -0.25, -f32::MAX] {
+        for weight in [
+            -f32::from_bits(1),
+            -f32::MIN_POSITIVE,
+            -0.1,
+            -0.25,
+            -f32::MAX,
+        ] {
             let mut signed = doc.clone();
             signed.assets.meshes[0].primitives[0].weights[0][0] = weight;
             assert!(matches!(
@@ -11890,6 +11896,7 @@ mod tests {
             source_mesh_index: 1,
             primitives: vec![
                 Primitive::default(),
+                Primitive::default(),
                 Primitive {
                     weights: vec![[0.0, 0.0, -f32::from_bits(1), 0.0]],
                     ..Primitive::default()
@@ -11906,7 +11913,7 @@ mod tests {
             .unwrap_err(),
             ScaleError::NegativeSkinWeight {
                 mesh_index: 1,
-                primitive_index: 1,
+                primitive_index: 2,
                 vertex_index: 0,
                 influence_index: 2,
             }
