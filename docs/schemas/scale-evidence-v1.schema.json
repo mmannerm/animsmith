@@ -128,7 +128,7 @@
     "tolerance": {
       "description": "The fixed tolerance policy, by identity and in full. There are no per-run tolerance flags; a policy change requires a new policy_id.",
       "type": "object",
-      "required": ["policy_id", "relative_orthogonality", "equal_axis", "common_factor", "singular_determinant_relative", "scalar_absolute", "scalar_relative", "rotation_residual_radians", "postcondition_unit_scale_residual", "proof_sample_work_budget"],
+      "required": ["policy_id", "relative_orthogonality", "equal_axis", "common_factor", "singular_determinant_relative", "scalar_absolute", "scalar_relative", "rotation_residual_radians", "postcondition_unit_scale_residual", "proof_sample_work_budget", "f32_rounding_ulps"],
       "properties": {
         "policy_id": { "type": "string", "minLength": 1 },
         "relative_orthogonality": { "type": "number", "minimum": 0 },
@@ -139,7 +139,8 @@
         "scalar_relative": { "type": "number", "minimum": 0 },
         "rotation_residual_radians": { "type": "number", "minimum": 0 },
         "postcondition_unit_scale_residual": { "type": "number", "minimum": 0 },
-        "proof_sample_work_budget": { "type": "integer", "minimum": 0 }
+        "proof_sample_work_budget": { "type": "integer", "minimum": 0 },
+        "f32_rounding_ulps": { "type": "integer", "minimum": 0 }
       },
       "additionalProperties": false
     },

@@ -297,6 +297,7 @@ struct ToleranceRecord {
     rotation_residual_radians: Finite,
     postcondition_unit_scale_residual: Finite,
     proof_sample_work_budget: u64,
+    f32_rounding_ulps: u32,
 }
 
 impl From<ScaleTolerancePolicy> for ToleranceRecord {
@@ -312,6 +313,7 @@ impl From<ScaleTolerancePolicy> for ToleranceRecord {
             rotation_residual_radians: Finite(policy.rotation_residual_radians),
             postcondition_unit_scale_residual: Finite(policy.postcondition_unit_scale_residual),
             proof_sample_work_budget: policy.proof_sample_work_budget,
+            f32_rounding_ulps: policy.f32_rounding_ulps,
         }
     }
 }
