@@ -867,12 +867,10 @@ candidate whose residual is exactly `0.0`. That would be a documented
 magnitude domain — a constant, checkable ahead of time — and this section says
 there is none, so there must not be one.
 `a_rig_whose_skinned_extent_passes_the_square_root_of_f32_max_still_proves`
-pins it. The composition magnitude is a different case and genuinely has no
-constant: its `f32` `abs(a) * abs(b)` can reach `inf` only once an operand
-entry passes about `7.0e37` — within a factor of five of `f32::MAX`, in a
-regime where `W * B` itself is already at or over the edge — and where exactly
-depends on the operands and their cancellation rather than on any threshold a
-document could be screened against.
+pins it. The same rule holds for the composition magnitude, whose `f32`
+`abs(a) * abs(b)` sums can leave the `f32` range while `a * b` is still
+finite: it recomputes them in `f64` rather than reporting `inf`, and
+`a_rig_whose_composition_operands_overflow_f32_still_proves` pins that.
 
 The gap this closes is that the two failures were previously reported under
 one reason string, which told an operator nothing about which one they had.

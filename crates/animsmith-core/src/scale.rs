@@ -4093,9 +4093,53 @@ fn product_operand_magnitude(a: Mat4, b: Mat4) -> f64 {
     // `abs(a) * abs(b)` *is* the matrix of those sums, so one matrix
     // multiply computes all sixteen of them. This runs once per skin slot
     // per document side per sample time — the same order as the `W * B`
-    // composition it describes — so it stays in `f32` lane operations rather
-    // than becoming a scalar `f64` fold over sixteen entries.
-    largest_entry(mat4_abs(a) * mat4_abs(b))
+    // composition it describes — so the fast path stays in `f32` lane
+    // operations rather than becoming a scalar `f64` fold over sixteen
+    // entries.
+    //
+    // Every term of every sum is non-negative, so no entry can cancel and a
+    // finite maximum means no entry overflowed: the `f32` result is exact
+    // enough to use whenever it is finite.
+    let lanes = largest_entry(mat4_abs(a) * mat4_abs(b));
+    if lanes.is_finite() {
+        return lanes;
+    }
+    product_operand_magnitude_f64(a, b)
+}
+
+/// [`product_operand_magnitude`] recomputed as a scalar `f64` fold, for the
+/// operands whose `f32` sums overflow.
+///
+/// These sums are the *operands'* magnitudes, not the product's, so they run
+/// past `f32::MAX` while `a * b` is still finite — the cancellation that
+/// makes `W * B` near-identity is exactly what removes the magnitude from the
+/// result. Sweeping 2_000_000 random rig-shaped `W` / `B` pairs found 87 such
+/// pairs, the smallest with an operand entry of `7.04e37`. Without this
+/// fallback each one made [`SkinSlot::rounding_magnitude`] infinite, which
+/// makes the tolerance derived from it infinite, which
+/// [`check_residual`] refuses — a *correct* candidate rejected with
+/// `tolerance: inf`. `SkinMatrix` reaches it from the joint transforms
+/// alone, with no unusual geometry involved.
+///
+/// The fold cannot overflow in turn, for any `a` and `b` this proof can
+/// reach. Each term is a product of two `f32` magnitudes, at most
+/// `f32::MAX^2 = 1.16e77`, and each sum has four of them: `4.63e77`, a
+/// hundred and fifty decades below `f64::MAX`. So the case is removed rather
+/// than moved, and it needs no domain caveat of its own.
+#[cold]
+#[inline(never)]
+fn product_operand_magnitude_f64(a: Mat4, b: Mat4) -> f64 {
+    let mut largest = 0.0f64;
+    for column in 0..4 {
+        for row in 0..4 {
+            let mut sum = 0.0f64;
+            for inner in 0..4 {
+                sum += f64::from(a.col(inner)[row].abs()) * f64::from(b.col(column)[inner].abs());
+            }
+            largest = largest.max(sum);
+        }
+    }
+    largest
 }
 
 /// `abs` applied to every component.
@@ -11576,6 +11620,90 @@ mod tests {
         assert!(
             proof.bounds_residual.is_finite(),
             "bounds residual {} is not finite",
+            proof.bounds_residual
+        );
+    }
+
+    /// The far-joint rotations, a `1e35` joint offset, and inverse binds
+    /// that really are the inverses of the rest world matrices.
+    ///
+    /// The offset puts the joint's world translation at `3.19e38` — inside
+    /// `f32`, an eighteenth of the way below `f32::MAX` — which is what makes
+    /// `abs(W) * abs(B)` overflow while `W * B` itself stays near-identity.
+    /// The inverse binds are inverted in `f64` because `glam`'s `f32`
+    /// `Mat4::inverse` expands cofactors, and at this factor its own
+    /// intermediates overflow: it would refuse the fixture at
+    /// `non_finite_inverse_bind` before the magnitude was ever computed. A
+    /// stored inverse bind comes off disk as sixteen numbers, not from a
+    /// 32-bit cofactor expansion, so inverting exactly is what a real file
+    /// carries here.
+    fn far_joint_overflow_document() -> (Document, Mat4, Mat4) {
+        let rotations = [
+            Quat::from_xyzw(0.84815156, -0.23002678, -0.2828825, -0.3843229),
+            Quat::from_xyzw(0.6066518, -0.10115066, -0.7511764, 0.23974188),
+        ];
+        let locals = [Vec3::new(0.0, 1e35, 0.0), Vec3::new(0.3, 0.4, 0.5)];
+        let mut doc = rotating_rig_document(
+            rotations,
+            3190.0,
+            locals,
+            &[Vec3::new(1.0, 0.0, 0.0), Vec3::new(-0.75, 0.5, -0.25)],
+            &[[1.0, 0.0, 0.0, 0.0], [0.5, 0.5, 0.0, 0.0]],
+        );
+        let first = Mat4::from_scale(Vec3::splat(3190.0))
+            * Mat4::from_rotation_translation(rotations[0], locals[0]);
+        let second = first * Mat4::from_rotation_translation(rotations[1], locals[1]);
+        let inverse_binds = vec![
+            first.as_dmat4().inverse().as_mat4(),
+            second.as_dmat4().inverse().as_mat4(),
+        ];
+        doc.assets.instances[0].skin_ibms.clone_from(&inverse_binds);
+        (doc, first, inverse_binds[0])
+    }
+
+    #[test]
+    fn a_rig_whose_composition_operands_overflow_f32_still_proves() {
+        // `product_operand_magnitude` sums products of two `f32` operand
+        // entries, so it runs past `f32::MAX` on operands that are themselves
+        // finite — and it does so precisely where the cancellation that makes
+        // `W * B` near-identity has taken the magnitude *out* of the result,
+        // which is the case the magnitude exists to describe. Sweeping
+        // 2_000_000 random rig-shaped `W` / `B` pairs found 87 of them.
+        //
+        // Computed in `f32` lanes the magnitude here is `inf`, which makes
+        // every tolerance derived from it `inf`, which `check_residual`
+        // refuses — a correct candidate rejected with `tolerance: inf`. This
+        // rig reaches it from the joint transforms alone: the mesh it carries
+        // is two unit-scale points.
+        let (doc, world, inverse_bind) = far_joint_overflow_document();
+
+        assert!(
+            !largest_entry(mat4_abs(world) * mat4_abs(inverse_bind)).is_finite(),
+            "the fixture no longer overflows the f32 lane computation, so it no longer \
+             exercises the fallback",
+        );
+        assert!(
+            (world * inverse_bind).is_finite(),
+            "the composition itself must stay finite: an overflowing product is a different \
+             failure, and one that is allowed to be refused",
+        );
+        let slot = SkinSlot::compose(world, inverse_bind);
+        assert!(
+            slot.rounding_magnitude.is_finite(),
+            "rounding magnitude {} is not finite",
+            slot.rounding_magnitude
+        );
+
+        let plan = rest_bind_plan(&doc, 3190.0);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).expect(
+            "a correct candidate whose composition operands overflow f32 must still prove: \
+             both operands are finite and so is their product",
+        );
+        assert!(
+            proof.skin_matrix_residual.is_finite() && proof.bounds_residual.is_finite(),
+            "skin {} / bounds {} residual is not finite",
+            proof.skin_matrix_residual,
             proof.bounds_residual
         );
     }
