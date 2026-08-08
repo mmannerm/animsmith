@@ -1726,7 +1726,8 @@ exactly the declared factor within tolerance while dimensionless facts remain
 equal. Both operations prove finite output, the skin equation, deterministic
 artifact bytes, and deterministic evidence bytes.
 
-**Every obligation above is gated on the evidence it needs.** A plan declares
+**Every obligation above is gated on the evidence it needs, with three
+deliberate exceptions named at the end of this paragraph.** A plan declares
 an obligation only when the planned document carries the payload that
 obligation reads — a transform-only attachment in the closure for the
 full-affine claim, an affected translation track for the key-time claim, an
@@ -1742,13 +1743,15 @@ which is justified above precisely as the one ensuring a no-op cannot pass —
 a guarantee an empty probe loop reporting zero would not provide.
 Three comparisons are deliberately ungated and run unconditionally:
 per-element track values, base mesh positions, and the stored inverse binds of
-skins outside the affected closure. The last two are about payloads the plan
-declares it does *not* rewrite, where gating them would make the plan's own
-"this domain is untouched" claim unfalsifiable; the first compares every
-element of every track against its own domain's analytic expectation,
-rewritten or retained, and so is owed by every plan. For all three the
-published comparison counts, not an obligation flag, are what distinguish a
-measured zero from an unmeasured one.
+skins outside the affected closure. The last is about a payload the plan
+declares it does *not* rewrite, where gating it would make the plan's own
+"this domain is untouched" claim unfalsifiable; the first two compare every
+element of every track and every base mesh against that element's own domain's
+analytic expectation — the declared multiplier where the plan rewrites the
+domain, the retained value where it does not — and so are owed by every plan.
+For all three the comparison counts the proof publishes beside each residual,
+not an obligation flag, are what distinguish a measured zero from an
+unmeasured one.
 
 Proof cost is bounded, not merely expected to be small. Source and candidate
 world matrices are derived once per sample time and shared across the
