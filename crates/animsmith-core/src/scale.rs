@@ -135,13 +135,23 @@ pub struct ScaleTolerancePolicy {
     /// the compared quantity orders of magnitude smaller than the operands
     /// it was computed from while it still carries those operands' absolute
     /// rounding error: a bound component near zero on a mesh 4000 units
-    /// across, or a near-identity `W * B` whose translation column cancelled
-    /// two 3190-magnitude terms. A purely relative band is then derived from
-    /// the small number and the error from the large one, and
-    /// [`prove_scale`] refuses a correct candidate that [`plan_scale`]
-    /// accepted. See [`Self::APPENDIX_D_V3`] for the measurement this count
-    /// comes from and DESIGN.md Appendix D §D.1 for which magnitude each
-    /// obligation takes it from.
+    /// across, a near-identity `W * B` whose translation column cancelled two
+    /// 3190-magnitude terms, or a world translation whose parent chain
+    /// cancelled two of them one composition earlier. A purely relative band
+    /// is then derived from the small number and the error from the large
+    /// one, and [`prove_scale`] refuses a correct candidate that
+    /// [`plan_scale`] accepted. See [`Self::APPENDIX_D_V3`] for the
+    /// measurement this count comes from and DESIGN.md Appendix D §D.1 for
+    /// which magnitude each obligation takes it from.
+    ///
+    /// The count is only as meaningful as that magnitude. Two revisions of
+    /// this policy have now found the *base* wrong rather than the count too
+    /// small — first the skinned extent alone, which missed the `W * B`
+    /// composition, then `abs(W) * abs(B)` alone, which missed what `W`'s own
+    /// parent chain had already cancelled — and in both the measured excess
+    /// was hundreds of thousands of ulps, not a factor of two. A residual
+    /// above this count is evidence about the base before it is evidence
+    /// about the count.
     pub f32_rounding_ulps: u32,
 }
 
@@ -169,13 +179,15 @@ impl ScaleTolerancePolicy {
     /// 2. [`Self::proof_sample_work_budget`] bounds the sampled proof work a
     ///    document may demand.
     /// 3. [`Self::f32_rounding_ulps`] is new in v3, and adds an absolute
-    ///    `f32`-rounding term to the three obligations that compare
+    ///    `f32`-rounding term to the five obligations that compare
     ///    `f32`-rounded arithmetic against a base that a rotation can make
     ///    arbitrarily smaller than the operands the arithmetic ran on —
     ///    [`ProofResidualKind::Bounds`], [`ProofResidualKind::SkinMatrix`],
-    ///    and [`ProofResidualKind::UnaffectedInverseBind`]. Without it
-    ///    [`plan_scale`] accepts and [`prove_scale`] refuses a correct
-    ///    candidate whenever `magnitude / component` is large.
+    ///    [`ProofResidualKind::UnaffectedInverseBind`],
+    ///    [`ProofResidualKind::RestTranslation`], and
+    ///    [`ProofResidualKind::Trajectory`]. Without it [`plan_scale`] accepts
+    ///    and [`prove_scale`] refuses a correct candidate whenever
+    ///    `magnitude / component` is large.
     ///
     /// `postcondition_unit_scale_residual` is
     /// `UNIT_SCALE_BANDS * common_factor = 4e-5`, rounded up to the next
@@ -238,37 +250,68 @@ impl ScaleTolerancePolicy {
         // costs `21_000` and admits `19_047`. A 100k-key track on the
         // 100k-vertex rig demands `2.01e10` and is refused.
         //
-        // The value is a wall-time ceiling expressed in work units, measured
-        // rather than assumed. Release timings of `prove_scale` at this
-        // ceiling: `1.54s` for the vertex-dominated shape (10k vertices, one
-        // slot, 19_992 sample times) and `4.77s` for the slot-dominated one
-        // (200 instances of 100 repeated slots, one vertex, 6_620 sample
-        // times) — the same total work costs about three times as much when
-        // it is slot work, so the pathological shape is what sets the
-        // ceiling. Timings are linear in the charge across four doublings
-        // (`1e8` to `8e8`) in both shapes, which is the evidence that the
-        // charge is a proxy for real work rather than a number.
+        // The value is a wall-time ceiling expressed in work units. What it
+        // costs in seconds is a property of the machine, so what is stated
+        // here is what is not: the measured time is linear in the charge
+        // across four doublings (`1e8` to `8e8`) in both shapes — the
+        // evidence that the charge is a proxy for real work rather than a
+        // number — and the same charge costs more as slot work than as vertex
+        // work, so the slot-dominated shape sets the ceiling. Both shapes are
+        // named in full so a reader can rebuild them: 200 instances of a
+        // 99-joint skin list with one vertex each, and one instance of that
+        // list with a 10_000-vertex primitive, each with as many sample times
+        // as `4e8` admits.
+        //
+        // On one developer machine at this ceiling the slot-dominated shape
+        // measures `6.5s` and the vertex-dominated one `3.7s`. Neither is a
+        // bound this policy guarantees. An earlier revision of this comment
+        // claimed one — "stays inside five" — from a `4.77s` measurement on
+        // different hardware and a different tree, and the same machine now
+        // reads `7.1s` for that shape *before* `f32_rounding_ulps`. See
+        // DESIGN.md Appendix D §D.1 for what that term costs at the ceiling.
         //
         // `1e8` — the first value this policy carried — was too tight, and
         // the arithmetic that justified it was the pre-both-sides charge. A
         // 200-bone rig with a 100k-vertex skinned mesh and a 30-second clip
         // at 30 fps costs `900 * 201_000 = 180_900_000`: a plausible
         // production asset, refused with no way for a caller to opt into the
-        // work. At `4e8` it is admitted with `2.2x` headroom (about 66
-        // seconds of animation on that rig) and proves in well under a
-        // second, while the worst-shaped document the budget still admits
-        // stays inside five.
+        // work. At `4e8` it is admitted with `2.2x` headroom — about 66
+        // seconds of animation on that rig.
         proof_sample_work_budget: 400_000_000,
-        // Measured, not assumed. Sweeping 30_000 correct rest/bind
-        // candidates — 2_000 random rotation pairs per cell, over declared
-        // factors `{3190, 100, 7.3, 0.01, 1e-4}` crossed with joint local
-        // translations of magnitude `{1000, 1, 0.001}`, mesh points spanning
-        // five decades, and two blended skin slots — the worst residual seen
-        // was `2.27` ulps of the bounds base and `2.50` ulps of the skin
-        // base. `4` is the next power of two above both, so the declared
-        // count is a shade under twice the worst measurement, and it is also
-        // the analytic worst case for the arithmetic involved: composing
-        // `W * B` accumulates a four-term inner product per entry.
+        // Measured, not assumed, over 2_390_000 correct candidates in four
+        // populations, none of which the earlier calibration covered:
+        //
+        // - 120_000 rest/bind candidates over declared factors
+        //   `{3190, 100, 7.3, 0.01, 1e-4}` crossed with joint local
+        //   translations of magnitude `{1000, 1, 0.001}`, both joints at the
+        //   cell magnitude in independently random directions;
+        // - 270_000 with the two joints' magnitudes drawn independently from
+        //   that set, under whole-document conversion as well as rest/bind;
+        // - 400_000 with continuous log-uniform joint magnitudes over
+        //   `[1e-3, 1e3]`, so no cell structure survives at all; and
+        // - 1_600_000 over chains of three to six joints, which is where a
+        //   parent chain has the most room to cancel.
+        //
+        // All four carry random rotations per joint, mesh points spanning
+        // five decades in random directions, and two blended skin slots. The
+        // quantity measured is what each residual actually *demands* of this
+        // count — `(observed - scalar_tolerance) / (magnitude * 2^-23)` — not
+        // its raw ulp count, because the scalar band pays first. The worst
+        // seen was `2.67` for `SkinMatrix`, `1.26` for `Bounds`, `0.42` for
+        // `RestTranslation`, and `0` for `UnaffectedInverseBind`, whose two
+        // sides are the identical `f32` expression on identical stored inputs.
+        // A further 320_000 candidates carrying a two-key translation track —
+        // which is what makes the sampled obligations run at all — demanded
+        // `0` for `Trajectory` and no more than the above for the rest.
+        // `4` is the next power of two above all of them, and it is also the
+        // analytic worst case for the arithmetic involved: composing `W * B`
+        // accumulates a four-term inner product per entry.
+        //
+        // Under the base this policy carried before the parent chain was
+        // folded into it, the same populations demanded up to `41` — see
+        // [`translation_operand_magnitude`], and
+        // `a_parent_chain_whose_translations_cancel_still_proves_its_skin`
+        // for a rig that demands `524288`.
         //
         // The detection cost is **not** bounded, and stating it as
         // `4.77e-7` of the compared quantity would be wrong. `4 * 2^-23` is
@@ -286,6 +329,18 @@ impl ScaleTolerancePolicy {
         // rig, the smallest inverse-bind `x` shift still refused is `4.09`
         // units. A regenerated bind wrong by four units is accepted.
         //
+        // Folding the parent chain into that magnitude does not move this
+        // number: on that fixture `abs(W) * abs(B)` already reads `6.38e6`
+        // against the chain's `3.19e6`, so the `max` is unchanged and the
+        // smallest refused shift is still `4.09` units. Across 2_000_000 skin
+        // slots of the sweep populations above the chain leaves the base
+        // exactly as it was on `96.2 %` of them, and where it does bind it
+        // widens by `1.26x` at the 99th percentile, `2.67x` at the 99.9th,
+        // and `27x` at the worst slot seen — always in proportion to what
+        // that rig's chain actually cancelled. Buying the same admissions by
+        // raising the count instead would have cost `10x` on *every* slot,
+        // including the `96 %` that lost nothing.
+        //
         // So for a rig whose joints sit `k` times further from the origin
         // than the geometry they carry, `SkinMatrix` and `Bounds` lose
         // discriminating power in proportion to `k`. That is a property of
@@ -294,12 +349,13 @@ impl ScaleTolerancePolicy {
         // its own ulp, and composing it against `W` amplifies that
         // quantization by `W`'s linear part into a product the cancellation
         // has made near-identity. Composing in `f64` does not remove it —
-        // measured over the same 30_000 candidates, an `f64` composition
-        // moves the worst skin residual from `2.50` to `2.06` ulps and the
-        // worst bounds residual from `1.68` to `0.90`, leaving the worst
-        // residual at `86 %` of the compared product's own magnitude against
-        // a `1e-5` relative band. The term is covering input quantization,
-        // which no amount of proof-side precision can undo.
+        // measured over the first 30_000 of the candidates above, an `f64`
+        // composition moves the worst skin residual from `2.50` to `2.06`
+        // ulps and the worst bounds residual from `1.68` to `0.90`, leaving
+        // the worst residual at `86 %` of the compared product's own
+        // magnitude against a `1e-5` relative band. The term is covering
+        // input quantization, which no amount of proof-side precision can
+        // undo.
         f32_rounding_ulps: 4,
     };
 
@@ -2454,6 +2510,63 @@ fn world_rests(skeleton: &Skeleton) -> Result<Vec<Mat4>, ScaleError> {
     })
 }
 
+/// One document side's composed world matrices, paired with the magnitude
+/// each bone's world *translation column* was actually summed from.
+///
+/// The two travel together for [`SkinSlot`]'s reason, one composition
+/// earlier: a parent chain whose translations cancel leaves a world
+/// translation orders of magnitude smaller than the terms it was accumulated
+/// from, and a tolerance for anything derived from that world has to be
+/// stated against the terms. See [`translation_operand_magnitude`].
+struct WorldPose {
+    matrices: Vec<Mat4>,
+    /// Per bone, the largest [`translation_operand_magnitude`] anywhere along
+    /// that bone's parent chain.
+    ///
+    /// `0.0` for a root: its world matrix *is* its local matrix, copied, so
+    /// no arithmetic ran and there is no operand magnitude to carry.
+    translation_chain: Vec<f64>,
+}
+
+impl WorldPose {
+    /// One bone's world matrix and the magnitude its translation column was
+    /// accumulated from.
+    ///
+    /// The two are always read together, and reading them through one
+    /// bounds-checked accessor is what keeps the chain lookup from being a
+    /// raw index that is safe only because a `get` on the parallel matrix
+    /// vector ran above it.
+    fn bone(&self, node: BoneId) -> Result<(Mat4, f64), ScaleError> {
+        let matrix = *self
+            .matrices
+            .get(node)
+            .ok_or(ScaleError::BoneIndexOutOfRange { index: node })?;
+        Ok((matrix, self.translation_chain[node]))
+    }
+}
+
+/// [`world_rests`] plus the translation chain magnitudes those worlds were
+/// composed through.
+fn rest_world_pose(skeleton: &Skeleton) -> Result<WorldPose, ScaleError> {
+    let matrices = world_rests(skeleton)?;
+    let mut translation_chain: Vec<f64> = Vec::with_capacity(matrices.len());
+    for (node, bone) in skeleton.bones.iter().enumerate() {
+        // `world_rests` has already refused every non-root whose parent is
+        // not strictly below it, so the `None` arm is reached only by a
+        // genuine root.
+        translation_chain.push(match bone.parent {
+            Some(parent) if parent < node => translation_chain[parent].max(
+                translation_operand_magnitude(matrices[parent], bone.rest.to_mat4()),
+            ),
+            _ => 0.0,
+        });
+    }
+    Ok(WorldPose {
+        matrices,
+        translation_chain,
+    })
+}
+
 // --- Candidate construction -------------------------------------------------
 
 /// A candidate document built from an accepted [`ScalePlan`].
@@ -3064,10 +3177,10 @@ pub fn prove_scale(
     validate_candidate_structure(source, candidate)?;
     let tol = plan.tolerance_policy;
     let affected = plan.affected_set();
-    let source_worlds = world_rests(&source.skeleton)?;
-    let candidate_worlds = world_rests(&candidate.skeleton)?;
+    let source_worlds = rest_world_pose(&source.skeleton)?;
+    let candidate_worlds = rest_world_pose(&candidate.skeleton)?;
 
-    let observed_factor = observed_factor_from_source(source, &source_worlds, plan)?;
+    let observed_factor = observed_factor_from_source(source, &source_worlds.matrices, plan)?;
     let mut proof = ScaleProof {
         tolerance_policy: tol,
         rest_translation_residual: 0.0,
@@ -3112,19 +3225,25 @@ pub fn prove_scale(
             });
         }
         for &node in &plan.affected_nodes {
-            let before = *source_worlds
-                .get(node)
-                .ok_or(ScaleError::BoneIndexOutOfRange { index: node })?;
-            let after = *candidate_worlds
-                .get(node)
-                .ok_or(ScaleError::BoneIndexOutOfRange { index: node })?;
+            let (before, before_chain) = source_worlds.bone(node)?;
+            let (after, after_chain) = candidate_worlds.bone(node)?;
             let (translation_residual, before_mag, after_mag) =
                 rest_node_residual(before, after, plan.is_whole_document(), plan.common_factor);
-            check_and_track(
+            // The magnitude is the parent chain's, not the surviving
+            // translation's: a joint whose local offset points back along its
+            // parent's world translation leaves a world translation the
+            // difference of two much larger terms, carrying their rounding
+            // error into a comparison whose own operands are small. Maxed
+            // over both sides for `check_skin_and_bounds`'s reason — the two
+            // documents' chains differ by the factor under whole-document
+            // conversion, and the larger side's arithmetic is what both need
+            // room for.
+            check_and_track_f32_rounded(
                 ProofResidualKind::RestTranslation,
                 translation_residual,
                 before_mag,
                 after_mag,
+                before_chain.max(after_chain),
                 &tol,
                 &mut proof,
             )?;
@@ -3220,9 +3339,11 @@ pub fn prove_scale(
         let probe = Vec3::ONE;
         for &node in &plan.transform_only_attachments {
             let before = *source_worlds
+                .matrices
                 .get(node)
                 .ok_or(ScaleError::BoneIndexOutOfRange { index: node })?;
             let after = *candidate_worlds
+                .matrices
                 .get(node)
                 .ok_or(ScaleError::BoneIndexOutOfRange { index: node })?;
             let expected_point = (before * correction).transform_point3(probe).as_dvec3();
@@ -3799,8 +3920,8 @@ fn check_and_track(
 /// [`check_and_track`] for a residual between two `f32`-rounded quantities,
 /// carrying the `magnitude` their arithmetic actually ran on.
 ///
-/// Only the three obligations whose compared quantity can be made
-/// arbitrarily smaller than that magnitude by a rotation use this — see
+/// Only the five obligations whose compared quantity can be made arbitrarily
+/// smaller than that magnitude by a rotation use this — see
 /// [`ScaleTolerancePolicy::f32_rounding_ulps`]. Every other obligation
 /// compares a vector length or a matrix entry against its own magnitude,
 /// where the two are the same number and the extra term would be noise.
@@ -4142,6 +4263,60 @@ fn product_operand_magnitude_f64(a: Mat4, b: Mat4) -> f64 {
     largest
 }
 
+/// The magnitude the translation column of `parent_world * local` is summed
+/// from: `max over i of sum over k of abs(parent_world_ik) * abs(local_k3)`.
+///
+/// [`product_operand_magnitude`] for one column, and it exists for the same
+/// reason one column further up the chain. That function reads the *already
+/// composed* `W`, whose translation column has already lost whatever its own
+/// parent chain cancelled: a joint whose local offset points back along its
+/// parent's world translation leaves `W` with a small translation that was
+/// summed from two large terms, and `abs(W) * abs(B)` cannot see terms that
+/// are no longer in `W`. Composing `W * B` then carries that lost magnitude's
+/// rounding error into a near-identity product, and a tolerance derived from
+/// `abs(W) * abs(B)` alone refuses the correct candidate — measured at up to
+/// `41` binary32 ulps of that base over a million correct candidates, against
+/// `2.4` once this term is included.
+///
+/// Only the translation column needs it. A world linear part is a product of
+/// rotations and uniform scales, and while an individual entry of that
+/// product can cancel to near zero, `product_operand_magnitude` already sums
+/// over the inner index — so the terms that cancelled are still in its sum.
+/// The translation column is the one place a *previous* composition's
+/// cancellation is carried forward as an operand.
+fn translation_operand_magnitude(parent_world: Mat4, local: Mat4) -> f64 {
+    // Every term is non-negative, so a finite maximum means no term
+    // overflowed and the `f32` lane result is exact enough to use — the same
+    // argument [`product_operand_magnitude`] makes, and it needs the same
+    // fallback for the operands whose sums leave the `f32` range while the
+    // composed world stays inside it.
+    let lanes = f64::from((mat4_abs(parent_world) * local.w_axis.abs()).max_element());
+    if lanes.is_finite() {
+        return lanes;
+    }
+    translation_operand_magnitude_f64(parent_world, local)
+}
+
+/// [`translation_operand_magnitude`] recomputed as a scalar `f64` fold, for
+/// the operands whose `f32` sums overflow.
+///
+/// Cannot overflow in turn, for [`product_operand_magnitude_f64`]'s reason:
+/// four terms, each a product of two `f32` magnitudes, is at most `4.63e77`.
+#[cold]
+#[inline(never)]
+fn translation_operand_magnitude_f64(parent_world: Mat4, local: Mat4) -> f64 {
+    let translation = local.w_axis.abs();
+    let mut largest = 0.0f64;
+    for row in 0..4 {
+        let mut sum = 0.0f64;
+        for inner in 0..4 {
+            sum += f64::from(parent_world.col(inner)[row].abs()) * f64::from(translation[inner]);
+        }
+        largest = largest.max(sum);
+    }
+    largest
+}
+
 /// `abs` applied to every component.
 fn mat4_abs(matrix: Mat4) -> Mat4 {
     Mat4::from_cols(
@@ -4251,27 +4426,28 @@ fn check_track_value_residual(
 /// (see [`sample_time_obligations`], which owns the single [`world_at_time`]
 /// evaluation these matrices come from).
 fn check_trajectory_residual_at(
-    source_worlds: &[Mat4],
-    candidate_worlds: &[Mat4],
+    source_worlds: &WorldPose,
+    candidate_worlds: &WorldPose,
     affected_nodes: &[BoneId],
     plan: &ScalePlan,
     tol: &ScaleTolerancePolicy,
     proof: &mut ScaleProof,
 ) -> Result<(), ScaleError> {
     for &node in affected_nodes {
-        let before = *source_worlds
-            .get(node)
-            .ok_or(ScaleError::BoneIndexOutOfRange { index: node })?;
-        let after = *candidate_worlds
-            .get(node)
-            .ok_or(ScaleError::BoneIndexOutOfRange { index: node })?;
+        let (before, before_chain) = source_worlds.bone(node)?;
+        let (after, after_chain) = candidate_worlds.bone(node)?;
         let (translation_residual, before_mag, after_mag) =
             rest_node_residual(before, after, plan.is_whole_document(), plan.common_factor);
-        check_and_track(
+        // The same magnitude the unanimated `RestTranslation` comparison
+        // takes, read off the sampled pose this residual was composed from
+        // rather than the rest pose: the two obligations differ only in which
+        // locals the chain ran on.
+        check_and_track_f32_rounded(
             ProofResidualKind::Trajectory,
             translation_residual,
             before_mag,
             after_mag,
+            before_chain.max(after_chain),
             tol,
             proof,
         )?;
@@ -4286,7 +4462,7 @@ fn check_trajectory_residual_at(
 /// not strictly earlier than its child rejects — the same structural
 /// invariant [`world_rest_matrices`](crate::model::world_rest_matrices)
 /// enforces for the unanimated rest pose.
-fn world_at_time(skeleton: &Skeleton, clip: &Clip, t: f32) -> Result<Vec<Mat4>, ScaleError> {
+fn world_at_time(skeleton: &Skeleton, clip: &Clip, t: f32) -> Result<WorldPose, ScaleError> {
     let bone_count = skeleton.bones.len();
     let mut locals = vec![Transform::IDENTITY; bone_count];
     for (index, bone) in skeleton.bones.iter().enumerate() {
@@ -4316,13 +4492,21 @@ fn world_at_time(skeleton: &Skeleton, clip: &Clip, t: f32) -> Result<Vec<Mat4>, 
         }
     }
     let mut worlds = vec![Mat4::IDENTITY; bone_count];
+    let mut translation_chain = vec![0.0f64; bone_count];
     for (index, bone) in skeleton.bones.iter().enumerate() {
         let local = locals[index].to_mat4();
         if !mat4_is_finite(local) {
             return Err(ScaleError::NonFiniteTransform { node: index });
         }
         worlds[index] = match bone.parent {
-            Some(parent) if parent < index => worlds[parent] * local,
+            Some(parent) if parent < index => {
+                // Accumulated in the same walk the composition runs in, so
+                // the chain costs one `Mat4 * Vec4` per bone rather than a
+                // second pass that would have to recompose every local.
+                translation_chain[index] = translation_chain[parent]
+                    .max(translation_operand_magnitude(worlds[parent], local));
+                worlds[parent] * local
+            }
             Some(parent) => {
                 return Err(ScaleError::InvalidParent {
                     node: index,
@@ -4335,7 +4519,10 @@ fn world_at_time(skeleton: &Skeleton, clip: &Clip, t: f32) -> Result<Vec<Mat4>, 
             return Err(ScaleError::NonFiniteTransform { node: index });
         }
     }
-    Ok(worlds)
+    Ok(WorldPose {
+        matrices: worlds,
+        translation_chain,
+    })
 }
 
 /// `abs(planned - proved) / max(abs(planned), abs(proved))` — the divergence
@@ -4634,8 +4821,8 @@ fn check_unaffected_instance_binds(
 fn check_skin_and_bounds(
     source: &Document,
     candidate: &Document,
-    source_worlds: &[Mat4],
-    candidate_worlds: &[Mat4],
+    source_worlds: &WorldPose,
+    candidate_worlds: &WorldPose,
     affected: &BTreeSet<BoneId>,
     plan: &ScalePlan,
     tol: &ScaleTolerancePolicy,
@@ -4693,16 +4880,12 @@ fn check_skin_and_bounds(
         let mut source_slots = Vec::with_capacity(instance.skin_joints.len());
         let mut candidate_slots = Vec::with_capacity(instance.skin_joints.len());
         for (slot, &joint) in instance.skin_joints.iter().enumerate() {
-            let before_world = *source_worlds
-                .get(joint)
-                .ok_or(ScaleError::BoneIndexOutOfRange { index: joint })?;
-            let after_world = *candidate_worlds
-                .get(joint)
-                .ok_or(ScaleError::BoneIndexOutOfRange { index: joint })?;
+            let (before_world, before_chain) = source_worlds.bone(joint)?;
+            let (after_world, after_chain) = candidate_worlds.bone(joint)?;
             let before_ibm = instance_bind(source, instance, slot, joint)?;
             let after_ibm = instance_bind(candidate, candidate_instance, slot, joint)?;
-            source_slots.push(SkinSlot::compose(before_world, before_ibm));
-            candidate_slots.push(SkinSlot::compose(after_world, after_ibm));
+            source_slots.push(SkinSlot::compose(before_world, before_ibm, before_chain));
+            candidate_slots.push(SkinSlot::compose(after_world, after_ibm, after_chain));
         }
 
         if prove_skin {
@@ -4905,10 +5088,23 @@ struct SkinSlot {
 }
 
 impl SkinSlot {
-    fn compose(world: Mat4, inverse_bind: Mat4) -> Self {
+    /// Compose `world * inverse_bind`, carrying the larger of the two
+    /// magnitudes the result's error can come from.
+    ///
+    /// `world_translation_chain` is [`WorldPose::translation_chain`] for this
+    /// slot's joint. It is a `max` and not a sum because the two describe the
+    /// same rounding at two points of one chain rather than two errors that
+    /// add: [`product_operand_magnitude`] covers what *this* multiply rounds,
+    /// and the chain covers what the `world` operand had already accumulated
+    /// before it arrived. Dropping either refuses correct candidates — the
+    /// chain alone by however far the joint sits from the geometry it
+    /// carries, `product_operand_magnitude` alone by up to `41` binary32 ulps
+    /// of its own base (see [`translation_operand_magnitude`]).
+    fn compose(world: Mat4, inverse_bind: Mat4, world_translation_chain: f64) -> Self {
         Self {
             matrix: world * inverse_bind,
-            rounding_magnitude: product_operand_magnitude(world, inverse_bind),
+            rounding_magnitude: product_operand_magnitude(world, inverse_bind)
+                .max(world_translation_chain),
         }
     }
 }
@@ -4922,16 +5118,19 @@ impl SkinSlot {
 ///
 /// `rounding_magnitude` is what
 /// [`ScaleTolerancePolicy::f32_rounding_ulps`] is counted in for
-/// [`ProofResidualKind::Bounds`], and it is a max over *two* quantities, not
-/// one. Each contributing vertex's skinned position covers the final
-/// `W * B * p` transform, whose error scales with the point. The
-/// contributing slot's [`SkinSlot::rounding_magnitude`] covers the
+/// [`ProofResidualKind::Bounds`], and it is a max over every stage of the
+/// chain that produced the bound, not over the bound itself. Each
+/// contributing vertex's skinned position covers the final `W * B * p`
+/// transform, whose error scales with the point. The contributing slot's
+/// [`SkinSlot::rounding_magnitude`] covers the two stages before it: the
 /// composition that produced `W * B`, whose translation column cancelled two
-/// terms of magnitude `abs(W)` — and a joint placed far from the origin
-/// carrying geometry close to itself makes that term dominate by an
-/// unbounded ratio. Measured over 30_000 correct candidates, the skinned
-/// magnitude alone left residuals up to `1.07e7` of its own ulp; the max of
-/// the two leaves `2.27`.
+/// terms of magnitude `abs(W)`, and the parent chain that produced `W`, whose
+/// translation column may have cancelled two terms larger still. Each stage
+/// dominates the others by an unbounded ratio on some rig — a joint far from
+/// the geometry it carries for the second, a joint whose local offset points
+/// back along its parent's world translation for the third. Measured over
+/// 30_000 correct candidates, the skinned magnitude alone left residuals up
+/// to `1.07e7` of its own ulp; the full max leaves `1.26` over 2_390_000.
 struct BoundsAccumulator {
     min: Vec3,
     max: Vec3,
@@ -11248,10 +11447,11 @@ mod tests {
     }
 
     /// A skin slot whose composition is the matrix itself: `M * I` rounds
-    /// nothing, so these fixtures assert about the bound extremes without a
-    /// rounding magnitude in the way.
+    /// nothing, and it is given an empty parent chain, so these fixtures
+    /// assert about the bound extremes without a rounding magnitude in the
+    /// way.
     fn unrounded_slot(matrix: Mat4) -> SkinSlot {
-        SkinSlot::compose(matrix, Mat4::IDENTITY)
+        SkinSlot::compose(matrix, Mat4::IDENTITY, 0.0)
     }
 
     /// One vertex, one slot, one influence — the smallest primitive that
@@ -11687,7 +11887,7 @@ mod tests {
             "the composition itself must stay finite: an overflowing product is a different \
              failure, and one that is allowed to be refused",
         );
-        let slot = SkinSlot::compose(world, inverse_bind);
+        let slot = SkinSlot::compose(world, inverse_bind, 0.0);
         assert!(
             slot.rounding_magnitude.is_finite(),
             "rounding magnitude {} is not finite",
@@ -11699,6 +11899,162 @@ mod tests {
         let proof = prove_scale(&doc, &candidate, &plan).expect(
             "a correct candidate whose composition operands overflow f32 must still prove: \
              both operands are finite and so is their product",
+        );
+        assert!(
+            proof.skin_matrix_residual.is_finite() && proof.bounds_residual.is_finite(),
+            "skin {} / bounds {} residual is not finite",
+            proof.skin_matrix_residual,
+            proof.bounds_residual
+        );
+    }
+
+    /// The far-joint rotations, a root factor of `1e3`, and a second joint
+    /// whose local translation is `-R0^-1 t0` — so the chain's own
+    /// `abs(W) * abs(t_local)` sums past `f32::MAX` while the world
+    /// translation they produce cancels to near zero.
+    ///
+    /// `3e35` under a `1e3` root puts the first joint's world translation at
+    /// `3e38`, and the second joint's operand sum at
+    /// `1e3 * 3e35 + 3e38 = 6e38`. The inverse binds are inverted in `f64`
+    /// for [`far_joint_overflow_document`]'s reason.
+    fn cancelling_chain_overflow_document() -> Document {
+        let rotations = [
+            Quat::from_xyzw(0.84815156, -0.23002678, -0.2828825, -0.3843229),
+            Quat::from_xyzw(0.6066518, -0.10115066, -0.7511764, 0.23974188),
+        ];
+        // The second local is `-R0^-1 (0, 3e35, 0)`, as literals.
+        let locals = [
+            Vec3::new(0.0, 3e35, 0.0),
+            Vec3::new(5.1827603e34, 1.7963013e35, -2.3462077e35),
+        ];
+        let mut doc = rotating_rig_document(
+            rotations,
+            1e3,
+            locals,
+            &[Vec3::new(1.0, 0.0, 0.0), Vec3::new(-0.75, 0.5, -0.25)],
+            &[[1.0, 0.0, 0.0, 0.0], [0.5, 0.5, 0.0, 0.0]],
+        );
+        let first = Mat4::from_scale(Vec3::splat(1e3))
+            * Mat4::from_rotation_translation(rotations[0], locals[0]);
+        let second = first * Mat4::from_rotation_translation(rotations[1], locals[1]);
+        doc.assets.instances[0].skin_ibms = vec![
+            first.as_dmat4().inverse().as_mat4(),
+            second.as_dmat4().inverse().as_mat4(),
+        ];
+        doc
+    }
+
+    #[test]
+    fn a_parent_chain_whose_translations_cancel_still_proves_its_skin() {
+        // The magnitude a *composition* rounds against is not on its own the
+        // magnitude its `world` operand arrived carrying, and this is the
+        // fixture that separates the two. The second joint's local
+        // translation is `-R0^-1 t0`, so its world translation is the
+        // difference of two terms of magnitude `3190 * 1000 = 3.19e6` and
+        // lands at `(0.125, 0, -0.125)`.
+        //
+        // `product_operand_magnitude(W, B)` reads `1.0` there, and correctly:
+        // that really is what `W * B` rounds against, because `W`'s
+        // translation column no longer contains the terms that cancelled. The
+        // composed skin matrix nonetheless differs between the two documents
+        // by `6.25e-2`, which is `524288` binary32 ulps of that base and
+        // `0.082` of the parent chain's.
+        let doc = rotating_rig_document(
+            [
+                Quat::from_xyzw(-0.81788284, 0.343121, -0.45392478, -0.085369624),
+                Quat::from_xyzw(-0.12301501, 0.043325406, -0.015209139, 0.991342),
+            ],
+            3190.0,
+            // The second local is `-R0^-1 (0, 1000, 0)`, as literals.
+            [
+                Vec3::new(0.0, 1000.0, 0.0),
+                Vec3::new(483.7628, 749.96, 451.14697),
+            ],
+            &[Vec3::new(0.5, -0.25, 0.125), Vec3::new(-0.75, 0.5, -0.25)],
+            &[[1.0, 0.0, 0.0, 0.0], [0.5, 0.5, 0.0, 0.0]],
+        );
+        let plan = rest_bind_plan(&doc, 3190.0);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+
+        // The cancellation is the fixture, so it is asserted before what it
+        // costs: a rig that stopped cancelling fails here rather than passing
+        // for want of a defect.
+        let worlds = rest_world_pose(&doc.skeleton).unwrap();
+        let instance = &doc.assets.instances[0];
+        let joint = instance.skin_joints[1];
+        let bind = instance_bind(&doc, instance, 1, joint).unwrap();
+        let product = product_operand_magnitude(worlds.matrices[joint], bind);
+        assert!(
+            product < 2.0,
+            "the composed product's own operands are no longer near-unit: {product}"
+        );
+        assert!(
+            worlds.translation_chain[joint] > 1e6,
+            "the parent chain no longer cancels a large translation: {}",
+            worlds.translation_chain[joint]
+        );
+
+        let proof = prove_scale(&doc, &candidate, &plan)
+            .expect("a correct candidate under a cancelling parent chain must prove");
+        assert!(
+            proof.skin_matrix_residual > 4.0 * product * f64::from(f32::EPSILON),
+            "skin residual {} no longer exceeds four ulps of the composition's own operands",
+            proof.skin_matrix_residual
+        );
+        // The same cancellation is visible one obligation earlier: the world
+        // translation it produced is `0.177` long and carries `3.19e6`'s
+        // rounding, so a purely per-axis band on the surviving translation
+        // refuses this node before the skin matrix is ever composed. Asserted
+        // here rather than left implicit, so `RestTranslation` losing the term
+        // fails a claim this fixture makes rather than one it happens to
+        // reach first.
+        let world_translation = worlds.matrices[joint].w_axis.truncate().length() as f64;
+        assert!(
+            proof.rest_translation_residual
+                > ScaleTolerancePolicy::APPENDIX_D_V3
+                    .scalar_tolerance(world_translation, world_translation),
+            "rest translation residual {} no longer exceeds the per-axis band its own \
+             translation buys",
+            proof.rest_translation_residual
+        );
+    }
+
+    #[test]
+    fn a_parent_chain_whose_operand_sums_overflow_f32_still_proves() {
+        // `translation_operand_magnitude` sums products of two `f32` operand
+        // entries, so it runs past `f32::MAX` exactly where the cancellation
+        // it exists to describe has taken that magnitude *out* of the composed
+        // world. Computed in `f32` lanes the chain here is `inf`, which makes
+        // every tolerance derived from it `inf`, which `check_residual`
+        // refuses — a correct candidate rejected with `tolerance: inf`.
+        let doc = cancelling_chain_overflow_document();
+        let local = doc.skeleton.bones[2].rest.to_mat4();
+        let worlds = world_rests(&doc.skeleton).unwrap();
+        assert!(
+            !(mat4_abs(worlds[1]) * local.w_axis.abs())
+                .max_element()
+                .is_finite(),
+            "the fixture no longer overflows the f32 lane computation, so it no longer \
+             exercises the fallback",
+        );
+        assert!(
+            mat4_is_finite(worlds[2]),
+            "the composed world must stay finite: an overflowing world is a different failure, \
+             and one that is allowed to be refused",
+        );
+
+        let pose = rest_world_pose(&doc.skeleton).unwrap();
+        assert!(
+            pose.translation_chain[2].is_finite(),
+            "chain magnitude {} is not finite",
+            pose.translation_chain[2]
+        );
+
+        let plan = rest_bind_plan(&doc, 1e3);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).expect(
+            "a correct candidate whose chain operands overflow f32 must still prove: every \
+             operand is finite and so is the world they compose to",
         );
         assert!(
             proof.skin_matrix_residual.is_finite() && proof.bounds_residual.is_finite(),
@@ -11918,7 +12274,7 @@ mod tests {
             0,
             0,
             &primitive,
-            &[SkinSlot::compose(world, world.inverse())],
+            &[SkinSlot::compose(world, world.inverse(), 0.0)],
             &mut composition_dominates,
         )
         .unwrap();
