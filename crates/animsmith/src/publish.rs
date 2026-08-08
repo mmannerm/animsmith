@@ -450,25 +450,41 @@ mod tests {
         assert_eq!(sink, record);
     }
 
-    /// Every `.rs` file directly under this crate's `src/`, as
-    /// `(file name, text)`, sorted.
+    /// Every `.rs` file anywhere under this crate's `src/`, as
+    /// `(path relative to src/, text)`, sorted.
+    ///
+    /// Recursive on purpose. The crate is flat today, but a scan that only
+    /// reads the top level would keep passing after a module moved into a
+    /// subdirectory — a guard that quietly stops guarding, which reads as
+    /// coverage while providing none.
     fn crate_sources() -> Vec<(String, String)> {
         let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let mut sources = fs::read_dir(&src)
-            .unwrap_or_else(|error| panic!("reads {}: {error}", src.display()))
-            .map(|entry| entry.expect("a source directory entry").path())
-            .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
-            .map(|path| {
-                let name = path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .expect("a UTF-8 source file name")
-                    .to_owned();
-                let text = fs::read_to_string(&path)
-                    .unwrap_or_else(|error| panic!("reads {}: {error}", path.display()));
-                (name, text)
-            })
-            .collect::<Vec<_>>();
+        let mut sources = Vec::new();
+        let mut pending = vec![src.clone()];
+        while let Some(directory) = pending.pop() {
+            let entries = fs::read_dir(&directory)
+                .unwrap_or_else(|error| panic!("reads {}: {error}", directory.display()));
+            for entry in entries {
+                let path = entry.expect("a source directory entry").path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else if path.extension().is_some_and(|extension| extension == "rs") {
+                    let name = path
+                        .strip_prefix(&src)
+                        .expect("a path found under src/")
+                        .to_str()
+                        .expect("a UTF-8 source path")
+                        .replace('\\', "/");
+                    let text = fs::read_to_string(&path)
+                        .unwrap_or_else(|error| panic!("reads {}: {error}", path.display()));
+                    sources.push((name, text));
+                }
+            }
+        }
+        assert!(
+            sources.iter().any(|(name, _)| name == "publish.rs"),
+            "the scan must reach this crate's own sources"
+        );
         sources.sort();
         sources
     }
@@ -485,6 +501,19 @@ mod tests {
     /// scan rather than a type-level constraint because `serde_json`'s free
     /// functions cannot be made unreachable from inside the crate that
     /// depends on it.
+    ///
+    /// # What this does and does not see
+    ///
+    /// It counts **occurrences**, not matching lines, over every `.rs` file
+    /// under `src/` recursively. A call `rustfmt` wraps is still caught: Rust
+    /// never splits an identifier across lines, so a break at `::` or at the
+    /// opening paren leaves the name contiguous on a line of its own —
+    /// verified by probe rather than assumed.
+    ///
+    /// It cannot see an import that renames one of these functions on the way
+    /// in (`use serde_json::… as pretty;`). That is a deliberate evasion
+    /// rather than something a refactor or a formatter produces, and catching
+    /// it would mean parsing rather than scanning.
     #[test]
     fn pretty_json_is_produced_at_exactly_one_site() {
         // Split so this test's own needles do not match themselves when it
@@ -497,10 +526,10 @@ mod tests {
         let sites = crate_sources()
             .into_iter()
             .filter_map(|(name, text)| {
-                let hits = text
-                    .lines()
-                    .filter(|line| needles.iter().any(|needle| line.contains(needle)))
-                    .count();
+                let hits: usize = needles
+                    .iter()
+                    .map(|needle| text.matches(needle).count())
+                    .sum();
                 (hits > 0).then_some((name, hits))
             })
             .collect::<std::collections::BTreeMap<_, _>>();

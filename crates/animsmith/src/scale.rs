@@ -19,6 +19,15 @@
 //! | Refusal | nothing | the record, `outcome: "rejected"` | 1 |
 //! | Operator error | nothing | — (prose on stderr) | 2 |
 //!
+//! A stdout that cannot take the record — a closed pipe, a full filesystem —
+//! changes no row of that table: the write failure is diagnosed on stderr and
+//! the outcome's exit code stands. By the time stdout is written the pair is
+//! already published or the refusal is already a fact about the asset, so
+//! raising it would report an operator error for work that was done, and
+//! would turn `scale … --format json | head` on a refused asset into exit
+//! `2`. A record that refuses to *serialize* is the opposite case and does
+//! exit `2`: that record would be false, and [`Finite`] exists to stop it.
+//!
 //! The split is by *what the failure is a property of*, not by where in the
 //! pipeline it was raised.
 //!
