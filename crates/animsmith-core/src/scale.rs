@@ -263,12 +263,15 @@ impl ScaleTolerancePolicy {
         // as `4e8` admits.
         //
         // On one developer machine at this ceiling the slot-dominated shape
-        // measures `6.5s` and the vertex-dominated one `3.7s`. Neither is a
+        // measures `6.7s` and the vertex-dominated one `3.3s`. Neither is a
         // bound this policy guarantees. An earlier revision of this comment
         // claimed one — "stays inside five" — from a `4.77s` measurement on
         // different hardware and a different tree, and the same machine now
-        // reads `7.1s` for that shape *before* `f32_rounding_ulps`. See
-        // DESIGN.md Appendix D §D.1 for what that term costs at the ceiling.
+        // reads `7.1s` for that shape *before* `f32_rounding_ulps`, which is
+        // to say the claim was already false of the tree it was written
+        // against. See DESIGN.md Appendix D §D.1 for what that term costs at
+        // the ceiling; the shape that sets the ceiling got faster, and the
+        // vertex-dominated one is `+64 %`.
         //
         // `1e8` — the first value this policy carried — was too tight, and
         // the arithmetic that justified it was the pre-both-sides charge. A
@@ -5246,21 +5249,35 @@ fn accumulate_skinned_bounds(
             }
             bounds.min = bounds.min.min(skinned);
             bounds.max = bounds.max.max(skinned);
-            // `as_dvec3().length()` rather than `skinned.length() as f64`:
             // `Vec3::length` squares its components in `f32`, so it returns
             // `inf` for every `skinned` past `sqrt(f32::MAX) = 1.84e19` even
             // though `skinned` itself is finite to `3.40e38` and has just
             // been checked so. An infinite magnitude makes
             // `f32_rounded_tolerance` infinite, and `check_residual` refuses
-            // a non-finite tolerance — so squaring in `f32` would refuse
+            // a non-finite tolerance — so squaring in `f32` alone would refuse
             // exactly-correct candidates (`observed: 0.0`) on any rig whose
-            // skinned extent passes that constant. Widening the square to
-            // `f64` puts the overflow boundary back where the rest of this
-            // function already put it: at the finiteness of `skinned`.
-            bounds.rounding_magnitude = bounds
-                .rounding_magnitude
-                .max(vertex_magnitude)
-                .max(skinned.as_dvec3().length());
+            // skinned extent passes that constant, and that constant would be
+            // a documented magnitude domain where DESIGN.md Appendix D §D.1
+            // says there is none.
+            //
+            // The `f64` widening is therefore the *fallback*, not the fast
+            // path, on [`product_operand_magnitude`]'s argument: a length sums
+            // squares, so every term is non-negative and nothing can cancel,
+            // and a finite `f32` result means no intermediate overflowed. Such
+            // a result is exact to `f32` precision, which is precisely what
+            // [`ScaleTolerancePolicy::f32_rounding_ulps`] already allows for.
+            // This runs once per weighted vertex per document side per sample
+            // time — the hottest loop in this proof — and the wide square is
+            // reached only past `sqrt(f32::MAX)`, where
+            // `a_rig_whose_skinned_extent_passes_the_square_root_of_f32_max_still_proves`
+            // holds it.
+            let length = skinned.length();
+            let length = if length.is_finite() {
+                f64::from(length)
+            } else {
+                skinned.as_dvec3().length()
+            };
+            bounds.rounding_magnitude = bounds.rounding_magnitude.max(vertex_magnitude).max(length);
             bounds.touched = true;
         }
     }

@@ -1053,7 +1053,7 @@ each, and the vertex-dominated one is a single instance of that skin list with
 a 10_000-vertex primitive, each with as many sample times as `4e8` admits.
 
 On one developer machine the slot-dominated shape at the ceiling measures
-`6.5s` and the vertex-dominated one `3.7s`, a ratio of `1.8`. Neither number
+`6.7s` and the vertex-dominated one `3.3s`, a ratio of `2.0`. Neither number
 is a bound this design guarantees, and an earlier revision of this section
 claimed one — "stays inside five seconds" — against a measurement taken on
 different hardware and a different tree. The ratio moved too: before
@@ -1069,17 +1069,28 @@ work.
 
 **What the `f32`-rounding term costs at that ceiling.** Deriving each
 obligation's magnitude is per-slot and per-vertex work that the tree before
-`appendix-d-v3` did not do, and the vertex-dominated shape is where it shows:
-the same machine and the same 1_932_084 skin and 117_096 bounds comparisons
-went from `2.0s` to `3.7s`, `+84 %`, dominated by the `f64` length of each
-skinned position — 390 million of them at the ceiling. The slot-dominated
-shape did not regress (`7.1s` to `6.5s`). Folding the parent chain into the
-magnitude added nothing measurable on either shape: one `Mat4 * Vec4` per bone
-per document side per sample time, accumulated in the walk that already
-composes the world matrices, against work that is per *slot* and per *vertex*.
+`appendix-d-v3` did not do, and the vertex-dominated shape is where it shows.
+On one machine, over twelve runs of each shape and taking minima, that shape
+went from `2.02s` to `3.31s` — `+64 %` — for the same 1_932_084 skin and
+117_096 bounds comparisons. The cost is dominated by taking the length of
+each skinned position, 390 million of them at the ceiling. Widening that
+length unconditionally to `f64` cost `+83 %` instead; making the `f64` square
+a fallback behind a finite `f32` one recovers about a quarter of the
+regression and none of the correctness, since the fallback is still what
+admits an extent past `sqrt(f32::MAX)`. The remaining `+64 %` is the `f32`
+square root itself, which is work this obligation did not previously do at
+all.
+
+The slot-dominated shape did not regress: `7.10s` before the term and `6.70s`
+after. Folding the parent chain into the magnitude added nothing measurable on
+either shape — one `Mat4 * Vec4` per bone per document side per sample time,
+accumulated in the walk that already composes the world matrices, against work
+that is per *slot* and per *vertex*.
+
 The budget is unchanged, because the budget bounds work units and the work
 units did not move; what moved is the seconds a unit costs, which this section
-now declines to state as a bound.
+now declines to state as a bound. The shape that sets the ceiling is still the
+slot-dominated one, and it got faster.
 
 ### D.2 Algebra and rewrite rules
 
