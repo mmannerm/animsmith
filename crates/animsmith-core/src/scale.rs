@@ -3182,12 +3182,20 @@ pub struct ScaleProof {
 /// ([`ProofResidualKind::TrackValue`]), base mesh `POSITION`
 /// ([`ProofResidualKind::MeshPosition`]) and the stored inverse binds of
 /// skins outside the affected closure
-/// ([`ProofResidualKind::UnaffectedInverseBind`]). The latter two are about
-/// payloads the plan declares it does *not* rewrite, where an obligation
-/// flag would make "unaffected" opt-out; the first compares every element of
-/// every track against its own domain's analytic expectation, rewritten or
-/// retained, and so is owed by every plan. None of the three admits an
-/// obligation flag as a proxy for having run — see [`ScaleProof`], whose
+/// ([`ProofResidualKind::UnaffectedInverseBind`]). The last is about a
+/// payload the plan declares it does *not* rewrite, where an obligation flag
+/// would make "unaffected" opt-out; the first two compare every element of
+/// every track and every base mesh against that element's own domain's
+/// analytic expectation — the declared multiplier where the plan rewrites
+/// that domain, the retained value where it does not — and so are owed by
+/// every plan. Base `POSITION` belongs with the track-value comparison, not
+/// with the unaffected binds, which is worth naming because it is easy to get
+/// backwards: a whole-document plan *does* rewrite it
+/// (`domain_rewrites.base_mesh_positions`), so its comparison is a
+/// rewritten-value check, and it is unconditional because skinned bounds
+/// would otherwise be its only witness — and they report a zero residual for
+/// a document carrying no skinned instance at all. None of the three admits
+/// an obligation flag as a proxy for having run — see [`ScaleProof`], whose
 /// comparison counts report what each of them actually walked.
 ///
 /// [`ScaleProof::observed_factor`] is re-derived here from `source` rather
@@ -4809,11 +4817,13 @@ fn observed_factor_from_source(
 /// exists for while comparing effective binds throughout. That is a design
 /// change and belongs in its own issue.
 ///
-/// Unconditional, like the base `POSITION` comparison in
-/// [`check_candidate_values`] and for the same reason: it is a structural
+/// Unconditional, like the per-element comparisons in
+/// [`check_candidate_values`], though for its own reason: it is a structural
 /// claim about payloads the plan declares *unaffected*, so there is no
 /// obligation flag that could switch it off without also making the plan's
-/// "unaffected" claim unfalsifiable.
+/// "unaffected" claim unfalsifiable. Base `POSITION` is unconditional on the
+/// other ground — a whole-document plan *does* rewrite it, and its only other
+/// witness reports zero for a document with no skinned instance.
 fn check_unaffected_instance_binds(
     source: &Document,
     candidate: &Document,
