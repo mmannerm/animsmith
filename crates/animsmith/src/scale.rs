@@ -551,6 +551,7 @@ fn scale_error_kind(error: &ScaleError) -> &'static str {
         ScaleError::InvalidMeshInstance { .. } => "invalid-mesh-instance",
         ScaleError::MissingInverseBind { .. } => "missing-inverse-bind",
         ScaleError::InvalidMeshPrimitive { .. } => "invalid-mesh-primitive",
+        ScaleError::NegativeSkinWeight { .. } => "negative-skin-weight",
         ScaleError::InvalidSkinnedPrimitive { .. } => "invalid-skinned-primitive",
         ScaleError::CandidateStructureMismatch { .. } => "candidate-structure-mismatch",
         _ => "unclassified-scale-error",

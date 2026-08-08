@@ -93,6 +93,11 @@ primitives, secondary skin influence sets, and accessor layouts outside the
 dense `f32` subset — the complete list of what a run refused is in the
 evidence record's `rejection.violations`.
 
+The shared scale-input validation also refuses any finite negative primary
+skin weight. Such a value cannot describe the convex skin blend required by
+the model: it exits 1 at the plan stage with rejection kind
+`negative-skin-weight` and publishes no artifact or evidence file.
+
 One invocation plans, rewrites, reloads and proves the candidate, re-runs the
 whole rewrite to check the bytes are deterministic, and re-reads the staged
 artifact to check its digest against the bytes that were proved. On a

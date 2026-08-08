@@ -259,6 +259,9 @@ A refused run's record is printed by `--format json` and is never written to
 the `--evidence` path: publication is an artifact/evidence *pair*, and a
 refusal has no artifact. This follows `lint --format json`, which prints its
 machine-readable result to stdout and exits 1 when the asset has a problem.
+For example, a finite negative primary skin weight is rejected during planning
+with `rejection.kind: "negative-skin-weight"`; the record has `result: null`
+and neither destination is written.
 
 The record binds the operation and its declared selectors, the operator's
 declared paths verbatim, the input digest and byte count, and the complete raw
