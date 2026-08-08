@@ -42,11 +42,31 @@ impl FindingSummary {
     }
 }
 
-/// Serialize any envelope as pretty JSON — the machine-readable contract
-/// shared by `measure`, `lint`, and `diff`.
-pub(crate) fn print_json<T: Serialize>(value: &T) {
-    let out = serde_json::to_string_pretty(value);
-    println!("{}", out.expect("report serializes"));
+/// Serialize any envelope to stdout as pretty JSON — the machine-readable
+/// contract shared by `measure`, `lint`, `diff`, and `convert`.
+///
+/// Goes through [`crate::publish::serialize_record`], the crate's one pretty
+/// serializer, and [`crate::publish::emit`]. So every `--format json` path in
+/// this CLI produces its bytes the same way and treats a stdout that cannot
+/// take them the same way: the write failure is diagnosed on stderr and the
+/// command's own outcome code stands — `lint`'s exit `1` for findings it
+/// really found, `diff`'s for movement it really measured.
+///
+/// A **producer** must not call this. It serializes afresh from the value, so
+/// its bytes would be a second serialization rather than the ones the
+/// producer published; producers hand their published `Vec<u8>` straight to
+/// [`crate::publish::emit`]. Pinned by
+/// `publish::tests::no_producer_module_reaches_for_the_re_serializing_printer`.
+///
+/// # Errors
+///
+/// Returns an operator error when the envelope refuses to serialize. This
+/// replaced an `.expect`: a record that cannot be rendered truthfully is a
+/// failure to diagnose, not one to panic over, and it is the same rule the
+/// producers apply to a non-finite evidence value.
+pub(crate) fn print_json<T: Serialize>(value: &T) -> Result<(), String> {
+    crate::publish::emit(&crate::publish::serialize_record(value)?);
+    Ok(())
 }
 
 /// Render one operator error for stderr.

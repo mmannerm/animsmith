@@ -505,7 +505,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             match format {
                 Format::Json => {
                     let envelope = MeasureEnvelope::new(current_tool(), reports);
-                    render::print_json(&envelope);
+                    render::print_json(&envelope)?;
                 }
                 Format::Text => {
                     for line in render::render_measure_text(&reports) {
@@ -569,7 +569,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             match format {
                 LintFormat::Json => {
                     let envelope = LintEnvelope::new(current_tool(), reports);
-                    render::print_json(&envelope);
+                    render::print_json(&envelope)?;
                 }
                 LintFormat::Text => print!("{}", render::render_text(&reports, &allow)),
                 LintFormat::Markdown => print!("{}", render::render_markdown(&reports, &allow)),
@@ -876,7 +876,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     material_texture_recipe: recipe_application
                         .as_ref()
                         .map(|application| &application.evidence),
-                }),
+                })?,
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -945,7 +945,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     a.display().to_string(),
                     b.display().to_string(),
                     deltas,
-                )),
+                ))?,
                 Format::Text => {
                     for line in render::render_diff_text(&deltas) {
                         println!("{line}");

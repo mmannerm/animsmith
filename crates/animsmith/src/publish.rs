@@ -7,10 +7,12 @@
 //! publishes a complete new pair or leaves the previous one exactly as it
 //! found it.
 //!
-//! It also owns the one place an evidence record becomes bytes:
-//! [`serialize_record`] runs once per invocation and [`emit`] writes those
-//! same bytes to stdout, so a producer's `--format json` stream and its
-//! evidence file cannot drift apart.
+//! It also owns the one place anything in this CLI becomes pretty JSON:
+//! [`serialize_record`] produces the bytes and [`emit`] writes them to
+//! stdout. A producer calls it once and hands the same `Vec<u8>` to its
+//! evidence file and to stdout, so the two cannot drift apart;
+//! [`crate::render::print_json`] routes the output-v5 envelopes through the
+//! same pair, so every `--format json` path renders and fails alike.
 //!
 //! # What a crash between the two renames leaves
 //!
@@ -50,25 +52,26 @@ use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-/// Serialize one evidence record as the pretty, newline-terminated JSON that
-/// **both** the evidence file and stdout carry.
+/// Serialize one record or envelope as the pretty, newline-terminated JSON
+/// this CLI writes everywhere.
 ///
 /// A producer calls this once per run and hands the resulting bytes to every
-/// destination, so the file and the `--format json` stream being identical is
-/// a property of the construction rather than an agreement between two
-/// serializers that a test has to keep re-checking. It is also why the
-/// evidence path does not go through [`crate::render::print_json`], which
-/// re-serializes and panics on failure: here a record that refuses to
-/// serialize is an operator error, raised before anything is published.
+/// destination, so its evidence file and its `--format json` stream being
+/// identical is a property of the construction rather than an agreement
+/// between two serializers that a test has to keep re-checking. It is also
+/// why a producer does not go through [`crate::render::print_json`]: that
+/// serializes afresh from the value, which would make the agreement a
+/// coincidence again.
 ///
 /// # Errors
 ///
 /// Returns an operator error when a value refuses to serialize — which
 /// `scale`'s `Finite` wrapper makes happen for any non-finite number on the
-/// evidence path.
+/// evidence path. A record that cannot be rendered truthfully is diagnosed,
+/// never panicked over and never silently dropped.
 pub(crate) fn serialize_record<T: Serialize>(record: &T) -> Result<Vec<u8>, String> {
     let mut bytes = serde_json::to_vec_pretty(record)
-        .map_err(|error| format!("cannot serialize evidence: {error}"))?;
+        .map_err(|error| format!("cannot serialize JSON output: {error}"))?;
     bytes.push(b'\n');
     Ok(bytes)
 }
@@ -78,7 +81,7 @@ pub(crate) fn serialize_record<T: Serialize>(record: &T) -> Result<Vec<u8>, Stri
 ///
 /// Takes bytes rather than a value so a caller cannot accidentally emit a
 /// second serialization of the record it already staged, and never panics the
-/// way the `println!` behind [`crate::render::print_json`] does.
+/// way the `println!` this replaced did.
 ///
 /// # Why a failure here does not change the exit code
 ///
@@ -122,7 +125,7 @@ pub(crate) fn emit(bytes: &[u8]) {
 /// Returns an operator error naming the underlying I/O failure.
 fn emit_to(sink: &mut impl std::io::Write, bytes: &[u8]) -> Result<(), String> {
     sink.write_all(bytes)
-        .map_err(|error| format!("cannot write evidence to stdout: {error}"))
+        .map_err(|error| format!("cannot write JSON output to stdout: {error}"))
 }
 
 /// The directory a path lives in, treating a bare file name as `.`.
@@ -407,7 +410,7 @@ mod tests {
         let error =
             emit_to(&mut BrokenPipe, b"{}\n").expect_err("a closed pipe must not be ignored");
         assert!(
-            error.starts_with("cannot write evidence to stdout"),
+            error.starts_with("cannot write JSON output to stdout"),
             "{error}"
         );
         assert!(error.contains("the reader is gone"), "{error}");
@@ -425,7 +428,7 @@ mod tests {
         let error = emit_to(&mut sink, b"{\"schema\":1}\n")
             .expect_err("a truncated record must not be reported as written");
         assert!(
-            error.starts_with("cannot write evidence to stdout"),
+            error.starts_with("cannot write JSON output to stdout"),
             "{error}"
         );
         assert_eq!(
@@ -475,12 +478,15 @@ mod tests {
     /// over one record produces identical bytes, so the byte-identity tests
     /// in `character_assembly_cli.rs` and `scale_cli.rs` pass either way.
     ///
-    /// What *is* mechanically checkable is that only two serializers exist.
-    /// This is a source scan rather than a type-level constraint because
-    /// `serde_json`'s free functions cannot be made unreachable from inside
-    /// the crate that depends on it.
+    /// What *is* mechanically checkable is that only one serializer exists.
+    /// [`crate::render::print_json`] routes the output-v5 envelopes through
+    /// this same helper, so every byte of pretty JSON this CLI writes — an
+    /// evidence record or an envelope — is produced here. This is a source
+    /// scan rather than a type-level constraint because `serde_json`'s free
+    /// functions cannot be made unreachable from inside the crate that
+    /// depends on it.
     #[test]
-    fn pretty_json_is_produced_at_exactly_two_sites() {
+    fn pretty_json_is_produced_at_exactly_one_site() {
         // Split so this test's own needles do not match themselves when it
         // scans the file it lives in.
         let needles = [
@@ -500,25 +506,23 @@ mod tests {
             .collect::<std::collections::BTreeMap<_, _>>();
         assert_eq!(
             sites,
-            std::collections::BTreeMap::from([
-                ("publish.rs".to_owned(), 1),
-                ("render.rs".to_owned(), 1),
-            ]),
-            "pretty JSON has exactly two permitted producers: `publish::serialize_record` \
-             in publish.rs, which every evidence record goes through once and whose bytes \
-             reach both the evidence file and stdout, and `render::print_json` in render.rs, \
-             which serves the output-v5 envelopes that have no file to agree with. Route a \
-             new call through one of those instead of adding a third serializer."
+            std::collections::BTreeMap::from([("publish.rs".to_owned(), 1)]),
+            "pretty JSON has exactly one producer: `publish::serialize_record`. Evidence \
+             records go through it once and its bytes reach both the evidence file and \
+             stdout; the output-v5 envelopes reach it through `render::print_json`. Route \
+             a new call through one of those two entry points instead of adding a second \
+             serializer."
         );
     }
 
     /// A producer's `--format json` stream must be the bytes it published,
     /// not a second rendering of the record.
     ///
-    /// [`crate::render::print_json`] re-serializes, so its reappearance in a
-    /// producer module is exactly the regression that would turn byte
-    /// identity back into a coincidence — and the one the byte-identity tests
-    /// cannot see, because the second rendering agrees.
+    /// [`crate::render::print_json`] shares this module's serializer but still
+    /// serializes *afresh from the value*, so a producer calling it would
+    /// serialize its record a second time — turning byte identity back into a
+    /// coincidence, and one the byte-identity tests cannot see because the
+    /// second rendering agrees.
     #[test]
     fn no_producer_module_reaches_for_the_re_serializing_printer() {
         // Split for the same reason as above: publish.rs names the printer in

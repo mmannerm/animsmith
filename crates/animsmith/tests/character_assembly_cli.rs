@@ -339,7 +339,7 @@ fn a_published_run_whose_stdout_is_closed_keeps_exit_0_and_diagnoses_on_stderr()
     // Ours, not the OS's: the platform's wording for a reader-less pipe is
     // not this contract.
     assert!(
-        stderr.starts_with("animsmith: cannot write evidence to stdout"),
+        stderr.starts_with("animsmith: cannot write JSON output to stdout"),
         "stderr:\n{stderr}"
     );
     // And the run really did publish, which is why it is a success.

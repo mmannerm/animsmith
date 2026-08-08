@@ -5,7 +5,7 @@ use animsmith_testkit::{quats_from_angles, scaled_quat, two_bone_rotation_doc};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:5";
 const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:11";
@@ -3678,6 +3678,85 @@ fn non_finite_key_times_never_escape_as_schema_invalid_nulls() {
         assert_eq!(
             json["files"][0]["measurements"]["clips"]["poisoned"]["duration_s"],
             0.5
+        );
+    }
+}
+
+/// Every `--format json` path in this CLI treats a stdout it cannot write to
+/// the same way: the write failure is diagnosed on stderr and the command's
+/// own outcome code stands.
+///
+/// `lint` is the load-bearing case. Findings it really found must not be
+/// relabelled as an operator error because the consumer hung up — `lint …
+/// --format json | head` still exits `1`. `diff`'s exit `1` for movement it
+/// really measured is the same claim.
+///
+/// The pipe's read end is dropped **before** the child is spawned, so its
+/// stdout has no reader from the moment it exists: the write failure is a
+/// property of the setup rather than a race against how quickly the child
+/// reaches its write.
+#[test]
+fn a_closed_stdout_is_diagnosed_without_rewriting_any_json_command_outcome() {
+    #[cfg(feature = "fbx")]
+    let dir = unique_temp_dir("closed-stdout-json");
+
+    #[cfg_attr(not(feature = "fbx"), expect(unused_mut))]
+    let mut cases: Vec<(&str, Vec<String>, i32)> = vec![
+        (
+            "measure",
+            vec![example_asset("clip.glb").display().to_string()],
+            0,
+        ),
+        (
+            "lint",
+            vec![example_asset("clip-dirty.glb").display().to_string()],
+            1,
+        ),
+        (
+            "diff",
+            vec![
+                example_asset("clip.glb").display().to_string(),
+                example_asset("walk.glb").display().to_string(),
+            ],
+            1,
+        ),
+    ];
+    #[cfg(feature = "fbx")]
+    cases.push((
+        "convert",
+        vec![
+            example_asset("clip.glb").display().to_string(),
+            "-o".to_owned(),
+            dir.path().join("converted.glb").display().to_string(),
+        ],
+        0,
+    ));
+
+    for (command, args, expected_exit) in cases {
+        let (reader, writer) = std::io::pipe().expect("creates a pipe");
+        drop(reader);
+        let output = animsmith()
+            .arg(command)
+            .args(&args)
+            .args(["--format", "json"])
+            .stdout(Stdio::from(writer))
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap_or_else(|error| panic!("spawns animsmith {command}: {error}"))
+            .wait_with_output()
+            .unwrap_or_else(|error| panic!("waits for animsmith {command}: {error}"));
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            output.status.code(),
+            Some(expected_exit),
+            "{command} must keep its own outcome when stdout is closed; stderr:\n{stderr}"
+        );
+        // Ours, not the OS's: the platform's wording for a reader-less pipe
+        // is not this contract.
+        assert!(
+            stderr.starts_with("animsmith: cannot write JSON output to stdout"),
+            "{command} stderr:\n{stderr}"
         );
     }
 }

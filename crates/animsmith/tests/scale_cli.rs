@@ -712,7 +712,7 @@ fn a_published_run_whose_stdout_is_closed_keeps_exit_0_and_diagnoses_on_stderr()
     // Ours, not the OS's: the platform's wording for a reader-less pipe is
     // not this contract.
     assert!(
-        stderr(&output).starts_with("animsmith: cannot write evidence to stdout"),
+        stderr(&output).starts_with("animsmith: cannot write JSON output to stdout"),
         "stderr:\n{}",
         stderr(&output)
     );
@@ -738,7 +738,7 @@ fn a_refused_run_whose_stdout_is_closed_keeps_exit_1_and_diagnoses_on_stderr() {
         stderr(&output)
     );
     assert!(
-        stderr(&output).starts_with("animsmith: cannot write evidence to stdout"),
+        stderr(&output).starts_with("animsmith: cannot write JSON output to stdout"),
         "stderr:\n{}",
         stderr(&output)
     );

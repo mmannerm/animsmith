@@ -166,13 +166,15 @@ tangents.
 | 1 | At least one failing finding, a significant `diff`, pending repairs under `fix --dry-run`, or a `scale` refusal that is a property of the input asset. |
 | 2 | Operator/tool error: unopenable input, bad config, unsupported format, or invalid flags. |
 
-The code reports what the run *did*, never how well it could report it. If a
-producer's `--format json` record cannot reach stdout — a closed pipe, a full
-filesystem — the write failure is diagnosed on stderr and the outcome's code
-stands: `0` for a published pair, `1` for a `scale` refusal. Raising it would
-report an operator error for a run whose pair is already on disk, and would
-turn `scale … --format json | head` on a refused asset into exit `2`. Only
-stdout is affected; publication is already complete and is untouched.
+The code reports what the run *did*, never how well it could report it. This
+holds for **every** `--format json` path — `measure`, `lint`, `diff`,
+`convert`, `assemble`, `scale`. If the record cannot reach stdout — a closed
+pipe, a full filesystem — the write failure is diagnosed on stderr and the
+command's own code stands: `lint … --format json | head` still exits `1` for
+findings it found, `scale` still exits `1` for a refusal and `0` for a
+published pair. Raising it instead would report an operator error for work
+that was actually done, and would turn an asset-property refusal into exit
+`2`. Only stdout is affected; nothing about publication changes.
 
 A role-dependent check with missing prerequisites reports a typed coverage
 gap and does not fail the run — exit `0` means no failing findings among the
