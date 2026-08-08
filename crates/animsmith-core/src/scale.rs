@@ -299,16 +299,40 @@ impl ScaleTolerancePolicy {
         // five decades in random directions, and two blended skin slots. The
         // quantity measured is what each residual actually *demands* of this
         // count — `(observed - scalar_tolerance) / (magnitude * 2^-23)` — not
-        // its raw ulp count, because the scalar band pays first. The worst
-        // seen was `2.67` for `SkinMatrix`, `1.26` for `Bounds`, `0.42` for
-        // `RestTranslation`, and `0` for `UnaffectedInverseBind`, whose two
-        // sides are the identical `f32` expression on identical stored inputs.
-        // A further 320_000 candidates carrying a two-key translation track —
-        // which is what makes the sampled obligations run at all — demanded
-        // `0` for `Trajectory` and no more than the above for the rest.
-        // `4` is the next power of two above all of them, and it is also the
-        // analytic worst case for the arithmetic involved: composing `W * B`
-        // accumulates a four-term inner product per entry.
+        // its raw ulp count, because the scalar band pays first.
+        //
+        // The worst seen **in these populations** was `2.67` for
+        // `SkinMatrix`, `1.26` for `Bounds` and `0.42` for `RestTranslation`,
+        // with `0` for `Trajectory` over a further 320_000 candidates
+        // carrying a two-key translation track — which is what makes the
+        // sampled obligations run at all. `UnaffectedInverseBind` demanded
+        // `0`, and always will: its two sides are the identical `f32`
+        // expression on identical stored inputs.
+        //
+        // Those are population maxima and are recorded as such, not as maxima
+        // of the obligations. Every rig in all five populations takes its
+        // binds as the analytic inverse of its own rest world and is converted
+        // under rest/bind, and each choice removes a class: identity `W * B`
+        // on every slot means no two slots can cancel a vertex between them,
+        // and rest/bind leaves the two documents' chain magnitudes equal, so
+        // the `max` over sides never separates. Measured independently outside
+        // them the demands reach `2.49` for `SkinMatrix`, `1.72` for `Bounds`,
+        // `1.35` for `RestTranslation` and `1.02` for `Trajectory`.
+        //
+        // The `0` for `Trajectory` is the clearest artefact of the population
+        // rather than a property of the obligation: those 320_000 rigs never
+        // build a sampled chain that cancels, so the only `Trajectory`
+        // comparison they make has `chain = 0` on both sides and the term is
+        // arithmetically absent.
+        // `a_sampled_pose_whose_parent_chain_cancels_still_proves_its_trajectory`
+        // demands `0.26` of the count from an ordinary two-key translation
+        // track, and pins that the term is reached at all.
+        //
+        // `4` is the next power of two above every figure above, and it is
+        // also the analytic worst case for the arithmetic involved: composing
+        // `W * B` accumulates a four-term inner product per entry. That — not
+        // any one of the measured demands being the largest reachable — is
+        // what this constant rests on.
         //
         // Under the base this policy carried before the parent chain was
         // folded into it, the same populations demanded up to `41` — see
@@ -329,13 +353,19 @@ impl ScaleTolerancePolicy {
         // `a_joint_far_from_the_geometry_it_carries_still_proves_its_bounds`
         // fixture the term is `4.44` against a `W * B` of magnitude `1.0`:
         // `443 %` of the compared quantity's own magnitude. Measured on that
-        // rig, the smallest inverse-bind `x` shift still refused is `4.09`
-        // units. A regenerated bind wrong by four units is accepted.
+        // rig, the largest inverse-bind `x` shift still *accepted* is
+        // `4.09375` units; the smallest refused is the next binary32 above
+        // it. A regenerated bind wrong by four units is accepted. The bracket
+        // is pinned by
+        // `the_far_joint_rig_admits_a_four_unit_bind_shift_and_refuses_the_next_one_up`,
+        // because a floor quoted here and nowhere held to drifts — an earlier
+        // revision of this comment said `4.09`, which is on the accepted side
+        // of the real floor.
         //
         // Folding the parent chain into that magnitude does not move this
         // number: on that fixture `abs(W) * abs(B)` already reads `6.38e6`
         // against the chain's `3.19e6`, so the `max` is unchanged and the
-        // smallest refused shift is still `4.09` units. Across 2_000_000 skin
+        // floor is still `4.09375` units. Across 2_000_000 skin
         // slots of the sweep populations above the chain leaves the base
         // exactly as it was on `96.2 %` of them, and where it does bind it
         // widens by `1.26x` at the 99th percentile, `2.67x` at the 99.9th,
@@ -3241,6 +3271,23 @@ pub fn prove_scale(
             // documents' chains differ by the factor under whole-document
             // conversion, and the larger side's arithmetic is what both need
             // room for.
+            //
+            // `a_cancelling_chain_under_conversion_holds_rest_translation_to_the_larger_side`
+            // pins that reading the *source* side alone refuses a correct
+            // candidate, and
+            // `the_rest_translation_chain_term_still_refuses_an_error_a_few_ulps_above_it`
+            // pins the size of the term from above.
+            //
+            // Replacing the `max` with `after_chain` alone is an **equivalent
+            // mutation**, and is listed here rather than left as an unexplained
+            // survivor. Whole-document conversion scales every translation by
+            // the factor and leaves every linear part alone, so the two chains
+            // are exactly that factor apart; the source's rounding is rebased
+            // by the same factor before it is compared, so the residual scales
+            // with `after_chain` at either end of the factor range and
+            // `before_chain` can only ever over-provide. Under rest/bind the
+            // two chains are equal outright. No candidate can distinguish the
+            // two expressions, so no fixture can either.
             check_and_track_f32_rounded(
                 ProofResidualKind::RestTranslation,
                 translation_residual,
@@ -4444,7 +4491,17 @@ fn check_trajectory_residual_at(
         // The same magnitude the unanimated `RestTranslation` comparison
         // takes, read off the sampled pose this residual was composed from
         // rather than the rest pose: the two obligations differ only in which
-        // locals the chain ran on.
+        // locals the chain ran on. Its `max` is equivalent-under-mutation for
+        // the same reason and in the same direction — see the note there.
+        //
+        // Reaching this term at all needs a rig whose *sampled* parent chain
+        // cancels, which a clip over a rest pose that already cancels is the
+        // simplest way to build:
+        // `a_sampled_pose_whose_parent_chain_cancels_still_proves_its_trajectory`
+        // and `the_trajectory_chain_term_still_refuses_an_error_a_few_ulps_above_it`
+        // are those fixtures. Without one the only comparison this obligation
+        // makes has `chain = 0` on both sides, and every mutation of the term
+        // is a no-op on a quantity that is arithmetically absent.
         check_and_track_f32_rounded(
             ProofResidualKind::Trajectory,
             translation_residual,
@@ -5122,18 +5179,24 @@ impl SkinSlot {
 /// `rounding_magnitude` is what
 /// [`ScaleTolerancePolicy::f32_rounding_ulps`] is counted in for
 /// [`ProofResidualKind::Bounds`], and it is a max over every stage of the
-/// chain that produced the bound, not over the bound itself. Each
-/// contributing vertex's skinned position covers the final `W * B * p`
-/// transform, whose error scales with the point. The contributing slot's
-/// [`SkinSlot::rounding_magnitude`] covers the two stages before it: the
-/// composition that produced `W * B`, whose translation column cancelled two
-/// terms of magnitude `abs(W)`, and the parent chain that produced `W`, whose
-/// translation column may have cancelled two terms larger still. Each stage
-/// dominates the others by an unbounded ratio on some rig — a joint far from
-/// the geometry it carries for the second, a joint whose local offset points
-/// back along its parent's world translation for the third. Measured over
-/// 30_000 correct candidates, the skinned magnitude alone left residuals up
-/// to `1.07e7` of its own ulp; the full max leaves `1.26` over 2_390_000.
+/// chain that produced the bound, not over the bound itself. There are four
+/// stages, and each is a cancellation the stage after it can no longer see:
+/// the contributing vertex position `p`, which covers the `W * B * p`
+/// transform, since that transform runs on terms of size `abs(W * B) * abs(p)`
+/// and the weighted sum over slots that follows can cancel them; the blended
+/// skinned position that sum produced, which therefore covers nothing the sum
+/// cancelled; and the contributing slot's [`SkinSlot::rounding_magnitude`],
+/// which covers the two stages before those — the composition that produced
+/// `W * B`, whose translation column cancelled two terms of magnitude
+/// `abs(W)`, and the parent chain that produced `W`, whose translation column
+/// may have cancelled two terms larger still.
+///
+/// Each stage dominates the others by an unbounded ratio on some rig: two
+/// slots whose composed `W * B` oppose for the first, a joint far from the
+/// geometry it carries for the third, a joint whose local offset points back
+/// along its parent's world translation for the fourth. Measured over 30_000
+/// correct candidates, the skinned magnitude alone left residuals up to
+/// `1.07e7` of its own ulp; the full max leaves `1.26` over 2_390_000.
 struct BoundsAccumulator {
     min: Vec3,
     max: Vec3,
@@ -5277,7 +5340,38 @@ fn accumulate_skinned_bounds(
             } else {
                 skinned.as_dvec3().length()
             };
-            bounds.rounding_magnitude = bounds.rounding_magnitude.max(vertex_magnitude).max(length);
+            // The *unblended* vertex position is a fourth stage, and `length`
+            // does not cover it. `slot.matrix.transform_point3(position)` runs
+            // on terms of magnitude `abs(W * B) * abs(p)`, and the weighted sum
+            // over slots that follows can cancel those terms against each other
+            // — two slots whose composed `W * B` differ by a half turn send a
+            // `1000`-unit point to a blended `0` while each term still carries
+            // that point's own ulp. `skinned` is the sum *after* the
+            // cancellation, so its length shrinks with the result and not with
+            // the arithmetic, exactly as the composed `W * B`'s own magnitude
+            // does one stage earlier. Only a bind pose that is not the rest
+            // pose can reach this — with `W * B = I` on every slot there is
+            // nothing to cancel — which is why the fixtures of this section had
+            // to grow one that sets binds independently of the rest world:
+            // `two_slots_whose_composed_binds_cancel_a_vertex_still_prove_its_bounds`.
+            //
+            // Taken with the same fast-path/fallback shape as `length` above,
+            // and for the same reason: a plain `f32` `Vec3::length` here
+            // reintroduces the `sqrt(f32::MAX)` refusal boundary that
+            // `a_rig_whose_skinned_extent_passes_the_square_root_of_f32_max_still_proves`
+            // pins against, since that fixture's extent comes from a position
+            // past the boundary in the first place.
+            let plen = position.length();
+            let plen = if plen.is_finite() {
+                f64::from(plen)
+            } else {
+                position.as_dvec3().length()
+            };
+            bounds.rounding_magnitude = bounds
+                .rounding_magnitude
+                .max(vertex_magnitude)
+                .max(length)
+                .max(plen);
             bounds.touched = true;
         }
     }
@@ -11743,7 +11837,27 @@ mod tests {
         // Four ulps of the skinned magnitude alone is `4.6e-7`; four ulps of
         // the magnitude the composition ran on is `4.4`. The gap is a factor
         // of `9.6e6`, and only the second admits this correct candidate.
-        let doc = rotating_rig_document(
+        let doc = far_joint_document();
+        let plan = rest_bind_plan(&doc, 3190.0);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan)
+            .expect("a distant joint's bounds must still prove");
+        assert!(
+            proof.bounds_residual > 4.0 * 1.0 * f64::from(f32::EPSILON),
+            "bounds residual {} no longer exceeds four ulps of the skinned magnitude",
+            proof.bounds_residual
+        );
+    }
+
+    /// The far-joint rig: joints `3.2e6` from the origin carrying geometry
+    /// within one unit of themselves, so `W * B` is near-identity while the
+    /// composition that produced it ran on `6.4e6`.
+    ///
+    /// This is the rig DESIGN.md §D.1 and
+    /// [`ScaleTolerancePolicy::APPENDIX_D_V3`] quote the cost of the rounding
+    /// term on, so the two fixtures that read it share one definition.
+    fn far_joint_document() -> Document {
+        rotating_rig_document(
             [
                 Quat::from_xyzw(0.84815156, -0.23002678, -0.2828825, -0.3843229),
                 Quat::from_xyzw(0.6066518, -0.10115066, -0.7511764, 0.23974188),
@@ -11752,14 +11866,153 @@ mod tests {
             [Vec3::new(0.0, 1000.0, 0.0), Vec3::new(200.0, -300.0, 400.0)],
             &[Vec3::new(0.5, -0.25, 0.125), Vec3::new(-0.75, 0.5, -0.25)],
             &[[1.0, 0.0, 0.0, 0.0], [0.5, 0.5, 0.0, 0.0]],
-        );
+        )
+    }
+
+    #[test]
+    fn the_far_joint_rig_admits_a_four_unit_bind_shift_and_refuses_the_next_one_up() {
+        // The documented cost of the rounding term, pinned rather than
+        // recomputed by hand each time it is quoted. DESIGN.md §D.1 and
+        // `APPENDIX_D_V3` both state this floor, and nothing else in the tree
+        // held them to it — an earlier revision stated `4.09`, which is on the
+        // *accepted* side of the real floor and so described a bracket that
+        // does not exist.
+        //
+        // The floor is `4.09375`: a shift of exactly that much is admitted and
+        // the next binary32 above it, `4.0937502`, is refused by `SkinMatrix`
+        // at `observed: 3.0625` against `tolerance: 3.0423`. The observed
+        // residual moves in steps rather than continuously, because it is the
+        // stored bind's own `f32` quantization at `3.2e6` — which is what the
+        // section says the term is covering.
+        let doc = far_joint_document();
         let plan = rest_bind_plan(&doc, 3190.0);
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
-        let proof = prove_scale(&doc, &candidate, &plan)
-            .expect("a distant joint's bounds must still prove");
+        let shifted = |shift: f32| {
+            let mut broken = candidate.document().clone();
+            broken.assets.instances[0].skin_ibms[0].w_axis.x += shift;
+            prove_scale(&doc, &ScaleCandidate { document: broken }, &plan)
+        };
+
+        shifted(4.09375).expect("a 4.09375-unit bind shift is inside the documented floor");
+        let error = shifted(4.094).expect_err("the next shift up must be refused");
         assert!(
-            proof.bounds_residual > 4.0 * 1.0 * f64::from(f32::EPSILON),
-            "bounds residual {} no longer exceeds four ulps of the skinned magnitude",
+            matches!(
+                error,
+                ScaleError::ProofResidualExceeded {
+                    kind: ProofResidualKind::SkinMatrix,
+                    ..
+                }
+            ),
+            "expected a refused skin matrix just above the floor, got {error:?}"
+        );
+    }
+
+    /// A half turn about `z`, exactly: the composed `W * B` of the second
+    /// slot in [`cancelling_blend_document`], written as literals because
+    /// `Quat::from_rotation_z(PI)` is not exact and the cancellation this
+    /// fixture depends on is.
+    const HALF_TURN_Z: Mat4 = Mat4::from_cols(
+        Vec4::new(-1.0, 0.0, 0.0, 0.0),
+        Vec4::new(0.0, -1.0, 0.0, 0.0),
+        Vec4::new(0.0, 0.0, 1.0, 0.0),
+        Vec4::new(0.0, 0.0, 0.0, 1.0),
+    );
+
+    /// Two skin slots whose composed `W * B` differ by [`HALF_TURN_Z`], and
+    /// one vertex `1000` units out weighted equally across both — so the
+    /// weighted sum cancels to the origin while each term still carries the
+    /// rounding of a `1000`-unit transform.
+    ///
+    /// The joints themselves sit within `3.2e-3` of the origin, so neither
+    /// the composition magnitude nor the parent chain can stand in for the
+    /// vertex: every stage *except* the vertex is small here, which is what
+    /// isolates the stage under test.
+    ///
+    /// Unlike every other fixture in this section this one does **not** take
+    /// `skin_ibms` from [`rotating_rig_document`], whose binds are the
+    /// analytic inverse of the rest world and therefore make `W * B` the
+    /// identity on every slot. Identity slots cannot cancel against each
+    /// other at all, which is precisely why no fixture here caught this: a
+    /// bind pose that is not the rest pose is ordinary content, and it is the
+    /// only way to reach the cancellation. The binds are inverted in `f64`
+    /// for [`far_joint_overflow_document`]'s reason.
+    fn cancelling_blend_document() -> Document {
+        let rotations = [
+            Quat::from_xyzw(-0.81788284, 0.343121, -0.45392478, -0.085369624),
+            Quat::from_xyzw(-0.12301501, 0.043325406, -0.015209139, 0.991342),
+        ];
+        let locals = [Vec3::new(0.0, 1e-6, 0.0), Vec3::new(0.3e-6, 0.4e-6, 0.5e-6)];
+        let mut doc = rotating_rig_document(
+            rotations,
+            3190.0,
+            locals,
+            &[Vec3::new(1000.0, 0.0, 0.0)],
+            &[[0.5, 0.5, 0.0, 0.0]],
+        );
+        let first = Mat4::from_scale(Vec3::splat(3190.0))
+            * Mat4::from_rotation_translation(rotations[0], locals[0]);
+        let second = first * Mat4::from_rotation_translation(rotations[1], locals[1]);
+        // `W_0 * B_0 = I` and `W_1 * B_1` a half turn about `z`, so the two
+        // slots send `(1000, 0, 0)` to `(1000, 0, 0)` and `(-1000, 0, 0)`.
+        doc.assets.instances[0].skin_ibms = vec![
+            first.as_dmat4().inverse().as_mat4(),
+            (second.as_dmat4().inverse() * HALF_TURN_Z.as_dmat4()).as_mat4(),
+        ];
+        doc
+    }
+
+    #[test]
+    fn two_slots_whose_composed_binds_cancel_a_vertex_still_prove_its_bounds() {
+        // The blended skinned point is a fourth stage of the chain the bounds
+        // magnitude maxes over, and the blend can cancel just as the
+        // composition and the parent chain can. Here it cancels completely:
+        // `0.5 * (1000, 0, 0) + 0.5 * (-1000, 0, 0)` is the origin, so the
+        // skinned extent's length is `0` and contributes nothing, while the
+        // joints are within `3.2e-3` of the origin so the composition and
+        // chain magnitudes are near `1`. Every stage the magnitude knew about
+        // is therefore small, and the arithmetic still ran on `1000`.
+        //
+        // Without the vertex position in the base this correct candidate is
+        // refused at `observed: 6.1e-5` — one ulp of `1000` — against a
+        // `1.48e-6` tolerance, a demand of `503` ulps. At `abs(p) = 1e5` the
+        // same rig demands `65_527`, so this is not a count that could have
+        // been raised.
+        let doc = cancelling_blend_document();
+        let plan = rest_bind_plan(&doc, 3190.0);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+
+        // The cancellation is the fixture, so it is asserted before what it
+        // costs: a rig that stopped cancelling passes below for want of a
+        // defect rather than because the base covers the vertex.
+        let worlds = rest_world_pose(&doc.skeleton).unwrap();
+        let instance = &doc.assets.instances[0];
+        let mut blended = Vec3::ZERO;
+        let mut slot_magnitude = 0.0f64;
+        for slot in 0..2 {
+            let joint = instance.skin_joints[slot];
+            let bind = instance_bind(&doc, instance, slot, joint).unwrap();
+            let composed = SkinSlot::compose(
+                worlds.matrices[joint],
+                bind,
+                worlds.translation_chain[joint],
+            );
+            blended += 0.5
+                * composed
+                    .matrix
+                    .transform_point3(Vec3::new(1000.0, 0.0, 0.0));
+            slot_magnitude = slot_magnitude.max(composed.rounding_magnitude);
+        }
+        assert!(
+            blended.length() < 1.0 && slot_magnitude < 2.0,
+            "the blend no longer cancels ({blended}) or the slots are no longer near-unit \
+             ({slot_magnitude}): the vertex is then covered by another stage",
+        );
+
+        let proof = prove_scale(&doc, &candidate, &plan)
+            .expect("a correct candidate whose slots cancel a vertex must still prove");
+        assert!(
+            proof.bounds_residual > 4.0 * slot_magnitude.max(1.0) * f64::from(f32::EPSILON),
+            "bounds residual {} no longer exceeds four ulps of every stage but the vertex",
             proof.bounds_residual
         );
     }
@@ -11961,6 +12214,31 @@ mod tests {
         doc
     }
 
+    /// The reproducer rotations and a second joint whose local translation is
+    /// `-R0^-1 t0`, so the two terms its world translation is composed from
+    /// cancel: at `factor` the chain runs on `factor * 1000` per term and the
+    /// surviving world translation is a rounding artefact of it.
+    ///
+    /// The cancellation is a property of the two locals alone, not of
+    /// `factor` — the root scales both terms equally — so the same rig serves
+    /// rest/bind at `3190` and whole-document conversion from `1`.
+    fn cancelling_chain_document(factor: f32) -> Document {
+        rotating_rig_document(
+            [
+                Quat::from_xyzw(-0.81788284, 0.343121, -0.45392478, -0.085369624),
+                Quat::from_xyzw(-0.12301501, 0.043325406, -0.015209139, 0.991342),
+            ],
+            factor,
+            // The second local is `-R0^-1 (0, 1000, 0)`, as literals.
+            [
+                Vec3::new(0.0, 1000.0, 0.0),
+                Vec3::new(483.7628, 749.96, 451.14697),
+            ],
+            &[Vec3::new(0.5, -0.25, 0.125), Vec3::new(-0.75, 0.5, -0.25)],
+            &[[1.0, 0.0, 0.0, 0.0], [0.5, 0.5, 0.0, 0.0]],
+        )
+    }
+
     #[test]
     fn a_parent_chain_whose_translations_cancel_still_proves_its_skin() {
         // The magnitude a *composition* rounds against is not on its own the
@@ -11976,20 +12254,7 @@ mod tests {
         // composed skin matrix nonetheless differs between the two documents
         // by `6.25e-2`, which is `524288` binary32 ulps of that base and
         // `0.082` of the parent chain's.
-        let doc = rotating_rig_document(
-            [
-                Quat::from_xyzw(-0.81788284, 0.343121, -0.45392478, -0.085369624),
-                Quat::from_xyzw(-0.12301501, 0.043325406, -0.015209139, 0.991342),
-            ],
-            3190.0,
-            // The second local is `-R0^-1 (0, 1000, 0)`, as literals.
-            [
-                Vec3::new(0.0, 1000.0, 0.0),
-                Vec3::new(483.7628, 749.96, 451.14697),
-            ],
-            &[Vec3::new(0.5, -0.25, 0.125), Vec3::new(-0.75, 0.5, -0.25)],
-            &[[1.0, 0.0, 0.0, 0.0], [0.5, 0.5, 0.0, 0.0]],
-        );
+        let doc = cancelling_chain_document(3190.0);
         let plan = rest_bind_plan(&doc, 3190.0);
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
 
@@ -12033,6 +12298,206 @@ mod tests {
             "rest translation residual {} no longer exceeds the per-axis band its own \
              translation buys",
             proof.rest_translation_residual
+        );
+    }
+
+    /// [`cancelling_chain_document`] under whole-document conversion, which is
+    /// the only operation that puts the two documents' chain magnitudes a
+    /// factor apart: rest/bind moves the factor from the root's scale into the
+    /// joint translations, so both sides compose the same `3.19e6` and every
+    /// rest/bind fixture is blind to which side the `max` reads.
+    ///
+    /// Here the source chain is `2000` and the candidate's is `6.38e6`, and the
+    /// residual the larger side's rounding leaves is `0.197`.
+    fn cancelling_chain_conversion() -> (Document, ScalePlan, ScaleCandidate) {
+        let doc = cancelling_chain_document(1.0);
+        let capability = complete_capability();
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::WholeDocumentLinearUnits { factor: 3190.0 },
+            document: &doc,
+            capability: &capability,
+        })
+        .expect("a whole-document conversion plans at any positive factor");
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        (doc, plan, candidate)
+    }
+
+    #[test]
+    fn a_cancelling_chain_under_conversion_holds_rest_translation_to_the_larger_side() {
+        // `RestTranslation`'s magnitude is the parent chain's, maxed over the
+        // two documents, and this is the fixture that pins both halves of that
+        // sentence. The chain cancels, so the surviving world translation is
+        // `6.1e-5` on the source side and the residual between the two
+        // documents is `0.197` — nothing the compared translations' own
+        // magnitudes could ever buy. And the two chains are `3190x` apart, so
+        // reading the source side alone buys the candidate's arithmetic a band
+        // derived from a rig `3190` times smaller.
+        //
+        // Measured: the residual is `0.197` against `3.04` from the larger
+        // chain, `9.58e-4` from the smaller, and `3.92e-6` with no chain term
+        // at all. Only the first admits this correct candidate.
+        let (doc, plan, candidate) = cancelling_chain_conversion();
+        let source_chain = rest_world_pose(&doc.skeleton).unwrap().translation_chain[2];
+        let candidate_chain = rest_world_pose(&candidate.document().skeleton)
+            .unwrap()
+            .translation_chain[2];
+        assert!(
+            candidate_chain > 1e3 * source_chain,
+            "the two sides' chains are no longer a factor apart: {source_chain} / \
+             {candidate_chain}",
+        );
+
+        let proof = prove_scale(&doc, &candidate, &plan).expect(
+            "the two documents' chain magnitudes are 3190x apart, and the larger side's \
+             arithmetic is what this obligation must be given room for",
+        );
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
+        assert!(
+            proof.rest_translation_residual > policy.f32_rounded_tolerance(0.0, 0.0, source_chain),
+            "rest translation residual {} no longer exceeds what the smaller side's chain \
+             buys, so this fixture no longer separates the two sides",
+            proof.rest_translation_residual
+        );
+    }
+
+    #[test]
+    fn the_rest_translation_chain_term_still_refuses_an_error_a_few_ulps_above_it() {
+        // The over-acceptance direction for `RestTranslation`, which the
+        // acceptance fixtures above cannot reach: a term that is merely
+        // *present* is not yet a term of the right size, and nothing else pins
+        // its size from above. On this rig the band is `3.04` units, so a
+        // `10`-unit displacement of an affected joint is refused and a `1`-unit
+        // one is not. That is the price the cancellation buys, stated as a
+        // bracket: any inflation of the magnitude by more than `6.4x` admits a
+        // `10`-unit build error on a rig whose geometry spans one unit.
+        let (doc, plan, candidate) = cancelling_chain_conversion();
+
+        let mut broken = candidate.document().clone();
+        broken.skeleton.bones[2].rest.translation.x += 10.0;
+        let broken = ScaleCandidate { document: broken };
+        let error = prove_scale(&doc, &broken, &plan)
+            .expect_err("a 10-unit joint displacement must still be refused");
+        let ScaleError::ProofResidualExceeded {
+            kind: ProofResidualKind::RestTranslation,
+            observed,
+            tolerance,
+        } = error
+        else {
+            panic!("expected a refused rest translation, got {error:?}");
+        };
+        assert!(
+            observed > tolerance && tolerance < 10.0,
+            "rest translation band moved: observed {observed}, tolerance {tolerance}"
+        );
+
+        // And the band really is a band: an error inside it is admitted, which
+        // is the cost of admitting the correct candidate above rather than an
+        // accident of this fixture.
+        let mut inside = candidate.document().clone();
+        inside.skeleton.bones[2].rest.translation.x += 1.0;
+        let inside = ScaleCandidate { document: inside };
+        prove_scale(&doc, &inside, &plan)
+            .expect("an error inside the chain-derived band is admitted, by construction");
+    }
+
+    /// [`cancelling_chain_conversion`]'s rig with an ordinary two-key linear
+    /// translation track on the first joint, whose value at `t = 0` is that
+    /// joint's own rest translation — so the sampled parent chain cancels at
+    /// that sample exactly as the rest chain does, and the sampled obligations
+    /// run at all.
+    ///
+    /// Without a track like this the only `Trajectory` comparison any fixture
+    /// in this section makes has `chain = 0` on both sides, which makes the
+    /// term arithmetically absent and every mutation of it a no-op.
+    fn cancelling_chain_clip_conversion() -> (Document, ScalePlan, ScaleCandidate) {
+        let mut doc = cancelling_chain_document(1.0);
+        doc.clips.push(Clip {
+            name: "clip".into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 1,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Vec3s(vec![
+                    Vec3::new(0.0, 1000.0, 0.0),
+                    Vec3::new(0.0, 2000.0, 0.0),
+                ]),
+            }],
+        });
+        let capability = complete_capability();
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::WholeDocumentLinearUnits { factor: 3190.0 },
+            document: &doc,
+            capability: &capability,
+        })
+        .expect("a whole-document conversion plans at any positive factor");
+        assert!(plan.proof_obligations().prove_trajectories);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        (doc, plan, candidate)
+    }
+
+    #[test]
+    fn a_sampled_pose_whose_parent_chain_cancels_still_proves_its_trajectory() {
+        // `Trajectory` takes the same chain magnitude `RestTranslation` does,
+        // read off the sampled pose rather than the rest pose, and this is the
+        // fixture that makes that term do work. At `t = 0` the track drives the
+        // first joint to its own rest translation, so the sampled chain cancels
+        // exactly as the rest chain does and the sampled world translation is a
+        // rounding artefact of `6.38e6`.
+        //
+        // Measured: the trajectory residual is `0.197` against `3.04` from the
+        // larger side's sampled chain, `9.58e-4` from the smaller, and `3.92e-6`
+        // with no chain term. It is the rest residual to the digit, because at
+        // this sample the two poses are the same pose — which is the point:
+        // the two obligations differ only in which locals the chain ran on.
+        let (doc, plan, candidate) = cancelling_chain_clip_conversion();
+        let proof = prove_scale(&doc, &candidate, &plan)
+            .expect("a correct candidate whose sampled chain cancels must still prove");
+        assert_eq!(proof.sample_time_count, 2);
+        let source_chain = rest_world_pose(&doc.skeleton).unwrap().translation_chain[2];
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
+        assert!(
+            proof.trajectory_residual > policy.f32_rounded_tolerance(0.0, 0.0, source_chain),
+            "trajectory residual {} no longer exceeds what the smaller side's chain buys, so \
+             this fixture no longer exercises the sampled chain term",
+            proof.trajectory_residual
+        );
+    }
+
+    #[test]
+    fn the_trajectory_chain_term_still_refuses_an_error_a_few_ulps_above_it() {
+        // The over-acceptance direction for `Trajectory`, as above. Both keys
+        // move together so the displacement is present at every sample rather
+        // than only at the cancelling one, which is the shape of a track that
+        // was rebased in the wrong basis.
+        //
+        // `10` units is the bracket: `100` is refused by `TrackValue` first —
+        // that obligation compares the key values themselves against a `31.9`
+        // band here — so a larger displacement would stop testing this
+        // obligation at all.
+        let (doc, plan, candidate) = cancelling_chain_clip_conversion();
+
+        let mut broken = candidate.document().clone();
+        let TrackValues::Vec3s(values) = &mut broken.clips[0].tracks[0].values else {
+            panic!("expected a vec3 track");
+        };
+        values[0].x += 10.0;
+        values[1].x += 10.0;
+        let broken = ScaleCandidate { document: broken };
+        let error = prove_scale(&doc, &broken, &plan)
+            .expect_err("a 10-unit sampled displacement must still be refused");
+        let ScaleError::ProofResidualExceeded {
+            kind: ProofResidualKind::Trajectory,
+            observed,
+            tolerance,
+        } = error
+        else {
+            panic!("expected a refused trajectory, got {error:?}");
+        };
+        assert!(
+            observed > tolerance && tolerance < 10.0,
+            "trajectory band moved: observed {observed}, tolerance {tolerance}"
         );
     }
 
