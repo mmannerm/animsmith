@@ -845,6 +845,14 @@ below the `1e-5` the relative band already allows. The `2^-23` is
   demand unchanged, because the sweep draws non-negative weights — which is why
   it is held by a named fixture and why the sweep's silence about it is
   recorded here rather than read as evidence.
+
+  Whether a mixed-sign weight should be a typed refusal upstream instead is
+  **issue #336**: glTF requires `WEIGHTS_n` to be non-negative, so refusing it
+  would restore convexity and make this stage provably redundant rather than
+  provably necessary. Until that is decided this stage is what carries such a
+  blend, and the fixture above is the evidence that it is load-bearing today.
+  #336 keeps the rig either way — pinning the refusal, or pinning that stage 2
+  carries it.
   `a_rig_whose_skinned_extent_passes_the_square_root_of_f32_max_still_proves`
   additionally holds this stage's `f32` overflow domain.
 
@@ -1048,8 +1056,11 @@ tolerance: 1.531e-5 }`.
 That limit is pre-existing rather than introduced by the rounding term, and the
 term narrows it: at `f32_rounding_ulps = 0` the same rig is refused from depth
 `64`. Widening the count is not the fix — the base is what fails to describe
-the arithmetic, exactly as in the three revisions below — and a chain-aware
-base is future work rather than something this section claims.
+the arithmetic, exactly as in the three revisions below. The chain-aware base
+is tracked as **issue #337**, which asks for a magnitude that accumulates
+across links rather than taking a `max` over them, and for the calibration
+sweep to carry depths beyond two before `4` is confirmed or changed from that
+measurement.
 
 A residual above the count is evidence about the *magnitude* before it is
 evidence about the count. Three revisions have now found the magnitude wrong
@@ -1124,7 +1135,8 @@ none of them was ever sound doing. The converse — that each obligation still
 anything here establishes, and an earlier revision of this section made it. The
 count is a fixed number of ulps of a base that describes one composition, so on
 a chain deep enough for the link errors to accumulate it is exceeded by
-rounding alone: see the depth bracket under **The calibration sweep** above.
+rounding alone: see the depth bracket under **The calibration sweep** above,
+and **issue #337**.
 What is pinned is a bracket per obligation, not a general guarantee — the
 smallest real error each one still refuses is measured and checked in, and it
 is `4.09375` units of bind shift on the far-joint rig.

@@ -345,7 +345,9 @@ impl ScaleTolerancePolicy {
         // is an ordinary straight chain that demands `0.685` ulps at depth `8`
         // and `4.833` at `256`, and is refused from depth `180` up. The count
         // is calibrated to the depths this sweep and the named fixtures reach
-        // — three — and that fixture is where it stops holding.
+        // — three — and that fixture is where it stops holding. Tracked as
+        // issue #337, which asks for a chain magnitude that accumulates across
+        // links and a sweep carrying depths beyond two.
         //
         // Under the base this policy carried before the parent chain was
         // folded into it, a correct candidate demanded up to `41` — see
@@ -5342,7 +5344,10 @@ impl SkinSlot {
 /// `a_blend_whose_weights_nearly_cancel_amplifies_a_vertex_and_still_proves_its_bounds`
 /// is that rig — stage 1 reads `1.000e3`, stage 3 `1.000e0`, and the blended
 /// point `1.997e8` — and dropping this stage refuses it outright at
-/// `observed: 8.929` against `tolerance: 5.969e-4`.
+/// `observed: 8.929` against `tolerance: 5.969e-4`. Whether a mixed-sign
+/// weight should instead be a typed refusal upstream, which would restore
+/// convexity and let this stage be deleted, is issue #336; until it is
+/// decided, this stage is what carries that blend.
 /// `a_rig_whose_skinned_extent_passes_the_square_root_of_f32_max_still_proves`
 /// additionally holds its `f32` overflow domain. See DESIGN.md Appendix D
 /// §D.1.
@@ -12401,6 +12406,13 @@ mod tests {
         // stage 2 dropped this correct candidate is refused outright:
         // `ProofResidualExceeded { kind: Bounds, observed: 8.929,
         // tolerance: 5.969e-4 }`.
+        //
+        // Issue #336 asks whether a mixed-sign weight should be a typed
+        // refusal upstream instead — glTF requires `WEIGHTS_n` to be
+        // non-negative — which would restore convexity and let stage 2 be
+        // deleted. This fixture is the evidence that stage 2 is load-bearing
+        // until that is decided, and #336 says it stays either way: pinning
+        // the refusal, or pinning that stage 2 carries the blend.
         let doc = amplifying_blend_document();
         let plan = rest_bind_plan(&doc, 3190.0);
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
@@ -13227,7 +13239,11 @@ mod tests {
         //
         // This is pre-existing rather than introduced here, and this PR
         // narrows it: with `f32_rounding_ulps = 0` — which is `main`'s
-        // behaviour — the same rig is refused from depth `64`.
+        // behaviour — the same rig is refused from depth `64`. Tracked as
+        // issue #337, which asks for a chain magnitude that accumulates
+        // across links rather than taking a `max` over them, measured
+        // against a sweep carrying depths beyond two. This fixture is the
+        // characterisation of today's behaviour, not an endorsement of it.
         let (shallow_demand, shallow) = deep_chain_demand(8);
         shallow.expect("a shallow chain is inside the count and must still prove");
         assert!(
