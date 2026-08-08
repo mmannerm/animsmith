@@ -402,8 +402,10 @@ pub(crate) fn run(request: &Request, tool: ToolInfo) -> Result<ExitCode, String>
     )?;
     match request.format {
         // The very bytes the evidence file received, not a second rendering
-        // of the same record.
-        Format::Json => emit(&published.evidence_bytes)?,
+        // of the same record. A stdout that cannot take them is diagnosed
+        // rather than raised: the pair is on disk, and a run that published
+        // it does not report an operator error.
+        Format::Json => emit(&published.evidence_bytes),
         Format::Text => print!(
             "{}",
             render::render_assemble_published(

@@ -55,6 +55,15 @@ temporary files and therefore land with mode `0600` rather than the `0644` a
 plain create under the process umask would produce; this is shared by every
 producer that publishes a pair.
 
+The `--format json` copy on stdout is a **view of the pair, never a member of
+it**. Both producers serialize their record exactly once and hand those same
+bytes to the evidence temporary and to stdout, so the file and the stream are
+identical by construction rather than by two serializers agreeing. Because the
+stream is not a destination, a stdout that cannot take it — a closed pipe, a
+full filesystem — changes nothing about publication and does not change the
+exit code: the failure is diagnosed on stderr and the outcome stands. Read the
+`--evidence` file, not stdout, when the record must be durable.
+
 Conversion evidence v1 remains a historical immutable contract at
 `urn:animsmith:schema:conversion-evidence:1`. The current CLI emits v2
 exclusively; regenerate v1 evidence when a v2 consumer is required.

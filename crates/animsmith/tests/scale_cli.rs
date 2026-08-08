@@ -16,7 +16,7 @@ use animsmith_testkit::{
 };
 use serde_json::Value;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 const SCALE_EVIDENCE_SCHEMA: &str =
     include_str!("../../../docs/schemas/scale-evidence-v1.schema.json");
@@ -57,8 +57,9 @@ impl Fixture {
     /// The factor is passed as `--expected-factor=<value>` rather than as two
     /// arguments so that a negative one is not read as a bundle of short
     /// flags: a factor the operation must reject has to reach the operation.
-    fn rest_bind(&self, expected_factor: &str, format: &str) -> Output {
-        animsmith()
+    fn rest_bind_command(&self, expected_factor: &str, format: &str) -> Command {
+        let mut command = animsmith();
+        command
             .current_dir(self.dir.path())
             .args([
                 "scale",
@@ -72,9 +73,32 @@ impl Fixture {
                 "0",
             ])
             .arg(format!("--expected-factor={expected_factor}"))
-            .args(["--evidence", "out.json", "--format", format])
+            .args(["--evidence", "out.json", "--format", format]);
+        command
+    }
+
+    fn rest_bind(&self, expected_factor: &str, format: &str) -> Output {
+        self.rest_bind_command(expected_factor, format)
             .output()
             .expect("runs animsmith")
+    }
+
+    /// `scale rest-bind --format json` with a stdout nobody is reading.
+    ///
+    /// The pipe's read end is dropped **before** the child is spawned, so its
+    /// stdout has no reader from the moment it exists: the write failure is a
+    /// property of the setup rather than a race against how quickly the child
+    /// reaches its write.
+    fn rest_bind_into_closed_stdout(&self, expected_factor: &str) -> Output {
+        let (reader, writer) = std::io::pipe().expect("creates a pipe");
+        drop(reader);
+        self.rest_bind_command(expected_factor, "json")
+            .stdout(Stdio::from(writer))
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawns animsmith")
+            .wait_with_output()
+            .expect("waits for animsmith")
     }
 
     fn whole_document(&self, factor: &str, format: &str) -> Output {
@@ -664,6 +688,61 @@ fn a_refusal_in_text_mode_writes_prose_to_stderr_and_nothing_to_stdout() {
         "stderr:\n{}",
         stderr(&output)
     );
+    assert!(!fixture.path("out.glb").exists());
+    assert!(!fixture.path("out.json").exists());
+}
+
+// --- A stdout that cannot take the record ----------------------------------
+
+/// A stdout nobody is reading is a failure to **report** the run, not to
+/// perform it: the pair is already on disk. Reporting exit `2` would say the
+/// invocation was wrong when it was not, and would contradict what exit `2`
+/// means everywhere else in this CLI.
+#[test]
+fn a_published_run_whose_stdout_is_closed_keeps_exit_0_and_diagnoses_on_stderr() {
+    let fixture = Fixture::new();
+    let output = fixture.rest_bind_into_closed_stdout("0.01");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    // Ours, not the OS's: the platform's wording for a reader-less pipe is
+    // not this contract.
+    assert!(
+        stderr(&output).starts_with("animsmith: cannot write evidence to stdout"),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    // And the run really did publish, which is why it is a success.
+    assert!(fixture.path("out.glb").is_file());
+    assert_eq!(read_json(&fixture.path("out.json"))["outcome"], "published");
+}
+
+/// The same for a refusal, where raising the write failure is an actual
+/// inversion rather than merely a wrong number: `scale … --format json | head`
+/// on a refused asset would report an operator error (`2`) for something that
+/// is a property of the asset (`1`) — the split this crate's exit codes exist
+/// to make legible.
+#[test]
+fn a_refused_run_whose_stdout_is_closed_keeps_exit_1_and_diagnoses_on_stderr() {
+    let fixture = Fixture::new();
+    let output = fixture.rest_bind_into_closed_stdout("0.02");
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a refusal whose record could not be printed is still a refusal; stderr:\n{}",
+        stderr(&output)
+    );
+    assert!(
+        stderr(&output).starts_with("animsmith: cannot write evidence to stdout"),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    // Nothing published, exactly as when the record is read successfully.
     assert!(!fixture.path("out.glb").exists());
     assert!(!fixture.path("out.json").exists());
 }

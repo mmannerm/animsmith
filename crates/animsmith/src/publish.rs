@@ -47,6 +47,7 @@
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 /// Serialize one evidence record as the pretty, newline-terminated JSON that
@@ -72,30 +73,43 @@ pub(crate) fn serialize_record<T: Serialize>(record: &T) -> Result<Vec<u8>, Stri
     Ok(bytes)
 }
 
-/// Write exactly these bytes to stdout.
+/// Write exactly these bytes to stdout, diagnosing a write failure on stderr
+/// rather than raising it.
 ///
 /// Takes bytes rather than a value so a caller cannot accidentally emit a
-/// second serialization of the record it already staged, and reports a write
-/// failure as an operator error rather than panicking the way the `println!`
-/// behind [`crate::render::print_json`] does.
+/// second serialization of the record it already staged, and never panics the
+/// way the `println!` behind [`crate::render::print_json`] does.
 ///
-/// # Errors
+/// # Why a failure here does not change the exit code
 ///
-/// Returns an operator error when stdout cannot take the bytes. Any pair has
-/// already been published when this happens: the failure is in reporting the
-/// run, not in performing it.
-pub(crate) fn emit(bytes: &[u8]) -> Result<(), String> {
+/// By the time this runs the work is over: the pair is already published, or
+/// the refusal is already determined and is a fact about the asset either
+/// way. The failure is in **reporting** the run, not in performing it.
+///
+/// Raising it would be actively wrong, not merely noisy. `scale … --format
+/// json | head` on a refused asset would exit `2` instead of `1`, turning an
+/// asset-property refusal into an operator error — the exact inversion the
+/// exit-code split documented on [`crate::scale`] exists to prevent. On the
+/// published path it would report `2` for a run that left a complete, correct
+/// pair on disk, contradicting what exit `2` means everywhere else in this
+/// CLI. So the diagnosis goes to stderr and the outcome stands.
+pub(crate) fn emit(bytes: &[u8]) {
     // Locked once for the whole record rather than per `write` call, so a
     // concurrently printed line cannot land inside the JSON document.
-    emit_to(&mut std::io::stdout().lock(), bytes)
+    if let Err(error) = emit_to(&mut std::io::stdout().lock(), bytes) {
+        // Best effort, and deliberately not `eprint!`: if stderr is gone too
+        // then there is nothing left to report with, and `eprint!` would
+        // panic for exactly the reason stdout just failed.
+        let _ =
+            std::io::stderr().write_all(crate::render::render_operator_error(&error).as_bytes());
+    }
 }
 
-/// Write exactly these bytes to `sink`, reporting a failure as an operator
-/// error.
+/// Write exactly these bytes to `sink`, reporting a failure as a typed error.
 ///
-/// Split from [`emit`] purely so the failure path is reachable from a test:
-/// stdout cannot be made to fail on demand from inside the process, and a
-/// broken pipe or a full disk turning into a panic rather than a diagnosed
+/// Split from [`emit`] purely so the failure path is reachable from a unit
+/// test: stdout cannot be made to fail on demand from inside the process, and
+/// a broken pipe or a full disk turning into a panic rather than a diagnosed
 /// error is exactly the behaviour this replaced.
 ///
 /// [`std::io::Write::write_all`] also covers the short-write case: it loops
@@ -385,9 +399,11 @@ mod tests {
     }
 
     #[test]
-    fn a_sink_that_refuses_the_record_is_an_operator_error_and_not_a_panic() {
+    fn a_sink_that_refuses_the_record_is_a_typed_error_and_not_a_panic() {
         // The behaviour this replaced was `println!`'s panic, which reaches
         // the operator as exit 101 and a backtrace rather than a diagnosis.
+        // What `emit` then does with the error — diagnose it and leave the
+        // outcome's exit code alone — is pinned end to end by the CLI tests.
         let error =
             emit_to(&mut BrokenPipe, b"{}\n").expect_err("a closed pipe must not be ignored");
         assert!(
@@ -429,6 +445,97 @@ mod tests {
         let mut sink = Vec::new();
         emit_to(&mut sink, &record).expect("a writable sink takes the record");
         assert_eq!(sink, record);
+    }
+
+    /// Every `.rs` file directly under this crate's `src/`, as
+    /// `(file name, text)`, sorted.
+    fn crate_sources() -> Vec<(String, String)> {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut sources = fs::read_dir(&src)
+            .unwrap_or_else(|error| panic!("reads {}: {error}", src.display()))
+            .map(|entry| entry.expect("a source directory entry").path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+            .map(|path| {
+                let name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .expect("a UTF-8 source file name")
+                    .to_owned();
+                let text = fs::read_to_string(&path)
+                    .unwrap_or_else(|error| panic!("reads {}: {error}", path.display()));
+                (name, text)
+            })
+            .collect::<Vec<_>>();
+        sources.sort();
+        sources
+    }
+
+    /// "Each record is serialized exactly once" is a property of the code's
+    /// shape, and no behavioural test can observe it: a second serializer
+    /// over one record produces identical bytes, so the byte-identity tests
+    /// in `character_assembly_cli.rs` and `scale_cli.rs` pass either way.
+    ///
+    /// What *is* mechanically checkable is that only two serializers exist.
+    /// This is a source scan rather than a type-level constraint because
+    /// `serde_json`'s free functions cannot be made unreachable from inside
+    /// the crate that depends on it.
+    #[test]
+    fn pretty_json_is_produced_at_exactly_two_sites() {
+        // Split so this test's own needles do not match themselves when it
+        // scans the file it lives in.
+        let needles = [
+            concat!("to_vec", "_pretty"),
+            concat!("to_string", "_pretty"),
+            concat!("to_writer", "_pretty"),
+        ];
+        let sites = crate_sources()
+            .into_iter()
+            .filter_map(|(name, text)| {
+                let hits = text
+                    .lines()
+                    .filter(|line| needles.iter().any(|needle| line.contains(needle)))
+                    .count();
+                (hits > 0).then_some((name, hits))
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(
+            sites,
+            std::collections::BTreeMap::from([
+                ("publish.rs".to_owned(), 1),
+                ("render.rs".to_owned(), 1),
+            ]),
+            "pretty JSON has exactly two permitted producers: `publish::serialize_record` \
+             in publish.rs, which every evidence record goes through once and whose bytes \
+             reach both the evidence file and stdout, and `render::print_json` in render.rs, \
+             which serves the output-v5 envelopes that have no file to agree with. Route a \
+             new call through one of those instead of adding a third serializer."
+        );
+    }
+
+    /// A producer's `--format json` stream must be the bytes it published,
+    /// not a second rendering of the record.
+    ///
+    /// [`crate::render::print_json`] re-serializes, so its reappearance in a
+    /// producer module is exactly the regression that would turn byte
+    /// identity back into a coincidence — and the one the byte-identity tests
+    /// cannot see, because the second rendering agrees.
+    #[test]
+    fn no_producer_module_reaches_for_the_re_serializing_printer() {
+        // Split for the same reason as above: publish.rs names the printer in
+        // its own documentation.
+        let printer = concat!("print", "_json");
+        let sources = crate_sources();
+        for producer in ["assembly.rs", "scale.rs"] {
+            let (_, text) = sources
+                .iter()
+                .find(|(name, _)| name == producer)
+                .unwrap_or_else(|| panic!("{producer} is part of this crate"));
+            assert!(
+                !text.contains(printer),
+                "{producer} must emit the bytes it already published through `publish::emit` \
+                 rather than re-render its record through `render::print_json`"
+            );
+        }
     }
 
     #[test]

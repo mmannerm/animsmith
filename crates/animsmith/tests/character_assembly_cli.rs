@@ -5,7 +5,7 @@
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 const RIGGED_TRIANGLE_FBX: &str = include_str!("../../animsmith-fbx/testdata/rigged_triangle.fbx");
 const RECIPE_SCHEMA: &str =
@@ -42,13 +42,34 @@ fn success_recipe() -> &'static str {
     )
 }
 
+fn assemble_command(dir: &Path, args: &[&str]) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_animsmith"));
+    command.current_dir(dir).arg("assemble").args(args);
+    command
+}
+
 fn run_args(dir: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_animsmith"))
-        .current_dir(dir)
-        .arg("assemble")
-        .args(args)
+    assemble_command(dir, args)
         .output()
         .expect("runs animsmith assemble")
+}
+
+/// `assemble` with a stdout nobody is reading.
+///
+/// The pipe's read end is dropped **before** the child is spawned, so its
+/// stdout has no reader from the moment it exists: the write failure is a
+/// property of the setup rather than a race against how quickly the child
+/// reaches its write.
+fn run_args_into_closed_stdout(dir: &Path, args: &[&str]) -> Output {
+    let (reader, writer) = std::io::pipe().expect("creates a pipe");
+    drop(reader);
+    assemble_command(dir, args)
+        .stdout(Stdio::from(writer))
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawns animsmith assemble")
+        .wait_with_output()
+        .expect("waits for animsmith assemble")
 }
 
 fn run(dir: &Path) -> Output {
@@ -288,6 +309,42 @@ fn json_format_emits_no_text_summary() {
     // A trailing or leading summary line would make this a parse failure
     // rather than one complete document.
     serde_json::from_str::<Value>(&stdout).expect("stdout is exactly one JSON document");
+}
+
+/// A stdout nobody is reading is a failure to **report** the run, not to
+/// perform it: the pair is already published. Reporting exit `2` would say
+/// the invocation was wrong when it was not, and would make every `assemble
+/// --format json | head` indistinguishable from a bad recipe.
+#[test]
+fn a_published_run_whose_stdout_is_closed_keeps_exit_0_and_diagnoses_on_stderr() {
+    let dir = tempfile::tempdir().expect("creates temp directory");
+    write_inputs(dir.path());
+    std::fs::write(dir.path().join("recipe.toml"), success_recipe()).expect("writes recipe");
+
+    let output = run_args_into_closed_stdout(
+        dir.path(),
+        &[
+            "recipe.toml",
+            "-o",
+            "character.glb",
+            "--evidence",
+            "character.assembly.json",
+            "--format",
+            "json",
+        ],
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "stderr:\n{stderr}");
+    // Ours, not the OS's: the platform's wording for a reader-less pipe is
+    // not this contract.
+    assert!(
+        stderr.starts_with("animsmith: cannot write evidence to stdout"),
+        "stderr:\n{stderr}"
+    );
+    // And the run really did publish, which is why it is a success.
+    assert!(dir.path().join("character.glb").is_file());
+    assert!(dir.path().join("character.assembly.json").is_file());
 }
 
 /// The publication summary escapes its declared paths, because it now goes

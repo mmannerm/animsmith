@@ -1051,8 +1051,10 @@ fn publish(
 
     match request.format {
         // The very bytes the evidence file received, not a second rendering
-        // of the same record.
-        Format::Json => emit(&evidence_bytes)?,
+        // of the same record. A stdout that cannot take them is diagnosed
+        // rather than raised: the pair is on disk, and a run that published
+        // it does not report an operator error.
+        Format::Json => emit(&evidence_bytes),
         Format::Text => print!(
             "{}",
             render::render_scale_published(
@@ -1101,9 +1103,12 @@ fn emit_rejection(
         rejection: Some(rejection),
     };
     match request.format {
-        // Serialized once and emitted, so a value `Finite` refuses becomes an
-        // operator error rather than a panic inside a shared printer.
-        Format::Json => emit(&serialize_record(&record)?)?,
+        // Serialized once and emitted. A value `Finite` refuses is still an
+        // operator error — it means this record would be *false*, and no
+        // exit code should stand behind that. A stdout that cannot take a
+        // record that serialized fine is only a reporting failure, so the
+        // refusal keeps exit `1` rather than inverting into `2`.
+        Format::Json => emit(&serialize_record(&record)?),
         Format::Text => eprint!("{summary}"),
     }
     Ok(ExitCode::from(crate::EXIT_FINDINGS))

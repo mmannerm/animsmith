@@ -166,6 +166,14 @@ tangents.
 | 1 | At least one failing finding, a significant `diff`, pending repairs under `fix --dry-run`, or a `scale` refusal that is a property of the input asset. |
 | 2 | Operator/tool error: unopenable input, bad config, unsupported format, or invalid flags. |
 
+The code reports what the run *did*, never how well it could report it. If a
+producer's `--format json` record cannot reach stdout — a closed pipe, a full
+filesystem — the write failure is diagnosed on stderr and the outcome's code
+stands: `0` for a published pair, `1` for a `scale` refusal. Raising it would
+report an operator error for a run whose pair is already on disk, and would
+turn `scale … --format json | head` on a refused asset into exit `2`. Only
+stdout is affected; publication is already complete and is untouched.
+
 A role-dependent check with missing prerequisites reports a typed coverage
 gap and does not fail the run — exit `0` means no failing findings among the
 checks that evaluated, not that every declared check evaluated; see
@@ -340,8 +348,10 @@ identity `urn:animsmith:schema:character-assembly-evidence:1`; see
 [`character-assembly-evidence-v1.schema.json`](schemas/character-assembly-evidence-v1.schema.json).
 `assemble --format json` prints the same record to stdout — the identical bytes
 the evidence file receives, serialized once — in place of the default `text`
-publication summary. A failure still exits 2 with prose on stderr and nothing
-on stdout, whatever the format.
+publication summary. Every `assemble` failure still exits 2 with prose on
+stderr, whatever the format, and emits nothing on stdout; a run whose stdout
+itself fails mid-record is the one exception, leaving a truncated record there
+and reporting the write failure on stderr without changing the exit code.
 
 `scale` writes scale evidence v1 to its required `--evidence` path, with
 immutable identity `urn:animsmith:schema:scale-evidence:1`; see
