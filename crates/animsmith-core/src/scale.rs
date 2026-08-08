@@ -1019,6 +1019,26 @@ pub enum ScaleError {
         /// Stable machine-readable reason.
         reason: &'static str,
     },
+    /// A primary skin-weight attribute contains a finite negative value.
+    ///
+    /// Skin weights are coefficients of a convex blend, never signed affine
+    /// coefficients. Refusing this at the shared scale-input boundary keeps
+    /// planning, candidate construction, and proof on that one semantic
+    /// domain and gives evidence consumers a stable kind without requiring
+    /// them to parse a [`ScaleError::InvalidMeshPrimitive`] reason string.
+    #[error(
+        "mesh {mesh_index} primitive {primitive_index} vertex {vertex_index} primary skin influence {influence_index} has a negative weight"
+    )]
+    NegativeSkinWeight {
+        /// Index into `document.assets.meshes`.
+        mesh_index: usize,
+        /// Index into that mesh's `primitives`.
+        primitive_index: usize,
+        /// Vertex carrying the rejected weight tuple.
+        vertex_index: usize,
+        /// Component within the primary four-influence tuple.
+        influence_index: usize,
+    },
     /// A skinned primitive is malformed: `joints`/`weights` shorter than
     /// `positions`, a non-finite position or weight, a joint-influence slot
     /// outside the owning instance's `skin_joints`, or a skinned result that
@@ -1372,7 +1392,8 @@ pub fn plan_scale(request: &ScaleRequest<'_>) -> Result<ScalePlan, ScaleError> {
 /// must trust before it reads or rewrites `document`: unique source-node and
 /// source-skin identity, agreement between the document's two parent
 /// hierarchies, unique and well-shaped clip tracks, and in-range,
-/// finite mesh-instance data. Called at the boundary of [`plan_scale`],
+/// finite mesh-instance data, and the non-negativity of every finite primary
+/// skin weight. Called at the boundary of [`plan_scale`],
 /// [`build_scale_candidate`], and [`prove_scale`] so a malformed public
 /// [`Document`] fails closed with a typed [`ScaleError`] instead of being
 /// silently deduplicated (last-write-wins), paired with the wrong structure,
@@ -1749,10 +1770,11 @@ fn validate_track_value_shape(clip_index: usize, track: &Track) -> Result<(), Sc
     Ok(())
 }
 
-/// Reject a mesh primitive with a non-finite base `POSITION`, a mesh
-/// instance with an out-of-range `node`, `mesh` or `skin_joints` entry, a
-/// non-empty `skin_ibms` whose length disagrees with `skin_joints`, a
-/// non-finite `skin_ibms` matrix, or a bone with a non-finite
+/// Reject a mesh primitive with a non-finite base `POSITION` or a finite
+/// negative primary skin weight, a mesh instance with an out-of-range `node`,
+/// `mesh` or `skin_joints` entry, a non-empty `skin_ibms` whose length
+/// disagrees with `skin_joints`, a non-finite `skin_ibms` matrix, or a bone
+/// with a non-finite
 /// [`crate::model::Bone::inverse_bind`].
 fn validate_scene_assets(document: &Document) -> Result<(), ScaleError> {
     let bone_count = document.skeleton.bones.len();
@@ -1769,6 +1791,18 @@ fn validate_scene_assets(document: &Document) -> Result<(), ScaleError> {
                     primitive_index,
                     reason: "non_finite_position",
                 });
+            }
+            for (vertex_index, weights) in primitive.weights.iter().enumerate() {
+                for (influence_index, &weight) in weights.iter().enumerate() {
+                    if weight.is_finite() && weight < 0.0 {
+                        return Err(ScaleError::NegativeSkinWeight {
+                            mesh_index,
+                            primitive_index,
+                            vertex_index,
+                            influence_index,
+                        });
+                    }
+                }
             }
         }
     }
@@ -5326,53 +5360,25 @@ impl SkinSlot {
 /// [`column_operand_magnitude`] of the composed slot against `p` extended by
 /// the homogeneous `1` — the *product* `abs(W * B) * abs(p)` and not either
 /// factor alone — since the weighted sum over slots that follows can cancel
-/// those terms; the blended skinned position that sum produced, which
-/// therefore covers nothing the sum cancelled; and the contributing slot's
-/// [`SkinSlot::rounding_magnitude`], which covers the two stages before those —
+/// those terms; the blended skinned position that sum produced; and the
+/// contributing slot's [`SkinSlot::rounding_magnitude`], which covers the two
+/// stages before those —
 /// the composition that produced `W * B`, whose translation column cancelled
 /// two terms of magnitude `abs(W)`, and the parent chain that produced `W`,
 /// whose translation column may have cancelled two terms larger still.
 ///
-/// Every one of the four dominates the others by an unbounded ratio on some
-/// rig: two slots whose composed `W * B` oppose for the first, a blend whose
-/// *weights* nearly cancel for the second, a joint far from the geometry it
-/// carries for the third, a joint whose local offset points back along its
-/// parent's world translation for the fourth. Dropping the first makes
+/// Stages one, three, and four each dominate the others by an unbounded ratio
+/// on some rig. Dropping the first makes
 /// `calibrate_f32_rounding_ulps` refuse correct candidates in thirty-four of
 /// its seventy-two cells and dropping the third in fifty-six.
 ///
-/// The *blended point* is the one the sweep cannot see — dropping it leaves
-/// every cell's demand unchanged — and it was recorded here as an unkillable
-/// survivor on the argument that the blend is a **convex** combination of the
-/// per-slot transformed points and so bounded by `sqrt(3)` times the first
-/// stage. That argument is false. The only guard on the normalisation is
-/// `weight_sum > 0.0`, nothing constrains authored weights to be non-negative
-/// (`a_vertex_whose_influences_sum_negative_is_left_out_of_the_bounds` is the
-/// test that says so), and `skinned /= weight_sum` over a mixed-sign blend is
-/// an **affine** combination, which is unbounded: weights of `1.0` and
-/// `-0.99999` sum to `9.999e-6` and multiply the summed point by `1.0e5`.
-/// `a_blend_whose_weights_nearly_cancel_amplifies_a_vertex_and_still_proves_its_bounds`
-/// is that rig — stage 1 reads `1.000e3`, stage 3 `1.000e0`, and the blended
-/// point `1.997e8` — and dropping this stage refuses it outright at
-/// `observed: 8.929` against `tolerance: 5.969e-4`. Whether a mixed-sign
-/// weight should instead be a typed refusal upstream, which would restore
-/// convexity and let this stage be deleted, is issue #336; until it is
-/// decided, this stage is what carries a mixed-sign blend **whose numerator
-/// does not also cancel**.
-///
-/// Where both cancel it does not, and no stage does. Two slots with the *same*
-/// composed `W * B` put the blended point back on stage 1 — the numerator
-/// shrinks by the same factor the denominator does — while `skinned /=
-/// weight_sum` still divides the accumulated rounding of terms of magnitude
-/// `abs(w_k) * abs(p)` by that weight sum. The base is then short by
-/// `sum(abs(w_k)) / abs(sum(w_k))`, which nothing bounds, and a correct
-/// candidate is refused:
-/// `a_blend_whose_numerator_cancels_with_its_weights_is_refused_though_correct`
-/// pins that refusal. It needs a negative weight to reach, so #336 closes it
-/// too.
-/// `a_rig_whose_skinned_extent_passes_the_square_root_of_f32_max_still_proves`
-/// additionally holds its `f32` overflow domain. See DESIGN.md Appendix D
-/// §D.1.
+/// Stage two is now conservative rather than load-bearing. Shared validation
+/// rejects finite negative weights before planning, so division by a positive
+/// weight sum makes every valid blend convex. Its L2 length is at most
+/// `sqrt(3)` times stage one's per-component bound. Removing it nevertheless
+/// changes the meaning of `appendix-d-v3`; it stays until the coordinated
+/// `appendix-d-v4` recalibration tracked by #344 removes it together with the
+/// #335 Bounds-base change. See DESIGN.md Appendix D §D.1.
 struct BoundsAccumulator {
     min: Vec3,
     max: Vec3,
@@ -11790,51 +11796,37 @@ mod tests {
     }
 
     #[test]
-    fn a_vertex_whose_influences_sum_negative_is_left_out_of_the_bounds() {
-        // The normalisation guard is `weight_sum > 0.0`, not
-        // `weight_sum != 0.0`. Nothing upstream constrains authored weights to
-        // be non-negative — `validate_scene_assets` range-checks joint ids,
-        // not weights — so a negative sum is reachable, and dividing by it
-        // negates every normalised influence: this vertex would be folded into
-        // the bounds at `(1, 10, 0)`, the *reflection* of where its single
-        // influence actually places it.
-        //
-        //   slot 0 translates by (0, 10, 0), so the influence puts the vertex
-        //   (1, 0, 0) at (1, 10, 0);
-        //   weight -0.5   ->  skinned    = -0.5 * (1, 10, 0) = (-0.5, -5, 0)
-        //                     weight_sum = -0.5
-        //   -0.5 > 0 is false, so the vertex contributes nothing and the
-        //   accumulator is never touched;
-        //   `!= 0.0` instead divides: (-0.5, -5, 0) / -0.5 = (1, 10, 0).
-        let slots = [unrounded_slot(Mat4::from_translation(Vec3::new(
-            0.0, 10.0, 0.0,
-        )))];
-        let mut accumulator = BoundsAccumulator::default();
-        accumulate_skinned_bounds(
-            0,
-            0,
-            &one_influence_primitive(-0.5),
-            &slots,
-            &mut accumulator,
-        )
-        .expect("a negative weight is not malformed, only unusable as a blend");
-        assert_eq!(accumulator.finish(), None);
+    fn every_public_scale_boundary_rejects_a_negative_skin_weight() {
+        let doc = multi_joint_document();
+        let capability = complete_capability();
+        let plan = multi_joint_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let mut signed = doc.clone();
+        signed.assets.meshes[0].primitives[0].weights[0][0] = -0.5;
+        let expected = ScaleError::NegativeSkinWeight {
+            mesh_index: 0,
+            primitive_index: 0,
+            vertex_index: 0,
+            influence_index: 0,
+        };
 
-        // The same primitive with the sign flipped does land in the bounds, so
-        // the emptiness above is the sign's doing and not the fixture failing
-        // to reach the accumulator at all.
-        let mut accumulator = BoundsAccumulator::default();
-        accumulate_skinned_bounds(
-            0,
-            0,
-            &one_influence_primitive(0.5),
-            &slots,
-            &mut accumulator,
-        )
-        .unwrap();
         assert_eq!(
-            accumulator.finish(),
-            Some((Vec3::new(1.0, 10.0, 0.0), Vec3::new(1.0, 10.0, 0.0)))
+            plan_scale(&ScaleRequest {
+                operation: ScaleOperation::WholeDocumentLinearUnits { factor: 2.0 },
+                document: &signed,
+                capability: &capability,
+            })
+            .unwrap_err(),
+            expected
+        );
+        assert_eq!(build_scale_candidate(&signed, &plan).unwrap_err(), expected);
+        assert_eq!(
+            prove_scale(&signed, &candidate, &plan).unwrap_err(),
+            expected
+        );
+        assert_eq!(
+            prove_scale(&doc, &ScaleCandidate::from_document(signed), &plan).unwrap_err(),
+            expected
         );
     }
 
@@ -12219,22 +12211,10 @@ mod tests {
         )
     }
 
-    /// The same two opposed slots as [`cancelling_blend_document`], but with
-    /// the *weights* nearly cancelling instead of the transformed points:
-    /// `1.0` and `-0.99999`, which sum to `9.999e-6`.
-    ///
-    /// Nothing constrains authored weights to be non-negative — see
-    /// `a_vertex_whose_influences_sum_negative_is_left_out_of_the_bounds`, and
-    /// `validate_scene_assets` range-checks joint ids rather than weights — so
-    /// a weight sum far below `1` is reachable, and `skinned /= weight_sum`
-    /// then makes the blend an **affine** combination rather than a convex
-    /// one. The two terms sum to `(1999.99, 0, 0)` and the division by
-    /// `9.999e-6` throws that to `1.997e8`: five decades *above* the `1e3` the
-    /// per-slot transform ran on, and eight above the near-unit joints.
-    ///
-    /// This is the rig that stops the blended point being a stage no test can
-    /// reach. It is the mirror image of [`cancelling_blend_document`], where
-    /// the same two slots drive the blended point to zero.
+    /// The invalid signed-weight rig from #336: two opposed slots and weights
+    /// `1.0` and `-0.99999`. Before negative weights were rejected, dividing
+    /// by their near-zero sum amplified the blend without bound and forced a
+    /// dedicated bounds-magnitude stage.
     fn amplifying_blend_document() -> Document {
         composed_slot_document(
             CANCELLING_BLEND_ROTATIONS,
@@ -12246,26 +12226,10 @@ mod tests {
         )
     }
 
-    /// [`amplifying_blend_document`]'s cancelling weights over two slots that
-    /// compose to the **same** transform, so the blend's *numerator* cancels
-    /// along with its denominator and the blended point lands back where the
-    /// per-slot transform left it.
-    ///
-    /// `1.0 * p + (-0.99999) * p` is `1.0e-2` on a `p` of `1000`, and dividing
-    /// by the `1.0014e-5` weight sum returns `p`: stage 2 reads `9.996e2`
-    /// against stage 1's `1.000e3`, so no stage of the base is amplified and
-    /// the four stages have nothing extra to name. The *accumulation* is
-    /// amplified all the same — the summed point carries the rounding of terms
-    /// of magnitude `abs(w_k) * abs(p)`, and `skinned /= weight_sum` divides
-    /// that rounding by the weight sum along with the point it belongs to. The
-    /// base is short by `sum(abs(w_k)) / abs(sum(w_k))`, which is `2.0e5` here
-    /// and which nothing bounds.
-    ///
-    /// [`amplifying_blend_document`] escapes this only because its two slots
-    /// are *opposed*: that inflates stage 2 to `1.997e8` and so raises the base
-    /// by `stage 2 / stage 1`, which is `2.0e5` — the same figure the shortfall
-    /// above is, which is exactly why that rig proves. Aligning them — the one
-    /// change here — collapses stage 2 back onto stage 1 and the base with it.
+    /// [`amplifying_blend_document`]'s signed weights over two slots that
+    /// compose to the same transform. This was the worse pre-#336 case: both
+    /// numerator and denominator cancelled, so no finite ULP stage could
+    /// cover the accumulated rounding. It remains as a refusal fixture.
     fn cancelling_numerator_blend_document() -> Document {
         composed_slot_document(
             CANCELLING_BLEND_ROTATIONS,
@@ -12451,185 +12415,36 @@ mod tests {
     }
 
     #[test]
-    fn a_blend_whose_weights_nearly_cancel_amplifies_a_vertex_and_still_proves_its_bounds() {
-        // The blended skinned point — stage 2 of the bounds base — was
-        // recorded as an unkillable survivor, on the argument that the blend
-        // is a *convex* combination of the per-slot transformed points and so
-        // bounded by `sqrt(3)` times stage 1. It is not convex. Nothing
-        // constrains authored weights to be non-negative
-        // (`a_vertex_whose_influences_sum_negative_is_left_out_of_the_bounds`
-        // is the test that says so), and the only guard is `weight_sum > 0.0`,
-        // so a weight sum of `1.0 - 0.99999 = 9.999e-6` passes it and
-        // `skinned /= weight_sum` multiplies the summed point by `1.0e5`. The
-        // combination is affine, and an affine combination is unbounded.
-        //
-        // Here stage 1 reads `1.000e3` and stage 3 `1.000e0`, while the
-        // blended point the bound is actually built from is `1.997e8`. With
-        // stage 2 dropped this correct candidate is refused outright:
-        // `ProofResidualExceeded { kind: Bounds, observed: 8.929,
-        // tolerance: 5.969e-4 }`.
-        //
-        // Issue #336 asks whether a mixed-sign weight should be a typed
-        // refusal upstream instead — glTF requires `WEIGHTS_n` to be
-        // non-negative — which would restore convexity and let stage 2 be
-        // deleted. This fixture is the evidence that stage 2 is load-bearing
-        // until that is decided, and #336 says it stays either way: pinning
-        // the refusal, or pinning that stage 2 carries the blend.
-        let doc = amplifying_blend_document();
-        let plan = rest_bind_plan(&doc, 3190.0);
-        let candidate = build_scale_candidate(&doc, &plan).unwrap();
-
-        // The amplification is the fixture, so it is asserted before what it
-        // costs: a rig whose weights stopped nearly cancelling passes below
-        // for want of a defect rather than because the base names the blend.
-        let slots = rig_skin_slots(&doc);
-        let primitive = &doc.assets.meshes[0].primitives[0];
-        let position = primitive.positions[0];
-        let weights = primitive.weights[0];
-        let mut summed = Vec3::ZERO;
-        let mut weight_sum = 0.0f32;
-        let mut stages_without_the_blend = 0.0f64;
-        for (slot_index, slot) in slots.iter().enumerate() {
-            summed += weights[slot_index] * slot.matrix.transform_point3(position);
-            weight_sum += weights[slot_index];
-            stages_without_the_blend = stages_without_the_blend
-                .max(column_operand_magnitude(
-                    slot.absolute,
-                    position.extend(1.0),
-                ))
-                .max(slot.rounding_magnitude);
-        }
-        let blended = f64::from((summed / weight_sum).length());
-        assert!(
-            weight_sum > 0.0 && blended > 1e4 * stages_without_the_blend,
-            "the weights no longer nearly cancel (sum {weight_sum}) or the blended point \
-             {blended} no longer dominates every other stage ({stages_without_the_blend}): \
-             the bound is then covered by a stage that is not the blend",
-        );
-
-        let proof = prove_scale(&doc, &candidate, &plan).expect(
-            "a correct candidate whose weight sum amplifies the blend must still prove: the \
-             bound is built from the blended point, and that is what the base must name",
-        );
-        assert!(
-            proof.bounds_residual > 4.0 * stages_without_the_blend * f64::from(f32::EPSILON),
-            "bounds residual {} no longer exceeds four ulps of every stage but the blend, so \
-             this fixture no longer kills a base that drops the blended point",
-            proof.bounds_residual
-        );
-    }
-
-    #[test]
-    fn a_blend_whose_numerator_cancels_with_its_weights_is_refused_though_correct() {
-        // Where
-        // `a_blend_whose_weights_nearly_cancel_amplifies_a_vertex_and_still_proves_its_bounds`
-        // ends. That fixture's slots are *opposed*, so the cancelling weight
-        // sum amplifies the blended point to `1.997e8` and stage 2 grows with
-        // the accumulation it has to cover. Align the two slots — the only
-        // change [`cancelling_numerator_blend_document`] makes — and the
-        // numerator cancels too: the blended point lands back on `1000`, stage
-        // 2 reads `9.996e2` against stage 1's `1.000e3`, and every stage of
-        // the base is ordinary while `skinned /= weight_sum` still divides the
-        // accumulated rounding by `1.0014e-5`.
-        //
-        // So the four stages cover a mixed-sign blend only when the numerator
-        // does not also cancel. Where both cancel the base is short by
-        // `sum(abs(w_k)) / abs(sum(w_k))` — `2.0e5` here — and that ratio has
-        // no upper bound: tightening the second weight to `-0.999999` and
-        // `-0.9999999` on this same rig moves the residual from `6.88e3` to
-        // `5.92e4` and `9.28e5` while the band stays near `33`. This is a
-        // *correct* candidate being refused, by `205x` at a raw demand of
-        // about `18_000` ulps, so it is not a count that could have been
-        // raised.
-        //
-        // It takes a negative weight to reach: `0.5`, `1e-6` and `-0.5` on
-        // this rig all prove. Issue #336 — refusing mixed-sign `WEIGHTS_n`
-        // upstream, as glTF already requires — therefore closes this as well
-        // as making stage 2 redundant.
-        //
-        // Pre-existing rather than introduced here, and narrowed by this PR:
-        // with `f32_rounding_ulps = 0`, which is `main`'s behaviour, the same
-        // rig is refused at `q = 1.5` as well, where it now proves. This
-        // fixture characterises today's behaviour, it does not endorse it, and
-        // when #336 lands it flips to an acceptance fixture — the rig stops
-        // being constructible, and the assertions below become the statement
-        // that `build_scale_candidate` never sees it.
-        let doc = cancelling_numerator_blend_document();
-
-        // The rig's shape is the fixture: a blend that stopped cancelling, or
-        // one whose blended point started dominating the way the opposed rig's
-        // does, is refused below for some other reason entirely.
-        let slots = rig_skin_slots(&doc);
-        let primitive = &doc.assets.meshes[0].primitives[0];
-        let position = primitive.positions[0];
-        let weights = primitive.weights[0];
-        let mut summed = Vec3::ZERO;
-        let mut weight_sum = 0.0f32;
-        let mut absolute_weight_sum = 0.0f32;
-        let mut stage_one = 0.0f64;
-        for (slot_index, slot) in slots.iter().enumerate() {
-            summed += weights[slot_index] * slot.matrix.transform_point3(position);
-            weight_sum += weights[slot_index];
-            absolute_weight_sum += weights[slot_index].abs();
-            stage_one = stage_one.max(column_operand_magnitude(
-                slot.absolute,
-                position.extend(1.0),
-            ));
-        }
-        let blended = f64::from((summed / weight_sum).length());
-        assert!(
-            weight_sum > 0.0 && blended < 2.0 * stage_one,
-            "the weights no longer nearly cancel (sum {weight_sum}) or the blended point \
-             {blended} is no longer back on the per-slot transform's own scale ({stage_one}): \
-             the base then names the accumulation the way the opposed rig's does",
-        );
-        let shortfall = f64::from(absolute_weight_sum / weight_sum);
-        assert!(
-            shortfall > 1e5,
-            "the accumulation is now only {shortfall}x the base, so this rig no longer reaches \
-             the gap it was written to pin",
-        );
-
-        // Both the sibling fixture's rest/bind plan and the reproducer's
-        // whole-document conversion refuse it, at `12.19` against `1.06e-2`
-        // and `6875.58` against `33.48` — this is a property of the base, not
-        // of one operation.
+    fn both_signed_blend_counterexamples_are_rejected_for_both_operations() {
         let capability = complete_capability();
-        let plans = [
-            rest_bind_plan(&doc, 3190.0),
-            plan_scale(&ScaleRequest {
-                operation: ScaleOperation::WholeDocumentLinearUnits { factor: 3190.0 },
-                document: &doc,
-                capability: &capability,
-            })
-            .expect("a whole-document conversion plans at any positive factor"),
+        let operations = [
+            ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 3190.0,
+            },
+            ScaleOperation::WholeDocumentLinearUnits { factor: 3190.0 },
         ];
-        for plan in &plans {
-            let candidate = build_scale_candidate(&doc, plan).expect(
-                "the candidate is built by the same code the proof checks, and #336 landing is \
-                 what should stop this rig existing — not a build failure",
-            );
-            let error = prove_scale(&doc, &candidate, plan).expect_err(
-                "a blend whose numerator cancels with its weights asks more of the bounds base \
-                 than the four stages name. If this now proves, the base has grown a term for \
-                 the accumulation (or #336 has refused the rig) and this fixture should become \
-                 an acceptance one — with DESIGN.md Appendix D section D.1's narrowing of \
-                 stage 2's claim changing with it.",
-            );
-            let ScaleError::ProofResidualExceeded {
-                kind: ProofResidualKind::Bounds,
-                observed,
-                tolerance,
-            } = error
-            else {
-                panic!("expected a refused bound, got {error:?}");
-            };
-            assert!(
-                observed > 100.0 * tolerance,
-                "bounds band moved: observed {observed}, tolerance {tolerance}. The gap this \
-                 pins is unbounded, so a band that now covers it within `100x` has been widened \
-                 by something other than a term for the accumulation",
-            );
+        for doc in [
+            amplifying_blend_document(),
+            cancelling_numerator_blend_document(),
+        ] {
+            for operation in operations {
+                assert_eq!(
+                    plan_scale(&ScaleRequest {
+                        operation,
+                        document: &doc,
+                        capability: &capability,
+                    })
+                    .unwrap_err(),
+                    ScaleError::NegativeSkinWeight {
+                        mesh_index: 0,
+                        primitive_index: 0,
+                        vertex_index: 0,
+                        influence_index: 1,
+                    }
+                );
+            }
         }
     }
 

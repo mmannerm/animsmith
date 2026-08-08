@@ -765,15 +765,14 @@ below the `1e-5` the relative band already allows. The `2^-23` is
      in with — the *product* `abs(W * B) * abs(p)` and not either factor alone
      — because the weighted sum over slots that follows can cancel those terms
      against each other;
-  2. the magnitude of the *blended* skinned point, which is what that sum
-     produced and therefore covers nothing the sum cancelled;
+  2. the L2 magnitude of the blended skinned point;
   3. the magnitude the contributing slot's `W * B` composition ran on, which
      covers the cancellation that composition performs; and
   4. the magnitude that slot's joint world translation was itself accumulated
      from along its parent chain, which covers the cancellation performed one
      composition earlier.
 
-  Stages 1, 3 and 4 are each load-bearing, and each dominates the others by an
+  Stages 1, 3, and 4 are load-bearing, and each dominates the others by an
   unbounded ratio on some rig. The skinned points alone miss a joint placed far
   from the geometry it carries — a `1000`-unit local translation under a `3190`
   root puts the joint `3.2e6` from the origin while its vertices skin to within
@@ -791,7 +790,7 @@ below the `1e-5` the relative band already allows. The `2^-23` is
 
   - The skinned point coincides with the transform only while no two slots
     oppose. Two slots whose composed `W * B` differ by a half turn send a
-    vertex `1000` units out to a blended origin, so stage 2 reads `0` while
+    vertex `1000` units out to a blended origin, so the result reads `0` while
     every term summed to produce it carried that vertex's own ulp; put the
     joints near the origin as well and stages 3 and 4 read `1`. The residual is
     then `6.1e-5` — one ulp of `1000` — against a `1.5e-6` band, a demand of
@@ -818,70 +817,28 @@ below the `1e-5` the relative band already allows. The `2^-23` is
   slots at `abs(W * B) = {1e-3, 1, 1e3}` so a third factor of the same kind is
   visible to a measurement rather than only to a reviewer.
 
-  **Stage 2 is needed because the blend is affine, not convex.** An earlier
-  revision of this section called it a survivor "and provably so — no test
-  kills it and none can", on the argument that the blended point is a *convex*
-  combination of the per-slot transformed points and therefore bounded by
-  `sqrt(3)` times stage 1. The premise is false. The only guard on the
-  normalisation is `weight_sum > 0.0`, and nothing constrains authored weights
-  to be non-negative — `validate_scene_assets` range-checks joint ids, not
-  weights, and
-  `a_vertex_whose_influences_sum_negative_is_left_out_of_the_bounds` is the
-  test that records it. With mixed-sign weights whose sum is positive but
-  small, `skinned /= weight_sum` is an **affine** combination, and an affine
-  combination amplifies without bound: weights of `1.0` and `-0.99999` sum to
-  `9.999e-6` and multiply the summed point by `1.0e5`.
+  **Stage 2 is conservative on the validated domain, but remains part of
+  `appendix-d-v3`.** Shared scale-input validation refuses every finite
+  negative primary skin weight before planning. Every contributing weight is
+  therefore non-negative, and division by their positive sum makes the
+  skinned point a convex combination of the per-slot transformed points. Per
+  output component, its magnitude cannot exceed the largest contributing
+  transformed component, which stage 1 already bounds. The vector's L2 length
+  can be up to `sqrt(3)` times that component bound, so stage 2 can widen the
+  per-axis bands without naming additional arithmetic.
 
-  `a_blend_whose_weights_nearly_cancel_amplifies_a_vertex_and_still_proves_its_bounds`
-  is that rig — the same two opposed slots as the cancellation fixture, with
-  the weights nearly cancelling instead of the points. Stage 1 reads `1.000e3`
-  and stage 3 `1.000e0` while the blended point the bound is actually built
-  from is `1.997e8`, and dropping stage 2 refuses that correct candidate at
-  `observed: 8.929` against `tolerance: 5.969e-4`. So all four stages dominate
-  the others by an unbounded ratio on some rig, and none of the four is a
-  survivor.
-
-  The calibration sweep cannot see this stage — dropping it leaves every cell's
-  demand unchanged, because the sweep draws non-negative weights — which is why
-  it is held by a named fixture and why the sweep's silence about it is
-  recorded here rather than read as evidence.
-
-  Whether a mixed-sign weight should be a typed refusal upstream instead is
-  **issue #336**: glTF requires `WEIGHTS_n` to be non-negative, so refusing it
-  would restore convexity and make this stage provably redundant rather than
-  provably necessary. Until that is decided this stage is what carries a
-  mixed-sign blend **whose numerator does not also cancel**, and the fixture
-  above is the evidence that it is load-bearing today. #336 keeps the rig
-  either way — pinning the refusal, or pinning that stage 2 carries it.
-  `a_rig_whose_skinned_extent_passes_the_square_root_of_f32_max_still_proves`
-  additionally holds this stage's `f32` overflow domain.
-
-  **Where both numerator and denominator cancel, no stage carries it.** Give
-  two slots the *same* composed `W * B` and the cancelling weights shrink the
-  numerator by the factor they shrink the denominator by, so the blended point
-  lands back on stage 1: on
-  `a_blend_whose_numerator_cancels_with_its_weights_is_refused_though_correct`
-  stage 2 reads `9.996e2` against stage 1's `1.000e3` and every stage of the
-  base is ordinary. The *accumulation* is not — the summed point carries the
-  rounding of terms of magnitude `abs(w_k) * abs(p)`, and `skinned /=
-  weight_sum` divides that rounding by `1.0014e-5` along with the point. The
-  base is short by `sum(abs(w_k)) / abs(sum(w_k))`, `2.0e5` on that rig, and
-  nothing bounds that ratio: tightening the second weight to `-0.999999` and
-  `-0.9999999` moves the residual from `6.88e3` to `5.92e4` and `9.28e5`
-  against a band that stays near `33`. A *correct* candidate is refused, by
-  `205x` at a raw demand of about `18_000` ulps, so no ulp count reaches it.
-
-  `a_blend_whose_weights_nearly_cancel_amplifies_a_vertex_and_still_proves_its_bounds`
-  escapes only because its slots are *opposed*, which inflates stage 2 to
-  `1.997e8` and so raises the base by `stage 2 / stage 1` — `2.0e5`, the same
-  figure the shortfall above is, which is exactly why that rig proves;
-  aligning them collapses stage 2 onto stage 1. This is pre-existing rather
-  than introduced by the per-axis work, and narrowed by it — at
-  `f32_rounding_ulps = 0` the same rig is refused at `q = 1.5` as well, where
-  it now proves. It requires a negative weight (`0.5`, `1e-6` and `-0.5` all
-  prove), so **#336 closes it** along with making stage 2 redundant. The
-  calibration sweep cannot see it either, and for the reason it cannot see
-  stage 2: the sweep draws non-negative weights.
+  This validation decision removes two formerly unbounded affine cases. With
+  weights `1.0` and `-0.99999`, a positive near-zero denominator could amplify
+  opposed transformed points to `1.997e8`; with identical transformed points,
+  both numerator and denominator could cancel while the accumulation error was
+  still divided by the near-zero sum. No finite ULP count could cover the
+  latter generally. The two #336 counterexample rigs remain as fixtures and
+  now pin `NegativeSkinWeight` at the shared planning boundary instead of
+  forcing tolerance machinery to describe invalid input. The stage is
+  nevertheless retained here because removing it changes the meaning of the
+  versioned tolerance policy. #344 schedules that removal with #335's weighted
+  Bounds base as `appendix-d-v4`, with one policy-identity change and one
+  checked-in final calibration.
 
   `magnitude` is deliberately *not* read off the bound corner being compared.
   A per-axis extreme is contributed by whichever vertex happened to be
@@ -1201,16 +1158,12 @@ the rotation and on the operand magnitudes rather than on the magnitude of
 the result.
 
 That "no constant" is a constraint on the magnitudes too, not just on the
-skinning. A magnitude derived from a skinned extent must take that extent's
-length in `f64`: squaring it in `f32` overflows at `sqrt(f32::MAX) = 1.84e19`,
-nineteen decades below the `3.40e38` the extent itself is checked finite to,
-and an infinite magnitude makes the tolerance infinite and refuses a correct
-candidate whose residual is exactly `0.0`. That would be a documented
-magnitude domain — a constant, checkable ahead of time — and this section says
-there is none, so there must not be one.
+skinning. `appendix-d-v3` derives stage 2 from the blended point's L2 length,
+and computes the overflow case in `f64`: squaring in `f32` would overflow at
+`sqrt(f32::MAX)` even though every component remains finite.
 `a_rig_whose_skinned_extent_passes_the_square_root_of_f32_max_still_proves`
-pins it. The same rule holds for the composition magnitude, whose `f32`
-`abs(a) * abs(b)` sums can leave the `f32` range while `a * b` is still
+pins that domain. The same rule holds for the composition magnitude, whose
+`f32` `abs(a) * abs(b)` sums can leave the `f32` range while `a * b` is still
 finite: it recomputes them in `f64` rather than reporting `inf`, and
 `a_rig_whose_composition_operands_overflow_f32_still_proves` pins that. The
 parent-chain magnitude sums `abs(W_parent) * abs(t_local)` and needs the same

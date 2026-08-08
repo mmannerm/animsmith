@@ -41,9 +41,12 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_asset(rest_bind_scale_rig_glb())
+    }
+
+    fn with_asset(asset: Vec<u8>) -> Self {
         let dir = tempfile::tempdir().expect("temporary directory");
-        std::fs::write(dir.path().join("rig.glb"), rest_bind_scale_rig_glb())
-            .expect("writes the rig fixture");
+        std::fs::write(dir.path().join("rig.glb"), asset).expect("writes the rig fixture");
         Self { dir }
     }
 
@@ -126,6 +129,16 @@ fn assert_schema_valid(instance: &Value) {
         .map(|error| format!("{}: {error}", error.instance_path()))
         .collect();
     assert!(errors.is_empty(), "schema errors: {}", errors.join("; "));
+}
+
+fn rest_bind_scale_rig_with_negative_weight_glb() -> Vec<u8> {
+    let mut asset = rest_bind_scale_rig_glb();
+    let json_length = u32::from_le_bytes(asset[12..16].try_into().unwrap()) as usize;
+    // GLB header + JSON chunk header/payload + BIN chunk header, followed by
+    // the fixture's WEIGHTS_0 accessor at byte 60 of its BIN payload.
+    let first_weight = 12 + 8 + json_length + 8 + 60;
+    asset[first_weight..first_weight + 4].copy_from_slice(&(-0.5f32).to_le_bytes());
+    asset
 }
 
 fn read_json(path: &Path) -> Value {
@@ -673,6 +686,36 @@ fn a_refused_run_publishes_nothing_and_leaves_a_prior_pair_byte_identical() {
     // A refusal still identifies the input it refused and inventories it.
     assert!(record["input"]["sha256"].is_string());
     assert_eq!(record["capability"]["container"], "glb");
+}
+
+#[test]
+fn a_negative_primary_skin_weight_is_a_typed_plan_refusal_and_publishes_nothing() {
+    let fixture = Fixture::with_asset(rest_bind_scale_rig_with_negative_weight_glb());
+    let output = fixture.rest_bind("0.01", "json");
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    assert!(!fixture.path("out.glb").exists());
+    assert!(!fixture.path("out.json").exists());
+
+    let record: Value = serde_json::from_str(&stdout(&output)).expect("stdout is one JSON record");
+    assert_schema_valid(&record);
+    assert_eq!(record["outcome"], "rejected");
+    assert_eq!(record["result"], Value::Null);
+    assert_eq!(record["rejection"]["stage"], "plan");
+    assert_eq!(record["rejection"]["kind"], "negative-skin-weight");
+    assert_eq!(record["rejection"]["violations"], serde_json::json!([]));
+    assert!(
+        record["rejection"]["detail"]
+            .as_str()
+            .expect("a rejection detail")
+            .contains("vertex 0 primary skin influence 0"),
+        "record: {record}"
+    );
 }
 
 #[test]
