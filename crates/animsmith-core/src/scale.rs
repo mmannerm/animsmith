@@ -11799,10 +11799,16 @@ mod tests {
     fn every_public_scale_boundary_rejects_a_negative_skin_weight() {
         let doc = multi_joint_document();
         let capability = complete_capability();
-        let plan = multi_joint_plan(&doc, &capability);
-        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let operations = [
+            ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 0.01,
+            },
+            ScaleOperation::WholeDocumentLinearUnits { factor: 2.0 },
+        ];
         let mut signed = doc.clone();
-        signed.assets.meshes[0].primitives[0].weights[3][3] = -0.5;
+        signed.assets.meshes[0].primitives[0].weights[3][3] = -f32::from_bits(1);
         let expected = ScaleError::NegativeSkinWeight {
             mesh_index: 0,
             primitive_index: 0,
@@ -11810,24 +11816,52 @@ mod tests {
             influence_index: 3,
         };
 
-        assert_eq!(
-            plan_scale(&ScaleRequest {
-                operation: ScaleOperation::WholeDocumentLinearUnits { factor: 2.0 },
-                document: &signed,
+        for operation in operations {
+            let plan = plan_scale(&ScaleRequest {
+                operation,
+                document: &doc,
                 capability: &capability,
             })
-            .unwrap_err(),
-            expected
-        );
-        assert_eq!(build_scale_candidate(&signed, &plan).unwrap_err(), expected);
-        assert_eq!(
-            prove_scale(&signed, &candidate, &plan).unwrap_err(),
-            expected
-        );
-        assert_eq!(
-            prove_scale(&doc, &ScaleCandidate::from_document(signed), &plan).unwrap_err(),
-            expected
-        );
+            .unwrap();
+            let candidate = build_scale_candidate(&doc, &plan).unwrap();
+            assert_eq!(
+                plan_scale(&ScaleRequest {
+                    operation,
+                    document: &signed,
+                    capability: &capability,
+                })
+                .unwrap_err(),
+                expected
+            );
+            assert_eq!(build_scale_candidate(&signed, &plan).unwrap_err(), expected);
+            assert_eq!(
+                prove_scale(&signed, &candidate, &plan).unwrap_err(),
+                expected
+            );
+            assert_eq!(
+                prove_scale(&doc, &ScaleCandidate::from_document(signed.clone()), &plan)
+                    .unwrap_err(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn representative_finite_negative_weights_are_all_refused() {
+        let doc = multi_joint_document();
+        let capability = complete_capability();
+        for weight in [-f32::from_bits(1), -f32::MIN_POSITIVE, -0.25, -f32::MAX] {
+            let mut signed = doc.clone();
+            signed.assets.meshes[0].primitives[0].weights[0][0] = weight;
+            assert!(matches!(
+                plan_scale(&ScaleRequest {
+                    operation: ScaleOperation::WholeDocumentLinearUnits { factor: 2.0 },
+                    document: &signed,
+                    capability: &capability,
+                }),
+                Err(ScaleError::NegativeSkinWeight { .. })
+            ));
+        }
     }
 
     // --- f32 rounding under rotation (`f32_rounding_ulps`) ---------------

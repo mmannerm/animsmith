@@ -134,6 +134,7 @@ fn assert_schema_valid(instance: &Value) {
 fn rest_bind_scale_rig_with_negative_weight_glb(
     vertex_index: usize,
     influence_index: usize,
+    weight: f32,
 ) -> Vec<u8> {
     let mut asset = rest_bind_scale_rig_glb();
     let json_length = u32::from_le_bytes(asset[12..16].try_into().unwrap()) as usize;
@@ -165,8 +166,7 @@ fn rest_bind_scale_rig_with_negative_weight_glb(
         + accessor_offset
         + vertex_index * stride
         + influence_index * size_of::<f32>();
-    asset[weight_offset..weight_offset + size_of::<f32>()]
-        .copy_from_slice(&(-0.5f32).to_le_bytes());
+    asset[weight_offset..weight_offset + size_of::<f32>()].copy_from_slice(&weight.to_le_bytes());
     asset
 }
 
@@ -719,32 +719,51 @@ fn a_refused_run_publishes_nothing_and_leaves_a_prior_pair_byte_identical() {
 
 #[test]
 fn a_negative_primary_skin_weight_is_a_typed_plan_refusal_and_publishes_nothing() {
-    let fixture = Fixture::with_asset(rest_bind_scale_rig_with_negative_weight_glb(2, 3));
-    let output = fixture.rest_bind("0.01", "json");
+    // The smallest finite value below zero catches a thresholded check such
+    // as `weight <= -0.5` while the last vertex/influence catches a partial
+    // scan of the VEC4 accessor.
+    let weight = -f32::from_bits(1);
+    for operation in ["rest-bind", "whole-document"] {
+        let fixture =
+            Fixture::with_asset(rest_bind_scale_rig_with_negative_weight_glb(2, 3, weight));
+        let output = match operation {
+            "rest-bind" => fixture.rest_bind("0.01", "json"),
+            "whole-document" => fixture.whole_document("100", "json"),
+            _ => unreachable!(),
+        };
 
-    assert_eq!(
-        output.status.code(),
-        Some(1),
-        "stderr:\n{}",
-        stderr(&output)
-    );
-    assert!(!fixture.path("out.glb").exists());
-    assert!(!fixture.path("out.json").exists());
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{operation} stderr:\n{}",
+            stderr(&output)
+        );
+        assert!(!fixture.path("out.glb").exists(), "{operation}");
+        assert!(!fixture.path("out.json").exists(), "{operation}");
 
-    let record: Value = serde_json::from_str(&stdout(&output)).expect("stdout is one JSON record");
-    assert_schema_valid(&record);
-    assert_eq!(record["outcome"], "rejected");
-    assert_eq!(record["result"], Value::Null);
-    assert_eq!(record["rejection"]["stage"], "plan");
-    assert_eq!(record["rejection"]["kind"], "negative-skin-weight");
-    assert_eq!(record["rejection"]["violations"], serde_json::json!([]));
-    assert!(
-        record["rejection"]["detail"]
-            .as_str()
-            .expect("a rejection detail")
-            .contains("vertex 2 primary skin influence 3"),
-        "record: {record}"
-    );
+        let record: Value =
+            serde_json::from_str(&stdout(&output)).expect("stdout is one JSON record");
+        assert_schema_valid(&record);
+        assert_eq!(record["outcome"], "rejected", "{operation}");
+        assert_eq!(record["result"], Value::Null, "{operation}");
+        assert_eq!(record["rejection"]["stage"], "plan", "{operation}");
+        assert_eq!(
+            record["rejection"]["kind"], "negative-skin-weight",
+            "{operation}"
+        );
+        assert_eq!(
+            record["rejection"]["violations"],
+            serde_json::json!([]),
+            "{operation}"
+        );
+        assert!(
+            record["rejection"]["detail"]
+                .as_str()
+                .expect("a rejection detail")
+                .contains("vertex 2 primary skin influence 3"),
+            "{operation} record: {record}"
+        );
+    }
 }
 
 #[test]
