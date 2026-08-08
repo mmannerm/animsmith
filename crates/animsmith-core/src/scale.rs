@@ -270,11 +270,36 @@ impl ScaleTolerancePolicy {
         // the analytic worst case for the arithmetic involved: composing
         // `W * B` accumulates a four-term inner product per entry.
         //
-        // The detection cost is bounded and small. The defects these three
-        // obligations exist to catch — a dropped rebase, a factor applied
-        // twice, a stale no-op candidate — move a bound or a skin matrix by
-        // a fraction of its own magnitude, while this term is
-        // `4.77e-7` of it.
+        // The detection cost is **not** bounded, and stating it as
+        // `4.77e-7` of the compared quantity would be wrong. `4 * 2^-23` is
+        // `4.77e-7` of *the magnitude the arithmetic ran on*, which equals
+        // the compared quantity only when the two coincide. Where
+        // cancellation made the compared quantity small, the term is that
+        // same fraction of the larger operand, and so is
+        // `4.77e-7 * (operand magnitude / compared magnitude)` of the
+        // quantity actually being compared — a ratio with no upper bound.
+        //
+        // On this module's own
+        // `a_joint_far_from_the_geometry_it_carries_still_proves_its_bounds`
+        // fixture the term is `4.44` against a `W * B` of magnitude `1.0`:
+        // `443 %` of the compared quantity's own magnitude. Measured on that
+        // rig, the smallest inverse-bind `x` shift still refused is `4.09`
+        // units. A regenerated bind wrong by four units is accepted.
+        //
+        // So for a rig whose joints sit `k` times further from the origin
+        // than the geometry they carry, `SkinMatrix` and `Bounds` lose
+        // discriminating power in proportion to `k`. That is a property of
+        // composing `W * B` from `f32` stored values, not of this policy:
+        // the stored inverse bind's translation column is only accurate to
+        // its own ulp, and composing it against `W` amplifies that
+        // quantization by `W`'s linear part into a product the cancellation
+        // has made near-identity. Composing in `f64` does not remove it —
+        // measured over the same 30_000 candidates, an `f64` composition
+        // moves the worst skin residual from `2.50` to `2.06` ulps and the
+        // worst bounds residual from `1.68` to `0.90`, leaving the worst
+        // residual at `86 %` of the compared product's own magnitude against
+        // a `1e-5` relative band. The term is covering input quantization,
+        // which no amount of proof-side precision can undo.
         f32_rounding_ulps: 4,
     };
 
@@ -4978,10 +5003,21 @@ fn accumulate_skinned_bounds(
             }
             bounds.min = bounds.min.min(skinned);
             bounds.max = bounds.max.max(skinned);
+            // `as_dvec3().length()` rather than `skinned.length() as f64`:
+            // `Vec3::length` squares its components in `f32`, so it returns
+            // `inf` for every `skinned` past `sqrt(f32::MAX) = 1.84e19` even
+            // though `skinned` itself is finite to `3.40e38` and has just
+            // been checked so. An infinite magnitude makes
+            // `f32_rounded_tolerance` infinite, and `check_residual` refuses
+            // a non-finite tolerance — so squaring in `f32` would refuse
+            // exactly-correct candidates (`observed: 0.0`) on any rig whose
+            // skinned extent passes that constant. Widening the square to
+            // `f64` puts the overflow boundary back where the rest of this
+            // function already put it: at the finiteness of `skinned`.
             bounds.rounding_magnitude = bounds
                 .rounding_magnitude
                 .max(vertex_magnitude)
-                .max(skinned.length() as f64);
+                .max(skinned.as_dvec3().length());
             bounds.touched = true;
         }
     }
@@ -11467,6 +11503,83 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_whole_document_conversion_takes_the_larger_side_s_magnitude_not_the_smaller() {
+        // Both magnitudes are maxed over the *two documents*, and every
+        // rest/bind fixture above is blind to which way the `max` goes:
+        // rest/bind moves the factor from the root's scale into the joint
+        // translations, so the source composes `3190 * 1000` where the
+        // candidate composes `1 * 3.19e6` and the two sides' magnitudes
+        // coincide by construction.
+        //
+        // Whole-document conversion separates them. It scales every
+        // translation by the factor and leaves every linear part alone, so
+        // the candidate's composition magnitude is the source's times the
+        // factor — here `3190x` apart. Taking the `min` of the two sides,
+        // or dropping either side from the `max`, buys the larger side a
+        // tolerance derived from the smaller side's arithmetic, and this
+        // correct candidate is refused.
+        let doc = rotating_rig_document(
+            [
+                Quat::from_xyzw(0.84815156, -0.23002678, -0.2828825, -0.3843229),
+                Quat::from_xyzw(0.6066518, -0.10115066, -0.7511764, 0.23974188),
+            ],
+            1.0,
+            [Vec3::new(0.0, 1000.0, 0.0), Vec3::new(200.0, -300.0, 400.0)],
+            &[Vec3::new(0.5, -0.25, 0.125), Vec3::new(-0.75, 0.5, -0.25)],
+            &[[1.0, 0.0, 0.0, 0.0], [0.5, 0.5, 0.0, 0.0]],
+        );
+        let capability = complete_capability();
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::WholeDocumentLinearUnits { factor: 3190.0 },
+            document: &doc,
+            capability: &capability,
+        })
+        .expect("a whole-document conversion plans at any positive factor");
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        prove_scale(&doc, &candidate, &plan).expect(
+            "the two documents' composition magnitudes are 3190x apart, and the larger side's \
+             arithmetic is what both obligations must be given room for",
+        );
+    }
+
+    #[test]
+    fn a_rig_whose_skinned_extent_passes_the_square_root_of_f32_max_still_proves() {
+        // The bounds magnitude is a `max` over skinned extents, and taking
+        // that extent's length in `f32` would square it — putting a hard
+        // refusal boundary at `sqrt(f32::MAX) = 1.845e19`, nineteen decades
+        // below the `3.403e38` the rest of this proof stays finite to. Past
+        // that boundary the magnitude is `inf`, so the tolerance is `inf`,
+        // and `check_residual` refuses a *correct* candidate whose residual
+        // is exactly `0.0`.
+        //
+        // `1.9e19` is just past it, so this fixture fails in the most
+        // misleading possible way if the length is ever narrowed back to
+        // `f32`. Nothing else about the rig is unusual: it is the far-joint
+        // fixture's rotations with one large coordinate.
+        let doc = rotating_rig_document(
+            [
+                Quat::from_xyzw(0.84815156, -0.23002678, -0.2828825, -0.3843229),
+                Quat::from_xyzw(0.6066518, -0.10115066, -0.7511764, 0.23974188),
+            ],
+            1e3,
+            [Vec3::new(0.0, 1000.0, 0.0), Vec3::new(200.0, -300.0, 400.0)],
+            &[Vec3::new(1.9e19, 0.0, 0.0), Vec3::new(-0.75, 0.5, -0.25)],
+            &[[1.0, 0.0, 0.0, 0.0], [0.5, 0.5, 0.0, 0.0]],
+        );
+        let plan = rest_bind_plan(&doc, 1e3);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).expect(
+            "a rig whose skinned extent exceeds sqrt(f32::MAX) must still prove: the extent \
+             itself is finite, and squaring it is the proof's own arithmetic",
+        );
+        assert!(
+            proof.bounds_residual.is_finite(),
+            "bounds residual {} is not finite",
+            proof.bounds_residual
+        );
+    }
+
     /// `scalar_tolerance` at a single magnitude, for fixtures that assert a
     /// residual exceeds the band the *component alone* would have bought.
     fn policy_scalar_tolerance_at(magnitude: f64) -> f64 {
@@ -11910,11 +12023,11 @@ mod tests {
     // --- Tolerance policy identity -----------------------------------------
 
     #[test]
-    fn the_appendix_d_v2_tolerance_identity_is_pinned_through_plan_and_proof() {
+    fn the_appendix_d_v3_tolerance_identity_is_pinned_through_plan_and_proof() {
         // DESIGN.md Appendix D §D.1/§D.6: producers record this identity and
         // these thresholds in evidence, so a change to either is a new policy
         // identity rather than a silent retune.
-        fn assert_appendix_d_v2(policy: ScaleTolerancePolicy) {
+        fn assert_appendix_d_v3(policy: ScaleTolerancePolicy) {
             assert_eq!(policy.id, "appendix-d-v3");
             assert_eq!(policy.relative_orthogonality, 1e-5);
             assert_eq!(policy.equal_axis, 1e-5);
@@ -11923,8 +12036,9 @@ mod tests {
             assert_eq!(policy.scalar_absolute, 1e-6);
             assert_eq!(policy.scalar_relative, 1e-5);
             assert_eq!(policy.rotation_residual_radians, 1e-5);
-            // `2^-14` exactly: the v2 unit-scale bound, on the binary32
-            // mantissa grid the composed-scale measurement lives on.
+            // `2^-14` exactly: the unit-scale bound v2 declared and v3
+            // retains, on the binary32 mantissa grid the composed-scale
+            // measurement lives on.
             assert_eq!(policy.postcondition_unit_scale_residual, 6.103_515_625e-5);
             assert_eq!(policy.proof_sample_work_budget, 400_000_000);
             // `abs_error <= 1e-6 + 1e-5 * max(abs(before), abs(after))`, at a
@@ -11977,10 +12091,10 @@ mod tests {
         let capability = complete_capability();
 
         let whole_document = whole_document_plan(&doc, &capability);
-        assert_appendix_d_v2(whole_document.tolerance_policy());
+        assert_appendix_d_v3(whole_document.tolerance_policy());
         let candidate = build_scale_candidate(&doc, &whole_document).unwrap();
         let proof = prove_scale(&doc, &candidate, &whole_document).unwrap();
-        assert_appendix_d_v2(proof.tolerance_policy);
+        assert_appendix_d_v3(proof.tolerance_policy);
 
         let rest_bind = plan_scale(&ScaleRequest {
             operation: ScaleOperation::RestBindUniformScale {
@@ -11992,10 +12106,10 @@ mod tests {
             capability: &capability,
         })
         .unwrap();
-        assert_appendix_d_v2(rest_bind.tolerance_policy());
+        assert_appendix_d_v3(rest_bind.tolerance_policy());
         let candidate = build_scale_candidate(&doc, &rest_bind).unwrap();
         let proof = prove_scale(&doc, &candidate, &rest_bind).unwrap();
-        assert_appendix_d_v2(proof.tolerance_policy);
+        assert_appendix_d_v3(proof.tolerance_policy);
     }
 
     // --- Tolerance boundary and reported maxima ----------------------------

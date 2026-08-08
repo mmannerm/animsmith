@@ -804,13 +804,45 @@ above both, and it is also the analytic worst case for the arithmetic
 involved, since composing `W * B` accumulates a four-term inner product per
 entry.
 
-The cost is bounded and is the direction that matters: on the rig above the
-smallest *real* error still refused is `3.1e-3` for skinned bounds and
-`3.1e-3` for the skin equation, against `6.1e-5` and `1.1e-5` before. Every
-build defect these obligations exist to catch — a dropped rebase, a factor
-applied twice, a stale no-op candidate, a regenerated bind that came out wrong
-— moves a bound or a skin matrix by a fraction of its own magnitude, not by
-three ulps of it.
+**The cost is real and it is not bounded.** On the rig above, the smallest
+*real* error still refused is `3.1e-3` for skinned bounds and `3.1e-3` for the
+skin equation, against `6.1e-5` and `1.1e-5` before. But that rig's compared
+quantities and its operand magnitudes sit close together, and the general case
+does not. `4 * 2^-23` is `4.77e-7` of **the magnitude the arithmetic ran on**,
+which is `4.77e-7` of the compared quantity only when the two coincide and is
+otherwise `4.77e-7 * (operand magnitude / compared magnitude)` of it. That
+ratio has no upper bound, and it is exactly the ratio the term exists to
+cover, so the term and the compared quantity diverge precisely as far as the
+cancellation this section opened with.
+
+Concretely, on the far-joint rig of
+`a_joint_far_from_the_geometry_it_carries_still_proves_its_bounds` — joints
+`3.2e6` from the origin carrying geometry within one unit of themselves, so
+`W * B` is near-identity — the term is `4.44` against a compared magnitude of
+`1.0`, and the smallest inverse-bind `x` shift still refused is `4.09` units.
+A regenerated bind wrong by four units is accepted there. As a rule: for a rig
+whose joints sit `k` times further from the origin than the geometry they
+carry, `SkinMatrix` and `Bounds` lose discriminating power in proportion to
+`k`.
+
+**This is a property of the `f32` inputs, not of the policy, and precision
+does not fix it.** The dominant error is not the composition's own rounding.
+It is the stored inverse bind's translation column — accurate only to its own
+ulp — amplified by `W`'s linear part into a product that cancellation has made
+near-identity. Composing `W * B` in `f64` from the same `f32` stored values
+was measured over the same 30_000 correct candidates: it moves the worst skin
+residual from `2.50` to `2.06` ulps and the worst bounds residual from `1.68`
+to `0.90`, an improvement of under a factor of two, and leaves the worst
+residual at `86 %` of the compared product's own magnitude against a `1e-5`
+relative band. On the far-joint rig it moves the smallest refused shift from
+`4.09` units to `4.16` at the same four ulps, or `3.16` at the three ulps that
+residual would then permit. The term covers a quantization the file itself
+already performed, and no amount of proof-side precision can undo it.
+
+What the term does buy is the direction that matters: each obligation still
+refuses any error larger than the rounding its own arithmetic genuinely
+incurs, and none of them was ever sound holding a quantity to a band tighter
+than its own rounding error.
 
 **Transform-only affine is not in this class.** It compares a probe point
 transformed through the complete expected and actual world affines as a vector
@@ -824,9 +856,26 @@ closed, and neither is bounded by a documented magnitude domain, because
 there is no constant a document could be checked against ahead of time:
 skinning accumulates a dot product per axis, so where it overflows depends on
 the rotation and on the operand magnitudes rather than on the magnitude of
-the result. The gap this closes is that the two failures were previously
-reported under one reason string, which told an operator nothing about which
-one they had.
+the result.
+
+That "no constant" is a constraint on the magnitudes too, not just on the
+skinning. A magnitude derived from a skinned extent must take that extent's
+length in `f64`: squaring it in `f32` overflows at `sqrt(f32::MAX) = 1.84e19`,
+nineteen decades below the `3.40e38` the extent itself is checked finite to,
+and an infinite magnitude makes the tolerance infinite and refuses a correct
+candidate whose residual is exactly `0.0`. That would be a documented
+magnitude domain — a constant, checkable ahead of time — and this section says
+there is none, so there must not be one.
+`a_rig_whose_skinned_extent_passes_the_square_root_of_f32_max_still_proves`
+pins it. The composition magnitude is a different case and genuinely has no
+constant: its `f32` `abs(a) * abs(b)` can reach `inf` only once an operand
+entry passes about `7.0e37` — within a factor of five of `f32::MAX`, in a
+regime where `W * B` itself is already at or over the edge — and where exactly
+depends on the operands and their cancellation rather than on any threshold a
+document could be screened against.
+
+The gap this closes is that the two failures were previously reported under
+one reason string, which told an operator nothing about which one they had.
 
 **Normative residual norm for the unit-scale postcondition.** The postcondition
 "unit composed scale for every affected node" is measured **per axis**, as
