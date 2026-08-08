@@ -212,10 +212,12 @@ fn assembles_schema_valid_byte_stable_character_and_evidence() {
 /// `--format json` puts the published evidence on stdout — the same bytes,
 /// not a second rendering of the same record.
 ///
-/// The byte equality is the regression guard on the single serialization in
-/// `publish::serialize_record`: the artifact and its evidence are prepared
-/// from one `Vec<u8>`, and if stdout is ever routed back through a separate
-/// serializer this is what notices when the two drift.
+/// The byte equality guards **drift**; it does not prove the record is
+/// serialized once. A second serializer producing identical bytes would pass
+/// this unchanged — which is precisely why the property lives in the
+/// construction instead: `publish::serialize_record` runs once and both the
+/// evidence temp and `publish::emit` receive that one `Vec<u8>`. This test is
+/// what notices if a later change lets the two destinations diverge.
 #[test]
 fn json_format_prints_the_published_evidence_bytes_verbatim() {
     let dir = tempfile::tempdir().expect("creates temp directory");
@@ -249,8 +251,7 @@ fn json_format_prints_the_published_evidence_bytes_verbatim() {
 
     let record: Value = serde_json::from_slice(&output.stdout).expect("stdout is one JSON record");
     assert_eq!(
-        record["schema"],
-        "urn:animsmith:schema:character-assembly-evidence:1",
+        record["schema"], "urn:animsmith:schema:character-assembly-evidence:1",
         "no second schema and no envelope around the record"
     );
     assert_schema_valid(&record, EVIDENCE_SCHEMA);

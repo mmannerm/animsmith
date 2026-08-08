@@ -590,9 +590,12 @@ fn identical_inputs_and_arguments_produce_byte_identical_artifact_and_evidence()
 
 /// Under `--format json` the published evidence and stdout are the same
 /// bytes, because the record is serialized once and both destinations
-/// receive that `Vec<u8>`. The regression this guards is stdout being routed
-/// back through a second serializer, where the two agreeing again becomes a
-/// coincidence rather than a construction.
+/// receive that `Vec<u8>`.
+///
+/// This guards **drift**, not the single serialization itself: routing stdout
+/// back through a second serializer would still pass here, because two
+/// serializers over one record agree today. The property is the construction;
+/// this test is what notices if the two destinations ever stop matching.
 #[test]
 fn the_published_evidence_and_the_json_stream_are_the_same_bytes() {
     let fixture = Fixture::new();

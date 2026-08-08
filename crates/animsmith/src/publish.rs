@@ -47,7 +47,6 @@
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 /// Serialize one evidence record as the pretty, newline-terminated JSON that
@@ -86,8 +85,29 @@ pub(crate) fn serialize_record<T: Serialize>(record: &T) -> Result<Vec<u8>, Stri
 /// already been published when this happens: the failure is in reporting the
 /// run, not in performing it.
 pub(crate) fn emit(bytes: &[u8]) -> Result<(), String> {
-    std::io::stdout()
-        .write_all(bytes)
+    // Locked once for the whole record rather than per `write` call, so a
+    // concurrently printed line cannot land inside the JSON document.
+    emit_to(&mut std::io::stdout().lock(), bytes)
+}
+
+/// Write exactly these bytes to `sink`, reporting a failure as an operator
+/// error.
+///
+/// Split from [`emit`] purely so the failure path is reachable from a test:
+/// stdout cannot be made to fail on demand from inside the process, and a
+/// broken pipe or a full disk turning into a panic rather than a diagnosed
+/// error is exactly the behaviour this replaced.
+///
+/// [`std::io::Write::write_all`] also covers the short-write case: it loops
+/// until the buffer is drained and reports [`std::io::ErrorKind::WriteZero`]
+/// once the sink stops accepting bytes, so a partially written record is an
+/// error here rather than a silently truncated one.
+///
+/// # Errors
+///
+/// Returns an operator error naming the underlying I/O failure.
+fn emit_to(sink: &mut impl std::io::Write, bytes: &[u8]) -> Result<(), String> {
+    sink.write_all(bytes)
         .map_err(|error| format!("cannot write evidence to stdout: {error}"))
 }
 
@@ -327,6 +347,89 @@ pub(crate) fn publish_pair(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A sink that refuses every write, the way a closed pipe does.
+    struct BrokenPipe;
+
+    impl std::io::Write for BrokenPipe {
+        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "the reader is gone",
+            ))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A sink that takes a prefix and then stops accepting bytes, which is
+    /// how a filesystem that has just filled up presents itself to `write`.
+    struct ShortWriter {
+        accepted: Vec<u8>,
+        budget: usize,
+    }
+
+    impl std::io::Write for ShortWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            let taken = buf.len().min(self.budget);
+            self.accepted.extend_from_slice(&buf[..taken]);
+            self.budget -= taken;
+            Ok(taken)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_sink_that_refuses_the_record_is_an_operator_error_and_not_a_panic() {
+        // The behaviour this replaced was `println!`'s panic, which reaches
+        // the operator as exit 101 and a backtrace rather than a diagnosis.
+        let error =
+            emit_to(&mut BrokenPipe, b"{}\n").expect_err("a closed pipe must not be ignored");
+        assert!(
+            error.starts_with("cannot write evidence to stdout"),
+            "{error}"
+        );
+        assert!(error.contains("the reader is gone"), "{error}");
+    }
+
+    #[test]
+    fn a_sink_that_stops_mid_record_refuses_rather_than_reporting_success() {
+        // `write_all` loops until the buffer drains, so the failure surfaces
+        // only once the sink stops taking bytes. A half-written record must
+        // not read as a written one.
+        let mut sink = ShortWriter {
+            accepted: Vec::new(),
+            budget: 5,
+        };
+        let error = emit_to(&mut sink, b"{\"schema\":1}\n")
+            .expect_err("a truncated record must not be reported as written");
+        assert!(
+            error.starts_with("cannot write evidence to stdout"),
+            "{error}"
+        );
+        assert_eq!(
+            sink.accepted, b"{\"sch",
+            "only the accepted prefix got through"
+        );
+    }
+
+    #[test]
+    fn a_writable_sink_receives_exactly_the_serialized_record() {
+        // Pins both halves of the shared helper: what `serialize_record`
+        // produces (pretty, newline-terminated) and that `emit_to` passes it
+        // through unchanged rather than re-rendering it.
+        let record =
+            serialize_record(&serde_json::json!({"schema": 1})).expect("record serializes");
+        assert_eq!(record, b"{\n  \"schema\": 1\n}\n");
+        let mut sink = Vec::new();
+        emit_to(&mut sink, &record).expect("a writable sink takes the record");
+        assert_eq!(sink, record);
+    }
 
     #[test]
     fn failed_second_publish_restores_both_previous_outputs() {
