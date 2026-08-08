@@ -5347,7 +5347,19 @@ impl SkinSlot {
 /// `observed: 8.929` against `tolerance: 5.969e-4`. Whether a mixed-sign
 /// weight should instead be a typed refusal upstream, which would restore
 /// convexity and let this stage be deleted, is issue #336; until it is
-/// decided, this stage is what carries that blend.
+/// decided, this stage is what carries a mixed-sign blend **whose numerator
+/// does not also cancel**.
+///
+/// Where both cancel it does not, and no stage does. Two slots with the *same*
+/// composed `W * B` put the blended point back on stage 1 — the numerator
+/// shrinks by the same factor the denominator does — while `skinned /=
+/// weight_sum` still divides the accumulated rounding of terms of magnitude
+/// `abs(w_k) * abs(p)` by that weight sum. The base is then short by
+/// `sum(abs(w_k)) / abs(sum(w_k))`, which nothing bounds, and a correct
+/// candidate is refused:
+/// `a_blend_whose_numerator_cancels_with_its_weights_is_refused_though_correct`
+/// pins that refusal. It needs a negative weight to reach, so #336 closes it
+/// too.
 /// `a_rig_whose_skinned_extent_passes_the_square_root_of_f32_max_still_proves`
 /// additionally holds its `f32` overflow domain. See DESIGN.md Appendix D
 /// §D.1.
@@ -12091,11 +12103,17 @@ mod tests {
         // does not exist.
         //
         // The floor is `4.09375`: a shift of exactly that much is admitted and
-        // the next binary32 above it, `4.0937502`, is refused by `SkinMatrix`
+        // the next binary32 above it, `4.0937505`, is refused by `SkinMatrix`
         // at `observed: 3.0625` against `tolerance: 3.0423`. The observed
         // residual moves in steps rather than continuously, because it is the
         // stored bind's own `f32` quantization at `3.2e6` — which is what the
         // section says the term is covering.
+        //
+        // The refused shift is written as the successor of the accepted one
+        // rather than as a decimal literal. This test's name claims a bracket
+        // one representable step wide, and an earlier revision spent `4.094` —
+        // some five hundred ulps up — which would have kept passing across any
+        // widening of the band that stayed inside that gap.
         let doc = far_joint_document();
         let plan = rest_bind_plan(&doc, 3190.0);
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
@@ -12105,8 +12123,11 @@ mod tests {
             prove_scale(&doc, &ScaleCandidate { document: broken }, &plan)
         };
 
-        shifted(4.09375).expect("a 4.09375-unit bind shift is inside the documented floor");
-        let error = shifted(4.094).expect_err("the next shift up must be refused");
+        const FLOOR: f32 = 4.09375;
+        let next_up = f32::from_bits(FLOOR.to_bits() + 1);
+        shifted(FLOOR).expect("a 4.09375-unit bind shift is inside the documented floor");
+        let error = shifted(next_up)
+            .expect_err("the next binary32 above the floor, 4.0937505, must be refused");
         assert!(
             matches!(
                 error,
@@ -12210,6 +12231,36 @@ mod tests {
             3190.0,
             CANCELLING_BLEND_LOCALS,
             [Mat4::IDENTITY, HALF_TURN_Z],
+            &[Vec3::new(1000.0, 0.0, 0.0)],
+            &[[1.0, -0.99999, 0.0, 0.0]],
+        )
+    }
+
+    /// [`amplifying_blend_document`]'s cancelling weights over two slots that
+    /// compose to the **same** transform, so the blend's *numerator* cancels
+    /// along with its denominator and the blended point lands back where the
+    /// per-slot transform left it.
+    ///
+    /// `1.0 * p + (-0.99999) * p` is `1.0e-2` on a `p` of `1000`, and dividing
+    /// by the `1.0014e-5` weight sum returns `p`: stage 2 reads `9.996e2`
+    /// against stage 1's `1.000e3`, so no stage of the base is amplified and
+    /// the four stages have nothing extra to name. The *accumulation* is
+    /// amplified all the same — the summed point carries the rounding of terms
+    /// of magnitude `abs(w_k) * abs(p)`, and `skinned /= weight_sum` divides
+    /// that rounding by the weight sum along with the point it belongs to. The
+    /// base is short by `sum(abs(w_k)) / abs(sum(w_k))`, which is `2.0e5` here
+    /// and which nothing bounds.
+    ///
+    /// [`amplifying_blend_document`] escapes this only because its two slots
+    /// are *opposed*: that inflates stage 2 to `1.997e8` and buys the base the
+    /// same `1.0e5` the accumulation needs. Aligning them — the one change
+    /// here — collapses stage 2 back onto stage 1 and the base with it.
+    fn cancelling_numerator_blend_document() -> Document {
+        composed_slot_document(
+            CANCELLING_BLEND_ROTATIONS,
+            3190.0,
+            CANCELLING_BLEND_LOCALS,
+            [Mat4::IDENTITY, Mat4::IDENTITY],
             &[Vec3::new(1000.0, 0.0, 0.0)],
             &[[1.0, -0.99999, 0.0, 0.0]],
         )
@@ -12455,6 +12506,120 @@ mod tests {
              this fixture no longer kills a base that drops the blended point",
             proof.bounds_residual
         );
+    }
+
+    #[test]
+    fn a_blend_whose_numerator_cancels_with_its_weights_is_refused_though_correct() {
+        // Where
+        // `a_blend_whose_weights_nearly_cancel_amplifies_a_vertex_and_still_proves_its_bounds`
+        // ends. That fixture's slots are *opposed*, so the cancelling weight
+        // sum amplifies the blended point to `1.997e8` and stage 2 grows with
+        // the accumulation it has to cover. Align the two slots — the only
+        // change [`cancelling_numerator_blend_document`] makes — and the
+        // numerator cancels too: the blended point lands back on `1000`, stage
+        // 2 reads `9.996e2` against stage 1's `1.000e3`, and every stage of
+        // the base is ordinary while `skinned /= weight_sum` still divides the
+        // accumulated rounding by `1.0014e-5`.
+        //
+        // So the four stages cover a mixed-sign blend only when the numerator
+        // does not also cancel. Where both cancel the base is short by
+        // `sum(abs(w_k)) / abs(sum(w_k))` — `2.0e5` here — and that ratio has
+        // no upper bound: tightening the second weight to `-0.999999` and
+        // `-0.9999999` on this same rig moves the residual from `6.88e3` to
+        // `5.92e4` and `9.28e5` while the band stays near `33`. This is a
+        // *correct* candidate being refused, by `205x` at a raw demand of
+        // about `18_000` ulps, so it is not a count that could have been
+        // raised.
+        //
+        // It takes a negative weight to reach: `0.5`, `1e-6` and `-0.5` on
+        // this rig all prove. Issue #336 — refusing mixed-sign `WEIGHTS_n`
+        // upstream, as glTF already requires — therefore closes this as well
+        // as making stage 2 redundant.
+        //
+        // Pre-existing rather than introduced here, and narrowed by this PR:
+        // with `f32_rounding_ulps = 0`, which is `main`'s behaviour, the same
+        // rig is refused at `q = 1.5` as well, where it now proves. This
+        // fixture characterises today's behaviour, it does not endorse it, and
+        // when #336 lands it flips to an acceptance fixture — the rig stops
+        // being constructible, and the assertions below become the statement
+        // that `build_scale_candidate` never sees it.
+        let doc = cancelling_numerator_blend_document();
+
+        // The rig's shape is the fixture: a blend that stopped cancelling, or
+        // one whose blended point started dominating the way the opposed rig's
+        // does, is refused below for some other reason entirely.
+        let slots = rig_skin_slots(&doc);
+        let primitive = &doc.assets.meshes[0].primitives[0];
+        let position = primitive.positions[0];
+        let weights = primitive.weights[0];
+        let mut summed = Vec3::ZERO;
+        let mut weight_sum = 0.0f32;
+        let mut absolute_weight_sum = 0.0f32;
+        let mut stage_one = 0.0f64;
+        for (slot_index, slot) in slots.iter().enumerate() {
+            summed += weights[slot_index] * slot.matrix.transform_point3(position);
+            weight_sum += weights[slot_index];
+            absolute_weight_sum += weights[slot_index].abs();
+            stage_one = stage_one.max(column_operand_magnitude(
+                slot.absolute,
+                position.extend(1.0),
+            ));
+        }
+        let blended = f64::from((summed / weight_sum).length());
+        assert!(
+            weight_sum > 0.0 && blended < 2.0 * stage_one,
+            "the weights no longer nearly cancel (sum {weight_sum}) or the blended point \
+             {blended} is no longer back on the per-slot transform's own scale ({stage_one}): \
+             the base then names the accumulation the way the opposed rig's does",
+        );
+        let shortfall = f64::from(absolute_weight_sum / weight_sum);
+        assert!(
+            shortfall > 1e5,
+            "the accumulation is now only {shortfall}x the base, so this rig no longer reaches \
+             the gap it was written to pin",
+        );
+
+        // Both the sibling fixture's rest/bind plan and the reproducer's
+        // whole-document conversion refuse it, at `12.19` against `1.06e-2`
+        // and `6875.58` against `33.48` — this is a property of the base, not
+        // of one operation.
+        let capability = complete_capability();
+        let plans = [
+            rest_bind_plan(&doc, 3190.0),
+            plan_scale(&ScaleRequest {
+                operation: ScaleOperation::WholeDocumentLinearUnits { factor: 3190.0 },
+                document: &doc,
+                capability: &capability,
+            })
+            .expect("a whole-document conversion plans at any positive factor"),
+        ];
+        for plan in &plans {
+            let candidate = build_scale_candidate(&doc, plan).expect(
+                "the candidate is built by the same code the proof checks, and #336 landing is \
+                 what should stop this rig existing — not a build failure",
+            );
+            let error = prove_scale(&doc, &candidate, plan).expect_err(
+                "a blend whose numerator cancels with its weights asks more of the bounds base \
+                 than the four stages name. If this now proves, the base has grown a term for \
+                 the accumulation (or #336 has refused the rig) and this fixture should become \
+                 an acceptance one — with DESIGN.md Appendix D section D.1's narrowing of \
+                 stage 2's claim changing with it.",
+            );
+            let ScaleError::ProofResidualExceeded {
+                kind: ProofResidualKind::Bounds,
+                observed,
+                tolerance,
+            } = error
+            else {
+                panic!("expected a refused bound, got {error:?}");
+            };
+            assert!(
+                observed > 100.0 * tolerance,
+                "bounds band moved: observed {observed}, tolerance {tolerance}. The gap this \
+                 pins is unbounded, so a band that now covers it within `100x` has been widened \
+                 by something other than a term for the accumulation",
+            );
+        }
     }
 
     #[test]
@@ -13100,6 +13265,12 @@ mod tests {
             &plan,
             &candidate,
             &ScaleCandidate { document: nudged },
+            |document: &Document| {
+                document.skeleton.bones[UNSKINNED_SIBLING_BONE]
+                    .rest
+                    .translation
+                    .x
+            },
         );
 
         // And the tightening half. `1e-4` sits between the two bands: above
@@ -13189,6 +13360,12 @@ mod tests {
             &plan,
             &candidate,
             &ScaleCandidate { document: inside },
+            |document: &Document| {
+                document.skeleton.bones[UNSKINNED_SIBLING_BONE]
+                    .rest
+                    .translation
+                    .x
+            },
         );
     }
 
@@ -13291,12 +13468,27 @@ mod tests {
     /// somewhere that does move it — fails here, loudly, instead of silently
     /// restoring the coincidental `SkinMatrix` death the brackets were written
     /// to escape.
+    ///
+    /// `perturbed` reads the field the caller displaced, off whichever
+    /// document it is handed. Bit-identical residuals are only evidence of
+    /// isolation if the two documents actually differ, and both ways of losing
+    /// that are silent: a caller that forgot to displace anything, and a
+    /// displacement small enough for `f32` to absorb — `+1e-3` on a stored
+    /// `1.54e6`, whose ulp is `0.125`, leaves the field unchanged and every
+    /// assertion below trivially true.
     fn assert_the_defect_axis_is_invisible_to_the_skin(
         doc: &Document,
         plan: &ScalePlan,
         candidate: &ScaleCandidate,
         nudged: &ScaleCandidate,
+        perturbed: impl Fn(&Document) -> f32,
     ) {
+        assert_ne!(
+            perturbed(candidate.document()),
+            perturbed(nudged.document()),
+            "the displacement did not survive storage, so the residuals below are equal because \
+             the two documents are and this assertion proves nothing about isolation",
+        );
         assert!(
             plan.affected_nodes().contains(&UNSKINNED_SIBLING_BONE),
             "the defect's bone is outside the affected closure, so no obligation compares it",
@@ -13532,7 +13724,7 @@ mod tests {
         // `20`, so a `max` over the two sides is the source side and is loose
         // by `100x`.
         //
-        // `5e-5` is the bracket, and it is a narrow one because `TrackValue`
+        // `3e-5` is the bracket, and it is a narrow one because `TrackValue`
         // closes in from above as the factor shrinks: it compares the key
         // values themselves, which are `10` units here, against a `1.01e-4`
         // band. Below that and above the `1.05e-5` the candidate's sampled
@@ -13561,6 +13753,12 @@ mod tests {
             &plan,
             &candidate,
             &ScaleCandidate { document: nudged },
+            |document: &Document| {
+                let TrackValues::Vec3s(values) = &document.clips[0].tracks[0].values else {
+                    panic!("expected a vec3 track");
+                };
+                values[0].x
+            },
         );
 
         let mut broken = candidate.document().clone();
@@ -13623,6 +13821,12 @@ mod tests {
             &plan,
             &candidate,
             &ScaleCandidate { document: nudged },
+            |document: &Document| {
+                let TrackValues::Vec3s(values) = &document.clips[0].tracks[0].values else {
+                    panic!("expected a vec3 track");
+                };
+                values[0].x
+            },
         );
 
         let mut broken = candidate.document().clone();

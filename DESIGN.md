@@ -849,12 +849,38 @@ below the `1e-5` the relative band already allows. The `2^-23` is
   Whether a mixed-sign weight should be a typed refusal upstream instead is
   **issue #336**: glTF requires `WEIGHTS_n` to be non-negative, so refusing it
   would restore convexity and make this stage provably redundant rather than
-  provably necessary. Until that is decided this stage is what carries such a
-  blend, and the fixture above is the evidence that it is load-bearing today.
-  #336 keeps the rig either way — pinning the refusal, or pinning that stage 2
-  carries it.
+  provably necessary. Until that is decided this stage is what carries a
+  mixed-sign blend **whose numerator does not also cancel**, and the fixture
+  above is the evidence that it is load-bearing today. #336 keeps the rig
+  either way — pinning the refusal, or pinning that stage 2 carries it.
   `a_rig_whose_skinned_extent_passes_the_square_root_of_f32_max_still_proves`
   additionally holds this stage's `f32` overflow domain.
+
+  **Where both numerator and denominator cancel, no stage carries it.** Give
+  two slots the *same* composed `W * B` and the cancelling weights shrink the
+  numerator by the factor they shrink the denominator by, so the blended point
+  lands back on stage 1: on
+  `a_blend_whose_numerator_cancels_with_its_weights_is_refused_though_correct`
+  stage 2 reads `9.996e2` against stage 1's `1.000e3` and every stage of the
+  base is ordinary. The *accumulation* is not — the summed point carries the
+  rounding of terms of magnitude `abs(w_k) * abs(p)`, and `skinned /=
+  weight_sum` divides that rounding by `1.0014e-5` along with the point. The
+  base is short by `sum(abs(w_k)) / abs(sum(w_k))`, `2.0e5` on that rig, and
+  nothing bounds that ratio: tightening the second weight to `-0.999999` and
+  `-0.9999999` moves the residual from `6.88e3` to `5.92e4` and `9.28e5`
+  against a band that stays near `33`. A *correct* candidate is refused, by
+  `205x` at a raw demand of about `18_000` ulps, so no ulp count reaches it.
+
+  `a_blend_whose_weights_nearly_cancel_amplifies_a_vertex_and_still_proves_its_bounds`
+  escapes only because its slots are *opposed*, which inflates stage 2 to
+  `1.997e8` and buys the base exactly the `1.0e5` the accumulation needs;
+  aligning them collapses stage 2 onto stage 1. This is pre-existing rather
+  than introduced by the per-axis work, and narrowed by it — at
+  `f32_rounding_ulps = 0` the same rig is refused at `q = 1.5` as well, where
+  it now proves. It requires a negative weight (`0.5`, `1e-6` and `-0.5` all
+  prove), so **#336 closes it** along with making stage 2 redundant. The
+  calibration sweep cannot see it either, and for the reason it cannot see
+  stage 2: the sweep draws non-negative weights.
 
   `magnitude` is deliberately *not* read off the bound corner being compared.
   A per-axis extreme is contributed by whichever vertex happened to be
