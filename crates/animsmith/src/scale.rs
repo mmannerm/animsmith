@@ -19,6 +19,15 @@
 //! | Refusal | nothing | the record, `outcome: "rejected"` | 1 |
 //! | Operator error | nothing | — (prose on stderr) | 2 |
 //!
+//! A stdout that cannot take the record — a closed pipe, a full filesystem —
+//! changes no row of that table: the write failure is diagnosed on stderr and
+//! the outcome's exit code stands. By the time stdout is written the pair is
+//! already published or the refusal is already a fact about the asset, so
+//! raising it would report an operator error for work that was done, and
+//! would turn `scale … --format json | head` on a refused asset into exit
+//! `2`. A record that refuses to *serialize* is the opposite case and does
+//! exit `2`: that record would be false, and [`Finite`] exists to stop it.
+//!
 //! The split is by *what the failure is a property of*, not by where in the
 //! pipeline it was raised.
 //!
@@ -60,8 +69,8 @@
 //! for the raw manifest and a digest of one is not a manifest.
 
 use crate::publish::{
-    destination_identity, input_identity, parent_or_current, publish_pair, read_digest,
-    require_writable_destination, sha256_hex,
+    destination_identity, emit, input_identity, parent_or_current, publish_pair, read_digest,
+    require_writable_destination, serialize_record, sha256_hex,
 };
 use crate::{Format, render};
 use animsmith_core::scale::{
@@ -1050,7 +1059,11 @@ fn publish(
     )?;
 
     match request.format {
-        Format::Json => render::print_json(&record),
+        // The very bytes the evidence file received, not a second rendering
+        // of the same record. A stdout that cannot take them is diagnosed
+        // rather than raised: the pair is on disk, and a run that published
+        // it does not report an operator error.
+        Format::Json => emit(&evidence_bytes),
         Format::Text => print!(
             "{}",
             render::render_scale_published(
@@ -1099,30 +1112,15 @@ fn emit_rejection(
         rejection: Some(rejection),
     };
     match request.format {
-        Format::Json => {
-            // Serialized first so a value `Finite` refuses becomes an
-            // operator error rather than a panic inside the shared printer.
-            serialize_record(&record)?;
-            render::print_json(&record);
-        }
+        // Serialized once and emitted. A value `Finite` refuses is still an
+        // operator error — it means this record would be *false*, and no
+        // exit code should stand behind that. A stdout that cannot take a
+        // record that serialized fine is only a reporting failure, so the
+        // refusal keeps exit `1` rather than inverting into `2`.
+        Format::Json => emit(&serialize_record(&record)?),
         Format::Text => eprint!("{summary}"),
     }
     Ok(ExitCode::from(crate::EXIT_FINDINGS))
-}
-
-/// Serialize one record as the pretty JSON both the file and stdout carry,
-/// newline-terminated.
-///
-/// # Errors
-///
-/// Returns an operator error when a value refuses to serialize — which
-/// [`Finite`] makes happen for any non-finite number on the evidence path.
-/// Nothing has been published at either call site when this fails.
-fn serialize_record(record: &ScaleEvidence<'_>) -> Result<Vec<u8>, String> {
-    let mut bytes = serde_json::to_vec_pretty(record)
-        .map_err(|error| format!("cannot serialize scale evidence: {error}"))?;
-    bytes.push(b'\n');
-    Ok(bytes)
 }
 
 #[cfg(test)]

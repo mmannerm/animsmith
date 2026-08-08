@@ -28,7 +28,8 @@ This lets producers pin conversion provenance independently of measurement
 and lint evidence.
 
 `assemble` writes a separate character-assembly-evidence v1 document to its
-required `--evidence` path. Its immutable identity is
+required `--evidence` path, and prints the same record to stdout under
+`--format json`. Its immutable identity is
 `urn:animsmith:schema:character-assembly-evidence:1`; its retrievable schema is
 [`character-assembly-evidence-v1.schema.json`](schemas/character-assembly-evidence-v1.schema.json).
 The paired GLB and evidence are prepared before publication, so an operator
@@ -53,6 +54,15 @@ a new artifact with no evidence at all. Both members are promoted from
 temporary files and therefore land with mode `0600` rather than the `0644` a
 plain create under the process umask would produce; this is shared by every
 producer that publishes a pair.
+
+The `--format json` copy on stdout is a **view of the pair, never a member of
+it**. Both producers serialize their record exactly once and hand those same
+bytes to the evidence temporary and to stdout, so the file and the stream are
+identical by construction rather than by two serializers agreeing. Because the
+stream is not a destination, a stdout that cannot take it — a closed pipe, a
+full filesystem — changes nothing about publication and does not change the
+exit code: the failure is diagnosed on stderr and the outcome stands. Read the
+`--evidence` file, not stdout, when the record must be durable.
 
 Conversion evidence v1 remains a historical immutable contract at
 `urn:animsmith:schema:conversion-evidence:1`. The current CLI emits v2

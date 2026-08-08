@@ -8,9 +8,10 @@ use crate::material_recipe::{
     MaterialTextureRecipeEvidence, apply_material_texture_recipe_in_root,
 };
 use crate::publish::{
-    destination_identity, parent_or_current, publish_pair, read_digest,
-    require_writable_destination,
+    destination_identity, emit, parent_or_current, publish_pair, read_digest,
+    require_writable_destination, serialize_record,
 };
+use crate::{Format, render};
 use animsmith_core::model::{
     Clip, Document, Interpolation, MaterialAsset, MeshAsset, Property, Skeleton, TrackValues,
 };
@@ -21,6 +22,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::process::ExitCode;
 
 const RECIPE_SCHEMA_VERSION: u32 = 1;
 const RECIPE_SCHEMA_ID: &str = "urn:animsmith:schema:character-assembly-recipe:1";
@@ -175,11 +177,18 @@ struct AssemblyEvidence {
     artifact: AssemblyArtifactEvidence,
 }
 
-/// Summary returned to the CLI's human-readable completion line.
-pub(crate) struct AssemblyResult {
-    pub(crate) animations: usize,
-    pub(crate) meshes: usize,
-    pub(crate) materials: usize,
+/// What one published assembly leaves for the caller to report: the counts
+/// the text summary names, and the **exact** evidence bytes the pair's
+/// evidence member received.
+///
+/// The bytes travel out rather than the record because stdout must not
+/// re-serialize: `--format json` writes this same `Vec<u8>`, so the two
+/// destinations are identical by construction.
+struct Published {
+    animations: usize,
+    meshes: usize,
+    materials: usize,
+    evidence_bytes: Vec<u8>,
 }
 
 struct InputResolver {
@@ -352,15 +361,74 @@ fn load_input(path: &Path) -> Result<Document, String> {
     crate::load(path)
 }
 
+/// One parsed `assemble` invocation, including the global `--config` this
+/// command resolves for itself.
+pub(crate) struct Request {
+    /// Versioned assembly recipe.
+    pub(crate) recipe: PathBuf,
+    /// Artifact destination.
+    pub(crate) output: PathBuf,
+    /// Evidence destination; required, and never a substitute for the pair.
+    pub(crate) evidence: PathBuf,
+    /// Explicit config path, or `None` to auto-load `./animsmith.toml`.
+    pub(crate) config: Option<PathBuf>,
+    /// Which rendering stdout receives.
+    pub(crate) format: Format,
+}
+
+/// Run one complete `assemble` invocation.
+///
+/// Mirrors [`crate::scale::run`]: the command owns its own format dispatch,
+/// so the CLI's match arm is one call.
+///
+/// # Errors
+///
+/// Returns an operator error (exit `2`) for every failure — a bad recipe, an
+/// unreadable input, an asset the recipe does not fit, or a publication
+/// failure alike. Splitting asset-property refusals out is issue #338's job,
+/// not this dispatch's.
+pub(crate) fn run(request: &Request, tool: ToolInfo) -> Result<ExitCode, String> {
+    let loaded_config = crate::load_config_with_source(request.config.as_deref())?;
+    let published = assemble(
+        &request.recipe,
+        &request.output,
+        &request.evidence,
+        &loaded_config.config,
+        loaded_config
+            .source
+            .as_ref()
+            .map(|source| (source.path.as_path(), source.bytes.as_slice())),
+        tool,
+    )?;
+    match request.format {
+        // The very bytes the evidence file received, not a second rendering
+        // of the same record. A stdout that cannot take them is diagnosed
+        // rather than raised: the pair is on disk, and a run that published
+        // it does not report an operator error.
+        Format::Json => emit(&published.evidence_bytes),
+        Format::Text => print!(
+            "{}",
+            render::render_assemble_published(
+                &request.output,
+                &request.evidence,
+                published.animations,
+                published.meshes,
+                published.materials,
+            )
+        ),
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 /// Execute one complete assembly and atomically publish its artifact/evidence pair.
-pub(crate) fn assemble(
+fn assemble(
     recipe_path: &Path,
     output: &Path,
     evidence_output: &Path,
     config: &Config,
     config_source: Option<(&Path, &[u8])>,
     tool: ToolInfo,
-) -> Result<AssemblyResult, String> {
+) -> Result<Published, String> {
     if !output
         .extension()
         .and_then(|extension| extension.to_str())
@@ -658,10 +726,8 @@ pub(crate) fn assemble(
         material_texture_recipe: material_application.map(|application| application.evidence),
         artifact: artifact_evidence(output, artifact_sha256, artifact_bytes, summary),
     };
-    let mut evidence_bytes =
-        serde_json::to_vec_pretty(&evidence).map_err(|error| error.to_string())?;
-    evidence_bytes.push(b'\n');
-    fs::write(&evidence_temp, evidence_bytes)
+    let evidence_bytes = serialize_record(&evidence)?;
+    fs::write(&evidence_temp, &evidence_bytes)
         .map_err(|error| format!("cannot write temporary evidence: {error}"))?;
     publish_pair(
         &artifact_temp,
@@ -670,10 +736,11 @@ pub(crate) fn assemble(
         evidence_output,
         false,
     )?;
-    Ok(AssemblyResult {
+    Ok(Published {
         animations: summary.animations,
         meshes: summary.meshes,
         materials: summary.materials,
+        evidence_bytes,
     })
 }
 

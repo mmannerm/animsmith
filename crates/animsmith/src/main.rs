@@ -212,6 +212,10 @@ enum Cmd {
         /// Versioned JSON evidence output path.
         #[arg(long)]
         evidence: PathBuf,
+        /// Render a human publication summary or the versioned assembly
+        /// evidence — the same bytes `--evidence` receives.
+        #[arg(long, value_enum, default_value_t = Format::Text)]
+        format: Format,
     },
     /// Rewrite declared linear scale and publish versioned evidence.
     #[command(
@@ -501,7 +505,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             match format {
                 Format::Json => {
                     let envelope = MeasureEnvelope::new(current_tool(), reports);
-                    render::print_json(&envelope);
+                    render::print_json(&envelope)?;
                 }
                 Format::Text => {
                     for line in render::render_measure_text(&reports) {
@@ -565,7 +569,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             match format {
                 LintFormat::Json => {
                     let envelope = LintEnvelope::new(current_tool(), reports);
-                    render::print_json(&envelope);
+                    render::print_json(&envelope)?;
                 }
                 LintFormat::Text => print!("{}", render::render_text(&reports, &allow)),
                 LintFormat::Markdown => print!("{}", render::render_markdown(&reports, &allow)),
@@ -872,7 +876,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     material_texture_recipe: recipe_application
                         .as_ref()
                         .map(|application| &application.evidence),
-                }),
+                })?,
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -881,29 +885,17 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             recipe,
             output,
             evidence,
-        } => {
-            let loaded_config = load_config_with_source(cli.config.as_deref())?;
-            let result = assembly::assemble(
-                &recipe,
-                &output,
-                &evidence,
-                &loaded_config.config,
-                loaded_config
-                    .source
-                    .as_ref()
-                    .map(|source| (source.path.as_path(), source.bytes.as_slice())),
-                current_tool(),
-            )?;
-            println!(
-                "wrote {} and {} ({} clip(s), {} mesh(es), {} material(s))",
-                output.display(),
-                evidence.display(),
-                result.animations,
-                result.meshes,
-                result.materials,
-            );
-            Ok(ExitCode::SUCCESS)
-        }
+            format,
+        } => assembly::run(
+            &assembly::Request {
+                recipe,
+                output,
+                evidence,
+                config: cli.config,
+                format,
+            },
+            current_tool(),
+        ),
         Cmd::Scale { operation } => {
             let request = match operation {
                 ScaleCmd::WholeDocument {
@@ -953,7 +945,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     a.display().to_string(),
                     b.display().to_string(),
                     deltas,
-                )),
+                ))?,
                 Format::Text => {
                     for line in render::render_diff_text(&deltas) {
                         println!("{line}");

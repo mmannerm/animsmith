@@ -53,7 +53,7 @@ animsmith report <file> -o <report.html> [--clip name]
 animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor] [--drop-duplicate-loop-endpoint] [--prune-constant-tracks] [--fps N]
 animsmith fix <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
 animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb|out.gltf> [--material-texture-recipe recipe.toml] [--animation-only|--bake-static-mesh-transforms] [--format text|json]
-animsmith assemble <recipe.toml> -o <out.glb> --evidence <out.json>
+animsmith assemble <recipe.toml> -o <out.glb> --evidence <out.json> [--format text|json]
 animsmith scale whole-document <in.glb|in.gltf> -o <out.glb|out.gltf> --factor N --evidence <out.json> [--format text|json]
 animsmith scale rest-bind <in.glb|in.gltf> -o <out.glb|out.gltf> --source-skin-index N --source-root-node-index N --expected-factor N --evidence <out.json> [--format text|json]
 animsmith diff <before> <after> [--format text|json]
@@ -165,6 +165,16 @@ tangents.
 | 0 | No failing findings: clean, warnings-only, notes-only, or coverage gaps only. |
 | 1 | At least one failing finding, a significant `diff`, pending repairs under `fix --dry-run`, or a `scale` refusal that is a property of the input asset. |
 | 2 | Operator/tool error: unopenable input, bad config, unsupported format, or invalid flags. |
+
+The code reports what the run *did*, never how well it could report it. This
+holds for **every** `--format json` path — `measure`, `lint`, `diff`,
+`convert`, `assemble`, `scale`. If the record cannot reach stdout — a closed
+pipe, a full filesystem — the write failure is diagnosed on stderr and the
+command's own code stands: `lint … --format json | head` still exits `1` for
+findings it found, `scale` still exits `1` for a refusal and `0` for a
+published pair. Raising it instead would report an operator error for work
+that was actually done, and would turn an asset-property refusal into exit
+`2`. Only stdout is affected; nothing about publication changes.
 
 A role-dependent check with missing prerequisites reports a typed coverage
 gap and does not fail the run — exit `0` means no failing findings among the
@@ -338,6 +348,12 @@ texture recipe is used. `text` is the default human-readable write summary.
 `assemble` writes evidence v1 to its required `--evidence` path, with immutable
 identity `urn:animsmith:schema:character-assembly-evidence:1`; see
 [`character-assembly-evidence-v1.schema.json`](schemas/character-assembly-evidence-v1.schema.json).
+`assemble --format json` prints the same record to stdout — the identical bytes
+the evidence file receives, serialized once — in place of the default `text`
+publication summary. Every `assemble` failure still exits 2 with prose on
+stderr, whatever the format, and emits nothing on stdout; a run whose stdout
+itself fails mid-record is the one exception, leaving a truncated record there
+and reporting the write failure on stderr without changing the exit code.
 
 `scale` writes scale evidence v1 to its required `--evidence` path, with
 immutable identity `urn:animsmith:schema:scale-evidence:1`; see
