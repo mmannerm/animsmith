@@ -60,8 +60,8 @@
 //! for the raw manifest and a digest of one is not a manifest.
 
 use crate::publish::{
-    destination_identity, input_identity, parent_or_current, publish_pair, read_digest,
-    require_writable_destination, sha256_hex,
+    destination_identity, emit, input_identity, parent_or_current, publish_pair, read_digest,
+    require_writable_destination, serialize_record, sha256_hex,
 };
 use crate::{Format, render};
 use animsmith_core::scale::{
@@ -1050,7 +1050,9 @@ fn publish(
     )?;
 
     match request.format {
-        Format::Json => render::print_json(&record),
+        // The very bytes the evidence file received, not a second rendering
+        // of the same record.
+        Format::Json => emit(&evidence_bytes)?,
         Format::Text => print!(
             "{}",
             render::render_scale_published(
@@ -1099,30 +1101,12 @@ fn emit_rejection(
         rejection: Some(rejection),
     };
     match request.format {
-        Format::Json => {
-            // Serialized first so a value `Finite` refuses becomes an
-            // operator error rather than a panic inside the shared printer.
-            serialize_record(&record)?;
-            render::print_json(&record);
-        }
+        // Serialized once and emitted, so a value `Finite` refuses becomes an
+        // operator error rather than a panic inside a shared printer.
+        Format::Json => emit(&serialize_record(&record)?)?,
         Format::Text => eprint!("{summary}"),
     }
     Ok(ExitCode::from(crate::EXIT_FINDINGS))
-}
-
-/// Serialize one record as the pretty JSON both the file and stdout carry,
-/// newline-terminated.
-///
-/// # Errors
-///
-/// Returns an operator error when a value refuses to serialize — which
-/// [`Finite`] makes happen for any non-finite number on the evidence path.
-/// Nothing has been published at either call site when this fails.
-fn serialize_record(record: &ScaleEvidence<'_>) -> Result<Vec<u8>, String> {
-    let mut bytes = serde_json::to_vec_pretty(record)
-        .map_err(|error| format!("cannot serialize scale evidence: {error}"))?;
-    bytes.push(b'\n');
-    Ok(bytes)
 }
 
 #[cfg(test)]

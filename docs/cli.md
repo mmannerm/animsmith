@@ -53,7 +53,7 @@ animsmith report <file> -o <report.html> [--clip name]
 animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor] [--drop-duplicate-loop-endpoint] [--prune-constant-tracks] [--fps N]
 animsmith fix <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
 animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb|out.gltf> [--material-texture-recipe recipe.toml] [--animation-only|--bake-static-mesh-transforms] [--format text|json]
-animsmith assemble <recipe.toml> -o <out.glb> --evidence <out.json>
+animsmith assemble <recipe.toml> -o <out.glb> --evidence <out.json> [--format text|json]
 animsmith scale whole-document <in.glb|in.gltf> -o <out.glb|out.gltf> --factor N --evidence <out.json> [--format text|json]
 animsmith scale rest-bind <in.glb|in.gltf> -o <out.glb|out.gltf> --source-skin-index N --source-root-node-index N --expected-factor N --evidence <out.json> [--format text|json]
 animsmith diff <before> <after> [--format text|json]
@@ -338,6 +338,10 @@ texture recipe is used. `text` is the default human-readable write summary.
 `assemble` writes evidence v1 to its required `--evidence` path, with immutable
 identity `urn:animsmith:schema:character-assembly-evidence:1`; see
 [`character-assembly-evidence-v1.schema.json`](schemas/character-assembly-evidence-v1.schema.json).
+`assemble --format json` prints the same record to stdout — the identical bytes
+the evidence file receives, serialized once — in place of the default `text`
+publication summary. A failure still exits 2 with prose on stderr and nothing
+on stdout, whatever the format.
 
 `scale` writes scale evidence v1 to its required `--evidence` path, with
 immutable identity `urn:animsmith:schema:scale-evidence:1`; see

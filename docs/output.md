@@ -28,7 +28,8 @@ This lets producers pin conversion provenance independently of measurement
 and lint evidence.
 
 `assemble` writes a separate character-assembly-evidence v1 document to its
-required `--evidence` path. Its immutable identity is
+required `--evidence` path, and prints the same record to stdout under
+`--format json`. Its immutable identity is
 `urn:animsmith:schema:character-assembly-evidence:1`; its retrievable schema is
 [`character-assembly-evidence-v1.schema.json`](schemas/character-assembly-evidence-v1.schema.json).
 The paired GLB and evidence are prepared before publication, so an operator

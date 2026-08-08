@@ -7,6 +7,11 @@
 //! publishes a complete new pair or leaves the previous one exactly as it
 //! found it.
 //!
+//! It also owns the one place an evidence record becomes bytes:
+//! [`serialize_record`] runs once per invocation and [`emit`] writes those
+//! same bytes to stdout, so a producer's `--format json` stream and its
+//! evidence file cannot drift apart.
+//!
 //! # What a crash between the two renames leaves
 //!
 //! The renames are individually atomic but not atomic together, so a process
@@ -39,9 +44,52 @@
 //! to open a directory for `fsync`, and failing publication for that would be
 //! worse than publishing without the extra guarantee.
 
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
+
+/// Serialize one evidence record as the pretty, newline-terminated JSON that
+/// **both** the evidence file and stdout carry.
+///
+/// A producer calls this once per run and hands the resulting bytes to every
+/// destination, so the file and the `--format json` stream being identical is
+/// a property of the construction rather than an agreement between two
+/// serializers that a test has to keep re-checking. It is also why the
+/// evidence path does not go through [`crate::render::print_json`], which
+/// re-serializes and panics on failure: here a record that refuses to
+/// serialize is an operator error, raised before anything is published.
+///
+/// # Errors
+///
+/// Returns an operator error when a value refuses to serialize — which
+/// `scale`'s `Finite` wrapper makes happen for any non-finite number on the
+/// evidence path.
+pub(crate) fn serialize_record<T: Serialize>(record: &T) -> Result<Vec<u8>, String> {
+    let mut bytes = serde_json::to_vec_pretty(record)
+        .map_err(|error| format!("cannot serialize evidence: {error}"))?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+/// Write exactly these bytes to stdout.
+///
+/// Takes bytes rather than a value so a caller cannot accidentally emit a
+/// second serialization of the record it already staged, and reports a write
+/// failure as an operator error rather than panicking the way the `println!`
+/// behind [`crate::render::print_json`] does.
+///
+/// # Errors
+///
+/// Returns an operator error when stdout cannot take the bytes. Any pair has
+/// already been published when this happens: the failure is in reporting the
+/// run, not in performing it.
+pub(crate) fn emit(bytes: &[u8]) -> Result<(), String> {
+    std::io::stdout()
+        .write_all(bytes)
+        .map_err(|error| format!("cannot write evidence to stdout: {error}"))
+}
 
 /// The directory a path lives in, treating a bare file name as `.`.
 pub(crate) fn parent_or_current(path: &Path) -> &Path {

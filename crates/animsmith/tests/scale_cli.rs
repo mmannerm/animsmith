@@ -588,6 +588,27 @@ fn identical_inputs_and_arguments_produce_byte_identical_artifact_and_evidence()
     );
 }
 
+/// Under `--format json` the published evidence and stdout are the same
+/// bytes, because the record is serialized once and both destinations
+/// receive that `Vec<u8>`. The regression this guards is stdout being routed
+/// back through a second serializer, where the two agreeing again becomes a
+/// coincidence rather than a construction.
+#[test]
+fn the_published_evidence_and_the_json_stream_are_the_same_bytes() {
+    let fixture = Fixture::new();
+    let output = fixture.rest_bind("0.01", "json");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    assert_eq!(
+        output.stdout,
+        std::fs::read(fixture.path("out.json")).unwrap(),
+    );
+}
+
 // --- Refusals ---------------------------------------------------------------
 
 #[test]

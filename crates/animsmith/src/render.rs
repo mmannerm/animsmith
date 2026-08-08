@@ -822,6 +822,28 @@ pub(crate) fn render_write_summary(output: &Path, summary: &WriteSummary) -> Str
     out
 }
 
+/// Render the `assemble` publication summary for stdout.
+///
+/// Names the pair first, like `scale`'s, because the operator's next action
+/// is on those two files; the counts that follow summarize what the artifact
+/// now holds. Its wording, field order and counts are those of the inline
+/// `println!` this replaced — what routing it through here adds is the same
+/// [`text_atom`] escaping every other summary already gave its paths.
+#[cfg(feature = "fbx")]
+pub(crate) fn render_assemble_published(
+    output: &Path,
+    evidence: &Path,
+    clips: usize,
+    meshes: usize,
+    materials: usize,
+) -> String {
+    format!(
+        "wrote {} and {} ({clips} clip(s), {meshes} mesh(es), {materials} material(s))\n",
+        text_atom(&output.display().to_string()),
+        text_atom(&evidence.display().to_string()),
+    )
+}
+
 /// Render the `scale` publication summary for stdout.
 ///
 /// The pair is named first because the operator's next action is on those
