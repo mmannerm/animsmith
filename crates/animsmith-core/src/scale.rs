@@ -37,11 +37,13 @@
 //! Those residuals are the producer evidence record of §D.6, which is why
 //! two properties of this module are contracts rather than implementation
 //! details. Every claim in [`ScaleProofObligations`] is declared only when
-//! the planned document carries the evidence for it, and a declared claim
-//! whose evidence is missing at proof time is
-//! [`ScaleError::MissingProofEvidence`] rather than a zero residual — a
-//! record asserting `0.0` for something nothing checked would be false, not
-//! merely incomplete. And the two independent observed-factor witnesses
+//! the planned document carries the evidence for it. Candidate construction
+//! and proof re-derive that structural inventory and report a stale plan as
+//! [`ScaleError::PlanDocumentMismatch`]; a counterpart missing inside an
+//! inventory-matched walk is [`ScaleError::MissingProofEvidence`]. Neither
+//! case becomes a zero residual — a record asserting `0.0` for something
+//! nothing checked would be false, not merely incomplete. And the two
+//! independent observed-factor witnesses
 //! §D.6 asks for are both recorded, together with
 //! [`ScaleProof::observed_factor_divergence`] between them, so the record
 //! states the relationship between its own two measurements instead of
@@ -1076,15 +1078,17 @@ pub enum ScaleError {
         reason: &'static str,
     },
     /// `candidate`'s skeleton/source-projection, clip/track/instance/mesh/
-    /// primitive structure does not match `source`'s: a changed parent or
-    /// source-node projection, a missing or extra clip, track, instance, mesh,
-    /// or primitive, a track whose identity, interpolation, times, or value
-    /// shape disagrees with its source counterpart, or a mesh instance whose
-    /// identity — the node it hangs off, the source node it came from, the
-    /// mesh it draws, or the joints it binds — disagrees with its source
-    /// counterpart. Proof pairs source and candidate structure by identity or
-    /// index, which requires this parity to hold — an extra, missing,
-    /// re-parented, or relocated structure is never silently ignored.
+    /// primitive structure does not match `source`'s, or an exact unchanged
+    /// semantic value differs. This includes a changed parent or source-node
+    /// projection, a changed world-rest affine outside a rest/bind closure, a
+    /// missing or extra clip, track, instance, mesh, or primitive, a track
+    /// whose identity, interpolation, times, or value shape disagrees with
+    /// its source counterpart, or a mesh instance whose identity — the node
+    /// it hangs off, the source node it came from, the mesh it draws, or the
+    /// joints it binds — disagrees with its source counterpart. Proof pairs
+    /// source and candidate structure by identity or index, which requires
+    /// this parity to hold — an extra, missing, re-parented, relocated, or
+    /// otherwise rewritten unchanged value is never silently ignored.
     #[error("candidate document structure does not match source ({reason})")]
     CandidateStructureMismatch {
         /// Stable machine-readable reason.
@@ -3360,10 +3364,13 @@ pub struct ScaleProof {
 /// # Errors
 ///
 /// Returns [`ScaleError::PlanDocumentMismatch`] when the supplied source
-/// derives a different proof inventory, [`ScaleError::ProofResidualExceeded`]
-/// for the first residual that exceeds [`ScalePlan::tolerance_policy`], or
-/// [`ScaleError::MissingProofEvidence`] if an obligation the plan declares
-/// provable has no counterpart evidence in `candidate`.
+/// derives a different proof inventory, any planning/selector error surfaced
+/// while re-deriving that inventory, [`ScaleError::CandidateStructureMismatch`]
+/// when an exact source/candidate invariant differs,
+/// [`ScaleError::ProofResidualExceeded`] for the first residual that exceeds
+/// [`ScalePlan::tolerance_policy`], or [`ScaleError::MissingProofEvidence`] if
+/// an obligation the plan declares provable has no counterpart evidence in
+/// `candidate`.
 ///
 /// Three of the claims checked here are not gated by
 /// [`ScaleProofObligations`]: the per-element animation-track values
@@ -10405,6 +10412,26 @@ mod tests {
         (source, ScaleCandidate { document })
     }
 
+    /// Assert both public plan-replay boundaries reject `source` before a
+    /// stale inventory can select the builder or proof walks.
+    fn assert_replayed_inventory_mismatch(source: &Document, plan: &ScalePlan) {
+        let expected = ScaleError::PlanDocumentMismatch {
+            reason: "proof_obligations_mismatch",
+        };
+        assert_eq!(build_scale_candidate(source, plan).unwrap_err(), expected);
+        assert_eq!(
+            prove_scale(
+                source,
+                &ScaleCandidate {
+                    document: source.clone(),
+                },
+                plan,
+            )
+            .unwrap_err(),
+            expected
+        );
+    }
+
     #[test]
     fn the_clip_driven_obligations_are_declared_only_by_the_tracks_that_evidence_them() {
         let capability = complete_capability();
@@ -10523,6 +10550,74 @@ mod tests {
                 reason: "proof_obligations_mismatch"
             }
         );
+    }
+
+    #[test]
+    fn a_replayed_plan_cannot_gain_trajectory_evidence() {
+        let doc = compensated_document();
+        let capability = complete_capability();
+        let plan = compensated_rest_bind_plan(&doc, &capability);
+        let before = plan.proof_obligations();
+        assert!(!before.prove_keys);
+        assert!(!before.prove_cubic_interiors);
+        assert!(!before.prove_trajectories);
+
+        let mut gained = doc.clone();
+        gained.clips.push(Clip {
+            name: "gained_rotation".into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 1,
+                property: Property::Rotation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Quats(vec![Quat::IDENTITY, Quat::IDENTITY]),
+            }],
+        });
+        let after = compensated_rest_bind_plan(&gained, &capability).proof_obligations();
+        assert!(!after.prove_keys);
+        assert!(!after.prove_cubic_interiors);
+        assert!(after.prove_trajectories);
+        assert_replayed_inventory_mismatch(&gained, &plan);
+    }
+
+    #[test]
+    fn a_replayed_plan_cannot_gain_key_evidence() {
+        let doc = rotation_only_clip_document();
+        let capability = complete_capability();
+        let plan = multi_joint_plan(&doc, &capability);
+        let before = plan.proof_obligations();
+        assert!(!before.prove_keys);
+        assert!(!before.prove_cubic_interiors);
+        assert!(before.prove_trajectories);
+
+        let mut gained = doc.clone();
+        gained.clips[0].tracks.push(linear_translation_track());
+        let after = multi_joint_plan(&gained, &capability).proof_obligations();
+        assert!(after.prove_keys);
+        assert!(!after.prove_cubic_interiors);
+        assert!(after.prove_trajectories);
+        assert_replayed_inventory_mismatch(&gained, &plan);
+    }
+
+    #[test]
+    fn a_replayed_plan_cannot_gain_cubic_evidence() {
+        let mut doc = multi_joint_document();
+        doc.clips[0].tracks.truncate(1);
+        let capability = complete_capability();
+        let plan = multi_joint_plan(&doc, &capability);
+        let before = plan.proof_obligations();
+        assert!(before.prove_keys);
+        assert!(!before.prove_cubic_interiors);
+        assert!(before.prove_trajectories);
+
+        let mut gained = doc.clone();
+        gained.clips[0].tracks.push(cubic_rotation_track());
+        let after = multi_joint_plan(&gained, &capability).proof_obligations();
+        assert!(after.prove_keys);
+        assert!(after.prove_cubic_interiors);
+        assert!(after.prove_trajectories);
+        assert_replayed_inventory_mismatch(&gained, &plan);
     }
 
     /// A two-key `CUBICSPLINE` *rotation* track on bone 2, with zero
@@ -16643,6 +16738,83 @@ mod tests {
     }
 
     #[test]
+    fn complete_projection_raw_parents_are_compared_independently_of_bone_parents() {
+        let (mut doc, _) = compensated_document_with_unskinned_prop();
+        for source_node_index in [100, 101] {
+            doc.assets.source_skeleton.nodes.push(SourceNodeAsset {
+                source_node_index,
+                name: None,
+                parent_source_node_index: None,
+                scene_root_indices: vec![0],
+                local_rest: SourceNodeLocalRest::Trs {
+                    translation: Vec3::ZERO,
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
+                bone: None,
+            });
+        }
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let mut changed = candidate.into_document();
+
+        // Both rows remain unprojected, so normalized topology is identical.
+        // Only the authoritative raw parent tuple changes.
+        changed
+            .assets
+            .source_skeleton
+            .nodes
+            .iter_mut()
+            .find(|node| node.source_node_index == 101)
+            .unwrap()
+            .parent_source_node_index = Some(100);
+        validate_document_shape(&changed).unwrap();
+        assert_eq!(
+            prove_scale(&doc, &ScaleCandidate { document: changed }, &plan).unwrap_err(),
+            ScaleError::CandidateStructureMismatch {
+                reason: "skeleton_topology_mismatch"
+            }
+        );
+    }
+
+    #[test]
+    fn complete_projection_bone_identity_is_compared_between_same_parent_siblings() {
+        let doc = rig_document(
+            &[
+                rig(None, 0, Vec3::ZERO),
+                rig(Some(0), 1, Vec3::ZERO),
+                rig(Some(0), 2, Vec3::ZERO),
+            ],
+            &[1],
+            0,
+            Mat4::IDENTITY,
+        );
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let mut changed = candidate.into_document();
+
+        // Swapping projected identities between siblings preserves both
+        // normalized parent values and raw parent values. Only the raw-node
+        // to BoneId tuple comparison can distinguish it.
+        for node in &mut changed.assets.source_skeleton.nodes {
+            node.bone = match node.source_node_index {
+                1 => Some(2),
+                2 => Some(1),
+                _ => node.bone,
+            };
+        }
+        validate_document_shape(&changed).unwrap();
+        assert_eq!(
+            prove_scale(&doc, &ScaleCandidate { document: changed }, &plan).unwrap_err(),
+            ScaleError::CandidateStructureMismatch {
+                reason: "skeleton_topology_mismatch"
+            }
+        );
+    }
+
+    #[test]
     fn complete_projection_rows_are_keyed_by_source_identity_not_array_order() {
         let (doc, _) = compensated_document_with_unskinned_prop();
         let capability = complete_capability();
@@ -17160,6 +17332,9 @@ mod tests {
         let doc = Document::default();
         let capability = complete_capability();
         let plan = whole_document_plan(&doc, &capability);
+        let obligations = plan.proof_obligations();
+        assert!(!obligations.prove_rest);
+        assert!(!obligations.prove_keys);
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
 

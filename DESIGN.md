@@ -1642,12 +1642,12 @@ domains that inventory covers.
 For the glTF producers, that raw complement explicitly includes scene
 membership, default-scene selection, materials, and their references: neither
 scale operation owns a write location in those payloads, so the artifact layer
-proves them byte-for-byte unchanged. The normalized core proof does not also
-deep-compare `assets.scenes` or `assets.materials`; those model values cannot
-replace the raw fields and references the container proof owns. A rebuilding
-frontend therefore cannot cite the core proof for those domains and must
-discharge them through the complete inventory route above before enabling an
-operation.
+proves their raw JSON values exactly unchanged. The normalized core proof does
+not also deep-compare `assets.scenes` or `assets.materials`; those model values
+cannot replace the raw fields and references the container proof owns. A
+rebuilding frontend therefore cannot cite the core proof for those domains
+and must discharge them through the complete inventory route above before
+enabling an operation.
 
 The proof evaluates rest, every key time, and analytic or sufficiently bounded
 interior times for cubic segments. For reparameterization it must prove,
