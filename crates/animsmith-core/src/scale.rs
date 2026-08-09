@@ -3449,18 +3449,16 @@ pub fn prove_scale(
     // Whole-document conversion has no complement, so the loop is naturally
     // empty there; topology parity still applies because that operation does
     // not rewrite parents either.
-    if !plan.is_whole_document() {
-        for node in 0..source.skeleton.bones.len() {
-            if affected.contains(&node) {
-                continue;
-            }
-            let (before, _) = source_worlds.bone(node)?;
-            let (after, _) = candidate_worlds.bone(node)?;
-            if before != after {
-                return Err(ScaleError::CandidateStructureMismatch {
-                    reason: "unaffected_world_rest_mismatch",
-                });
-            }
+    for node in 0..source.skeleton.bones.len() {
+        if affected.contains(&node) {
+            continue;
+        }
+        let (before, _) = source_worlds.bone(node)?;
+        let (after, _) = candidate_worlds.bone(node)?;
+        if before != after {
+            return Err(ScaleError::CandidateStructureMismatch {
+                reason: "unaffected_world_rest_mismatch",
+            });
         }
     }
 
