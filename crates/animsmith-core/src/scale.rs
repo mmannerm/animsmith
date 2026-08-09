@@ -37,11 +37,13 @@
 //! Those residuals are the producer evidence record of §D.6, which is why
 //! two properties of this module are contracts rather than implementation
 //! details. Every claim in [`ScaleProofObligations`] is declared only when
-//! the planned document carries the evidence for it, and a declared claim
-//! whose evidence is missing at proof time is
-//! [`ScaleError::MissingProofEvidence`] rather than a zero residual — a
-//! record asserting `0.0` for something nothing checked would be false, not
-//! merely incomplete. And the two independent observed-factor witnesses
+//! the planned document carries the evidence for it. Candidate construction
+//! and proof re-derive that structural inventory and report a stale plan as
+//! [`ScaleError::PlanDocumentMismatch`]; a counterpart missing inside an
+//! inventory-matched walk is [`ScaleError::MissingProofEvidence`]. Neither
+//! case becomes a zero residual — a record asserting `0.0` for something
+//! nothing checked would be false, not merely incomplete. And the two
+//! independent observed-factor witnesses
 //! §D.6 asks for are both recorded, together with
 //! [`ScaleProof::observed_factor_divergence`] between them, so the record
 //! states the relationship between its own two measurements instead of
@@ -796,6 +798,19 @@ pub enum ScaleError {
         /// The out-of-range index.
         index: usize,
     },
+    /// A plan replayed against a document derives a different write or proof
+    /// inventory than it did when planned.
+    ///
+    /// Plans may be reused across numerically different documents, but only
+    /// while re-deriving the supplied source's structural planning inventory
+    /// selects the same complete domain. Otherwise a stale affected-node list
+    /// or evidence flag could leave newly introduced payload outside every
+    /// proof walk.
+    #[error("plan does not describe the supplied document: {reason}")]
+    PlanDocumentMismatch {
+        /// Stable machine-readable mismatch kind.
+        reason: &'static str,
+    },
     /// The affected closure could not be completed.
     #[error("affected domain closure is not complete: {reason}")]
     IncompleteClosure {
@@ -1062,15 +1077,18 @@ pub enum ScaleError {
         /// Stable machine-readable reason.
         reason: &'static str,
     },
-    /// `candidate`'s clip/track/instance/mesh/primitive structure does not
-    /// match `source`'s: a missing or extra clip, track, instance, mesh, or
-    /// primitive, a track whose identity, interpolation, times, or value
-    /// shape disagrees with its source counterpart, or a mesh instance whose
-    /// identity — the node it hangs off, the source node it came from, the
-    /// mesh it draws, or the joints it binds — disagrees with its source
-    /// counterpart. Proof pairs source and candidate structure by index,
-    /// which requires this parity to hold — an extra, missing or relocated
-    /// structure is never silently ignored.
+    /// `candidate`'s skeleton/source-projection, clip/track/instance/mesh/
+    /// primitive structure does not match `source`'s, or an exact unchanged
+    /// semantic value differs. This includes a changed parent or source-node
+    /// projection, a changed world-rest affine outside a rest/bind closure, a
+    /// missing or extra clip, track, instance, mesh, or primitive, a track
+    /// whose identity, interpolation, times, or value shape disagrees with
+    /// its source counterpart, or a mesh instance whose identity — the node
+    /// it hangs off, the source node it came from, the mesh it draws, or the
+    /// joints it binds — disagrees with its source counterpart. Proof pairs
+    /// source and candidate structure by identity or index, which requires
+    /// this parity to hold — an extra, missing, re-parented, relocated, or
+    /// otherwise rewritten unchanged value is never silently ignored.
     #[error("candidate document structure does not match source ({reason})")]
     CandidateStructureMismatch {
         /// Stable machine-readable reason.
@@ -1154,15 +1172,15 @@ pub struct ScaleDomainRewrites {
 /// Which claims [`prove_scale`] must independently verify for one plan.
 ///
 /// **Every flag is evidence-gated.** [`plan_scale`] declares an obligation
-/// only when the planned document carries the payload that obligation reads,
-/// and [`prove_scale`] refuses with [`ScaleError::MissingProofEvidence`],
-/// naming the obligation, when a declared one's evidence is not in the
-/// documents it was handed. Neither half is optional: a declared obligation
-/// with nothing to iterate would report a `0.0` residual, and those residuals
-/// are what producer evidence records (DESIGN.md Appendix D §D.6). A record
-/// stating "residual 0.0" for a claim nothing checked is a false record, not
-/// a missing one, so an unprovable claim is never declared and a vanished one
-/// is never quietly downgraded to success.
+/// only when the planned document carries the payload that obligation reads.
+/// Candidate construction and proof independently re-derive this inventory
+/// from the supplied source and reject any stale plan with
+/// [`ScaleError::PlanDocumentMismatch`]. A counterpart or value that is still
+/// missing while an inventory-matched walk executes is
+/// [`ScaleError::MissingProofEvidence`]. Neither half is optional: a declared
+/// obligation with nothing to iterate would report a `0.0` residual, and
+/// those residuals are what producer evidence records (DESIGN.md Appendix D
+/// §D.6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ScaleProofObligations {
@@ -1221,11 +1239,10 @@ pub struct ScaleProofObligations {
     /// Its evidence predicate is likewise independent of the three
     /// clip-driven flags': a document with a skinned instance and no clips
     /// declares this one and none of them.
-    /// `a_skin_only_plan_still_evaluates_its_sampled_obligations` pins the
-    /// shape where it arms the sampled loop alone, and
+    /// `the_clip_driven_obligations_are_declared_only_by_the_tracks_that_evidence_them`
+    /// pins that independence, and
     /// `an_unanimated_skinned_document_still_compares_its_skin_at_rest` pins
-    /// the rest-pose walk on a document with no sample times at all, so
-    /// neither half of the coverage can be lost silently.
+    /// the rest-pose walk on a document with no sample times at all.
     pub prove_skin: bool,
     /// Prove skinned mesh bounds, at rest and at every declared
     /// key/cubic-interior sample time.
@@ -1858,11 +1875,12 @@ fn validate_scene_assets(document: &Document) -> Result<(), ScaleError> {
     Ok(())
 }
 
-/// Reject `candidate`'s bone/clip/track/instance/mesh/primitive structure when
-/// it does not match `source`'s: every proof comparison in this module pairs
-/// source and candidate structure positionally (by bone/clip/track/instance/
-/// mesh index), which is only sound once the two document shapes are known to
-/// agree — an extra or missing structure is never silently ignored.
+/// Reject `candidate`'s skeleton/source-projection, clip/track/instance/mesh/
+/// primitive structure when it does not match `source`'s: every proof
+/// comparison in this module pairs source and candidate structure by stable
+/// identity or position, which is only sound once the two document shapes are
+/// known to agree — an extra, missing, or re-parented structure is never
+/// silently ignored.
 fn validate_candidate_structure(source: &Document, candidate: &Document) -> Result<(), ScaleError> {
     // Bone-count parity is checked first, and it is the clause the sampling
     // budget rests on. [`sample_time_obligations`] poses *both* skeletons at
@@ -1883,6 +1901,37 @@ fn validate_candidate_structure(source: &Document, candidate: &Document) -> Resu
     if source.skeleton.bones.len() != candidate.skeleton.bones.len() {
         return Err(ScaleError::CandidateStructureMismatch {
             reason: "bone_count_mismatch",
+        });
+    }
+    // Topology is outside both operations' write sets. Compare it globally,
+    // not only outside a rest/bind closure: whole-document conversion affects
+    // every bone but still never re-parents one, and an affected leaf can be
+    // coherently moved between parents whose worlds happen to agree.
+    //
+    // The raw source-node rows are keyed by source identity rather than
+    // zipped or indexed as BoneIds. A loader is free to normalize a wide
+    // source hierarchy into parent-before-child DFS order, so raw node-array
+    // order and normalized bone order are not interchangeable. Requiring the
+    // coverage and, when coverage is Complete, the `(raw parent, projected
+    // bone)` map to agree also prevents a candidate from making a coherent
+    // skeleton re-parent look valid by rewriting its own projection to match.
+    // Rows under Unavailable coverage are deliberately ignored: the model
+    // does not claim that they are identity evidence.
+    let complete_projection_differs = source.assets.source_skeleton.coverage
+        == SourceSkeletonCoverage::Complete
+        && candidate.assets.source_skeleton.coverage == SourceSkeletonCoverage::Complete
+        && source_node_projection(source) != source_node_projection(candidate);
+    if source
+        .skeleton
+        .bones
+        .iter()
+        .map(|bone| bone.parent)
+        .ne(candidate.skeleton.bones.iter().map(|bone| bone.parent))
+        || source.assets.source_skeleton.coverage != candidate.assets.source_skeleton.coverage
+        || complete_projection_differs
+    {
+        return Err(ScaleError::CandidateStructureMismatch {
+            reason: "skeleton_topology_mismatch",
         });
     }
     if source.clips.len() != candidate.clips.len() {
@@ -1935,14 +1984,14 @@ fn validate_candidate_structure(source: &Document, candidate: &Document) -> Resu
     // glTF's format-defined identity default or is refused as missing
     // evidence.
     //
-    // What these two clauses prove is therefore instance identity *against a
-    // fixed skeleton*, not world placement. A bone outside the affected
-    // closure has neither its `rest` nor its `parent` compared anywhere in
-    // this module, so the same prop can still be relocated by rewriting the
-    // bone it names, with every residual zero. Issue #325 tracks that gap.
-    // Comparing them positionally also fixes instance *order*: two instances
-    // identical in every payload but attached to different nodes cannot be
-    // swapped without one of these two clauses firing.
+    // The topology comparison above now supplies that fixed skeleton, and
+    // `prove_scale` compares the complete derived world rest of every bone
+    // outside a rest/bind closure exactly. Together they prove placement as
+    // well as instance identity: neither a coherent re-parent nor a direct
+    // rest mutation of an independent sibling/leaf can relocate the prop.
+    // Comparing instances positionally also fixes instance *order*: two
+    // instances identical in every payload but attached to different nodes
+    // cannot be swapped without one of these two clauses firing.
     for (instance, candidate_instance) in source
         .assets
         .instances
@@ -1999,6 +2048,21 @@ fn validate_candidate_structure(source: &Document, candidate: &Document) -> Resu
         }
     }
     Ok(())
+}
+
+fn source_node_projection(document: &Document) -> BTreeMap<usize, (Option<usize>, Option<BoneId>)> {
+    document
+        .assets
+        .source_skeleton
+        .nodes
+        .iter()
+        .map(|node| {
+            (
+                node.source_node_index,
+                (node.parent_source_node_index, node.bone),
+            )
+        })
+        .collect()
 }
 
 /// Reject an `f64` factor whose `f32` image cannot carry it.
@@ -2071,21 +2135,27 @@ fn plan_whole_document(document: &Document, factor: f64) -> Result<ScalePlan, Sc
     })
 }
 
-fn plan_rest_bind(
+struct RestBindPlanDomain {
+    source_nodes: BTreeSet<usize>,
+    bone_of_source: BTreeMap<usize, BoneId>,
+    scaled_root_bone: BoneId,
+    affected_nodes: Vec<BoneId>,
+    transform_only_attachments: Vec<BoneId>,
+    proof_obligations: ScaleProofObligations,
+}
+
+/// Resolve the selector-derived rest/bind domain without classifying its
+/// numeric affine factors.
+///
+/// Planning uses both halves. Candidate construction and proof reuse only
+/// this half to bind a replayed plan to the supplied source's current write
+/// and evidence inventory while keeping proof's observed-factor witness
+/// independent of planning's numeric acceptance band.
+fn derive_rest_bind_plan_domain(
     document: &Document,
     source_skin_index: usize,
     source_root_node_index: usize,
-    expected_factor: f64,
-) -> Result<ScalePlan, ScaleError> {
-    if !expected_factor.is_finite() || expected_factor <= 0.0 {
-        return Err(ScaleError::InvalidExpectedFactor {
-            factor: expected_factor,
-        });
-    }
-    // Both directions: the builder narrows `expected_factor` itself, and the
-    // proof's basis correction `C = scale(1 / s)` narrows its reciprocal.
-    check_factor_narrows(expected_factor, expected_factor)?;
-    check_factor_narrows(expected_factor, 1.0 / expected_factor)?;
+) -> Result<RestBindPlanDomain, ScaleError> {
     if document.assets.source_skeleton.coverage != SourceSkeletonCoverage::Complete {
         return Err(ScaleError::IncompleteSourceSkeleton);
     }
@@ -2097,11 +2167,11 @@ fn plan_rest_bind(
         });
     }
 
-    let domain =
+    let source_nodes =
         rest_bind_affected_closure(document, &by_source_index, skin, source_root_node_index)?;
 
     let mut bone_of_source: BTreeMap<usize, BoneId> = BTreeMap::new();
-    for &source in &domain {
+    for &source in &source_nodes {
         let asset = by_source_index[&source];
         let bone = asset.bone.ok_or(ScaleError::SourceNodeNotNormalized {
             source_node_index: source,
@@ -2109,46 +2179,6 @@ fn plan_rest_bind(
         bone_of_source.insert(source, bone);
     }
     let scaled_root_bone = bone_of_source[&source_root_node_index];
-
-    let tol = ScaleTolerancePolicy::APPENDIX_D_V3;
-    let mut world_cache: BTreeMap<usize, Mat4> = BTreeMap::new();
-    let mut node_factor: BTreeMap<BoneId, f64> = BTreeMap::new();
-    for &source in &domain {
-        let world = source_world_matrix(source, &by_source_index, &mut world_cache)?;
-        let bone = bone_of_source[&source];
-        let linear = Mat3::from_mat4(world);
-        let factor = classify_affine(linear, &tol)
-            .map_err(|reason| ScaleError::InvalidAffineDomain { node: bone, reason })?;
-        node_factor.insert(bone, factor);
-    }
-    // Read at the scaled root, which DESIGN.md Appendix D §D.6 names, rather
-    // than at whichever affected node happens to sort first. The two readings
-    // were separable before this module related its two parent chains; under
-    // the agreement `validate_parent_chain_agreement` now establishes they are
-    // provably the same node, and the proof is written out on
-    // `observed_factor_from_source` (§ "The scaled root is the minimum
-    // BoneId in the closure"). Naming the root explicitly keeps this reading
-    // and that second witness pinned to the same definition rather than to a
-    // coincidence of ordering.
-    let observed_common = node_factor[&scaled_root_bone];
-    if !tol.relative(tol.common_factor, observed_common, expected_factor) {
-        return Err(ScaleError::FactorMismatch {
-            expected: expected_factor,
-            observed: observed_common,
-        });
-    }
-    for (&bone, &factor) in &node_factor {
-        if bone == scaled_root_bone {
-            continue;
-        }
-        if !tol.relative(tol.common_factor, factor, observed_common) {
-            return Err(ScaleError::MixedFactor {
-                expected: observed_common,
-                observed: factor,
-                node: bone,
-            });
-        }
-    }
 
     let affected_nodes: Vec<BoneId> = {
         let set: BTreeSet<BoneId> = bone_of_source.values().copied().collect();
@@ -2181,6 +2211,83 @@ fn plan_rest_bind(
     let sampled = sampled_evidence(document, &affected);
     let attached = !transform_only_attachments.is_empty();
 
+    Ok(RestBindPlanDomain {
+        source_nodes,
+        bone_of_source,
+        scaled_root_bone,
+        affected_nodes,
+        transform_only_attachments,
+        proof_obligations: ScaleProofObligations {
+            prove_rest: true,
+            prove_unit_scale_postcondition: true,
+            prove_transform_only_affine: attached,
+            prove_keys: sampled.key_translations,
+            prove_cubic_interiors: sampled.cubic_interiors,
+            prove_trajectories: sampled.sample_times,
+            prove_skin: skinned,
+            prove_bounds: skinned,
+        },
+    })
+}
+
+fn plan_rest_bind(
+    document: &Document,
+    source_skin_index: usize,
+    source_root_node_index: usize,
+    expected_factor: f64,
+) -> Result<ScalePlan, ScaleError> {
+    if !expected_factor.is_finite() || expected_factor <= 0.0 {
+        return Err(ScaleError::InvalidExpectedFactor {
+            factor: expected_factor,
+        });
+    }
+    // Both directions: the builder narrows `expected_factor` itself, and the
+    // proof's basis correction `C = scale(1 / s)` narrows its reciprocal.
+    check_factor_narrows(expected_factor, expected_factor)?;
+    check_factor_narrows(expected_factor, 1.0 / expected_factor)?;
+    let domain = derive_rest_bind_plan_domain(document, source_skin_index, source_root_node_index)?;
+    let by_source_index = source_node_index_map(document);
+
+    let tol = ScaleTolerancePolicy::APPENDIX_D_V3;
+    let mut world_cache: BTreeMap<usize, Mat4> = BTreeMap::new();
+    let mut node_factor: BTreeMap<BoneId, f64> = BTreeMap::new();
+    for &source in &domain.source_nodes {
+        let world = source_world_matrix(source, &by_source_index, &mut world_cache)?;
+        let bone = domain.bone_of_source[&source];
+        let linear = Mat3::from_mat4(world);
+        let factor = classify_affine(linear, &tol)
+            .map_err(|reason| ScaleError::InvalidAffineDomain { node: bone, reason })?;
+        node_factor.insert(bone, factor);
+    }
+    // Read at the scaled root, which DESIGN.md Appendix D §D.6 names, rather
+    // than at whichever affected node happens to sort first. The two readings
+    // were separable before this module related its two parent chains; under
+    // the agreement `validate_parent_chain_agreement` now establishes they are
+    // provably the same node, and the proof is written out on
+    // `observed_factor_from_source` (§ "The scaled root is the minimum
+    // BoneId in the closure"). Naming the root explicitly keeps this reading
+    // and that second witness pinned to the same definition rather than to a
+    // coincidence of ordering.
+    let observed_common = node_factor[&domain.scaled_root_bone];
+    if !tol.relative(tol.common_factor, observed_common, expected_factor) {
+        return Err(ScaleError::FactorMismatch {
+            expected: expected_factor,
+            observed: observed_common,
+        });
+    }
+    for (&bone, &factor) in &node_factor {
+        if bone == domain.scaled_root_bone {
+            continue;
+        }
+        if !tol.relative(tol.common_factor, factor, observed_common) {
+            return Err(ScaleError::MixedFactor {
+                expected: observed_common,
+                observed: factor,
+                node: bone,
+            });
+        }
+    }
+
     Ok(ScalePlan {
         operation: ScaleOperation::RestBindUniformScale {
             source_skin_index,
@@ -2188,8 +2295,8 @@ fn plan_rest_bind(
             expected_factor,
         },
         tolerance_policy: tol,
-        affected_nodes,
-        transform_only_attachments,
+        affected_nodes: domain.affected_nodes,
+        transform_only_attachments: domain.transform_only_attachments,
         common_factor: expected_factor,
         // The measured source fact, kept alongside the declared factor the
         // build applies rather than discarded once it has been validated
@@ -2208,17 +2315,59 @@ fn plan_rest_bind(
         // never empty: it is seeded from `source_root_node_index`, and
         // `bone_of_source` maps that node to a bone or fails outright, so the
         // scaled root is always in `affected_nodes`.
-        proof_obligations: ScaleProofObligations {
-            prove_rest: true,
-            prove_unit_scale_postcondition: true,
-            prove_transform_only_affine: attached,
-            prove_keys: sampled.key_translations,
-            prove_cubic_interiors: sampled.cubic_interiors,
-            prove_trajectories: sampled.sample_times,
-            prove_skin: skinned,
-            prove_bounds: skinned,
-        },
+        proof_obligations: domain.proof_obligations,
     })
+}
+
+/// Re-derive the document-dependent part of `plan` against the source a
+/// builder or proof was actually handed.
+///
+/// Numerical replay remains intentional: proof may independently observe
+/// different transform values from those planning read. Structural replay is
+/// different. Every proof loop is selected by the affected domain and the
+/// evidence inventory, so accepting a source that derives a wider domain or
+/// different obligations would let a stale plan omit payload altogether.
+fn validate_plan_document_inventory(
+    document: &Document,
+    plan: &ScalePlan,
+) -> Result<(), ScaleError> {
+    let (affected_nodes, transform_only_attachments, proof_obligations) = match plan.operation {
+        ScaleOperation::WholeDocumentLinearUnits { factor } => {
+            let derived = plan_whole_document(document, factor)?;
+            (
+                derived.affected_nodes,
+                derived.transform_only_attachments,
+                derived.proof_obligations,
+            )
+        }
+        ScaleOperation::RestBindUniformScale {
+            source_skin_index,
+            source_root_node_index,
+            ..
+        } => {
+            let domain =
+                derive_rest_bind_plan_domain(document, source_skin_index, source_root_node_index)?;
+            (
+                domain.affected_nodes,
+                domain.transform_only_attachments,
+                domain.proof_obligations,
+            )
+        }
+    };
+
+    let reason = if affected_nodes != plan.affected_nodes {
+        Some("affected_nodes_mismatch")
+    } else if transform_only_attachments != plan.transform_only_attachments {
+        Some("transform_only_attachments_mismatch")
+    } else if proof_obligations != plan.proof_obligations {
+        Some("proof_obligations_mismatch")
+    } else {
+        None
+    };
+    if let Some(reason) = reason {
+        return Err(ScaleError::PlanDocumentMismatch { reason });
+    }
+    Ok(())
 }
 
 /// Resolve `source_skin_index` against
@@ -2703,17 +2852,20 @@ impl ScaleCandidate {
 /// Build a candidate document from an accepted [`ScalePlan`], without
 /// mutating `document`.
 ///
-/// `document` need not be the exact document `plan` was computed against —
-/// every index [`ScalePlan`] carries is independently re-validated against
-/// `document` rather than trusted, so a stale or mismatched plan produces a
-/// typed error instead of a panic or a silently wrong candidate.
+/// `document` need not be numerically identical to the document `plan` was
+/// computed against. Re-deriving its structural planning inventory must,
+/// however, produce the same affected domain and proof inventory. This permits intentional numerical replay
+/// while rejecting a structurally stale plan before one of its proof walks
+/// can omit newly introduced payload.
 ///
 /// # Errors
 ///
 /// Returns [`ScaleError::AffectedScaleAnimation`] if a scale track targets
 /// an affected node in `document` (including one added after `plan` was
-/// computed), [`ScaleError::BoneIndexOutOfRange`] if an affected node in
-/// `plan` is out of range for `document`, [`ScaleError::MissingInverseBind`]
+/// computed), [`ScaleError::PlanDocumentMismatch`] if `document` derives a
+/// different plan inventory, [`ScaleError::BoneIndexOutOfRange`] if an
+/// affected node in `plan` is out of range for `document`,
+/// [`ScaleError::MissingInverseBind`]
 /// if an affected skin slot has no inverse-bind evidence to conjugate, or
 /// any document-shape error — checked on the *candidate* as
 /// well as the input, so a build can never hand back a structurally invalid
@@ -2723,6 +2875,7 @@ pub fn build_scale_candidate(
     plan: &ScalePlan,
 ) -> Result<ScaleCandidate, ScaleError> {
     validate_document_shape(document)?;
+    validate_plan_document_inventory(document, plan)?;
     let candidate = match plan.operation {
         ScaleOperation::WholeDocumentLinearUnits { factor } => {
             build_whole_document(document, factor)?
@@ -3197,19 +3350,27 @@ pub struct ScaleProof {
 ///
 /// Proof runs on the in-memory candidate, re-deriving world matrices,
 /// sampled trajectories, skin matrices, and bounds from `source` and
-/// `candidate` rather than trusting how they were built. Every comparison
-/// uses [`ScaleTolerancePolicy::scalar_tolerance`] computed from that
-/// comparison's own actual before/after magnitudes, never a proxy such as
-/// the plan's declared factor. Neither `source` nor `candidate` need be the
-/// exact documents `plan` was computed against: every index is
-/// independently re-validated.
+/// `candidate` rather than trusting how they were built. Numerical residuals
+/// use [`ScaleTolerancePolicy::scalar_tolerance`] computed from that
+/// comparison's own actual before/after magnitudes, never a proxy such as the
+/// plan's declared factor. Discrete topology and the complete rest-world
+/// affine outside a rest/bind closure are exact unchanged-domain invariants.
+/// The world comparison is a semantic placement claim; exact local write-set
+/// parity is a separate artifact/ledger obligation. Neither `source` nor
+/// `candidate` need be numerically identical to the document `plan` was
+/// computed against, but re-deriving `source`'s structural planning inventory
+/// must produce the same affected domain and proof obligations.
 ///
 /// # Errors
 ///
-/// Returns [`ScaleError::ProofResidualExceeded`] for the first residual that
-/// exceeds [`ScalePlan::tolerance_policy`], or
-/// [`ScaleError::MissingProofEvidence`] if an obligation the plan declares
-/// provable has no counterpart evidence in `candidate`.
+/// Returns [`ScaleError::PlanDocumentMismatch`] when the supplied source
+/// derives a different proof inventory, any planning/selector error surfaced
+/// while re-deriving that inventory, [`ScaleError::CandidateStructureMismatch`]
+/// when an exact source/candidate invariant differs,
+/// [`ScaleError::ProofResidualExceeded`] for the first residual that exceeds
+/// [`ScalePlan::tolerance_policy`], or [`ScaleError::MissingProofEvidence`] if
+/// an obligation the plan declares provable has no counterpart evidence in
+/// `candidate`.
 ///
 /// Three of the claims checked here are not gated by
 /// [`ScaleProofObligations`]: the per-element animation-track values
@@ -3268,12 +3429,38 @@ pub fn prove_scale(
     }
     let candidate = candidate.document();
     validate_document_shape(source)?;
+    validate_plan_document_inventory(source, plan)?;
     validate_document_shape(candidate)?;
     validate_candidate_structure(source, candidate)?;
     let tol = plan.tolerance_policy;
     let affected = plan.affected_set();
     let source_worlds = rest_world_pose(&source.skeleton)?;
     let candidate_worlds = rest_world_pose(&candidate.skeleton)?;
+
+    // Rest/bind rewrites a strict hierarchy domain while promising that every
+    // bone outside it keeps the same world rest. This is exact, not a new
+    // tolerance: unchanged placement is the operation's semantic invariant,
+    // and a relative tolerance would only admit larger and larger displacement
+    // as authored coordinates grow. Compare the complete affine so an
+    // in-place rotation or scale mutation cannot hide behind an unchanged
+    // origin. Exact local-field/write-set parity is intentionally not inferred
+    // from equal matrices; that belongs to the explicit artifact/ledger layer.
+    //
+    // Whole-document conversion has no complement, so the loop is naturally
+    // empty there; topology parity still applies because that operation does
+    // not rewrite parents either.
+    for node in 0..source.skeleton.bones.len() {
+        if affected.contains(&node) {
+            continue;
+        }
+        let (before, _) = source_worlds.bone(node)?;
+        let (after, _) = candidate_worlds.bone(node)?;
+        if before != after {
+            return Err(ScaleError::CandidateStructureMismatch {
+                reason: "unaffected_world_rest_mismatch",
+            });
+        }
+    }
 
     let observed_factor = observed_factor_from_source(source, &source_worlds.matrices, plan)?;
     let mut proof = ScaleProof {
@@ -3311,14 +3498,6 @@ pub fn prove_scale(
     check_candidate_values(source, candidate, &affected, plan, &tol, &mut proof)?;
 
     if plan.proof_obligations.prove_rest {
-        // The affected closure is this obligation's whole evidence base, and
-        // a plan only declares it when the closure is non-empty.
-        if plan.affected_nodes.is_empty() {
-            return Err(ScaleError::MissingProofEvidence {
-                kind: ProofResidualKind::RestTranslation,
-                detail: "empty_affected_closure",
-            });
-        }
         for &node in &plan.affected_nodes {
             let (before, _) = source_worlds.bone(node)?;
             let (after, after_chain) = candidate_worlds.bone(node)?;
@@ -3434,18 +3613,6 @@ pub fn prove_scale(
     }
 
     if plan.proof_obligations.prove_transform_only_affine {
-        // A plan only declares this obligation when its closure actually
-        // carried a transform-only attachment, so an empty list here means
-        // the plan and the documents under proof disagree. Failing closed
-        // matches `prove_bounds`: iterating an empty list instead would
-        // report a `0.0` residual for §D.6's "a no-op cannot pass" claim
-        // without ever transforming a probe point.
-        if plan.transform_only_attachments.is_empty() {
-            return Err(ScaleError::MissingProofEvidence {
-                kind: ProofResidualKind::TransformOnlyAffine,
-                detail: "no_transform_only_attachment",
-            });
-        }
         // scale(1/s): the analytically expected basis correction `C_i` for
         // every node inside the affected domain (DESIGN.md Appendix D §D.2).
         let correction = Mat4::from_scale(Vec3::splat((1.0 / plan.common_factor) as f32));
@@ -3488,7 +3655,7 @@ pub fn prove_scale(
         &tol,
         &mut proof,
     )?;
-    check_unaffected_instance_binds(source, candidate, &affected, plan, &tol, &mut proof)?;
+    check_unaffected_instance_binds(source, candidate, &affected, &tol, &mut proof)?;
 
     let any_sampled_obligation = plan.proof_obligations.prove_keys
         || plan.proof_obligations.prove_cubic_interiors
@@ -3496,32 +3663,6 @@ pub fn prove_scale(
         || plan.proof_obligations.prove_skin
         || plan.proof_obligations.prove_bounds;
     if any_sampled_obligation {
-        // The clip-driven obligations are declared only when the planned
-        // document carried the tracks they read (see [`SampledEvidence`]), so
-        // a `source` that carries none is not the document this plan was
-        // computed against. Each obligation is refused separately and names
-        // itself, because "no clips at all" and "clips with no affected
-        // cubic segment" are different gaps and a caller repairing one should
-        // not be told about the other.
-        let evidence = sampled_evidence(source, &affected);
-        if plan.proof_obligations.prove_keys && !evidence.key_translations {
-            return Err(ScaleError::MissingProofEvidence {
-                kind: ProofResidualKind::KeyTranslation,
-                detail: "no_affected_translation_track",
-            });
-        }
-        if plan.proof_obligations.prove_cubic_interiors && !evidence.cubic_interiors {
-            return Err(ScaleError::MissingProofEvidence {
-                kind: ProofResidualKind::CubicInterior,
-                detail: "no_affected_cubic_interior_time",
-            });
-        }
-        if plan.proof_obligations.prove_trajectories && !evidence.sample_times {
-            return Err(ScaleError::MissingProofEvidence {
-                kind: ProofResidualKind::Trajectory,
-                detail: "no_affected_sample_time",
-            });
-        }
         // Harvested once, up front, for two reasons: the budget below has to
         // know the total sample count *before* the first sample is evaluated,
         // and re-harvesting per clip inside the loop would sort and dedup the
@@ -4862,7 +5003,6 @@ fn check_unaffected_instance_binds(
     source: &Document,
     candidate: &Document,
     affected: &BTreeSet<BoneId>,
-    plan: &ScalePlan,
     tol: &ScaleTolerancePolicy,
     proof: &mut ScaleProof,
 ) -> Result<(), ScaleError> {
@@ -4902,29 +5042,11 @@ fn check_unaffected_instance_binds(
                 }
                 (Some(before), Some(after)) => (before, after),
             };
-            // The same analytic expectation [`check_skin_and_bounds`] states
-            // for an affected slot's inverse bind: whole-document conversion
-            // conjugates every retained matrix as `U B U^-1`, which for a
-            // uniform `U` scales the translation column and leaves the linear
-            // part alone; rest/bind reparameterization does not touch a skin
-            // outside its closure at all.
-            //
-            // For a whole-document plan and the document it was planned
-            // against the conversion branch is unreachable, and provably so:
-            // `plan_whole_document` marks every bone affected, and
-            // `validate_scene_assets` rejects a `skin_joints` entry outside
-            // the bone range, so an instance that reaches here at all has an
-            // empty `skin_joints` and this loop has no iterations. It is
-            // reachable — and pinned by
-            // `a_whole_document_plan_replayed_against_an_extra_bone_still_holds_its_binds_to_the_factor`
-            // — only when the plan is replayed against a document with bones
-            // its affected set never covered, which this module guards
-            // everywhere else rather than assuming away.
-            let expected = if plan.is_whole_document() {
-                scale_translation_only(before, plan.common_factor as f32)
-            } else {
-                before
-            };
+            // Any slot reaching this function is outside a rest/bind closure
+            // and therefore unchanged. A valid whole-document plan covers
+            // every current bone; `validate_plan_document_inventory` rejects
+            // stale replay before an added bone could reach this walk.
+            let expected = before;
             let residual = matrix_residual(expected, after);
             // Both sides are stored matrices, so the magnitude the
             // comparison rounded against *is* the magnitude being compared:
@@ -4982,29 +5104,6 @@ fn check_skin_and_bounds(
     let prove_bounds = plan.proof_obligations.prove_bounds;
     if !prove_skin && !prove_bounds {
         return Ok(());
-    }
-    // A plan only declares these two when its source actually carried a
-    // skinned instance touching the affected closure, so reaching here with
-    // none means the document handed to `prove_scale` is not the one the plan
-    // was computed against. Failing closed here matches how every other
-    // missing-counterpart branch behaves; returning `Ok` instead would report
-    // a `0.0` skin-matrix or bounds residual for a claim that was never
-    // checked.
-    if (prove_skin || prove_bounds) && !has_skinned_evidence(source, affected) {
-        return Err(ScaleError::MissingProofEvidence {
-            // One gap, reported once, named for whichever of the two the plan
-            // declared — and for `prove_bounds` when it declared both, which
-            // every planner-built plan does. This gate was `prove_bounds`'s
-            // alone (#288) before `prove_skin` joined it, and what a
-            // planner-built plan reports here must not move underneath a
-            // caller matching on it.
-            kind: if prove_bounds {
-                ProofResidualKind::Bounds
-            } else {
-                ProofResidualKind::SkinMatrix
-            },
-            detail: "no_skinned_instance_in_affected_closure",
-        });
     }
 
     let mut source_bounds = BoundsAccumulator::default();
@@ -8099,12 +8198,12 @@ mod tests {
     }
 
     #[test]
-    fn a_rest_bind_proof_whose_source_cannot_locate_the_scaled_root_reports_missing_evidence() {
+    fn a_rest_bind_plan_cannot_be_replayed_against_a_renumbered_selector_domain() {
         // The observed factor is re-derived through the proof source's own
-        // source-node projection. A source that does not carry one for the
-        // plan's scaled root cannot be measured, and reporting `0.0` — or the
-        // plan's recorded value — would be evidence for a measurement that
-        // never happened.
+        // source-node projection. A source that has renumbered the selected
+        // root is not the structural domain the plan describes and is now
+        // rejected while re-planning, before proof could report a measurement
+        // for the wrong domain.
         let doc = compensated_document();
         let capability = complete_capability();
         let plan = plan_scale(&ScaleRequest {
@@ -8119,20 +8218,26 @@ mod tests {
         .unwrap();
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
 
-        // Renumbering rather than deleting: `prove_scale` does not require
-        // its source to be the document the plan came from, and a source
-        // whose projection is internally consistent — same tree, same bones,
-        // different source-node numbering — is a document
-        // `validate_document_shape` accepts and whose scaled root, source
-        // node 0, is simply not in it.
+        // Renumbering rather than deleting keeps the document internally
+        // consistent — same tree and same bones, different source identity —
+        // so document-shape validation itself still accepts it.
         let mut unprojected = doc.clone();
         unprojected.assets.source_skeleton.nodes[0].source_node_index = 7;
         unprojected.assets.source_skeleton.nodes[1].parent_source_node_index = Some(7);
+        let mut unprojected_candidate = candidate.into_document();
+        unprojected_candidate.assets.source_skeleton.nodes[0].source_node_index = 7;
+        unprojected_candidate.assets.source_skeleton.nodes[1].parent_source_node_index = Some(7);
         assert_eq!(
-            prove_scale(&unprojected, &candidate, &plan).unwrap_err(),
-            ScaleError::MissingProofEvidence {
-                kind: ProofResidualKind::ObservedFactor,
-                detail: "scaled_root_not_projected",
+            prove_scale(
+                &unprojected,
+                &ScaleCandidate {
+                    document: unprojected_candidate
+                },
+                &plan
+            )
+            .unwrap_err(),
+            ScaleError::InvalidRootSelector {
+                source_root_node_index: 0,
             }
         );
     }
@@ -10244,7 +10349,7 @@ mod tests {
     }
 
     #[test]
-    fn a_declared_bounds_obligation_with_no_skinned_evidence_is_missing_not_vacuous() {
+    fn a_replayed_plan_cannot_lose_its_bounds_evidence() {
         let doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
         let capability = complete_capability();
         let plan = whole_document_plan(&doc, &capability);
@@ -10252,8 +10357,8 @@ mod tests {
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
         // Replay the plan against a document pair that no longer carries the
         // skinned instance its bounds obligation was declared from. Both
-        // sides lose it, so what fails is the bounds obligation for want of
-        // evidence, not the source/candidate skin-identity parity check.
+        // sides lose it, so source/candidate structure still agrees; the
+        // source-derived obligation inventory is what must fail closed.
         let mut unskinned = doc.clone();
         unskinned.assets.instances[0].skin_joints.clear();
         unskinned.assets.instances[0].skin_ibms.clear();
@@ -10263,18 +10368,12 @@ mod tests {
         let candidate = ScaleCandidate {
             document: unskinned_candidate,
         };
-        let error = prove_scale(&unskinned, &candidate, &plan).unwrap_err();
-        let ScaleError::MissingProofEvidence { kind, detail } = error else {
-            panic!("expected missing bounds evidence, got {error:?}");
-        };
-        assert_eq!(kind, ProofResidualKind::Bounds);
-        // The `detail` is load-bearing, not decoration. Deleting the early
-        // `has_skinned_evidence` gate leaves the later `skinned_bounds`
-        // fallback returning the same *variant* and the same `kind` from a
-        // different cause, so only the reason string distinguishes "the
-        // document carries no skinned instance at all" from "it carries one
-        // whose vertices produced no box".
-        assert_eq!(detail, "no_skinned_instance_in_affected_closure");
+        assert_eq!(
+            prove_scale(&unskinned, &candidate, &plan).unwrap_err(),
+            ScaleError::PlanDocumentMismatch {
+                reason: "proof_obligations_mismatch"
+            }
+        );
     }
 
     // --- Evidence gating, per obligation (issue #302) ---------------------
@@ -10309,6 +10408,26 @@ mod tests {
         let mut document = candidate.into_document();
         document.clips.clear();
         (source, ScaleCandidate { document })
+    }
+
+    /// Assert both public plan-replay boundaries reject `source` before a
+    /// stale inventory can select the builder or proof walks.
+    fn assert_replayed_inventory_mismatch(source: &Document, plan: &ScalePlan) {
+        let expected = ScaleError::PlanDocumentMismatch {
+            reason: "proof_obligations_mismatch",
+        };
+        assert_eq!(build_scale_candidate(source, plan).unwrap_err(), expected);
+        assert_eq!(
+            prove_scale(
+                source,
+                &ScaleCandidate {
+                    document: source.clone(),
+                },
+                plan,
+            )
+            .unwrap_err(),
+            expected
+        );
     }
 
     #[test]
@@ -10365,7 +10484,7 @@ mod tests {
     }
 
     #[test]
-    fn a_declared_key_obligation_with_no_affected_translation_track_is_missing_not_vacuous() {
+    fn a_replayed_plan_cannot_lose_its_key_evidence() {
         let doc = multi_joint_document();
         let capability = complete_capability();
         let plan = multi_joint_plan(&doc, &capability);
@@ -10374,16 +10493,16 @@ mod tests {
         prove_scale(&doc, &candidate, &plan).unwrap();
 
         let (clipless, clipless_candidate) = without_clips(&doc, candidate);
-        let error = prove_scale(&clipless, &clipless_candidate, &plan).unwrap_err();
-        let ScaleError::MissingProofEvidence { kind, detail } = error else {
-            panic!("expected missing key evidence, got {error:?}");
-        };
-        assert_eq!(kind, ProofResidualKind::KeyTranslation);
-        assert_eq!(detail, "no_affected_translation_track");
+        assert_eq!(
+            prove_scale(&clipless, &clipless_candidate, &plan).unwrap_err(),
+            ScaleError::PlanDocumentMismatch {
+                reason: "proof_obligations_mismatch"
+            }
+        );
     }
 
     #[test]
-    fn a_declared_cubic_obligation_with_no_affected_cubic_segment_is_missing_not_vacuous() {
+    fn a_replayed_plan_cannot_lose_its_cubic_evidence() {
         let doc = multi_joint_document();
         let capability = complete_capability();
         let plan = multi_joint_plan(&doc, &capability);
@@ -10398,16 +10517,16 @@ mod tests {
         source.clips[0].tracks.truncate(1);
         let mut document = candidate.into_document();
         document.clips[0].tracks.truncate(1);
-        let error = prove_scale(&source, &ScaleCandidate { document }, &plan).unwrap_err();
-        let ScaleError::MissingProofEvidence { kind, detail } = error else {
-            panic!("expected missing cubic evidence, got {error:?}");
-        };
-        assert_eq!(kind, ProofResidualKind::CubicInterior);
-        assert_eq!(detail, "no_affected_cubic_interior_time");
+        assert_eq!(
+            prove_scale(&source, &ScaleCandidate { document }, &plan).unwrap_err(),
+            ScaleError::PlanDocumentMismatch {
+                reason: "proof_obligations_mismatch"
+            }
+        );
     }
 
     #[test]
-    fn a_declared_trajectory_obligation_with_no_sample_time_is_missing_not_vacuous() {
+    fn a_replayed_plan_cannot_lose_its_trajectory_evidence() {
         // `prove_trajectories` is the widest of the three, so its refusal is
         // only reachable from a plan that declares it *without* the other
         // two — otherwise the key or cubic refusal fires first and this one
@@ -10423,12 +10542,80 @@ mod tests {
         prove_scale(&doc, &candidate, &plan).unwrap();
 
         let (clipless, clipless_candidate) = without_clips(&doc, candidate);
-        let error = prove_scale(&clipless, &clipless_candidate, &plan).unwrap_err();
-        let ScaleError::MissingProofEvidence { kind, detail } = error else {
-            panic!("expected missing trajectory evidence, got {error:?}");
-        };
-        assert_eq!(kind, ProofResidualKind::Trajectory);
-        assert_eq!(detail, "no_affected_sample_time");
+        assert_eq!(
+            prove_scale(&clipless, &clipless_candidate, &plan).unwrap_err(),
+            ScaleError::PlanDocumentMismatch {
+                reason: "proof_obligations_mismatch"
+            }
+        );
+    }
+
+    #[test]
+    fn a_replayed_plan_cannot_gain_trajectory_evidence() {
+        let doc = compensated_document();
+        let capability = complete_capability();
+        let plan = compensated_rest_bind_plan(&doc, &capability);
+        let before = plan.proof_obligations();
+        assert!(!before.prove_keys);
+        assert!(!before.prove_cubic_interiors);
+        assert!(!before.prove_trajectories);
+
+        let mut gained = doc.clone();
+        gained.clips.push(Clip {
+            name: "gained_rotation".into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 1,
+                property: Property::Rotation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Quats(vec![Quat::IDENTITY, Quat::IDENTITY]),
+            }],
+        });
+        let after = compensated_rest_bind_plan(&gained, &capability).proof_obligations();
+        assert!(!after.prove_keys);
+        assert!(!after.prove_cubic_interiors);
+        assert!(after.prove_trajectories);
+        assert_replayed_inventory_mismatch(&gained, &plan);
+    }
+
+    #[test]
+    fn a_replayed_plan_cannot_gain_key_evidence() {
+        let doc = rotation_only_clip_document();
+        let capability = complete_capability();
+        let plan = multi_joint_plan(&doc, &capability);
+        let before = plan.proof_obligations();
+        assert!(!before.prove_keys);
+        assert!(!before.prove_cubic_interiors);
+        assert!(before.prove_trajectories);
+
+        let mut gained = doc.clone();
+        gained.clips[0].tracks.push(linear_translation_track());
+        let after = multi_joint_plan(&gained, &capability).proof_obligations();
+        assert!(after.prove_keys);
+        assert!(!after.prove_cubic_interiors);
+        assert!(after.prove_trajectories);
+        assert_replayed_inventory_mismatch(&gained, &plan);
+    }
+
+    #[test]
+    fn a_replayed_plan_cannot_gain_cubic_evidence() {
+        let mut doc = multi_joint_document();
+        doc.clips[0].tracks.truncate(1);
+        let capability = complete_capability();
+        let plan = multi_joint_plan(&doc, &capability);
+        let before = plan.proof_obligations();
+        assert!(before.prove_keys);
+        assert!(!before.prove_cubic_interiors);
+        assert!(before.prove_trajectories);
+
+        let mut gained = doc.clone();
+        gained.clips[0].tracks.push(cubic_rotation_track());
+        let after = multi_joint_plan(&gained, &capability).proof_obligations();
+        assert!(after.prove_keys);
+        assert!(after.prove_cubic_interiors);
+        assert!(after.prove_trajectories);
+        assert_replayed_inventory_mismatch(&gained, &plan);
     }
 
     /// A two-key `CUBICSPLINE` *rotation* track on bone 2, with zero
@@ -10654,13 +10841,11 @@ mod tests {
     }
 
     #[test]
-    fn the_proof_side_key_gate_reads_the_key_evidence_and_not_a_neighbouring_field() {
-        // The three proof-side gates differ only in which `SampledEvidence`
-        // field each reads, and `a_declared_key_obligation_with_no_affected
-        // _translation_track_is_missing_not_vacuous` removes every clip, which
-        // takes all three fields false together — so the key gate reading
-        // `sample_times` instead of `key_translations` would behave
-        // identically there.
+    fn the_replayed_plan_inventory_reads_key_evidence_not_a_neighbouring_field() {
+        // The three sampled inventory fields differ only in which
+        // `SampledEvidence` member each reads. Removing every clip takes all
+        // three false together, so a key check accidentally reading
+        // `sample_times` instead of `key_translations` would look correct.
         //
         // A rotation-only clip separates them: `sample_times` is true and
         // `key_translations` is false. The plan is built from a document whose
@@ -10676,16 +10861,15 @@ mod tests {
         assert!(!obligations.prove_cubic_interiors);
         assert!(obligations.prove_trajectories);
 
-        // The proof source keeps a clip — so it still has sample times — and
+        // The replay source keeps a clip — so it still has sample times — and
         // carries no translation payload for the key obligation to read.
         let rotation_only = rotation_only_clip_document();
-        let candidate = build_scale_candidate(&rotation_only, &plan).unwrap();
-        let error = prove_scale(&rotation_only, &candidate, &plan).unwrap_err();
-        let ScaleError::MissingProofEvidence { kind, detail } = error else {
-            panic!("expected missing key evidence, got {error:?}");
-        };
-        assert_eq!(kind, ProofResidualKind::KeyTranslation);
-        assert_eq!(detail, "no_affected_translation_track");
+        assert_eq!(
+            build_scale_candidate(&rotation_only, &plan).unwrap_err(),
+            ScaleError::PlanDocumentMismatch {
+                reason: "proof_obligations_mismatch"
+            }
+        );
     }
 
     #[test]
@@ -10719,6 +10903,41 @@ mod tests {
         // here would have been reached rather than skipped for want of a
         // sample time: what the two flags turn on is the instance walk alone.
         assert!(proof.sample_time_count > 0);
+
+        // The decisive stale-plan direction is evidence gained, not lost.
+        // Re-add a skinned instance on the same already-affected joints: the
+        // affected closure and attachment list stay identical, but the stale
+        // plan still has both flags false. Before full inventory parity, a
+        // candidate with a corrupted affected bind or vertex weight skipped
+        // both skin and bounds and proved successfully.
+        let skinned = multi_joint_document();
+        assert_eq!(
+            derive_rest_bind_plan_domain(&skinned, 0, 0)
+                .unwrap()
+                .affected_nodes,
+            plan.affected_nodes()
+        );
+        let expected = ScaleError::PlanDocumentMismatch {
+            reason: "proof_obligations_mismatch",
+        };
+        assert_eq!(
+            build_scale_candidate(&skinned, &plan).unwrap_err(),
+            expected
+        );
+
+        let mut corrupted = build_rest_bind(&skinned, &plan).unwrap();
+        corrupted.assets.instances[0].skin_ibms[0] = Mat4::IDENTITY;
+        assert_eq!(
+            prove_scale(
+                &skinned,
+                &ScaleCandidate {
+                    document: corrupted
+                },
+                &plan
+            )
+            .unwrap_err(),
+            expected
+        );
     }
 
     #[test]
@@ -10755,17 +10974,10 @@ mod tests {
     }
 
     #[test]
-    fn a_declared_transform_only_obligation_with_no_attachment_is_missing_not_vacuous() {
-        // The attachment list lives in the plan, so this obligation's
-        // evidence cannot vanish from a *document*: the fail-open state
-        // §D.6's "a no-op cannot pass" claim has to be protected against is a
-        // plan that declares the obligation over an empty list, which is
-        // exactly what `plan_rest_bind` produced unconditionally before this
-        // gate. Reconstructed here the same way the skin-only and bounds-only
-        // plans below are.
+    fn a_replayed_plan_cannot_reclassify_a_transform_only_attachment_as_a_joint() {
         let doc = compensated_document();
         let capability = complete_capability();
-        let planned = plan_scale(&ScaleRequest {
+        let plan = plan_scale(&ScaleRequest {
             operation: ScaleOperation::RestBindUniformScale {
                 source_skin_index: 0,
                 source_root_node_index: 0,
@@ -10775,113 +10987,31 @@ mod tests {
             capability: &capability,
         })
         .unwrap();
-        let candidate = build_scale_candidate(&doc, &planned).unwrap();
-        prove_scale(&doc, &candidate, &planned).unwrap();
+        assert_eq!(plan.affected_nodes(), &[0, 1, 2]);
+        assert_eq!(plan.transform_only_attachments(), &[2]);
 
-        let mut obligations = planned.proof_obligations();
-        assert!(obligations.prove_transform_only_affine);
-        obligations.prove_skin = false;
-        obligations.prove_bounds = false;
-        let unattached = ScalePlan {
-            operation: planned.operation(),
-            tolerance_policy: planned.tolerance_policy(),
-            affected_nodes: planned.affected_nodes().to_vec(),
-            transform_only_attachments: Vec::new(),
-            common_factor: planned.common_factor(),
-            observed_factor: planned.observed_factor(),
-            domain_rewrites: planned.domain_rewrites(),
-            proof_obligations: obligations,
-        };
-        let error = prove_scale(&doc, &candidate, &unattached).unwrap_err();
-        let ScaleError::MissingProofEvidence { kind, detail } = error else {
-            panic!("expected missing transform-only evidence, got {error:?}");
-        };
-        assert_eq!(kind, ProofResidualKind::TransformOnlyAffine);
-        assert_eq!(detail, "no_transform_only_attachment");
-    }
-
-    #[test]
-    fn a_declared_skin_obligation_with_no_skinned_evidence_is_missing_not_vacuous() {
-        // The mirror of `a_declared_bounds_obligation_with_no_skinned
-        // _evidence_is_missing_not_vacuous`. Both flags read the same
-        // instance walk, so the gate reports one gap once and names it for
-        // `prove_bounds` whenever that is declared; the skin-only plan is the
-        // shape where `prove_skin` is the one left holding the claim.
-        let doc = multi_joint_document();
-        let capability = complete_capability();
-        let planned = multi_joint_plan(&doc, &capability);
-        let candidate = build_scale_candidate(&doc, &planned).unwrap();
-
-        let skin_only = ScalePlan {
-            operation: planned.operation(),
-            tolerance_policy: planned.tolerance_policy(),
-            affected_nodes: planned.affected_nodes().to_vec(),
-            transform_only_attachments: Vec::new(),
-            common_factor: planned.common_factor(),
-            observed_factor: planned.observed_factor(),
-            domain_rewrites: planned.domain_rewrites(),
-            proof_obligations: ScaleProofObligations {
-                prove_rest: false,
-                prove_unit_scale_postcondition: false,
-                prove_transform_only_affine: false,
-                prove_keys: false,
-                prove_cubic_interiors: false,
-                prove_trajectories: false,
-                prove_skin: true,
-                prove_bounds: false,
-            },
-        };
-        prove_scale(&doc, &candidate, &skin_only).unwrap();
-
-        let mut unskinned = doc.clone();
-        unskinned.assets.instances[0].skin_joints.clear();
-        unskinned.assets.instances[0].skin_ibms.clear();
-        let mut document = candidate.into_document();
-        document.assets.instances[0].skin_joints.clear();
-        document.assets.instances[0].skin_ibms.clear();
-        let error = prove_scale(&unskinned, &ScaleCandidate { document }, &skin_only).unwrap_err();
-        let ScaleError::MissingProofEvidence { kind, detail } = error else {
-            panic!("expected missing skin evidence, got {error:?}");
-        };
-        assert_eq!(kind, ProofResidualKind::SkinMatrix);
-        assert_eq!(detail, "no_skinned_instance_in_affected_closure");
-    }
-
-    #[test]
-    fn a_boneless_document_declares_no_rest_obligation_and_a_declared_one_is_missing() {
-        // A whole-document conversion's affected closure is the whole
-        // skeleton, so a document with no bones plans an empty one — the only
-        // way either planner reaches that state. `prove_rest` walking an
-        // empty closure would report a `0.0` rest-translation residual for
-        // nodes that do not exist.
-        let doc = Document::default();
-        assert!(doc.skeleton.bones.is_empty());
-        let capability = complete_capability();
-        let plan = whole_document_plan(&doc, &capability);
-        assert!(plan.affected_nodes().is_empty());
-        assert!(!plan.proof_obligations().prove_rest);
-        let candidate = build_scale_candidate(&doc, &plan).unwrap();
-        prove_scale(&doc, &candidate, &plan).unwrap();
-
-        let declared = ScalePlan {
-            operation: plan.operation(),
-            tolerance_policy: plan.tolerance_policy(),
-            affected_nodes: Vec::new(),
-            transform_only_attachments: Vec::new(),
-            common_factor: plan.common_factor(),
-            observed_factor: plan.observed_factor(),
-            domain_rewrites: plan.domain_rewrites(),
-            proof_obligations: ScaleProofObligations {
-                prove_rest: true,
-                ..plan.proof_obligations()
-            },
-        };
-        let error = prove_scale(&doc, &candidate, &declared).unwrap_err();
-        let ScaleError::MissingProofEvidence { kind, detail } = error else {
-            panic!("expected missing rest evidence, got {error:?}");
-        };
-        assert_eq!(kind, ProofResidualKind::RestTranslation);
-        assert_eq!(detail, "empty_affected_closure");
+        // Claim the existing transform-only child as another joint of the
+        // selected source skin. The closure still contains exactly the same
+        // bones, but the off-origin affine obligation would disappear under
+        // the stale plan's new source classification.
+        let mut reclassified = doc.clone();
+        let child_source = reclassified
+            .assets
+            .source_skeleton
+            .nodes
+            .iter()
+            .find(|node| node.bone == Some(2))
+            .unwrap()
+            .source_node_index;
+        reclassified.assets.source_skeleton.skins[0]
+            .joint_source_node_indices
+            .push(child_source);
+        assert_eq!(
+            build_scale_candidate(&reclassified, &plan).unwrap_err(),
+            ScaleError::PlanDocumentMismatch {
+                reason: "transform_only_attachments_mismatch"
+            }
+        );
     }
 
     #[test]
@@ -14768,117 +14898,6 @@ mod tests {
     }
 
     #[test]
-    fn a_skin_only_plan_still_evaluates_its_sampled_obligations() {
-        // `prove_skin` is one of the flags that arms `prove_scale`'s sampled
-        // loop. Under every plan the two planners construct it is co-declared
-        // with `prove_keys`, `prove_cubic_interiors` and `prove_trajectories`,
-        // so dropping it from that trigger changes nothing observable — see
-        // the note on `ScaleProofObligations::prove_skin`. This synthetic plan
-        // is the shape where it is load-bearing on its own: with every other
-        // sampled flag off, the sample-coverage `prove_scale` reports is
-        // entirely `prove_skin`'s doing.
-        let doc = multi_joint_document();
-        let capability = complete_capability();
-        let planned = multi_joint_plan(&doc, &capability);
-        let candidate = build_scale_candidate(&doc, &planned).unwrap();
-
-        let skin_only = ScalePlan {
-            operation: planned.operation(),
-            tolerance_policy: planned.tolerance_policy(),
-            affected_nodes: planned.affected_nodes().to_vec(),
-            transform_only_attachments: Vec::new(),
-            common_factor: planned.common_factor(),
-            observed_factor: planned.observed_factor(),
-            domain_rewrites: planned.domain_rewrites(),
-            proof_obligations: ScaleProofObligations {
-                prove_rest: false,
-                prove_unit_scale_postcondition: false,
-                prove_transform_only_affine: false,
-                prove_keys: false,
-                prove_cubic_interiors: false,
-                prove_trajectories: false,
-                prove_skin: true,
-                prove_bounds: false,
-            },
-        };
-
-        let proof = prove_scale(&doc, &candidate, &skin_only).unwrap();
-        // `multi_joint_document`'s clip has key times `{0.0, 1.0}` shared by
-        // both tracks plus the analytic midpoint `0.5` of the single cubic
-        // segment: three sample times, all of them harvested for `prove_skin`
-        // alone.
-        assert_eq!(proof.sample_time_count, 3);
-        // Nothing else was claimed, so nothing else may be reported as
-        // checked.
-        assert_eq!(proof.key_translation_residual, 0.0);
-        assert_eq!(proof.cubic_interior_residual, 0.0);
-        assert_eq!(proof.trajectory_residual, 0.0);
-        assert_eq!(proof.bounds_residual, 0.0);
-    }
-
-    #[test]
-    fn a_bounds_only_plan_still_evaluates_its_sampled_bounds() {
-        // The mirror of the skin-only plan above, for `prove_bounds`. Both of
-        // the guards this refactor introduced — `sample_time_obligations`'s
-        // early return and `check_skin_and_bounds`'s — test `prove_skin ||
-        // prove_bounds`, and under every plan the two planners construct the
-        // two flags are co-declared, so dropping `prove_bounds` from either
-        // guard changes nothing observable on a planner-built plan. This
-        // synthetic plan is the shape where it is load-bearing on its own:
-        // with `prove_skin` off, a dropped `prove_bounds` clause turns the
-        // whole obligation into a silent no-op that still reports a `0.0`
-        // bounds residual.
-        //
-        // The defect is `a_reweighted_vertex_is_named_by_the_bounds
-        // _obligation`'s: per-vertex weights are the one rewritten payload no
-        // other obligation reads, and at rest both joint palettes are the
-        // identity, so it is invisible until the clip drives the two joints
-        // apart — which is what makes it reach the *sampled* bounds walk and
-        // not merely the rest-pose one.
-        let doc = multi_joint_document();
-        let capability = complete_capability();
-        let planned = multi_joint_plan(&doc, &capability);
-        let candidate = build_scale_candidate(&doc, &planned).unwrap();
-
-        let bounds_only = ScalePlan {
-            operation: planned.operation(),
-            tolerance_policy: planned.tolerance_policy(),
-            affected_nodes: planned.affected_nodes().to_vec(),
-            transform_only_attachments: Vec::new(),
-            common_factor: planned.common_factor(),
-            observed_factor: planned.observed_factor(),
-            domain_rewrites: planned.domain_rewrites(),
-            proof_obligations: ScaleProofObligations {
-                prove_rest: false,
-                prove_unit_scale_postcondition: false,
-                prove_transform_only_affine: false,
-                prove_keys: false,
-                prove_cubic_interiors: false,
-                prove_trajectories: false,
-                prove_skin: false,
-                prove_bounds: true,
-            },
-        };
-
-        // The untouched candidate still proves, and the three sample times
-        // are entirely `prove_bounds`'s doing.
-        let proof = prove_scale(&doc, &candidate, &bounds_only).unwrap();
-        assert_eq!(proof.sample_time_count, 3);
-        assert_eq!(proof.skin_matrix_residual, 0.0);
-
-        let mut broken = candidate.document().clone();
-        broken.assets.meshes[0].primitives[0].weights[2] = [0.75, 0.25, 0.0, 0.0];
-        let broken = ScaleCandidate { document: broken };
-        assert!(matches!(
-            prove_scale(&doc, &broken, &bounds_only).unwrap_err(),
-            ScaleError::ProofResidualExceeded {
-                kind: ProofResidualKind::Bounds,
-                ..
-            }
-        ));
-    }
-
-    #[test]
     fn each_clip_is_proved_against_its_own_sample_times() {
         // `prove_scale` harvests each clip's sample times once, up front, into
         // an index-parallel cache, then reads `clip_times[clip_index]` inside
@@ -15926,35 +15945,14 @@ mod tests {
     }
 
     #[test]
-    fn a_whole_document_plan_replayed_against_an_extra_bone_still_holds_its_binds_to_the_factor() {
-        // For a whole-document plan and the document it was planned against,
-        // no instance can reach the unaffected-bind obligation with a slot to
-        // check: `plan_whole_document` marks every bone affected and
-        // `validate_scene_assets` rejects an out-of-range `skin_joints`
-        // entry, so an unaffected instance has no joints at all.
-        //
-        // Replaying the plan against a *different* document — which
-        // `prove_scale` explicitly permits, and guards against everywhere
-        // else — does reach it. The expectation there is the conversion's,
-        // not "unchanged": `B' = U B U^-1` scales the translation column by
-        // `q` and leaves the linear part alone.
-        //
-        //   source bind translation (100, 0, 0), q = 0.01
-        //   candidate bind translation (1, 0, 0) = the built candidate's
-        //   expected translation (1, 0, 0), residual 0
-        //
-        // A zero residual is also this field's *initialized* value, so the
-        // honest run below cannot by itself tell "checked, and it matched"
-        // from "skipped": deleting this obligation's whole-document branch
-        // leaves every assertion in it standing. The second run therefore
-        // perturbs the candidate's translation *inside* the tolerance this
-        // comparison derives for itself and pins the reported maximum:
-        //
-        //   candidate bind translation (1 + 2^-18, 0, 0)
-        //   residual   2^-18 = 3.8147e-6, exact: `1 + 2^-18` is exact in
-        //              binary32 (`ulp(1) = 2^-23`) and so is the difference
-        //   tolerance  1e-6 + 1e-5 * max(1, 1 + 2^-18) = 1.1000038e-5,
-        //              roughly `2.9x` the residual — a pass with headroom.
+    fn a_whole_document_plan_cannot_omit_a_bone_added_after_planning() {
+        // A stale plan over bones 0 and 1 once proved a wider source while
+        // walking only those two ids. Restoring added bone 2's candidate rest
+        // translation from the correct `0.05` to its source value `5.0`
+        // therefore returned `Ok`: whole-document disabled the complement,
+        // and no other obligation reached that bone. Re-deriving the plan
+        // inventory against the supplied source must reject before either
+        // build or proof can silently omit it.
         let capability = complete_capability();
         let planned = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
         let plan = plan_scale(&ScaleRequest {
@@ -15966,26 +15964,44 @@ mod tests {
         assert_eq!(plan.affected_nodes(), &[0, 1]);
 
         let mut wider = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
-        assert_eq!(
-            push_unrelated_skin(
-                &mut wider,
-                Some(Mat4::from_translation(Vec3::new(100.0, 0.0, 0.0)))
-            ),
-            2
+        let added = push_unrelated_skin(
+            &mut wider,
+            Some(Mat4::from_translation(Vec3::new(100.0, 0.0, 0.0))),
         );
-        let candidate = build_scale_candidate(&wider, &plan).unwrap();
-        assert_eq!(
-            candidate.document().assets.instances[1].skin_ibms[0],
-            Mat4::from_translation(Vec3::new(1.0, 0.0, 0.0))
-        );
-        let proof = prove_scale(&wider, &candidate, &plan).unwrap();
-        assert_eq!(proof.unaffected_inverse_bind_residual, 0.0);
+        assert_eq!(added, 2);
+        let expected = ScaleError::PlanDocumentMismatch {
+            reason: "affected_nodes_mismatch",
+        };
+        assert_eq!(build_scale_candidate(&wider, &plan).unwrap_err(), expected);
 
-        let mut nudged = candidate.document().clone();
-        nudged.assets.instances[1].skin_ibms[0] =
-            Mat4::from_translation(Vec3::new(1.0 + 2f32.powi(-18), 0.0, 0.0));
-        let proof = prove_scale(&wider, &ScaleCandidate { document: nudged }, &plan).unwrap();
-        assert_eq!(proof.unaffected_inverse_bind_residual, 2f64.powi(-18));
+        // Bypass the public builder only to reproduce the old proof exploit:
+        // start from the correct whole-document rewrite, then restore the new
+        // bone's normalized/raw rest and its instance bind so every payload
+        // the stale plan omits is consistently left unconverted.
+        let mut omitted = build_whole_document(&wider, 0.01).unwrap();
+        omitted.skeleton.bones[added].rest = wider.skeleton.bones[added].rest;
+        let source_local_rest = wider
+            .assets
+            .source_skeleton
+            .nodes
+            .iter()
+            .find(|node| node.bone == Some(added))
+            .unwrap()
+            .local_rest
+            .clone();
+        omitted
+            .assets
+            .source_skeleton
+            .nodes
+            .iter_mut()
+            .find(|node| node.bone == Some(added))
+            .unwrap()
+            .local_rest = source_local_rest;
+        omitted.assets.instances[1].skin_ibms[0] = wider.assets.instances[1].skin_ibms[0];
+        assert_eq!(
+            prove_scale(&wider, &ScaleCandidate { document: omitted }, &plan).unwrap_err(),
+            expected
+        );
     }
 
     // --- Stable reason strings ---------------------------------------------
@@ -16250,7 +16266,7 @@ mod tests {
         let plan = whole_document_plan(&doc, &capability);
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
 
-        let cases: [StructureMismatchCase; 13] = [
+        let cases: [StructureMismatchCase; 14] = [
             // The extra bone is a parentless copy of the root, so it passes
             // `validate_document_shape` (which runs first) and reaches the
             // parity clause rather than a shape guard. This is the row the
@@ -16260,6 +16276,16 @@ mod tests {
             ("bone_count_mismatch", |d| {
                 let root = d.skeleton.bones[0].clone();
                 d.skeleton.bones.push(root);
+            }),
+            ("skeleton_topology_mismatch", |d| {
+                d.skeleton.bones[1].parent = None;
+                d.assets
+                    .source_skeleton
+                    .nodes
+                    .iter_mut()
+                    .find(|node| node.bone == Some(1))
+                    .unwrap()
+                    .parent_source_node_index = None;
             }),
             ("track_count_mismatch", |d| {
                 d.clips[0].tracks.push(Track {
@@ -16549,6 +16575,305 @@ mod tests {
             .unwrap_err(),
             ScaleError::CandidateStructureMismatch {
                 reason: "instance_node_mismatch"
+            }
+        );
+    }
+
+    #[test]
+    fn a_rest_bind_candidate_that_changes_an_unaffected_world_rest_is_refused() {
+        let (doc, prop) = compensated_document_with_unskinned_prop();
+        let capability = complete_capability();
+        let plan = compensated_rest_bind_plan(&doc, &capability);
+        assert_eq!(plan.affected_nodes(), &[0, 1, 2]);
+        assert!(!plan.affected_nodes().contains(&prop));
+
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        prove_scale(&doc, &candidate, &plan).unwrap();
+
+        // Exercise all four columns of the derived world affine. Comparing
+        // only the origin would miss the rotation and scale mutations; a
+        // translation-only residual is therefore not this obligation. The
+        // one-ulp translation mutation is far inside the v3 scalar band and
+        // pins why an unchanged composition has no nonzero tolerance.
+        for mutate in [
+            |rest: &mut Transform| rest.translation.x = 500.0,
+            |rest: &mut Transform| {
+                rest.translation.x = f32::from_bits(rest.translation.x.to_bits() + 1)
+            },
+            |rest: &mut Transform| rest.rotation = Quat::from_rotation_z(0.5),
+            |rest: &mut Transform| rest.scale.y = 2.0,
+        ] as [fn(&mut Transform); 4]
+        {
+            let mut changed = candidate.document().clone();
+            mutate(&mut changed.skeleton.bones[prop].rest);
+            assert_eq!(
+                prove_scale(&doc, &ScaleCandidate { document: changed }, &plan).unwrap_err(),
+                ScaleError::CandidateStructureMismatch {
+                    reason: "unaffected_world_rest_mismatch"
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn a_coherently_reparented_candidate_is_a_topology_mismatch() {
+        let (doc, prop) = compensated_document_with_unskinned_prop();
+        let capability = complete_capability();
+        let plan = compensated_rest_bind_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let mut reparented = candidate.document().clone();
+
+        let new_parent_source = reparented
+            .assets
+            .source_skeleton
+            .nodes
+            .iter()
+            .find(|node| node.bone == Some(2))
+            .map(|node| node.source_node_index)
+            .unwrap();
+        reparented.skeleton.bones[prop].parent = Some(2);
+        reparented
+            .assets
+            .source_skeleton
+            .nodes
+            .iter_mut()
+            .find(|node| node.bone == Some(prop))
+            .unwrap()
+            .parent_source_node_index = Some(new_parent_source);
+
+        // The candidate remains internally coherent, so #309's per-document
+        // chain validation accepts it. It is the exact source/candidate
+        // topology comparison that must refuse the operation rewrite.
+        validate_document_shape(&reparented).unwrap();
+        assert_eq!(
+            prove_scale(
+                &doc,
+                &ScaleCandidate {
+                    document: reparented
+                },
+                &plan
+            )
+            .unwrap_err(),
+            ScaleError::CandidateStructureMismatch {
+                reason: "skeleton_topology_mismatch"
+            }
+        );
+    }
+
+    #[test]
+    fn topology_remains_exact_when_whole_document_affects_every_bone() {
+        let (mut doc, prop) = compensated_document_with_unskinned_prop();
+        doc.assets.source_skeleton.coverage = SourceSkeletonCoverage::Unavailable;
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        assert_eq!(plan.affected_nodes(), &[0, 1, 2, 3]);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+
+        let mut changed = candidate.document().clone();
+        // Both sides declare their raw rows non-authoritative, so this
+        // refusal can only come from normalized `Bone::parent` parity.
+        changed.skeleton.bones[prop].parent = Some(2);
+        validate_document_shape(&changed).unwrap();
+
+        assert_eq!(
+            prove_scale(&doc, &ScaleCandidate { document: changed }, &plan).unwrap_err(),
+            ScaleError::CandidateStructureMismatch {
+                reason: "skeleton_topology_mismatch"
+            }
+        );
+    }
+
+    #[test]
+    fn source_projection_identity_cannot_be_downgraded_by_the_candidate() {
+        let (doc, _) = compensated_document_with_unskinned_prop();
+        let capability = complete_capability();
+        let plan = compensated_rest_bind_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let mut changed = candidate.document().clone();
+        changed.assets.source_skeleton.coverage = SourceSkeletonCoverage::Unavailable;
+        // Coverage unavailable deliberately makes the candidate's projection
+        // non-authoritative to its own validation. It must not make that
+        // identity disappear from the source/candidate comparison.
+        validate_document_shape(&changed).unwrap();
+        assert_eq!(
+            prove_scale(&doc, &ScaleCandidate { document: changed }, &plan).unwrap_err(),
+            ScaleError::CandidateStructureMismatch {
+                reason: "skeleton_topology_mismatch"
+            }
+        );
+    }
+
+    #[test]
+    fn complete_projection_row_identity_is_compared_independently_of_bone_parents() {
+        let (doc, _) = compensated_document_with_unskinned_prop();
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let mut changed = candidate.into_document();
+
+        // Add a valid unnormalized raw node. It changes no normalized parent,
+        // so only the Complete projection-map comparison can detect that the
+        // candidate rewrote source identity outside either operation's set.
+        changed.assets.source_skeleton.nodes.push(SourceNodeAsset {
+            source_node_index: 100,
+            name: None,
+            parent_source_node_index: None,
+            scene_root_indices: vec![0],
+            local_rest: SourceNodeLocalRest::Trs {
+                translation: Vec3::ZERO,
+                rotation: Quat::IDENTITY,
+                scale: Vec3::ONE,
+            },
+            bone: None,
+        });
+        validate_document_shape(&changed).unwrap();
+        assert_eq!(
+            prove_scale(&doc, &ScaleCandidate { document: changed }, &plan).unwrap_err(),
+            ScaleError::CandidateStructureMismatch {
+                reason: "skeleton_topology_mismatch"
+            }
+        );
+    }
+
+    #[test]
+    fn complete_projection_raw_parents_are_compared_independently_of_bone_parents() {
+        let (mut doc, _) = compensated_document_with_unskinned_prop();
+        for source_node_index in [100, 101] {
+            doc.assets.source_skeleton.nodes.push(SourceNodeAsset {
+                source_node_index,
+                name: None,
+                parent_source_node_index: None,
+                scene_root_indices: vec![0],
+                local_rest: SourceNodeLocalRest::Trs {
+                    translation: Vec3::ZERO,
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
+                bone: None,
+            });
+        }
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let mut changed = candidate.into_document();
+
+        // Both rows remain unprojected, so normalized topology is identical.
+        // Only the authoritative raw parent tuple changes.
+        changed
+            .assets
+            .source_skeleton
+            .nodes
+            .iter_mut()
+            .find(|node| node.source_node_index == 101)
+            .unwrap()
+            .parent_source_node_index = Some(100);
+        validate_document_shape(&changed).unwrap();
+        assert_eq!(
+            prove_scale(&doc, &ScaleCandidate { document: changed }, &plan).unwrap_err(),
+            ScaleError::CandidateStructureMismatch {
+                reason: "skeleton_topology_mismatch"
+            }
+        );
+    }
+
+    #[test]
+    fn complete_projection_bone_identity_is_compared_between_same_parent_siblings() {
+        let doc = rig_document(
+            &[
+                rig(None, 0, Vec3::ZERO),
+                rig(Some(0), 1, Vec3::ZERO),
+                rig(Some(0), 2, Vec3::ZERO),
+            ],
+            &[1],
+            0,
+            Mat4::IDENTITY,
+        );
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let mut changed = candidate.into_document();
+
+        // Swapping projected identities between siblings preserves both
+        // normalized parent values and raw parent values. Only the raw-node
+        // to BoneId tuple comparison can distinguish it.
+        for node in &mut changed.assets.source_skeleton.nodes {
+            node.bone = match node.source_node_index {
+                1 => Some(2),
+                2 => Some(1),
+                _ => node.bone,
+            };
+        }
+        validate_document_shape(&changed).unwrap();
+        assert_eq!(
+            prove_scale(&doc, &ScaleCandidate { document: changed }, &plan).unwrap_err(),
+            ScaleError::CandidateStructureMismatch {
+                reason: "skeleton_topology_mismatch"
+            }
+        );
+    }
+
+    #[test]
+    fn complete_projection_rows_are_keyed_by_source_identity_not_array_order() {
+        let (doc, _) = compensated_document_with_unskinned_prop();
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let mut reordered = candidate.into_document();
+        reordered.assets.source_skeleton.nodes.reverse();
+
+        validate_document_shape(&reordered).unwrap();
+        prove_scale(
+            &doc,
+            &ScaleCandidate {
+                document: reordered,
+            },
+            &plan,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn unavailable_projection_rows_are_not_candidate_identity_evidence() {
+        let (mut doc, _) = compensated_document_with_unskinned_prop();
+        doc.assets.source_skeleton.coverage = SourceSkeletonCoverage::Unavailable;
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+
+        // Under Unavailable coverage the rows are explicitly not a claim
+        // about source-node identity. A synthesizing producer may therefore
+        // omit stale rows without changing the normalized skeleton topology
+        // or any whole-document semantic result.
+        let mut without_rows = candidate.into_document();
+        without_rows.assets.source_skeleton.nodes.clear();
+        prove_scale(
+            &doc,
+            &ScaleCandidate {
+                document: without_rows,
+            },
+            &plan,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn unavailable_source_coverage_cannot_be_upgraded_by_the_candidate() {
+        let (mut doc, _) = compensated_document_with_unskinned_prop();
+        doc.assets.source_skeleton.coverage = SourceSkeletonCoverage::Unavailable;
+        let capability = complete_capability();
+        let plan = whole_document_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let mut upgraded = candidate.into_document();
+        upgraded.assets.source_skeleton.coverage = SourceSkeletonCoverage::Complete;
+
+        // The retained rows happen to be coherent, so the candidate is valid
+        // in isolation; source/candidate coverage identity must refuse the
+        // unilateral upgrade.
+        validate_document_shape(&upgraded).unwrap();
+        assert_eq!(
+            prove_scale(&doc, &ScaleCandidate { document: upgraded }, &plan).unwrap_err(),
+            ScaleError::CandidateStructureMismatch {
+                reason: "skeleton_topology_mismatch"
             }
         );
     }
@@ -17005,6 +17330,9 @@ mod tests {
         let doc = Document::default();
         let capability = complete_capability();
         let plan = whole_document_plan(&doc, &capability);
+        let obligations = plan.proof_obligations();
+        assert!(!obligations.prove_rest);
+        assert!(!obligations.prove_keys);
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
 
@@ -17023,8 +17351,7 @@ mod tests {
         // this combination would prove `Ok` and publish `unit_scale_residual:
         // 0.0` having compared nothing. Not reachable through `plan_scale` —
         // `ScalePlan`'s fields are private and neither planner emits it — so
-        // it is constructed here, in-crate, exactly as the boneless
-        // rest-obligation case above is.
+        // it is constructed here in-crate to pin this plan-internal guard.
         let doc = compensated_document();
         let capability = complete_capability();
         let plan = compensated_rest_bind_plan(&doc, &capability);

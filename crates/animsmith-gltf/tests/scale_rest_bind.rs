@@ -36,8 +36,8 @@
 
 use animsmith_core::model::Document;
 use animsmith_core::scale::{
-    AffineDomainViolation, ScaleError, ScaleOperation, ScalePlan, ScaleRequest,
-    ScaleTolerancePolicy, plan_scale,
+    AffineDomainViolation, ScaleCandidate, ScaleError, ScaleOperation, ScalePlan, ScaleRequest,
+    ScaleTolerancePolicy, plan_scale, prove_scale,
 };
 use animsmith_gltf::{
     GltfCapabilityViolationKind, GltfScaleArtifact, GltfScalePreflightError, GltfScaleRewriteError,
@@ -502,6 +502,79 @@ fn the_rebased_artifact_proves_and_reports_its_evidence() {
         instance_identity(source.document())
     );
     assert_eq!(instance_identity(&reloaded), vec![(3, 3, 0, vec![1])]);
+}
+
+#[test]
+fn a_wide_raw_hierarchy_proves_unaffected_world_rest_by_bone_identity() {
+    let buffer = rig_buffer("LINEAR");
+    let mut value = rig_json("LINEAR", &buffer);
+    // Raw node order is deliberately unrelated to the loader's
+    // parent-before-child DFS BoneId order:
+    //
+    // raw 1 -> bone 0 (scaled root), raw 2 -> bone 1 (joint),
+    // raw 4 -> bone 2 (attachment), raw 3 -> bone 3 (unrelated root),
+    // raw 0 -> bone 4 (independent prop), raw 5 -> bone 5 (holder).
+    value["nodes"] = json!([
+        { "name": "prop", "translation": [5.0, 0.0, 0.0], "mesh": 0 },
+        { "name": "root", "scale": [0.01, 0.01, 0.01], "children": [2] },
+        { "name": "joint", "translation": [0.0, 100.0, 0.0], "children": [4] },
+        { "name": "unrelated", "children": [0] },
+        { "name": "attach", "translation": [1.0, 0.0, 0.0] },
+        { "name": "holder", "mesh": 0, "skin": 0 }
+    ]);
+    value["scenes"][0]["nodes"] = json!([1, 3, 5]);
+    value["skins"][0]["joints"] = json!([2]);
+    value["skins"][0]["skeleton"] = json!(1);
+    value["animations"][0]["channels"][0]["target"]["node"] = json!(2);
+    value["animations"][0]["channels"][1]["target"]["node"] = json!(2);
+
+    let source = accepted("wide-bone-order.gltf", &value);
+    let prop_bone = source
+        .document()
+        .assets
+        .source_skeleton
+        .nodes
+        .iter()
+        .find(|node| node.source_node_index == 0)
+        .and_then(|node| node.bone)
+        .expect("the prop normalizes to a bone");
+    // Make the raw/BoneId confusion discriminating without pinning the
+    // loader's complete DFS order: the prop's BoneId must collide with one of
+    // the raw ids in the selected closure, although the prop is not in that
+    // closure semantically.
+    assert!([1, 2, 4].contains(&prop_bone));
+
+    let plan = plan_scale(&ScaleRequest {
+        operation: ScaleOperation::RestBindUniformScale {
+            source_skin_index: 0,
+            source_root_node_index: 1,
+            expected_factor: 0.01,
+        },
+        document: source.document(),
+        capability: &capability_facts(source.manifest()),
+    })
+    .expect("wide hierarchy plans");
+    assert!(!plan.affected_nodes().contains(&prop_bone));
+    let artifact = rewrite_rest_bind(&source, 0, 1, 0.01).expect("wide hierarchy rewrites");
+    prove_rewritten_rest_bind(&source, &artifact, &plan).expect("the exact emitted reload proves");
+
+    // An implementation that subtracts raw affected node ids `{1,2,4}` from
+    // BoneIds would call the independent prop affected and silently skip this
+    // 495-unit displacement.
+    let mut changed =
+        load_bytes(Path::new("wide-bone-order.gltf"), artifact.bytes()).expect("artifact reloads");
+    changed.skeleton.bones[prop_bone].rest.translation.x = 500.0;
+    assert_eq!(
+        prove_scale(
+            source.document(),
+            &ScaleCandidate::from_document(changed),
+            &plan
+        )
+        .unwrap_err(),
+        ScaleError::CandidateStructureMismatch {
+            reason: "unaffected_world_rest_mismatch"
+        }
+    );
 }
 
 #[test]

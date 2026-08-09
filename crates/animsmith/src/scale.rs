@@ -535,6 +535,7 @@ fn scale_error_kind(error: &ScaleError) -> &'static str {
         ScaleError::NonFiniteTransform { .. } => "non-finite-transform",
         ScaleError::InvalidParent { .. } => "invalid-parent",
         ScaleError::BoneIndexOutOfRange { .. } => "bone-index-out-of-range",
+        ScaleError::PlanDocumentMismatch { .. } => "plan-document-mismatch",
         ScaleError::IncompleteClosure { .. } => "incomplete-closure",
         ScaleError::UnsupportedUnskinnedGeometry { .. } => "unsupported-unskinned-geometry",
         ScaleError::InvalidAffineDomain { .. } => "invalid-affine-domain",

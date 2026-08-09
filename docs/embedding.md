@@ -205,8 +205,10 @@ residual maxima against the fixed `ScaleTolerancePolicy::APPENDIX_D_V3`
 tolerance identity, refusing a document whose sampled proof work exceeds that
 policy's budget rather than sampling a subset of it. Every proof obligation is
 evidence-gated: a plan declares one only when the planned document carries the
-payload that obligation reads, and a declared obligation whose evidence is
-missing at proof time is a typed `MissingProofEvidence` refusal rather than a
+payload that obligation reads. Candidate construction and proof re-derive the
+supplied source's structural planning inventory; a stale domain or evidence
+set is a typed `PlanDocumentMismatch`, while a missing counterpart encountered
+inside an inventory-matched walk is `MissingProofEvidence`. Neither becomes a
 zero residual. `ScaleProof` publishes each residual maximum beside the number
 of comparisons it was taken over, both written at the point of comparison, so
 a `0.0` that was measured is distinguishable from one that nothing walked —
