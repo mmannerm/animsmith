@@ -1639,6 +1639,16 @@ frontend owes that obligation by the other route — a complete loader-supplied
 inventory of every §D.4 domain — and may enable an operation only over the
 domains that inventory covers.
 
+For the glTF producers, that raw complement explicitly includes scene
+membership, default-scene selection, materials, and their references: neither
+scale operation owns a write location in those payloads, so the artifact layer
+proves them byte-for-byte unchanged. The normalized core proof does not also
+deep-compare `assets.scenes` or `assets.materials`; those model values cannot
+replace the raw fields and references the container proof owns. A rebuilding
+frontend therefore cannot cite the core proof for those domains and must
+discharge them through the complete inventory route above before enabling an
+operation.
+
 The proof evaluates rest, every key time, and analytic or sufficiently bounded
 interior times for cubic segments. For reparameterization it must prove,
 within versioned tolerances:
@@ -1652,18 +1662,34 @@ within versioned tolerances:
   same skin joints, hangs off the same node, and names the same source node as
   its source counterpart, none of which either operation rewrites, and that a
   skin *outside* the affected closure keeps the inverse binds each side stores.
-  Identity here covers *placement*, not only what an instance is: with the
-  skeleton held fixed, the node is what positions an unskinned prop, and the
-  source node is what resolves the skin whose absent bind accessor stands for
-  the format-defined identity default. Both are compared positionally, so the
-  instance list must also agree in length and order. Held fixed is the limit
-  of the claim — a bone outside the affected closure has neither its rest
-  transform nor its parent compared, so the prop an instance names can still
-  be moved by rewriting that bone while every residual reads zero. Issue #325
-  tracks closing it. The unaffected-bind comparison is over
-  stored evidence, in the resolution order the model defines (per-instance
-  array, then the bone convenience value). A slot exactly one side records is
-  a rewritten skin and is refused;
+  Identity here covers *placement*, not only what an instance is: the node is
+  what positions an unskinned prop, and the source node is what resolves the
+  skin whose absent bind accessor stands for the format-defined identity
+  default. Both are compared positionally, so the instance list must also
+  agree in length and order. Candidate proof also compares normalized parent
+  topology and source-projection coverage exactly for every operation. When
+  coverage is `Complete`, the raw-node parent/bone map is exact too; rows under
+  `Unavailable` coverage are non-authoritative and are not compared. Neither
+  operation rewrites any authoritative identity. For rest/bind,
+  it then compares the complete composed world-rest affine of every bone
+  outside the affected closure exactly. The discriminating case is an
+  independent sibling or leaf outside the closure's ancestry; an unaffected
+  ancestor was already constrained transitively by an affected descendant's
+  world-rest residual. This is an exact semantic placement invariant, not a
+  tolerance or a claim that equal matrices prove every stored local field was
+  retained; exact local write-set parity belongs to the artifact/obligation
+  ledger. Whole-document conversion has no unaffected complement, but its
+  global topology comparison remains in force. Before either operation builds
+  or proves, it re-derives the supplied source's structural planning inventory
+  and requires the same affected domain, transform-only attachments, and proof
+  obligations. Operation-fixed rewrite and tolerance policy fields are not
+  source inventory. Numeric affine/factor classification is not repeated
+  there, so proof's normalized-skeleton witness remains independent of
+  planning's raw-projection witness; a structurally stale plan still cannot
+  omit a newly added bone or payload from every proof walk. The
+  unaffected-bind comparison is over stored evidence, in the resolution order
+  the model defines (per-instance array, then the bone convenience value). A
+  slot exactly one side records is a rewritten skin and is refused;
   a slot neither side records is reported as out of the proof's scope, never
   as proven — a document carrying an unrelated skin with no bind evidence at
   all is not an operation this record touches, and must not be refused for
@@ -1688,12 +1714,14 @@ affected cubic segment with a translation track to read at its interior times,
 any affected track at all for the sampled trajectories, a skinned instance
 touching the closure for the skin equation and the bounds, a non-empty
 affected closure for the rest facts. A declared obligation whose evidence is
-absent from the documents proof is handed is a typed refusal naming that
-obligation, never a zero residual: the residuals *are* the evidence record, so
-a record stating "residual 0.0" for a claim nothing checked is a false record
-rather than a missing one. This matters most for the transform-only obligation,
-which is justified above precisely as the one ensuring a no-op cannot pass —
-a guarantee an empty probe loop reporting zero would not provide.
+absent from a replayed source changes that source-derived inventory and is a
+typed `PlanDocumentMismatch`, never a zero residual. A counterpart or value
+that remains missing inside an inventory-matched walk is typed
+`MissingProofEvidence`. The residuals *are* the evidence record, so a record
+stating "residual 0.0" for a claim nothing checked is false rather than
+missing. This matters most for the transform-only obligation, which is
+justified above precisely as the one ensuring a no-op cannot pass — a guarantee
+an empty probe loop reporting zero would not provide.
 Three comparisons are deliberately ungated and run unconditionally:
 per-element track values, base mesh positions, and the stored inverse binds of
 skins outside the affected closure. The last is about a payload the plan
