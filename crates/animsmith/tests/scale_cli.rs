@@ -177,7 +177,7 @@ fn read_json(path: &Path) -> Value {
 // --- Published pairs --------------------------------------------------------
 
 #[test]
-fn rest_bind_publishes_a_pair_whose_evidence_names_the_appendix_d3_case_2_rewrite() {
+fn rest_bind_publishes_a_pair_whose_evidence_names_the_appendix_d4_policy() {
     let fixture = Fixture::new();
     let output = fixture.rest_bind("0.01", "text");
 
@@ -313,13 +313,13 @@ fn rest_bind_publishes_a_pair_whose_evidence_names_the_appendix_d3_case_2_rewrit
     assert_eq!(result["factors"]["proved_observed"], observed);
     assert_eq!(
         result["factors"]["divergence_ceiling"], 7.103515625e-5,
-        "the `appendix-d-v3` common-factor band plus its unit-scale postcondition"
+        "the `appendix-d-v4` common-factor band plus its unit-scale postcondition"
     );
 
-    assert_eq!(result["tolerance"]["policy_id"], "appendix-d-v3");
-    // New in `appendix-d-v3`, and published rather than implied: a consumer
-    // reading two records with the same policy id must be able to see that
-    // they allowed the same `f32` rounding.
+    assert_eq!(result["tolerance"]["policy_id"], "appendix-d-v4");
+    // Published rather than implied, and retained under the v4 identity: a
+    // consumer reading two records with the same policy id must be able to
+    // see that they allowed the same `f32` rounding.
     assert_eq!(result["tolerance"]["f32_rounding_ulps"], 4);
 
     // Two of the three residuals `prove_scale` evaluates unconditionally,
@@ -929,7 +929,7 @@ fn a_document_whose_size_alone_exceeds_the_proof_sampling_budget_is_refused_at_t
     // size property of the input — and it is checked before the first sample
     // time is evaluated, so this 1.9 MB rig refuses in milliseconds.
     //
-    // Hand-computed against the `appendix-d-v3` budget of 400,000,000:
+    // Hand-computed against the `appendix-d-v4` budget of 400,000,000:
     //
     //   per-sample cost = 2 sides * 3 bones                    =       6
     //                   + (2 sides + 1 skin residual) * 1 slot =       3

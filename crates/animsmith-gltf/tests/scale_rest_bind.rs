@@ -3,7 +3,7 @@
 //!
 //! Every expectation is a hand-computed literal from the Appendix D §D.3
 //! worked cases, or — for the noisy tolerance boundary — derived from
-//! [`ScaleTolerancePolicy::APPENDIX_D_V3`]'s own constants at test time. No
+//! [`ScaleTolerancePolicy::APPENDIX_D_V4`]'s own constants at test time. No
 //! assertion is stated against a value the code under test produced, and no
 //! rewritten value is cross-compared against
 //! [`animsmith_core::scale::build_scale_candidate`]: the two routes narrow to
@@ -469,7 +469,7 @@ fn the_rebased_artifact_proves_and_reports_its_evidence() {
     assert_eq!(proof.preserved_byte_ranges, 3);
 
     let core = proof.core;
-    assert_eq!(core.tolerance_policy.id, "appendix-d-v3");
+    assert_eq!(core.tolerance_policy.id, "appendix-d-v4");
     assert_eq!(core.unit_scale_residual, 0.0);
     assert_eq!(core.transform_only_affine_residual, 0.0);
     assert_eq!(core.skin_matrix_residual, 0.0);
@@ -1582,7 +1582,7 @@ fn a_noisy_but_in_band_hierarchy_is_accepted_and_its_residual_is_reported() {
     // Derived from the policy's own constants rather than hard-coded, so a
     // policy revision moves the fixture with it instead of silently turning
     // it into a boundary test of a band that no longer exists.
-    let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
+    let policy = ScaleTolerancePolicy::APPENDIX_D_V4;
     let declared = 0.01_f64;
     // For axis lengths `(a, a, a(1 + e))` the average is `a(1 + e/3)`, so the
     // largest per-axis deviation is the long axis's `2ae/3` measured against
@@ -1648,7 +1648,7 @@ fn a_hierarchy_just_outside_the_equal_axis_band_is_refused() {
     // The over-acceptance mirror of the test above, derived from the same
     // constant: four bands of skew is unambiguously outside the roughly
     // three-band admissible window.
-    let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
+    let policy = ScaleTolerancePolicy::APPENDIX_D_V4;
     let declared = 0.01_f64;
     let (mut value, _) = rig("LINEAR");
     value["nodes"][0]["scale"] = json!([
@@ -1664,7 +1664,7 @@ fn a_hierarchy_just_outside_the_equal_axis_band_is_refused() {
 
 #[test]
 fn a_declared_factor_outside_the_common_factor_band_is_refused() {
-    let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
+    let policy = ScaleTolerancePolicy::APPENDIX_D_V4;
     let (value, _) = rig("LINEAR");
     // The source's measured factor is `f32(0.01)`; declare one two bands
     // away from it.
