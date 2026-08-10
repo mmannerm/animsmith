@@ -18561,6 +18561,67 @@ mod tests {
         }
     }
 
+    #[test]
+    fn calibration_demand_ownership_is_not_swappable() {
+        let (doc, plan, candidate) = animated_deep_chain_conversion(8);
+        let mut proof = prove_scale(&doc, &candidate, &plan).expect("the calibration rig proves");
+        proof.rest_translation_f32_rounding_demand = 0.0;
+        proof.trajectory_f32_rounding_demand = 0.0;
+        proof.skin_matrix_f32_rounding_demand = 0.0;
+        proof.bounds_f32_rounding_demand = 0.0;
+        proof.unaffected_inverse_bind_f32_rounding_demand = 0.0;
+
+        let epsilon = f64::from(f32::EPSILON);
+        for (kind, demand) in [
+            (ProofResidualKind::RestTranslation, 1.0),
+            (ProofResidualKind::Trajectory, 2.0),
+            (ProofResidualKind::SkinMatrix, 3.0),
+            (ProofResidualKind::Bounds, 4.0),
+            (ProofResidualKind::UnaffectedInverseBind, 5.0),
+        ] {
+            proof.record_f32_rounding_demand(kind, demand * epsilon, 1.0);
+        }
+        assert_eq!(
+            (
+                proof.rest_translation_f32_rounding_demand,
+                proof.trajectory_f32_rounding_demand,
+                proof.skin_matrix_f32_rounding_demand,
+                proof.bounds_f32_rounding_demand,
+                proof.unaffected_inverse_bind_f32_rounding_demand,
+            ),
+            (1.0, 2.0, 3.0, 4.0, 5.0),
+            "the central production diagnostic must keep every residual kind in its own field",
+        );
+
+        let expected_counts = (
+            proof.rest_translation_comparisons,
+            proof.trajectory_comparisons,
+            proof.skin_matrix_comparisons,
+            proof.bounds_comparisons,
+        );
+        let measured = DeepChainWorst::from_proof(proof);
+        assert_eq!(
+            (
+                measured.rest_translation,
+                measured.trajectory,
+                measured.skin_matrix,
+                measured.bounds,
+            ),
+            (1.0, 2.0, 3.0, 4.0),
+            "the deep calibration adapter must not swap or duplicate obligation demands",
+        );
+        assert_eq!(
+            (
+                measured.rest_comparisons,
+                measured.trajectory_comparisons,
+                measured.skin_comparisons,
+                measured.bounds_comparisons,
+            ),
+            expected_counts,
+            "the deep calibration adapter must retain each obligation's production count",
+        );
+    }
+
     fn deep_chain_case(
         depth: usize,
         rotation: Quat,
