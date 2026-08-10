@@ -1208,15 +1208,25 @@ mod tests {
                 }
             }
         }
-        let mut collector = RawJsonDifferenceCollector::default();
-        collect_json_differences(
+        let error = check_preserved_json(
             &Value::Object(before),
             &Value::Object(after),
-            "",
             &BTreeSet::new(),
-            &mut collector,
-        );
-        let summary = collector.finish();
+            "the capped preservation fixture stays exact",
+        )
+        .expect_err("twenty preserved-location differences must fail");
+        let GltfScaleRewriteError::ArtifactProofFailed {
+            claim,
+            observed,
+            tolerance,
+            raw_json_differences: Some(summary),
+        } = error
+        else {
+            panic!("expected located JSON diagnostics, got {error:?}");
+        };
+        assert_eq!(claim, "the capped preservation fixture stays exact");
+        assert_eq!(observed, 20.0, "observed retains the full count");
+        assert_eq!(tolerance, 0.0);
         assert_eq!(summary.differences.len() + summary.omitted, 20);
         assert_eq!(summary.omitted, 4);
         assert_eq!(

@@ -301,7 +301,9 @@ evidence. Nothing in the record carries a timestamp.
 
 The normative contract is
 [`scale-evidence-v2.schema.json`](schemas/scale-evidence-v2.schema.json).
-The immutable v1 schema remains available for historical records.
+The current CLI emits v2 exclusively; the immutable
+[`scale-evidence-v1.schema.json`](schemas/scale-evidence-v1.schema.json)
+remains available for historical records.
 
 For an `artifact-proof-failed` refusal from the exact raw-JSON-preservation
 walk, v2 adds
@@ -312,8 +314,8 @@ entries, each with a JSON-pointer `location` and an
 counts entries outside the prefix, so the full difference count is
 `items.length + omitted`. The field is `null` when that exact-preservation
 walk did not supply locations for the refusal. It does not replace
-`rejection.violations`, which continues to
-describe unsupported source capabilities.
+`rejection.violations`, which continues to describe unsupported source
+capabilities.
 
 ## `measure` and `lint`
 
