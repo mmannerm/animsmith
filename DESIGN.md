@@ -959,41 +959,17 @@ translation are a factor apart, and both sides retain an unscaled `O(1)` floor
 from the composition's linear block and from the exact `1.0` the homogeneous
 row contributes to every chain. Where that floor dominates the source,
 `q * source` exceeds the candidate's magnitude under a growing conversion by up
-to the whole factor. That excess is provisioning rather than a rescue, and it is
-measured as such: the unscaled floor describes arithmetic whose rounding is
-*identical* on the two sides, since conversion leaves every linear part
-bit-for-bit unchanged, so the linear block's error cancels out of `a - q * b`
-instead of accumulating into it. Measured by the calibration sweep below over
-its whole population, dropping the rebased source side from both bases leaves
-the worst demand at `2.768` of the four ulps for skinned bounds and `2.084` for
-the skin equation — the same two figures the shipped bases produce, because in
-every cell the worst case is one where the candidate is already the larger
-side. Reading the candidate alone is therefore an equivalent mutation, recorded
-here and at the call site rather than left as an unexplained survivor; the
-sweep asserts it, and
-`a_growing_conversion_provisions_a_rebased_source_magnitude_it_never_needs`
-pins it on the one rig where the excess is `1776x`, so a rig that ever needs it
-fails in both places.
+to the whole factor. Production retains the `max` because it is the operand
+bound justified by the comparison; no smaller candidate-only or `min` base is
+part of the policy contract.
 
-Flipping that `max` to a `min` is likewise an equivalent mutation over this
-population, and is declared here on the same evidence rather than left as an
-unexplained zero in a mutation table. `min` only ever *tightens*, so it has no
-over-acceptance direction and no bracket fixture can reach it; the only way it
-can be wrong is by refusing a correct candidate, which is exactly what the
-sweep measures. With the `max` flipped to a `min` the worst demand is `2.768`
-and `2.084` — the shipped figures to the digit, because in every cell's worst
-case the two sides coincide — and the sweep asserts it. That measurement also
-bounds reading `q * source` alone, since `min` is never the larger of the two,
-which is what entitles dropping the candidate side of the skin base to be
-declared equivalent too.
-
-That equivalence was false for skinned bounds under the base this section
-shipped before stage 1 was corrected, and is recorded as having been so:
-against the earlier `abs(p)` stage the sweep's worst skinned-bounds demand with
-the source side dropped is `444.4` of the four ulps rather than `2.768`. It is
-true again only because stage 1 now names the transform's operand product. The
-skin equation's half was never affected — its base was already an operand
-product.
+An earlier calibration tried to classify those smaller bases as equivalent by
+dividing an obligation-wide maximum residual by a separately selected maximum
+slot base. Those maxima can belong to different slots: after calibration began
+recording each production comparison's own residual and provenance, the
+shipped SkinMatrix demand was `2.213` while that mispairing still printed
+`2.084`. The alternative-base figures and equivalence claim were removed
+rather than preserved as false mutation evidence.
 
 ### The calibration sweep
 
@@ -1032,15 +1008,15 @@ from it are not quite. The draws run `f64::powf` for the magnitude decades,
 `f64::sin`/`cos` for the directions, and glam's `f32` sine and cosine for the
 rotations, none of which any platform is required to round identically. Two
 machines can therefore differ in the last ulp of a joint local and in the last
-printed digit of the worst demand. That is the resolution at which these
-figures are re-derivable; at `2.8` against a count of `4` it cannot move a
-verdict, and every assertion in the sweep is a threshold rather than an
-equality for that reason.
+printed digit of the worst demand. The table below records the reference run
+for this policy revision; the checked test asserts platform-tolerant
+non-silence floors and the strict `< 4` safety ceiling rather than pretending
+those libm-dependent last digits are normative.
 
 | quantity | worst over the population |
 |---|---|
 | skinned bounds | `2.768` |
-| the skin equation | `2.084` |
+| the skin equation | `2.213` |
 | rest translation | `2.583` |
 | refused correct candidates | `0` of `360_000` |
 
@@ -1053,15 +1029,19 @@ populations that were never checked in and so could not be re-derived; the
 figures above replace them.
 
 The 144-cell phase remains intentionally shallow. A separate deep-chain phase
-uses the same production pose, slot, and bounds helpers and proves 80 correct
-animated candidates at depths `8, 16, 32, 64, 128, 192, 256, 512`. At every
+proves 80 correct animated candidates at depths
+`8, 16, 32, 64, 128, 192, 256, 512`. At every
 depth it covers rest/bind and the eight whole-document conversions; the
 whole-document cases use the literal `170`-degree chain, while rest/bind uses
 an exact half turn because repeating the approximate quaternion eventually
 leaves the operation's supported affine-input class. Eight additional
-whole-document cases use a literal step that closes a 192-link ring. Each raw
-ULP demand pairs one residual with that same comparison's provenance before
-taking a maximum; it never divides unrelated obligation-wide maxima.
+whole-document cases use a literal step that closes a 192-link ring. In test
+builds the central production comparison records each raw ULP demand at the
+exact point its residual and provenance meet. Both shallow and deep calibration
+fold those private maxima; the deep phase also folds production-owned counts.
+The released proof layout and runtime path are unchanged, and calibration no
+longer rebuilds a parallel pose/slot/bounds walk or divides unrelated
+obligation-wide maxima.
 
 | deep-chain quantity | worst over 80 cases | comparisons |
 |---|---:|---:|
@@ -1096,7 +1076,8 @@ dimension because one composition happens per link. Its maximum over links
 stayed flat while coherent rounding accumulated with depth, and correctly
 built candidates began refusing at depth 180.
 
-v5 fixes the provenance rather than increasing the count. For a root,
+v5 replaces the depth-flat maximum with an empirically calibrated additive
+provenance recurrence rather than increasing the count. For a root,
 `C_root = 0`. For child `i`, with parent world `W_p` and local matrix `L_i`,
 
 ```text
@@ -1125,6 +1106,12 @@ parent 512 times. An uneven chain accrues its actual per-link bases rather
 than `depth * max`, and the literal 192-link ring plus the `170`-degree chain
 prove through depth 512.
 
+This scalar is not a universal componentwise forward-error proof: in
+particular it does not separately propagate error in the inherited linear
+block before that block acts on a later translation. The shipped claim is the
+named additive recurrence and its checked empirical envelope over the declared
+populations, not an unbounded-depth analytic guarantee.
+
 The later fixed stages retain the measured scalar maximum: SkinMatrix maxes
 the accumulated chain against the `W * B` operand magnitude, and Bounds feeds
 that slot base through v4's weight-proportional blend. A fully analytic matrix
@@ -1146,19 +1133,24 @@ checked-in sweep is for, and why its cells name the shapes rather than only
 the magnitudes.
 
 **The cost is real and it is not bounded.** The four chain-dominant fixtures
-search a declared positive-binary32 mutation interval, sample 4097 evenly
-spaced bit coordinates as a gross non-monotonicity guard, and pin the adjacent
-accepted/refused transition found by bisection. This is not an exhaustive
-monotonicity proof. The v4 baseline is the exact
-merged commit `0a253228dc2d557a9030cfd72f2b15326f4853bd`; v5 runs the identical
-fixtures and mutation axes through production proof.
+search their declared positive-binary32 intervals in the normal suite, sample
+4097 evenly spaced bit coordinates as a gross non-monotonicity guard, and pin
+the adjacent accepted/refused transition found by bisection plus the exact
+refused residual/tolerance bits. This is not an exhaustive monotonicity proof.
+The four searches remain comfortably sub-second in the debug reference run,
+so a second ignored-only search path would add structure without buying
+practical test time. The v4 values are frozen historical measurements from the
+exact merged commit `0a253228dc2d557a9030cfd72f2b15326f4853bd`, independently
+reproduced during audit with the same fixtures and mutation axes. The v5 suite
+compares its production endpoints with those recorded bits; it does not carry
+a second implementation of the retired policy.
 
 | obligation / mutation | v4 refused transition | v5 adjacent accepted / refused | v5 refused-endpoint observed / tolerance |
 |---|---:|---:|---:|
 | RestTranslation, unskinned rest x | `3.1875` (`0x404c0000`) | `4.5625` / `4.5625005` (`0x40920000` / `0x40920001`) | `4.5686544` / `4.5633805` |
 | Trajectory, both unskinned key x values | `3.1875` (`0x404c0000`) | `4.5625` / `4.5625005` (`0x40920000` / `0x40920001`) | `4.5686544` / `4.5633805` |
 | SkinMatrix, cancelling-joint inverse-bind x | `3.5713947` (`0x406491bb`) | `5.3570914` / `5.357092` (`0x40ab6d4b` / `0x40ab6d4c`) | `4.5633788` / `4.5633783` |
-| Bounds, chain-dominant point y | `2.9826486` (`0x403ee3b7`) | `4.503774` / `4.5037746` (`0x40901eeb` / `0x40901eec`) | `4.5633788` / `4.5633785` |
+| Bounds, chain-dominant point y | `2.9826486` (`0x403ee3b7`) | `4.503774` / `4.5037746` (`0x40901eeb` / `0x40901eec`) | `4.5633788` / `4.5633786` |
 
 Those are fixture-local transitions, not global smallest defects. The typed
 refused endpoint isolates the named obligation: the rest/trajectory bone is not

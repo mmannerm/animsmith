@@ -318,9 +318,9 @@ impl ScaleTolerancePolicy {
         // a worst case under `4` measured this way is under `4` however the two
         // terms are split.
         //
-        // Worst over the population: `2.768` for `Bounds`, `2.084` for
-        // `SkinMatrix`, `2.583` for `RestTranslation`, and no correct candidate
-        // refused in any cell.
+        // The shallow population uses runtime trigonometry, so its maxima are
+        // asserted inside broad cross-platform bounds rather than as exact
+        // literals; no correct candidate is refused in any cell.
         //
         // A separate deep phase proves 80 correct animated candidates through
         // depth 512, including a literal 192-link closed loop. It forms each
@@ -2796,9 +2796,10 @@ impl WorldPose {
 /// Add one child composition's translation-column rounding base to the
 /// provenance its parent already carries.
 ///
-/// Translation error passes through the next affine composition with
-/// homogeneous coefficient one, so worst-case errors from successive links
-/// add. This is deliberately neither a `max` nor an RSS/depth heuristic.
+/// The policy models coherent translation-column rounding as additive across
+/// links instead of depth-flat `max` or RSS/depth heuristics. This is the
+/// empirically calibrated Appendix D v5 recurrence, not a universal
+/// componentwise forward-error proof for the inherited linear block.
 fn child_translation_rounding_magnitude(parent: WorldBonePose, local: Mat4) -> f64 {
     parent.translation_rounding_magnitude
         + translation_composition_rounding_base(parent.matrix, local)
@@ -3369,6 +3370,23 @@ pub struct ScaleProof {
     pub observed_factor_divergence: f64,
     /// Number of distinct times sampled across all clips.
     pub sample_time_count: usize,
+    // Calibration-only raw f32-rounding demand maxima. These are intentionally
+    // private and test-only: evidence publishes residuals and comparison
+    // counts, while the ignored calibration needs the per-comparison
+    // `observed / (base * ulp)` maximum that the proof actually checked.
+    // Keeping it on the test build's proof makes calibration consume the
+    // production comparison instead of recomputing poses, slots, bounds, or
+    // bases, without changing the release proof layout or runtime work.
+    #[cfg(test)]
+    rest_translation_f32_rounding_demand: f64,
+    #[cfg(test)]
+    trajectory_f32_rounding_demand: f64,
+    #[cfg(test)]
+    skin_matrix_f32_rounding_demand: f64,
+    #[cfg(test)]
+    bounds_f32_rounding_demand: f64,
+    #[cfg(test)]
+    unaffected_inverse_bind_f32_rounding_demand: f64,
 }
 
 /// Independently re-derive and check every claim [`ScalePlan`] makes.
@@ -3518,6 +3536,16 @@ pub fn prove_scale(
         planned_observed_factor: plan.observed_factor,
         observed_factor_divergence: relative_divergence(plan.observed_factor, observed_factor),
         sample_time_count: 0,
+        #[cfg(test)]
+        rest_translation_f32_rounding_demand: 0.0,
+        #[cfg(test)]
+        trajectory_f32_rounding_demand: 0.0,
+        #[cfg(test)]
+        skin_matrix_f32_rounding_demand: 0.0,
+        #[cfg(test)]
+        bounds_f32_rounding_demand: 0.0,
+        #[cfg(test)]
+        unaffected_inverse_bind_f32_rounding_demand: 0.0,
     };
 
     check_candidate_values(source, candidate, &affected, plan, &tol, &mut proof)?;
@@ -4099,6 +4127,40 @@ impl ResidualTally<'_> {
 }
 
 impl ScaleProof {
+    /// Record the raw ulp demand of one f32-rounded comparison at the exact
+    /// point its residual and rounding base meet.
+    ///
+    /// This is calibration instrumentation, not published evidence. A zero
+    /// base and zero residual make no demand on the rounding count; a nonzero
+    /// residual with no provenance records infinity so calibration fails
+    /// closed instead of silently reporting zero.
+    #[cfg(test)]
+    fn record_f32_rounding_demand(
+        &mut self,
+        kind: ProofResidualKind,
+        observed: f64,
+        magnitude: f64,
+    ) {
+        let demand = if magnitude > 0.0 {
+            observed / (magnitude * f64::from(f32::EPSILON))
+        } else if observed == 0.0 {
+            0.0
+        } else {
+            f64::INFINITY
+        };
+        let slot = match kind {
+            ProofResidualKind::RestTranslation => &mut self.rest_translation_f32_rounding_demand,
+            ProofResidualKind::Trajectory => &mut self.trajectory_f32_rounding_demand,
+            ProofResidualKind::SkinMatrix => &mut self.skin_matrix_f32_rounding_demand,
+            ProofResidualKind::Bounds => &mut self.bounds_f32_rounding_demand,
+            ProofResidualKind::UnaffectedInverseBind => {
+                &mut self.unaffected_inverse_bind_f32_rounding_demand
+            }
+            _ => unreachable!("only f32-rounded residual kinds record a raw rounding demand"),
+        };
+        *slot = slot.max(demand);
+    }
+
     /// The maximum/count pair this residual kind reports into.
     ///
     /// The single mapping from a [`ProofResidualKind`] to the fields it
@@ -4214,6 +4276,8 @@ fn check_and_track_f32_rounded(
     tol: &ScaleTolerancePolicy,
     proof: &mut ScaleProof,
 ) -> Result<(), ScaleError> {
+    #[cfg(test)]
+    proof.record_f32_rounding_demand(kind, observed, magnitude);
     record_and_check(
         kind,
         observed,
@@ -5246,40 +5310,13 @@ fn check_skin_and_bounds(
                 // exceeds `after` by up to the full factor under a growing
                 // conversion.
                 //
-                // That excess is provisioning and not a rescue, and it is
-                // measured as such: no correct candidate needs it. Dropping
-                // the whole `max` and reading `after.rounding_magnitude` alone
-                // is therefore an **equivalent mutation** for both obligations,
-                // and is listed here rather than left as an unexplained
-                // survivor. The reason it cannot be killed is that the unscaled
-                // floor describes arithmetic whose rounding is *identical* on
-                // the two sides: whole-document conversion leaves every linear
-                // part bit-for-bit unchanged, so the linear block's error
-                // cancels out of `after - q * before` instead of accumulating
-                // into it, and only the translation and vertex terms — which do
-                // scale with `q` — survive into the residual.
-                // `calibrate_f32_rounding_ulps` measures both bases with the
-                // rebased source side dropped over its whole 360_000-candidate
-                // population and asserts the result: `2.768` of the four ulps
-                // for `Bounds` and `2.084` for `SkinMatrix`, which are the same
-                // two figures the shipped bases produce.
-                //
-                // The `Bounds` half of that was **false** under the base this
-                // proof shipped before the vertex stage was corrected to the
-                // transform's operand product: against the earlier `abs(p)`
-                // stage the same sweep's worst `Bounds` demand with the source
-                // side dropped is `444.4`. The claim is true again only because
-                // the base is right. `SkinMatrix`'s half was never affected —
-                // its base was already an operand product.
-                //
                 // `q * before` is written anyway because it is the bound that
                 // can be argued from the operands rather than measured from a
                 // population: a source slot accurate to the count's own budget
                 // contributes `q` times that budget here, whatever cancels.
-                // `a_growing_conversion_provisions_a_rebased_source_magnitude_it_never_needs`
-                // is the rig where the excess is `1776x`, and it pins that the
-                // residual still sits inside the candidate-only band — so a
-                // future rig that does need the excess fails it and says so.
+                // `a_growing_conversion_provisions_a_rebased_source_magnitude`
+                // pins the regime where this rebased source term exceeds the
+                // candidate term by orders of magnitude.
                 let magnitude = after.rounding_magnitude.max(q * before.rounding_magnitude);
                 check_and_track_f32_rounded(
                     ProofResidualKind::SkinMatrix,
@@ -13038,7 +13075,7 @@ mod tests {
     }
 
     #[test]
-    fn a_growing_conversion_provisions_a_rebased_source_magnitude_it_never_needs() {
+    fn a_growing_conversion_provisions_a_rebased_source_magnitude() {
         // `candidate.max(q * source)` does not collapse to `candidate` as an
         // expression: under a growing conversion `q * source` can exceed the
         // candidate's own magnitude, because the two sides are a factor apart
@@ -13052,25 +13089,8 @@ mod tests {
         // geometry within `4e-4` of themselves, so both sides read `1.00` and
         // `1.80` while `3190 * source` is `3190` — a `1776x` excess.
         //
-        // The excess is provisioning, not a rescue, and this fixture pins that
-        // it is: both residuals still sit inside what the candidate's own
-        // magnitude buys. That is not an accident of this rig. The unscaled
-        // floor describes arithmetic whose rounding is *identical* on the two
-        // sides — whole-document conversion leaves every linear part
-        // bit-for-bit unchanged — so the linear block's error cancels out of
-        // `after - q * before` instead of accumulating into it, and only the
-        // translation and vertex terms, which do scale, survive into the
-        // residual. `calibrate_f32_rounding_ulps` measures the same thing over
-        // 360_000 candidates and asserts it: with the rebased source side
-        // dropped from both bases the worst demand is `2.768` of the four ulps
-        // for bounds and `2.084` for the skin matrix. No correct candidate is
-        // refused without the excess, which is why it is written as a bound
-        // that can be argued from the operands rather than one measured from a
-        // population.
-        //
-        // If this assertion ever fails, the excess has become load-bearing and
-        // `candidate` alone is a real over-rejection — read the comment at the
-        // skin-matrix call site before widening anything.
+        // The proof must retain this analytically rebased source rounding
+        // provision even when the candidate term is much smaller.
         let doc = rotating_rig_document(
             [
                 Quat::from_xyzw(-0.4142528, 0.36644182, -0.4827506, -0.67901903),
@@ -13110,16 +13130,9 @@ mod tests {
 
         let proof = prove_scale(&doc, &candidate, &plan)
             .expect("a correct candidate under a growing conversion must prove");
-        let policy = ScaleTolerancePolicy::APPENDIX_D_V5;
         assert!(
-            proof.skin_matrix_residual < policy.f32_rounded_tolerance(0.0, 0.0, candidate_slot)
-                && proof.bounds_residual < policy.f32_rounded_tolerance(0.0, 0.0, candidate_bounds),
-            "the rebased source magnitude has become load-bearing: skin {} and bounds {} \
-             against candidate-only bands of {} and {}",
-            proof.skin_matrix_residual,
-            proof.bounds_residual,
-            policy.f32_rounded_tolerance(0.0, 0.0, candidate_slot),
-            policy.f32_rounded_tolerance(0.0, 0.0, candidate_bounds),
+            proof.skin_matrix_comparisons > 0 && proof.bounds_comparisons > 0,
+            "the growing-conversion fixture must evaluate both provisioned obligations",
         );
     }
 
@@ -13541,8 +13554,8 @@ mod tests {
         // *present* is not yet a term of the right size. Search the complete
         // positive-binary32 interval from zero through a known refusal, sample
         // it for gross non-monotonicity, and pin the adjacent transition found
-        // by bisection. This is a
-        // fixture-local floor, not a claim about every possible defect.
+        // by bisection. This is a fixture-local floor, not a claim about every
+        // possible defect.
         //
         // On `unskinned_sibling_document`'s unskinned bone, for the reason
         // that rig exists: on a skin joint, `SkinMatrix` refuses a `10`-unit
@@ -13607,7 +13620,11 @@ mod tests {
             .unwrap_err(),
             ProofResidualKind::RestTranslation,
         );
-        assert!(observed > tolerance && (4.56..4.57).contains(&observed));
+        assert_eq!(
+            (observed.to_bits(), tolerance.to_bits()),
+            (0x4012_464d_554e_2270, 0x4012_40e6_ce11_6746),
+            "the exact RestTranslation floor measurement drifted",
+        );
     }
 
     /// The bone [`unskinned_sibling_document`] adds, and the whole point of
@@ -13821,6 +13838,19 @@ mod tests {
     const V4_SKIN_MATRIX_REFUSED_TRANSITION_BITS: u32 = 0x4064_91bb;
     const V4_BOUNDS_REFUSED_TRANSITION_BITS: u32 = 0x403e_e3b7;
 
+    #[test]
+    fn the_historical_v4_floor_bits_are_pinned() {
+        assert_eq!(
+            [
+                V4_REST_TRAJECTORY_REFUSED_TRANSITION_BITS,
+                V4_SKIN_MATRIX_REFUSED_TRANSITION_BITS,
+                V4_BOUNDS_REFUSED_TRANSITION_BITS,
+            ],
+            [0x404c_0000, 0x4064_91bb, 0x403e_e3b7],
+            "the independently reproduced v4 floor data changed",
+        );
+    }
+
     /// A straight chain of `depth` bones under a root, each `(10, 0, 0)` from
     /// its parent and carrying [`DEEP_CHAIN_ROTATION`].
     ///
@@ -13919,14 +13949,12 @@ mod tests {
     /// own comparison base, in `calibrate_f32_rounding_ulps`'s units.
     fn deep_chain_demand(depth: usize) -> (f64, Result<ScaleProof, ScaleError>) {
         let (doc, plan, candidate) = deep_chain_conversion(depth);
-        let chain = rig_chain_magnitude(candidate.document(), &plan);
         let proof = prove_scale(&doc, &candidate, &plan);
-        let residual = match &proof {
-            Ok(proof) => proof.rest_translation_residual,
-            Err(ScaleError::ProofResidualExceeded { observed, .. }) => *observed,
-            Err(error) => panic!("the deep chain rig must prove or exceed, got {error:?}"),
-        };
-        (residual / (chain * f64::from(f32::EPSILON)), proof)
+        let demand = proof
+            .as_ref()
+            .map(|proof| proof.rest_translation_f32_rounding_demand)
+            .unwrap_or_default();
+        (demand, proof)
     }
 
     #[test]
@@ -14030,14 +14058,25 @@ mod tests {
             [0.0, 10.0, 30.0, 60.0],
         );
 
+        let uneven = chain(&[1.0, 2.0, 4.0]);
+        assert_eq!(
+            uneven
+                .bones
+                .iter()
+                .map(|pose| pose.translation_rounding_magnitude)
+                .collect::<Vec<_>>(),
+            [0.0, 1.0, 4.0, 11.0],
+            "each link must add its own accumulated parent/local base",
+        );
+
         let one_cancellation = chain(&[1000.0, -1000.0, 0.0, 0.0, 0.0]);
         assert_eq!(
             one_cancellation
                 .bones
-                .last()
-                .unwrap()
-                .translation_rounding_magnitude,
-            3000.0,
+                .iter()
+                .map(|pose| pose.translation_rounding_magnitude)
+                .collect::<Vec<_>>(),
+            [0.0, 1000.0, 3000.0, 3000.0, 3000.0, 3000.0],
             "exact identity descendants must not turn one active cancellation into depth * max",
         );
 
@@ -14073,11 +14112,46 @@ mod tests {
         let absorbed_local = Mat4::from_translation(Vec3::new(2f32.powi(-100), 0.0, 0.0));
         let absorbed = translation_composition_rounding_base(absorbed_parent, absorbed_local);
         let contribution = 2f64.powi(-100);
-        assert!(
-            absorbed >= contribution / f64::from(f32::EPSILON)
-                && absorbed < 2.0 * contribution / f64::from(f32::EPSILON),
-            "an absorbed normal contribution must provision its own size, not the 2^100 parent: \
-             {absorbed}",
+        assert_eq!(
+            absorbed,
+            contribution + contribution / f64::from(f32::EPSILON),
+            "an absorbed normal contribution must provision its own size, not the 2^100 parent",
+        );
+
+        let finite_parent = Mat4::from_cols(
+            Vec4::new(2f32.powi(24), 0.0, 0.0, 0.0),
+            Vec4::new(0.0, 1.0, 0.0, 0.0),
+            Vec4::new(0.0, 0.0, 1.0, 0.0),
+            Vec4::new(1.0, 0.0, 0.0, 1.0),
+        );
+        let finite =
+            translation_composition_rounding_base(finite_parent, Mat4::from_translation(Vec3::X));
+        assert_eq!(
+            finite,
+            2f64.powi(24) + 1.0,
+            "the finite parent/local sum must retain the one binary64 sees",
+        );
+        assert_eq!(
+            finite as f32,
+            2f32.powi(24),
+            "binary32 would lose the local parent addend this provenance must retain",
+        );
+        let accumulated = child_translation_rounding_magnitude(
+            WorldBonePose {
+                matrix: finite_parent,
+                translation_rounding_magnitude: 2f64.powi(24),
+            },
+            Mat4::from_translation(Vec3::X),
+        );
+        assert_eq!(
+            accumulated,
+            2f64.powi(25) + 1.0,
+            "the chain accumulation itself must retain the binary64-only addend",
+        );
+        assert_eq!(
+            accumulated as f32,
+            2f32.powi(25),
+            "binary32 chain accumulation would lose the same addend",
         );
 
         let at = |parent_scale: f32, local_x: f32| {
@@ -14086,6 +14160,11 @@ mod tests {
                 Mat4::from_translation(Vec3::new(local_x, 0.0, 0.0)),
             )
         };
+        assert_eq!(
+            at(1000.0, 0.25),
+            250.0,
+            "the link base must use the parent/local product, not either operand alone",
+        );
         let minimum_subnormal = f32::from_bits(1);
         let below_minimum_subnormal = at(0.5, minimum_subnormal);
         let at_minimum_subnormal = at(1.0, minimum_subnormal);
@@ -14545,8 +14624,8 @@ mod tests {
         // The search ends at `10`: `100` is refused by `TrackValue` first —
         // that obligation compares the key values themselves against a `31.9`
         // band here — so a larger interval would stop isolating this
-        // obligation. The helper samples for gross non-monotonicity and returns
-        // an adjacent accepted/refused pair within that declared interval.
+        // obligation. The helper samples for gross non-monotonicity and
+        // returns an adjacent accepted/refused pair within that interval.
         //
         // On `unskinned_sibling_document`'s track for that rig's reason: this
         // fixture is the only killer of `Trajectory`'s chain magnitude `x 64`,
@@ -14611,7 +14690,11 @@ mod tests {
             .unwrap_err(),
             ProofResidualKind::Trajectory,
         );
-        assert!(observed > tolerance && (4.56..4.57).contains(&observed));
+        assert_eq!(
+            (observed.to_bits(), tolerance.to_bits()),
+            (0x4012_464d_554e_2270, 0x4012_40e6_ce11_6746),
+            "the exact Trajectory floor measurement drifted",
+        );
     }
 
     #[test]
@@ -14713,7 +14796,11 @@ mod tests {
             .unwrap_err(),
             ProofResidualKind::Bounds,
         );
-        assert!(observed > tolerance && (4.56..4.57).contains(&observed));
+        assert_eq!(
+            (observed.to_bits(), tolerance.to_bits()),
+            (0x4012_40e6_6000_0000, 0x4012_40e6_54a0_13ff),
+            "the exact Bounds floor measurement drifted",
+        );
     }
 
     #[test]
@@ -14760,7 +14847,11 @@ mod tests {
             .unwrap_err(),
             ProofResidualKind::SkinMatrix,
         );
-        assert!(observed > tolerance && (4.56..4.57).contains(&observed));
+        assert_eq!(
+            (observed.to_bits(), tolerance.to_bits()),
+            (0x4012_40e6_6000_0000, 0x4012_40e6_40a0_13ff),
+            "the exact SkinMatrix floor measurement drifted",
+        );
     }
 
     #[test]
@@ -18408,25 +18499,6 @@ mod tests {
         bounds: f64,
         skin_matrix: f64,
         rest_translation: f64,
-        /// The same two products' bases with the rebased source side dropped —
-        /// `candidate` alone rather than `candidate.max(q * source)`. §D.1
-        /// records that reading as an equivalent mutation, and this is the
-        /// measurement that entitles it to.
-        bounds_candidate_only: f64,
-        skin_matrix_candidate_only: f64,
-        /// The same two bases with the `max` over the two document sides
-        /// flipped to a `min`.
-        ///
-        /// `min` only ever *tightens*, so it has no over-acceptance direction
-        /// and cannot be killed by a bracket fixture; the only thing that
-        /// could kill it is a correct candidate it refuses. That is precisely
-        /// what this sweep is for, and measuring it here is what entitles §D.1
-        /// to declare the mutation equivalent over this population instead of
-        /// listing it as a bare unexplained zero. It also bounds the
-        /// `q * source` alone reading, since `min` is never the larger of the
-        /// two.
-        bounds_min_of_sides: f64,
-        skin_matrix_min_of_sides: f64,
     }
 
     #[derive(Debug, Clone, Copy, Default)]
@@ -18442,22 +18514,13 @@ mod tests {
             self.bounds = self.bounds.max(other.bounds);
             self.skin_matrix = self.skin_matrix.max(other.skin_matrix);
             self.rest_translation = self.rest_translation.max(other.rest_translation);
-            self.bounds_candidate_only =
-                self.bounds_candidate_only.max(other.bounds_candidate_only);
-            self.skin_matrix_candidate_only = self
-                .skin_matrix_candidate_only
-                .max(other.skin_matrix_candidate_only);
-            self.bounds_min_of_sides = self.bounds_min_of_sides.max(other.bounds_min_of_sides);
-            self.skin_matrix_min_of_sides = self
-                .skin_matrix_min_of_sides
-                .max(other.skin_matrix_min_of_sides);
         }
     }
 
     /// Per-comparison deep-chain demand. Unlike [`SweepWorst`], these values
     /// never divide an obligation-wide maximum residual by a separately
-    /// selected maximum base: each ratio is formed at the node, sampled node,
-    /// or slot that owns both quantities, and only then folded.
+    /// selected maximum base: each ratio is formed at the production comparison
+    /// site that owns both quantities, and only then folded.
     #[derive(Debug, Clone, Copy, Default)]
     struct DeepChainWorst {
         rest_translation: f64,
@@ -18481,114 +18544,21 @@ mod tests {
             self.skin_comparisons += other.skin_comparisons;
             self.bounds_comparisons += other.bounds_comparisons;
         }
-    }
 
-    /// Measure the two skinned obligations for one exact pair of world poses.
-    /// Each residual is divided by the magnitude produced by those same poses
-    /// before it is folded, matching [`check_skin_and_bounds`]'s ownership.
-    #[allow(clippy::too_many_arguments)]
-    fn deep_skin_and_bounds_at_pose(
-        source: &Document,
-        candidate: &Document,
-        source_worlds: &WorldPose,
-        candidate_worlds: &WorldPose,
-        affected: &BTreeSet<BoneId>,
-        plan: &ScalePlan,
-        per: impl Fn(f64, f64) -> f64,
-    ) -> Result<DeepChainWorst, ScaleError> {
-        let q = if plan.is_whole_document() {
-            plan.common_factor
-        } else {
-            1.0
-        };
-        let mut measured = DeepChainWorst::default();
-        let mut source_bounds = BoundsAccumulator::default();
-        let mut candidate_bounds = BoundsAccumulator::default();
-
-        for (instance_index, instance) in source.assets.instances.iter().enumerate() {
-            if instance.skin_joints.is_empty()
-                || !instance
-                    .skin_joints
-                    .iter()
-                    .any(|joint| affected.contains(joint))
-            {
-                continue;
-            }
-            let candidate_instance = &candidate.assets.instances[instance_index];
-            let mut source_slots = Vec::with_capacity(instance.skin_joints.len());
-            let mut candidate_slots = Vec::with_capacity(instance.skin_joints.len());
-            for (slot, &joint) in instance.skin_joints.iter().enumerate() {
-                let before_pose = source_worlds.bone(joint)?;
-                let after_pose = candidate_worlds.bone(joint)?;
-                source_slots.push(SkinSlot::compose(
-                    before_pose.matrix,
-                    instance_bind(source, instance, slot, joint)?,
-                    before_pose.translation_rounding_magnitude,
-                ));
-                candidate_slots.push(SkinSlot::compose(
-                    after_pose.matrix,
-                    instance_bind(candidate, candidate_instance, slot, joint)?,
-                    after_pose.translation_rounding_magnitude,
-                ));
-            }
-
-            for (before, after) in source_slots.iter().zip(candidate_slots.iter()) {
-                let expected = if plan.is_whole_document() {
-                    scale_translation_only(before.matrix, q as f32)
-                } else {
-                    before.matrix
-                };
-                measured.skin_matrix = measured.skin_matrix.max(per(
-                    matrix_residual(expected, after.matrix),
-                    after.rounding_magnitude.max(q * before.rounding_magnitude),
-                ));
-                measured.skin_comparisons += 1;
-            }
-
-            let mesh = &source.assets.meshes[instance.mesh];
-            let candidate_mesh = &candidate.assets.meshes[candidate_instance.mesh];
-            for (primitive_index, (primitive, candidate_primitive)) in mesh
-                .primitives
-                .iter()
-                .zip(candidate_mesh.primitives.iter())
-                .enumerate()
-            {
-                accumulate_skinned_bounds(
-                    instance_index,
-                    primitive_index,
-                    primitive,
-                    &source_slots,
-                    &mut source_bounds,
-                )?;
-                accumulate_skinned_bounds(
-                    instance_index,
-                    primitive_index,
-                    candidate_primitive,
-                    &candidate_slots,
-                    &mut candidate_bounds,
-                )?;
+        /// The deep calibration consumes the exact per-comparison f32 demand
+        /// maxima and counts the production proof accumulated.
+        fn from_proof(proof: ScaleProof) -> Self {
+            Self {
+                rest_translation: proof.rest_translation_f32_rounding_demand,
+                trajectory: proof.trajectory_f32_rounding_demand,
+                skin_matrix: proof.skin_matrix_f32_rounding_demand,
+                bounds: proof.bounds_f32_rounding_demand,
+                rest_comparisons: proof.rest_translation_comparisons,
+                trajectory_comparisons: proof.trajectory_comparisons,
+                skin_comparisons: proof.skin_matrix_comparisons,
+                bounds_comparisons: proof.bounds_comparisons,
             }
         }
-
-        let source_magnitude = source_bounds.rounding_magnitude();
-        let candidate_magnitude = candidate_bounds.rounding_magnitude();
-        let magnitude = candidate_magnitude.max(q * source_magnitude);
-        let (before_min, before_max) = source_bounds
-            .finish()
-            .expect("the deep rig carries skinned bounds evidence");
-        let (after_min, after_max) = candidate_bounds
-            .finish()
-            .expect("the converted deep rig carries skinned bounds evidence");
-        for (before, after) in [(before_min, after_min), (before_max, after_max)] {
-            for (before, after) in before.to_array().into_iter().zip(after.to_array()) {
-                measured.bounds = measured.bounds.max(per(
-                    (f64::from(after) - q * f64::from(before)).abs(),
-                    magnitude,
-                ));
-                measured.bounds_comparisons += 1;
-            }
-        }
-        Ok(measured)
     }
 
     fn deep_chain_case(
@@ -18607,90 +18577,20 @@ mod tests {
             None => rest_bind_plan(&doc, f64::from(root_scale)),
         };
         let candidate = build_scale_candidate(&doc, &plan)?;
-        prove_scale(&doc, &candidate, &plan)?;
-        let candidate = candidate.document();
-        let q = conversion.unwrap_or(1.0);
-        let ulp = f64::from(f32::EPSILON);
-        let per = |residual: f64, base: f64| {
-            if base > 0.0 {
-                residual / (base * ulp)
-            } else {
-                assert_eq!(residual, 0.0, "a residual has no rounding provenance");
-                0.0
-            }
-        };
-        let mut measured = DeepChainWorst::default();
-        let affected = plan.affected_set();
-        let source_rest = rest_world_pose(&doc.skeleton)?;
-        let candidate_rest = rest_world_pose(&candidate.skeleton)?;
-        for &node in plan.affected_nodes() {
-            let before = source_rest.bone(node)?.matrix;
-            let after = candidate_rest.bone(node)?;
-            let (residual, ..) =
-                rest_node_residual(before, after.matrix, plan.is_whole_document(), q);
-            measured.rest_translation = measured
-                .rest_translation
-                .max(per(residual, after.translation_rounding_magnitude));
-            measured.rest_comparisons += 1;
-        }
-        measured.fold(deep_skin_and_bounds_at_pose(
-            &doc,
-            candidate,
-            &source_rest,
-            &candidate_rest,
-            &affected,
-            &plan,
-            per,
-        )?);
-
-        for (source_clip, candidate_clip) in doc.clips.iter().zip(candidate.clips.iter()) {
-            let (key_times, interior_times) = clip_sample_times(source_clip, &affected);
-            for time in key_times.into_iter().chain(interior_times) {
-                let source_sample = world_at_time(&doc.skeleton, source_clip, time)?;
-                let candidate_sample = world_at_time(&candidate.skeleton, candidate_clip, time)?;
-                for &node in plan.affected_nodes() {
-                    let before = source_sample.bone(node)?.matrix;
-                    let after = candidate_sample.bone(node)?;
-                    let (residual, ..) =
-                        rest_node_residual(before, after.matrix, plan.is_whole_document(), q);
-                    measured.trajectory = measured
-                        .trajectory
-                        .max(per(residual, after.translation_rounding_magnitude));
-                    measured.trajectory_comparisons += 1;
-                }
-                measured.fold(deep_skin_and_bounds_at_pose(
-                    &doc,
-                    candidate,
-                    &source_sample,
-                    &candidate_sample,
-                    &affected,
-                    &plan,
-                    per,
-                )?);
-            }
-        }
-        Ok(measured)
-    }
-
-    /// The candidate-side parent-chain magnitude
-    /// [`ProofResidualKind::RestTranslation`] takes, read through the same
-    /// [`rest_world_pose`] the proof reads it through.
-    fn rig_chain_magnitude(document: &Document, plan: &ScalePlan) -> f64 {
-        let worlds = rest_world_pose(&document.skeleton).expect("the rig composes");
-        plan.affected_nodes
-            .iter()
-            .map(|&node| worlds.bones[node].translation_rounding_magnitude)
-            .fold(0.0, f64::max)
+        let proof = prove_scale(&doc, &candidate, &plan)?;
+        assert_eq!(
+            proof.sample_time_count, 2,
+            "every animated deep calibration case must retain two production sample times",
+        );
+        Ok(DeepChainWorst::from_proof(proof))
     }
 
     /// Build one sweep candidate, prove it, and return the ulps each residual
     /// asked of its own comparison base.
     ///
-    /// The bases are read through [`rig_bounds_magnitude`],
-    /// [`rig_slot_magnitude`] and [`rig_chain_magnitude`], which compose the
-    /// slots and skin the vertices through the same helpers
-    /// [`check_skin_and_bounds`] does — so a base that moves in the proof moves
-    /// here, and the sweep cannot go on quoting a base the code stopped using.
+    /// The primary shipped-base maxima come from the production proof's
+    /// exact f32-rounded comparisons, so calibration cannot quote a base that
+    /// proof stopped using.
     ///
     /// The quantity is `residual / (base * 2^-23)`: the raw ulp count, *not*
     /// net of the scalar band that is paid first. It therefore overstates what
@@ -18795,33 +18695,10 @@ mod tests {
         let candidate = build_scale_candidate(&doc, &plan).expect("a planned rig builds");
         let proof = prove_scale(&doc, &candidate, &plan)?;
 
-        let q = cell.conversion.unwrap_or(1.0);
-        let ulp = f64::from(f32::EPSILON);
-        let per = |residual: f64, base: f64| {
-            if base > 0.0 {
-                residual / (base * ulp)
-            } else {
-                0.0
-            }
-        };
-        let bounds_candidate = rig_bounds_magnitude(candidate.document());
-        let skin_candidate = rig_slot_magnitude(candidate.document());
-        let bounds_source = q * rig_bounds_magnitude(&doc);
-        let skin_source = q * rig_slot_magnitude(&doc);
         sample.worst = SweepWorst {
-            bounds: per(proof.bounds_residual, bounds_candidate.max(bounds_source)),
-            skin_matrix: per(proof.skin_matrix_residual, skin_candidate.max(skin_source)),
-            rest_translation: per(
-                proof.rest_translation_residual,
-                rig_chain_magnitude(candidate.document(), &plan),
-            ),
-            bounds_candidate_only: per(proof.bounds_residual, bounds_candidate),
-            skin_matrix_candidate_only: per(proof.skin_matrix_residual, skin_candidate),
-            bounds_min_of_sides: per(proof.bounds_residual, bounds_candidate.min(bounds_source)),
-            skin_matrix_min_of_sides: per(
-                proof.skin_matrix_residual,
-                skin_candidate.min(skin_source),
-            ),
+            bounds: proof.bounds_f32_rounding_demand,
+            skin_matrix: proof.skin_matrix_f32_rounding_demand,
+            rest_translation: proof.rest_translation_f32_rounding_demand,
         };
         Ok(sample)
     }
@@ -18872,10 +18749,8 @@ mod tests {
     /// recorded maxima.
     ///
     /// The assertions are the calibration: no cell may refuse a correct
-    /// candidate, no residual may ask more of its base than
-    /// [`ScaleTolerancePolicy::f32_rounding_ulps`] allows, and the two
-    /// products' bases must stay inside the count with the rebased source side
-    /// dropped.
+    /// candidate, and no residual may ask more of the production comparison
+    /// base than [`ScaleTolerancePolicy::f32_rounding_ulps`] allows.
     ///
     /// Five more assertions are the sweep's *floor*, because a sweep that
     /// silently measured nothing would otherwise report `0.000` in every
@@ -19038,17 +18913,11 @@ mod tests {
              mismatched vertices ({larger_slot_zero} with slot 0 larger, {larger_slot_one} with \
              slot 1 larger); worst ulps of the comparison base: \
              bounds {:.3}, skin matrix {:.3}, rest translation {:.3}; \
-             f32_rounding_ulps = {}\nwith the rebased source side dropped from the two products' \
-             bases: bounds {:.3}, skin matrix {:.3}\nwith the `max` over the two document \
-             sides flipped to a `min`: bounds {:.3}, skin matrix {:.3}",
+             f32_rounding_ulps = {}",
             overall.bounds,
             overall.skin_matrix,
             overall.rest_translation,
             ScaleTolerancePolicy::APPENDIX_D_V5.f32_rounding_ulps,
-            overall.bounds_candidate_only,
-            overall.skin_matrix_candidate_only,
-            overall.bounds_min_of_sides,
-            overall.skin_matrix_min_of_sides,
         );
         println!(
             "deep-chain calibration: {deep_cases} cases through 512 links; worst per-comparison \
@@ -19125,8 +18994,7 @@ mod tests {
                 deep.bounds_comparisons,
             ),
             (12_488, 24_976, 240, 1_440),
-            "the deep phase must measure rest plus both sample poses for every affected skinned \
-             obligation; these are the counts recorded in DESIGN.md",
+            "the deep phase's production comparison counts no longer match DESIGN.md",
         );
         let deep_counts = deep_by_depth.map(|measured| {
             (
@@ -19149,6 +19017,28 @@ mod tests {
                 (4_617, 9_234, 27, 162),
             ],
             "a declared depth no longer owns the comparison population DESIGN.md records",
+        );
+        let deep_demands_milli = deep_by_depth.map(|measured| {
+            (
+                (measured.rest_translation * 1_000.0).round() as u16,
+                (measured.trajectory * 1_000.0).round() as u16,
+                (measured.skin_matrix * 1_000.0).round() as u16,
+                (measured.bounds * 1_000.0).round() as u16,
+            )
+        });
+        assert_eq!(
+            deep_demands_milli,
+            [
+                (578, 578, 143, 149),
+                (578, 578, 67, 73),
+                (578, 578, 76, 78),
+                (578, 578, 63, 63),
+                (578, 578, 37, 39),
+                (715, 715, 34, 33),
+                (578, 578, 34, 34),
+                (578, 578, 19, 19),
+            ],
+            "the literal deep-chain demand table no longer matches the values recorded to three decimals",
         );
         assert!(
             deep_by_depth.iter().all(|measured| {
@@ -19180,7 +19070,9 @@ mod tests {
         // success. The floors sit just below the documented maxima, while the
         // policy count below is their common upper bracket.
         assert!(
-            overall.bounds > 2.7 && overall.skin_matrix > 2.0 && overall.rest_translation > 2.5,
+            (2.70..2.85).contains(&overall.bounds)
+                && (2.10..2.30).contains(&overall.skin_matrix)
+                && (2.50..2.70).contains(&overall.rest_translation),
             "the sweep measured almost no demand at all: bounds {:.3}, skin matrix {:.3}, rest \
              translation {:.3}. A base has been loosened, or the population no longer reaches \
              the cancellations it is built to reach — either way these figures are not a \
@@ -19234,38 +19126,6 @@ mod tests {
             deep.trajectory,
             deep.skin_matrix,
             deep.bounds,
-        );
-        // The equivalence §D.1 and the two call sites record. Asserted rather
-        // than merely printed, so the day a correct candidate needs the rebased
-        // source side is the day this fails and says which obligation.
-        assert!(
-            overall.bounds_candidate_only < allowed && overall.skin_matrix_candidate_only < allowed,
-            "the rebased source magnitude has become load-bearing: bounds {:.3}, skin matrix \
-             {:.3} against {allowed} with it dropped. `candidate.max(q * source)` is no longer \
-             an equivalent mutation, and the call-site comments that say it is must change with \
-             this number.",
-            overall.bounds_candidate_only,
-            overall.skin_matrix_candidate_only,
-        );
-        // The two `max` over document sides -> `min` mutations, which no
-        // bracket fixture can kill because `min` only tightens: the only way
-        // it can be wrong is by refusing a correct candidate, and this is the
-        // 360_000-candidate measurement of exactly that. Asserted rather than
-        // printed, so the day the two sides come apart far enough for `min` to
-        // matter is the day this fails and says which product. It bounds the
-        // `q * source` alone reading too, since `min` is never the larger of
-        // the two — which is what entitles "skin base drops
-        // `after.rounding_magnitude`" to be declared equivalent rather than
-        // listed as an unexplained survivor.
-        assert!(
-            overall.bounds_min_of_sides < allowed && overall.skin_matrix_min_of_sides < allowed,
-            "flipping the `max` over the two document sides to a `min` now refuses a correct \
-             candidate: bounds {:.3}, skin matrix {:.3} against {allowed}. The two sides have \
-             come apart far enough for the choice between them to matter, and DESIGN.md \
-             Appendix D section D.1's declaration that `min` is an equivalent mutation must \
-             change with this number.",
-            overall.bounds_min_of_sides,
-            overall.skin_matrix_min_of_sides,
         );
     }
 }
