@@ -31,7 +31,7 @@
 //! the caller's source document mutated — the half-built candidate is
 //! simply dropped. [`prove_scale`] independently re-derives the plan's
 //! claims from the source and candidate documents and reports the observed
-//! residual maxima against the fixed [`ScaleTolerancePolicy::APPENDIX_D_V3`]
+//! residual maxima against the fixed [`ScaleTolerancePolicy::APPENDIX_D_V4`]
 //! tolerance identity.
 //!
 //! Those residuals are the producer evidence record of §D.6, which is why
@@ -55,7 +55,7 @@ use crate::model::{
     SourceSkinAsset, Track, TrackValues, Transform, mat4_is_finite, world_rest_matrices,
 };
 use crate::sample::{TrackSample, sample_track};
-use glam::{Mat3, Mat4, Quat, Vec3, Vec4};
+use glam::{DVec3, Mat3, Mat4, Quat, Vec3, Vec4};
 use std::collections::{BTreeMap, BTreeSet};
 
 // --- Tolerance policy ----------------------------------------------------
@@ -63,7 +63,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Fixed Appendix D tolerance identity and thresholds. Classification and
 /// proof share this one versioned policy and compute in `f64`, narrowing
 /// only at the writer model boundary. There is exactly one supported
-/// instance, [`ScaleTolerancePolicy::APPENDIX_D_V3`]: a policy change is a
+/// instance, [`ScaleTolerancePolicy::APPENDIX_D_V4`]: a policy change is a
 /// new policy identity, not a runtime knob.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
@@ -100,7 +100,7 @@ pub struct ScaleTolerancePolicy {
     /// measure, so the input band and this postcondition are directly
     /// commensurable (DESIGN.md Appendix D §D.1). This value is *derived*
     /// from [`Self::common_factor`] rather than declared independently: see
-    /// [`Self::APPENDIX_D_V3`] for the composition argument and
+    /// [`Self::APPENDIX_D_V4`] for the composition argument and
     /// [`Self::UNIT_SCALE_BANDS`] for the multiplier.
     pub postcondition_unit_scale_residual: f64,
     /// Maximum sampled proof work [`prove_scale`] will perform, in
@@ -142,7 +142,7 @@ pub struct ScaleTolerancePolicy {
     /// cancelled two of them one composition earlier. A purely relative band
     /// is then derived from the small number and the error from the large
     /// one, and [`prove_scale`] refuses a correct candidate that
-    /// [`plan_scale`] accepted. See [`Self::APPENDIX_D_V3`] for the
+    /// [`plan_scale`] accepted. See [`Self::APPENDIX_D_V4`] for the
     /// measurement this count comes from and DESIGN.md Appendix D §D.1 for
     /// which magnitude each obligation takes it from.
     ///
@@ -162,14 +162,13 @@ impl ScaleTolerancePolicy {
     /// [`Self::postcondition_unit_scale_residual`] is derived from.
     ///
     /// Three of them are analytic and one is float headroom; see
-    /// [`Self::APPENDIX_D_V3`].
+    /// [`Self::APPENDIX_D_V4`].
     pub const UNIT_SCALE_BANDS: f64 = 4.0;
 
-    /// The only supported tolerance policy: DESIGN.md Appendix D, version 3.
+    /// The only supported tolerance policy: DESIGN.md Appendix D, version 4.
     ///
-    /// Version 3 supersedes `appendix-d-v2`, which superseded
-    /// `appendix-d-v1`. Each identity change is a change of *meaning*, not a
-    /// retune:
+    /// Version 4 supersedes `appendix-d-v3`, which superseded v2 and v1. Each
+    /// identity change is a change of *meaning*, not a retune:
     ///
     /// 1. [`Self::postcondition_unit_scale_residual`] is a per-axis
     ///    (L-infinity) residual derived from [`Self::common_factor`], instead
@@ -190,6 +189,12 @@ impl ScaleTolerancePolicy {
     ///    [`ProofResidualKind::Trajectory`]. Without it [`plan_scale`] accepts
     ///    and [`prove_scale`] refuses a correct candidate whenever
     ///    `magnitude / component` is large.
+    /// 4. v4 widens finite non-negative weight normalization and accumulation
+    ///    to binary64, makes the Bounds magnitude a weight-proportional
+    ///    combination of each influence's transform and slot-composition
+    ///    provenance, and removes v3's blended-point L2 stage. Bounds residuals
+    ///    are per axis, and the normalized blend is already bounded by those
+    ///    weighted operands.
     ///
     /// `postcondition_unit_scale_residual` is
     /// `UNIT_SCALE_BANDS * common_factor = 4e-5`, rounded up to the next
@@ -234,8 +239,8 @@ impl ScaleTolerancePolicy {
     /// catch — a dropped rebase, a factor applied twice, a stale no-op — is
     /// `>= 1e-3`, so `6.1e-5` still leaves better than a `16x` detection
     /// margin.
-    pub const APPENDIX_D_V3: Self = Self {
-        id: "appendix-d-v3",
+    pub const APPENDIX_D_V4: Self = Self {
+        id: "appendix-d-v4",
         relative_orthogonality: 1e-5,
         equal_axis: 1e-5,
         common_factor: 1e-5,
@@ -252,28 +257,21 @@ impl ScaleTolerancePolicy {
         // costs `21_000` and admits `19_047`. A 100k-key track on the
         // 100k-vertex rig demands `2.01e10` and is refused.
         //
-        // The value is a wall-time ceiling expressed in work units. What it
-        // costs in seconds is a property of the machine, so what is stated
-        // here is what is not: the measured time is linear in the charge
-        // across four doublings (`1e8` to `8e8`) in both shapes — the
-        // evidence that the charge is a proxy for real work rather than a
-        // number — and the same charge costs more as slot work than as vertex
-        // work, so the slot-dominated shape sets the ceiling. Both shapes are
-        // named in full so a reader can rebuild them: 200 instances of a
-        // 99-joint skin list with one vertex each, and one instance of that
-        // list with a 10_000-vertex primitive, each with as many sample times
-        // as `4e8` admits.
+        // The value is a wall-time ceiling expressed in work units. Historical
+        // v3 measurements were linear in the charge across four doublings
+        // (`1e8` to `8e8`) in both named shapes, which establishes that the
+        // charge is a proxy for real work rather than an arbitrary count. The
+        // shapes were 200 instances of a 99-joint skin list with one vertex
+        // each, and one instance of that list with a 10_000-vertex primitive,
+        // each with as many sample times as `4e8` admits.
         //
-        // On one developer machine at this ceiling the slot-dominated shape
-        // measures `6.7s` and the vertex-dominated one `3.3s`. Neither is a
-        // bound this policy guarantees. An earlier revision of this comment
-        // claimed one — "stays inside five" — from a `4.77s` measurement on
-        // different hardware and a different tree, and the same machine now
-        // reads `7.1s` for that shape *before* `f32_rounding_ulps`, which is
-        // to say the claim was already false of the tree it was written
-        // against. See DESIGN.md Appendix D §D.1 for what that term costs at
-        // the ceiling; the shape that sets the ceiling got faster, and the
-        // vertex-dominated one is `+64 %`.
+        // On one developer machine under v3 those shapes measured `6.7s` and
+        // `3.3s`. They are neither bounds nor v4 measurements: v4 removes the
+        // per-vertex L2 stage and widens weighted accumulation to binary64, so
+        // it deliberately does not carry the old ordering or attribution
+        // forward. The budget remains a conservative work limit because the
+        // charged passes and their cardinalities did not change. See DESIGN.md
+        // Appendix D §D.1 for the historical measurements and this boundary.
         //
         // `1e8` — the first value this policy carried — was too tight, and
         // the arithmetic that justified it was the pre-both-sides charge. A
@@ -285,7 +283,7 @@ impl ScaleTolerancePolicy {
         proof_sample_work_budget: 400_000_000,
         // Measured, not assumed, and the measurement is **checked in**:
         // `calibrate_f32_rounding_ulps` builds and proves 360_000 correct
-        // candidates over 72 cells and asserts every figure below. Run it with
+        // candidates over 144 cells and asserts every figure below. Run it with
         //
         //   cargo test -p animsmith-core --release --lib \
         //       calibrate_f32_rounding_ulps -- --ignored --nocapture
@@ -295,12 +293,14 @@ impl ScaleTolerancePolicy {
         // `{1e-4, 0.01, 0.1, 1.5, 7.3, 100, 3190, 1e6}`, so both directions of
         // the factor — four slot compositions — analytic binds, where
         // `abs(W * B)` is `1`, and composed slots at
-        // `abs(W * B) = {1e-3, 1, 1e3}` — and two blends: two slots that oppose
-        // on the swept vertex and cancel it to the origin, against two that do
-        // not. Joint locals and vertex positions are drawn log-uniformly over
-        // six and eight decades in random directions, every joint carries a
-        // random rotation, and half of every cell's trials carry a parent chain
-        // that cancels.
+        // `abs(W * B) = {1e-3, 1, 1e3}` — two blends, and two weight profiles:
+        // balanced, and a mismatched profile that gives each vertex's larger
+        // production influence base a log-uniform weight in `[1e-20, 1e-2]`
+        // while the smaller gets `1`. The latter realizes 241_667 mismatched
+        // vertices, in both slot orientations. Joint locals and vertex
+        // positions are drawn log-uniformly over six and eight decades in
+        // random directions, every joint carries a random rotation, and half
+        // of every cell's trials carry a parent chain that cancels.
         //
         // The quantity is `residual / (magnitude * 2^-23)`: the raw ulp count,
         // *not* net of the scalar band that is paid first. It therefore
@@ -308,8 +308,8 @@ impl ScaleTolerancePolicy {
         // a worst case under `4` measured this way is under `4` however the two
         // terms are split.
         //
-        // Worst over the population: `2.632` for `Bounds`, `2.065` for
-        // `SkinMatrix`, `2.400` for `RestTranslation`, and no correct candidate
+        // Worst over the population: `2.800` for `Bounds`, `2.164` for
+        // `SkinMatrix`, `2.293` for `RestTranslation`, and no correct candidate
         // refused in any cell.
         //
         // The sweep carries two joints and no clips, so `Trajectory` and chains
@@ -330,9 +330,9 @@ impl ScaleTolerancePolicy {
         // that cancel" with a worst `Bounds` demand of `0.92`. The shape it did
         // not carry is a composed slot with `abs(W * B) != 1`, and against the
         // base this policy shipped at the time that shape refuses correct
-        // candidates in fifteen of the seventy-two cells above and demands
-        // `47.7`. A figure a reader cannot re-derive is a figure nobody can
-        // check.
+        // candidates in fifteen of the pre-v4 sweep's seventy-two cells and
+        // demands `47.7`. A figure a reader cannot re-derive is a figure nobody
+        // can check.
         //
         // `4` is the next power of two above every figure above, **measured
         // over that population**. It is not an analytic bound. An earlier
@@ -417,7 +417,7 @@ impl ScaleTolerancePolicy {
     /// The expected ceiling on [`ScaleProof::observed_factor_divergence`]:
     /// [`Self::common_factor`] plus
     /// [`Self::postcondition_unit_scale_residual`], `7.103515625e-5` under
-    /// [`Self::APPENDIX_D_V3`].
+    /// [`Self::APPENDIX_D_V4`].
     ///
     /// [`ScalePlan::observed_factor`] and [`ScaleProof::observed_factor`] are
     /// two independent witnesses of the same quantity, measured from
@@ -2102,7 +2102,7 @@ fn plan_whole_document(document: &Document, factor: f64) -> Result<ScalePlan, Sc
     let boned = !affected_nodes.is_empty();
     Ok(ScalePlan {
         operation: ScaleOperation::WholeDocumentLinearUnits { factor },
-        tolerance_policy: ScaleTolerancePolicy::APPENDIX_D_V3,
+        tolerance_policy: ScaleTolerancePolicy::APPENDIX_D_V4,
         affected_nodes,
         transform_only_attachments: Vec::new(),
         common_factor: factor,
@@ -2248,7 +2248,7 @@ fn plan_rest_bind(
     let domain = derive_rest_bind_plan_domain(document, source_skin_index, source_root_node_index)?;
     let by_source_index = source_node_index_map(document);
 
-    let tol = ScaleTolerancePolicy::APPENDIX_D_V3;
+    let tol = ScaleTolerancePolicy::APPENDIX_D_V4;
     let mut world_cache: BTreeMap<usize, Mat4> = BTreeMap::new();
     let mut node_factor: BTreeMap<BoneId, f64> = BTreeMap::new();
     for &source in &domain.source_nodes {
@@ -2697,7 +2697,7 @@ fn classify_affine(linear: Mat3, tol: &ScaleTolerancePolicy) -> Result<f64, Affi
     // determinant can never reach this line. `determinant` is finite by the
     // guard above, `lengths` are finite and non-negative, so `axis_product` is
     // non-negative and never `NaN`; `singular_determinant_relative` is `1e-6`
-    // — this function is only ever called with `APPENDIX_D_V3` — so the
+    // — this function is only ever called with `APPENDIX_D_V4` — so the
     // singular threshold is non-negative, and `(±0.0).abs() <= threshold`
     // holds for every non-negative threshold. Both signed zeros are therefore
     // already `Singular`, and on every determinant that does arrive here
@@ -5203,8 +5203,8 @@ fn check_skin_and_bounds(
                 // scale with `q` — survive into the residual.
                 // `calibrate_f32_rounding_ulps` measures both bases with the
                 // rebased source side dropped over its whole 360_000-candidate
-                // population and asserts the result: `2.632` of the four ulps
-                // for `Bounds` and `2.065` for `SkinMatrix`, which are the same
+                // population and asserts the result: `2.800` of the four ulps
+                // for `Bounds` and `2.164` for `SkinMatrix`, which are the same
                 // two figures the shipped bases produce.
                 //
                 // The `Bounds` half of that was **false** under the base this
@@ -5452,32 +5452,24 @@ impl SkinSlot {
 ///
 /// `rounding_magnitude` is what
 /// [`ScaleTolerancePolicy::f32_rounding_ulps`] is counted in for
-/// [`ProofResidualKind::Bounds`], and it is a max over every stage of the
-/// chain that produced the bound, not over the bound itself. There are four
-/// stages, and each is a cancellation the stage after it can no longer see:
-/// the magnitude the `W * B * p` transform ran on, which is
+/// [`ProofResidualKind::Bounds`]. For each contributing influence, it is the
+/// larger of the magnitude the `W * B * p` transform ran on and the slot's
+/// [`SkinSlot::rounding_magnitude`]. The former is
 /// [`column_operand_magnitude`] of the composed slot against `p` extended by
 /// the homogeneous `1` — the *product* `abs(W * B) * abs(p)` and not either
-/// factor alone — since the weighted sum over slots that follows can cancel
-/// those terms; the blended skinned position that sum produced; and the
-/// contributing slot's [`SkinSlot::rounding_magnitude`], which covers the two
-/// stages before those —
-/// the composition that produced `W * B`, whose translation column cancelled
-/// two terms of magnitude `abs(W)`, and the parent chain that produced `W`,
-/// whose translation column may have cancelled two terms larger still.
+/// factor alone. The latter carries the two earlier stages: the composition
+/// that produced `W * B`, whose translation column may cancel large `W` and
+/// `B` terms, and the parent chain that produced `W`, whose translation may
+/// already contain cancellation.
 ///
-/// Stages one, three, and four each dominate the others by an unbounded ratio
-/// on some rig. Dropping the first makes
-/// `calibrate_f32_rounding_ulps` refuse correct candidates in thirty-four of
-/// its seventy-two cells and dropping the third in fifty-six.
-///
-/// Stage two is now conservative rather than load-bearing. Shared validation
-/// rejects finite negative weights before planning, so division by a positive
-/// weight sum makes every valid blend convex. Its L2 length is at most
-/// `sqrt(3)` times stage one's per-component bound. Removing it nevertheless
-/// changes the meaning of `appendix-d-v3`; it stays until the coordinated
-/// `appendix-d-v4` recalibration tracked by #344 removes it together with the
-/// #335 Bounds-base change. See DESIGN.md Appendix D §D.1.
+/// The per-influence magnitudes are combined with the same binary64 weighted
+/// average of the stored, non-negative binary32 weights as the skinned point.
+/// A tiny influence therefore carries only its proportional arithmetic
+/// provenance; taking a plain max would let an arbitrarily small weight on a
+/// distant joint widen the whole bound tolerance. The blended point's own
+/// per-axis magnitude is consequently already bounded by the weighted
+/// transform operands and needs no separate L2 stage. See DESIGN.md Appendix
+/// D §D.1.
 struct BoundsAccumulator {
     min: Vec3,
     max: Vec3,
@@ -5540,11 +5532,14 @@ fn accumulate_skinned_bounds(
         }
         let joints = primitive.joints[vertex];
         let weights = primitive.weights[vertex];
-        let mut skinned = Vec3::ZERO;
-        let mut weight_sum = 0.0f32;
-        let mut vertex_magnitude = 0.0f64;
-        for slot_index in 0..4 {
-            let weight = weights[slot_index];
+        // Accumulate both the weighted numerator and denominator in binary64,
+        // then narrow the normalized point once. Binary32 multiply-then-divide
+        // can lose a lone subnormal contribution or overflow a large finite
+        // denominator. Precomputing binary32 coefficients is not sufficient:
+        // their rounded sum can exceed one and overflow an otherwise finite
+        // convex blend at `f32::MAX`.
+        let mut weight_sum = 0.0f64;
+        for weight in weights {
             if weight == 0.0 {
                 continue;
             }
@@ -5555,6 +5550,19 @@ fn accumulate_skinned_bounds(
                     reason: "non_finite_weight",
                 });
             }
+            weight_sum += f64::from(weight);
+        }
+        if weight_sum == 0.0 {
+            continue;
+        }
+
+        let mut skinned_numerator = DVec3::ZERO;
+        let mut weighted_magnitude = 0.0f64;
+        for slot_index in 0..4 {
+            let stored_weight = weights[slot_index];
+            if stored_weight == 0.0 {
+                continue;
+            }
             let Some(slot) = slots.get(joints[slot_index] as usize) else {
                 return Err(ScaleError::InvalidSkinnedPrimitive {
                     instance_index,
@@ -5562,8 +5570,8 @@ fn accumulate_skinned_bounds(
                     reason: "joint_influence_slot_out_of_range",
                 });
             };
-            skinned += weight * slot.matrix.transform_point3(position);
-            weight_sum += weight;
+            let weight = f64::from(stored_weight);
+            skinned_numerator += weight * slot.matrix.transform_point3(position).as_dvec3();
             // The magnitude `slot.matrix.transform_point3(position)` runs on,
             // which is `abs(W * B) * abs(p)` and not either factor alone.
             //
@@ -5584,72 +5592,49 @@ fn accumulate_skinned_bounds(
             // The homogeneous `1` is included because `transform_point3` sums
             // the translation column in with the rest, so that column's entries
             // are terms of the same dot product.
-            vertex_magnitude = vertex_magnitude.max(column_operand_magnitude(
-                slot.absolute,
-                position.extend(1.0),
-            ));
-            vertex_magnitude = vertex_magnitude.max(slot.rounding_magnitude);
+            let influence_magnitude = skin_influence_magnitude(slot, position);
+            weighted_magnitude += weight * influence_magnitude;
         }
-        if weight_sum > 0.0 {
-            skinned /= weight_sum;
-            if !skinned.is_finite() {
-                // Overflow and `NaN` are different failures and are
-                // reported as such: an overflowing skinned position is a
-                // document whose geometry leaves the `f32` range this proof
-                // computes in, while a `NaN` is a malformed or degenerate
-                // input that survived every finiteness check above. No
-                // magnitude domain is documented for the former, because the
-                // boundary is not a property of any magnitude a document
-                // could be checked against ahead of time:
-                // `transform_point3` accumulates a dot product whose
-                // intermediate terms depend on the rotation, so two rigs
-                // whose skinned extents agree can disagree on whether they
-                // compose finitely.
-                return Err(ScaleError::InvalidSkinnedPrimitive {
-                    instance_index,
-                    primitive_index,
-                    reason: if skinned.is_nan() {
-                        "non_finite_result"
-                    } else {
-                        "skinned_magnitude_overflow"
-                    },
-                });
-            }
-            bounds.min = bounds.min.min(skinned);
-            bounds.max = bounds.max.max(skinned);
-            // `Vec3::length` squares its components in `f32`, so it returns
-            // `inf` for every `skinned` past `sqrt(f32::MAX) = 1.84e19` even
-            // though `skinned` itself is finite to `3.40e38` and has just
-            // been checked so. An infinite magnitude makes
-            // `f32_rounded_tolerance` infinite, and `check_residual` refuses
-            // a non-finite tolerance — so squaring in `f32` alone would refuse
-            // exactly-correct candidates (`observed: 0.0`) on any rig whose
-            // skinned extent passes that constant, and that constant would be
-            // a documented magnitude domain where DESIGN.md Appendix D §D.1
-            // says there is none.
-            //
-            // The `f64` widening is therefore the *fallback*, not the fast
-            // path, on [`product_operand_magnitude`]'s argument: a length sums
-            // squares, so every term is non-negative and nothing can cancel,
-            // and a finite `f32` result means no intermediate overflowed. Such
-            // a result is exact to `f32` precision, which is precisely what
-            // [`ScaleTolerancePolicy::f32_rounding_ulps`] already allows for.
-            // This runs once per weighted vertex per document side per sample
-            // time — the hottest loop in this proof — and the wide square is
-            // reached only past `sqrt(f32::MAX)`, where
-            // `a_rig_whose_skinned_extent_passes_the_square_root_of_f32_max_still_proves`
-            // holds it.
-            let length = skinned.length();
-            let length = if length.is_finite() {
-                f64::from(length)
-            } else {
-                skinned.as_dvec3().length()
-            };
-            bounds.rounding_magnitude = bounds.rounding_magnitude.max(vertex_magnitude).max(length);
-            bounds.touched = true;
+        let skinned = (skinned_numerator / weight_sum).as_vec3();
+        if !skinned.is_finite() {
+            // Overflow and `NaN` are different failures and are
+            // reported as such: an overflowing skinned position is a
+            // document whose geometry leaves the `f32` range this proof
+            // computes in, while a `NaN` is a malformed or degenerate
+            // input that survived every finiteness check above. No
+            // magnitude domain is documented for the former, because the
+            // boundary is not a property of any magnitude a document
+            // could be checked against ahead of time:
+            // `transform_point3` accumulates a dot product whose
+            // intermediate terms depend on the rotation, so two rigs
+            // whose skinned extents agree can disagree on whether they
+            // compose finitely.
+            return Err(ScaleError::InvalidSkinnedPrimitive {
+                instance_index,
+                primitive_index,
+                reason: if skinned.is_nan() {
+                    "non_finite_result"
+                } else {
+                    "skinned_magnitude_overflow"
+                },
+            });
         }
+        bounds.min = bounds.min.min(skinned);
+        bounds.max = bounds.max.max(skinned);
+        let vertex_magnitude = weighted_magnitude / weight_sum;
+        bounds.rounding_magnitude = bounds.rounding_magnitude.max(vertex_magnitude);
+        bounds.touched = true;
     }
     Ok(())
+}
+
+/// The per-axis arithmetic provenance one weighted skin influence carries
+/// into a bound. The transform application and the already-composed slot can
+/// each dominate by an unbounded ratio, so the influence retains the larger;
+/// [`accumulate_skinned_bounds`] then combines influences with the same
+/// binary64 weighted average as the skinned point.
+fn skin_influence_magnitude(slot: &SkinSlot, position: Vec3) -> f64 {
+    column_operand_magnitude(slot.absolute, position.extend(1.0)).max(slot.rounding_magnitude)
 }
 
 #[cfg(test)]
@@ -6709,7 +6694,7 @@ mod tests {
                 Vec3::new(0.0, 0.0, c),
             )
         };
-        let tol = ScaleTolerancePolicy::APPENDIX_D_V3;
+        let tol = ScaleTolerancePolicy::APPENDIX_D_V4;
         assert!(classify_affine(basis(y0_down), &tol).is_ok());
         assert!(classify_affine(basis(y0), &tol).is_ok());
         assert_eq!(
@@ -7201,7 +7186,7 @@ mod tests {
         // The sum is exact: `2^-14` is a power of two well above `fl(1e-5)`'s
         // last bit, and the rounded sum is the same binary64 value the
         // decimal literal denotes.
-        let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V4;
         assert_eq!(policy.common_factor, 1e-5);
         assert_eq!(policy.postcondition_unit_scale_residual, 2f64.powi(-14));
         assert_eq!(
@@ -10048,7 +10033,7 @@ mod tests {
     /// `1.0000000000…e-5`), so the in-band cases must be accepted: the
     /// rejections above are the shear magnitude talking and not the shape.
     fn assert_only_this_column_pair_decides_shear(pair: ShearPair) {
-        let tol = ScaleTolerancePolicy::APPENDIX_D_V3;
+        let tol = ScaleTolerancePolicy::APPENDIX_D_V4;
         // Written as exact dyadics rather than decimal literals, so the
         // binary32 bits are readable straight off the page: `2^-15` and
         // `2^-17`.
@@ -11926,6 +11911,78 @@ mod tests {
     }
 
     #[test]
+    fn weight_normalization_is_stable_at_both_f32_exponents() {
+        // The old multiply-then-divide order fails at both ends of binary32:
+        // a lone minimum subnormal loses `.5` before it can be divided by
+        // itself, while two maximum finite weights overflow their sum. Both
+        // describe the same normalized identity blend and must produce `.5`.
+        let tiny = f32::from_bits(1);
+        assert_eq!(tiny * 0.5, 0.0);
+        assert!((f32::MAX + f32::MAX).is_infinite());
+        let primitive = Primitive {
+            positions: vec![Vec3::splat(0.5), Vec3::splat(0.5)],
+            joints: vec![[0, 0, 0, 0]; 2],
+            weights: vec![[tiny, 0.0, 0.0, 0.0], [f32::MAX, f32::MAX, 0.0, 0.0]],
+            ..Primitive::default()
+        };
+        let mut accumulator = BoundsAccumulator::default();
+        accumulate_skinned_bounds(
+            7,
+            3,
+            &primitive,
+            &[unrounded_slot(Mat4::IDENTITY)],
+            &mut accumulator,
+        )
+        .unwrap();
+        let (min, max) = accumulator.finish().unwrap();
+        assert_eq!(min, Vec3::splat(0.5));
+        assert_eq!(max, Vec3::splat(0.5));
+    }
+
+    #[test]
+    fn widened_weight_accumulation_stays_convex_at_f32_max() {
+        // Even precomputed binary32 coefficients are insufficient. These
+        // exact dyadic weights round to coefficients whose exact represented
+        // sum is greater than one, so applying them to `f32::MAX` overflows an
+        // identity blend that must remain exactly at its finite endpoint.
+        let stored: [f32; 2] = [19.0 / 64.0, 9.0 / 64.0];
+        let weight_scale = stored[0].max(stored[1]);
+        let scaled = [stored[0] / weight_scale, stored[1] / weight_scale];
+        let scaled_sum = scaled[0] + scaled[1];
+        let coefficients = [scaled[0] / scaled_sum, scaled[1] / scaled_sum];
+        assert!(f64::from(coefficients[0]) + f64::from(coefficients[1]) > 1.0);
+
+        let position = Vec3::splat(f32::MAX);
+        assert!(position.is_finite());
+        assert!(
+            !(coefficients[0] * position + coefficients[1] * position).is_finite(),
+            "the binary32 counterexample no longer overflows"
+        );
+        let primitive = Primitive {
+            positions: vec![position],
+            joints: vec![[0, 1, 0, 0]],
+            weights: vec![[stored[0], stored[1], 0.0, 0.0]],
+            ..Primitive::default()
+        };
+        let mut accumulator = BoundsAccumulator::default();
+        accumulate_skinned_bounds(
+            7,
+            3,
+            &primitive,
+            &[
+                unrounded_slot(Mat4::IDENTITY),
+                unrounded_slot(Mat4::IDENTITY),
+            ],
+            &mut accumulator,
+        )
+        .unwrap();
+
+        let (min, max) = accumulator.finish().unwrap();
+        assert_eq!(min, position);
+        assert_eq!(max, position);
+    }
+
+    #[test]
     fn every_public_scale_boundary_rejects_a_negative_skin_weight() {
         let doc = multi_joint_document();
         let capability = complete_capability();
@@ -12184,7 +12241,7 @@ mod tests {
         // The residual really is above the per-axis-only band, so this
         // fixture is exercising the new term rather than passing for want of
         // a defect. `2.44e-4` is `2^-12`, one ulp of `2048`.
-        let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V4;
         assert!(
             proof.bounds_residual > policy.scalar_tolerance(5.982, 5.982),
             "bounds residual {} no longer exceeds the per-axis band",
@@ -12263,7 +12320,7 @@ mod tests {
     /// composition that produced it ran on `6.4e6`.
     ///
     /// This is the rig DESIGN.md §D.1 and
-    /// [`ScaleTolerancePolicy::APPENDIX_D_V3`] quote the cost of the rounding
+    /// [`ScaleTolerancePolicy::APPENDIX_D_V4`] quote the cost of the rounding
     /// term on, so the two fixtures that read it share one definition.
     fn far_joint_document() -> Document {
         rotating_rig_document(
@@ -12347,7 +12404,7 @@ mod tests {
     fn the_far_joint_rig_admits_a_four_unit_bind_shift_and_refuses_the_next_one_up() {
         // The documented cost of the rounding term, pinned rather than
         // recomputed by hand each time it is quoted. DESIGN.md §D.1 and
-        // `APPENDIX_D_V3` both state this floor, and nothing else in the tree
+        // `APPENDIX_D_V4` both state this floor, and nothing else in the tree
         // held them to it — an earlier revision stated `4.09`, which is on the
         // *accepted* side of the real floor and so described a bracket that
         // does not exist.
@@ -12541,10 +12598,9 @@ mod tests {
         // The blend can cancel just as the composition and the parent chain
         // can, and here it cancels completely:
         // `0.5 * (1000, 0, 0) + 0.5 * (-1000, 0, 0)` is the origin, so the
-        // skinned extent's length is `0` and contributes nothing, while the
-        // joints are within `3.2e-3` of the origin so the composition and
-        // chain magnitudes are near `1`. Every stage downstream of the vertex
-        // transform is therefore small, and that transform still ran on
+        // skinned point cannot itself reveal the transform's operands. The
+        // joints are within `3.2e-3` of the origin, so the composition and
+        // chain magnitudes are near `1`, while that transform still ran on
         // `1000`.
         //
         // Without the transform stage in the base this correct candidate is
@@ -12610,9 +12666,9 @@ mod tests {
         // This rig supplies it: the two slots compose to `1024 * I` and
         // `1024 * HALF_TURN_Z`, so they still cancel a vertex to the origin,
         // and each term of the cancelled sum now carries the rounding of a
-        // `1024 * 65536 = 6.7e7`-magnitude transform. Every stage the base
-        // knew about is still small — the blend is `0`, the joints are within
-        // `3.2e-3` of the origin, and the vertex itself is `65536`.
+        // `1024 * 65536 = 6.7e7`-magnitude transform. Every earlier proxy is
+        // still small — the blend is `0`, the joints are within `3.2e-3` of
+        // the origin, and the vertex itself is `65536`.
         //
         // With `abs(p)` alone in the base this correct candidate is refused at
         // `observed: 4.0` against `tolerance: 0.0313`, a demand of `512` ulps.
@@ -12737,7 +12793,7 @@ mod tests {
             "the two documents' composition magnitudes are 3190x apart, and the candidate's \
              arithmetic is what both obligations must be given room for",
         );
-        let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V4;
         let source_band = policy.f32_rounded_tolerance(0.0, 0.0, source_slot);
         assert!(
             proof.skin_matrix_residual > source_band,
@@ -12772,7 +12828,7 @@ mod tests {
         // `1.3e-5` at `0.01` and `1.3e-7` at `1e-4`, against `1.9e-3` under the
         // `max` at both — `100x` and `10_000x` of recovered discriminating
         // power, tracking the factor as it should.
-        let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V4;
         for (factor, shift) in [(0.01f64, 1e-4f32), (1e-4, 1e-6)] {
             let (doc, plan, candidate) = far_joint_conversion_at(factor);
             let source_slot = rig_slot_magnitude(&doc);
@@ -12838,7 +12894,7 @@ mod tests {
         // That is `100x` and `9797x` of recovered discriminating power — the
         // second short of `10_000x` only because the `1e-6` absolute band
         // starts to pay at that size.
-        let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V4;
         for &factor in &[0.01f64, 1e-4] {
             let doc = cancelling_blend_document_reaching(1e6);
             let capability = complete_capability();
@@ -12910,8 +12966,8 @@ mod tests {
         // translation and vertex terms, which do scale, survive into the
         // residual. `calibrate_f32_rounding_ulps` measures the same thing over
         // 360_000 candidates and asserts it: with the rebased source side
-        // dropped from both bases the worst demand is `2.632` of the four ulps
-        // for bounds and `2.065` for the skin matrix. No correct candidate is
+        // dropped from both bases the worst demand is `2.800` of the four ulps
+        // for bounds and `2.164` for the skin matrix. No correct candidate is
         // refused without the excess, which is why it is written as a bound
         // that can be argued from the operands rather than one measured from a
         // population.
@@ -12958,7 +13014,7 @@ mod tests {
 
         let proof = prove_scale(&doc, &candidate, &plan)
             .expect("a correct candidate under a growing conversion must prove");
-        let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V4;
         assert!(
             proof.skin_matrix_residual < policy.f32_rounded_tolerance(0.0, 0.0, candidate_slot)
                 && proof.bounds_residual < policy.f32_rounded_tolerance(0.0, 0.0, candidate_bounds),
@@ -12973,13 +13029,13 @@ mod tests {
 
     #[test]
     fn a_rig_whose_skinned_extent_passes_the_square_root_of_f32_max_still_proves() {
-        // The bounds magnitude is a `max` over skinned extents, and taking
-        // that extent's length in `f32` would square it — putting a hard
-        // refusal boundary at `sqrt(f32::MAX) = 1.845e19`, nineteen decades
-        // below the `3.403e38` the rest of this proof stays finite to. Past
-        // that boundary the magnitude is `inf`, so the tolerance is `inf`,
-        // and `check_residual` refuses a *correct* candidate whose residual
-        // is exactly `0.0`.
+        // Bounds comparisons are per axis, so deriving their provenance from
+        // the blended point's L2 length would both use the wrong norm and
+        // square in `f32`. That would put a hard refusal boundary at
+        // `sqrt(f32::MAX) = 1.845e19`, nineteen decades below the `3.403e38`
+        // the rest of this proof stays finite to. Past that boundary the
+        // magnitude becomes `inf`, and `check_residual` refuses a *correct*
+        // candidate whose residual is exactly `0.0`.
         //
         // `1.9e19` is just past it, so this fixture fails in the most
         // misleading possible way if the length is ever narrowed back to
@@ -13207,7 +13263,7 @@ mod tests {
         let world_translation = worlds.matrices[joint].w_axis.truncate().length() as f64;
         assert!(
             proof.rest_translation_residual
-                > ScaleTolerancePolicy::APPENDIX_D_V3
+                > ScaleTolerancePolicy::APPENDIX_D_V4
                     .scalar_tolerance(world_translation, world_translation),
             "rest translation residual {} no longer exceeds the per-axis band its own \
              translation buys",
@@ -13279,7 +13335,7 @@ mod tests {
             "the two documents' chain magnitudes are 3190x apart, and the candidate's \
              arithmetic is what this obligation must be given room for",
         );
-        let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V4;
         assert!(
             proof.rest_translation_residual > policy.f32_rounded_tolerance(0.0, 0.0, source_chain),
             "rest translation residual {} no longer exceeds what the source side's chain \
@@ -13367,7 +13423,7 @@ mod tests {
         else {
             panic!("expected a refused rest translation, got {error:?}");
         };
-        let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V4;
         assert!(
             observed > tolerance,
             "rest translation band moved: observed {observed}, tolerance {tolerance}"
@@ -13695,7 +13751,7 @@ mod tests {
 
         let (deep_demand, deep) = deep_chain_demand(256);
         assert!(
-            deep_demand > f64::from(ScaleTolerancePolicy::APPENDIX_D_V3.f32_rounding_ulps),
+            deep_demand > f64::from(ScaleTolerancePolicy::APPENDIX_D_V4.f32_rounding_ulps),
             "a 256-link chain now demands only {deep_demand} ulps, inside the count. If the \
              chain magnitude has been widened to cover the links it accumulates, this fixture \
              should be replaced by an acceptance one — and DESIGN.md Appendix D section D.1's \
@@ -13781,7 +13837,7 @@ mod tests {
             .expect("a correct candidate whose sampled chain cancels must still prove");
         assert_eq!(proof.sample_time_count, 2);
         let source_chain = rest_world_pose(&doc.skeleton).unwrap().translation_chain[2];
-        let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V4;
         assert!(
             proof.trajectory_residual > policy.f32_rounded_tolerance(0.0, 0.0, source_chain),
             "trajectory residual {} no longer exceeds what the source side's chain buys, so \
@@ -13929,7 +13985,7 @@ mod tests {
              rounding its world translation carries is its ancestors', and only the inherited \
              chain magnitude names it",
         );
-        let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V4;
         assert!(
             proof.rest_translation_residual > policy.f32_rounded_tolerance(0.0, 0.0, own_link),
             "rest translation residual {} no longer exceeds what the leaf's own link buys, so \
@@ -13971,7 +14027,7 @@ mod tests {
              prove, for the rest fixture's reason",
         );
         assert_eq!(proof.sample_time_count, 2);
-        let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V4;
         assert!(
             proof.trajectory_residual > policy.f32_rounded_tolerance(0.0, 0.0, own_link),
             "trajectory residual {} no longer exceeds what the sampled leaf's own link buys, so \
@@ -14045,7 +14101,7 @@ mod tests {
         };
         let source_chain =
             rest_world_pose(&doc.skeleton).unwrap().translation_chain[UNSKINNED_SIBLING_BONE];
-        let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V4;
         assert!(
             observed > tolerance,
             "trajectory band moved: observed {observed}, tolerance {tolerance}"
@@ -14165,7 +14221,7 @@ mod tests {
     /// `scalar_tolerance` at a single magnitude, for fixtures that assert a
     /// residual exceeds the band the *component alone* would have bought.
     fn policy_scalar_tolerance_at(magnitude: f64) -> f64 {
-        ScaleTolerancePolicy::APPENDIX_D_V3.scalar_tolerance(magnitude, magnitude)
+        ScaleTolerancePolicy::APPENDIX_D_V4.scalar_tolerance(magnitude, magnitude)
     }
 
     #[test]
@@ -14252,7 +14308,7 @@ mod tests {
         // the relative band `scalar_relative` already declares. Stated as a
         // ratio rather than as two literals so it holds at every magnitude
         // rather than at the one a fixture happened to pick.
-        let policy = ScaleTolerancePolicy::APPENDIX_D_V3;
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V4;
         for magnitude in [1e-6, 1.0, 3190.0, 1e9] {
             let plain = policy.scalar_tolerance(magnitude, magnitude);
             let rounded = policy.f32_rounded_tolerance(magnitude, magnitude, magnitude);
@@ -14339,14 +14395,12 @@ mod tests {
     }
 
     #[test]
-    fn the_bounds_rounding_magnitude_is_the_max_of_the_points_and_the_composition() {
-        // Both halves are part of appendix-d-v3, so the accumulator maxes
-        // them rather than picking one. The diagonal point specifically pins
-        // the retained stage-2 L2 length: stage 1's per-component bound is
-        // only `300`, while the blended length is `sqrt(3) * 300`. Removing
-        // that conservative stage without changing the policy identity must
-        // fail this test. A slot that cancelled two large terms still sets the
-        // magnitude itself even when every skinned point is near the origin.
+    fn bounds_provenance_uses_the_per_axis_transform_and_slot_composition() {
+        // The diagonal point pins the per-axis norm: every component ran on
+        // `300`, so an L2 reading of the blended point would incorrectly
+        // widen the base to `sqrt(3) * 300`. A slot that cancelled two large
+        // terms still carries that composition provenance even when its
+        // skinned point is near the origin.
         let primitive = Primitive {
             positions: vec![Vec3::splat(300.0)],
             joints: vec![[0, 0, 0, 0]],
@@ -14363,8 +14417,7 @@ mod tests {
             &mut points_dominate,
         )
         .unwrap();
-        let blended_length = f64::from(Vec3::splat(300.0).length());
-        assert!((points_dominate.rounding_magnitude() - blended_length).abs() < 1e-3);
+        assert!((points_dominate.rounding_magnitude() - 300.0).abs() < 1e-6);
 
         // `W = [I | (5000, 0, 0)]` against `B = W^-1`: the product is the
         // identity, so `matrix_magnitude` of it is `1`, but the translation
@@ -14383,6 +14436,352 @@ mod tests {
             composition_dominates.rounding_magnitude() >= 5000.0,
             "the composition's magnitude was lost: {}",
             composition_dominates.rounding_magnitude()
+        );
+    }
+
+    #[test]
+    fn a_tiny_influence_carries_only_its_proportional_bounds_provenance() {
+        // Isolate the slot-composition half: both composed matrices are the
+        // identity, but the second was produced at magnitude `1e20`. Its
+        // `1e-20` weight contributes about `1`, rather than buying the full
+        // distant slot's tolerance. The transform-operand half is `1` for
+        // both influences, so an unweighted max or a mispaired
+        // `max(weight) * max(magnitude)` fails this numeric pin.
+        let primitive = Primitive {
+            positions: vec![Vec3::ZERO],
+            joints: vec![[0, 1, 0, 0]],
+            weights: vec![[1.0, 1e-20, 0.0, 0.0]],
+            ..Primitive::default()
+        };
+        let slots = [
+            SkinSlot {
+                matrix: Mat4::IDENTITY,
+                absolute: Mat4::IDENTITY,
+                rounding_magnitude: 1.0,
+            },
+            SkinSlot {
+                matrix: Mat4::IDENTITY,
+                absolute: Mat4::IDENTITY,
+                rounding_magnitude: 1e20,
+            },
+        ];
+        let mut accumulator = BoundsAccumulator::default();
+        accumulate_skinned_bounds(0, 0, &primitive, &slots, &mut accumulator).unwrap();
+
+        let magnitude = accumulator.rounding_magnitude();
+        assert!(
+            (magnitude - 2.0).abs() < 1e-6,
+            "the tiny slot bought more than its proportional provenance: {magnitude}"
+        );
+    }
+
+    #[test]
+    fn a_tiny_influence_carries_only_its_proportional_transform_provenance() {
+        // The transform itself, not the slot-composition history, is huge in
+        // this half. Both weighted contributions are `1`, so retaining the
+        // lightly weighted transform's unweighted `1e20` operand magnitude
+        // would be an unbounded tolerance widening.
+        let primitive = Primitive {
+            positions: vec![Vec3::new(1.0, 0.0, 0.0)],
+            joints: vec![[0, 1, 0, 0]],
+            weights: vec![[1.0, 1e-20, 0.0, 0.0]],
+            ..Primitive::default()
+        };
+        let slots = [
+            SkinSlot {
+                matrix: Mat4::IDENTITY,
+                absolute: Mat4::IDENTITY,
+                rounding_magnitude: 1.0,
+            },
+            SkinSlot {
+                matrix: Mat4::from_scale(Vec3::splat(1e20)),
+                absolute: Mat4::from_scale(Vec3::splat(1e20)),
+                rounding_magnitude: 1.0,
+            },
+        ];
+        let mut accumulator = BoundsAccumulator::default();
+        accumulate_skinned_bounds(0, 0, &primitive, &slots, &mut accumulator).unwrap();
+
+        let magnitude = accumulator.rounding_magnitude();
+        assert!(
+            (magnitude - 2.0).abs() < 1e-5,
+            "the tiny transform bought more than its proportional provenance: {magnitude}"
+        );
+    }
+
+    #[test]
+    fn weighted_bounds_provenance_recovers_the_tiny_influence_detection_floor() {
+        // The second joint sits at `1e20`, but its composed slot moves the
+        // vertex by only `1e17` and its weight is `1e-20`. The source bound is
+        // therefore about `1e-3`. Dropping that influence in the candidate is
+        // a real bound defect above the ordinary scalar band.
+        //
+        // Under v3's unweighted max the far joint bought an `O(1e20)` base, so
+        // the complete band admitted `9.53e13` units and this defect proved.
+        // The normalized provenance is about `2`, so v4 refuses it. Both
+        // numbers are read through production helpers to make this a measured
+        // before/after detection floor rather than a restatement of the
+        // formula.
+        let doc = composed_slot_document(
+            [Quat::IDENTITY; 2],
+            1.0,
+            [Vec3::ZERO, Vec3::new(1e20, 0.0, 0.0)],
+            [
+                Mat4::IDENTITY,
+                Mat4::from_translation(Vec3::new(1e17, 0.0, 0.0)),
+            ],
+            &[Vec3::ZERO],
+            &[[1.0, 1e-20, 0.0, 0.0]],
+        );
+        let plan = rest_bind_plan(&doc, 1.0);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        prove_scale(&doc, &candidate, &plan).expect("the valid tiny influence must prove");
+
+        let slots = rig_skin_slots(&doc);
+        let old_unweighted_base = slots
+            .iter()
+            .map(|slot| slot.rounding_magnitude)
+            .fold(0.0, f64::max);
+        let weighted_base = rig_bounds_magnitude(&doc);
+        assert!(
+            old_unweighted_base >= 1e20 && weighted_base < 3.0,
+            "fixture did not separate old and weighted bases: {old_unweighted_base} / \
+             {weighted_base}"
+        );
+
+        let mut broken = candidate.document().clone();
+        broken.assets.meshes[0].primitives[0].weights[0][1] = 0.0;
+        let error = prove_scale(&doc, &ScaleCandidate { document: broken }, &plan)
+            .expect_err("dropping the tiny influence must no longer hide behind the far joint");
+        let ScaleError::ProofResidualExceeded {
+            kind: ProofResidualKind::Bounds,
+            observed,
+            tolerance,
+        } = error
+        else {
+            panic!("expected the bounds obligation, got {error:?}");
+        };
+        let old_unweighted_tolerance = ScaleTolerancePolicy::APPENDIX_D_V4.f32_rounded_tolerance(
+            0.0,
+            0.0,
+            old_unweighted_base,
+        );
+        assert!(
+            observed > tolerance && observed < old_unweighted_tolerance,
+            "detection floor did not tighten: observed {observed}, v4 {tolerance}, old \
+             unweighted {old_unweighted_tolerance}"
+        );
+
+        // Record the exact before/after detection floor with one candidate
+        // mutation and adjacent positive binary32 values. The historical
+        // predicate is a frozen copy of v3's Bounds arithmetic and policy, so
+        // a future v4 edit cannot silently rewrite the historical baseline.
+        fn v3_bounds(document: &Document) -> ((Vec3, Vec3), f64) {
+            let slots = rig_skin_slots(document);
+            let instance = &document.assets.instances[0];
+            let mesh = &document.assets.meshes[instance.mesh];
+            let mut min = Vec3::splat(f32::INFINITY);
+            let mut max = Vec3::splat(f32::NEG_INFINITY);
+            let mut magnitude = 0.0f64;
+            for primitive in &mesh.primitives {
+                for (vertex, &position) in primitive.positions.iter().enumerate() {
+                    let joints = primitive.joints[vertex];
+                    let weights = primitive.weights[vertex];
+                    let mut skinned = Vec3::ZERO;
+                    let mut weight_sum = 0.0f32;
+                    let mut vertex_magnitude = 0.0f64;
+                    for slot_index in 0..4 {
+                        let weight = weights[slot_index];
+                        if weight == 0.0 {
+                            continue;
+                        }
+                        let slot = &slots[joints[slot_index] as usize];
+                        skinned += weight * slot.matrix.transform_point3(position);
+                        weight_sum += weight;
+                        vertex_magnitude = vertex_magnitude.max(column_operand_magnitude(
+                            slot.absolute,
+                            position.extend(1.0),
+                        ));
+                        vertex_magnitude = vertex_magnitude.max(slot.rounding_magnitude);
+                    }
+                    if weight_sum > 0.0 {
+                        skinned /= weight_sum;
+                        min = min.min(skinned);
+                        max = max.max(skinned);
+                        let length = skinned.length();
+                        let length = if length.is_finite() {
+                            f64::from(length)
+                        } else {
+                            skinned.as_dvec3().length()
+                        };
+                        magnitude = magnitude.max(vertex_magnitude).max(length);
+                    }
+                }
+            }
+            ((min, max), magnitude)
+        }
+
+        fn v3_bounds_outcome(
+            source: (Vec3, Vec3),
+            candidate: (Vec3, Vec3),
+            magnitude: f64,
+        ) -> (bool, f64) {
+            let mut refused = false;
+            let mut max_residual = 0.0f64;
+            for (before, after) in [(source.0, candidate.0), (source.1, candidate.1)] {
+                for (before, after) in before.to_array().into_iter().zip(after.to_array()) {
+                    let expected = f64::from(before);
+                    let observed = f64::from(after);
+                    let residual = (observed - expected).abs();
+                    let tolerance = 1e-6
+                        + 1e-5 * expected.abs().max(observed.abs())
+                        + 4.0 * magnitude.abs() * f64::from(f32::EPSILON);
+                    refused |= residual > tolerance;
+                    max_residual = max_residual.max(residual);
+                }
+            }
+            (refused, max_residual)
+        }
+
+        fn adjacent_transition(
+            accepted_value: f32,
+            refused_value: f32,
+            mut refuses: impl FnMut(f32) -> bool,
+        ) -> (f32, f32) {
+            let mut accepted = accepted_value.to_bits();
+            let mut refused = refused_value.to_bits();
+            assert!(!refuses(f32::from_bits(accepted)));
+            assert!(refuses(f32::from_bits(refused)));
+            while accepted + 1 < refused {
+                let middle = accepted + (refused - accepted) / 2;
+                if refuses(f32::from_bits(middle)) {
+                    refused = middle;
+                } else {
+                    accepted = middle;
+                }
+            }
+            (f32::from_bits(accepted), f32::from_bits(refused))
+        }
+
+        fn adjacent_reverse_transition(
+            refused_value: f32,
+            accepted_value: f32,
+            mut refuses: impl FnMut(f32) -> bool,
+        ) -> (f32, f32) {
+            let mut refused = refused_value.to_bits();
+            let mut accepted = accepted_value.to_bits();
+            assert!(refuses(f32::from_bits(refused)));
+            assert!(!refuses(f32::from_bits(accepted)));
+            while refused + 1 < accepted {
+                let middle = refused + (accepted - refused) / 2;
+                if refuses(f32::from_bits(middle)) {
+                    refused = middle;
+                } else {
+                    accepted = middle;
+                }
+            }
+            (f32::from_bits(refused), f32::from_bits(accepted))
+        }
+
+        let (source_v3_bounds, source_v3_magnitude) = v3_bounds(&doc);
+        let original_weight = 1e-20f32;
+        let mutate = |far_weight: f32| {
+            let mut broken = candidate.document().clone();
+            broken.assets.meshes[0].primitives[0].weights[0][1] = far_weight;
+            broken
+        };
+        let v4_refuses = |far_weight: f32| {
+            let broken = ScaleCandidate {
+                document: mutate(far_weight),
+            };
+            match prove_scale(&doc, &broken, &plan) {
+                Ok(_) => false,
+                Err(ScaleError::ProofResidualExceeded {
+                    kind: ProofResidualKind::Bounds,
+                    ..
+                }) => true,
+                Err(error) => panic!("the v4 floor reached another obligation: {error:?}"),
+            }
+        };
+        let (v4_lower_refused, v4_lower_accepted) =
+            adjacent_reverse_transition(0.0, original_weight, v4_refuses);
+        let (v4_upper_accepted, v4_upper_refused) =
+            adjacent_transition(original_weight, 1.0, v4_refuses);
+        let (v3_accepted, v3_refused) = adjacent_transition(original_weight, 1.0, |far_weight| {
+            let broken = mutate(far_weight);
+            let (candidate_v3_bounds, candidate_v3_magnitude) = v3_bounds(&broken);
+            let v3_magnitude = candidate_v3_magnitude.max(source_v3_magnitude);
+            assert_eq!(
+                v3_magnitude, old_unweighted_base,
+                "the historical base moved at candidate weight {far_weight}"
+            );
+            v3_bounds_outcome(source_v3_bounds, candidate_v3_bounds, v3_magnitude).0
+        });
+        let zero_v3 = v3_bounds(&mutate(0.0));
+        assert!(
+            !v3_bounds_outcome(
+                source_v3_bounds,
+                zero_v3.0,
+                source_v3_magnitude.max(zero_v3.1),
+            )
+            .0,
+            "v3 unexpectedly had a lower transition"
+        );
+
+        let v4_refusal = |far_weight: f32| {
+            let broken = ScaleCandidate {
+                document: mutate(far_weight),
+            };
+            let error = prove_scale(&doc, &broken, &plan).unwrap_err();
+            let ScaleError::ProofResidualExceeded {
+                kind: ProofResidualKind::Bounds,
+                observed,
+                tolerance,
+            } = error
+            else {
+                panic!("the v4 endpoint reached another obligation: {error:?}");
+            };
+            (observed, tolerance)
+        };
+        let v4_lower_outcome = v4_refusal(v4_lower_refused);
+        let v4_upper_outcome = v4_refusal(v4_upper_refused);
+        let v4_floor = v4_lower_outcome.0.min(v4_upper_outcome.0);
+        let (v3_refused_bounds, v3_refused_magnitude) = v3_bounds(&mutate(v3_refused));
+        let v3_floor = v3_bounds_outcome(
+            source_v3_bounds,
+            v3_refused_bounds,
+            source_v3_magnitude.max(v3_refused_magnitude),
+        )
+        .1;
+
+        assert_eq!(
+            [
+                v4_lower_refused.to_bits(),
+                v4_lower_accepted.to_bits(),
+                v4_upper_accepted.to_bits(),
+                v4_upper_refused.to_bits(),
+                v3_accepted.to_bits(),
+                v3_refused.to_bits(),
+            ],
+            [
+                0x1e3c_6f0a,
+                0x1e3c_6f0b,
+                0x1e3d_5b21,
+                0x1e3d_5b22,
+                0x3a7a_1be3,
+                0x3a7a_1be4,
+            ],
+            "the recorded before/after weight brackets moved; recalibrate and update Appendix D"
+        );
+        assert_eq!(v4_lower_refused.to_bits() + 1, v4_lower_accepted.to_bits());
+        assert_eq!(v4_upper_accepted.to_bits() + 1, v4_upper_refused.to_bits());
+        assert_eq!(v3_accepted.to_bits() + 1, v3_refused.to_bits());
+        assert_eq!(v4_floor.to_bits(), 0x3ec4_7800_0000_0000);
+        assert_eq!(v3_floor.to_bits(), 0x42d5_ac65_4000_0000);
+        assert!(
+            v3_floor / v4_floor > 3.9e19,
+            "the weighted base recovered too little detection power: v3 residual {v3_floor}, \
+             v4 residual {v4_floor}"
         );
     }
 
@@ -14608,12 +15007,12 @@ mod tests {
     // --- Tolerance policy identity -----------------------------------------
 
     #[test]
-    fn the_appendix_d_v3_tolerance_identity_is_pinned_through_plan_and_proof() {
+    fn the_appendix_d_v4_tolerance_identity_is_pinned_through_plan_and_proof() {
         // DESIGN.md Appendix D §D.1/§D.6: producers record this identity and
         // these thresholds in evidence, so a change to either is a new policy
         // identity rather than a silent retune.
-        fn assert_appendix_d_v3(policy: ScaleTolerancePolicy) {
-            assert_eq!(policy.id, "appendix-d-v3");
+        fn assert_appendix_d_v4(policy: ScaleTolerancePolicy) {
+            assert_eq!(policy.id, "appendix-d-v4");
             assert_eq!(policy.relative_orthogonality, 1e-5);
             assert_eq!(policy.equal_axis, 1e-5);
             assert_eq!(policy.common_factor, 1e-5);
@@ -14621,8 +15020,8 @@ mod tests {
             assert_eq!(policy.scalar_absolute, 1e-6);
             assert_eq!(policy.scalar_relative, 1e-5);
             assert_eq!(policy.rotation_residual_radians, 1e-5);
-            // `2^-14` exactly: the unit-scale bound v2 declared and v3
-            // retains, on the binary32 mantissa grid the composed-scale
+            // `2^-14` exactly: the unit-scale bound v2 declared and v3/v4
+            // retain, on the binary32 mantissa grid the composed-scale
             // measurement lives on.
             assert_eq!(policy.postcondition_unit_scale_residual, 6.103_515_625e-5);
             assert_eq!(policy.proof_sample_work_budget, 400_000_000);
@@ -14676,10 +15075,10 @@ mod tests {
         let capability = complete_capability();
 
         let whole_document = whole_document_plan(&doc, &capability);
-        assert_appendix_d_v3(whole_document.tolerance_policy());
+        assert_appendix_d_v4(whole_document.tolerance_policy());
         let candidate = build_scale_candidate(&doc, &whole_document).unwrap();
         let proof = prove_scale(&doc, &candidate, &whole_document).unwrap();
-        assert_appendix_d_v3(proof.tolerance_policy);
+        assert_appendix_d_v4(proof.tolerance_policy);
 
         let rest_bind = plan_scale(&ScaleRequest {
             operation: ScaleOperation::RestBindUniformScale {
@@ -14691,10 +15090,10 @@ mod tests {
             capability: &capability,
         })
         .unwrap();
-        assert_appendix_d_v3(rest_bind.tolerance_policy());
+        assert_appendix_d_v4(rest_bind.tolerance_policy());
         let candidate = build_scale_candidate(&doc, &rest_bind).unwrap();
         let proof = prove_scale(&doc, &candidate, &rest_bind).unwrap();
-        assert_appendix_d_v3(proof.tolerance_policy);
+        assert_appendix_d_v4(proof.tolerance_policy);
     }
 
     // --- Tolerance boundary and reported maxima ----------------------------
@@ -14708,7 +15107,7 @@ mod tests {
         // actually lands on the bound. `next_up` is the immediately larger
         // `f64`, so the accept/reject pair below straddles the bound with no
         // representable value in between.
-        let bound = ScaleTolerancePolicy::APPENDIX_D_V3.postcondition_unit_scale_residual;
+        let bound = ScaleTolerancePolicy::APPENDIX_D_V4.postcondition_unit_scale_residual;
         assert_eq!(
             check_residual(ProofResidualKind::UnitScale, bound, bound),
             Ok(())
@@ -15041,7 +15440,7 @@ mod tests {
         assert_eq!(
             prove_scale(&doc, &candidate, &plan).unwrap_err(),
             ScaleError::ProofSamplingBudgetExceeded {
-                policy_id: "appendix-d-v3",
+                policy_id: "appendix-d-v4",
                 sample_times: 200_000,
                 per_sample_cost: 2_007,
                 work: 401_400_000,
@@ -15074,7 +15473,7 @@ mod tests {
     fn work_unit_plan(prove_skin: bool, prove_bounds: bool) -> ScalePlan {
         ScalePlan {
             operation: ScaleOperation::WholeDocumentLinearUnits { factor: 1.0 },
-            tolerance_policy: ScaleTolerancePolicy::APPENDIX_D_V3,
+            tolerance_policy: ScaleTolerancePolicy::APPENDIX_D_V4,
             affected_nodes: vec![1, 2],
             transform_only_attachments: Vec::new(),
             common_factor: 1.0,
@@ -15226,7 +15625,7 @@ mod tests {
         assert_eq!(
             prove_scale(&doc, &candidate, &plan).unwrap_err(),
             ScaleError::ProofSamplingBudgetExceeded {
-                policy_id: "appendix-d-v3",
+                policy_id: "appendix-d-v4",
                 sample_times: 26_484,
                 per_sample_cost: 15_104,
                 work: 400_014_336,
@@ -15266,7 +15665,7 @@ mod tests {
         assert_eq!(
             prove_scale(&doc, &candidate, &plan).unwrap_err(),
             ScaleError::ProofSamplingBudgetExceeded {
-                policy_id: "appendix-d-v3",
+                policy_id: "appendix-d-v4",
                 sample_times: 19_995,
                 per_sample_cost: 20_007,
                 work: 400_039_965,
@@ -15291,13 +15690,13 @@ mod tests {
         // literal, and `20_001 * 20_000 = 400_020_000` is the next
         // representable step up in `sample_times` — one more sample time of
         // the same document.
-        let tol = ScaleTolerancePolicy::APPENDIX_D_V3;
+        let tol = ScaleTolerancePolicy::APPENDIX_D_V4;
         assert_eq!(tol.proof_sample_work_budget, 400_000_000);
         assert_eq!(check_sampling_budget(&tol, 20_000, 20_000), Ok(()));
         assert_eq!(
             check_sampling_budget(&tol, 20_001, 20_000),
             Err(ScaleError::ProofSamplingBudgetExceeded {
-                policy_id: "appendix-d-v3",
+                policy_id: "appendix-d-v4",
                 sample_times: 20_001,
                 per_sample_cost: 20_000,
                 work: 400_020_000,
@@ -15309,7 +15708,7 @@ mod tests {
         assert_eq!(
             check_sampling_budget(&tol, 400_000_001, 1),
             Err(ScaleError::ProofSamplingBudgetExceeded {
-                policy_id: "appendix-d-v3",
+                policy_id: "appendix-d-v4",
                 sample_times: 400_000_001,
                 per_sample_cost: 1,
                 work: 400_000_001,
@@ -15332,12 +15731,12 @@ mod tests {
         // uses them: `check_sampling_budget` takes the two numbers and the
         // policy, and nothing about the arithmetic depends on where they came
         // from.
-        let tol = ScaleTolerancePolicy::APPENDIX_D_V3;
+        let tol = ScaleTolerancePolicy::APPENDIX_D_V4;
         let sample_times = 9_223_372_036_854_775_808; // 2^63
         assert_eq!(
             check_sampling_budget(&tol, sample_times, 2),
             Err(ScaleError::ProofSamplingBudgetExceeded {
-                policy_id: "appendix-d-v3",
+                policy_id: "appendix-d-v4",
                 sample_times,
                 per_sample_cost: 2,
                 work: u64::MAX,
@@ -17404,7 +17803,7 @@ mod tests {
     /// cosine, none of which is required to be correctly rounded. Two machines
     /// can therefore differ in the last ulp of a joint local or a rotation, and
     /// the worst demand each reports can differ in its last printed digit. That
-    /// is the resolution at which these figures are re-derivable — at `2.6`
+    /// is the resolution at which these figures are re-derivable — at `2.8`
     /// against a count of `4` it cannot move a verdict, and the assertions
     /// below are thresholds rather than equalities for that reason.
     struct SweepRng(u64);
@@ -17470,13 +17869,24 @@ mod tests {
     enum SweepBlend {
         /// The second slot is the first composed with [`HALF_TURN_Z`] and the
         /// vertex lies along `x`, so the two terms of the weighted sum are
-        /// exact negations and the blend cancels to the origin. Every stage
-        /// downstream of the transform then reads a number the transform's own
-        /// operands are not in.
+        /// exact negations and the blend cancels to the origin. The result and
+        /// earlier slot stages then contain no record of the transform's own
+        /// operands.
         Cancelling,
         /// The two slots are independent, so the blend keeps the magnitude it
         /// was built from.
         Independent,
+    }
+
+    /// The skin-weight/provenance relationship a cell exercises.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum SweepWeights {
+        /// Both slots contribute equally.
+        Balanced,
+        /// For each vertex whose two influence bases differ, the larger base
+        /// receives a log-uniform weight in `[1e-20, 1e-2]` and the smaller
+        /// receives `1`.
+        Mismatched,
     }
 
     /// One sweep cell: an operation, a slot composition, and a blend.
@@ -17487,6 +17897,7 @@ mod tests {
         conversion: Option<f64>,
         composition: SweepComposition,
         blend: SweepBlend,
+        weights: SweepWeights,
     }
 
     impl SweepCell {
@@ -17515,6 +17926,10 @@ mod tests {
                 match self.blend {
                     SweepBlend::Cancelling => 0,
                     SweepBlend::Independent => 1,
+                },
+                match self.weights {
+                    SweepWeights::Balanced => 0,
+                    SweepWeights::Mismatched => 1,
                 },
             ] {
                 state = SweepRng(state ^ word).next_u64();
@@ -17548,6 +17963,14 @@ mod tests {
         /// two.
         bounds_min_of_sides: f64,
         skin_matrix_min_of_sides: f64,
+    }
+
+    #[derive(Debug, Clone, Copy, Default)]
+    struct SweepSample {
+        worst: SweepWorst,
+        mismatched_vertices: usize,
+        larger_slot_zero: usize,
+        larger_slot_one: usize,
     }
 
     impl SweepWorst {
@@ -17592,7 +18015,7 @@ mod tests {
     /// the count is actually asked for, by the whole scalar band, and a worst
     /// case under `4` measured this way is a worst case under `4` however the
     /// two terms are split.
-    fn sweep_one(rng: &mut SweepRng, cell: SweepCell) -> Result<SweepWorst, ScaleError> {
+    fn sweep_one(rng: &mut SweepRng, cell: SweepCell) -> Result<SweepSample, ScaleError> {
         let root = if cell.conversion.is_some() {
             1.0
         } else {
@@ -17624,7 +18047,7 @@ mod tests {
         ];
         let weights = [[0.5, 0.5, 0.0, 0.0]; 2];
 
-        let doc = match cell.composition {
+        let mut doc = match cell.composition {
             SweepComposition::Analytic => {
                 rotating_rig_document(rotations, root, locals, &points, &weights)
             }
@@ -17641,6 +18064,38 @@ mod tests {
                 composed_slot_document(rotations, root, locals, [first, second], &points, &weights)
             }
         };
+        let mut sample = SweepSample::default();
+        if cell.weights == SweepWeights::Mismatched {
+            let slots = rig_skin_slots(&doc);
+            for (vertex, &point) in points.iter().enumerate() {
+                let bases = [
+                    skin_influence_magnitude(&slots[0], point),
+                    skin_influence_magnitude(&slots[1], point),
+                ];
+                let Some((larger, smaller)) = (bases[0] > bases[1])
+                    .then_some((0, 1))
+                    .or_else(|| (bases[1] > bases[0]).then_some((1, 0)))
+                else {
+                    continue;
+                };
+                let mut mismatched = [0.0; 4];
+                mismatched[larger] = rng.decades(-20.0, -2.0);
+                mismatched[smaller] = 1.0;
+                doc.assets.meshes[0].primitives[0].weights[vertex] = mismatched;
+                let installed = doc.assets.meshes[0].primitives[0].weights[vertex];
+                assert!(
+                    installed[larger] > 0.0
+                        && installed[larger] <= 1e-2
+                        && installed[larger] < installed[smaller]
+                        && installed[smaller] == 1.0,
+                    "the production document did not retain the requested mismatch: bases \
+                     {bases:?}, weights {installed:?}"
+                );
+                sample.mismatched_vertices += 1;
+                sample.larger_slot_zero += usize::from(larger == 0);
+                sample.larger_slot_one += usize::from(larger == 1);
+            }
+        }
         // An analytic cell composes every slot to the identity, so its blend
         // cannot be made to cancel and the two blend values name the same
         // population. Swept anyway rather than special-cased, because "the
@@ -17671,7 +18126,7 @@ mod tests {
         let skin_candidate = rig_slot_magnitude(candidate.document());
         let bounds_source = q * rig_bounds_magnitude(&doc);
         let skin_source = q * rig_slot_magnitude(&doc);
-        Ok(SweepWorst {
+        sample.worst = SweepWorst {
             bounds: per(proof.bounds_residual, bounds_candidate.max(bounds_source)),
             skin_matrix: per(proof.skin_matrix_residual, skin_candidate.max(skin_source)),
             rest_translation: per(
@@ -17685,7 +18140,8 @@ mod tests {
                 proof.skin_matrix_residual,
                 skin_candidate.min(skin_source),
             ),
-        })
+        };
+        Ok(sample)
     }
 
     /// The sweep [`ScaleTolerancePolicy::f32_rounding_ulps`] is calibrated
@@ -17714,7 +18170,11 @@ mod tests {
     ///   shape the pre-sweep fixtures could build) and composed slots at
     ///   `abs(W * B) = {1e-3, 1, 1e3}`; and
     /// - two blends: two slots that oppose on the swept vertex and cancel it
-    ///   to the origin, and two independent slots that do not.
+    ///   to the origin under balanced weights, and two independent slots that
+    ///   do not; and
+    /// - two explicit weight profiles: balanced `[0.5, 0.5]`, and mismatched,
+    ///   where each vertex's larger production influence base receives a
+    ///   log-uniform weight in `[1e-20, 1e-2]` and the smaller receives `1`.
     ///
     /// with joint locals and vertex positions drawn log-uniformly over six and
     /// eight decades in random directions, a random rotation per joint, and
@@ -17738,11 +18198,14 @@ mod tests {
     /// products' bases must stay inside the count with the rebased source side
     /// dropped.
     ///
-    /// Three more assertions are the sweep's *floor*, because a sweep that
+    /// Five more assertions are the sweep's *floor*, because a sweep that
     /// silently measured nothing would otherwise report `0.000` in every
     /// column and pass: the cell count and the candidate count are checked
     /// against literals rather than against the swept arrays' own lengths, and
-    /// the worst demand of each obligation must be above `0.5`. An earlier
+    /// the mismatch-profile candidate count is fixed, the installed document
+    /// must actually carry the inverse weight/base relation in both slot
+    /// orientations within narrow brackets around the recorded population,
+    /// and each worst demand is bracketed below the shipped count. An earlier
     /// revision had none of these and claimed all of them. It compared `cells`
     /// against `conversions.len() * compositions.len() * blends.len()`, which
     /// holds however far those arrays are cut back — deleting every
@@ -17764,9 +18227,9 @@ mod tests {
     /// each of which names the smallest real error its obligation still
     /// refuses. This sweep is a one-directional instrument and says so.
     #[test]
-    #[ignore = "calibration sweep: tens of thousands of proofs. See the doc comment."]
+    #[ignore = "calibration sweep: 360,000 proofs. See the doc comment."]
     fn calibrate_f32_rounding_ulps() {
-        const TRIALS: usize = 5_000;
+        const TRIALS: usize = 2_500;
         let conversions = [
             None,
             Some(1e-4),
@@ -17785,57 +18248,75 @@ mod tests {
             SweepComposition::Scaled(3),
         ];
         let blends = [SweepBlend::Cancelling, SweepBlend::Independent];
+        let weight_profiles = [SweepWeights::Balanced, SweepWeights::Mismatched];
 
         let mut overall = SweepWorst::default();
         let mut refusals = Vec::new();
         let mut cells = 0usize;
+        let mut mismatched_profile_candidates = 0usize;
+        let mut mismatched_vertices = 0usize;
+        let mut larger_slot_zero = 0usize;
+        let mut larger_slot_one = 0usize;
         println!(
-            "{:>8}  {:>10}  {:>12}  {:>8}  {:>8}  {:>8}  {:>8}",
-            "conv", "abs(W*B)", "blend", "refused", "bounds", "skin", "rest"
+            "{:>8}  {:>10}  {:>12}  {:>10}  {:>8}  {:>8}  {:>8}  {:>8}",
+            "conv", "abs(W*B)", "blend", "weights", "refused", "bounds", "skin", "rest"
         );
         for &conversion in &conversions {
             for &composition in &compositions {
                 for &blend in &blends {
-                    let cell = SweepCell {
-                        conversion,
-                        composition,
-                        blend,
-                    };
-                    let mut rng = SweepRng(cell.seed());
-                    let mut worst = SweepWorst::default();
-                    let mut refused = 0usize;
-                    for _ in 0..TRIALS {
-                        match sweep_one(&mut rng, cell) {
-                            Ok(measured) => worst.fold(measured),
-                            Err(error) => {
-                                refused += 1;
-                                if refused == 1 {
-                                    refusals.push(format!("{cell:?}: {error:?}"));
+                    for &weights in &weight_profiles {
+                        let cell = SweepCell {
+                            conversion,
+                            composition,
+                            blend,
+                            weights,
+                        };
+                        let mut rng = SweepRng(cell.seed());
+                        let mut worst = SweepWorst::default();
+                        let mut refused = 0usize;
+                        for _ in 0..TRIALS {
+                            match sweep_one(&mut rng, cell) {
+                                Ok(measured) => {
+                                    worst.fold(measured.worst);
+                                    mismatched_vertices += measured.mismatched_vertices;
+                                    larger_slot_zero += measured.larger_slot_zero;
+                                    larger_slot_one += measured.larger_slot_one;
+                                }
+                                Err(error) => {
+                                    refused += 1;
+                                    if refused == 1 {
+                                        refusals.push(format!("{cell:?}: {error:?}"));
+                                    }
                                 }
                             }
                         }
+                        println!(
+                            "{:>8}  {:>10}  {:>12}  {:>10}  {:>8}  {:>8.3}  {:>8.3}  {:>8.3}",
+                            conversion.map_or("rest/bind".into(), |q| format!("{q:e}")),
+                            match composition {
+                                SweepComposition::Analytic => "1 (exact)".into(),
+                                SweepComposition::Scaled(e) => format!("1e{e}"),
+                            },
+                            format!("{blend:?}"),
+                            format!("{weights:?}"),
+                            format!("{refused}/{TRIALS}"),
+                            worst.bounds,
+                            worst.skin_matrix,
+                            worst.rest_translation,
+                        );
+                        overall.fold(worst);
+                        cells += 1;
+                        mismatched_profile_candidates +=
+                            usize::from(weights == SweepWeights::Mismatched) * TRIALS;
                     }
-                    println!(
-                        "{:>8}  {:>10}  {:>12}  {:>8}  {:>8.3}  {:>8.3}  {:>8.3}",
-                        conversion.map_or("rest/bind".into(), |q| format!("{q:e}")),
-                        match composition {
-                            SweepComposition::Analytic => "1 (exact)".into(),
-                            SweepComposition::Scaled(e) => format!("1e{e}"),
-                        },
-                        format!("{blend:?}"),
-                        format!("{refused}/{TRIALS}"),
-                        worst.bounds,
-                        worst.skin_matrix,
-                        worst.rest_translation,
-                    );
-                    overall.fold(worst);
-                    cells += 1;
                 }
             }
         }
         let total = cells * TRIALS;
         println!(
-            "\n{total} correct candidates over {cells} cells; worst ulps of the comparison base: \
+            "\n{total} correct candidates over {cells} cells; {mismatched_vertices} realized \
+             mismatched vertices ({larger_slot_zero} with slot 0 larger, {larger_slot_one} with \
+             slot 1 larger); worst ulps of the comparison base: \
              bounds {:.3}, skin matrix {:.3}, rest translation {:.3}; \
              f32_rounding_ulps = {}\nwith the rebased source side dropped from the two products' \
              bases: bounds {:.3}, skin matrix {:.3}\nwith the `max` over the two document \
@@ -17843,7 +18324,7 @@ mod tests {
             overall.bounds,
             overall.skin_matrix,
             overall.rest_translation,
-            ScaleTolerancePolicy::APPENDIX_D_V3.f32_rounding_ulps,
+            ScaleTolerancePolicy::APPENDIX_D_V4.f32_rounding_ulps,
             overall.bounds_candidate_only,
             overall.skin_matrix_candidate_only,
             overall.bounds_min_of_sides,
@@ -17862,8 +18343,8 @@ mod tests {
         // whole `abs(W * B) != 1` population that the transform-stage defect
         // hid in, left it passing. So did `TRIALS = 1`.
         assert_eq!(
-            cells, 72,
-            "the sweep no longer runs the 72 cells DESIGN.md Appendix D section D.1 names. If a \
+            cells, 144,
+            "the sweep no longer runs the 144 cells DESIGN.md Appendix D section D.1 names. If a \
              dimension was deliberately added or removed, this literal and the prose that quotes \
              it move together.",
         );
@@ -17873,18 +18354,32 @@ mod tests {
             "the sweep no longer draws the 360_000 candidates DESIGN.md Appendix D section D.1 \
              names, so the figures below are not the ones that section quotes.",
         );
+        assert_eq!(
+            mismatched_profile_candidates, 180_000,
+            "half of the sweep must use the explicit mismatched-weight profile",
+        );
+        assert!(
+            (240_000..=243_000).contains(&mismatched_vertices)
+                && (93_000..=96_000).contains(&larger_slot_zero)
+                && (146_000..=149_000).contains(&larger_slot_one),
+            "the mismatch profile did not realize both production-base orientations: \
+             {mismatched_vertices} vertices total, slot 0 larger {larger_slot_zero}, slot 1 \
+             larger {larger_slot_one}; expected the platform-tolerant brackets around the \
+             recorded 241667/94409/147258 population",
+        );
         // A floor on what the sweep *measured*, not only on what it refused.
-        // Every base in this proof is a `max` over stages, so loosening any
-        // one of them drives the measured demand toward zero rather than
-        // toward the count: without this, a mutation that inflates a base
+        // Every base in this proof grows monotonically with its arithmetic
+        // provenance, so loosening any one of them drives the measured demand
+        // toward zero rather than toward the count: without this, a mutation
+        // that inflates a base
         // reports `0.000` in every column and passes. The over-acceptance
         // direction proper is covered by named fixtures — the bracket tests
         // that pin the smallest error each obligation still refuses — and this
         // is only the floor that stops the sweep from reporting silence as
-        // success. `0.5` is an order of magnitude below the worst figures the
-        // section quotes and an order above nothing.
+        // success. The floors sit just below the documented maxima, while the
+        // policy count below is their common upper bracket.
         assert!(
-            overall.bounds > 0.5 && overall.skin_matrix > 0.5 && overall.rest_translation > 0.5,
+            overall.bounds > 2.7 && overall.skin_matrix > 2.1 && overall.rest_translation > 2.2,
             "the sweep measured almost no demand at all: bounds {:.3}, skin matrix {:.3}, rest \
              translation {:.3}. A base has been loosened, or the population no longer reaches \
              the cancellations it is built to reach — either way these figures are not a \
@@ -17893,7 +18388,7 @@ mod tests {
             overall.skin_matrix,
             overall.rest_translation,
         );
-        let allowed = f64::from(ScaleTolerancePolicy::APPENDIX_D_V3.f32_rounding_ulps);
+        let allowed = f64::from(ScaleTolerancePolicy::APPENDIX_D_V4.f32_rounding_ulps);
         assert!(
             overall.bounds < allowed
                 && overall.skin_matrix < allowed
