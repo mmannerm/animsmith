@@ -1243,20 +1243,23 @@ mod tests {
 
     #[test]
     fn unequal_arrays_report_one_value_change_at_the_array_root() {
-        let before = json!({ "nodes": [1] });
-        let after = json!({ "nodes": [1, 2] });
-        let mut collector = RawJsonDifferenceCollector::default();
-        collect_json_differences(&before, &after, "", &BTreeSet::new(), &mut collector);
-        assert_eq!(
-            collector.finish(),
-            GltfRawJsonDifferenceSummary {
-                differences: vec![GltfRawJsonDifference {
-                    pointer: "/nodes".into(),
-                    kind: GltfRawJsonDifferenceKind::ValueChanged,
-                }],
-                omitted: 0,
-            }
-        );
+        for (before, after) in [
+            (json!({ "nodes": [1] }), json!({ "nodes": [1, 2] })),
+            (json!({ "nodes": [1, 2] }), json!({ "nodes": [1] })),
+        ] {
+            let mut collector = RawJsonDifferenceCollector::default();
+            collect_json_differences(&before, &after, "", &BTreeSet::new(), &mut collector);
+            assert_eq!(
+                collector.finish(),
+                GltfRawJsonDifferenceSummary {
+                    differences: vec![GltfRawJsonDifference {
+                        pointer: "/nodes".into(),
+                        kind: GltfRawJsonDifferenceKind::ValueChanged,
+                    }],
+                    omitted: 0,
+                }
+            );
+        }
     }
 
     #[test]
