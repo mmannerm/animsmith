@@ -1097,14 +1097,17 @@ covers subnormal product rounding without imposing a fixed charge when
 finite binary32 operands finite. Charging the full parent at every nonzero
 link would let arbitrarily small or underflowed descendants buy unbounded
 tolerance. Only the three spatial output rows participate: affine row 3 is the
-exact homogeneous `1`, and including it would invent one unit of provenance
-for every identity link. Rest and sampled poses use one shared recurrence. A
-512-link zero-translation chain therefore adds nothing below a translated
-root; the corresponding chain of underflowed nonzero translations carries
-only its vanishing `s_i,r`-derived budget instead of charging the million-unit
-parent 512 times. An uneven chain accrues its actual per-link bases rather
-than `depth * max`, and the literal 192-link ring plus the `170`-degree chain
-prove through depth 512.
+exact homogeneous coordinate rather than a spatial translation component. For
+validated affine operands its linear entries are zero, so the shipped cap would
+make its contribution zero even if it were visited; excluding it explicitly
+keeps non-affine bottom-row values out of this spatial provenance if validation
+regresses. Rest and sampled poses use one shared recurrence. A 512-link
+zero-translation chain therefore adds nothing below a translated root; the
+corresponding chain of underflowed nonzero translations carries only its
+vanishing `s_i,r`-derived budget instead of charging the million-unit parent
+512 times. An uneven chain accrues its actual per-link bases rather than
+`depth * max`, and the literal 192-link ring plus the `170`-degree chain prove
+through depth 512.
 
 This scalar is not a universal componentwise forward-error proof: in
 particular it does not separately propagate error in the inherited linear

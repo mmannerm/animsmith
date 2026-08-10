@@ -4631,10 +4631,12 @@ fn product_operand_magnitude_f64(a: Mat4, b: Mat4) -> f64 {
 /// `41` binary32 ulps of that base over a million correct candidates, against
 /// `2.4` once this term is included.
 ///
-/// The homogeneous output row is deliberately excluded. For an affine matrix
-/// it is the exact constant `1`, so including it in an additive parent-chain
-/// budget would charge a fake unit for every identity/zero-translation link
-/// and break the quantity's unit-conversion homogeneity.
+/// The homogeneous output row is deliberately excluded because it is not a
+/// spatial translation component. For validated affine operands its linear
+/// entries are zero, so the shipped `contribution / EPSILON` cap would already
+/// make its contribution zero. Keeping the spatial range explicit preserves
+/// the quantity's unit semantics and prevents a non-affine bottom row from
+/// entering provenance if upstream validation regresses.
 ///
 /// Only the translation column needs it. A world linear part is a product of
 /// rotations and uniform scales, and while an individual entry of that
@@ -14187,6 +14189,53 @@ mod tests {
     }
 
     #[test]
+    fn sampled_and_rest_provenance_match_on_the_z_spatial_row() {
+        let local = Vec3::new(0.0, 0.0, 10.0);
+        let skeleton = Skeleton {
+            bones: vec![
+                Bone {
+                    name: "root".into(),
+                    parent: None,
+                    rest: Transform::default(),
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "z-child".into(),
+                    parent: Some(0),
+                    rest: Transform {
+                        translation: local,
+                        ..Transform::default()
+                    },
+                    inverse_bind: None,
+                },
+            ],
+        };
+        let clip = Clip {
+            name: "rest-equivalent-z".into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 1,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Vec3s(vec![local, local]),
+            }],
+        };
+
+        let rest = rest_world_pose(&skeleton).expect("the rest pose composes");
+        let sampled = world_at_time(&skeleton, &clip, 0.0).expect("the sampled pose composes");
+        assert_eq!(rest.bones[1].matrix, sampled.bones[1].matrix);
+        assert_eq!(
+            (
+                rest.bones[1].translation_rounding_magnitude,
+                sampled.bones[1].translation_rounding_magnitude,
+            ),
+            (10.0, 10.0),
+            "rest and sampled poses must share the recurrence across all three spatial rows",
+        );
+    }
+
+    #[test]
     fn zero_translation_descendants_do_not_recharge_a_translated_parent() {
         let mut nodes = vec![RigNode {
             parent: None,
@@ -18592,6 +18641,13 @@ mod tests {
             (1.0, 2.0, 3.0, 4.0, 5.0),
             "the central production diagnostic must keep every residual kind in its own field",
         );
+        proof.record_f32_rounding_demand(ProofResidualKind::UnaffectedInverseBind, 1.0, 0.0);
+        assert!(
+            proof
+                .unaffected_inverse_bind_f32_rounding_demand
+                .is_infinite(),
+            "a nonzero residual with no rounding provenance must fail calibration closed",
+        );
 
         let expected_counts = (
             proof.rest_translation_comparisons,
@@ -18831,9 +18887,10 @@ mod tests {
     /// What the floor does *not* buy is the over-acceptance direction. Every
     /// base here is a `max` over stages, so loosening one lowers the measured
     /// demand toward zero rather than raising it: a base widened inside
-    /// [`accumulate_skinned_bounds`] is caught by the `0.5` floor (it reports
-    /// `bounds 0.000`), but one widened at the *call site*, where this sweep's
-    /// own helpers do not read it, moves nothing this test measures. That
+    /// [`accumulate_skinned_bounds`] is caught by the Bounds non-silence
+    /// bracket below (it reports `bounds 0.000`), but one widened at the *call
+    /// site*, where this sweep's own helpers do not read it, moves nothing this
+    /// test measures. That
     /// direction is held by four chain-dominant adjacent-binary32 searches —
     /// `the_bounds_v5_floor_is_an_adjacent_f32_transition`,
     /// `the_skin_matrix_v5_floor_is_an_adjacent_f32_transition`,
