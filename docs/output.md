@@ -35,11 +35,11 @@ required `--evidence` path, and prints the same record to stdout under
 The paired GLB and evidence are prepared before publication, so an operator
 failure emits neither new destination and restores any prior pair.
 
-`scale` writes a separate scale-evidence v1 document to its required
+`scale` writes a separate scale-evidence v2 document to its required
 `--evidence` path, and prints the same record to stdout under
 `--format json`. Its immutable identity is
-`urn:animsmith:schema:scale-evidence:1`; its retrievable schema is
-[`scale-evidence-v1.schema.json`](schemas/scale-evidence-v1.schema.json). The
+`urn:animsmith:schema:scale-evidence:2`; its retrievable schema is
+[`scale-evidence-v2.schema.json`](schemas/scale-evidence-v2.schema.json). The
 artifact and its evidence are prepared as temporaries and published as one
 pair, so a refusal or an operator failure emits neither destination and
 restores any prior pair.
@@ -247,7 +247,7 @@ consumer-boundary semantics.
 
 ## `scale`
 
-`scale` writes scale evidence v1 beside its artifact. One record serves both
+`scale` writes scale evidence v2 beside its artifact. One record serves both
 outcomes, discriminated by `outcome`:
 
 | `outcome` | `result` | `rejection` | Published | Exit |
@@ -300,7 +300,18 @@ are deliberately not serialized, so identical arguments produce byte-identical
 evidence. Nothing in the record carries a timestamp.
 
 The normative contract is
-[`scale-evidence-v1.schema.json`](schemas/scale-evidence-v1.schema.json).
+[`scale-evidence-v2.schema.json`](schemas/scale-evidence-v2.schema.json).
+The immutable v1 schema remains available for historical records.
+
+For `artifact-proof-failed`, v2 adds
+`rejection.artifact_proof_differences`: the artifact proof's bounded,
+deterministically ordered raw-JSON difference sample. `items` has one to 16
+entries, each with a JSON-pointer `location` and an
+`artifact_added`, `artifact_removed`, or `value_changed` `kind`;
+`total` is the full difference count and `omitted` counts entries outside
+the sample. The field is `null` when the refusal did not compare raw JSON
+locations. It does not replace `rejection.violations`, which continues to
+describe unsupported source capabilities.
 
 ## `measure` and `lint`
 

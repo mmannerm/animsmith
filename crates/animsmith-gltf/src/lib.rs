@@ -84,6 +84,7 @@ pub use capability::{
     preflight_scale_source_bytes,
 };
 pub use scale::{
+    GltfRawJsonDifference, GltfRawJsonDifferenceKind, GltfRawJsonDifferenceSummary,
     GltfScaleArtifact, GltfScaleArtifactProof, GltfScaleRewriteError, capability_facts,
     prove_rewritten_artifact, prove_rewritten_rest_bind, rewrite_linear_units, rewrite_rest_bind,
 };

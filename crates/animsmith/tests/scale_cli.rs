@@ -19,8 +19,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 const SCALE_EVIDENCE_SCHEMA: &str =
-    include_str!("../../../docs/schemas/scale-evidence-v1.schema.json");
-const SCALE_EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:scale-evidence:1";
+    include_str!("../../../docs/schemas/scale-evidence-v2.schema.json");
+const SCALE_EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:scale-evidence:2";
 
 fn animsmith() -> Command {
     Command::new(env!("CARGO_BIN_EXE_animsmith"))
@@ -195,7 +195,7 @@ fn rest_bind_publishes_a_pair_whose_evidence_names_the_appendix_d5_policy() {
 
     let record = read_json(&fixture.path("out.json"));
     assert_schema_valid(&record);
-    assert_eq!(record["schema_version"], 1);
+    assert_eq!(record["schema_version"], 2);
     assert_eq!(record["schema"], SCALE_EVIDENCE_SCHEMA_ID);
     assert_eq!(record["command"], "scale");
     assert_eq!(record["outcome"], "published");
@@ -712,9 +712,90 @@ fn a_refused_run_publishes_nothing_and_leaves_a_prior_pair_byte_identical() {
     assert_eq!(record["rejection"]["stage"], "plan");
     assert_eq!(record["rejection"]["kind"], "factor-mismatch");
     assert_eq!(record["rejection"]["violations"], serde_json::json!([]));
+    assert_eq!(
+        record["rejection"]["artifact_proof_differences"],
+        Value::Null
+    );
     // A refusal still identifies the input it refused and inventories it.
     assert!(record["input"]["sha256"].is_string());
     assert_eq!(record["capability"]["container"], "glb");
+}
+
+#[test]
+fn scale_evidence_v2_schema_pins_artifact_proof_difference_shape() {
+    // Start with a real refusal so the fixture remains a full producer
+    // record, then replace only the nullable diagnostic payload.
+    let fixture = Fixture::new();
+    let output = fixture.rest_bind("0.02", "json");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    let mut record: Value =
+        serde_json::from_str(&stdout(&output)).expect("stdout is one JSON record");
+
+    record["rejection"]["artifact_proof_differences"] = serde_json::json!({
+        "total": 17,
+        "omitted": 1,
+        "items": (0..16)
+            .map(|index| serde_json::json!({
+                "location": format!("/nodes/{index}"),
+                "kind": match index % 3 {
+                    0 => "value_changed",
+                    1 => "artifact_added",
+                    _ => "artifact_removed",
+                }
+            }))
+            .collect::<Vec<_>>()
+    });
+    record["rejection"]["kind"] = serde_json::json!("artifact-proof-failed");
+    assert_schema_valid(&record);
+
+    for invalid in [
+        serde_json::json!({
+            "total": 0,
+            "omitted": 0,
+            "items": [{ "location": "/nodes/1", "kind": "value_changed" }]
+        }),
+        serde_json::json!({ "total": 1, "omitted": 0, "items": [] }),
+        serde_json::json!({
+            "total": 1,
+            "omitted": 0,
+            "items": [{ "location": "/nodes/1", "kind": "unsupported" }]
+        }),
+        serde_json::json!({
+            "total": 1,
+            "omitted": 0,
+            "items": [{ "location": "nodes/1", "kind": "value_changed" }]
+        }),
+        serde_json::json!({
+            "total": 17,
+            "omitted": 1,
+            "items": (0..17)
+                .map(|index| serde_json::json!({
+                    "location": format!("/nodes/{index}"),
+                    "kind": "artifact_removed"
+                }))
+                .collect::<Vec<_>>()
+        }),
+    ] {
+        let mut malformed = record.clone();
+        malformed["rejection"]["artifact_proof_differences"] = invalid;
+        let schema = validator();
+        let errors: Vec<_> = schema.iter_errors(&malformed).collect();
+        assert!(!errors.is_empty(), "{malformed}");
+    }
+
+    let mut wrong_kind = record;
+    wrong_kind["rejection"]["kind"] = serde_json::json!("factor-mismatch");
+    let schema = validator();
+    let errors: Vec<_> = schema.iter_errors(&wrong_kind).collect();
+    assert!(
+        !errors.is_empty(),
+        "only artifact-proof-failed may carry raw JSON differences"
+    );
 }
 
 #[test]
@@ -908,6 +989,11 @@ fn an_unsupported_source_domain_is_refused_with_its_typed_violations() {
     assert_schema_valid(&record);
     assert_eq!(record["rejection"]["stage"], "preflight");
     assert_eq!(record["rejection"]["kind"], "unsupported-source-domain");
+    assert_eq!(
+        record["rejection"]["artifact_proof_differences"],
+        Value::Null,
+        "capability violations retain their existing, separate contract"
+    );
     let kinds: Vec<&str> = record["rejection"]["violations"]
         .as_array()
         .expect("violations array")

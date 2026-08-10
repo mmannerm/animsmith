@@ -360,12 +360,17 @@ stderr, whatever the format, and emits nothing on stdout; a run whose stdout
 itself fails mid-record is the one exception, leaving a truncated record there
 and reporting the write failure on stderr without changing the exit code.
 
-`scale` writes scale evidence v1 to its required `--evidence` path, with
-immutable identity `urn:animsmith:schema:scale-evidence:1`; see
+`scale` writes scale evidence v2 to its required `--evidence` path, with
+immutable identity `urn:animsmith:schema:scale-evidence:2`; see
 [output.md](output.md) and
-[`scale-evidence-v1.schema.json`](schemas/scale-evidence-v1.schema.json). The
+[`scale-evidence-v2.schema.json`](schemas/scale-evidence-v2.schema.json). The
 same record is what `scale --format json` prints to stdout, for a refusal as
-well as for a published pair.
+well as for a published pair. For an `artifact-proof-failed` refusal,
+`rejection.artifact_proof_differences` names up to 16 raw JSON locations the
+proof found different; its `total` and `omitted` fields state the complete
+count and the number beyond that fixed cap. It is `null` for refusals that
+did not compare raw JSON locations, including capability refusals whose
+`violations` array retains its existing meaning.
 
 Machine-readable lint rejects `--allow` so it cannot erase evidence. The flag
 remains a presentation and exit-policy convenience for text and Markdown.

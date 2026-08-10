@@ -1720,6 +1720,13 @@ frontend owes that obligation by the other route — a complete loader-supplied
 inventory of every §D.4 domain — and may enable an operation only over the
 domains that inventory covers.
 
+An artifact-preservation refusal is diagnostic evidence as well as a refusal:
+the current scale-evidence v2 record carries the first 16 deterministic raw
+JSON differences, each as a pointer and an added/removed/changed direction,
+beside the full count and omitted remainder. The field is null when a refusal
+did not compare raw JSON locations; it is not an alternate spelling of the
+capability preflight's violations.
+
 For the glTF producers, that raw complement explicitly includes scene
 membership, default-scene selection, materials, and their references: neither
 scale operation owns a write location in those payloads, so the artifact layer

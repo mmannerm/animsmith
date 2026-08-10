@@ -34,7 +34,10 @@
 
 use super::bytes::{self, AccessorSpan};
 use super::rules::AccessorRule;
-use super::{GltfScaleArtifact, GltfScaleRewriteError};
+use super::{
+    GltfRawJsonDifference, GltfRawJsonDifferenceKind, GltfRawJsonDifferenceSummary,
+    GltfScaleArtifact, GltfScaleRewriteError,
+};
 use crate::capability::{GltfContainerKind, GltfScaleSource, raw_json_bytes};
 use crate::{LoadError, load_bytes, resolve_buffers};
 use animsmith_core::scale::{
@@ -46,6 +49,7 @@ use std::path::Path;
 
 const GLB_JSON_CHUNK: u32 = 0x4e4f_534a;
 const GLB_BIN_CHUNK: u32 = 0x004e_4942;
+const MAX_RAW_JSON_DIFFERENCES: usize = 16;
 
 /// Observed artifact-level evidence from [`prove_rewritten_artifact`] or
 /// [`super::prove_rewritten_rest_bind`].
@@ -205,21 +209,12 @@ pub fn prove_rewritten_artifact(
     for &buffer_index in artifact.reencoded_buffers() {
         allowed.insert(format!("/buffers/{buffer_index}/uri"));
     }
-    let mut differences = Vec::new();
-    collect_json_differences(
+    check_preserved_json(
         source.raw_json(),
         &artifact_json,
-        "",
         &allowed,
-        &mut differences,
-    );
-    if !differences.is_empty() {
-        return Err(failed(
-            "every raw JSON location outside the converted set is preserved exactly",
-            differences.len() as f64,
-            0.0,
-        ));
-    }
+        "every raw JSON location outside the converted set is preserved exactly",
+    )?;
 
     let converted_spans: Vec<AccessorSpan> = spans.iter().map(|(span, _)| *span).collect();
     proof.preserved_byte_ranges = check_preserved_bytes(
@@ -606,14 +601,60 @@ pub(super) fn check_preserved_bytes(
     Ok(preserved)
 }
 
+#[derive(Debug, Default)]
+struct RawJsonDifferenceCollector {
+    differences: Vec<GltfRawJsonDifference>,
+    total: usize,
+}
+
+impl RawJsonDifferenceCollector {
+    fn record(&mut self, pointer: String, kind: GltfRawJsonDifferenceKind) {
+        self.total += 1;
+        if self.differences.len() < MAX_RAW_JSON_DIFFERENCES {
+            self.differences
+                .push(GltfRawJsonDifference { pointer, kind });
+        }
+    }
+
+    fn finish(self) -> GltfRawJsonDifferenceSummary {
+        let omitted = self.total - self.differences.len();
+        GltfRawJsonDifferenceSummary {
+            differences: self.differences,
+            total: self.total,
+            omitted,
+        }
+    }
+}
+
+/// Check that every raw JSON location outside `allowed` is preserved.
+pub(super) fn check_preserved_json(
+    before: &Value,
+    after: &Value,
+    allowed: &BTreeSet<String>,
+    claim: &'static str,
+) -> Result<(), GltfScaleRewriteError> {
+    let mut collector = RawJsonDifferenceCollector::default();
+    collect_json_differences(before, after, "", allowed, &mut collector);
+    if collector.total == 0 {
+        return Ok(());
+    }
+    let summary = collector.finish();
+    Err(GltfScaleRewriteError::ArtifactProofFailed {
+        claim,
+        observed: summary.total as f64,
+        tolerance: 0.0,
+        raw_json_differences: Some(summary),
+    })
+}
+
 /// Collect every JSON location where the artifact differs from the source,
 /// skipping the pointers the conversion is allowed to change.
-pub(super) fn collect_json_differences(
+fn collect_json_differences(
     before: &Value,
     after: &Value,
     pointer: &str,
     allowed: &BTreeSet<String>,
-    out: &mut Vec<String>,
+    out: &mut RawJsonDifferenceCollector,
 ) {
     if allowed.contains(pointer) {
         return;
@@ -639,7 +680,13 @@ pub(super) fn collect_json_differences(
                     // conversion adds no member at all, so nothing there
                     // changes either way.
                     _ if allowed.contains(&child) => {}
-                    _ => out.push(child),
+                    (None, Some(_)) => {
+                        out.record(child, GltfRawJsonDifferenceKind::ArtifactAdded);
+                    }
+                    (Some(_), None) => {
+                        out.record(child, GltfRawJsonDifferenceKind::ArtifactRemoved);
+                    }
+                    (None, None) => unreachable!("a key came from at least one object"),
                 }
             }
         }
@@ -655,7 +702,7 @@ pub(super) fn collect_json_differences(
             }
         }
         (before, after) if before == after => {}
-        _ => out.push(pointer.to_owned()),
+        _ => out.record(pointer.to_owned(), GltfRawJsonDifferenceKind::ValueChanged),
     }
 }
 
@@ -756,11 +803,11 @@ pub(super) fn track_length(
     proof.length_factor_residual = proof.length_factor_residual.max(residual);
     let bound = tolerance.scalar_tolerance(expected, after);
     if residual > bound {
-        return Err(GltfScaleRewriteError::ArtifactProofFailed {
-            claim: "every converted length differs from the source by exactly the declared factor",
-            observed: residual,
-            tolerance: bound,
-        });
+        return Err(failed(
+            "every converted length differs from the source by exactly the declared factor",
+            residual,
+            bound,
+        ));
     }
     Ok(())
 }
@@ -775,11 +822,11 @@ pub(super) fn track_dimensionless(
     proof.dimensionless_residual = proof.dimensionless_residual.max(residual);
     let bound = tolerance.scalar_tolerance(before, after);
     if residual > bound {
-        return Err(GltfScaleRewriteError::ArtifactProofFailed {
-            claim: "every dimensionless value inside a converted range is invariant",
-            observed: residual,
-            tolerance: bound,
-        });
+        return Err(failed(
+            "every dimensionless value inside a converted range is invariant",
+            residual,
+            bound,
+        ));
     }
     Ok(())
 }
@@ -789,6 +836,7 @@ pub(super) fn failed(claim: &'static str, observed: f64, tolerance: f64) -> Gltf
         claim,
         observed,
         tolerance,
+        raw_json_differences: None,
     }
 }
 
@@ -947,8 +995,16 @@ mod tests {
         expected: &str,
     ) {
         match prove_rewritten_artifact(source, artifact, plan) {
-            Err(GltfScaleRewriteError::ArtifactProofFailed { claim, .. }) => {
+            Err(GltfScaleRewriteError::ArtifactProofFailed {
+                claim,
+                raw_json_differences,
+                ..
+            }) => {
                 assert_eq!(claim, expected);
+                assert_eq!(
+                    raw_json_differences, None,
+                    "ordinary proof claims do not carry raw JSON diagnostics"
+                );
             }
             other => panic!("expected the claim {expected:?} to fail, got {other:?}"),
         }
@@ -1035,16 +1091,153 @@ mod tests {
     }
 
     #[test]
-    fn a_changed_preserved_json_location_fails_json_preservation() {
+    fn added_and_removed_preserved_json_locations_keep_whole_document_direction() {
         let (source, mut artifact, plan) = fixture();
         let mut value = artifact_value(&artifact);
-        value["materials"][0]["name"] = json!("renamed");
+        let material = value["materials"][0]
+            .as_object_mut()
+            .expect("fixture material is an object");
+        material.remove("name");
+        material.insert("replacement".into(), json!(true));
         put_artifact_value(&mut artifact, &value);
-        expect_claim(
-            &source,
-            &artifact,
-            &plan,
-            "every raw JSON location outside the converted set is preserved exactly",
+        let error = prove_rewritten_artifact(&source, &artifact, &plan)
+            .expect_err("changed preserved JSON must fail");
+        assert_eq!(
+            error.to_string(),
+            "artifact proof claim \"every raw JSON location outside the converted set is preserved exactly\" observed 2, tolerance 0; raw JSON differences: /materials/0/name (artifact-removed), /materials/0/replacement (artifact-added)"
+        );
+        match error {
+            GltfScaleRewriteError::ArtifactProofFailed {
+                claim,
+                observed,
+                tolerance,
+                raw_json_differences: Some(summary),
+            } => {
+                assert_eq!(
+                    claim,
+                    "every raw JSON location outside the converted set is preserved exactly"
+                );
+                assert_eq!(observed, 2.0);
+                assert_eq!(tolerance, 0.0);
+                assert_eq!(
+                    summary,
+                    GltfRawJsonDifferenceSummary {
+                        differences: vec![
+                            GltfRawJsonDifference {
+                                pointer: "/materials/0/name".into(),
+                                kind: GltfRawJsonDifferenceKind::ArtifactRemoved,
+                            },
+                            GltfRawJsonDifference {
+                                pointer: "/materials/0/replacement".into(),
+                                kind: GltfRawJsonDifferenceKind::ArtifactAdded,
+                            },
+                        ],
+                        total: 2,
+                        omitted: 0,
+                    }
+                );
+            }
+            other => panic!("expected located JSON diagnostics, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn json_difference_collection_is_typed_escaped_ordered_and_allowlisted() {
+        let before = json!({
+            "a/b": { "~key": 1 },
+            "allowed": "source secret",
+            "removed": true,
+            "value": 1
+        });
+        let after = json!({
+            "a/b": { "~key": 2 },
+            "added": true,
+            "allowed": "artifact secret",
+            "value": 2
+        });
+        let allowed = BTreeSet::from(["/allowed".to_owned()]);
+        let mut collector = RawJsonDifferenceCollector::default();
+        collect_json_differences(&before, &after, "", &allowed, &mut collector);
+        assert_eq!(
+            collector.finish(),
+            GltfRawJsonDifferenceSummary {
+                differences: vec![
+                    GltfRawJsonDifference {
+                        pointer: "/a~1b/~0key".into(),
+                        kind: GltfRawJsonDifferenceKind::ValueChanged,
+                    },
+                    GltfRawJsonDifference {
+                        pointer: "/added".into(),
+                        kind: GltfRawJsonDifferenceKind::ArtifactAdded,
+                    },
+                    GltfRawJsonDifference {
+                        pointer: "/removed".into(),
+                        kind: GltfRawJsonDifferenceKind::ArtifactRemoved,
+                    },
+                    GltfRawJsonDifference {
+                        pointer: "/value".into(),
+                        kind: GltfRawJsonDifferenceKind::ValueChanged,
+                    },
+                ],
+                total: 4,
+                omitted: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn json_difference_collection_caps_storage_but_counts_every_difference() {
+        let mut before = Map::new();
+        let mut after = Map::new();
+        for index in 0..20 {
+            before.insert(format!("key-{index:02}"), json!(0));
+            after.insert(format!("key-{index:02}"), json!(1));
+        }
+        let mut collector = RawJsonDifferenceCollector::default();
+        collect_json_differences(
+            &Value::Object(before),
+            &Value::Object(after),
+            "",
+            &BTreeSet::new(),
+            &mut collector,
+        );
+        let summary = collector.finish();
+        assert_eq!(summary.total, 20);
+        assert_eq!(summary.omitted, 4);
+        assert_eq!(summary.differences.len(), MAX_RAW_JSON_DIFFERENCES);
+        assert_eq!(summary.differences.first().unwrap().pointer, "/key-00");
+        assert_eq!(summary.differences.last().unwrap().pointer, "/key-15");
+        let display = super::super::RawJsonDifferenceSuffix(Some(&summary)).to_string();
+        assert!(display.ends_with("; 4 omitted"));
+        assert!(display.contains("/key-15 (value-changed)"));
+        assert!(
+            !display.contains("/key-16"),
+            "omitted pointers stay omitted"
+        );
+        assert!(
+            summary
+                .differences
+                .iter()
+                .all(|difference| difference.kind == GltfRawJsonDifferenceKind::ValueChanged)
+        );
+    }
+
+    #[test]
+    fn unequal_arrays_report_one_value_change_at_the_array_root() {
+        let before = json!({ "nodes": [1] });
+        let after = json!({ "nodes": [1, 2] });
+        let mut collector = RawJsonDifferenceCollector::default();
+        collect_json_differences(&before, &after, "", &BTreeSet::new(), &mut collector);
+        assert_eq!(
+            collector.finish(),
+            GltfRawJsonDifferenceSummary {
+                differences: vec![GltfRawJsonDifference {
+                    pointer: "/nodes".into(),
+                    kind: GltfRawJsonDifferenceKind::ValueChanged,
+                }],
+                total: 1,
+                omitted: 0,
+            }
         );
     }
 

@@ -1356,10 +1356,12 @@ fn the_artifact_proof_refuses_a_plan_whose_factor_is_not_the_artifacts() {
             claim,
             observed,
             tolerance,
+            raw_json_differences,
         }) => {
             assert_eq!(claim, "plan factor equals the artifact's declared factor");
             assert_eq!(observed, 2.0);
             assert_eq!(tolerance, 0.0);
+            assert_eq!(raw_json_differences, None);
         }
         other => panic!("expected ArtifactProofFailed, got {other:?}"),
     }
