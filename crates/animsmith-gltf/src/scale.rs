@@ -461,6 +461,78 @@ impl GltfScaleArtifact {
 
 // --- Errors -----------------------------------------------------------------
 
+/// The structural relationship of one raw JSON difference to the source.
+///
+/// Values are intentionally not retained: proof diagnostics identify where
+/// preservation failed without copying potentially sensitive source payloads
+/// into logs or machine-readable output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum GltfRawJsonDifferenceKind {
+    /// The artifact declares a member the source did not.
+    ArtifactAdded,
+    /// The source declares a member the artifact removed.
+    ArtifactRemoved,
+    /// Both sides declare the location, but its value or shape changed.
+    ValueChanged,
+}
+
+impl std::fmt::Display for GltfRawJsonDifferenceKind {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::ArtifactAdded => "artifact-added",
+            Self::ArtifactRemoved => "artifact-removed",
+            Self::ValueChanged => "value-changed",
+        })
+    }
+}
+
+/// One value-free raw JSON difference found by an artifact preservation proof.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GltfRawJsonDifference {
+    /// RFC 6901 JSON pointer of a deterministic difference root.
+    ///
+    /// Object members and equal-length array elements are walked recursively.
+    /// Unequal arrays are reported once at their array root because their
+    /// element identities no longer pair one-to-one.
+    pub pointer: String,
+    /// How the artifact differs from the source at [`Self::pointer`].
+    pub kind: GltfRawJsonDifferenceKind,
+}
+
+/// Bounded raw JSON diagnostics for an artifact preservation proof failure.
+///
+/// [`Self::differences`] contains at most sixteen entries. The full count is
+/// the retained length plus [`Self::omitted`], the exact number not retained.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GltfRawJsonDifferenceSummary {
+    /// Deterministic prefix of differences, ordered by the JSON tree walk.
+    pub differences: Vec<GltfRawJsonDifference>,
+    /// Exact number of differences not retained in [`Self::differences`].
+    pub omitted: usize,
+}
+
+struct RawJsonDifferenceSuffix<'a>(Option<&'a GltfRawJsonDifferenceSummary>);
+
+impl std::fmt::Display for RawJsonDifferenceSuffix<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Some(summary) = self.0 else {
+            return Ok(());
+        };
+        formatter.write_str("; raw JSON differences: ")?;
+        for (index, difference) in summary.differences.iter().enumerate() {
+            if index > 0 {
+                formatter.write_str(", ")?;
+            }
+            write!(formatter, "{} ({})", difference.pointer, difference.kind)?;
+        }
+        if summary.omitted > 0 {
+            write!(formatter, "; {} omitted", summary.omitted)?;
+        }
+        Ok(())
+    }
+}
+
 /// Typed, fail-closed rejection from [`rewrite_linear_units`] or
 /// [`prove_rewritten_artifact`].
 #[derive(Debug, thiserror::Error)]
@@ -631,7 +703,10 @@ pub enum GltfScaleRewriteError {
         reason: &'static str,
     },
     /// An artifact-level proof claim failed.
-    #[error("artifact proof claim {claim:?} observed {observed}, tolerance {tolerance}")]
+    #[error(
+        "artifact proof claim {claim:?} observed {observed}, tolerance {tolerance}{diagnostics}",
+        diagnostics = RawJsonDifferenceSuffix(.raw_json_differences.as_ref())
+    )]
     ArtifactProofFailed {
         /// Stable machine-readable claim identity.
         claim: &'static str,
@@ -639,6 +714,11 @@ pub enum GltfScaleRewriteError {
         observed: f64,
         /// The bound it exceeded.
         tolerance: f64,
+        /// Bounded, value-free locations for a raw JSON preservation failure.
+        ///
+        /// Every other artifact proof claim carries `None` because its
+        /// existing typed fields already identify the failed obligation.
+        raw_json_differences: Option<GltfRawJsonDifferenceSummary>,
     },
 }
 

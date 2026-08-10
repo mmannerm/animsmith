@@ -79,7 +79,8 @@ use animsmith_core::scale::{
 };
 use animsmith_core::{InputIdentity, ToolInfo};
 use animsmith_gltf::{
-    GltfCapabilityManifest, GltfCapabilityViolation, GltfContainerKind, GltfScaleArtifact,
+    GltfCapabilityManifest, GltfCapabilityViolation, GltfContainerKind, GltfRawJsonDifference,
+    GltfRawJsonDifferenceKind, GltfRawJsonDifferenceSummary, GltfScaleArtifact,
     GltfScaleArtifactProof, GltfScalePreflightError, GltfScaleRewriteError, GltfScaleSource,
     capability_facts, preflight_scale_source_bytes, prove_rewritten_artifact,
     prove_rewritten_rest_bind, rewrite_linear_units, rewrite_rest_bind,
@@ -90,8 +91,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-const SCALE_EVIDENCE_SCHEMA_VERSION: u32 = 1;
-pub(crate) const SCALE_EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:scale-evidence:1";
+const SCALE_EVIDENCE_SCHEMA_VERSION: u32 = 2;
+pub(crate) const SCALE_EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:scale-evidence:2";
 
 // --- Request ---------------------------------------------------------------
 
@@ -463,9 +464,73 @@ struct RejectionRecord {
     /// Empty otherwise — never absent, so a consumer never has to
     /// distinguish "no violations" from "field not written".
     violations: Vec<GltfCapabilityViolation>,
+    /// Bounded raw-JSON evidence for an artifact-preservation refusal.
+    ///
+    /// `null` says that this refusal did not compare raw JSON locations. It
+    /// is deliberately separate from [`Self::violations`]: capability
+    /// violations describe unsupported source domains, while these entries
+    /// describe a failed preservation claim after rewriting.
+    artifact_proof_differences: Option<ArtifactProofDifferencesRecord>,
 }
 
-/// The immutable versioned scale-evidence contract, `scale-evidence:1`.
+/// A bounded raw-JSON difference sample from an artifact proof.
+#[derive(Debug, Clone, Serialize)]
+struct ArtifactProofDifferencesRecord {
+    omitted: usize,
+    items: Vec<ArtifactProofDifferenceRecord>,
+}
+
+impl From<GltfRawJsonDifferenceSummary> for ArtifactProofDifferencesRecord {
+    fn from(summary: GltfRawJsonDifferenceSummary) -> Self {
+        Self {
+            omitted: summary.omitted,
+            items: summary.differences.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+/// One raw-JSON location the artifact proof found different.
+#[derive(Debug, Clone, Serialize)]
+struct ArtifactProofDifferenceRecord {
+    location: String,
+    kind: ArtifactProofDifferenceKindRecord,
+}
+
+impl From<GltfRawJsonDifference> for ArtifactProofDifferenceRecord {
+    fn from(difference: GltfRawJsonDifference) -> Self {
+        Self {
+            location: difference.pointer,
+            kind: difference.kind.into(),
+        }
+    }
+}
+
+/// Stable machine identity for a raw-JSON difference direction.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ArtifactProofDifferenceKindRecord {
+    ArtifactAdded,
+    ArtifactRemoved,
+    ValueChanged,
+}
+
+impl From<GltfRawJsonDifferenceKind> for ArtifactProofDifferenceKindRecord {
+    fn from(kind: GltfRawJsonDifferenceKind) -> Self {
+        match kind {
+            GltfRawJsonDifferenceKind::ArtifactAdded => Self::ArtifactAdded,
+            GltfRawJsonDifferenceKind::ArtifactRemoved => Self::ArtifactRemoved,
+            GltfRawJsonDifferenceKind::ValueChanged => Self::ValueChanged,
+            // This immutable v2 contract has exactly these three values. A
+            // future frontend kind requires a new evidence identity, rather
+            // than silently serializing a record v2 consumers cannot read.
+            _ => unreachable!(
+                "a new raw JSON difference kind requires a new scale-evidence schema version"
+            ),
+        }
+    }
+}
+
+/// The immutable versioned scale-evidence contract, `scale-evidence:2`.
 ///
 /// One schema serves both outcomes, discriminated by `outcome`: a published
 /// run carries `result` and a `null` `rejection`, a refused run the reverse.
@@ -511,6 +576,7 @@ fn refuse(stage: Stage, kind: &'static str, detail: String) -> Failure {
         kind,
         detail,
         violations: Vec::new(),
+        artifact_proof_differences: None,
     })
 }
 
@@ -601,52 +667,66 @@ fn plan_failure(error: ScaleError) -> Failure {
 /// is reached.
 fn rewrite_failure(stage: Stage, error: GltfScaleRewriteError) -> Failure {
     let detail = error.to_string();
-    let (kind, violations) = match error {
+    let (kind, violations, artifact_proof_differences) = match error {
         GltfScaleRewriteError::Capability { violations, .. } => {
-            ("unsupported-source-domain", violations)
+            ("unsupported-source-domain", violations, None)
         }
-        GltfScaleRewriteError::Plan(error) => (scale_error_kind(&error), Vec::new()),
-        GltfScaleRewriteError::Load(_) => ("unreadable-source", Vec::new()),
-        GltfScaleRewriteError::Write(_) => ("unwritable-container", Vec::new()),
+        GltfScaleRewriteError::Plan(error) => (scale_error_kind(&error), Vec::new(), None),
+        GltfScaleRewriteError::Load(_) => ("unreadable-source", Vec::new(), None),
+        GltfScaleRewriteError::Write(_) => ("unwritable-container", Vec::new(), None),
         GltfScaleRewriteError::UnhandledLengthField { .. } => {
-            ("unhandled-length-field", Vec::new())
+            ("unhandled-length-field", Vec::new(), None)
         }
         GltfScaleRewriteError::ConflictingRewriteRule { .. } => {
-            ("conflicting-rewrite-rule", Vec::new())
+            ("conflicting-rewrite-rule", Vec::new(), None)
         }
-        GltfScaleRewriteError::UnrewritableAccessor { .. } => ("unrewritable-accessor", Vec::new()),
+        GltfScaleRewriteError::UnrewritableAccessor { .. } => {
+            ("unrewritable-accessor", Vec::new(), None)
+        }
         GltfScaleRewriteError::ConflictingNodeTransform { .. } => {
-            ("conflicting-node-transform", Vec::new())
+            ("conflicting-node-transform", Vec::new(), None)
         }
-        GltfScaleRewriteError::NonAffineNodeMatrix { .. } => ("non-affine-node-matrix", Vec::new()),
-        GltfScaleRewriteError::ImagePayloadOverlap { .. } => ("image-payload-overlap", Vec::new()),
+        GltfScaleRewriteError::NonAffineNodeMatrix { .. } => {
+            ("non-affine-node-matrix", Vec::new(), None)
+        }
+        GltfScaleRewriteError::ImagePayloadOverlap { .. } => {
+            ("image-payload-overlap", Vec::new(), None)
+        }
         GltfScaleRewriteError::UnreassemblableContainer { .. } => {
-            ("unreassemblable-container", Vec::new())
+            ("unreassemblable-container", Vec::new(), None)
         }
         GltfScaleRewriteError::ValueNotRepresentable { .. } => {
-            ("value-not-representable", Vec::new())
+            ("value-not-representable", Vec::new(), None)
         }
         GltfScaleRewriteError::ConflictingRestBindFactor { .. } => {
-            ("conflicting-rest-bind-factor", Vec::new())
+            ("conflicting-rest-bind-factor", Vec::new(), None)
         }
-        GltfScaleRewriteError::ClosureMismatch { .. } => ("closure-mismatch", Vec::new()),
+        GltfScaleRewriteError::ClosureMismatch { .. } => ("closure-mismatch", Vec::new(), None),
         GltfScaleRewriteError::ParentChainDisagreement { .. } => {
-            ("parent-chain-disagreement", Vec::new())
+            ("parent-chain-disagreement", Vec::new(), None)
         }
         GltfScaleRewriteError::AmbiguousSourceNodeProjection { .. } => {
-            ("ambiguous-source-node-projection", Vec::new())
+            ("ambiguous-source-node-projection", Vec::new(), None)
         }
         GltfScaleRewriteError::UnusableSourceHierarchy { .. } => {
-            ("unusable-source-hierarchy", Vec::new())
+            ("unusable-source-hierarchy", Vec::new(), None)
         }
-        GltfScaleRewriteError::ArtifactProofFailed { .. } => ("artifact-proof-failed", Vec::new()),
-        _ => ("unclassified-rewrite-error", Vec::new()),
+        GltfScaleRewriteError::ArtifactProofFailed {
+            raw_json_differences,
+            ..
+        } => (
+            "artifact-proof-failed",
+            Vec::new(),
+            raw_json_differences.map(Into::into),
+        ),
+        _ => ("unclassified-rewrite-error", Vec::new(), None),
     };
     Failure::Refusal(RejectionRecord {
         stage,
         kind,
         detail,
         violations,
+        artifact_proof_differences,
     })
 }
 
@@ -833,6 +913,7 @@ pub(crate) fn run(request: &Request, tool: ToolInfo) -> Result<ExitCode, String>
                 kind: "unreadable-source",
                 detail: error.to_string(),
                 violations: Vec::new(),
+                artifact_proof_differences: None,
             };
             return emit_rejection(request, tool, &paths, identity, None, rejection);
         }
@@ -848,6 +929,7 @@ pub(crate) fn run(request: &Request, tool: ToolInfo) -> Result<ExitCode, String>
                     "glTF scale preflight rejected {count} unsupported source domain(s)"
                 ),
                 violations,
+                artifact_proof_differences: None,
             };
             return emit_rejection(request, tool, &paths, identity, Some(&manifest), rejection);
         }
@@ -863,6 +945,7 @@ pub(crate) fn run(request: &Request, tool: ToolInfo) -> Result<ExitCode, String>
                 kind: "unclassified-preflight-error",
                 detail: other.to_string(),
                 violations: Vec::new(),
+                artifact_proof_differences: None,
             };
             return emit_rejection(request, tool, &paths, identity, None, rejection);
         }
@@ -1191,6 +1274,100 @@ mod tests {
             serde_json::to_string(&rest_bind).unwrap(),
             r#"{"kind":"rest-bind","declared_factor":0.01,"source_skin_index":2,"source_root_node_index":3}"#
         );
+    }
+
+    #[test]
+    fn artifact_proof_difference_diagnostics_preserve_locations_and_kinds() {
+        let summary = GltfRawJsonDifferenceSummary {
+            omitted: 1,
+            differences: vec![
+                GltfRawJsonDifference {
+                    pointer: "/nodes/1/translation/0".to_owned(),
+                    kind: GltfRawJsonDifferenceKind::ValueChanged,
+                },
+                GltfRawJsonDifference {
+                    pointer: "/nodes/2".to_owned(),
+                    kind: GltfRawJsonDifferenceKind::ArtifactAdded,
+                },
+                GltfRawJsonDifference {
+                    pointer: "/nodes/3".to_owned(),
+                    kind: GltfRawJsonDifferenceKind::ArtifactRemoved,
+                },
+            ],
+        };
+
+        assert_eq!(
+            serde_json::to_string(&ArtifactProofDifferencesRecord::from(summary)).unwrap(),
+            r#"{"omitted":1,"items":[{"location":"/nodes/1/translation/0","kind":"value_changed"},{"location":"/nodes/2","kind":"artifact_added"},{"location":"/nodes/3","kind":"artifact_removed"}]}"#
+        );
+    }
+
+    #[test]
+    fn artifact_proof_failure_maps_its_differences_into_the_shipped_rejection() {
+        let differences = (0..16)
+            .map(|index| GltfRawJsonDifference {
+                pointer: format!("/nodes/{index}"),
+                kind: match index % 3 {
+                    0 => GltfRawJsonDifferenceKind::ValueChanged,
+                    1 => GltfRawJsonDifferenceKind::ArtifactAdded,
+                    _ => GltfRawJsonDifferenceKind::ArtifactRemoved,
+                },
+            })
+            .collect();
+        let error = GltfScaleRewriteError::ArtifactProofFailed {
+            claim: "preserved raw JSON",
+            observed: 20.0,
+            tolerance: 0.0,
+            raw_json_differences: Some(GltfRawJsonDifferenceSummary {
+                omitted: 4,
+                differences,
+            }),
+        };
+
+        let Failure::Refusal(rejection) = rewrite_failure(Stage::Proof, error) else {
+            panic!("an artifact proof failure is a typed refusal");
+        };
+        assert_eq!(rejection.stage, Stage::Proof);
+        assert_eq!(rejection.kind, "artifact-proof-failed");
+        assert_eq!(rejection.violations, Vec::new());
+        assert_eq!(
+            rejection.detail,
+            "artifact proof claim \"preserved raw JSON\" observed 20, tolerance 0; raw JSON differences: /nodes/0 (value-changed), /nodes/1 (artifact-added), /nodes/2 (artifact-removed), /nodes/3 (value-changed), /nodes/4 (artifact-added), /nodes/5 (artifact-removed), /nodes/6 (value-changed), /nodes/7 (artifact-added), /nodes/8 (artifact-removed), /nodes/9 (value-changed), /nodes/10 (artifact-added), /nodes/11 (artifact-removed), /nodes/12 (value-changed), /nodes/13 (artifact-added), /nodes/14 (artifact-removed), /nodes/15 (value-changed); 4 omitted"
+        );
+        let expected_items: Vec<_> = (0..16)
+            .map(|index| {
+                let kind = match index % 3 {
+                    0 => "value_changed",
+                    1 => "artifact_added",
+                    _ => "artifact_removed",
+                };
+                serde_json::json!({
+                    "location": format!("/nodes/{index}"),
+                    "kind": kind,
+                })
+            })
+            .collect();
+        assert_eq!(
+            serde_json::to_value(rejection.artifact_proof_differences).unwrap(),
+            serde_json::json!({
+                "omitted": 4,
+                "items": expected_items,
+            })
+        );
+    }
+
+    #[test]
+    fn artifact_proof_failure_without_a_json_walk_maps_to_null_differences() {
+        let error = GltfScaleRewriteError::ArtifactProofFailed {
+            claim: "an earlier artifact claim",
+            observed: 1.0,
+            tolerance: 0.0,
+            raw_json_differences: None,
+        };
+        let Failure::Refusal(rejection) = rewrite_failure(Stage::Proof, error) else {
+            panic!("an artifact proof failure is a typed refusal");
+        };
+        assert!(rejection.artifact_proof_differences.is_none());
     }
 
     #[test]

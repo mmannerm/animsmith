@@ -1720,6 +1720,14 @@ frontend owes that obligation by the other route — a complete loader-supplied
 inventory of every §D.4 domain — and may enable an operation only over the
 domains that inventory covers.
 
+The exact raw-JSON-preservation refusal is diagnostic evidence as well as a
+refusal: the current scale-evidence v2 record carries up to the first 16
+deterministic differences, each as a pointer and an added/removed/changed
+direction, plus the omitted remainder; the full count is the retained length
+plus that remainder. The field is null when the exact-preservation walk did
+not supply locations for a refusal; it is not an alternate spelling of the
+capability preflight's violations.
+
 For the glTF producers, that raw complement explicitly includes scene
 membership, default-scene selection, materials, and their references: neither
 scale operation owns a write location in those payloads, so the artifact layer

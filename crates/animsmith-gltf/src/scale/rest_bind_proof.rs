@@ -46,7 +46,7 @@
 use super::bytes::{self, AccessorSpan};
 use super::proof::{
     GltfScaleArtifactProof, check_array_identities, check_container_integrity,
-    check_preserved_bytes, collect_json_differences, failed, numeric, object, track_dimensionless,
+    check_preserved_bytes, check_preserved_json, failed, numeric, object, track_dimensionless,
     track_length,
 };
 use super::rest_bind::{RestBindComponents, RestBindDomain, rewrite_rest_bind};
@@ -244,21 +244,12 @@ pub fn prove_rewritten_rest_bind(
     for &buffer_index in artifact.reencoded_buffers() {
         allowed.insert(format!("/buffers/{buffer_index}/uri"));
     }
-    let mut differences = Vec::new();
-    collect_json_differences(
+    check_preserved_json(
         source.raw_json(),
         &artifact_json,
-        "",
         &allowed,
-        &mut differences,
-    );
-    if !differences.is_empty() {
-        return Err(failed(
-            "every raw JSON location outside the rewritten set is preserved exactly",
-            differences.len() as f64,
-            0.0,
-        ));
-    }
+        "every raw JSON location outside the rewritten set is preserved exactly",
+    )?;
 
     proof.preserved_byte_ranges =
         check_preserved_bytes(source.resolved_buffers(), &artifact_buffers, &spans)?;
@@ -938,8 +929,16 @@ mod tests {
         expected: &str,
     ) {
         match prove_rewritten_rest_bind(source, artifact, plan) {
-            Err(GltfScaleRewriteError::ArtifactProofFailed { claim, .. }) => {
+            Err(GltfScaleRewriteError::ArtifactProofFailed {
+                claim,
+                raw_json_differences,
+                ..
+            }) => {
                 assert_eq!(claim, expected);
+                assert_eq!(
+                    raw_json_differences, None,
+                    "ordinary proof claims do not carry raw JSON diagnostics"
+                );
             }
             other => panic!("expected the claim {expected:?} to fail, got {other:?}"),
         }
@@ -1006,6 +1005,7 @@ mod tests {
                 claim,
                 observed,
                 tolerance,
+                raw_json_differences,
             }) => {
                 assert_eq!(
                     claim,
@@ -1013,6 +1013,7 @@ mod tests {
                 );
                 assert_eq!(observed, 2.0, "two declared joints");
                 assert_eq!(tolerance, 1.0, "one inverse bind");
+                assert_eq!(raw_json_differences, None);
             }
             other => panic!("expected a joint-count refusal, got {other:?}"),
         }
@@ -1351,17 +1352,47 @@ mod tests {
     }
 
     #[test]
-    fn a_changed_preserved_json_location_fails_json_preservation() {
+    fn added_and_removed_preserved_json_locations_keep_rest_bind_direction() {
         let (source, mut artifact, plan) = fixture();
         let mut value = artifact_value(&artifact);
-        value["materials"][0]["name"] = json!("renamed");
+        let material = value["materials"][0]
+            .as_object_mut()
+            .expect("fixture material is an object");
+        material.remove("name");
+        material.insert("replacement".into(), json!(true));
         put_artifact_value(&mut artifact, &value);
-        expect_claim(
-            &source,
-            &artifact,
-            &plan,
-            "every raw JSON location outside the rewritten set is preserved exactly",
-        );
+        match prove_rewritten_rest_bind(&source, &artifact, &plan) {
+            Err(GltfScaleRewriteError::ArtifactProofFailed {
+                claim,
+                observed,
+                tolerance,
+                raw_json_differences: Some(summary),
+            }) => {
+                assert_eq!(
+                    claim,
+                    "every raw JSON location outside the rewritten set is preserved exactly"
+                );
+                assert_eq!(observed, 2.0);
+                assert_eq!(tolerance, 0.0);
+                assert_eq!(
+                    summary,
+                    super::super::GltfRawJsonDifferenceSummary {
+                        differences: vec![
+                            super::super::GltfRawJsonDifference {
+                                pointer: "/materials/0/name".into(),
+                                kind: super::super::GltfRawJsonDifferenceKind::ArtifactRemoved,
+                            },
+                            super::super::GltfRawJsonDifference {
+                                pointer: "/materials/0/replacement".into(),
+                                kind: super::super::GltfRawJsonDifferenceKind::ArtifactAdded,
+                            },
+                        ],
+                        omitted: 0,
+                    }
+                );
+            }
+            other => panic!("expected located JSON diagnostics, got {other:?}"),
+        }
     }
 
     #[test]

@@ -1,0 +1,424 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:animsmith:schema:scale-evidence:2",
+  "title": "animsmith scale evidence v2",
+  "description": "Immutable versioned evidence emitted by animsmith scale. One record serves both outcomes: a published artifact/evidence pair carries result and a null rejection, a refused run the reverse. A refused run's record is printed by --format json and is never published, because publication is an artifact/evidence pair and a refusal has no artifact. A published record additionally always carries the raw capability manifest: publication is only reachable through a preflight that inventoried the source, so a null manifest beside outcome published would describe a run that cannot have happened.",
+  "type": "object",
+  "required": ["schema_version", "schema", "tool", "command", "outcome", "operation", "paths", "input", "capability", "result", "rejection"],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "schema": { "const": "urn:animsmith:schema:scale-evidence:2" },
+    "tool": { "$ref": "#/$defs/tool" },
+    "command": { "const": "scale" },
+    "outcome": { "enum": ["published", "rejected"] },
+    "operation": { "$ref": "#/$defs/operation" },
+    "paths": { "$ref": "#/$defs/paths" },
+    "input": { "$ref": "#/$defs/identity" },
+    "capability": { "oneOf": [{ "$ref": "#/$defs/capability" }, { "type": "null" }] },
+    "result": { "oneOf": [{ "$ref": "#/$defs/result" }, { "type": "null" }] },
+    "rejection": { "oneOf": [{ "$ref": "#/$defs/rejection" }, { "type": "null" }] }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "outcome": { "const": "published" } }, "required": ["outcome"] },
+      "then": {
+        "properties": {
+          "capability": { "$ref": "#/$defs/capability" },
+          "result": { "$ref": "#/$defs/result" },
+          "rejection": { "type": "null" }
+        }
+      },
+      "else": {
+        "properties": { "result": { "type": "null" }, "rejection": { "$ref": "#/$defs/rejection" } }
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "index": { "type": "integer", "minimum": 0 },
+    "index_array": { "type": "array", "items": { "$ref": "#/$defs/index" } },
+    "string_array": { "type": "array", "items": { "type": "string" } },
+    "nullable_index": { "type": ["integer", "null"], "minimum": 0 },
+    "tool": {
+      "type": "object",
+      "required": ["name", "version", "source"],
+      "properties": {
+        "name": { "const": "animsmith" },
+        "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$" },
+        "source": {
+          "type": "object",
+          "required": ["revision", "dirty"],
+          "properties": {
+            "revision": { "type": ["string", "null"], "pattern": "^[0-9a-fA-F]{40}$" },
+            "dirty": { "type": ["boolean", "null"] }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "identity": {
+      "type": "object",
+      "required": ["sha256", "bytes"],
+      "properties": {
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "bytes": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "paths": {
+      "description": "The operator's declared paths, verbatim. Canonical host paths are used only for the three-way distinctness check and are deliberately never recorded.",
+      "type": "object",
+      "required": ["input", "output", "evidence"],
+      "properties": {
+        "input": { "type": "string", "minLength": 1 },
+        "output": { "type": "string", "minLength": 1 },
+        "evidence": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "operation": {
+      "description": "The selected operation and its declared parameters. The rest/bind selectors are required exactly when kind is rest-bind, and are forbidden otherwise: a whole-document conversion selects no skin and no root.",
+      "type": "object",
+      "required": ["kind", "declared_factor"],
+      "properties": {
+        "kind": { "enum": ["whole-document", "rest-bind"] },
+        "declared_factor": { "type": "number", "exclusiveMinimum": 0 },
+        "source_skin_index": { "$ref": "#/$defs/index" },
+        "source_root_node_index": { "$ref": "#/$defs/index" }
+      },
+      "if": { "properties": { "kind": { "const": "rest-bind" } }, "required": ["kind"] },
+      "then": { "required": ["source_skin_index", "source_root_node_index"] },
+      "else": { "not": { "anyOf": [{ "required": ["source_skin_index"] }, { "required": ["source_root_node_index"] }] } },
+      "additionalProperties": false
+    },
+    "residual": {
+      "description": "One proof residual. max is null exactly when evaluated is false, so an obligation nothing checked reports an absence rather than a fabricated zero.",
+      "type": "object",
+      "required": ["evaluated", "max"],
+      "properties": {
+        "evaluated": { "type": "boolean" },
+        "max": { "type": ["number", "null"], "minimum": 0 }
+      },
+      "if": { "properties": { "evaluated": { "const": true } }, "required": ["evaluated"] },
+      "then": { "properties": { "max": { "type": "number", "minimum": 0 } } },
+      "else": { "properties": { "max": { "type": "null" } } },
+      "additionalProperties": false
+    },
+    "residuals": {
+      "type": "object",
+      "required": ["rest_translation", "rest_rotation", "unit_scale", "transform_only_affine", "track_value", "mesh_position", "key_translation", "cubic_interior", "trajectory", "skin_matrix", "bounds", "unaffected_inverse_bind"],
+      "properties": {
+        "rest_translation": { "$ref": "#/$defs/residual" },
+        "rest_rotation": { "$ref": "#/$defs/residual" },
+        "unit_scale": { "$ref": "#/$defs/residual" },
+        "transform_only_affine": { "$ref": "#/$defs/residual" },
+        "track_value": { "$ref": "#/$defs/residual" },
+        "mesh_position": { "$ref": "#/$defs/residual" },
+        "key_translation": { "$ref": "#/$defs/residual" },
+        "cubic_interior": { "$ref": "#/$defs/residual" },
+        "trajectory": { "$ref": "#/$defs/residual" },
+        "skin_matrix": { "$ref": "#/$defs/residual" },
+        "bounds": { "$ref": "#/$defs/residual" },
+        "unaffected_inverse_bind": { "$ref": "#/$defs/residual" }
+      },
+      "additionalProperties": false
+    },
+    "tolerance": {
+      "description": "The fixed tolerance policy, by identity and in full. There are no per-run tolerance flags; a policy change requires a new policy_id.",
+      "type": "object",
+      "required": ["policy_id", "relative_orthogonality", "equal_axis", "common_factor", "singular_determinant_relative", "scalar_absolute", "scalar_relative", "rotation_residual_radians", "postcondition_unit_scale_residual", "proof_sample_work_budget", "f32_rounding_ulps"],
+      "properties": {
+        "policy_id": { "type": "string", "minLength": 1 },
+        "relative_orthogonality": { "type": "number", "minimum": 0 },
+        "equal_axis": { "type": "number", "minimum": 0 },
+        "common_factor": { "type": "number", "minimum": 0 },
+        "singular_determinant_relative": { "type": "number", "minimum": 0 },
+        "scalar_absolute": { "type": "number", "minimum": 0 },
+        "scalar_relative": { "type": "number", "minimum": 0 },
+        "rotation_residual_radians": { "type": "number", "minimum": 0 },
+        "postcondition_unit_scale_residual": { "type": "number", "minimum": 0 },
+        "proof_sample_work_budget": { "type": "integer", "minimum": 0 },
+        "f32_rounding_ulps": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "factors": {
+      "description": "Both observed-factor witnesses and the divergence between them. planned_observed is measured from the raw source projection's parent chain, proved_observed from the normalized skeleton's; the two chains are validated to describe the same tree, but nothing reconciles the two readings, since each composes its own stored transforms. That is why both are recorded. The divergence is reported, never enforced.",
+      "type": "object",
+      "required": ["declared", "planned_observed", "proved_observed", "divergence", "divergence_ceiling"],
+      "properties": {
+        "declared": { "type": "number", "exclusiveMinimum": 0 },
+        "planned_observed": { "type": "number" },
+        "proved_observed": { "type": "number" },
+        "divergence": { "type": "number", "minimum": 0 },
+        "divergence_ceiling": { "type": "number", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "affected": {
+      "description": "Affected identities in the raw source index space the selectors use, not normalized bone ids.",
+      "type": "object",
+      "required": ["source_nodes", "source_skins", "transform_only_attachment_count"],
+      "properties": {
+        "source_nodes": { "$ref": "#/$defs/index_array" },
+        "source_skins": { "$ref": "#/$defs/index_array" },
+        "transform_only_attachment_count": { "$ref": "#/$defs/index" }
+      },
+      "additionalProperties": false
+    },
+    "domain_rewrites": {
+      "type": "object",
+      "required": ["rest_hierarchy", "translation_animation", "inverse_binds", "base_mesh_positions"],
+      "properties": {
+        "rest_hierarchy": { "type": "boolean" },
+        "translation_animation": { "type": "boolean" },
+        "inverse_binds": { "type": "boolean" },
+        "base_mesh_positions": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "artifact_proof": {
+      "type": "object",
+      "required": ["length_factor_residual", "dimensionless_residual", "preserved_byte_ranges", "rewritten_accessor_count"],
+      "properties": {
+        "length_factor_residual": { "type": "number", "minimum": 0 },
+        "dimensionless_residual": { "type": "number", "minimum": 0 },
+        "preserved_byte_ranges": { "$ref": "#/$defs/index" },
+        "rewritten_accessor_count": { "$ref": "#/$defs/index" }
+      },
+      "additionalProperties": false
+    },
+    "proof": {
+      "type": "object",
+      "required": ["sample_time_count", "residuals", "artifact", "read_back_digest_matches"],
+      "properties": {
+        "sample_time_count": { "$ref": "#/$defs/index" },
+        "residuals": { "$ref": "#/$defs/residuals" },
+        "artifact": { "$ref": "#/$defs/artifact_proof" },
+        "read_back_digest_matches": { "const": true }
+      },
+      "additionalProperties": false
+    },
+    "artifact": {
+      "type": "object",
+      "required": ["container", "sha256", "bytes", "rewritten_accessors", "rewritten_json_pointers", "reencoded_buffers"],
+      "properties": {
+        "container": { "enum": ["gltf", "glb"] },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "rewritten_accessors": { "$ref": "#/$defs/index_array" },
+        "rewritten_json_pointers": { "$ref": "#/$defs/string_array" },
+        "reencoded_buffers": { "$ref": "#/$defs/index_array" }
+      },
+      "additionalProperties": false
+    },
+    "result": {
+      "type": "object",
+      "required": ["tolerance", "factors", "affected", "domain_rewrites", "proof", "artifact"],
+      "properties": {
+        "tolerance": { "$ref": "#/$defs/tolerance" },
+        "factors": { "$ref": "#/$defs/factors" },
+        "affected": { "$ref": "#/$defs/affected" },
+        "domain_rewrites": { "$ref": "#/$defs/domain_rewrites" },
+        "proof": { "$ref": "#/$defs/proof" },
+        "artifact": { "$ref": "#/$defs/artifact" }
+      },
+      "additionalProperties": false
+    },
+    "rejection": {
+      "description": "One typed refusal. kind is the stable machine identity a consumer branches on; detail is the typed error's own rendering, for an operator. artifact_proof_differences is non-null only when the exact raw-JSON-preservation walk found differences; null says that walk did not supply locations for this refusal.",
+      "type": "object",
+      "required": ["stage", "kind", "detail", "violations", "artifact_proof_differences"],
+      "properties": {
+        "stage": { "enum": ["preflight", "plan", "rewrite", "proof", "read-back"] },
+        "kind": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+        "detail": { "type": "string", "minLength": 1 },
+        "violations": { "type": "array", "items": { "$ref": "#/$defs/violation" } },
+        "artifact_proof_differences": {
+          "oneOf": [
+            { "$ref": "#/$defs/artifact_proof_differences" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "artifact_proof_differences": { "type": "object" } },
+            "required": ["artifact_proof_differences"]
+          },
+          "then": { "properties": { "kind": { "const": "artifact-proof-failed" } } }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "artifact_proof_differences": {
+      "description": "A bounded, deterministic prefix of raw JSON differences from the exact-preservation walk. omitted is the number beyond the fixed 16-entry cap; the full count is items.length + omitted.",
+      "type": "object",
+      "required": ["omitted", "items"],
+      "properties": {
+        "omitted": { "type": "integer", "minimum": 0 },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/artifact_proof_difference" }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "omitted": { "minimum": 1 } }, "required": ["omitted"] },
+          "then": { "properties": { "items": { "minItems": 16, "maxItems": 16 } } }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "artifact_proof_difference": {
+      "type": "object",
+      "required": ["location", "kind"],
+      "properties": {
+        "location": { "type": "string", "pattern": "^(?:/(?:[^~/]|~[01])*)*$" },
+        "kind": { "enum": ["artifact_added", "artifact_removed", "value_changed"] }
+      },
+      "additionalProperties": false
+    },
+    "violation": {
+      "type": "object",
+      "required": ["location", "kind"],
+      "properties": {
+        "location": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["external_resource", "morph_target", "morph_weights", "camera", "light", "instancing", "extension_declaration", "extension_payload", "extras", "unknown_json_member", "non_triangle_primitive", "unsupported_vertex_attribute", "secondary_skin_influences", "missing_inverse_binds", "empty_inverse_bind_accessor", "inverse_bind_count_mismatch", "unreadable_inverse_binds", "unsafe_accessor_layout", "conflicting_accessor_use", "overlapping_accessor_ranges", "conflicting_node_transform", "non_affine_node_matrix", "image_payload_overlap"] }
+      },
+      "additionalProperties": false
+    },
+    "capability": {
+      "description": "The raw #280 capability manifest, in full. Appendix D §D.6 asks for the raw manifest, and a digest of one is not a manifest, so this is per-accessor and per-channel and is large for a production asset.",
+      "type": "object",
+      "required": ["container", "buffers", "buffer_views", "accessors", "nodes", "animation_channels", "primitives", "instancing", "skins", "camera_count", "extensions", "extension_locations", "external_resource_locations", "extras_locations", "unknown_member_locations"],
+      "properties": {
+        "container": { "enum": ["gltf", "glb"] },
+        "buffers": { "type": "array", "items": { "$ref": "#/$defs/capability_buffer" } },
+        "buffer_views": { "type": "array", "items": { "$ref": "#/$defs/capability_buffer_view" } },
+        "accessors": { "type": "array", "items": { "$ref": "#/$defs/capability_accessor" } },
+        "nodes": { "type": "array", "items": { "$ref": "#/$defs/capability_node" } },
+        "animation_channels": { "type": "array", "items": { "$ref": "#/$defs/capability_animation_channel" } },
+        "primitives": { "type": "array", "items": { "$ref": "#/$defs/capability_primitive" } },
+        "instancing": { "type": "array", "items": { "$ref": "#/$defs/capability_instancing" } },
+        "skins": { "type": "array", "items": { "$ref": "#/$defs/capability_skin" } },
+        "camera_count": { "$ref": "#/$defs/index" },
+        "extensions": { "$ref": "#/$defs/string_array" },
+        "extension_locations": { "$ref": "#/$defs/string_array" },
+        "external_resource_locations": { "$ref": "#/$defs/string_array" },
+        "extras_locations": { "$ref": "#/$defs/string_array" },
+        "unknown_member_locations": { "$ref": "#/$defs/string_array" }
+      },
+      "additionalProperties": false
+    },
+    "capability_buffer": {
+      "type": "object",
+      "required": ["buffer_index", "source_kind", "declared_byte_length"],
+      "properties": {
+        "buffer_index": { "$ref": "#/$defs/index" },
+        "source_kind": { "enum": ["binary_chunk", "data_uri", "external"] },
+        "declared_byte_length": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "capability_buffer_view": {
+      "type": "object",
+      "required": ["buffer_view_index", "buffer_index", "byte_offset", "byte_length", "byte_stride"],
+      "properties": {
+        "buffer_view_index": { "$ref": "#/$defs/index" },
+        "buffer_index": { "$ref": "#/$defs/index" },
+        "byte_offset": { "type": "integer", "minimum": 0 },
+        "byte_length": { "type": "integer", "minimum": 0 },
+        "byte_stride": { "$ref": "#/$defs/nullable_index" }
+      },
+      "additionalProperties": false
+    },
+    "capability_accessor": {
+      "type": "object",
+      "required": ["accessor_index", "buffer_view_index", "byte_offset", "component_type", "accessor_type", "count", "normalized", "sparse"],
+      "properties": {
+        "accessor_index": { "$ref": "#/$defs/index" },
+        "buffer_view_index": { "$ref": "#/$defs/nullable_index" },
+        "byte_offset": { "type": "integer", "minimum": 0 },
+        "component_type": { "type": "integer", "minimum": 0 },
+        "accessor_type": { "type": "string" },
+        "count": { "type": "integer", "minimum": 0 },
+        "normalized": { "type": "boolean" },
+        "sparse": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "capability_node": {
+      "type": "object",
+      "required": ["node_index", "rest_kind", "mesh_index", "skin_index"],
+      "properties": {
+        "node_index": { "$ref": "#/$defs/index" },
+        "rest_kind": { "enum": ["trs", "matrix"] },
+        "mesh_index": { "$ref": "#/$defs/nullable_index" },
+        "skin_index": { "$ref": "#/$defs/nullable_index" }
+      },
+      "additionalProperties": false
+    },
+    "capability_animation_channel": {
+      "type": "object",
+      "required": ["animation_index", "channel_index", "target_node_index", "target_path", "interpolation", "input_accessor_index", "output_accessor_index"],
+      "properties": {
+        "animation_index": { "$ref": "#/$defs/index" },
+        "channel_index": { "$ref": "#/$defs/index" },
+        "target_node_index": { "$ref": "#/$defs/index" },
+        "target_path": { "type": "string" },
+        "interpolation": { "type": "string" },
+        "input_accessor_index": { "$ref": "#/$defs/index" },
+        "output_accessor_index": { "$ref": "#/$defs/index" }
+      },
+      "additionalProperties": false
+    },
+    "capability_attribute": {
+      "type": "object",
+      "required": ["semantic", "accessor_index"],
+      "properties": {
+        "semantic": { "type": "string" },
+        "accessor_index": { "$ref": "#/$defs/index" }
+      },
+      "additionalProperties": false
+    },
+    "capability_primitive": {
+      "type": "object",
+      "required": ["mesh_index", "primitive_index", "mode", "attributes", "morph_target_count", "morph_position_accessors"],
+      "properties": {
+        "mesh_index": { "$ref": "#/$defs/index" },
+        "primitive_index": { "$ref": "#/$defs/index" },
+        "mode": { "type": "integer", "minimum": 0 },
+        "attributes": { "type": "array", "items": { "$ref": "#/$defs/capability_attribute" } },
+        "morph_target_count": { "$ref": "#/$defs/index" },
+        "morph_position_accessors": { "$ref": "#/$defs/index_array" }
+      },
+      "additionalProperties": false
+    },
+    "capability_instancing": {
+      "type": "object",
+      "required": ["node_index", "attributes"],
+      "properties": {
+        "node_index": { "$ref": "#/$defs/index" },
+        "attributes": { "type": "array", "items": { "$ref": "#/$defs/capability_attribute" } }
+      },
+      "additionalProperties": false
+    },
+    "capability_skin": {
+      "type": "object",
+      "required": ["skin_index", "joint_count", "inverse_bind_accessor_index", "inverse_bind_count"],
+      "properties": {
+        "skin_index": { "$ref": "#/$defs/index" },
+        "joint_count": { "$ref": "#/$defs/index" },
+        "inverse_bind_accessor_index": { "$ref": "#/$defs/nullable_index" },
+        "inverse_bind_count": { "$ref": "#/$defs/nullable_index" }
+      },
+      "additionalProperties": false
+    }
+  }
+}
