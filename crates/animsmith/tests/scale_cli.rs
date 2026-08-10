@@ -737,7 +737,6 @@ fn scale_evidence_v2_schema_pins_artifact_proof_difference_shape() {
         serde_json::from_str(&stdout(&output)).expect("stdout is one JSON record");
 
     record["rejection"]["artifact_proof_differences"] = serde_json::json!({
-        "total": 17,
         "omitted": 1,
         "items": (0..16)
             .map(|index| serde_json::json!({
@@ -753,25 +752,45 @@ fn scale_evidence_v2_schema_pins_artifact_proof_difference_shape() {
     record["rejection"]["kind"] = serde_json::json!("artifact-proof-failed");
     assert_schema_valid(&record);
 
+    let mut untruncated = record.clone();
+    untruncated["rejection"]["artifact_proof_differences"] = serde_json::json!({
+        "omitted": 0,
+        "items": [
+            { "location": "", "kind": "value_changed" },
+            { "location": "/a~0~1b~0", "kind": "artifact_added" }
+        ]
+    });
+    assert_schema_valid(&untruncated);
+
     for invalid in [
         serde_json::json!({
-            "total": 0,
             "omitted": 0,
-            "items": [{ "location": "/nodes/1", "kind": "value_changed" }]
+            "items": [{ "location": "/nodes/1", "kind": "value_changed" }],
+            "total": 1
         }),
-        serde_json::json!({ "total": 1, "omitted": 0, "items": [] }),
+        serde_json::json!({ "omitted": 0, "items": [] }),
         serde_json::json!({
-            "total": 1,
             "omitted": 0,
             "items": [{ "location": "/nodes/1", "kind": "unsupported" }]
         }),
         serde_json::json!({
-            "total": 1,
             "omitted": 0,
             "items": [{ "location": "nodes/1", "kind": "value_changed" }]
         }),
         serde_json::json!({
-            "total": 17,
+            "omitted": 0,
+            "items": [{ "location": "/bad~2escape", "kind": "value_changed" }]
+        }),
+        serde_json::json!({
+            "omitted": 1,
+            "items": (0..15)
+                .map(|index| serde_json::json!({
+                    "location": format!("/nodes/{index}"),
+                    "kind": "artifact_removed"
+                }))
+                .collect::<Vec<_>>()
+        }),
+        serde_json::json!({
             "omitted": 1,
             "items": (0..17)
                 .map(|index| serde_json::json!({

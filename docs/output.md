@@ -303,14 +303,16 @@ The normative contract is
 [`scale-evidence-v2.schema.json`](schemas/scale-evidence-v2.schema.json).
 The immutable v1 schema remains available for historical records.
 
-For `artifact-proof-failed`, v2 adds
+For an `artifact-proof-failed` refusal from the exact raw-JSON-preservation
+walk, v2 adds
 `rejection.artifact_proof_differences`: the artifact proof's bounded,
 deterministically ordered raw-JSON difference sample. `items` has one to 16
 entries, each with a JSON-pointer `location` and an
-`artifact_added`, `artifact_removed`, or `value_changed` `kind`;
-`total` is the full difference count and `omitted` counts entries outside
-the sample. The field is `null` when the refusal did not compare raw JSON
-locations. It does not replace `rejection.violations`, which continues to
+`artifact_added`, `artifact_removed`, or `value_changed` `kind`. `omitted`
+counts entries outside the prefix, so the full difference count is
+`items.length + omitted`. The field is `null` when that exact-preservation
+walk did not supply locations for the refusal. It does not replace
+`rejection.violations`, which continues to
 describe unsupported source capabilities.
 
 ## `measure` and `lint`

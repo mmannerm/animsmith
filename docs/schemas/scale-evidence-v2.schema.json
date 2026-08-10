@@ -228,7 +228,7 @@
       "additionalProperties": false
     },
     "rejection": {
-      "description": "One typed refusal. kind is the stable machine identity a consumer branches on; detail is the typed error's own rendering, for an operator. artifact_proof_differences is non-null only when an artifact-proof refusal compared raw JSON locations; null says this refusal did not make that comparison.",
+      "description": "One typed refusal. kind is the stable machine identity a consumer branches on; detail is the typed error's own rendering, for an operator. artifact_proof_differences is non-null only when the exact raw-JSON-preservation walk found differences; null says that walk did not supply locations for this refusal.",
       "type": "object",
       "required": ["stage", "kind", "detail", "violations", "artifact_proof_differences"],
       "properties": {
@@ -255,11 +255,10 @@
       "additionalProperties": false
     },
     "artifact_proof_differences": {
-      "description": "A bounded, deterministic sample of raw JSON differences from an artifact-preservation proof. total is the full count; omitted is the number not present in items because the producer's fixed cap is 16.",
+      "description": "A bounded, deterministic prefix of raw JSON differences from the exact-preservation walk. omitted is the number beyond the fixed 16-entry cap; the full count is items.length + omitted.",
       "type": "object",
-      "required": ["total", "omitted", "items"],
+      "required": ["omitted", "items"],
       "properties": {
-        "total": { "type": "integer", "minimum": 1 },
         "omitted": { "type": "integer", "minimum": 0 },
         "items": {
           "type": "array",
@@ -268,13 +267,19 @@
           "items": { "$ref": "#/$defs/artifact_proof_difference" }
         }
       },
+      "allOf": [
+        {
+          "if": { "properties": { "omitted": { "minimum": 1 } }, "required": ["omitted"] },
+          "then": { "properties": { "items": { "minItems": 16, "maxItems": 16 } } }
+        }
+      ],
       "additionalProperties": false
     },
     "artifact_proof_difference": {
       "type": "object",
       "required": ["location", "kind"],
       "properties": {
-        "location": { "type": "string", "pattern": "^/" },
+        "location": { "type": "string", "pattern": "^(?:/(?:[^~/]|~[01])*)*$" },
         "kind": { "enum": ["artifact_added", "artifact_removed", "value_changed"] }
       },
       "additionalProperties": false

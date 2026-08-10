@@ -620,7 +620,6 @@ impl RawJsonDifferenceCollector {
         let omitted = self.total - self.differences.len();
         GltfRawJsonDifferenceSummary {
             differences: self.differences,
-            total: self.total,
             omitted,
         }
     }
@@ -638,10 +637,11 @@ pub(super) fn check_preserved_json(
     if collector.total == 0 {
         return Ok(());
     }
+    let total = collector.total;
     let summary = collector.finish();
     Err(GltfScaleRewriteError::ArtifactProofFailed {
         claim,
-        observed: summary.total as f64,
+        observed: total as f64,
         tolerance: 0.0,
         raw_json_differences: Some(summary),
     })
@@ -1132,7 +1132,6 @@ mod tests {
                                 kind: GltfRawJsonDifferenceKind::ArtifactAdded,
                             },
                         ],
-                        total: 2,
                         omitted: 0,
                     }
                 );
@@ -1144,15 +1143,17 @@ mod tests {
     #[test]
     fn json_difference_collection_is_typed_escaped_ordered_and_allowlisted() {
         let before = json!({
-            "a/b": { "~key": 1 },
+            "a~/b~/c": 1,
             "allowed": "source secret",
+            "allowedly": 1,
             "removed": true,
             "value": 1
         });
         let after = json!({
-            "a/b": { "~key": 2 },
+            "a~/b~/c": 2,
             "added": true,
             "allowed": "artifact secret",
+            "allowedly": 2,
             "value": 2
         });
         let allowed = BTreeSet::from(["/allowed".to_owned()]);
@@ -1163,12 +1164,16 @@ mod tests {
             GltfRawJsonDifferenceSummary {
                 differences: vec![
                     GltfRawJsonDifference {
-                        pointer: "/a~1b/~0key".into(),
+                        pointer: "/added".into(),
+                        kind: GltfRawJsonDifferenceKind::ArtifactAdded,
+                    },
+                    GltfRawJsonDifference {
+                        pointer: "/allowedly".into(),
                         kind: GltfRawJsonDifferenceKind::ValueChanged,
                     },
                     GltfRawJsonDifference {
-                        pointer: "/added".into(),
-                        kind: GltfRawJsonDifferenceKind::ArtifactAdded,
+                        pointer: "/a~0~1b~0~1c".into(),
+                        kind: GltfRawJsonDifferenceKind::ValueChanged,
                     },
                     GltfRawJsonDifference {
                         pointer: "/removed".into(),
@@ -1179,7 +1184,6 @@ mod tests {
                         kind: GltfRawJsonDifferenceKind::ValueChanged,
                     },
                 ],
-                total: 4,
                 omitted: 0,
             }
         );
@@ -1190,8 +1194,19 @@ mod tests {
         let mut before = Map::new();
         let mut after = Map::new();
         for index in 0..20 {
-            before.insert(format!("key-{index:02}"), json!(0));
-            after.insert(format!("key-{index:02}"), json!(1));
+            let key = format!("key-{index:02}");
+            match index % 3 {
+                0 => {
+                    before.insert(key.clone(), json!(0));
+                    after.insert(key, json!(1));
+                }
+                1 => {
+                    after.insert(key, json!(1));
+                }
+                _ => {
+                    before.insert(key, json!(0));
+                }
+            }
         }
         let mut collector = RawJsonDifferenceCollector::default();
         collect_json_differences(
@@ -1202,23 +1217,27 @@ mod tests {
             &mut collector,
         );
         let summary = collector.finish();
-        assert_eq!(summary.total, 20);
+        assert_eq!(summary.differences.len() + summary.omitted, 20);
         assert_eq!(summary.omitted, 4);
-        assert_eq!(summary.differences.len(), MAX_RAW_JSON_DIFFERENCES);
-        assert_eq!(summary.differences.first().unwrap().pointer, "/key-00");
-        assert_eq!(summary.differences.last().unwrap().pointer, "/key-15");
+        assert_eq!(
+            summary.differences,
+            (0..MAX_RAW_JSON_DIFFERENCES)
+                .map(|index| GltfRawJsonDifference {
+                    pointer: format!("/key-{index:02}"),
+                    kind: match index % 3 {
+                        0 => GltfRawJsonDifferenceKind::ValueChanged,
+                        1 => GltfRawJsonDifferenceKind::ArtifactAdded,
+                        _ => GltfRawJsonDifferenceKind::ArtifactRemoved,
+                    },
+                })
+                .collect::<Vec<_>>()
+        );
         let display = super::super::RawJsonDifferenceSuffix(Some(&summary)).to_string();
         assert!(display.ends_with("; 4 omitted"));
         assert!(display.contains("/key-15 (value-changed)"));
         assert!(
             !display.contains("/key-16"),
             "omitted pointers stay omitted"
-        );
-        assert!(
-            summary
-                .differences
-                .iter()
-                .all(|difference| difference.kind == GltfRawJsonDifferenceKind::ValueChanged)
         );
     }
 
@@ -1235,7 +1254,6 @@ mod tests {
                     pointer: "/nodes".into(),
                     kind: GltfRawJsonDifferenceKind::ValueChanged,
                 }],
-                total: 1,
                 omitted: 0,
             }
         );

@@ -367,9 +367,9 @@ immutable identity `urn:animsmith:schema:scale-evidence:2`; see
 same record is what `scale --format json` prints to stdout, for a refusal as
 well as for a published pair. For an `artifact-proof-failed` refusal,
 `rejection.artifact_proof_differences` names up to 16 raw JSON locations the
-proof found different; its `total` and `omitted` fields state the complete
-count and the number beyond that fixed cap. It is `null` for refusals that
-did not compare raw JSON locations, including capability refusals whose
+exact-preservation walk found different; `omitted` counts locations beyond
+that fixed cap, and the full count is `items.length + omitted`. It is `null`
+when that walk did not supply locations, including capability refusals whose
 `violations` array retains its existing meaning.
 
 Machine-readable lint rejects `--allow` so it cannot erase evidence. The flag

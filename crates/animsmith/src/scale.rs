@@ -476,7 +476,6 @@ struct RejectionRecord {
 /// A bounded raw-JSON difference sample from an artifact proof.
 #[derive(Debug, Clone, Serialize)]
 struct ArtifactProofDifferencesRecord {
-    total: usize,
     omitted: usize,
     items: Vec<ArtifactProofDifferenceRecord>,
 }
@@ -484,7 +483,6 @@ struct ArtifactProofDifferencesRecord {
 impl From<GltfRawJsonDifferenceSummary> for ArtifactProofDifferencesRecord {
     fn from(summary: GltfRawJsonDifferenceSummary) -> Self {
         Self {
-            total: summary.total,
             omitted: summary.omitted,
             items: summary.differences.into_iter().map(Into::into).collect(),
         }
@@ -1281,7 +1279,6 @@ mod tests {
     #[test]
     fn artifact_proof_difference_diagnostics_preserve_locations_and_kinds() {
         let summary = GltfRawJsonDifferenceSummary {
-            total: 4,
             omitted: 1,
             differences: vec![
                 GltfRawJsonDifference {
@@ -1301,33 +1298,29 @@ mod tests {
 
         assert_eq!(
             serde_json::to_string(&ArtifactProofDifferencesRecord::from(summary)).unwrap(),
-            r#"{"total":4,"omitted":1,"items":[{"location":"/nodes/1/translation/0","kind":"value_changed"},{"location":"/nodes/2","kind":"artifact_added"},{"location":"/nodes/3","kind":"artifact_removed"}]}"#
+            r#"{"omitted":1,"items":[{"location":"/nodes/1/translation/0","kind":"value_changed"},{"location":"/nodes/2","kind":"artifact_added"},{"location":"/nodes/3","kind":"artifact_removed"}]}"#
         );
     }
 
     #[test]
     fn artifact_proof_failure_maps_its_differences_into_the_shipped_rejection() {
+        let differences = (0..16)
+            .map(|index| GltfRawJsonDifference {
+                pointer: format!("/nodes/{index}"),
+                kind: match index % 3 {
+                    0 => GltfRawJsonDifferenceKind::ValueChanged,
+                    1 => GltfRawJsonDifferenceKind::ArtifactAdded,
+                    _ => GltfRawJsonDifferenceKind::ArtifactRemoved,
+                },
+            })
+            .collect();
         let error = GltfScaleRewriteError::ArtifactProofFailed {
             claim: "preserved raw JSON",
-            observed: 4.0,
+            observed: 20.0,
             tolerance: 0.0,
             raw_json_differences: Some(GltfRawJsonDifferenceSummary {
-                total: 4,
-                omitted: 1,
-                differences: vec![
-                    GltfRawJsonDifference {
-                        pointer: "/materials/0/name".to_owned(),
-                        kind: GltfRawJsonDifferenceKind::ValueChanged,
-                    },
-                    GltfRawJsonDifference {
-                        pointer: "/nodes/2".to_owned(),
-                        kind: GltfRawJsonDifferenceKind::ArtifactAdded,
-                    },
-                    GltfRawJsonDifference {
-                        pointer: "/nodes/3".to_owned(),
-                        kind: GltfRawJsonDifferenceKind::ArtifactRemoved,
-                    },
-                ],
+                omitted: 4,
+                differences,
             }),
         };
 
@@ -1339,20 +1332,42 @@ mod tests {
         assert_eq!(rejection.violations, Vec::new());
         assert_eq!(
             rejection.detail,
-            "artifact proof claim \"preserved raw JSON\" observed 4, tolerance 0; raw JSON differences: /materials/0/name (value-changed), /nodes/2 (artifact-added), /nodes/3 (artifact-removed); 1 omitted"
+            "artifact proof claim \"preserved raw JSON\" observed 20, tolerance 0; raw JSON differences: /nodes/0 (value-changed), /nodes/1 (artifact-added), /nodes/2 (artifact-removed), /nodes/3 (value-changed), /nodes/4 (artifact-added), /nodes/5 (artifact-removed), /nodes/6 (value-changed), /nodes/7 (artifact-added), /nodes/8 (artifact-removed), /nodes/9 (value-changed), /nodes/10 (artifact-added), /nodes/11 (artifact-removed), /nodes/12 (value-changed), /nodes/13 (artifact-added), /nodes/14 (artifact-removed), /nodes/15 (value-changed); 4 omitted"
         );
+        let expected_items: Vec<_> = (0..16)
+            .map(|index| {
+                let kind = match index % 3 {
+                    0 => "value_changed",
+                    1 => "artifact_added",
+                    _ => "artifact_removed",
+                };
+                serde_json::json!({
+                    "location": format!("/nodes/{index}"),
+                    "kind": kind,
+                })
+            })
+            .collect();
         assert_eq!(
             serde_json::to_value(rejection.artifact_proof_differences).unwrap(),
             serde_json::json!({
-                "total": 4,
-                "omitted": 1,
-                "items": [
-                    { "location": "/materials/0/name", "kind": "value_changed" },
-                    { "location": "/nodes/2", "kind": "artifact_added" },
-                    { "location": "/nodes/3", "kind": "artifact_removed" }
-                ]
+                "omitted": 4,
+                "items": expected_items,
             })
         );
+    }
+
+    #[test]
+    fn artifact_proof_failure_without_a_json_walk_maps_to_null_differences() {
+        let error = GltfScaleRewriteError::ArtifactProofFailed {
+            claim: "an earlier artifact claim",
+            observed: 1.0,
+            tolerance: 0.0,
+            raw_json_differences: None,
+        };
+        let Failure::Refusal(rejection) = rewrite_failure(Stage::Proof, error) else {
+            panic!("an artifact proof failure is a typed refusal");
+        };
+        assert!(rejection.artifact_proof_differences.is_none());
     }
 
     #[test]

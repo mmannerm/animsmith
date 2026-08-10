@@ -1387,7 +1387,6 @@ mod tests {
                                 kind: super::super::GltfRawJsonDifferenceKind::ArtifactAdded,
                             },
                         ],
-                        total: 2,
                         omitted: 0,
                     }
                 );

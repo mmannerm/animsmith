@@ -502,15 +502,12 @@ pub struct GltfRawJsonDifference {
 
 /// Bounded raw JSON diagnostics for an artifact preservation proof failure.
 ///
-/// [`Self::differences`] contains at most sixteen entries. [`Self::total`]
-/// still counts every difference found, and [`Self::omitted`] is exactly the
-/// number not retained in the bounded prefix.
+/// [`Self::differences`] contains at most sixteen entries. The full count is
+/// the retained length plus [`Self::omitted`], the exact number not retained.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GltfRawJsonDifferenceSummary {
     /// Deterministic prefix of differences, ordered by the JSON tree walk.
     pub differences: Vec<GltfRawJsonDifference>,
-    /// Exact number of differences found, including omitted entries.
-    pub total: usize,
     /// Exact number of differences not retained in [`Self::differences`].
     pub omitted: usize,
 }
