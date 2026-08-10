@@ -11911,18 +11911,59 @@ mod tests {
     }
 
     #[test]
-    fn weight_normalization_is_stable_at_both_f32_exponents() {
-        // The old multiply-then-divide order fails at both ends of binary32:
-        // a lone minimum subnormal loses `.5` before it can be divided by
-        // itself, while two maximum finite weights overflow their sum. Both
-        // describe the same normalized identity blend and must produce `.5`.
+    fn bounds_provenance_is_invariant_when_weights_are_rescaled_to_subnormals() {
+        // At p = (0.5, 0.5, 0.5), the identity transform's operand magnitude
+        // is 1, so these distinct slot magnitudes dominate and are the exact
+        // bases. The ordinary tuple sums to `0.75`, pinning the denominator in
+        // `sum(w_i * base_i) / sum(w_i)`; the subnormal tuple is an exact
+        // uniform rescaling and must retain both the point and provenance.
+        let slots = [
+            SkinSlot {
+                matrix: Mat4::IDENTITY,
+                absolute: Mat4::IDENTITY,
+                rounding_magnitude: 6.0,
+            },
+            SkinSlot {
+                matrix: Mat4::IDENTITY,
+                absolute: Mat4::IDENTITY,
+                rounding_magnitude: 3.0,
+            },
+        ];
+        let measure = |weights: [f32; 4]| {
+            let primitive = Primitive {
+                positions: vec![Vec3::splat(0.5)],
+                joints: vec![[0, 1, 0, 0]],
+                weights: vec![weights],
+                ..Primitive::default()
+            };
+            let mut accumulator = BoundsAccumulator::default();
+            accumulate_skinned_bounds(0, 0, &primitive, &slots, &mut accumulator).unwrap();
+            let magnitude = accumulator.rounding_magnitude();
+            (accumulator.finish(), magnitude)
+        };
+
         let tiny = f32::from_bits(1);
-        assert_eq!(tiny * 0.5, 0.0);
+        let two_tiny = f32::from_bits(2);
+        let scale = f32::from_bits(4);
+        assert!(tiny.is_subnormal() && two_tiny.is_subnormal());
+        assert_eq!(0.25 * scale, tiny);
+        assert_eq!(0.5 * scale, two_tiny);
+
+        let ordinary = measure([0.25, 0.5, 0.0, 0.0]);
+        let subnormal = measure([tiny, two_tiny, 0.0, 0.0]);
+        assert_eq!(ordinary, (Some((Vec3::splat(0.5), Vec3::splat(0.5))), 4.0));
+        assert_eq!(subnormal, ordinary);
+    }
+
+    #[test]
+    fn weight_normalization_does_not_overflow_at_f32_max() {
+        // Two maximum finite weights overflow a binary32 denominator, but
+        // still describe the same normalized identity blend at `.5`.
         assert!((f32::MAX + f32::MAX).is_infinite());
         let primitive = Primitive {
-            positions: vec![Vec3::splat(0.5), Vec3::splat(0.5)],
-            joints: vec![[0, 0, 0, 0]; 2],
-            weights: vec![[tiny, 0.0, 0.0, 0.0], [f32::MAX, f32::MAX, 0.0, 0.0]],
+            positions: vec![Vec3::splat(0.5)],
+            joints: vec![[0, 0, 0, 0]],
+            weights: vec![[f32::MAX, f32::MAX, 0.0, 0.0]],
             ..Primitive::default()
         };
         let mut accumulator = BoundsAccumulator::default();
@@ -15013,6 +15054,7 @@ mod tests {
         // identity rather than a silent retune.
         fn assert_appendix_d_v4(policy: ScaleTolerancePolicy) {
             assert_eq!(policy.id, "appendix-d-v4");
+            assert_eq!(policy.f32_rounding_ulps, 4);
             assert_eq!(policy.relative_orthogonality, 1e-5);
             assert_eq!(policy.equal_axis, 1e-5);
             assert_eq!(policy.common_factor, 1e-5);

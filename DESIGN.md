@@ -795,7 +795,7 @@ below the `1e-5` the relative band already allows. The `2^-23` is
     oppose. Two slots whose composed `W * B` differ by a half turn send a
     vertex `1000` units out to a blended origin, so the result reads `0` while
     every term summed to produce it carried that vertex's own ulp; put the
-    joints near the origin as well and stages 3 and 4 read `1`. The residual is
+    joints near the origin as well and stages 2 and 3 read `1`. The residual is
     then `6.1e-5` — one ulp of `1000` — against a `1.5e-6` band, a demand of
     `503` ulps, rising to `65_527` at `abs(p) = 1e5`.
   - `abs(p)` coincides with the transform only while `abs(W * B)` is `1`, and
