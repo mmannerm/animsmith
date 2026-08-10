@@ -201,10 +201,11 @@ impl ScaleTolerancePolicy {
     ///    term capped by `contribution / EPSILON`. This provisions the smaller
     ///    of one parent-scale ulp and losing the entire contribution, so zero
     ///    and underflowed descendants cannot charge the same translated parent
-    ///    repeatedly. The homogeneous row would likewise add a fictitious
-    ///    unit for every identity link. The same recurrence constructs rest
-    ///    and sampled poses, and its result reaches RestTranslation,
-    ///    Trajectory, SkinMatrix and Bounds through their existing consumers.
+    ///    repeatedly. Only the three spatial output rows participate; the
+    ///    affine homogeneous row contributes zero under this cap. The same
+    ///    recurrence constructs rest and sampled poses, and its result reaches
+    ///    RestTranslation, Trajectory, SkinMatrix and Bounds through their
+    ///    existing consumers.
     ///
     /// `postcondition_unit_scale_residual` is
     /// `UNIT_SCALE_BANDS * common_factor = 4e-5`, rounded up to the next
