@@ -92,7 +92,7 @@ should fail on warnings too:
 $ animsmith lint --deny-warnings examples/assets/clip-dirty.glb   # exits 1
 ```
 
-For machine consumption, `--format json` emits the v5 result envelope
+For machine consumption, `--format json` emits the v6 result envelope
 (see [output.md](../docs/output.md)). This `jq` projection keeps the example
 short while showing where retained/promotion evidence, content findings, and
 independently versioned measurement evidence live:

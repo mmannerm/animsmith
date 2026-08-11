@@ -2080,7 +2080,9 @@ reported common factor. These corrected numeric semantics require the nested
 measurements-v12 identity. The JSON shape remains unchanged, but the outer
 identity advances to output-v6 because each immutable output schema statically
 pins its nested measurement URN; measurements v11 and output-v5 remain
-immutable historical evidence.
+immutable historical evidence. In general, changing a nested identity that an
+immutable outer schema references requires a new outer identity too; historical
+outer schemas are never retargeted or broadened in place.
 
 After this design is accepted, implementation is split into independently
 auditable issues, in order:

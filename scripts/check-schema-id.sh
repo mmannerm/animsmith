@@ -46,6 +46,25 @@ for historical_output in docs/schemas/output-v4.schema.json docs/schemas/output-
   grep -Fq '"measurements": { "$ref": "urn:animsmith:schema:measurements:11" }' "$historical_output" || fail "$historical_output must retain its measurements-v11 reference"
 done
 grep -Fq '"measurements": { "$ref": "urn:animsmith:schema:measurements:12" }' docs/schemas/output-v6.schema.json || fail 'docs/schemas/output-v6.schema.json must reference measurements-v12'
+if ! cmp -s docs/schemas/measurements-v11.schema.json <(
+  sed \
+    -e 's/urn:animsmith:schema:measurements:12/urn:animsmith:schema:measurements:11/g' \
+    -e 's/animsmith measurements v12/animsmith measurements v11/' \
+    -e 's/"const": 12/"const": 11/' \
+    docs/schemas/measurements-v12.schema.json
+); then
+  fail 'measurements-v12 must differ from immutable measurements-v11 only by identity'
+fi
+if ! cmp -s docs/schemas/output-v5.schema.json <(
+  sed \
+    -e 's/urn:animsmith:schema:output:6/urn:animsmith:schema:output:5/g' \
+    -e 's/animsmith output v6/animsmith output v5/' \
+    -e 's/"const": 6/"const": 5/' \
+    -e 's/urn:animsmith:schema:measurements:12/urn:animsmith:schema:measurements:11/g' \
+    docs/schemas/output-v6.schema.json
+); then
+  fail 'output-v6 must differ from immutable output-v5 only by identity and nested measurement identity'
+fi
 check_schema docs/schemas/conversion-evidence-v1.schema.json urn:animsmith:schema:conversion-evidence:1 docs/output.md
 check_schema docs/schemas/conversion-evidence-v2.schema.json urn:animsmith:schema:conversion-evidence:2 docs/output.md docs/cli.md
 check_schema docs/schemas/scale-evidence-v1.schema.json urn:animsmith:schema:scale-evidence:1

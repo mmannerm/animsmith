@@ -73,7 +73,7 @@ impl AffineGeometryFacts {
             linear.y_axis.as_dvec3(),
             linear.z_axis.as_dvec3(),
         ];
-        let axis_lengths = columns.map(glam::DVec3::length);
+        let axis_lengths = affine_axis_lengths(linear);
         let mean_axis_length = average_affine_axis_length(axis_lengths);
         let determinant = columns[2].dot(columns[0].cross(columns[1]));
         let axis_length_product = axis_lengths[0] * axis_lengths[1] * axis_lengths[2];
@@ -2982,6 +2982,30 @@ mod tests {
                 0x4060_0000_0000_0000,
             ],
             "cross-axis slots are XY, XZ, YZ"
+        );
+    }
+
+    #[test]
+    fn affine_geometry_facts_widen_dot_products_before_multiplying() {
+        let x = Vec3::new(
+            f32::from_bits(0x3ff3_5574),
+            f32::from_bits(0x3f0e_fa3c),
+            0.0,
+        );
+        let y = Vec3::new(
+            f32::from_bits(0x3ff5_5e17),
+            f32::from_bits(0x3f10_2c31),
+            0.0,
+        );
+        let facts = AffineGeometryFacts::from_linear(Mat3::from_cols(x, y, Vec3::Z))
+            .expect("finite widened facts");
+        let widened_dot = x.as_dvec3().dot(y.as_dvec3());
+        let f32_then_widened = f64::from(x.dot(y));
+
+        assert_eq!(facts.cross_axis_dots[0], widened_dot);
+        assert_ne!(
+            facts.cross_axis_dots[0], f32_then_widened,
+            "the fact must multiply and add in f64, not widen an f32 dot product"
         );
     }
 

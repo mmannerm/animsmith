@@ -2373,6 +2373,48 @@ mod tests {
     }
 
     #[test]
+    fn skin_bind_summary_classification_is_mean_relative_in_every_joint_order() {
+        let factors = [
+            1.0_f32,
+            f32::from_bits(0x3f80_004b),
+            f32::from_bits(0x3f7f_ff69),
+        ];
+        let mut sorted_factors = factors.map(f64::from);
+        sorted_factors.sort_by(f64::total_cmp);
+        let expected_mean = sorted_factors.into_iter().sum::<f64>() / factors.len() as f64;
+        let permutations = [
+            [0usize, 1usize, 2usize],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ];
+
+        for order in permutations {
+            let joints = order.map(|index| SkinJointMeasurements {
+                joint_index: index,
+                node_index: index,
+                joint_bind_to_mesh: available_derived_matrix(Mat4::from_scale(Vec3::splat(
+                    factors[index],
+                ))),
+                mesh_bind_world: available_derived_matrix(Mat4::IDENTITY),
+            });
+            assert_eq!(
+                summarize_skin_bind_linear(&joints),
+                SkinBindLinearSummaryMeasurements {
+                    classification: SkinBindLinearSummaryClassification::ConsistentUniform,
+                    joint_count: 3,
+                    available_joint_count: 3,
+                    unavailable_joint_count: 0,
+                    consistent_uniform_scale: Some(expected_mean),
+                },
+                "high/low factors straddle the first-joint band in order {order:?}"
+            );
+        }
+    }
+
+    #[test]
     fn source_measurement_reports_disagreeing_uniform_joint_bind_scales() {
         let doc = Document {
             assets: SceneAssets {

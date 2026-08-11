@@ -32,6 +32,12 @@ fn matrix_translation(x: f32, y: f32, z: f32) -> [f32; 16] {
     ]
 }
 
+fn matrix_uniform_scale(scale: f32) -> [f32; 16] {
+    [
+        scale, 0.0, 0.0, 0.0, 0.0, scale, 0.0, 0.0, 0.0, 0.0, scale, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ]
+}
+
 fn write_matrix_node_gltf(path: &std::path::Path) {
     let matrix = [
         2.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 0.0, 4.0, 0.0, 10.0, 20.0, 30.0, 1.0,
@@ -149,6 +155,70 @@ fn write_source_skin_gltf(path: &std::path::Path, case: InverseBindCase, multipl
         serde_json::to_vec_pretty(&document).expect("serializes glTF"),
     )
     .expect("writes synthetic glTF");
+}
+
+fn write_uniform_bind_summary_gltf(path: &std::path::Path, reverse_joint_order: bool) {
+    let mut bytes = Vec::new();
+    let (positions_offset, positions_length) = append_f32s(
+        &mut bytes,
+        [0.0_f32, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0],
+    );
+    let inverse_bind_scales = [1.0_f32, f32::from_bits(0x3f7f_ff80)];
+    let order = if reverse_joint_order {
+        [1usize, 0usize]
+    } else {
+        [0, 1]
+    };
+    let (inverse_binds_offset, inverse_binds_length) = append_f32s(
+        &mut bytes,
+        order
+            .into_iter()
+            .flat_map(|index| matrix_uniform_scale(inverse_bind_scales[index])),
+    );
+    let buffer = path.with_extension("bin");
+    std::fs::write(&buffer, &bytes).expect("writes synthetic buffer");
+
+    let document = json!({
+        "asset": { "version": "2.0" },
+        "buffers": [{
+            "uri": buffer.file_name().and_then(|name| name.to_str()).expect("UTF-8 name"),
+            "byteLength": bytes.len()
+        }],
+        "bufferViews": [
+            { "buffer": 0, "byteOffset": positions_offset, "byteLength": positions_length },
+            { "buffer": 0, "byteOffset": inverse_binds_offset, "byteLength": inverse_binds_length }
+        ],
+        "accessors": [
+            {
+                "bufferView": 0,
+                "componentType": 5126,
+                "count": 3,
+                "type": "VEC3",
+                "min": [0.0, 0.0, 0.0],
+                "max": [1.0, 1.0, 0.0]
+            },
+            { "bufferView": 1, "componentType": 5126, "count": 2, "type": "MAT4" }
+        ],
+        "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 } }] }],
+        "nodes": [
+            { "name": "root", "children": [1, 2, 3] },
+            { "name": "joint-a" },
+            { "name": "joint-b" },
+            { "name": "mesh", "mesh": 0, "skin": 0 }
+        ],
+        "skins": [{
+            "name": "uniform-summary",
+            "joints": order.map(|index| index + 1),
+            "inverseBindMatrices": 1
+        }],
+        "scenes": [{ "nodes": [0] }],
+        "scene": 0
+    });
+    std::fs::write(
+        path,
+        serde_json::to_vec_pretty(&document).expect("serializes summary glTF"),
+    )
+    .expect("writes summary glTF");
 }
 
 fn write_inverse_bind_state_gltf(path: &std::path::Path) {
@@ -628,6 +698,63 @@ fn cli_measure_preserves_source_skin_identity_and_coordinate_domains() {
     assert_eq!(
         skins[1]["joints"][0]["mesh_bind_world"]["matrix"],
         json!(matrix_translation(9.0, 0.0, 0.0))
+    );
+}
+
+#[test]
+fn cli_measure_publishes_a_canonical_multi_joint_uniform_summary() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut summaries = Vec::new();
+
+    for (name, reverse_joint_order, expected_nodes) in [
+        ("forward", false, [1_u64, 2_u64]),
+        ("reverse", true, [2_u64, 1_u64]),
+    ] {
+        let input = dir.path().join(format!("{name}.gltf"));
+        write_uniform_bind_summary_gltf(&input, reverse_joint_order);
+        let (document, _) = measure(&input);
+        let measurements = &document["files"][0]["measurements"];
+        assert_measurements_schema(measurements);
+        let skin = &measurements["skins"][0];
+        let joints = skin["joints"].as_array().expect("joint rows");
+        assert_eq!(
+            joints
+                .iter()
+                .map(|joint| joint["node_index"].as_u64().expect("node index"))
+                .collect::<Vec<_>>(),
+            expected_nodes,
+            "the fixture really changes authored joint order"
+        );
+        let mut factors = joints
+            .iter()
+            .map(|joint| {
+                joint["joint_bind_to_mesh"]["linear"]["uniform_scale"]
+                    .as_f64()
+                    .expect("uniform factor")
+            })
+            .collect::<Vec<_>>();
+        assert_ne!(factors[0], factors[1], "joint factors must be distinct");
+        factors.sort_by(f64::total_cmp);
+        let expected_mean = factors.iter().sum::<f64>() / factors.len() as f64;
+        let summary = &skin["joint_bind_linear_summary"];
+        assert_eq!(summary["classification"], "consistent_uniform");
+        assert_eq!(summary["joint_count"], 2);
+        assert_eq!(summary["available_joint_count"], 2);
+        assert_eq!(summary["unavailable_joint_count"], 0);
+        assert_eq!(
+            summary["consistent_uniform_scale"]
+                .as_f64()
+                .expect("summary factor")
+                .to_bits(),
+            expected_mean.to_bits(),
+            "the JSON boundary publishes the canonical mean rather than joint 0"
+        );
+        summaries.push(summary.clone());
+    }
+
+    assert_eq!(
+        summaries[0], summaries[1],
+        "authored joint order cannot change the serialized summary"
     );
 }
 
