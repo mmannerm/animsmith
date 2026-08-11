@@ -2214,6 +2214,124 @@ mod tests {
     }
 
     #[test]
+    fn document_shape_rejects_duplicate_tracks_for_every_property() {
+        let tracks = [
+            (Property::Translation, TrackValues::Vec3s(vec![Vec3::ZERO])),
+            (Property::Scale, TrackValues::Vec3s(vec![Vec3::ONE])),
+            (Property::Rotation, TrackValues::Quats(vec![Quat::IDENTITY])),
+        ];
+
+        for (property, values) in tracks {
+            let track = Track {
+                property,
+                values,
+                ..valid_track()
+            };
+            let mut document = track_document(track.clone());
+            document.clips[0].tracks.push(track);
+
+            assert_eq!(
+                validate_document_shape(&document),
+                Err(DocumentShapeError::DuplicateClipTrack {
+                    clip_index: 0,
+                    node: 0,
+                    property,
+                }),
+                "duplicate {property:?} track"
+            );
+        }
+    }
+
+    #[test]
+    fn document_shape_rejects_infinite_times_quaternions_and_inverse_binds() {
+        for non_finite in [f32::INFINITY, f32::NEG_INFINITY] {
+            let document = track_document(Track {
+                times: vec![non_finite],
+                values: TrackValues::Vec3s(vec![Vec3::ZERO]),
+                ..valid_track()
+            });
+            assert_eq!(
+                validate_document_shape(&document),
+                Err(DocumentShapeError::TrackShape {
+                    clip_index: 0,
+                    node: 0,
+                    violation: TrackShapeViolation::NonFiniteTime,
+                }),
+                "track time {non_finite}"
+            );
+
+            let document = track_document(Track {
+                property: Property::Rotation,
+                values: TrackValues::Quats(vec![Quat::from_xyzw(non_finite, 0.0, 0.0, 1.0)]),
+                ..valid_track()
+            });
+            assert_eq!(
+                validate_document_shape(&document),
+                Err(DocumentShapeError::TrackShape {
+                    clip_index: 0,
+                    node: 0,
+                    violation: TrackShapeViolation::NonFiniteValue,
+                }),
+                "track quaternion {non_finite}"
+            );
+
+            let mut columns = Mat4::IDENTITY.to_cols_array();
+            columns[0] = non_finite;
+            let inverse_bind = Mat4::from_cols_array(&columns);
+            let mut document = instance_document();
+            document.assets.instances[0].skin_joints = vec![0];
+            document.assets.instances[0].skin_ibms = vec![inverse_bind];
+            assert_eq!(
+                validate_document_shape(&document),
+                Err(DocumentShapeError::MeshInstanceShape {
+                    instance_index: 0,
+                    violation: MeshInstanceShapeViolation::NonFiniteSkinInverseBind,
+                }),
+                "instance inverse bind {non_finite}"
+            );
+
+            let mut document = one_bone_document();
+            document.skeleton.bones[0].inverse_bind = Some(inverse_bind);
+            assert_eq!(
+                validate_document_shape(&document),
+                Err(DocumentShapeError::NonFiniteBoneInverseBind { node: 0 }),
+                "bone inverse bind {non_finite}"
+            );
+        }
+    }
+
+    #[test]
+    fn document_shape_checks_mesh_and_joint_references_on_later_instances() {
+        let later_instance = MeshInstance {
+            node: 0,
+            mesh: 0,
+            ..MeshInstance::default()
+        };
+
+        let mut document = instance_document();
+        document.assets.instances.push(later_instance.clone());
+        document.assets.instances[1].mesh = 1;
+        assert_eq!(
+            validate_document_shape(&document),
+            Err(DocumentShapeError::MeshInstanceShape {
+                instance_index: 1,
+                violation: MeshInstanceShapeViolation::MeshIndexOutOfRange,
+            })
+        );
+
+        let mut document = instance_document();
+        document.assets.instances.push(later_instance);
+        document.assets.instances[1].skin_joints = vec![1];
+        assert_eq!(
+            validate_document_shape(&document),
+            Err(DocumentShapeError::MeshInstanceShape {
+                instance_index: 1,
+                violation: MeshInstanceShapeViolation::SkinJointOutOfRange,
+            })
+        );
+    }
+
+    #[test]
     fn document_shape_violation_names_remain_machine_stable() {
         let source_projection = [
             (
