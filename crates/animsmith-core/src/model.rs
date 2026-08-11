@@ -122,8 +122,13 @@ pub(crate) fn affine_axis_lengths(linear: Mat3) -> [f64; 3] {
 
 /// The arithmetic-mean common factor represented by three affine axis
 /// lengths.
+///
+/// The finite widened inputs are summed in ascending order so this shared
+/// factor does not depend on an affine matrix's authored column order.
 pub(crate) fn average_affine_axis_length(lengths: [f64; 3]) -> f64 {
-    (lengths[0] + lengths[1] + lengths[2]) / 3.0
+    let mut ascending = lengths;
+    ascending.sort_by(f64::total_cmp);
+    (ascending[0] + ascending[1] + ascending[2]) / 3.0
 }
 
 #[cfg(test)]
@@ -141,6 +146,38 @@ pub(crate) mod affine_test_fixtures {
     /// lies between the two callers' orthogonality bands.
     pub(crate) fn orthogonality_tolerance_divergence_basis() -> Mat3 {
         Mat3::from_cols(Vec3::X, Vec3::new(5.0e-5, 1.0, 0.0), Vec3::Z)
+    }
+
+    /// All signed column orders of the exact Appendix D v6 mean fixture.
+    ///
+    /// Odd permutations negate their first column, preserving orientation
+    /// without changing any axis length.
+    pub(crate) fn appendix_d_v6_mean_permutations() -> [Mat3; 6] {
+        let columns = [
+            Vec3::new(
+                f32::from_bits(0x3f0e_8cbb),
+                f32::from_bits(0x3f26_fbbe),
+                f32::from_bits(0x3f21_9bc7),
+            ),
+            Vec3::new(
+                f32::from_bits(0x3d9c_b415),
+                f32::from_bits(0x3e92_d82b),
+                f32::from_bits(0x3f82_e85d),
+            ),
+            Vec3::new(
+                f32::from_bits(0x3f14_5226),
+                f32::from_bits(0x3e9e_e50d),
+                f32::from_bits(0x3f56_817c),
+            ),
+        ];
+        [
+            Mat3::from_cols(columns[0], columns[1], columns[2]),
+            Mat3::from_cols(-columns[0], columns[2], columns[1]),
+            Mat3::from_cols(-columns[1], columns[0], columns[2]),
+            Mat3::from_cols(columns[1], columns[2], columns[0]),
+            Mat3::from_cols(columns[2], columns[0], columns[1]),
+            Mat3::from_cols(-columns[2], columns[1], columns[0]),
+        ]
     }
 }
 
@@ -2707,6 +2744,87 @@ mod tests {
             assert_eq!(
                 classify_positive_uniform_affine(basis, policy),
                 Err(AffineDomainViolation::Sheared)
+            );
+        }
+    }
+
+    #[test]
+    fn affine_axis_mean_is_ascending_and_column_order_invariant() {
+        // This is the audited counterexample. These are the widened lengths
+        // of three exact binary32 columns; their authored-order sum changes
+        // by one binary64 ulp when the columns are cycled. The canonical
+        // ascending association is the lower result.
+        let lengths = [
+            f64::from_bits(0x3ff1_09e7_e000_022c),
+            f64::from_bits(0x3ff1_09ec_6000_0eb5),
+            f64::from_bits(0x3ff1_09fa_e000_3cde),
+        ];
+        let expected = f64::from_bits(0x3ff1_09ef_b555_6f3f);
+        let ascending = (lengths[0] + lengths[1] + lengths[2]) / 3.0;
+        let descending = (lengths[2] + lengths[1] + lengths[0]) / 3.0;
+        assert_eq!(expected.to_bits(), 0x3ff1_09ef_b555_6f3f);
+        assert_eq!(ascending.to_bits(), expected.to_bits());
+        assert_eq!(descending.to_bits(), 0x3ff1_09ef_b555_6f40);
+        for order in [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ] {
+            assert_eq!(
+                average_affine_axis_length(order.map(|index| lengths[index])),
+                expected,
+                "axis order {order:?}"
+            );
+        }
+
+        // The association is observable even for exactly representable
+        // dyadic inputs: adding the two small terms first retains them,
+        // while adding either to `2^53` loses both. This catches replacing
+        // the canonical sort with a different fixed input order.
+        let dyadic = [2.0_f64.powi(53), 1.0, 1.0];
+        let ascending = (dyadic[1] + dyadic[2] + dyadic[0]) / 3.0;
+        let descending = (dyadic[0] + dyadic[1] + dyadic[2]) / 3.0;
+        assert_ne!(ascending, descending);
+        assert_eq!(average_affine_axis_length(dyadic), ascending);
+
+        // The same exact binary32 columns exercise the classifier. Every
+        // permutation below preserves orientation: odd column permutations
+        // negate one column, which leaves lengths unchanged and restores the
+        // determinant's sign. The equal-axis boundary must consequently
+        // reject the same geometry in all six authored axis orders.
+        let permutations = affine_test_fixtures::appendix_d_v6_mean_permutations();
+        let expected_length_bits = lengths.map(f64::to_bits);
+        assert_eq!(
+            affine_axis_lengths(permutations[0]).map(f64::to_bits),
+            expected_length_bits
+        );
+        let tolerance = PositiveUniformAffineTolerance {
+            equal_axis: 1.0e-5,
+            relative_orthogonality: 1.0e-5,
+            singular_determinant_relative: 1.0e-6,
+        };
+        for (permutation, linear) in permutations.into_iter().enumerate() {
+            assert!(
+                linear
+                    .x_axis
+                    .as_dvec3()
+                    .cross(linear.y_axis.as_dvec3())
+                    .dot(linear.z_axis.as_dvec3())
+                    > 0.0,
+                "orientation for permutation {permutation}"
+            );
+            assert_eq!(
+                average_affine_axis_length(affine_axis_lengths(linear)).to_bits(),
+                expected.to_bits(),
+                "mean for permutation {permutation}"
+            );
+            assert_eq!(
+                classify_positive_uniform_affine(linear, tolerance),
+                Err(AffineDomainViolation::NonUniformScale),
+                "classification for permutation {permutation}"
             );
         }
     }

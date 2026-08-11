@@ -519,7 +519,7 @@ const OVERSIZED_KEY_COUNT: usize = 5_000;
 /// node 2 "holder"  mesh 0, skin 0             50,000 vertices, one influence
 /// ```
 ///
-/// Hand-computed against the `appendix-d-v5` budget of `400_000_000`, using
+/// Hand-computed against the `appendix-d-v6` budget of `400_000_000`, using
 /// the per-sample charge the core proof documents — two document sides times
 /// the bone count, plus two sides and one residual comparison per skin slot,
 /// plus two sides times the skinned vertex count:
