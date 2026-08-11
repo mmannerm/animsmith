@@ -2004,6 +2004,33 @@ and, later, an assembly-v2 integration. The existing
 `canonicalize_skinned_bind_pose` remains the narrower unanimated bind-geometry
 foundation; it is not silently widened or renamed into this contract.
 
+**Shared affine classification, distinct acceptance contracts.** The core uses
+one typed, symmetric `f64` positive-uniform `Mat3` classifier for both Appendix
+D and skinned bind-pose canonicalization. Appendix D retains
+`appendix-d-v5`'s `1e-5` equal-axis/orthogonality and `1e-6`
+relative-determinant thresholds. The canonicalization input
+`source_to_meters_y_up` retains its numeric `1e-4` equal-axis/orthogonality
+thresholds and exact-zero determinant threshold; these are compatibility with
+the existing assembly/canonicalization contract, not a second scale-policy
+version.
+
+Canonicalization does deliberately adopt the shared classifier's semantics:
+axis equality is relative to the three-axis average and longer operand rather
+than to the first column, derived arithmetic is `f64`, and singularity is
+classified before non-uniformity or shear. Thus a unit basis with one axis at
+`1.00015` is accepted while `1.00016` is refused, and an input that is both
+exactly singular and sheared now uses the existing
+`reflection_or_singular` reason rather than `non_uniform_or_sheared`. The
+machine-readable vocabulary is unchanged; these symmetric boundaries and
+precedence replace two independent algorithms with one explicit typed policy.
+The classifier runs after canonicalization's separate existing
+zero-translation/fourth-column `w_axis ~= Vec4::W` gate and its first-axis
+`<= 1e-4` `zero_scale` reason. That zero-scale gate reads the same widened
+`f64` axis length as the classifier, so a finite large basis cannot overflow a
+binary32 length intermediate and be mislabeled as zero scale.
+Near the shear boundary, the symmetric average base and binary64 dot products
+can also refuse inputs that the former first-column/binary32 check accepted.
+
 After this design is accepted, implementation is split into independently
 auditable issues, in order:
 

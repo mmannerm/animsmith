@@ -142,8 +142,8 @@ pub use finding::{Finding, MemberMeasurement, Severity, Value};
 pub use glam;
 pub use metrics::MetricGrids;
 pub use model::{
-    AdditionalInfluenceSet, Bone, BoneId, Clip, DecodedImageColorType, Document,
-    ImageContainerFormat, ImageSourceKind, ImageUnavailableReason, Interpolation,
+    AdditionalInfluenceSet, AffineDomainViolation, Bone, BoneId, Clip, DecodedImageColorType,
+    Document, ImageContainerFormat, ImageSourceKind, ImageUnavailableReason, Interpolation,
     MaterialResourceAssets, MaterialResourceCoverage, MaterialTextureSlot, Property, Skeleton,
     SourceImageAsset, SourceImageInspection, SourceInfo, SourceInverseBindAccessor,
     SourceInverseBindAccessorStatus, SourceMaterialAsset, SourceMaterialTextureBinding,
@@ -155,10 +155,9 @@ pub use profile::{
 };
 pub use sample::{PoseGrid, TrackSample, default_frame_count, sample_clip, sample_track};
 pub use scale::{
-    AffineDomainViolation, ProofResidualKind, ScaleCandidate, ScaleCapabilityCoverage,
-    ScaleCapabilityFacts, ScaleDomainRewrites, ScaleError, ScaleOperation, ScalePlan, ScaleProof,
-    ScaleProofObligations, ScaleRequest, ScaleTolerancePolicy, build_scale_candidate, plan_scale,
-    prove_scale,
+    ProofResidualKind, ScaleCandidate, ScaleCapabilityCoverage, ScaleCapabilityFacts,
+    ScaleDomainRewrites, ScaleError, ScaleOperation, ScalePlan, ScaleProof, ScaleProofObligations,
+    ScaleRequest, ScaleTolerancePolicy, build_scale_candidate, plan_scale, prove_scale,
 };
 pub use skinned_canonical::{
     SkinnedBindPoseCanonicalization, SkinnedBindPoseCanonicalizationError,
