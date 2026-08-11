@@ -5,8 +5,143 @@
 //! density, …) read this layer; semantic checks read the sampled layer
 //! built from it (see [`crate::sample`]).
 
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat3, Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
+
+/// Stable machine-readable reason a positive-uniform affine linear part failed
+/// classification.
+///
+/// Core consumers map these typed facts into their own domain-specific
+/// diagnostics rather than sharing a broad operation error enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AffineDomainViolation {
+    /// The linear part's axis lengths are not equal (non-uniform scale).
+    NonUniformScale,
+    /// The linear part's axes are not mutually orthogonal (shear).
+    Sheared,
+    /// The linear part has a negative determinant (reflection).
+    Reflected,
+    /// The linear part is singular or near-singular.
+    Singular,
+    /// The linear part contains a non-finite component.
+    NonFinite,
+}
+
+/// Tolerances supplied by one caller of
+/// [`classify_positive_uniform_affine`].
+///
+/// The classifier deliberately owns no global policy: Appendix D scale
+/// planning uses its versioned `f64` policy, while skinned bind-pose
+/// canonicalization retains its established `1e-4` acceptance band.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct PositiveUniformAffineTolerance {
+    pub(crate) equal_axis: f64,
+    pub(crate) relative_orthogonality: f64,
+    pub(crate) singular_determinant_relative: f64,
+}
+
+/// Classify an affine linear part as an orientation-preserving positive
+/// uniform scale and return its common factor.
+///
+/// Inputs widen to `f64` before every derived calculation. This preserves the
+/// Appendix D scale classifier's boundary behaviour; callers choose the
+/// tolerance policy appropriate to their separate contract.
+pub(crate) fn classify_positive_uniform_affine(
+    linear: Mat3,
+    tolerance: PositiveUniformAffineTolerance,
+) -> Result<f64, AffineDomainViolation> {
+    if !linear.is_finite() {
+        return Err(AffineDomainViolation::NonFinite);
+    }
+    let columns = [
+        linear.x_axis.as_dvec3(),
+        linear.y_axis.as_dvec3(),
+        linear.z_axis.as_dvec3(),
+    ];
+    let lengths = affine_axis_lengths(linear);
+    if lengths.iter().any(|length| !length.is_finite()) {
+        return Err(AffineDomainViolation::NonFinite);
+    }
+    let average = average_affine_axis_length(lengths);
+    if average <= 0.0 {
+        return Err(AffineDomainViolation::Singular);
+    }
+
+    // Check singularity before the shape facts. A degenerate basis that is
+    // also non-uniform or sheared is still singular, which keeps the
+    // independently named rejection classes deterministic.
+    // Expand the scalar triple product from the widened columns. Calling
+    // `Mat3::determinant` here would perform the derived arithmetic in f32
+    // before widening and moves the singular boundary.
+    let determinant = columns[2].dot(columns[0].cross(columns[1]));
+    if !determinant.is_finite() {
+        return Err(AffineDomainViolation::NonFinite);
+    }
+    let axis_product = lengths[0] * lengths[1] * lengths[2];
+    if determinant.abs() <= tolerance.singular_determinant_relative * axis_product {
+        return Err(AffineDomainViolation::Singular);
+    }
+    // This is a relative band with no unit floor: a floor would become an
+    // absolute tolerance for sub-unit transforms. The longer-operand base
+    // keeps the comparison symmetric, and `>` makes the boundary inclusive.
+    if lengths
+        .iter()
+        .any(|&length| (length - average).abs() > tolerance.equal_axis * average.max(length))
+    {
+        return Err(AffineDomainViolation::NonUniformScale);
+    }
+
+    // Scale the dot-product band by the square of the common factor. As with
+    // the axis band, equality is accepted and only a value beyond it rejects.
+    let orthogonality_tolerance = tolerance.relative_orthogonality * average * average;
+    if columns[0].dot(columns[1]).abs() > orthogonality_tolerance
+        || columns[0].dot(columns[2]).abs() > orthogonality_tolerance
+        || columns[1].dot(columns[2]).abs() > orthogonality_tolerance
+    {
+        return Err(AffineDomainViolation::Sheared);
+    }
+    if determinant < 0.0 {
+        return Err(AffineDomainViolation::Reflected);
+    }
+    Ok(average)
+}
+
+/// The three column lengths of a linear part, widened to `f64` first.
+///
+/// The positive-uniform classifier and the scale proof's observed-factor
+/// witness both use this helper so that their factor is one shared quantity.
+pub(crate) fn affine_axis_lengths(linear: Mat3) -> [f64; 3] {
+    [
+        linear.x_axis.as_dvec3().length(),
+        linear.y_axis.as_dvec3().length(),
+        linear.z_axis.as_dvec3().length(),
+    ]
+}
+
+/// The arithmetic-mean common factor represented by three affine axis
+/// lengths.
+pub(crate) fn average_affine_axis_length(lengths: [f64; 3]) -> f64 {
+    (lengths[0] + lengths[1] + lengths[2]) / 3.0
+}
+
+#[cfg(test)]
+pub(crate) mod affine_test_fixtures {
+    use super::{Mat3, Vec3};
+
+    /// A finite diagonal basis intentionally between the two callers' equal
+    /// axis bands: Appendix D rejects it, while skinned canonicalization's
+    /// established `1e-4` policy accepts it.
+    pub(crate) fn tolerance_divergence_basis() -> Mat3 {
+        Mat3::from_diagonal(Vec3::new(1.0, 1.000_05, 1.0))
+    }
+
+    /// A nearly orthogonal basis whose only non-zero cross-axis dot product
+    /// lies between the two callers' orthogonality bands.
+    pub(crate) fn orthogonality_tolerance_divergence_basis() -> Mat3 {
+        Mat3::from_cols(Vec3::X, Vec3::new(5.0e-5, 1.0, 0.0), Vec3::Z)
+    }
+}
 
 /// Index into [`Skeleton::bones`].
 pub type BoneId = usize;
@@ -890,6 +1025,172 @@ pub struct SceneAssets {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_affine_classifier_respects_distinct_caller_tolerances() {
+        let equal_axis_basis = affine_test_fixtures::tolerance_divergence_basis();
+        let strict = PositiveUniformAffineTolerance {
+            equal_axis: 1.0e-5,
+            relative_orthogonality: 1.0e-5,
+            singular_determinant_relative: 1.0e-6,
+        };
+        let loose = PositiveUniformAffineTolerance {
+            equal_axis: 1.0e-4,
+            relative_orthogonality: 1.0e-4,
+            singular_determinant_relative: 0.0,
+        };
+
+        assert_eq!(
+            classify_positive_uniform_affine(equal_axis_basis, strict),
+            Err(AffineDomainViolation::NonUniformScale),
+            "the stricter caller rejects this equal-axis difference"
+        );
+        assert!(
+            classify_positive_uniform_affine(equal_axis_basis, loose).is_ok(),
+            "the looser caller accepts this equal-axis difference"
+        );
+
+        let orthogonality_basis = affine_test_fixtures::orthogonality_tolerance_divergence_basis();
+        assert_eq!(
+            classify_positive_uniform_affine(orthogonality_basis, strict),
+            Err(AffineDomainViolation::Sheared),
+            "the stricter caller rejects this cross-axis dot product"
+        );
+        assert!(
+            classify_positive_uniform_affine(orthogonality_basis, loose).is_ok(),
+            "the looser caller accepts this cross-axis dot product"
+        );
+    }
+
+    #[test]
+    fn shared_affine_classifier_pins_its_symmetric_f64_formula() {
+        let policy = PositiveUniformAffineTolerance {
+            equal_axis: 1.0e-5,
+            relative_orthogonality: 1.0e-5,
+            singular_determinant_relative: 1.0e-6,
+        };
+
+        // Exact binary32 lengths whose mean is exactly 99_999 in binary64.
+        // The longest-axis deviation is exactly 1: accepted only when the
+        // relative base is max(mean, axis), then refused one binary32 ulp
+        // farther out.
+        let on_long_edge = Mat3::from_diagonal(Vec3::new(99_998.5, 99_998.5, 100_000.0));
+        assert_eq!(
+            classify_positive_uniform_affine(on_long_edge, policy),
+            Ok(99_999.0)
+        );
+        let short = 99_998.5;
+        let long = 100_000.0 + 0.007_812_5;
+        for diagonal in [
+            Vec3::new(long, short, short),
+            Vec3::new(short, long, short),
+            Vec3::new(short, short, long),
+        ] {
+            assert_eq!(
+                classify_positive_uniform_affine(Mat3::from_diagonal(diagonal), policy),
+                Err(AffineDomainViolation::NonUniformScale)
+            );
+        }
+
+        // A one-sided comparison would miss the uniquely short axis. At this
+        // exact binary32 step the short-axis deviation is outside the band,
+        // while each longer axis remains inside it.
+        let short = 1.0 - 2.0_f32.powi(-16);
+        for diagonal in [
+            Vec3::new(short, 1.0, 1.0),
+            Vec3::new(1.0, short, 1.0),
+            Vec3::new(1.0, 1.0, short),
+        ] {
+            assert_eq!(
+                classify_positive_uniform_affine(Mat3::from_diagonal(diagonal), policy),
+                Err(AffineDomainViolation::NonUniformScale)
+            );
+        }
+
+        // Only binary64 dot-product arithmetic places this basis outside the
+        // orthogonality band; binary32 rounds the deciding dot back inside.
+        let c0 = Vec3::new(0.12792248, -0.99066633, -0.047073245);
+        let c1 = Vec3::new(-0.34637994, -0.00016034879, -0.93809813);
+        let c2 = Vec3::new(0.92933476, 0.13630849, -0.3431568);
+        assert!((c1.dot(c2) as f64).abs() < 1.0e-5);
+        assert!(c1.as_dvec3().dot(c2.as_dvec3()).abs() > 1.0e-5);
+        assert_eq!(
+            classify_positive_uniform_affine(Mat3::from_cols(c0, c1, c2), policy),
+            Err(AffineDomainViolation::Sheared)
+        );
+
+        // Orthogonality is sign-independent; dropping abs() accepts the
+        // negative case while leaving the positive fixture green.
+        for shear in [2.0_f32.powi(-15), -2.0_f32.powi(-15)] {
+            let basis = Mat3::from_cols(Vec3::X, Vec3::new(shear, 1.0, 0.0), Vec3::Z);
+            assert_eq!(
+                classify_positive_uniform_affine(basis, policy),
+                Err(AffineDomainViolation::Sheared)
+            );
+        }
+    }
+
+    #[test]
+    fn shared_affine_classifier_pins_f64_determinant_arithmetic() {
+        // These exact binary32 columns make the f32 scalar triple product
+        // land above the same threshold that the product of widened columns
+        // lands below. The remaining bands are deliberately loose so only
+        // singularity arithmetic decides the result.
+        let linear = Mat3::from_cols(
+            Vec3::new(
+                f32::from_bits(0x3ff3_5574),
+                f32::from_bits(0x3f0e_fa3c),
+                0.0,
+            ),
+            Vec3::new(
+                f32::from_bits(0x3ff5_5e17),
+                f32::from_bits(0x3f10_2c31),
+                0.0,
+            ),
+            Vec3::Z,
+        );
+        let columns = [
+            linear.x_axis.as_dvec3(),
+            linear.y_axis.as_dvec3(),
+            linear.z_axis.as_dvec3(),
+        ];
+        let determinant_f64 = columns[2].dot(columns[0].cross(columns[1]));
+        let determinant_f32 = f64::from(linear.determinant());
+        let lengths = affine_axis_lengths(linear);
+        let threshold = (determinant_f64 + determinant_f32) / 2.0;
+        assert!(determinant_f64 < threshold);
+        assert!(determinant_f32 > threshold);
+
+        assert_eq!(
+            classify_positive_uniform_affine(
+                linear,
+                PositiveUniformAffineTolerance {
+                    equal_axis: 10.0,
+                    relative_orthogonality: 10.0,
+                    singular_determinant_relative: threshold
+                        / (lengths[0] * lengths[1] * lengths[2]),
+                },
+            ),
+            Err(AffineDomainViolation::Singular)
+        );
+
+        // Every derived determinant operand must stay widened as well. A
+        // binary32 axis-product intermediate overflows on this otherwise
+        // finite, positive, exactly uniform basis and falsely calls it
+        // singular under Appendix D's non-zero relative threshold.
+        let large_uniform = 2.0e19_f32;
+        assert_eq!(
+            classify_positive_uniform_affine(
+                Mat3::from_diagonal(Vec3::splat(large_uniform)),
+                PositiveUniformAffineTolerance {
+                    equal_axis: 1.0e-5,
+                    relative_orthogonality: 1.0e-5,
+                    singular_determinant_relative: 1.0e-6,
+                },
+            ),
+            Ok(f64::from(large_uniform))
+        );
+    }
 
     #[test]
     fn weld_preserves_uv_seams_at_shared_positions() {

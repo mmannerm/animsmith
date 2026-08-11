@@ -34,10 +34,10 @@
 //! `100 * 0.01 == 1.0`, `300 * 0.01 == 3.0`, `0.01 * (1/0.01) == 1.0`, and
 //! `1 * 0.01` is the `f32` whose shortest round-tripping spelling is `0.01`.
 
-use animsmith_core::model::Document;
+use animsmith_core::model::{AffineDomainViolation, Document};
 use animsmith_core::scale::{
-    AffineDomainViolation, ScaleCandidate, ScaleError, ScaleOperation, ScalePlan, ScaleRequest,
-    ScaleTolerancePolicy, plan_scale, prove_scale,
+    ScaleCandidate, ScaleError, ScaleOperation, ScalePlan, ScaleRequest, ScaleTolerancePolicy,
+    plan_scale, prove_scale,
 };
 use animsmith_gltf::{
     GltfCapabilityViolationKind, GltfScaleArtifact, GltfScalePreflightError, GltfScaleRewriteError,

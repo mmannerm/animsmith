@@ -5,14 +5,21 @@
 //! same declared coordinate transform, and regenerates inverse bind matrices.
 
 use crate::model::{
-    Bone, Document, MeshAsset, MeshInstance, SceneAsset, SceneAssets, Skeleton,
-    SourceSkeletonAssets, Transform, WorldMatrixError, world_rest_matrices,
+    AffineDomainViolation, Bone, Document, MeshAsset, MeshInstance, PositiveUniformAffineTolerance,
+    SceneAsset, SceneAssets, Skeleton, SourceSkeletonAssets, Transform, WorldMatrixError,
+    affine_axis_lengths, classify_positive_uniform_affine, world_rest_matrices,
 };
 use glam::{Mat3, Mat4, Vec3};
 use std::collections::BTreeSet;
 
 const MATRIX_EPSILON: f32 = 1.0e-4;
 const MIN_RELATIVE_DETERMINANT: f32 = 1.0e-6;
+const COORDINATE_AFFINE_TOLERANCE: PositiveUniformAffineTolerance =
+    PositiveUniformAffineTolerance {
+        equal_axis: MATRIX_EPSILON as f64,
+        relative_orthogonality: MATRIX_EPSILON as f64,
+        singular_determinant_relative: 0.0,
+    };
 
 /// Deterministic placement applied after the declared coordinate conversion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -330,37 +337,35 @@ fn validate_coordinate_transform(
         );
     }
     let linear = Mat3::from_mat4(transform);
-    let columns = [linear.x_axis, linear.y_axis, linear.z_axis];
-    let scale = columns[0].length();
-    if !scale.is_finite() || scale <= MATRIX_EPSILON {
+    let scale = affine_axis_lengths(linear)[0];
+    if !scale.is_finite() || scale <= f64::from(MATRIX_EPSILON) {
         return Err(
             SkinnedBindPoseCanonicalizationError::InvalidCoordinateTransform {
                 reason: "zero_scale",
             },
         );
     }
-    let tolerance = MATRIX_EPSILON * scale * scale;
-    if columns
-        .iter()
-        .any(|column| (column.length() - scale).abs() > MATRIX_EPSILON * scale)
-        || columns[0].dot(columns[1]).abs() > tolerance
-        || columns[0].dot(columns[2]).abs() > tolerance
-        || columns[1].dot(columns[2]).abs() > tolerance
-    {
-        return Err(
-            SkinnedBindPoseCanonicalizationError::InvalidCoordinateTransform {
-                reason: "non_uniform_or_sheared",
+    classify_positive_uniform_affine(linear, COORDINATE_AFFINE_TOLERANCE)
+        .map(|_| ())
+        .map_err(
+            |violation| SkinnedBindPoseCanonicalizationError::InvalidCoordinateTransform {
+                reason: coordinate_transform_violation_reason(violation),
             },
-        );
+        )
+}
+
+/// Preserve skinned canonicalization's established machine-readable reasons
+/// while sharing the typed Mat3 classifier with scale planning.
+fn coordinate_transform_violation_reason(violation: AffineDomainViolation) -> &'static str {
+    match violation {
+        AffineDomainViolation::NonFinite => "non_finite",
+        AffineDomainViolation::NonUniformScale | AffineDomainViolation::Sheared => {
+            "non_uniform_or_sheared"
+        }
+        AffineDomainViolation::Reflected | AffineDomainViolation::Singular => {
+            "reflection_or_singular"
+        }
     }
-    if linear.determinant() <= 0.0 {
-        return Err(
-            SkinnedBindPoseCanonicalizationError::InvalidCoordinateTransform {
-                reason: "reflection_or_singular",
-            },
-        );
-    }
-    Ok(())
 }
 
 fn validate(
@@ -797,4 +802,30 @@ fn matrix3_is_finite(matrix: Mat3) -> bool {
         .to_cols_array()
         .into_iter()
         .all(|component| component.is_finite())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::affine_test_fixtures;
+
+    #[test]
+    fn coordinate_transform_accepts_the_shared_fixtures_inside_its_1e4_bands() {
+        assert_eq!(
+            COORDINATE_AFFINE_TOLERANCE,
+            PositiveUniformAffineTolerance {
+                equal_axis: f64::from(1.0e-4_f32),
+                relative_orthogonality: f64::from(1.0e-4_f32),
+                singular_determinant_relative: 0.0,
+            },
+            "the canonicalization policy tuple is an explicit contract"
+        );
+        for basis in [
+            affine_test_fixtures::tolerance_divergence_basis(),
+            affine_test_fixtures::orthogonality_tolerance_divergence_basis(),
+        ] {
+            validate_coordinate_transform(Mat4::from_mat3(basis))
+                .expect("skinned canonicalization keeps its declared 1e-4 policy");
+        }
+    }
 }

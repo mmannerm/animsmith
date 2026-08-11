@@ -50,9 +50,11 @@
 //! leaving a consumer to guess which to trust.
 
 use crate::model::{
-    BoneId, Clip, Document, Interpolation, MeshInstance, Primitive, Property, Skeleton,
-    SourceInverseBindAccessorStatus, SourceNodeAsset, SourceNodeLocalRest, SourceSkeletonCoverage,
-    SourceSkinAsset, Track, TrackValues, Transform, mat4_is_finite, world_rest_matrices,
+    AffineDomainViolation, BoneId, Clip, Document, Interpolation, MeshInstance,
+    PositiveUniformAffineTolerance, Primitive, Property, Skeleton, SourceInverseBindAccessorStatus,
+    SourceNodeAsset, SourceNodeLocalRest, SourceSkeletonCoverage, SourceSkinAsset, Track,
+    TrackValues, Transform, affine_axis_lengths, average_affine_axis_length,
+    classify_positive_uniform_affine, mat4_is_finite, world_rest_matrices,
 };
 use crate::sample::{TrackSample, sample_track};
 use glam::{DVec3, Mat3, Mat4, Quat, Vec3, Vec4};
@@ -674,23 +676,6 @@ pub struct ScaleRequest<'a> {
 }
 
 // --- Errors ----------------------------------------------------------------
-
-/// Stable machine-readable reason an affine linear part failed
-/// classification against the fixed tolerance policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum AffineDomainViolation {
-    /// The linear part's axis lengths are not equal (non-uniform scale).
-    NonUniformScale,
-    /// The linear part's axes are not mutually orthogonal (shear).
-    Sheared,
-    /// The linear part has a negative determinant (reflection).
-    Reflected,
-    /// The linear part is singular or near-singular.
-    Singular,
-    /// The linear part contains a non-finite component.
-    NonFinite,
-}
 
 /// Typed, fail-closed rejection from [`plan_scale`], [`build_scale_candidate`],
 /// or [`prove_scale`].
@@ -2608,133 +2593,15 @@ fn local_rest_matrix(rest: &SourceNodeLocalRest) -> Mat4 {
     }
 }
 
-/// Classify one rest-world linear part against the fixed tolerance policy,
-/// returning its common uniform factor.
-///
-/// Every component is widened to `f64` *first* and every derived quantity —
-/// column lengths, determinant, and column dot products — is then evaluated
-/// entirely in `f64`, per DESIGN.md Appendix D §D.1 ("Classification and
-/// proof share one versioned tolerance policy and compute in `f64`,
-/// narrowing only at the writer model boundary"). Evaluating in `f32` and
-/// casting the result afterwards is not the same thing: an `f32` column dot
-/// product of three near-unit axes carries roughly `1e-7` of cancellation
-/// error against a `1e-5` relative threshold scaled by `average^2`, which at
-/// small factors is enough to flip a genuinely sheared basis to accepted (a
-/// ULP sweep finds pairs whose `f32` dot is `-9.98e-6` and whose `f64` dot is
-/// `-1.00e-5`, either side of the threshold).
-///
-/// The two helpers below name the quantity this function returns, so the
-/// observed factor [`prove_scale`] re-derives is the *same* quantity by
-/// definition rather than by coincidence — see [`observed_factor_from_source`].
 fn classify_affine(linear: Mat3, tol: &ScaleTolerancePolicy) -> Result<f64, AffineDomainViolation> {
-    if !linear.is_finite() {
-        return Err(AffineDomainViolation::NonFinite);
-    }
-    let columns = [
-        linear.x_axis.as_dvec3(),
-        linear.y_axis.as_dvec3(),
-        linear.z_axis.as_dvec3(),
-    ];
-    let lengths = axis_lengths(linear);
-    if lengths.iter().any(|length| !length.is_finite()) {
-        return Err(AffineDomainViolation::NonFinite);
-    }
-    let average = axis_length_average(lengths);
-    if average <= 0.0 {
-        return Err(AffineDomainViolation::Singular);
-    }
-    // Determinant/singularity is checked before the uniform-axis and
-    // orthogonality checks: a rigid orthogonal basis with equal-length axes
-    // can never itself be near-singular (its determinant is forced to
-    // `±average^3`), so a degenerate matrix that also happens to have
-    // unequal or non-orthogonal axes must still classify as singular first,
-    // matching DESIGN.md Appendix D's independent violation fixtures.
-    //
-    // Expanded as the scalar triple product of the already-widened columns
-    // rather than through `Mat3::determinant`, which would evaluate the whole
-    // expansion in `f32`.
-    let determinant = columns[2].dot(columns[0].cross(columns[1]));
-    if !determinant.is_finite() {
-        return Err(AffineDomainViolation::NonFinite);
-    }
-    let axis_product = lengths[0] * lengths[1] * lengths[2];
-    if determinant.abs() <= tol.singular_determinant_relative * axis_product {
-        return Err(AffineDomainViolation::Singular);
-    }
-    // Relative to the axis magnitudes themselves — `average` is already
-    // proven positive above, so no floor is needed and none may be used: a
-    // `1.0` floor would make this an absolute `1e-5` test for every rig
-    // authored below unit magnitude, accepting `(0.01, 0.01, 0.010005)` as
-    // uniform.
-    //
-    // The base is `max(average, length)`, not `average`, and the comparison
-    // is `>`, not `>=`; both are pinned exactly on the boundary by
-    // `the_equal_axis_band_is_relative_to_the_longer_axis_and_admits_its_own_edge`.
-    if lengths
-        .iter()
-        .any(|&length| (length - average).abs() > tol.equal_axis * average.max(length))
-    {
-        return Err(AffineDomainViolation::NonUniformScale);
-    }
-    let dot01 = columns[0].dot(columns[1]);
-    let dot02 = columns[0].dot(columns[2]);
-    let dot12 = columns[1].dot(columns[2]);
-    let orthogonality_tolerance = tol.relative_orthogonality * average * average;
-    // `>`, inclusive, like every other comparison against a policy bound, and
-    // pinned exactly on the boundary — like the equal-axis band above — by
-    // `an_orthogonality_dot_exactly_on_its_tolerance_is_accepted_and_the_next_one_up_is_not`.
-    //
-    // An earlier revision of this comment claimed no binary32 basis could
-    // reach this boundary exactly, on a three-square argument that required
-    // `relative_orthogonality` to be the rational `1/100000` and
-    // `average * average` to be exact. It is neither. `1e-5` in binary64 is
-    // `5_902_958_103_587_057 * 2^-69`, whose numerator is odd, and both
-    // `average` and the two products below it are rounded — so nothing here
-    // is an identity between exact rationals and no such argument applies.
-    // Boundary bases are in fact easy to come by: sweeping the fixture's
-    // shape outward from the identity hits one two binary32 steps in.
-    if dot01.abs() > orthogonality_tolerance
-        || dot02.abs() > orthogonality_tolerance
-        || dot12.abs() > orthogonality_tolerance
-    {
-        return Err(AffineDomainViolation::Sheared);
-    }
-    // `<` rather than `<=`, and the two are indistinguishable here: a zero
-    // determinant can never reach this line. `determinant` is finite by the
-    // guard above, `lengths` are finite and non-negative, so `axis_product` is
-    // non-negative and never `NaN`; `singular_determinant_relative` is `1e-6`
-    // — this function is only ever called with `APPENDIX_D_V5` — so the
-    // singular threshold is non-negative, and `(±0.0).abs() <= threshold`
-    // holds for every non-negative threshold. Both signed zeros are therefore
-    // already `Singular`, and on every determinant that does arrive here
-    // `< 0.0` and `<= 0.0` agree. No fixture can separate them; a test that
-    // appeared to would be asserting on a policy no caller can supply.
-    if determinant < 0.0 {
-        return Err(AffineDomainViolation::Reflected);
-    }
-    Ok(average)
-}
-
-/// The three column lengths of a linear part, widened to `f64` first, per
-/// DESIGN.md Appendix D §D.1.
-fn axis_lengths(linear: Mat3) -> [f64; 3] {
-    [
-        linear.x_axis.as_dvec3().length(),
-        linear.y_axis.as_dvec3().length(),
-        linear.z_axis.as_dvec3().length(),
-    ]
-}
-
-/// The uniform factor a basis with those column lengths carries: their
-/// arithmetic mean.
-///
-/// Shared by [`classify_affine`] and [`observed_factor_from_source`] so that
-/// "the observed factor" denotes one quantity across planning and proof.
-/// Meaningful only for a basis whose axes are already known equal within
-/// [`ScaleTolerancePolicy::equal_axis`]; on any other basis it is just an
-/// average and claims nothing.
-fn axis_length_average(lengths: [f64; 3]) -> f64 {
-    (lengths[0] + lengths[1] + lengths[2]) / 3.0
+    classify_positive_uniform_affine(
+        linear,
+        PositiveUniformAffineTolerance {
+            equal_axis: tol.equal_axis,
+            relative_orthogonality: tol.relative_orthogonality,
+            singular_determinant_relative: tol.singular_determinant_relative,
+        },
+    )
 }
 
 /// Compose every [`Bone::rest`](crate::model::Bone::rest) local transform in
@@ -3290,10 +3157,11 @@ pub struct ScaleProof {
     /// is one there and the candidate's composed root scale is exactly
     /// `s_observed / s_declared` — unit only when the two agree, which the
     /// input band admits without requiring. The candidate route is real and it
-    /// is accurate: `plan.common_factor() * axis_length_average(axis_lengths(
-    /// candidate root world linear))` recovers the measurement to a relative
-    /// error below `2^-24`, the half-ulp of the one binary32 rounding that
-    /// round trip costs at unit magnitude. Swept over all 215 binary32 values
+    /// is accurate: `plan.common_factor() * average_affine_axis_length(
+    /// affine_axis_lengths(candidate root world linear))` recovers the
+    /// measurement to a relative error below `2^-24`, the half-ulp of the one
+    /// binary32 rounding that round trip costs at unit magnitude. Swept over
+    /// all 215 binary32 values
     /// the `1e-5` band admits around a declared `0.01`, the worst is
     /// `5.9604613e-8`; over this module's own `0.01`-factor fixtures it is
     /// `4.84e-8`, at a source root of `0.010_000_099`.
@@ -5030,7 +4898,9 @@ fn observed_factor_from_source(
             detail: "scaled_root_not_projected",
         })?;
     let world = source_worlds.bone(bone)?.matrix;
-    Ok(axis_length_average(axis_lengths(Mat3::from_mat4(world))))
+    Ok(average_affine_axis_length(affine_axis_lengths(
+        Mat3::from_mat4(world),
+    )))
 }
 
 /// Prove that inverse-bind evidence *outside* the affected closure came
@@ -6799,6 +6669,77 @@ mod tests {
     }
 
     #[test]
+    fn appendix_d_v5_rejects_the_shared_policy_divergence_fixture() {
+        assert_eq!(
+            classify_affine(
+                crate::model::affine_test_fixtures::tolerance_divergence_basis(),
+                &ScaleTolerancePolicy::APPENDIX_D_V5,
+            ),
+            Err(AffineDomainViolation::NonUniformScale)
+        );
+    }
+
+    #[test]
+    fn affine_adapter_maps_each_named_policy_field_to_its_own_classifier_band() {
+        let strict_shape_policy = ScaleTolerancePolicy {
+            equal_axis: 1.0e-4,
+            relative_orthogonality: 1.0e-5,
+            singular_determinant_relative: 1.0e-7,
+            ..ScaleTolerancePolicy::APPENDIX_D_V5
+        };
+
+        assert!(
+            classify_affine(
+                crate::model::affine_test_fixtures::tolerance_divergence_basis(),
+                &strict_shape_policy,
+            )
+            .is_ok(),
+            "the loose equal-axis band must reach the equal-axis field"
+        );
+        assert_eq!(
+            classify_affine(
+                crate::model::affine_test_fixtures::orthogonality_tolerance_divergence_basis(),
+                &strict_shape_policy,
+            ),
+            Err(AffineDomainViolation::Sheared),
+            "the strict orthogonality band must reach the orthogonality field"
+        );
+        let loose_orthogonality_policy = ScaleTolerancePolicy {
+            relative_orthogonality: 1.0e-4,
+            ..strict_shape_policy
+        };
+        assert!(
+            classify_affine(
+                crate::model::affine_test_fixtures::orthogonality_tolerance_divergence_basis(),
+                &loose_orthogonality_policy,
+            )
+            .is_ok(),
+            "the loose orthogonality band must reach the orthogonality field"
+        );
+
+        let determinant_boundary_basis =
+            |determinant: f32| Mat3::from_cols(Vec3::X, Vec3::new(1.0, determinant, 0.0), Vec3::Z);
+        assert_eq!(
+            classify_affine(determinant_boundary_basis(5.0e-8), &strict_shape_policy),
+            Err(AffineDomainViolation::Singular),
+            "the strict singularity band must reach the singularity field"
+        );
+        assert_eq!(
+            classify_affine(determinant_boundary_basis(5.0e-7), &strict_shape_policy),
+            Err(AffineDomainViolation::Sheared),
+            "a determinant beyond the singularity band must reach the later shape check"
+        );
+        assert_eq!(
+            classify_affine(
+                determinant_boundary_basis(5.0e-7),
+                &ScaleTolerancePolicy::APPENDIX_D_V5,
+            ),
+            Err(AffineDomainViolation::Singular),
+            "the production singularity band must differ from the strict test policy"
+        );
+    }
+
+    #[test]
     fn nonuniform_scale_domain_rejects() {
         let error = reject_case(|rest| *rest = trs_scale(Vec3::new(0.01, 0.02, 0.01)));
         assert!(matches!(
@@ -8183,7 +8124,7 @@ mod tests {
     #[test]
     fn the_observed_factor_is_the_mean_of_the_scaled_roots_axes_not_its_first_one() {
         // `observed_factor_from_source` reports
-        // `axis_length_average(axis_lengths(..))` — the same pair of helpers
+        // `average_affine_axis_length(affine_axis_lengths(..))` — the same pair of helpers
         // `classify_affine` returns its factor through, which is what makes
         // the two "the same quantity by definition rather than by
         // coincidence". On a basis whose axes are equal within

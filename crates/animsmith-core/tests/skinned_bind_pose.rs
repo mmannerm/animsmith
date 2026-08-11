@@ -284,6 +284,278 @@ fn canonicalization_rejects_non_uniform_coordinate_conversion() {
 }
 
 #[test]
+fn canonicalization_pins_the_shared_symmetric_axis_band() {
+    canonicalize_skinned_bind_pose(
+        &source_document(),
+        SkinnedBindPoseCanonicalizationOptions {
+            source_to_meters_y_up: Mat4::from_scale(Vec3::new(1.0, 1.000_15, 1.0)),
+            placement: SkinnedBindPosePlacement::Preserve,
+        },
+    )
+    .expect("the shared average-relative 1e-4 band accepts this single-axis edge");
+
+    let error = canonicalize_skinned_bind_pose(
+        &source_document(),
+        SkinnedBindPoseCanonicalizationOptions {
+            source_to_meters_y_up: Mat4::from_scale(Vec3::new(1.0, 1.000_16, 1.0)),
+            placement: SkinnedBindPosePlacement::Preserve,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        SkinnedBindPoseCanonicalizationError::InvalidCoordinateTransform {
+            reason: "non_uniform_or_sheared"
+        }
+    ));
+}
+
+#[test]
+fn canonicalization_preserves_preclassifier_reason_precedence() {
+    let mut non_affine = Mat4::IDENTITY;
+    non_affine.w_axis.x = 1.0;
+    for (transform, expected_reason) in [
+        (Mat4::from_scale(Vec3::new(1.0e-4, 1.0, 1.0)), "zero_scale"),
+        (non_affine, "non_affine"),
+    ] {
+        let error = canonicalize_skinned_bind_pose(
+            &source_document(),
+            SkinnedBindPoseCanonicalizationOptions {
+                source_to_meters_y_up: transform,
+                placement: SkinnedBindPosePlacement::Preserve,
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            SkinnedBindPoseCanonicalizationError::InvalidCoordinateTransform { reason }
+                if reason == expected_reason
+        ));
+    }
+}
+
+#[test]
+fn canonicalization_does_not_overflow_its_zero_scale_witness() {
+    let mut source = source_document();
+    for bone in &mut source.skeleton.bones {
+        bone.rest = Transform::IDENTITY;
+    }
+    source.assets.instances[0].skin_ibms = vec![Mat4::IDENTITY; 2];
+    // The coordinate basis itself is valid and reaches the later output-TRS
+    // representability check. The former f32 length mislabeled it as
+    // `InvalidCoordinateTransform { reason: "zero_scale" }` before then.
+    let error = canonicalize_skinned_bind_pose(
+        &source,
+        SkinnedBindPoseCanonicalizationOptions {
+            source_to_meters_y_up: Mat4::from_scale(Vec3::splat(2.0e19)),
+            placement: SkinnedBindPosePlacement::Preserve,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        SkinnedBindPoseCanonicalizationError::NonTrsRoot { node: 0 }
+    ));
+}
+
+#[test]
+fn canonicalization_pins_its_production_orthogonality_and_singularity_parameters() {
+    let accepted_shear = Mat3::from_cols(Vec3::X, Vec3::new(5.0e-5, 1.0, 0.0), Vec3::Z);
+    canonicalize_skinned_bind_pose(
+        &source_document(),
+        SkinnedBindPoseCanonicalizationOptions {
+            source_to_meters_y_up: Mat4::from_mat3(accepted_shear),
+            placement: SkinnedBindPosePlacement::Preserve,
+        },
+    )
+    .expect("the canonical coordinate policy keeps its declared 1e-4 shear band");
+
+    let refused_shear = Mat3::from_cols(Vec3::X, Vec3::new(1.1e-4, 1.0, 0.0), Vec3::Z);
+    let error = canonicalize_skinned_bind_pose(
+        &source_document(),
+        SkinnedBindPoseCanonicalizationOptions {
+            source_to_meters_y_up: Mat4::from_mat3(refused_shear),
+            placement: SkinnedBindPosePlacement::Preserve,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        SkinnedBindPoseCanonicalizationError::InvalidCoordinateTransform {
+            reason: "non_uniform_or_sheared"
+        }
+    ));
+
+    // This positive-determinant basis is below Appendix D's relative
+    // singularity threshold, but canonicalization declares only an exact
+    // zero determinant singular. Its much larger shear must therefore own
+    // the established grouped rejection reason.
+    let near_singular_shear = Mat3::from_cols(Vec3::X, Vec3::new(1.0, 5.0e-7, 0.0), Vec3::Z);
+    let error = canonicalize_skinned_bind_pose(
+        &source_document(),
+        SkinnedBindPoseCanonicalizationOptions {
+            source_to_meters_y_up: Mat4::from_mat3(near_singular_shear),
+            placement: SkinnedBindPosePlacement::Preserve,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        SkinnedBindPoseCanonicalizationError::InvalidCoordinateTransform {
+            reason: "non_uniform_or_sheared"
+        }
+    ));
+}
+
+#[test]
+fn canonicalization_pins_its_exact_zero_singularity_threshold() {
+    // The smallest positive binary32 determinant must reach the later shear
+    // check rather than being absorbed by an implicit positive singularity
+    // floor.
+    let positive_minimum_determinant =
+        Mat3::from_cols(Vec3::X, Vec3::new(1.0, f32::from_bits(1), 0.0), Vec3::Z);
+    let error = canonicalize_skinned_bind_pose(
+        &source_document(),
+        SkinnedBindPoseCanonicalizationOptions {
+            source_to_meters_y_up: Mat4::from_mat3(positive_minimum_determinant),
+            placement: SkinnedBindPosePlacement::Preserve,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        SkinnedBindPoseCanonicalizationError::InvalidCoordinateTransform {
+            reason: "non_uniform_or_sheared"
+        }
+    ));
+}
+
+#[test]
+fn canonicalization_pins_the_shared_symmetric_shear_base() {
+    let linear = Mat3::from_cols(
+        Vec3::X,
+        Vec3::new(9.999_319e-5, 0.999_923_9, 0.0),
+        Vec3::new(0.0, 0.0, 0.999_923_9),
+    );
+    let columns = [
+        linear.x_axis.as_dvec3(),
+        linear.y_axis.as_dvec3(),
+        linear.z_axis.as_dvec3(),
+    ];
+    let average = columns.iter().map(|column| column.length()).sum::<f64>() / 3.0;
+    let dot = columns[0].dot(columns[1]).abs();
+    assert!(dot <= f64::from(1.0e-4_f32));
+    assert!(dot > f64::from(1.0e-4_f32) * average * average);
+
+    let error = canonicalize_skinned_bind_pose(
+        &source_document(),
+        SkinnedBindPoseCanonicalizationOptions {
+            source_to_meters_y_up: Mat4::from_mat3(linear),
+            placement: SkinnedBindPosePlacement::Preserve,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        SkinnedBindPoseCanonicalizationError::InvalidCoordinateTransform {
+            reason: "non_uniform_or_sheared"
+        }
+    ));
+}
+
+#[test]
+fn canonicalization_pins_f64_shear_arithmetic_at_its_public_boundary() {
+    let linear = Mat3::from_cols(
+        Vec3::new(1.0, f32::from_bits(0xb3b5_dd6f), 0.0),
+        Vec3::new(f32::from_bits(0x38d1_e80c), 1.0, 0.0),
+        Vec3::new(0.0, 0.0, f32::from_bits(0x3f80_0332)),
+    );
+    let f32_average =
+        (linear.x_axis.length() + linear.y_axis.length() + linear.z_axis.length()) / 3.0;
+    let f32_dot = linear.x_axis.dot(linear.y_axis).abs();
+    let f32_tolerance = 1.0e-4_f32 * f32_average * f32_average;
+    assert_eq!(f32_dot, f32_tolerance);
+
+    let columns = [
+        linear.x_axis.as_dvec3(),
+        linear.y_axis.as_dvec3(),
+        linear.z_axis.as_dvec3(),
+    ];
+    let f64_average = columns.iter().map(|column| column.length()).sum::<f64>() / 3.0;
+    let f64_dot = columns[0].dot(columns[1]).abs();
+    let f64_tolerance = f64::from(1.0e-4_f32) * f64_average * f64_average;
+    assert!(f64_dot > f64_tolerance);
+
+    let error = canonicalize_skinned_bind_pose(
+        &source_document(),
+        SkinnedBindPoseCanonicalizationOptions {
+            source_to_meters_y_up: Mat4::from_mat3(linear),
+            placement: SkinnedBindPosePlacement::Preserve,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        SkinnedBindPoseCanonicalizationError::InvalidCoordinateTransform {
+            reason: "non_uniform_or_sheared"
+        }
+    ));
+}
+
+#[test]
+fn canonicalization_prioritizes_singular_coordinate_conversion_over_shear() {
+    // This basis is both sheared (its first two columns are parallel) and
+    // singular. The shared classifier deliberately replaces the legacy
+    // canonicalization order with its singular-before-shape precedence while
+    // preserving the existing grouped reason vocabulary.
+    let error = canonicalize_skinned_bind_pose(
+        &source_document(),
+        SkinnedBindPoseCanonicalizationOptions {
+            source_to_meters_y_up: Mat4::from_cols_array(&[
+                1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+            ]),
+            placement: SkinnedBindPosePlacement::Preserve,
+        },
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        SkinnedBindPoseCanonicalizationError::InvalidCoordinateTransform {
+            reason: "reflection_or_singular"
+        }
+    ));
+}
+
+#[test]
+fn canonicalization_preserves_non_finite_and_reflection_reason_strings() {
+    for (basis, expected_reason) in [
+        (
+            Mat4::from_scale(Vec3::new(f32::NAN, 1.0, 1.0)),
+            "non_finite",
+        ),
+        (
+            Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0)),
+            "reflection_or_singular",
+        ),
+    ] {
+        let error = canonicalize_skinned_bind_pose(
+            &source_document(),
+            SkinnedBindPoseCanonicalizationOptions {
+                source_to_meters_y_up: basis,
+                placement: SkinnedBindPosePlacement::Preserve,
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            SkinnedBindPoseCanonicalizationError::InvalidCoordinateTransform { reason }
+                if reason == expected_reason
+        ));
+    }
+}
+
+#[test]
 fn canonicalization_rejects_animated_base_scenes() {
     let mut source = source_document();
     source.clips.push(Clip {
