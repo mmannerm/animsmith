@@ -262,6 +262,9 @@ machine-readable result to stdout and exits 1 when the asset has a problem.
 For example, a finite negative primary skin weight is rejected during planning
 with `rejection.kind: "negative-skin-weight"`; the record has `result: null`
 and neither destination is written.
+Shared structural refusals likewise keep their specific existing kinds (such
+as `invalid-parent`, `invalid-track-shape`, or `invalid-mesh-instance`) rather
+than collapsing into a generic document-shape kind.
 
 The record binds the operation and its declared selectors, the operator's
 declared paths verbatim, the input digest and byte count, and the complete raw

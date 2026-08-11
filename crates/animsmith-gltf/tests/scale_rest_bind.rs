@@ -34,7 +34,10 @@
 //! `100 * 0.01 == 1.0`, `300 * 0.01 == 3.0`, `0.01 * (1/0.01) == 1.0`, and
 //! `1 * 0.01` is the `f32` whose shortest round-tripping spelling is `0.01`.
 
-use animsmith_core::model::{AffineDomainViolation, Document};
+use animsmith_core::model::{
+    AffineDomainViolation, Document, DocumentShapeError, MeshInstanceShapeViolation,
+    TrackShapeViolation,
+};
 use animsmith_core::scale::{
     ScaleCandidate, ScaleError, ScaleOperation, ScalePlan, ScaleRequest, ScaleTolerancePolicy,
     plan_scale, prove_scale,
@@ -1476,14 +1479,17 @@ fn a_non_finite_inverse_bind_is_refused() {
     buffer[at::INVERSE_BIND..at::INVERSE_BIND + 4].copy_from_slice(&f32::NAN.to_le_bytes());
     value["buffers"][0]["uri"] = json!(data_uri(&buffer));
     match plan_error(refused("nan-ibm.gltf", &value, 0.01)) {
-        ScaleError::InvalidMeshInstance {
+        ScaleError::InvalidDocumentShape(DocumentShapeError::MeshInstanceShape {
             instance_index,
-            reason,
-        } => {
+            violation,
+        }) => {
             assert_eq!(instance_index, 0);
-            assert_eq!(reason, "non_finite_inverse_bind");
+            assert_eq!(
+                violation,
+                MeshInstanceShapeViolation::NonFiniteSkinInverseBind
+            );
         }
-        other => panic!("expected InvalidMeshInstance, got {other:?}"),
+        other => panic!("expected InvalidDocumentShape, got {other:?}"),
     }
 }
 
@@ -1493,16 +1499,16 @@ fn a_non_finite_translation_value_is_refused() {
     buffer[at::TRANSLATION + 4..at::TRANSLATION + 8].copy_from_slice(&f32::INFINITY.to_le_bytes());
     value["buffers"][0]["uri"] = json!(data_uri(&buffer));
     match plan_error(refused("inf-value.gltf", &value, 0.01)) {
-        ScaleError::InvalidTrackShape {
+        ScaleError::InvalidDocumentShape(DocumentShapeError::TrackShape {
             clip_index,
             node,
-            reason,
-        } => {
+            violation,
+        }) => {
             assert_eq!(clip_index, 0);
             assert_eq!(node, 1);
-            assert_eq!(reason, "non_finite_value");
+            assert_eq!(violation, TrackShapeViolation::NonFiniteValue);
         }
-        other => panic!("expected InvalidTrackShape, got {other:?}"),
+        other => panic!("expected InvalidDocumentShape, got {other:?}"),
     }
 }
 

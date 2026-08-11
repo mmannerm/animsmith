@@ -220,6 +220,14 @@ between them and the ceiling that divergence is expected to stay under
 not select CLI arguments, publish
 artifacts/evidence, or write files — see the crate rustdoc for the exact
 selector, error, and proof-obligation contracts.
+Each scale boundary validates every `Document` snapshot it consumes with the
+model-owned `validate_document_shape` check and reports a failure through
+`ScaleError::InvalidDocumentShape`.
+Because `Document` is publicly mutable, embedders must not treat one successful
+validation as a durable guarantee after mutation. The checker enumerates the
+strict structural invariants scale consumes; measurement and sampling retain
+their documented partial/tolerant behavior and do not use it as a universal
+validity gate.
 `ScaleOperation::RestBindUniformScale`'s selectors are raw, format-neutral
 source identity (`source_skin_index`, `source_root_node_index`), resolved
 against `Document::assets::source_skeleton` — never a normalized `BoneId` or

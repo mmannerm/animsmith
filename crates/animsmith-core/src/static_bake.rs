@@ -262,8 +262,8 @@ struct BakePlan {
 /// hierarchy or primitive layouts, non-finite transforms, attributes, or
 /// material factors, zero or unstable normals, near-singular transforms, and
 /// reflections are also rejected. Reflections would require rewriting the
-/// preserved triangle winding. The full document, including the transformed
-/// positions and normals, is validated before output is constructed.
+/// preserved triangle winding. The consumed fields, including transformed
+/// positions and normals, are validated before output is constructed.
 pub fn bake_static_mesh_transforms(doc: &Document) -> Result<StaticMeshBake, StaticMeshBakeError> {
     let plans = validate(doc)?;
     let mut meshes = Vec::with_capacity(plans.len());

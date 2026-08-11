@@ -1324,3 +1324,83 @@ fn static_mesh_bake_rejects_ambiguous_or_nonstatic_inputs() {
         )
     });
 }
+
+#[test]
+fn static_mesh_bake_ignores_unused_source_projection_shape() {
+    let mut source = supported_document();
+    let mut first = SourceNodeAsset::new(
+        7,
+        SourceNodeLocalRest::Trs {
+            translation: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
+        },
+    );
+    first.parent_source_node_index = Some(999);
+    first.bone = Some(2);
+    let mut duplicate = first.clone();
+    duplicate.bone = Some(3);
+    source.assets.source_skeleton = SourceSkeletonAssets {
+        coverage: SourceSkeletonCoverage::Complete,
+        nodes: vec![first, duplicate],
+        skins: vec![
+            SourceSkinAsset {
+                source_skin_index: 4,
+                ..SourceSkinAsset::default()
+            },
+            SourceSkinAsset {
+                source_skin_index: 5,
+                ..SourceSkinAsset::default()
+            },
+            SourceSkinAsset {
+                source_skin_index: 4,
+                ..SourceSkinAsset::default()
+            },
+        ],
+    };
+
+    let baked = bake_static_mesh_transforms(&source)
+        .expect("static baking does not consume raw source-projection identity");
+    assert_eq!(baked.evidence.entries.len(), 2);
+}
+
+#[test]
+fn static_mesh_bake_preserves_its_operation_specific_validation_precedence() {
+    let mut source = supported_document();
+    source.clips.push(Clip {
+        name: "malformed-but-still-animation".into(),
+        duration_s: 0.0,
+        tracks: vec![Track {
+            bone: 999,
+            property: Property::Translation,
+            interpolation: Interpolation::Linear,
+            times: Vec::new(),
+            values: TrackValues::Vec3s(Vec::new()),
+        }],
+    });
+    source.assets.instances[0].node = 999;
+    source.assets.instances[0].mesh = 999;
+
+    assert_bake_error(&source, "AnimationTrack precedence", |error| {
+        matches!(
+            error,
+            StaticMeshBakeError::AnimationTrack {
+                clip,
+                node: 999,
+                property: "translation"
+            } if clip == "malformed-but-still-animation"
+        )
+    });
+
+    source.clips.clear();
+    source.skeleton.bones[1].inverse_bind = Some(Mat4::IDENTITY);
+    source.skeleton.bones[0].parent = Some(1);
+    assert_bake_error(&source, "SkeletonSkin precedence", |error| {
+        matches!(error, StaticMeshBakeError::SkeletonSkin { node: 1 })
+    });
+
+    source.assets.instances.clear();
+    assert_bake_error(&source, "NoInstances precedence", |error| {
+        matches!(error, StaticMeshBakeError::NoInstances)
+    });
+}
