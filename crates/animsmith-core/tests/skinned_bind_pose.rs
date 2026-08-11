@@ -359,6 +359,100 @@ fn canonicalization_does_not_overflow_its_zero_scale_witness() {
 }
 
 #[test]
+fn canonicalization_pins_large_finite_positive_and_reflected_determinants() {
+    let mut source = source_document();
+    for bone in &mut source.skeleton.bones {
+        bone.rest = Transform::IDENTITY;
+    }
+    source.assets.instances[0].skin_ibms = vec![Mat4::IDENTITY; 2];
+
+    // This is a reflected, nearly orthogonal uniform basis. Its stored f32
+    // components and its exact f64 determinant are finite, but the old f32
+    // determinant evaluates `-inf + inf` and becomes NaN. A `det <= 0`
+    // predicate therefore admitted it. The shared widened classifier must
+    // retain the negative orientation fact and its stable public reason.
+    let scale = 1.0e18_f32;
+    let shear = 5.0e-5_f32;
+    let reflected = Mat3::from_cols(
+        scale * Vec3::new(1.0, shear, 0.0),
+        scale * Vec3::new(shear, 0.0, 1.0),
+        scale * Vec3::new(0.0, 1.0, -shear),
+    );
+    assert!(reflected.to_cols_array().into_iter().all(f32::is_finite));
+    assert!(reflected.determinant().is_nan());
+    let widened_columns = [
+        reflected.x_axis.as_dvec3(),
+        reflected.y_axis.as_dvec3(),
+        reflected.z_axis.as_dvec3(),
+    ];
+    let widened_lengths = widened_columns.map(|column| column.length());
+    let widened_average = widened_lengths.into_iter().sum::<f64>() / 3.0;
+    for length in widened_lengths {
+        assert!(
+            (length - widened_average).abs() <= f64::from(1.0e-4_f32) * widened_average.max(length)
+        );
+    }
+    let widened_orthogonality_tolerance = f64::from(1.0e-4_f32) * widened_average * widened_average;
+    for (left, right) in [(0, 1), (0, 2), (1, 2)] {
+        assert!(
+            widened_columns[left].dot(widened_columns[right]).abs()
+                <= widened_orthogonality_tolerance
+        );
+    }
+    let widened_determinant = widened_columns[2].dot(widened_columns[0].cross(widened_columns[1]));
+    assert!(widened_determinant.is_finite());
+    assert!(widened_determinant < 0.0);
+
+    // Flipping one column preserves every magnitude and orthogonality fact
+    // while making the widened orientation positive. Its f32 determinant is
+    // still NaN, so the public result distinguishes the determinant's actual
+    // sign from a blanket rejection of every binary32 NaN.
+    let positive = Mat3::from_cols(reflected.x_axis, reflected.y_axis, -reflected.z_axis);
+    assert!(positive.to_cols_array().into_iter().all(f32::is_finite));
+    assert!(positive.determinant().is_nan());
+    let positive_columns = [
+        positive.x_axis.as_dvec3(),
+        positive.y_axis.as_dvec3(),
+        positive.z_axis.as_dvec3(),
+    ];
+    let positive_widened_determinant =
+        positive_columns[2].dot(positive_columns[0].cross(positive_columns[1]));
+    assert!(positive_widened_determinant.is_finite());
+    assert!(positive_widened_determinant > 0.0);
+
+    let error = canonicalize_skinned_bind_pose(
+        &source,
+        SkinnedBindPoseCanonicalizationOptions {
+            source_to_meters_y_up: Mat4::from_mat3(positive),
+            placement: SkinnedBindPosePlacement::Preserve,
+        },
+    )
+    .unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            SkinnedBindPoseCanonicalizationError::NonTrsRoot { node: 0 }
+        ),
+        "unexpected positive-basis result: {error:?}"
+    );
+
+    let error = canonicalize_skinned_bind_pose(
+        &source,
+        SkinnedBindPoseCanonicalizationOptions {
+            source_to_meters_y_up: Mat4::from_mat3(reflected),
+            placement: SkinnedBindPosePlacement::Preserve,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        SkinnedBindPoseCanonicalizationError::InvalidCoordinateTransform {
+            reason: "reflection_or_singular"
+        }
+    ));
+}
+
+#[test]
 fn canonicalization_pins_its_production_orthogonality_and_singularity_parameters() {
     let accepted_shear = Mat3::from_cols(Vec3::X, Vec3::new(5.0e-5, 1.0, 0.0), Vec3::Z);
     canonicalize_skinned_bind_pose(
