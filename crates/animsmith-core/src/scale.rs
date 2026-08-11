@@ -8431,6 +8431,36 @@ mod tests {
     }
 
     #[test]
+    fn build_runs_the_shared_shape_checker_on_the_candidate_it_generated() {
+        let document = Document {
+            skeleton: Skeleton {
+                bones: vec![Bone {
+                    name: "root".into(),
+                    parent: None,
+                    rest: Transform {
+                        translation: Vec3::splat(f32::MAX),
+                        ..Transform::IDENTITY
+                    },
+                    inverse_bind: None,
+                }],
+            },
+            ..Document::default()
+        };
+        let capability = complete_capability();
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::WholeDocumentLinearUnits { factor: 2.0 },
+            document: &document,
+            capability: &capability,
+        })
+        .expect("the source shape and narrowed factor are individually finite");
+
+        assert_eq!(
+            build_scale_candidate(&document, &plan).unwrap_err(),
+            ScaleError::InvalidDocumentShape(DocumentShapeError::NonFiniteSkeletonRest { node: 0 })
+        );
+    }
+
+    #[test]
     fn missing_inverse_bind_evidence_rejects_instead_of_defaulting_to_identity() {
         let doc = compensated_document();
         let capability = complete_capability();

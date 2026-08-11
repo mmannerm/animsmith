@@ -1343,7 +1343,20 @@ fn static_mesh_bake_ignores_unused_source_projection_shape() {
     source.assets.source_skeleton = SourceSkeletonAssets {
         coverage: SourceSkeletonCoverage::Complete,
         nodes: vec![first, duplicate],
-        skins: Vec::new(),
+        skins: vec![
+            SourceSkinAsset {
+                source_skin_index: 4,
+                ..SourceSkinAsset::default()
+            },
+            SourceSkinAsset {
+                source_skin_index: 5,
+                ..SourceSkinAsset::default()
+            },
+            SourceSkinAsset {
+                source_skin_index: 4,
+                ..SourceSkinAsset::default()
+            },
+        ],
     };
 
     let baked = bake_static_mesh_transforms(&source)

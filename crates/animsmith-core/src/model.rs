@@ -1627,16 +1627,32 @@ mod tests {
             },
             ..Document::default()
         };
-        let invalid_parent = Document {
+        let self_parent = Document {
             skeleton: Skeleton {
                 bones: vec![bone(Some(0))],
+            },
+            ..Document::default()
+        };
+        let forward_parent = Document {
+            skeleton: Skeleton {
+                bones: vec![bone(Some(1)), bone(None)],
+            },
+            ..Document::default()
+        };
+        let far_parent = Document {
+            skeleton: Skeleton {
+                bones: vec![bone(Some(99))],
             },
             ..Document::default()
         };
         let duplicate_node = Document {
             assets: SceneAssets {
                 source_skeleton: SourceSkeletonAssets {
-                    nodes: vec![source_node(9, None, None), source_node(9, None, None)],
+                    nodes: vec![
+                        source_node(9, None, None),
+                        source_node(10, None, None),
+                        source_node(9, None, None),
+                    ],
                     ..SourceSkeletonAssets::default()
                 },
                 ..SceneAssets::default()
@@ -1649,6 +1665,10 @@ mod tests {
                     skins: vec![
                         SourceSkinAsset {
                             source_skin_index: 4,
+                            ..SourceSkinAsset::default()
+                        },
+                        SourceSkinAsset {
+                            source_skin_index: 5,
                             ..SourceSkinAsset::default()
                         },
                         SourceSkinAsset {
@@ -1704,6 +1724,17 @@ mod tests {
             ]),
             ..Document::default()
         };
+        let cyclic_unprojected_parent_pair = Document {
+            skeleton: Skeleton {
+                bones: vec![bone(None), bone(Some(0))],
+            },
+            assets: complete_projection(vec![
+                source_node(11, Some(12), Some(1)),
+                source_node(12, Some(13), None),
+                source_node(13, Some(12), None),
+            ]),
+            ..Document::default()
+        };
         let mismatched_nearest_parent = Document {
             skeleton: Skeleton {
                 bones: vec![bone(None), bone(Some(0))],
@@ -1725,18 +1756,25 @@ mod tests {
         let duplicate_track = {
             let track = valid_track();
             let mut document = track_document(track.clone());
+            document.clips[0].tracks.push(Track {
+                property: Property::Scale,
+                ..valid_track()
+            });
             document.clips[0].tracks.push(track);
             document
         };
-        let mut out_of_range_track = valid_track();
-        out_of_range_track.bone = 1;
+        let mut boundary_out_of_range_track = valid_track();
+        boundary_out_of_range_track.bone = 1;
+        let mut far_out_of_range_track = valid_track();
+        far_out_of_range_track.bone = 99;
         let empty_track = Track {
             times: Vec::new(),
             values: TrackValues::Vec3s(Vec::new()),
             ..valid_track()
         };
-        let non_finite_time = Track {
-            times: vec![f32::NAN],
+        let non_finite_later_time = Track {
+            times: vec![0.0, f32::NAN],
+            values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::ZERO]),
             ..valid_track()
         };
         let unordered_times = Track {
@@ -1744,12 +1782,53 @@ mod tests {
             values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::ZERO]),
             ..valid_track()
         };
-        let wrong_value_count = Track {
+        let equal_times = Track {
+            times: vec![0.0, 0.0],
+            values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::ZERO]),
+            ..valid_track()
+        };
+        let wrong_linear_value_count = Track {
             values: TrackValues::Vec3s(Vec::new()),
             ..valid_track()
         };
-        let wrong_value_type = Track {
+        let excess_linear_value_count = Track {
+            values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::ZERO]),
+            ..valid_track()
+        };
+        let wrong_step_value_count = Track {
+            interpolation: Interpolation::Step,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Vec3s(vec![Vec3::ZERO]),
+            ..valid_track()
+        };
+        let excess_step_value_count = Track {
+            interpolation: Interpolation::Step,
+            values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::ZERO]),
+            ..valid_track()
+        };
+        let wrong_cubic_value_count = Track {
+            interpolation: Interpolation::CubicSpline,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Vec3s(vec![Vec3::ZERO; 4]),
+            ..valid_track()
+        };
+        let excess_cubic_value_count = Track {
+            interpolation: Interpolation::CubicSpline,
+            values: TrackValues::Vec3s(vec![Vec3::ZERO; 4]),
+            ..valid_track()
+        };
+        let wrong_translation_value_type = Track {
             values: TrackValues::Quats(vec![Quat::IDENTITY]),
+            ..valid_track()
+        };
+        let wrong_scale_value_type = Track {
+            property: Property::Scale,
+            values: TrackValues::Quats(vec![Quat::IDENTITY]),
+            ..valid_track()
+        };
+        let wrong_rotation_value_type = Track {
+            property: Property::Rotation,
+            values: TrackValues::Vec3s(vec![Vec3::ZERO]),
             ..valid_track()
         };
         let non_finite_value = Track {
@@ -1759,13 +1838,23 @@ mod tests {
 
         let mut bad_instance_node = instance_document();
         bad_instance_node.assets.instances[0].node = 1;
+        let mut far_instance_node = instance_document();
+        far_instance_node.assets.instances[0].node = 99;
         let mut bad_instance_mesh = instance_document();
         bad_instance_mesh.assets.instances[0].mesh = 1;
+        let mut far_instance_mesh = instance_document();
+        far_instance_mesh.assets.instances[0].mesh = 99;
         let mut bad_instance_joint = instance_document();
         bad_instance_joint.assets.instances[0].skin_joints = vec![1];
+        let mut far_instance_joint = instance_document();
+        far_instance_joint.assets.instances[0].skin_joints = vec![99];
         let mut bad_instance_count = instance_document();
         bad_instance_count.assets.instances[0].skin_joints = vec![0];
         bad_instance_count.assets.instances[0].skin_ibms = vec![Mat4::IDENTITY, Mat4::IDENTITY];
+        let mut short_instance_count = instance_document();
+        short_instance_count.skeleton.bones.push(bone(Some(0)));
+        short_instance_count.assets.instances[0].skin_joints = vec![0, 1];
+        short_instance_count.assets.instances[0].skin_ibms = vec![Mat4::IDENTITY];
         let mut bad_instance_ibm = instance_document();
         bad_instance_ibm.assets.instances[0].skin_joints = vec![0];
         bad_instance_ibm.assets.instances[0].skin_ibms =
@@ -1785,9 +1874,22 @@ mod tests {
                 DocumentShapeError::NonFiniteSkeletonRest { node: 1 },
             ),
             (
-                "invalid parent",
-                invalid_parent,
+                "self parent",
+                self_parent,
                 DocumentShapeError::InvalidSkeletonParent { node: 0, parent: 0 },
+            ),
+            (
+                "forward parent",
+                forward_parent,
+                DocumentShapeError::InvalidSkeletonParent { node: 0, parent: 1 },
+            ),
+            (
+                "far parent",
+                far_parent,
+                DocumentShapeError::InvalidSkeletonParent {
+                    node: 0,
+                    parent: 99,
+                },
             ),
             (
                 "duplicate source node",
@@ -1830,6 +1932,14 @@ mod tests {
                 ),
             ),
             (
+                "cyclic projection parent pair",
+                cyclic_unprojected_parent_pair,
+                projection_error(
+                    11,
+                    SourceProjectionViolation::CyclicUnprojectedSourceParentChain,
+                ),
+            ),
+            (
                 "nearest projection parent",
                 mismatched_nearest_parent,
                 projection_error(
@@ -1855,9 +1965,14 @@ mod tests {
                 },
             ),
             (
-                "track bone range",
-                track_document(out_of_range_track),
+                "track bone range boundary",
+                track_document(boundary_out_of_range_track),
                 track_error(1, TrackShapeViolation::BoneIndexOutOfRange),
+            ),
+            (
+                "track bone range far",
+                track_document(far_out_of_range_track),
+                track_error(99, TrackShapeViolation::BoneIndexOutOfRange),
             ),
             (
                 "empty track",
@@ -1866,7 +1981,7 @@ mod tests {
             ),
             (
                 "non-finite time",
-                track_document(non_finite_time),
+                track_document(non_finite_later_time),
                 track_error(0, TrackShapeViolation::NonFiniteTime),
             ),
             (
@@ -1875,13 +1990,53 @@ mod tests {
                 track_error(0, TrackShapeViolation::TimesNotStrictlyIncreasing),
             ),
             (
-                "value count",
-                track_document(wrong_value_count),
+                "equal times",
+                track_document(equal_times),
+                track_error(0, TrackShapeViolation::TimesNotStrictlyIncreasing),
+            ),
+            (
+                "linear value count",
+                track_document(wrong_linear_value_count),
                 track_error(0, TrackShapeViolation::ValueCountMismatch),
             ),
             (
-                "value type",
-                track_document(wrong_value_type),
+                "linear excess value count",
+                track_document(excess_linear_value_count),
+                track_error(0, TrackShapeViolation::ValueCountMismatch),
+            ),
+            (
+                "step value count",
+                track_document(wrong_step_value_count),
+                track_error(0, TrackShapeViolation::ValueCountMismatch),
+            ),
+            (
+                "step excess value count",
+                track_document(excess_step_value_count),
+                track_error(0, TrackShapeViolation::ValueCountMismatch),
+            ),
+            (
+                "cubic value count",
+                track_document(wrong_cubic_value_count),
+                track_error(0, TrackShapeViolation::ValueCountMismatch),
+            ),
+            (
+                "cubic excess value count",
+                track_document(excess_cubic_value_count),
+                track_error(0, TrackShapeViolation::ValueCountMismatch),
+            ),
+            (
+                "translation value type",
+                track_document(wrong_translation_value_type),
+                track_error(0, TrackShapeViolation::ValueTypeMismatchesProperty),
+            ),
+            (
+                "scale value type",
+                track_document(wrong_scale_value_type),
+                track_error(0, TrackShapeViolation::ValueTypeMismatchesProperty),
+            ),
+            (
+                "rotation value type",
+                track_document(wrong_rotation_value_type),
                 track_error(0, TrackShapeViolation::ValueTypeMismatchesProperty),
             ),
             (
@@ -1890,23 +2045,43 @@ mod tests {
                 track_error(0, TrackShapeViolation::NonFiniteValue),
             ),
             (
-                "instance node",
+                "instance node boundary",
                 bad_instance_node,
                 instance_error(MeshInstanceShapeViolation::NodeIndexOutOfRange),
             ),
             (
-                "instance mesh",
+                "instance node far",
+                far_instance_node,
+                instance_error(MeshInstanceShapeViolation::NodeIndexOutOfRange),
+            ),
+            (
+                "instance mesh boundary",
                 bad_instance_mesh,
                 instance_error(MeshInstanceShapeViolation::MeshIndexOutOfRange),
             ),
             (
-                "instance joint",
+                "instance mesh far",
+                far_instance_mesh,
+                instance_error(MeshInstanceShapeViolation::MeshIndexOutOfRange),
+            ),
+            (
+                "instance joint boundary",
                 bad_instance_joint,
                 instance_error(MeshInstanceShapeViolation::SkinJointOutOfRange),
             ),
             (
-                "instance ibm count",
+                "instance joint far",
+                far_instance_joint,
+                instance_error(MeshInstanceShapeViolation::SkinJointOutOfRange),
+            ),
+            (
+                "instance ibm count excess",
                 bad_instance_count,
+                instance_error(MeshInstanceShapeViolation::SkinInverseBindCountMismatch),
+            ),
+            (
+                "instance ibm count short",
+                short_instance_count,
                 instance_error(MeshInstanceShapeViolation::SkinInverseBindCountMismatch),
             ),
             (
@@ -1922,6 +2097,119 @@ mod tests {
         ];
         for (name, document, expected) in cases {
             assert_eq!(validate_document_shape(&document), Err(expected), "{name}");
+        }
+    }
+
+    #[test]
+    fn document_shape_finiteness_checks_every_stored_component() {
+        for component in 0..3 {
+            let mut translation = Vec3::ZERO.to_array();
+            translation[component] = f32::NAN;
+            let mut document = one_bone_document();
+            document.skeleton.bones[0].rest.translation = Vec3::from_array(translation);
+            assert_eq!(
+                validate_document_shape(&document),
+                Err(DocumentShapeError::NonFiniteSkeletonRest { node: 0 }),
+                "rest translation component {component}"
+            );
+
+            let mut scale = Vec3::ONE.to_array();
+            scale[component] = f32::NAN;
+            let mut document = one_bone_document();
+            document.skeleton.bones[0].rest.scale = Vec3::from_array(scale);
+            assert_eq!(
+                validate_document_shape(&document),
+                Err(DocumentShapeError::NonFiniteSkeletonRest { node: 0 }),
+                "rest scale component {component}"
+            );
+
+            let mut value = Vec3::ZERO.to_array();
+            value[component] = f32::NAN;
+            let document = track_document(Track {
+                values: TrackValues::Vec3s(vec![Vec3::from_array(value)]),
+                ..valid_track()
+            });
+            assert_eq!(
+                validate_document_shape(&document),
+                Err(DocumentShapeError::TrackShape {
+                    clip_index: 0,
+                    node: 0,
+                    violation: TrackShapeViolation::NonFiniteValue,
+                }),
+                "track Vec3 component {component}"
+            );
+        }
+
+        for component in 0..4 {
+            let mut rotation = Quat::IDENTITY.to_array();
+            rotation[component] = f32::NAN;
+            let mut document = one_bone_document();
+            document.skeleton.bones[0].rest.rotation = Quat::from_array(rotation);
+            assert_eq!(
+                validate_document_shape(&document),
+                Err(DocumentShapeError::NonFiniteSkeletonRest { node: 0 }),
+                "rest rotation component {component}"
+            );
+
+            let document = track_document(Track {
+                property: Property::Rotation,
+                values: TrackValues::Quats(vec![Quat::from_array(rotation)]),
+                ..valid_track()
+            });
+            assert_eq!(
+                validate_document_shape(&document),
+                Err(DocumentShapeError::TrackShape {
+                    clip_index: 0,
+                    node: 0,
+                    violation: TrackShapeViolation::NonFiniteValue,
+                }),
+                "track quaternion component {component}"
+            );
+        }
+
+        for key in 0..3 {
+            let mut times = vec![0.0, 1.0, 2.0];
+            times[key] = f32::NAN;
+            let document = track_document(Track {
+                times,
+                values: TrackValues::Vec3s(vec![Vec3::ZERO; 3]),
+                ..valid_track()
+            });
+            assert_eq!(
+                validate_document_shape(&document),
+                Err(DocumentShapeError::TrackShape {
+                    clip_index: 0,
+                    node: 0,
+                    violation: TrackShapeViolation::NonFiniteTime,
+                }),
+                "track time {key}"
+            );
+        }
+
+        for component in 0..16 {
+            let mut columns = Mat4::IDENTITY.to_cols_array();
+            columns[component] = f32::NAN;
+            let inverse_bind = Mat4::from_cols_array(&columns);
+
+            let mut instance_document = instance_document();
+            instance_document.assets.instances[0].skin_joints = vec![0];
+            instance_document.assets.instances[0].skin_ibms = vec![inverse_bind];
+            assert_eq!(
+                validate_document_shape(&instance_document),
+                Err(DocumentShapeError::MeshInstanceShape {
+                    instance_index: 0,
+                    violation: MeshInstanceShapeViolation::NonFiniteSkinInverseBind,
+                }),
+                "instance inverse-bind component {component}"
+            );
+
+            let mut bone_document = one_bone_document();
+            bone_document.skeleton.bones[0].inverse_bind = Some(inverse_bind);
+            assert_eq!(
+                validate_document_shape(&bone_document),
+                Err(DocumentShapeError::NonFiniteBoneInverseBind { node: 0 }),
+                "bone inverse-bind component {component}"
+            );
         }
     }
 

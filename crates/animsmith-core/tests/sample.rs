@@ -204,3 +204,27 @@ fn sample_clip_quat_storage_drives_rotation_for_mismatched_property() {
     assert_eq!(grid.local(0, 0).scale, Vec3::splat(3.0));
     assert_eq!(grid.local(1, 0).scale, Vec3::splat(3.0));
 }
+
+#[test]
+fn sample_clip_vec3_storage_does_not_drive_a_rotation_property() {
+    let mut skel = two_bone_skeleton();
+    skel.bones[0].rest.translation = Vec3::new(1.0, 2.0, 3.0);
+    skel.bones[0].rest.rotation = Quat::from_rotation_x(0.25);
+    skel.bones[0].rest.scale = Vec3::splat(3.0);
+    let c = clip(vec![Track {
+        bone: 0,
+        property: Property::Rotation,
+        interpolation: Interpolation::Linear,
+        times: vec![0.0, 1.0],
+        values: TrackValues::Vec3s(vec![Vec3::splat(42.0)]),
+    }]);
+
+    let grid = sample_clip(&skel, &c, 2);
+    for frame in 0..2 {
+        assert_eq!(
+            grid.local(frame, 0),
+            skel.bones[0].rest,
+            "Vec3 storage is ignored when the declared property is rotation"
+        );
+    }
+}
