@@ -1275,6 +1275,16 @@ fn help_matches_compiled_feature_set() {
         "{}",
         stdout(&transform)
     );
+
+    let diff = animsmith()
+        .args(["diff", "--help"])
+        .output()
+        .expect("runs diff help");
+    assert!(diff.status.success(), "stderr:\n{}", stderr(&diff));
+    let out = stdout(&diff);
+    assert!(out.contains("output-v6"), "{out}");
+    assert!(out.contains("measurements-v12"), "{out}");
+    assert!(!out.contains("v5"), "{out}");
 }
 
 #[test]

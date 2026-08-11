@@ -87,7 +87,7 @@ animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hol
 animsmith fix     <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
 animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb> [--material-texture-recipe recipe.toml] [--animation-only|--bake-static-mesh-transforms] [--format text|json]
 animsmith assemble <recipe.toml> -o <out.glb> --evidence <out.json>
-animsmith diff    <A> <B> [--format text|json]     # A/B: assets or single-file v5 measure/lint JSON
+animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file output-v6 measure/lint JSON
 ```
 
 - `lint` = measure + judge against config. `measure` is lint minus

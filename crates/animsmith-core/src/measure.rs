@@ -1971,6 +1971,69 @@ mod tests {
     }
 
     #[test]
+    fn linear_measurement_reports_axis_lengths_in_xyz_column_order() {
+        let measured = measure_linear_transform(Mat4::from_scale(Vec3::new(2.0, 3.0, 5.0)));
+
+        assert_eq!(measured.axis_lengths, Some([2.0, 3.0, 5.0]));
+    }
+
+    #[test]
+    fn affine_consumers_widen_each_pair_dot_before_comparison() {
+        // These equal-band axes put the widened dot just beyond both callers'
+        // fixed orthogonality thresholds, while an f32 dot rounded before
+        // widening lands just inside. The three placements make each named
+        // pair independently own that public classification boundary.
+        let x = Vec3::new(
+            f32::from_bits(0x3fd8_2778),
+            f32::from_bits(0x3fd9_ea4a),
+            0.0,
+        );
+        let y = Vec3::new(
+            f32::from_bits(0xbfd9_e92c),
+            f32::from_bits(0x3fd8_2778),
+            0.0,
+        );
+        let z = Vec3::new(0.0, 0.0, f32::from_bits(0x4019_77cc));
+        let widened_dot = x.as_dvec3().dot(y.as_dvec3()).abs();
+        let f32_first_dot = f64::from(x.dot(y).abs());
+        let x_length = x.as_dvec3().length();
+        let y_length = y.as_dvec3().length();
+        let z_length = f64::from(z.z);
+        let pair_tolerance = LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE * x_length * y_length;
+        let mean = (x_length + y_length + z_length) / 3.0;
+        let common_tolerance = LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE * mean * mean;
+        let policy = PositiveUniformAffineTolerance {
+            equal_axis: LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE,
+            relative_orthogonality: LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE,
+            singular_determinant_relative: LINEAR_CLASSIFICATION_SINGULAR_TOLERANCE,
+        };
+
+        assert!(f32_first_dot <= pair_tolerance && widened_dot > pair_tolerance);
+        assert!(f32_first_dot <= common_tolerance && widened_dot > common_tolerance);
+
+        for (pair, linear) in [
+            ("positive XY", Mat3::from_cols(x, y, z)),
+            ("negative XY", Mat3::from_cols(x, -y, -z)),
+            ("positive XZ", Mat3::from_cols(x, -z, y)),
+            ("negative XZ", Mat3::from_cols(x, z, -y)),
+            ("positive YZ", Mat3::from_cols(z, x, y)),
+            ("negative YZ", Mat3::from_cols(-z, x, -y)),
+        ] {
+            let measured = measure_linear_transform(Mat4::from_mat3(linear));
+            assert_eq!(
+                measured.classification,
+                LinearTransformClassification::Sheared,
+                "measurement must compare the widened {pair} dot"
+            );
+            assert_eq!(
+                classify_positive_uniform_affine(linear, policy),
+                Err(AffineDomainViolation::Sheared),
+                "the positive-uniform classifier must compare the same widened {pair} dot"
+            );
+        }
+    }
+
+    #[test]
     fn linear_measurement_pins_equal_axis_boundaries_and_extreme_finite_scales() {
         let on_long_edge = Vec3::new(99_998.5, 99_998.5, 100_000.0);
         let measured = measure_linear_transform(Mat4::from_scale(on_long_edge));
@@ -2044,11 +2107,27 @@ mod tests {
                 ),
             ),
             (
+                "negative XZ",
+                Mat3::from_cols(
+                    Vec3::X,
+                    Vec3::new(0.0, 100.0, 0.0),
+                    Vec3::new(-1.5e-5, 0.0, 1.0),
+                ),
+            ),
+            (
                 "YZ",
                 Mat3::from_cols(
                     Vec3::new(100.0, 0.0, 0.0),
                     Vec3::Y,
                     Vec3::new(0.0, 1.5e-5, 1.0),
+                ),
+            ),
+            (
+                "negative YZ",
+                Mat3::from_cols(
+                    Vec3::new(100.0, 0.0, 0.0),
+                    Vec3::Y,
+                    Vec3::new(0.0, -1.5e-5, 1.0),
                 ),
             ),
         ] {
