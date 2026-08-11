@@ -906,7 +906,7 @@ fn measurement_report_input_identifies_invalid_file_without_cli_remediation() {
 }
 
 #[test]
-fn tool_source_drops_revision_text_outside_the_v5_schema() {
+fn tool_source_drops_revision_text_outside_the_v6_schema() {
     for invalid in ["f".repeat(39), "z".repeat(40), "f".repeat(41)] {
         let source = ToolSource::new(Some(invalid), Some(true));
         let json =

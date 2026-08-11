@@ -7,20 +7,21 @@ future machine serializers should project the JSON contract.
 
 ## Contract identities
 
-Validation and comparison JSON commands emit output contract v5 with the immutable protocol
-identity `urn:animsmith:schema:output:5`. The retrievable schema is
-[`output-v5.schema.json`](schemas/output-v5.schema.json); its repository URL
+Validation and comparison JSON commands emit output contract v6 with the immutable protocol
+identity `urn:animsmith:schema:output:6`. The retrievable schema is
+[`output-v6.schema.json`](schemas/output-v6.schema.json); its repository URL
 is a retrieval location, not the protocol identity.
 
 Measurement evidence is nested and independently versioned as
-`urn:animsmith:schema:measurements:11`. Its retrievable schema is
-[`measurements-v11.schema.json`](schemas/measurements-v11.schema.json). Version
-11 makes parent-space translation explicit and adds rest-world and skin-bind
-linear-transform facts. A future measurement-definition change can therefore
-bump that contract without redesigning the outer result envelope.
+`urn:animsmith:schema:measurements:12`. Its retrievable schema is
+[`measurements-v12.schema.json`](schemas/measurements-v12.schema.json). Version
+12 preserves the v11 JSON shape and vocabulary, but corrects the derivation of
+rest-world and skin-bind linear-transform facts. Because each output schema
+statically pins its nested measurement URN, that correction also requires the
+new output-v6 identity; it does not redesign the envelope shape.
 
 `convert --format json` is deliberately a separate conversion-evidence
-contract, not another command in the output-v5 envelope. Its immutable
+contract, not another command in the output-v6 envelope. Its immutable
 identity is `urn:animsmith:schema:conversion-evidence:2`; its retrievable
 schema is
 [`conversion-evidence-v2.schema.json`](schemas/conversion-evidence-v2.schema.json).
@@ -69,18 +70,19 @@ Conversion evidence v1 remains a historical immutable contract at
 exclusively; regenerate v1 evidence when a v2 consumer is required.
 
 [`Output-v2`](schemas/output-v2.schema.json),
-[`output-v3`](schemas/output-v3.schema.json), and
-[`output-v4`](schemas/output-v4.schema.json) remain historical immutable
+[`output-v3`](schemas/output-v3.schema.json),
+[`output-v4`](schemas/output-v4.schema.json), and
+[`output-v5`](schemas/output-v5.schema.json) remain historical immutable
 contracts. The current CLI emits and
-`diff` reads output-v5; regenerate a current output-v5 report from the original
+`diff` reads output-v6; regenerate a current output-v6 report from the original
 asset with `animsmith measure --format json` before passing it to `diff`.
 
 ## Common envelope
 
 ```json
 {
-  "schema_version": 5,
-  "schema": "urn:animsmith:schema:output:5",
+  "schema_version": 6,
+  "schema": "urn:animsmith:schema:output:6",
   "tool": {
     "name": "animsmith",
     "version": "0.1.0",
@@ -326,8 +328,8 @@ Both commands put evidence under `files[].measurements`:
 
 ```json
 {
-  "schema_version": 11,
-  "schema": "urn:animsmith:schema:measurements:11",
+  "schema_version": 12,
+  "schema": "urn:animsmith:schema:measurements:12",
   "clips": {},
   "mesh_definitions": [],
   "node_instances": [],
@@ -509,13 +511,22 @@ matrix as a directly consumable world-domain translation. `rest_world_linear`
 describes its upper-left 3x3 matrix with X/Y/Z column lengths, determinant,
 orientation sign, an optional common orthogonal `uniform_scale`, and one stable
 classification: `unit_orthonormal`, `uniform_scaled`, `non_uniform`,
-`sheared`, `reflected`, `singular`, or `non_finite`. Reflection takes
-classification precedence; axis lengths and the negative orientation retain
-the scale-shape evidence. Relative `1e-5` orthogonality/equal-axis tolerances
-and a scale-relative `1e-6` determinant tolerance make the result independent
-of a uniform choice of source units. The derived numeric facts are calculated
-and serialized with `f64` precision so scale-cubed determinants do not
-overflow or underflow across the finite `f32` source-matrix range. A
+`sheared`, `reflected`, `singular`, or `non_finite`. After singularity,
+reflection takes classification precedence over shear and scale shape; axis
+lengths and the negative orientation retain the remaining evidence.
+Measurements v12 derives its finite `f64` axis,
+determinant, and cross-axis facts through the shared affine facts, then applies
+its tolerant measurement policy: every length is compared to the three-axis
+mean using the longer operand, orthogonality is normalized by each axis pair,
+and singular/reflected/sheared/unit-or-uniform/non-uniform precedence remains
+measurement-specific. This reconciles the `1.0, 1.0, 1.000012` fixture
+with shared uniform-affine facts and gives the same observation after an axis
+permutation. v11 remains the immutable historical contract with its former
+derivation. Relative `1e-5` orthogonality/equal-axis tolerances and a
+scale-relative `1e-6` determinant tolerance make the result independent of a
+uniform choice of source units. The derived numeric facts are calculated and
+serialized with `f64` precision so scale-cubed determinants do not overflow or
+underflow across the finite `f32` source-matrix range. A
 non-finite or transitively unavailable world matrix carries its typed
 unavailable reason and a `non_finite` linear classification without fabricated
 numeric fields.
@@ -684,13 +695,13 @@ the same numeric value to a conforming adapter.
 
 ## `diff`
 
-`diff --format json` uses the same output v5 header and emits `inputs`, a
+`diff --format json` uses the same output v6 header and emits `inputs`, a
 delta count, and structured metric deltas:
 
 ```json
 {
-  "schema_version": 5,
-  "schema": "urn:animsmith:schema:output:5",
+  "schema_version": 6,
+  "schema": "urn:animsmith:schema:output:6",
   "tool": {
     "name": "animsmith",
     "version": "0.1.0",
@@ -705,9 +716,11 @@ delta count, and structured metric deltas:
 }
 ```
 
-`diff` accepts asset files or one-file v5 `measure`/`lint` reports carrying
-measurement contract v11. Multi-file reports and unsupported contract versions
-are rejected as operator errors. Before extracting the clip metrics it uses,
+`diff` accepts asset files or one-file v6 `measure`/`lint` reports carrying
+measurement contract v12. v11 reports are historical and are rejected with
+guidance to regenerate them from the original asset. Multi-file reports and
+other unsupported contract versions are also rejected as operator errors.
+Before extracting the clip metrics it uses,
 `diff` validates the complete measurement record, including mesh evidence, and
 rejects malformed or non-finite payload values.
 

@@ -103,8 +103,8 @@ $ animsmith lint --format json examples/assets/clip-dirty.glb | jq \
       check: (.files[0].checks[] | select(.check_id == "quat-norm")),
       measurements: (.files[0].measurements | {schema_version, schema})}'
 {
-  "schema_version": 5,
-  "schema": "urn:animsmith:schema:output:5",
+  "schema_version": 6,
+  "schema": "urn:animsmith:schema:output:6",
   "command": "lint",
   "input": {
     "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
@@ -123,8 +123,8 @@ $ animsmith lint --format json examples/assets/clip-dirty.glb | jq \
     ]
   },
   "measurements": {
-    "schema_version": 11,
-    "schema": "urn:animsmith:schema:measurements:11",
+    "schema_version": 12,
+    "schema": "urn:animsmith:schema:measurements:12",
     "clips": {},
     "mesh_definitions": [],
     "node_instances": [],
@@ -345,8 +345,8 @@ since this cycle returns its feet exactly), gait phase, and L/R foot amplitude:
 ```console
 $ animsmith measure examples/assets/walk.glb          # --format json
 {
-  "schema_version": 5,
-  "schema": "urn:animsmith:schema:output:5",
+  "schema_version": 6,
+  "schema": "urn:animsmith:schema:output:6",
   "tool": { "name": "animsmith", "version": "0.1.0",
             "source": { "revision": null, "dirty": null } },
   "command": "measure",
@@ -361,8 +361,8 @@ $ animsmith measure examples/assets/walk.glb          # --format json
       "rig": { "profile": "ue-mannequin", "resolved_roles": {
         "hips": "pelvis", "left_foot": "foot_l", "right_foot": "foot_r" } },
       "measurements": {
-        "schema_version": 11,
-        "schema": "urn:animsmith:schema:measurements:11",
+        "schema_version": 12,
+        "schema": "urn:animsmith:schema:measurements:12",
         "clips": { "walk": {
           "duration_s": 1.0, "frame_count": 33,
           "animated_bones": ["foot_l", "foot_r"],

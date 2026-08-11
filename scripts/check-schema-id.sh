@@ -35,11 +35,17 @@ check_schema() {
 check_schema docs/schemas/output-v2.schema.json urn:animsmith:schema:output:2
 check_schema docs/schemas/output-v3.schema.json urn:animsmith:schema:output:3
 check_schema docs/schemas/output-v4.schema.json urn:animsmith:schema:output:4
-check_schema docs/schemas/output-v5.schema.json urn:animsmith:schema:output:5 crates/animsmith-core/src/contract.rs docs/output.md
+check_schema docs/schemas/output-v5.schema.json urn:animsmith:schema:output:5
+check_schema docs/schemas/output-v6.schema.json urn:animsmith:schema:output:6 crates/animsmith-core/src/contract.rs docs/output.md
 check_schema docs/schemas/measurements-v8.schema.json urn:animsmith:schema:measurements:8
 check_schema docs/schemas/measurements-v9.schema.json urn:animsmith:schema:measurements:9
 check_schema docs/schemas/measurements-v10.schema.json urn:animsmith:schema:measurements:10
-check_schema docs/schemas/measurements-v11.schema.json urn:animsmith:schema:measurements:11 crates/animsmith-core/src/contract.rs docs/output.md
+check_schema docs/schemas/measurements-v11.schema.json urn:animsmith:schema:measurements:11 docs/schemas/output-v4.schema.json docs/schemas/output-v5.schema.json
+check_schema docs/schemas/measurements-v12.schema.json urn:animsmith:schema:measurements:12 crates/animsmith-core/src/contract.rs docs/schemas/output-v6.schema.json docs/output.md
+for historical_output in docs/schemas/output-v4.schema.json docs/schemas/output-v5.schema.json; do
+  grep -Fq '"measurements": { "$ref": "urn:animsmith:schema:measurements:11" }' "$historical_output" || fail "$historical_output must retain its measurements-v11 reference"
+done
+grep -Fq '"measurements": { "$ref": "urn:animsmith:schema:measurements:12" }' docs/schemas/output-v6.schema.json || fail 'docs/schemas/output-v6.schema.json must reference measurements-v12'
 check_schema docs/schemas/conversion-evidence-v1.schema.json urn:animsmith:schema:conversion-evidence:1 docs/output.md
 check_schema docs/schemas/conversion-evidence-v2.schema.json urn:animsmith:schema:conversion-evidence:2 docs/output.md docs/cli.md
 check_schema docs/schemas/scale-evidence-v1.schema.json urn:animsmith:schema:scale-evidence:1
@@ -48,10 +54,10 @@ check_schema docs/schemas/scale-evidence-v2.schema.json urn:animsmith:schema:sca
 # Current-contract descriptions must not send readers back to the immutable
 # output-v2 schema. Keep these exact statements aligned with the current outer
 # contract when it advances.
-grep -Fq 'Final output-v5 record for one catalog check.' crates/animsmith-core/src/evaluation.rs \
-  || fail 'CheckEvaluation documentation does not identify output v5'
-grep -Fq 'regenerate a current output-v5 report from the original' docs/output.md \
-  || fail 'report migration documentation does not identify output v5'
+grep -Fq 'Final output-v6 record for one catalog check.' crates/animsmith-core/src/evaluation.rs \
+  || fail 'CheckEvaluation documentation does not identify output v6'
+grep -Fq 'regenerate a current output-v6 report from the original' docs/output.md \
+  || fail 'report migration documentation does not identify output v6'
 
 for removed_schema in \
   docs/schemas/output-v1.schema.json \
@@ -217,7 +223,7 @@ legacy_candidate_pattern='"schema_version"'
 
 # Pin the scanner against a normal outer envelope whose schema/tool fields sit
 # between its version and command. Also prove that current nested measurements in a
-# current output-v5 envelope are not mistaken for an outer legacy contract.
+# current output-v6 envelope are not mistaken for an outer legacy contract.
 legacy_scanner_regression=$(
   printf '%s\n' \
     '{' \
@@ -302,14 +308,14 @@ modern_scanner_regression=$(
     '  "schema_version": 2,' \
     '  "command": "measure",' \
     '  "files": [{ "measurements": {' \
-    '    "schema_version": 11,' \
-    '    "schema": "urn:animsmith:schema:measurements:11"' \
+    '    "schema_version": 12,' \
+    '    "schema": "urn:animsmith:schema:measurements:12"' \
     '  }}]' \
     '}' \
     | awk "$legacy_envelope_awk"
 )
 if [ -n "$modern_scanner_regression" ]; then
-  fail "legacy-envelope scanner misclassified nested measurements v11"
+  fail "legacy-envelope scanner misclassified nested measurements v12"
 fi
 
 legacy_envelope=$(

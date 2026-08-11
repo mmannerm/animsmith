@@ -977,7 +977,7 @@ fn load_measurements(
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         let report: MeasurementReportInput = serde_json::from_str(&text)
             .map_err(|e| format!("bad JSON in {}: {e}", path.display()))?;
-        // Only the current output-v5 envelope with measurement contract v11 is
+        // Only the current output-v6 envelope with measurement contract v12 is
         // accepted. Older report shapes are intentionally not retained while
         // the project is alpha.
         let file_count = report.file_count();
@@ -1014,6 +1014,10 @@ fn diff_report_error(error: &MeasurementReportError, file_count: Option<usize>) 
         MeasurementReportError::MissingOutputVersion => {
             format!("is not an animsmith report envelope (no `schema_version`); {REMEDIATION}")
         }
+        MeasurementReportError::UnsupportedOutputVersion { found } => format!(
+            "has schema_version {found}; this build reads schema_version {}; {REMEDIATION}",
+            animsmith_core::OUTPUT_SCHEMA_VERSION
+        ),
         MeasurementReportError::WrongOutputIdentity => format!(
             "does not identify output contract {}; {REMEDIATION}",
             animsmith_core::OUTPUT_SCHEMA_ID
@@ -1039,7 +1043,7 @@ fn diff_report_error(error: &MeasurementReportError, file_count: Option<usize>) 
                 format!("has no versioned measurement contract; {REMEDIATION}")
             }
             MeasurementFileError::UnsupportedMeasurementVersion { found } => format!(
-                "has measurement schema_version {found}; this build reads measurement schema_version {}",
+                "has measurement schema_version {found}; this build reads measurement schema_version {}; {REMEDIATION}",
                 animsmith_core::MEASUREMENTS_SCHEMA_VERSION
             ),
             MeasurementFileError::WrongMeasurementIdentity => format!(

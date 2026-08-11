@@ -453,8 +453,8 @@ learns an embedder's contract schema.
 
 - **Text** (default): findings grouped per clip, measured-vs-expected on
   one line, colored; `--quiet` for CI summaries.
-- **JSON** (`--format json`): final output v5, identified by
-  `urn:animsmith:schema:output:5`. Lint emits one result per catalog check and
+- **JSON** (`--format json`): final output v6, identified by
+  `urn:animsmith:schema:output:6`. Lint emits one result per catalog check and
   represents selection, configuration, applicability, evaluation coverage,
   content findings, completed scopes, and typed gaps independently. Measure
   and lint share a nested, independently versioned measurement contract. The
@@ -468,6 +468,11 @@ learns an embedder's contract schema.
   facts. This remains measurement evidence, not an image acceptance, repair,
   resize, transcode, color-space, writer-preservation, or recipe-authority
   policy.
+  Measurements v12 keeps that payload's JSON shape and vocabulary but corrects
+  its linear-transform observations through shared f64 affine facts. Its
+  tolerant measurement policy compares every axis to the mean using the longer
+  operand, retains pair-normalized orthogonality and measurement-specific
+  classification precedence, and leaves v11 as immutable historical evidence.
   `convert --format json` instead emits the separately versioned
   `urn:animsmith:schema:conversion-evidence:2` producer-evidence contract:
   requested options, written-artifact counts, optional static mesh bake entries
@@ -476,7 +481,7 @@ learns an embedder's contract schema.
   the current CLI emits v2 exclusively.
   CLI exit status derives only from content severity (warnings block only
   with `--deny-warnings`); coverage gaps are nonblocking evidence.
-  The output-v5 envelope types and immutable identities live in
+  The output-v6 envelope types and immutable identities live in
   `animsmith-core` so CLI and embedded producers serialize the same reporting
   contract. Static-bake evidence is also a public core type; the conversion
   envelope remains a CLI producer contract.
@@ -2056,6 +2061,26 @@ zero-translation/fourth-column `w_axis ~= Vec4::W` gate and its first-axis
 binary32 length intermediate and be mislabeled as zero scale.
 Near the shear boundary, the symmetric average base and binary64 dot products
 can also refuse inputs that the former first-column/binary32 check accepted.
+
+**Measurement shares facts, not the positive-only verdict.** Measurements v12
+derives axis lengths, their authored-axis-order mean, determinant, axis-length
+product, and XY/XZ/YZ dot products from the same crate-private widened `f64`
+fact record. It also uses the shared symmetric mean/longer-operand equal-axis
+predicate, which removes v11's privileged-X result and reconciles the finite
+`diag(1, 1, 1.000012)` fixture. Measurement still asks a different question:
+it keeps finite partial evidence for singular, reflected, sheared, and
+non-uniform inputs; normalizes each orthogonality comparison by that axis
+pair's length product; and classifies in singular, reflected, sheared,
+unit/uniform, then non-uniform precedence. Calling the positive-uniform
+classifier directly would discard those descriptive facts and impose the
+operation's different precedence. Skin-bind summary factors are sorted before
+their mean is derived and every factor is compared to that mean, so authored
+joint order cannot choose `consistent_uniform` versus `mixed_uniform` or the
+reported common factor. These corrected numeric semantics require the nested
+measurements-v12 identity. The JSON shape remains unchanged, but the outer
+identity advances to output-v6 because each immutable output schema statically
+pins its nested measurement URN; measurements v11 and output-v5 remain
+immutable historical evidence.
 
 After this design is accepted, implementation is split into independently
 auditable issues, in order:

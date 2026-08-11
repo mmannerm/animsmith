@@ -5,7 +5,7 @@
 use serde_json::{Value, json};
 
 const MEASUREMENTS_SCHEMA: &str =
-    include_str!("../../../docs/schemas/measurements-v11.schema.json");
+    include_str!("../../../docs/schemas/measurements-v12.schema.json");
 const DEEP_HIERARCHY_DEPTH: usize = 4_096;
 
 #[derive(Clone, Copy)]
@@ -507,10 +507,10 @@ fn cli_measure_preserves_source_skin_identity_and_coordinate_domains() {
         measurements, &second["files"][0]["measurements"],
         "deterministic measurements"
     );
-    assert_eq!(measurements["schema_version"], 11);
+    assert_eq!(measurements["schema_version"], 12);
     assert_eq!(
         measurements["schema"],
-        "urn:animsmith:schema:measurements:11"
+        "urn:animsmith:schema:measurements:12"
     );
     assert_eq!(measurements["skeleton_source_coverage"], "complete");
     assert_eq!(
