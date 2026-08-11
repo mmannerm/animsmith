@@ -2986,7 +2986,7 @@ mod tests {
     }
 
     #[test]
-    fn affine_geometry_facts_widen_dot_products_before_multiplying() {
+    fn affine_geometry_facts_widen_every_dot_product_before_multiplying() {
         let x = Vec3::new(
             f32::from_bits(0x3ff3_5574),
             f32::from_bits(0x3f0e_fa3c),
@@ -2997,16 +2997,21 @@ mod tests {
             f32::from_bits(0x3f10_2c31),
             0.0,
         );
-        let facts = AffineGeometryFacts::from_linear(Mat3::from_cols(x, y, Vec3::Z))
-            .expect("finite widened facts");
         let widened_dot = x.as_dvec3().dot(y.as_dvec3());
         let f32_then_widened = f64::from(x.dot(y));
 
-        assert_eq!(facts.cross_axis_dots[0], widened_dot);
-        assert_ne!(
-            facts.cross_axis_dots[0], f32_then_widened,
-            "the fact must multiply and add in f64, not widen an f32 dot product"
-        );
+        for (slot, linear) in [
+            (0, Mat3::from_cols(x, y, Vec3::Z)),
+            (1, Mat3::from_cols(x, Vec3::Z, y)),
+            (2, Mat3::from_cols(Vec3::Z, x, y)),
+        ] {
+            let facts = AffineGeometryFacts::from_linear(linear).expect("finite widened facts");
+            assert_eq!(facts.cross_axis_dots[slot], widened_dot);
+            assert_ne!(
+                facts.cross_axis_dots[slot], f32_then_widened,
+                "dot slot {slot} must multiply and add in f64, not widen an f32 result"
+            );
+        }
     }
 
     #[test]

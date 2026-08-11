@@ -2026,10 +2026,14 @@ mod tests {
                     * facts.mean_axis_length,
             "measurement intentionally does not use the operation classifier's common-factor band"
         );
-        assert_eq!(
-            measure_linear_transform(Mat4::from_mat3(pair_normalized_shear)).classification,
-            LinearTransformClassification::Sheared
-        );
+        for shear in [3.0e-5, -3.0e-5] {
+            let signed_shear = Mat3::from_cols(Vec3::X, Vec3::new(shear, 2.0, 0.0), Vec3::Z);
+            assert_eq!(
+                measure_linear_transform(Mat4::from_mat3(signed_shear)).classification,
+                LinearTransformClassification::Sheared,
+                "orthogonality is independent of the dot-product sign"
+            );
+        }
         for (pair, linear) in [
             (
                 "XZ",

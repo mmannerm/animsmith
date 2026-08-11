@@ -43,9 +43,13 @@ check_schema docs/schemas/measurements-v10.schema.json urn:animsmith:schema:meas
 check_schema docs/schemas/measurements-v11.schema.json urn:animsmith:schema:measurements:11 docs/schemas/output-v4.schema.json docs/schemas/output-v5.schema.json
 check_schema docs/schemas/measurements-v12.schema.json urn:animsmith:schema:measurements:12 crates/animsmith-core/src/contract.rs docs/schemas/output-v6.schema.json docs/output.md
 for historical_output in docs/schemas/output-v4.schema.json docs/schemas/output-v5.schema.json; do
-  grep -Fq '"measurements": { "$ref": "urn:animsmith:schema:measurements:11" }' "$historical_output" || fail "$historical_output must retain its measurements-v11 reference"
+  jq -e --arg expected 'urn:animsmith:schema:measurements:11' \
+    '.["$defs"].file_report.properties.measurements["$ref"] == $expected' \
+    "$historical_output" >/dev/null || fail "$historical_output must retain its measurements-v11 reference"
 done
-grep -Fq '"measurements": { "$ref": "urn:animsmith:schema:measurements:12" }' docs/schemas/output-v6.schema.json || fail 'docs/schemas/output-v6.schema.json must reference measurements-v12'
+jq -e --arg expected 'urn:animsmith:schema:measurements:12' \
+  '.["$defs"].file_report.properties.measurements["$ref"] == $expected' \
+  docs/schemas/output-v6.schema.json >/dev/null || fail 'docs/schemas/output-v6.schema.json must reference measurements-v12'
 if ! cmp -s docs/schemas/measurements-v11.schema.json <(
   sed \
     -e 's/urn:animsmith:schema:measurements:12/urn:animsmith:schema:measurements:11/g' \

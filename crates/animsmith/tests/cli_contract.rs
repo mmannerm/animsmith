@@ -2806,7 +2806,8 @@ fn diff_preserves_error_precedence_for_malformed_multi_file_reports() {
     invalid_third["files"] = json!([file.clone(), file.clone(), file]);
     invalid_third["files"][2]["measurements"]["schema"] = json!("urn:other:measurements");
 
-    let remediation = "regenerate it with `animsmith measure --format json`";
+    let remediation =
+        "regenerate it from the original asset with `animsmith measure --format json <asset>`";
     for (name, report, expected) in [
         (
             "invalid first record",
@@ -2885,7 +2886,8 @@ fn diff_preserves_tailored_report_errors_and_remediation() {
     wrong_measurement_identity["files"][0]["measurements"]["schema"] =
         json!("urn:other:measurements");
 
-    let remediation = "regenerate it with `animsmith measure --format json`";
+    let remediation =
+        "regenerate it from the original asset with `animsmith measure --format json <asset>`";
     let cases = vec![
         (
             "missing output version",
@@ -3054,7 +3056,7 @@ fn diff_rejects_outer_and_nested_contract_identity_drift() {
                 report["files"][0]["measurements"]["schema_version"] = json!(7);
                 report
             },
-            "has measurement schema_version 7; this build reads measurement schema_version 12; regenerate it with `animsmith measure --format json`",
+            "has measurement schema_version 7; this build reads measurement schema_version 12; regenerate it from the original asset with `animsmith measure --format json <asset>`",
         ),
         (
             {
@@ -3237,7 +3239,9 @@ fn diff_rejects_json_without_schema_version_with_measure_remediation() {
         stderr(&output)
     );
     assert!(
-        stderr(&output).contains("regenerate it with `animsmith measure --format json`"),
+        stderr(&output).contains(
+            "regenerate it from the original asset with `animsmith measure --format json <asset>`"
+        ),
         "stderr:\n{}",
         stderr(&output)
     );
@@ -3271,7 +3275,9 @@ fn diff_rejects_unsupported_schema_versions() {
             stderr(&output)
         );
         assert!(
-            stderr(&output).contains("regenerate it with `animsmith measure --format json`"),
+            stderr(&output).contains(
+                "regenerate it from the original asset with `animsmith measure --format json <asset>`"
+            ),
             "version {version}: stderr:\n{}",
             stderr(&output)
         );
@@ -3302,7 +3308,7 @@ fn diff_rejects_historical_output_v5_with_v11_measurements() {
     assert!(stdout(&output).is_empty());
     assert!(
         stderr(&output).contains(
-            "has schema_version 5; this build reads schema_version 6; regenerate it with `animsmith measure --format json`"
+            "has schema_version 5; this build reads schema_version 6; regenerate it from the original asset with `animsmith measure --format json <asset>`"
         ),
         "stderr:\n{}",
         stderr(&output)
@@ -3380,7 +3386,7 @@ fn diff_rejects_v11_skeleton_shape_before_decoding_v12_fields() {
     assert!(stdout(&output).is_empty());
     assert!(
         stderr(&output).contains(
-            "has measurement schema_version 11; this build reads measurement schema_version 12; regenerate it with `animsmith measure --format json`"
+            "has measurement schema_version 11; this build reads measurement schema_version 12; regenerate it from the original asset with `animsmith measure --format json <asset>`"
         ),
         "stderr:\n{}",
         stderr(&output)

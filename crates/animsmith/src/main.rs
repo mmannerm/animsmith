@@ -1004,7 +1004,8 @@ fn load_measurements(
 
 /// Add `diff` consumer policy and operator remediation to neutral core errors.
 fn diff_report_error(error: &MeasurementReportError, file_count: Option<usize>) -> String {
-    const REMEDIATION: &str = "regenerate it with `animsmith measure --format json`";
+    const REMEDIATION: &str =
+        "regenerate it from the original asset with `animsmith measure --format json <asset>`";
     if let Some(found) = file_count.filter(|found| *found != 1)
         && error.file_index().is_some()
     {
@@ -1163,7 +1164,7 @@ mod tests {
 
         assert_eq!(
             diff_report_error(&error, Some(1)),
-            "has invalid measurements: measurement value meshes[0].aabb.min[0] must be finite; regenerate it with `animsmith measure --format json`"
+            "has invalid measurements: measurement value meshes[0].aabb.min[0] must be finite; regenerate it from the original asset with `animsmith measure --format json <asset>`"
         );
     }
 }
