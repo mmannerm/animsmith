@@ -50,11 +50,12 @@
 //! leaving a consumer to guess which to trust.
 
 use crate::model::{
-    AffineDomainViolation, BoneId, Clip, Document, Interpolation, MeshInstance,
-    PositiveUniformAffineTolerance, Primitive, Property, Skeleton, SourceInverseBindAccessorStatus,
-    SourceNodeAsset, SourceNodeLocalRest, SourceSkeletonCoverage, SourceSkinAsset, Track,
-    TrackValues, Transform, affine_axis_lengths, average_affine_axis_length,
-    classify_positive_uniform_affine, mat4_is_finite, world_rest_matrices,
+    AffineDomainViolation, BoneId, Clip, Document, DocumentShapeError, Interpolation, MeshInstance,
+    MeshInstanceShapeViolation, PositiveUniformAffineTolerance, Primitive, Property, Skeleton,
+    SourceInverseBindAccessorStatus, SourceNodeAsset, SourceNodeLocalRest, SourceSkeletonCoverage,
+    SourceSkinAsset, TrackValues, Transform, affine_axis_lengths, average_affine_axis_length,
+    classify_positive_uniform_affine, mat4_is_finite,
+    validate_document_shape as validate_model_document_shape, world_rest_matrices,
 };
 use crate::sample::{TrackSample, sample_track};
 use glam::{DVec3, Mat3, Mat4, Quat, Vec3, Vec4};
@@ -761,13 +762,17 @@ pub enum ScaleError {
         /// The source node with the non-finite transform.
         source_node_index: usize,
     },
-    /// A skeleton rest transform or accumulated world matrix is non-finite.
+    /// A transform composed during scale planning or proof is non-finite.
+    /// Entry-time skeleton rest failures are reported through
+    /// [`ScaleError::InvalidDocumentShape`].
     #[error("node {node} has a non-finite rest transform")]
     NonFiniteTransform {
         /// The node with the non-finite transform.
         node: BoneId,
     },
-    /// The skeleton is not in parent-before-child order.
+    /// A runtime scale walk encountered a parent that cannot be resolved.
+    /// Entry-time skeleton topology failures are reported through
+    /// [`ScaleError::InvalidDocumentShape`].
     #[error("node {node} has invalid parent {parent}")]
     InvalidParent {
         /// The node with an invalid parent.
@@ -900,101 +905,11 @@ pub enum ScaleError {
         /// Stable machine-readable reason.
         detail: &'static str,
     },
-    /// `document.assets.source_skeleton.nodes` declares the same
-    /// `source_node_index` more than once. This projection is never
-    /// deduplicated by last-write-wins or first-match: a duplicate is a
-    /// malformed source and must reject.
-    #[error("source skeleton declares duplicate source node index {source_node_index}")]
-    DuplicateSourceNodeIndex {
-        /// The duplicated source-node index.
-        source_node_index: usize,
-    },
-    /// `document.assets.source_skeleton.skins` declares the same
-    /// `source_skin_index` more than once.
-    #[error("source skeleton declares duplicate source skin index {source_skin_index}")]
-    DuplicateSourceSkinIndex {
-        /// The duplicated source-skin index.
-        source_skin_index: usize,
-    },
-    /// Under [`crate::model::SourceSkeletonCoverage::Complete`] coverage the
-    /// source-node projection is not a downward-closed parent-preserving
-    /// injection into `document.skeleton`: a projected node names a bone the
-    /// skeleton does not have, shares its bone with another projected node,
-    /// names a parent chain that leaves the table or never terminates, or
-    /// disagrees with [`crate::model::Bone::parent`] about who its parent is —
-    /// or a bone the projection describes has a
-    /// [`crate::model::Bone::parent`] child it does not.
-    ///
-    /// A source node naming *no* bone is none of these by itself: it never
-    /// became a bone, so nothing can displace it, and it is not in the
-    /// skeleton for [`crate::model::Bone::parent`] to name. Such a row *on*
-    /// the chain is stepped over rather than refused — the glTF container node
-    /// above the first joint is the ordinary case — so the comparison is
-    /// against the nearest projected ancestor. It still fails if that walk
-    /// leaves the table or cycles, and an unprojected row does not exempt a
-    /// *bone*: the downward-closure case above is reported at the projected
-    /// parent regardless.
-    ///
-    /// `source_node_index` names the projected node that failed, which for the
-    /// downward-closure case is the projected *parent* — the unprojected child
-    /// has no source-node index to report.
-    ///
-    /// This module walks the raw projection to build the affected closure and
-    /// classify factors, and walks the skeleton to rebase and to prove — so
-    /// the two hierarchies agreeing is a precondition of the residuals meaning
-    /// anything, not a nicety.
-    #[error(
-        "source node {source_node_index} contradicts the document skeleton's parent chain ({reason})"
-    )]
-    ParentChainDisagreement {
-        /// The projected source node that failed.
-        source_node_index: usize,
-        /// Stable machine-readable reason.
-        reason: &'static str,
-    },
-    /// One clip declares two tracks for the same `(bone, property)` pair.
-    /// Every clip-track lookup in this module pairs source and candidate
-    /// tracks by index, which is only sound when track identity within a
-    /// clip is unique — so a duplicate is rejected rather than silently
-    /// paired with the first (or last) match.
-    #[error("clip {clip_index} declares duplicate {property:?} tracks for node {node}")]
-    DuplicateClipTrack {
-        /// Index into `document.clips` of the offending clip.
-        clip_index: usize,
-        /// The duplicated target node.
-        node: BoneId,
-        /// The duplicated property.
-        property: Property,
-    },
-    /// A track's shape is malformed: an out-of-range bone, empty or
-    /// non-finite keyframe times, a value count that disagrees with
-    /// `times.len()` and `interpolation`, a `TrackValues` variant that
-    /// disagrees with `property`, or a non-finite value.
-    #[error("clip {clip_index} track for node {node} has an invalid shape ({reason})")]
-    InvalidTrackShape {
-        /// Index into `document.clips` of the offending clip.
-        clip_index: usize,
-        /// The track's target node.
-        node: BoneId,
-        /// Stable machine-readable reason.
-        reason: &'static str,
-    },
-    /// A mesh instance is malformed: an out-of-range `node`, `mesh` or
-    /// `skin_joints` entry, a non-empty `skin_ibms` whose length disagrees
-    /// with `skin_joints`, or a non-finite inverse-bind matrix.
-    ///
-    /// `node` is range-checked for the same reason `mesh` is: it names a
-    /// bone the rest of the pipeline resolves without a second bounds test
-    /// — the glTF writer attaches the instance there, and measurement reads
-    /// that bone's world matrix — so an index past the end of the skeleton
-    /// is a malformed document rather than a residual.
-    #[error("mesh instance {instance_index} is invalid ({reason})")]
-    InvalidMeshInstance {
-        /// Index into `document.assets.instances` of the offending instance.
-        instance_index: usize,
-        /// Stable machine-readable reason.
-        reason: &'static str,
-    },
+    /// The shared model shape required by strict mutating operations is
+    /// malformed. [`Document`] is publicly mutable, so planning, building,
+    /// and proof validate each supplied snapshot independently.
+    #[error(transparent)]
+    InvalidDocumentShape(#[from] DocumentShapeError),
     /// No inverse-bind evidence exists for a skin joint: the owning mesh
     /// instance declares an empty `skin_ibms` (falling back to the bone's
     /// own [`crate::model::Bone::inverse_bind`]) and that bone also has no
@@ -1378,7 +1293,7 @@ pub fn plan_scale(request: &ScaleRequest<'_>) -> Result<ScalePlan, ScaleError> {
     if !request.capability.is_supported() {
         return Err(ScaleError::IncompleteCapability);
     }
-    validate_document_shape(request.document)?;
+    validate_scale_input(request.document)?;
     match request.operation {
         ScaleOperation::WholeDocumentLinearUnits { factor } => {
             plan_whole_document(request.document, factor)
@@ -1396,397 +1311,20 @@ pub fn plan_scale(request: &ScaleRequest<'_>) -> Result<ScalePlan, ScaleError> {
     }
 }
 
-/// Validate structural invariants every public entry point in this module
-/// must trust before it reads or rewrites `document`: unique source-node and
-/// source-skin identity, agreement between the document's two parent
-/// hierarchies, unique and well-shaped clip tracks, and in-range,
-/// finite mesh-instance data, and the non-negativity of every finite primary
-/// skin weight. Called at the boundary of [`plan_scale`],
-/// [`build_scale_candidate`], and [`prove_scale`] so a malformed public
-/// [`Document`] fails closed with a typed [`ScaleError`] instead of being
-/// silently deduplicated (last-write-wins), paired with the wrong structure,
-/// or defaulted.
+/// Validate every public scale-input snapshot before reading or rewriting it.
+/// Shared structure is delegated to [`crate::model::validate_document_shape`];
+/// this adapter owns only scale's finite base-position and nonnegative primary
+/// skin-weight requirements. [`plan_scale`], [`build_scale_candidate`], and
+/// [`prove_scale`] all call it, including for generated and externally loaded
+/// candidates, because a mutable [`Document`] cannot carry a durable validation
+/// guarantee.
 ///
 /// Per-vertex primitive skinning shape (`joints`/`weights` parallel to
 /// `positions`) is deliberately not checked here: it is validated directly
-/// where it is walked, in [`skinned_bounds`], since only the affected
+/// where it is walked, in [`accumulate_skinned_bounds`], since only the affected
 /// instances' geometry needs inspecting there.
-fn validate_document_shape(document: &Document) -> Result<(), ScaleError> {
-    // Validated for its own sake, not for the returned matrices: this is
-    // what catches a non-finite rest transform or a parent index that is
-    // not strictly earlier than its child before any planning, building, or
-    // sampling ever indexes into the skeleton.
-    world_rests(&document.skeleton)?;
-    validate_source_skeleton_identity(document)?;
-    // Ordered after the identity check, which is what makes "the projection
-    // node with this `source_node_index`" a well-defined lookup.
-    validate_parent_chain_agreement(document)?;
-    validate_clip_tracks(document)?;
-    validate_scene_assets(document)?;
-    Ok(())
-}
-
-/// Reject a `document.assets.source_skeleton` that declares the same
-/// `source_node_index` or `source_skin_index` more than once, rather than
-/// letting a later `BTreeMap`-keyed projection silently keep the last (or
-/// first) duplicate.
-fn validate_source_skeleton_identity(document: &Document) -> Result<(), ScaleError> {
-    let mut seen_nodes = BTreeSet::new();
-    for node in &document.assets.source_skeleton.nodes {
-        if !seen_nodes.insert(node.source_node_index) {
-            return Err(ScaleError::DuplicateSourceNodeIndex {
-                source_node_index: node.source_node_index,
-            });
-        }
-    }
-    let mut seen_skins = BTreeSet::new();
-    for skin in &document.assets.source_skeleton.skins {
-        if !seen_skins.insert(skin.source_skin_index) {
-            return Err(ScaleError::DuplicateSourceSkinIndex {
-                source_skin_index: skin.source_skin_index,
-            });
-        }
-    }
-    Ok(())
-}
-
-/// Reject a `document` whose two parent hierarchies describe different trees.
-///
-/// A [`Document`] carries the ancestry twice. `assets.source_skeleton.nodes`
-/// records the raw format's chain through
-/// [`SourceNodeAsset::parent_source_node_index`], in source-node identity
-/// space; `skeleton.bones` records the normalized chain through
-/// [`crate::model::Bone::parent`], in [`BoneId`] space and constrained so a
-/// parent's id is strictly less than its child's. This module reads *both*,
-/// and reads them for different jobs: [`rest_bind_affected_closure`] and
-/// [`classify_affine`] walk the projection, while [`world_rests`],
-/// [`build_rest_bind`]'s per-node rebase, and every proof residual walk the
-/// skeleton. [`SourceNodeAsset::bone`] is the only stated relation between
-/// the two spaces, and nothing else establishes that it is a hierarchy
-/// isomorphism rather than a bare per-node label.
-///
-/// Unchecked, that gap is a false-proof mechanism rather than a tidiness
-/// concern. A source node that is a projection *leaf* — so outside a closure
-/// rooted at its projection parent — can be a skeleton *child* of a node
-/// inside that closure. The rebase divides the parent's local rest by `s` and
-/// leaves the leaf's alone, so the leaf's world rest is multiplied by `1/s`
-/// while every obligation looks away: the rest and unit-scale walks iterate
-/// `plan.affected_nodes`, [`check_unaffected_instance_binds`] compares stored
-/// binds rather than world placement, and [`check_skin_and_bounds`] skips an
-/// instance with no affected joint. Geometry hanging off that leaf moves by
-/// the full factor and the evidence record of §D.6 reports every residual
-/// zero. A bone the projection omits *entirely* reaches the same false proof
-/// by the same route: it is outside every closure by construction, so if it is
-/// a skeleton child of a bone inside one, its world rest is multiplied by
-/// `1/s` with nothing looking.
-///
-/// # What is checked, and when
-///
-/// Only when `assets.source_skeleton.coverage` is
-/// [`SourceSkeletonCoverage::Complete`]. Under any other coverage the
-/// projection is not identity evidence about this document at all — it is the
-/// absent-evidence default that [`SourceSkeletonCoverage`] exists to
-/// distinguish from a genuinely empty source table — so a mismatch between it
-/// and the skeleton is not a *contradiction*, and there is nothing to refuse.
-/// The gate is defensive rather than load-bearing: its only behavioural effect
-/// today is on a document that declares non-`Complete` coverage while carrying
-/// a non-empty projection contradicting its skeleton, and no in-tree producer
-/// emits that shape. The synthesizing producers ([`crate::static_bake`],
-/// [`crate::skinned_canonical`]) and every loader with no source-node table
-/// emit an *empty* projection, which the checks below accept with or without
-/// the gate.
-///
-/// Under `Complete` coverage the projection is the identity evidence for the
-/// input, and three facts are required of it:
-///
-/// - **injective** — no two projected nodes name the same bone. Two source
-///   nodes mapping onto one bone makes "the bone this selector resolves to"
-///   ambiguous, and every resolution in this module would silently take
-///   whichever it met first;
-/// - **parent-preserving** — for a node that names a bone,
-///   `bone(nearest projected ancestor of n)` equals
-///   `skeleton.bones[bone(n)].parent`, including the root case where both
-///   sides must be `None`;
-/// - **downward-closed** — a bone with no projecting node must not be the
-///   `Bone::parent` child of a bone that has one.
-///
-/// Totality is deliberately *not* required. [`SourceNodeAsset::bone`]
-/// documents `None` as the loader having dropped that source node during
-/// normalization, [`SourceNodeAsset::new`] starts it absent, and a node that
-/// never became a bone cannot be displaced by a rewrite. Agreement is
-/// therefore validated over the projected nodes only, and a table carrying
-/// bare source-node evidence alongside them stays legal.
-///
-/// This is why *parent-preserving* compares against the nearest projected
-/// ancestor rather than the immediate parent row. An unprojected row on the
-/// chain is not a bone, so `Bone::parent` cannot name it and it cannot be the
-/// value the comparison wants; the glTF shape where the joints hang under an
-/// `Armature`/transform node that is not itself a joint is the ordinary case,
-/// and pruned intermediates and camera or mesh nodes between two joints are
-/// the same shape. The walk still fails closed if the chain leaves the table
-/// (`parent_source_node_is_missing`) or never terminates
-/// (`cyclic_unprojected_source_parent_chain`) — the projection has to name
-/// *some* determinate ancestor for the comparison to mean anything.
-///
-/// Full surjectivity is deliberately *not* required either, but downward
-/// closure is, and the difference is the whole of the mechanism above. An
-/// unprojected bone with no projected ancestor is genuinely unreachable by the
-/// displacement: a rest/bind closure never reaches it, and the whole-document
-/// operation puts every bone in `plan.affected_nodes` and rebases it with the
-/// rest, so in neither case does something above it move while it stays put.
-/// An unprojected bone whose *parent* is projected is the opposite case — the
-/// parent can be affected while the child is not, which is precisely the
-/// world-rest displacement this function exists to refuse, reached from the
-/// unprojected side rather than the disagreeing one. Requiring closure and not
-/// surjectivity is also what keeps two candidate-structure refusals reachable:
-/// an empty projection under `Complete` coverage stays accepted, as does a
-/// skeleton carrying whole extra roots the projection does not describe. The
-/// mirror of the closure rule is *not* accepted, though: a **projected** bone
-/// whose `Bone::parent` is an **unprojected** bone is refused as
-/// `projection_and_skeleton_parents_differ`, since the nearest-ancestor walk
-/// can only ever yield a bone the projection names — fail-closed on a shape
-/// the displacement above does not motivate, and emitted by no in-tree
-/// producer.
-///
-/// The displacement is what *motivates* the closure rule, not the scope it is
-/// applied at. Under [`ScaleOperation::WholeDocumentLinearUnits`] the
-/// displacement is impossible — `plan_whole_document` affects every bone, so
-/// nothing is left behind while its parent moves — and the same is true of
-/// the parent-preserving comparison. Both are still enforced there, because
-/// this is one predicate about a *document*, evaluated identically wherever
-/// [`validate_document_shape`] runs: whether the projection and the skeleton
-/// describe the same tree is a fact about the input, not about what a caller
-/// intends to do with it, and this module reads both hierarchies in the same
-/// run either way. Scoping the rules per operation would make the invariant
-/// below conditional and would silently exempt the next partial-domain
-/// operation that forgets to opt in. The price is refusing a shape no
-/// in-tree producer emits — see `crates/animsmith/tests/parent_chain_agreement.rs`.
-///
-/// Together these give the property the rest of this module relies on: the
-/// rest/bind closure is downward-closed in source-node space, so its image
-/// under `bone` is downward-closed in [`BoneId`] space, so no skeleton child
-/// of an affected bone is left unaffected.
-///
-/// # Errors
-///
-/// [`ScaleError::ParentChainDisagreement`], naming the source node that
-/// failed and a stable reason for which of the three facts it broke.
-fn validate_parent_chain_agreement(document: &Document) -> Result<(), ScaleError> {
-    let source_skeleton = &document.assets.source_skeleton;
-    if source_skeleton.coverage != SourceSkeletonCoverage::Complete {
-        return Ok(());
-    }
-    let bones = &document.skeleton.bones;
-
-    // Range and injectivity first, resolving each projected node's bone *and*
-    // that bone's skeleton parent in one pass — so the comparison below reads
-    // resolved values rather than repeating a lookup that could fail a second
-    // time, and each refusal has exactly one site. A node with no bone is not
-    // projected at all: it is skipped here and never becomes anyone's
-    // projected parent below.
-    let mut bone_of_source: BTreeMap<usize, BoneId> = BTreeMap::new();
-    let mut source_of_bone: BTreeMap<BoneId, usize> = BTreeMap::new();
-    let mut skeleton_parents: Vec<(&SourceNodeAsset, Option<BoneId>)> =
-        Vec::with_capacity(source_skeleton.nodes.len());
-    for node in &source_skeleton.nodes {
-        let Some(bone) = node.bone else {
-            continue;
-        };
-        let skeleton_parent = bones
-            .get(bone)
-            .ok_or(ScaleError::ParentChainDisagreement {
-                source_node_index: node.source_node_index,
-                reason: "projected_bone_out_of_range",
-            })?
-            .parent;
-        if source_of_bone
-            .insert(bone, node.source_node_index)
-            .is_some()
-        {
-            return Err(ScaleError::ParentChainDisagreement {
-                source_node_index: node.source_node_index,
-                reason: "two_source_nodes_project_to_one_bone",
-            });
-        }
-        // `validate_source_skeleton_identity` has already rejected a
-        // duplicate `source_node_index`, so this insert never overwrites.
-        bone_of_source.insert(node.source_node_index, bone);
-        skeleton_parents.push((node, skeleton_parent));
-    }
-
-    let by_source_index = source_node_index_map(document);
-    // Every row carries a distinct `source_node_index`, so this is exactly the
-    // number of rows the ancestor walk below is allowed to step over.
-    let unprojected_rows = source_skeleton.nodes.len() - bone_of_source.len();
-    for (node, skeleton_parent) in skeleton_parents {
-        // The projection's *nearest projected ancestor*, not its immediate
-        // parent row. Rows that name no bone never became bones, so they are
-        // not in the skeleton to be named by `Bone::parent` and cannot break
-        // the chain by sitting on it: the glTF container node above the first
-        // joint, a pruned intermediate, a camera or mesh node between two
-        // joints. Skipping them is what makes those ordinary shapes legal;
-        // stopping at them would refuse every rig whose joints hang under an
-        // `Armature`. The walk is bounded by the number of unprojected rows,
-        // so a chain that never reaches a projected node or `None` fails
-        // closed.
-        let mut cursor = node.parent_source_node_index;
-        let mut steps = 0usize;
-        let projected_parent = loop {
-            let Some(parent_source_node_index) = cursor else {
-                break None;
-            };
-            if let Some(&bone) = bone_of_source.get(&parent_source_node_index) {
-                break Some(bone);
-            }
-            let parent = by_source_index.get(&parent_source_node_index).ok_or(
-                ScaleError::ParentChainDisagreement {
-                    source_node_index: node.source_node_index,
-                    reason: "parent_source_node_is_missing",
-                },
-            )?;
-            // Counted after the lookup, so a step is only ever charged for an
-            // unprojected row the walk actually stepped *over* — a dangling
-            // final link costs nothing. Each row has one parent, so an acyclic
-            // chain meets each unprojected row at most once: exceeding their
-            // count means one was met twice, which is a cycle.
-            steps += 1;
-            if steps > unprojected_rows {
-                return Err(ScaleError::ParentChainDisagreement {
-                    source_node_index: node.source_node_index,
-                    reason: "cyclic_unprojected_source_parent_chain",
-                });
-            }
-            cursor = parent.parent_source_node_index;
-        };
-        if projected_parent != skeleton_parent {
-            return Err(ScaleError::ParentChainDisagreement {
-                source_node_index: node.source_node_index,
-                reason: "projection_and_skeleton_parents_differ",
-            });
-        }
-    }
-
-    // Downward closure, reported at the *parent's* projecting node: that is
-    // the node whose bone a rest/bind closure can affect, and the unprojected
-    // child has no source-node index to name.
-    for (bone, child) in bones.iter().enumerate() {
-        if source_of_bone.contains_key(&bone) {
-            continue;
-        }
-        if let Some(parent) = child.parent
-            && let Some(&source_node_index) = source_of_bone.get(&parent)
-        {
-            return Err(ScaleError::ParentChainDisagreement {
-                source_node_index,
-                reason: "projected_bone_has_an_unprojected_skeleton_child",
-            });
-        }
-    }
-    Ok(())
-}
-
-/// Reject a clip that declares two tracks for the same `(bone, property)`,
-/// an out-of-range track bone, or a track whose `times`/`values` shape is
-/// malformed. Every proof pairing in this module matches source and
-/// candidate tracks positionally, which is only sound once identity within
-/// a clip is known to be unique.
-fn validate_clip_tracks(document: &Document) -> Result<(), ScaleError> {
-    let bone_count = document.skeleton.bones.len();
-    for (clip_index, clip) in document.clips.iter().enumerate() {
-        let mut seen: Vec<(BoneId, Property)> = Vec::with_capacity(clip.tracks.len());
-        for track in &clip.tracks {
-            if track.bone >= bone_count {
-                return Err(ScaleError::InvalidTrackShape {
-                    clip_index,
-                    node: track.bone,
-                    reason: "bone_index_out_of_range",
-                });
-            }
-            let key = (track.bone, track.property);
-            if seen.contains(&key) {
-                return Err(ScaleError::DuplicateClipTrack {
-                    clip_index,
-                    node: track.bone,
-                    property: track.property,
-                });
-            }
-            seen.push(key);
-            validate_track_value_shape(clip_index, track)?;
-        }
-    }
-    Ok(())
-}
-
-fn validate_track_value_shape(clip_index: usize, track: &Track) -> Result<(), ScaleError> {
-    if track.times.is_empty() {
-        return Err(ScaleError::InvalidTrackShape {
-            clip_index,
-            node: track.bone,
-            reason: "empty_times",
-        });
-    }
-    if track.times.iter().any(|time| !time.is_finite()) {
-        return Err(ScaleError::InvalidTrackShape {
-            clip_index,
-            node: track.bone,
-            reason: "non_finite_time",
-        });
-    }
-    if track.times.windows(2).any(|w| w[0] >= w[1]) {
-        return Err(ScaleError::InvalidTrackShape {
-            clip_index,
-            node: track.bone,
-            reason: "times_not_strictly_increasing",
-        });
-    }
-    let expected_values = match track.interpolation {
-        Interpolation::CubicSpline => track.times.len() * 3,
-        Interpolation::Linear | Interpolation::Step => track.times.len(),
-    };
-    if track.values.len() != expected_values {
-        return Err(ScaleError::InvalidTrackShape {
-            clip_index,
-            node: track.bone,
-            reason: "value_count_mismatch",
-        });
-    }
-    let variant_matches_property = matches!(
-        (&track.values, track.property),
-        (
-            TrackValues::Vec3s(_),
-            Property::Translation | Property::Scale
-        ) | (TrackValues::Quats(_), Property::Rotation)
-    );
-    if !variant_matches_property {
-        return Err(ScaleError::InvalidTrackShape {
-            clip_index,
-            node: track.bone,
-            reason: "value_type_mismatches_property",
-        });
-    }
-    let finite = match &track.values {
-        TrackValues::Vec3s(values) => values.iter().all(|value| value.is_finite()),
-        TrackValues::Quats(values) => values.iter().all(|value| value.is_finite()),
-    };
-    if !finite {
-        return Err(ScaleError::InvalidTrackShape {
-            clip_index,
-            node: track.bone,
-            reason: "non_finite_value",
-        });
-    }
-    Ok(())
-}
-
-/// Reject a mesh primitive with a non-finite base `POSITION` or a finite
-/// negative primary skin weight, a mesh instance with an out-of-range `node`,
-/// `mesh` or `skin_joints` entry, a non-empty `skin_ibms` whose length
-/// disagrees with `skin_joints`, a non-finite `skin_ibms` matrix, or a bone
-/// with a non-finite
-/// [`crate::model::Bone::inverse_bind`].
-fn validate_scene_assets(document: &Document) -> Result<(), ScaleError> {
-    let bone_count = document.skeleton.bones.len();
-    let mesh_count = document.assets.meshes.len();
+fn validate_scale_input(document: &Document) -> Result<(), ScaleError> {
+    validate_model_document_shape(document)?;
     for (mesh_index, mesh) in document.assets.meshes.iter().enumerate() {
         for (primitive_index, primitive) in mesh.primitives.iter().enumerate() {
             if primitive
@@ -1814,64 +1352,9 @@ fn validate_scene_assets(document: &Document) -> Result<(), ScaleError> {
             }
         }
     }
-    for (instance_index, instance) in document.assets.instances.iter().enumerate() {
-        // `node` is the bone the instance hangs off, and nothing downstream
-        // range-checks it again: the glTF writer emits it as a node index and
-        // measurement reads that bone's world matrix. Checked here, alongside
-        // `mesh` and `skin_joints`, so the same pass covers every index this
-        // instance names.
-        if instance.node >= bone_count {
-            return Err(ScaleError::InvalidMeshInstance {
-                instance_index,
-                reason: "node_index_out_of_range",
-            });
-        }
-        if instance.mesh >= mesh_count {
-            return Err(ScaleError::InvalidMeshInstance {
-                instance_index,
-                reason: "mesh_index_out_of_range",
-            });
-        }
-        if instance
-            .skin_joints
-            .iter()
-            .any(|&joint| joint >= bone_count)
-        {
-            return Err(ScaleError::InvalidMeshInstance {
-                instance_index,
-                reason: "skin_joint_out_of_range",
-            });
-        }
-        if !instance.skin_ibms.is_empty() && instance.skin_ibms.len() != instance.skin_joints.len()
-        {
-            return Err(ScaleError::InvalidMeshInstance {
-                instance_index,
-                reason: "skin_ibm_count_mismatch",
-            });
-        }
-        if instance.skin_ibms.iter().any(|ibm| !mat4_is_finite(*ibm)) {
-            return Err(ScaleError::InvalidMeshInstance {
-                instance_index,
-                reason: "non_finite_inverse_bind",
-            });
-        }
-    }
-    for (node, bone) in document.skeleton.bones.iter().enumerate() {
-        if let Some(inverse_bind) = bone.inverse_bind
-            && !mat4_is_finite(inverse_bind)
-        {
-            return Err(ScaleError::NonFiniteTransform { node });
-        }
-    }
     Ok(())
 }
 
-/// Reject `candidate`'s skeleton/source-projection, clip/track/instance/mesh/
-/// primitive structure when it does not match `source`'s: every proof
-/// comparison in this module pairs source and candidate structure by stable
-/// identity or position, which is only sound once the two document shapes are
-/// known to agree — an extra, missing, or re-parented structure is never
-/// silently ignored.
 fn validate_candidate_structure(source: &Document, candidate: &Document) -> Result<(), ScaleError> {
     // Bone-count parity is checked first, and it is the clause the sampling
     // budget rests on. [`sample_time_obligations`] poses *both* skeletons at
@@ -2253,8 +1736,8 @@ fn plan_rest_bind(
     // Read at the scaled root, which DESIGN.md Appendix D §D.6 names, rather
     // than at whichever affected node happens to sort first. The two readings
     // were separable before this module related its two parent chains; under
-    // the agreement `validate_parent_chain_agreement` now establishes they are
-    // provably the same node, and the proof is written out on
+    // the source-projection agreement [`crate::model::validate_document_shape`]
+    // establishes they are provably the same node, and the proof is written out on
     // `observed_factor_from_source` (§ "The scaled root is the minimum
     // BoneId in the closure"). Naming the root explicitly keeps this reading
     // and that second witness pinned to the same definition rather than to a
@@ -2768,7 +2251,7 @@ pub fn build_scale_candidate(
     document: &Document,
     plan: &ScalePlan,
 ) -> Result<ScaleCandidate, ScaleError> {
-    validate_document_shape(document)?;
+    validate_scale_input(document)?;
     validate_plan_document_inventory(document, plan)?;
     let candidate = match plan.operation {
         ScaleOperation::WholeDocumentLinearUnits { factor } => {
@@ -2782,7 +2265,7 @@ pub fn build_scale_candidate(
     // this, an overflowing or annihilating factor produces a candidate whose
     // only remaining defence is `prove_scale`, which a caller is free not to
     // run.
-    validate_document_shape(&candidate)?;
+    validate_scale_input(&candidate)?;
     Ok(ScaleCandidate {
         document: candidate,
     })
@@ -3340,9 +2823,9 @@ pub fn prove_scale(
         });
     }
     let candidate = candidate.document();
-    validate_document_shape(source)?;
+    validate_scale_input(source)?;
     validate_plan_document_inventory(source, plan)?;
-    validate_document_shape(candidate)?;
+    validate_scale_input(candidate)?;
     validate_candidate_structure(source, candidate)?;
     let tol = plan.tolerance_policy;
     let affected = plan.affected_set();
@@ -3783,7 +3266,7 @@ fn check_sampling_budget(
 /// The slot term is charged explicitly because nothing bounds it and nothing
 /// else stands in for it. An earlier revision charged only `bone_count +
 /// vertices` on the claim that slot work "cannot exceed the bone count",
-/// which is false twice over: [`validate_scene_assets`] only range-checks
+/// which is false twice over: [`validate_scale_input`] only range-checks
 /// joint ids, so `skin_joints` may repeat a joint and be arbitrarily long,
 /// and the instance count is unbounded, so the total is
 /// `sum over instances of len(skin_joints)` with no relation to
@@ -3854,7 +3337,7 @@ fn per_sample_work_units(
 /// replacing it would take.
 ///
 /// The out-of-range branch is unreachable for a document that passed
-/// [`validate_scene_assets`], which requires a non-empty `skin_ibms` to be
+/// [`validate_scale_input`], which requires a non-empty `skin_ibms` to be
 /// exactly as long as `skin_joints`; it is kept because this function is
 /// total over its arguments rather than over its current call sites.
 fn stored_instance_bind(
@@ -4733,7 +4216,7 @@ fn check_trajectory_residual_at(
 /// out-of-range track bone rejects rather than being skipped, a non-finite
 /// sampled value or accumulated matrix rejects, and a parent index that is
 /// not strictly earlier than its child rejects — the same structural
-/// invariant [`world_rest_matrices`](crate::model::world_rest_matrices)
+/// invariant [`world_rest_matrices`]
 /// enforces for the unanimated rest pose.
 fn world_at_time(skeleton: &Skeleton, clip: &Clip, t: f32) -> Result<WorldPose, ScaleError> {
     let bone_count = skeleton.bones.len();
@@ -4844,7 +4327,7 @@ fn relative_divergence(planned: f64, proved: f64) -> f64 {
 /// §D.6 defines the observed factor *at the scaled root*, and "the lowest
 /// affected bone id" is the reading a source-node-space walk and a
 /// `BoneId`-space walk could otherwise land on separately. Once
-/// [`validate_parent_chain_agreement`] holds they are the same node, and no
+/// [`crate::model::validate_document_shape`] holds they are the same node, and no
 /// document can distinguish them:
 ///
 /// - every insertion [`rest_bind_affected_closure`] makes is the root itself,
@@ -5204,19 +4687,16 @@ fn check_skin_and_bounds(
         }
 
         if prove_bounds {
-            let mesh =
-                source
-                    .assets
-                    .meshes
-                    .get(instance.mesh)
-                    .ok_or(ScaleError::InvalidMeshInstance {
-                        instance_index,
-                        reason: "mesh_index_out_of_range",
-                    })?;
-            let candidate_mesh = candidate.assets.meshes.get(candidate_instance.mesh).ok_or(
-                ScaleError::InvalidMeshInstance {
+            let mesh = source.assets.meshes.get(instance.mesh).ok_or(
+                DocumentShapeError::MeshInstanceShape {
                     instance_index,
-                    reason: "mesh_index_out_of_range",
+                    violation: MeshInstanceShapeViolation::MeshIndexOutOfRange,
+                },
+            )?;
+            let candidate_mesh = candidate.assets.meshes.get(candidate_instance.mesh).ok_or(
+                DocumentShapeError::MeshInstanceShape {
+                    instance_index,
+                    violation: MeshInstanceShapeViolation::MeshIndexOutOfRange,
                 },
             )?;
             for (primitive_index, (primitive, candidate_primitive)) in mesh
@@ -5607,8 +5087,8 @@ mod tests {
     use super::*;
     use crate::model::{
         Bone, MeshAsset, MeshInstance, Primitive, SceneAssets, SourceInverseBindAccessor,
-        SourceNodeAsset, SourceNodeLocalRest, SourceSkeletonAssets, SourceSkeletonCoverage,
-        SourceSkinAsset, SourceSkinAttachment, Track,
+        SourceNodeAsset, SourceNodeLocalRest, SourceProjectionViolation, SourceSkeletonAssets,
+        SourceSkeletonCoverage, SourceSkinAsset, SourceSkinAttachment, Track,
     };
     use glam::{Quat, Vec3};
 
@@ -7393,7 +6873,7 @@ mod tests {
     /// compares stored binds rather than world placement, and
     /// [`check_skin_and_bounds`] skips an instance with no affected joint.
     ///
-    /// [`validate_parent_chain_agreement`] is what refuses it, which is why
+    /// [`crate::model::validate_document_shape`] is what refuses it, which is why
     /// this is a refusal exhibit rather than a proving document.
     fn contradictory_parent_chain_document() -> Document {
         let mut doc = rig_document(
@@ -7430,128 +6910,6 @@ mod tests {
     }
 
     // --- Parent-chain agreement -------------------------------------------
-
-    /// One row of the chain-agreement table: the stable reason, the source
-    /// node that must be named, and the single projection field corrupting it.
-    type ChainAgreementCase = (&'static str, usize, fn(&mut Document));
-
-    #[test]
-    fn every_parent_chain_disagreement_names_its_own_reason() {
-        // Each row corrupts exactly one field of a document that otherwise
-        // plans, builds, and proves, and asserts the refusal by equality —
-        // reason *and* the source node it names. The operation is the
-        // whole-document one on purpose: the check is a document-shape fact
-        // every entry point gets, not a rest/bind precondition.
-        let cases: &[ChainAgreementCase] = &[
-            ("projected_bone_out_of_range", 1, |doc| {
-                doc.assets.source_skeleton.nodes[1].bone = Some(9);
-            }),
-            ("two_source_nodes_project_to_one_bone", 2, |doc| {
-                doc.assets.source_skeleton.nodes[2].bone = Some(1);
-            }),
-            // A parent index naming no row of the table at all: the subtree
-            // shape, whose honest coverage declaration is `Unavailable`. The
-            // ancestor walk steps over unprojected *rows*, but it cannot step
-            // over an index that names nothing.
-            ("parent_source_node_is_missing", 2, |doc| {
-                doc.assets.source_skeleton.nodes[2].parent_source_node_index = Some(9);
-            }),
-            // The same refusal at the walk's exact bound, which needs the
-            // whole table rather than one field: bones 0 and 1 stop being
-            // projected (legal — neither is the child of a projected bone),
-            // so node 2 is the only projected row and the two rows above it
-            // are the only steps the walk may take. Its chain then leaves the
-            // table, and the step that discovers that must not be charged
-            // against the bound: the walk spends exactly `unprojected_rows`
-            // steps and still has to report the dangling index rather than a
-            // cycle. Pins the off-by-one a `>=` bound would introduce.
-            ("parent_source_node_is_missing", 2, |doc| {
-                let nodes = &mut doc.assets.source_skeleton.nodes;
-                nodes[0].bone = None;
-                nodes[1].bone = None;
-                nodes[0].parent_source_node_index = Some(9);
-            }),
-            // Unprojected rows the walk can never leave: 5 and 6 name each
-            // other, so node 2's chain has no nearest projected ancestor and
-            // no root either. Bounded rather than hung.
-            ("cyclic_unprojected_source_parent_chain", 2, |doc| {
-                let nodes = &mut doc.assets.source_skeleton.nodes;
-                nodes[2].parent_source_node_index = Some(5);
-                for (index, parent) in [(5, 6), (6, 5)] {
-                    let mut evidence =
-                        SourceNodeAsset::new(index, SourceNodeLocalRest::Matrix(Mat4::IDENTITY));
-                    evidence.parent_source_node_index = Some(parent);
-                    nodes.push(evidence);
-                }
-            }),
-            // Re-parented within the projection: node 2's projected parent
-            // becomes node 0 while `Skeleton::parent` still says bone 1.
-            ("projection_and_skeleton_parents_differ", 2, |doc| {
-                doc.assets.source_skeleton.nodes[2].parent_source_node_index = Some(0);
-            }),
-            // The root case in the direction `Some` vs `None`: the skeleton
-            // root acquires a projected parent.
-            ("projection_and_skeleton_parents_differ", 0, |doc| {
-                doc.assets.source_skeleton.nodes[0].parent_source_node_index = Some(2);
-            }),
-            // And the root case in the *other* direction, `None` vs `Some`:
-            // the projection calls node 2 a root while `Skeleton::parent`
-            // gives bone 2 a parent. Both directions are pinned because a
-            // comparison guarded on either side being present survives the
-            // other row — and this is the one that reproduces #309, so
-            // `a_projection_root_of_a_skeleton_child_is_refused` exhibits the
-            // false proof it would otherwise allow.
-            ("projection_and_skeleton_parents_differ", 2, |doc| {
-                doc.assets.source_skeleton.nodes[2].parent_source_node_index = None;
-            }),
-            // Stepping over an unprojected row is not the same as accepting
-            // whatever is above it: dropping node 1's bone leaves node 2's
-            // nearest projected ancestor at bone 0 while `Skeleton::parent`
-            // still says bone 1. (Bone 1 also loses its projecting node, which
-            // the downward-closure pass below would refuse — the parent pass
-            // reaches node 2 first.)
-            ("projection_and_skeleton_parents_differ", 2, |doc| {
-                doc.assets.source_skeleton.nodes[1].bone = None;
-            }),
-            // Downward closure, reported at the projected *parent*: bone 2
-            // stops being projected while its skeleton parent bone 1 still is,
-            // so a closure over bone 1 would leave bone 2 behind.
-            (
-                "projected_bone_has_an_unprojected_skeleton_child",
-                1,
-                |doc| {
-                    doc.assets.source_skeleton.nodes[2].bone = None;
-                },
-            ),
-        ];
-        let capability = complete_capability();
-        for &(reason, source_node_index, corrupt) in cases {
-            let mut doc = compensated_document();
-            // The uncorrupted document is accepted, so each refusal below is
-            // attributable to the one field the row touched.
-            plan_scale(&ScaleRequest {
-                operation: ScaleOperation::WholeDocumentLinearUnits { factor: 0.01 },
-                document: &doc,
-                capability: &capability,
-            })
-            .expect("the uncorrupted document plans");
-            corrupt(&mut doc);
-            assert_eq!(
-                plan_scale(&ScaleRequest {
-                    operation: ScaleOperation::WholeDocumentLinearUnits { factor: 0.01 },
-                    document: &doc,
-                    capability: &capability,
-                })
-                .unwrap_err(),
-                ScaleError::ParentChainDisagreement {
-                    source_node_index,
-                    reason,
-                },
-                "{reason} at source node {source_node_index}"
-            );
-        }
-    }
-
     #[test]
     fn the_contradictory_parent_chain_documents_false_proof_is_refused() {
         // Planned at source node 0, `contradictory_parent_chain_document`
@@ -7579,10 +6937,10 @@ mod tests {
                     capability: &capability,
                 })
                 .unwrap_err(),
-                ScaleError::ParentChainDisagreement {
+                ScaleError::InvalidDocumentShape(DocumentShapeError::SourceProjection {
                     source_node_index: 0,
-                    reason: "projection_and_skeleton_parents_differ",
-                }
+                    violation: SourceProjectionViolation::NearestProjectedParentMismatch,
+                })
             );
         }
     }
@@ -7611,10 +6969,10 @@ mod tests {
         doctored.assets.source_skeleton.nodes[2].parent_source_node_index = Some(0);
         assert_eq!(
             prove_scale(&doc, &ScaleCandidate { document: doctored }, &plan).unwrap_err(),
-            ScaleError::ParentChainDisagreement {
+            ScaleError::InvalidDocumentShape(DocumentShapeError::SourceProjection {
                 source_node_index: 2,
-                reason: "projection_and_skeleton_parents_differ",
-            }
+                violation: SourceProjectionViolation::NearestProjectedParentMismatch,
+            })
         );
     }
 
@@ -7742,10 +7100,10 @@ mod tests {
         // unprojected child has no source-node index to name.
         let capability = complete_capability();
         let doc = unprojected_skeleton_child_document();
-        let expected = ScaleError::ParentChainDisagreement {
+        let expected = ScaleError::InvalidDocumentShape(DocumentShapeError::SourceProjection {
             source_node_index: 0,
-            reason: "projected_bone_has_an_unprojected_skeleton_child",
-        };
+            violation: SourceProjectionViolation::ProjectedBoneHasUnprojectedSkeletonChild,
+        });
         // A document-shape fact, so every entry point gets it...
         assert_eq!(
             plan_scale(&ScaleRequest {
@@ -7832,10 +7190,10 @@ mod tests {
         // `0.0`, bone 2 displaced a hundredfold.
         let capability = complete_capability();
         let doc = projection_root_of_a_skeleton_child_document();
-        let expected = ScaleError::ParentChainDisagreement {
+        let expected = ScaleError::InvalidDocumentShape(DocumentShapeError::SourceProjection {
             source_node_index: 2,
-            reason: "projection_and_skeleton_parents_differ",
-        };
+            violation: SourceProjectionViolation::NearestProjectedParentMismatch,
+        });
         // A document-shape fact, so every entry point gets it...
         assert_eq!(
             plan_scale(&ScaleRequest {
@@ -8094,10 +7452,10 @@ mod tests {
                 capability: &capability,
             })
             .unwrap_err(),
-            ScaleError::ParentChainDisagreement {
+            ScaleError::InvalidDocumentShape(DocumentShapeError::SourceProjection {
                 source_node_index: 1,
-                reason: "projected_bone_out_of_range",
-            }
+                violation: SourceProjectionViolation::ProjectedBoneOutOfRange,
+            })
         );
     }
 
@@ -8778,10 +8136,10 @@ mod tests {
         // parent the projection itself no longer carries.
         assert_eq!(
             rest_bind_reject_reason(&doc),
-            ScaleError::ParentChainDisagreement {
+            ScaleError::InvalidDocumentShape(DocumentShapeError::SourceProjection {
                 source_node_index: 2,
-                reason: "parent_source_node_is_missing",
-            }
+                violation: SourceProjectionViolation::ParentSourceNodeMissing,
+            })
         );
     }
 
@@ -8929,189 +8287,11 @@ mod tests {
         };
         assert!(matches!(
             plan_scale(&request).unwrap_err(),
-            ScaleError::DuplicateSourceNodeIndex {
+            ScaleError::InvalidDocumentShape(DocumentShapeError::DuplicateSourceNodeIndex {
                 source_node_index: 1
-            }
+            })
         ));
     }
-
-    #[test]
-    fn duplicate_source_skin_index_rejects_instead_of_first_match() {
-        let mut doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
-        let duplicate = doc.assets.source_skeleton.skins[0].clone();
-        doc.assets.source_skeleton.skins.push(duplicate);
-        let capability = complete_capability();
-        let request = ScaleRequest {
-            operation: ScaleOperation::RestBindUniformScale {
-                source_skin_index: 0,
-                source_root_node_index: 0,
-                expected_factor: 1.0,
-            },
-            document: &doc,
-            capability: &capability,
-        };
-        assert!(matches!(
-            plan_scale(&request).unwrap_err(),
-            ScaleError::DuplicateSourceSkinIndex {
-                source_skin_index: 0
-            }
-        ));
-    }
-
-    // --- Duplicate clip tracks (hardening gap 2) -------------------------
-
-    #[test]
-    fn duplicate_clip_track_for_the_same_bone_and_property_rejects() {
-        let mut doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
-        let track = Track {
-            bone: 1,
-            property: Property::Translation,
-            interpolation: Interpolation::Linear,
-            times: vec![0.0, 1.0],
-            values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::ONE]),
-        };
-        doc.clips.push(Clip {
-            name: "clip".into(),
-            duration_s: 1.0,
-            tracks: vec![track.clone(), track],
-        });
-        let capability = complete_capability();
-        let request = ScaleRequest {
-            operation: ScaleOperation::WholeDocumentLinearUnits { factor: 2.0 },
-            document: &doc,
-            capability: &capability,
-        };
-        assert!(matches!(
-            plan_scale(&request).unwrap_err(),
-            ScaleError::DuplicateClipTrack {
-                clip_index: 0,
-                node: 1,
-                property: Property::Translation,
-            }
-        ));
-    }
-
-    #[test]
-    fn malformed_track_shapes_reject_without_panicking() {
-        // Each malformation is paired with the stable reason it must be
-        // reported as: a single interchangeable reason string would let a
-        // producer's evidence say "invalid shape" without ever saying which
-        // shape rule the source broke.
-        let bad_tracks = [
-            // Out-of-range bone.
-            (
-                "bone_index_out_of_range",
-                Track {
-                    bone: 99,
-                    property: Property::Translation,
-                    interpolation: Interpolation::Linear,
-                    times: vec![0.0],
-                    values: TrackValues::Vec3s(vec![Vec3::ZERO]),
-                },
-            ),
-            // Empty times.
-            (
-                "empty_times",
-                Track {
-                    bone: 1,
-                    property: Property::Translation,
-                    interpolation: Interpolation::Linear,
-                    times: vec![],
-                    values: TrackValues::Vec3s(vec![]),
-                },
-            ),
-            // Non-finite time.
-            (
-                "non_finite_time",
-                Track {
-                    bone: 1,
-                    property: Property::Translation,
-                    interpolation: Interpolation::Linear,
-                    times: vec![f32::NAN],
-                    values: TrackValues::Vec3s(vec![Vec3::ZERO]),
-                },
-            ),
-            // Non-ascending times.
-            (
-                "times_not_strictly_increasing",
-                Track {
-                    bone: 1,
-                    property: Property::Translation,
-                    interpolation: Interpolation::Linear,
-                    times: vec![1.0, 0.0],
-                    values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::ONE]),
-                },
-            ),
-            // Value count disagrees with times/interpolation.
-            (
-                "value_count_mismatch",
-                Track {
-                    bone: 1,
-                    property: Property::Translation,
-                    interpolation: Interpolation::Linear,
-                    times: vec![0.0, 1.0],
-                    values: TrackValues::Vec3s(vec![Vec3::ZERO]),
-                },
-            ),
-            // Cubic-spline value count not `3 * times.len()`.
-            (
-                "value_count_mismatch",
-                Track {
-                    bone: 1,
-                    property: Property::Translation,
-                    interpolation: Interpolation::CubicSpline,
-                    times: vec![0.0, 1.0],
-                    values: TrackValues::Vec3s(vec![Vec3::ZERO; 4]),
-                },
-            ),
-            // `TrackValues` variant disagrees with `property`.
-            (
-                "value_type_mismatches_property",
-                Track {
-                    bone: 1,
-                    property: Property::Translation,
-                    interpolation: Interpolation::Linear,
-                    times: vec![0.0],
-                    values: TrackValues::Quats(vec![Quat::IDENTITY]),
-                },
-            ),
-            // Non-finite value.
-            (
-                "non_finite_value",
-                Track {
-                    bone: 1,
-                    property: Property::Translation,
-                    interpolation: Interpolation::Linear,
-                    times: vec![0.0],
-                    values: TrackValues::Vec3s(vec![Vec3::new(f32::NAN, 0.0, 0.0)]),
-                },
-            ),
-        ];
-        for (expected_reason, track) in bad_tracks {
-            let node = track.bone;
-            let mut doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
-            doc.clips.push(Clip {
-                name: "clip".into(),
-                duration_s: 1.0,
-                tracks: vec![track],
-            });
-            let capability = complete_capability();
-            let request = ScaleRequest {
-                operation: ScaleOperation::WholeDocumentLinearUnits { factor: 2.0 },
-                document: &doc,
-                capability: &capability,
-            };
-            assert_eq!(
-                plan_scale(&request).unwrap_err(),
-                ScaleError::InvalidTrackShape {
-                    clip_index: 0,
-                    node,
-                    reason: expected_reason,
-                }
-            );
-        }
-    }
-
     // --- world_at_time hardening (hardening gap 3) -----------------------
 
     #[test]
@@ -9138,71 +8318,9 @@ mod tests {
         });
         assert!(matches!(
             build_scale_candidate(&mutated, &plan).unwrap_err(),
-            ScaleError::InvalidTrackShape { .. }
+            ScaleError::InvalidDocumentShape(DocumentShapeError::TrackShape { .. })
         ));
     }
-
-    #[test]
-    fn invalid_skeleton_parent_ordering_rejects_without_panicking() {
-        // Bone 0's parent is bone 1, which is later in `bones` — violates
-        // the documented parent-before-child invariant.
-        let doc = Document {
-            skeleton: Skeleton {
-                bones: vec![
-                    Bone {
-                        name: "a".into(),
-                        parent: Some(1),
-                        rest: Transform::IDENTITY,
-                        inverse_bind: None,
-                    },
-                    Bone {
-                        name: "b".into(),
-                        parent: None,
-                        rest: Transform::IDENTITY,
-                        inverse_bind: None,
-                    },
-                ],
-            },
-            clips: Vec::new(),
-            assets: SceneAssets {
-                source_skeleton: SourceSkeletonAssets {
-                    coverage: SourceSkeletonCoverage::Complete,
-                    nodes: vec![
-                        SourceNodeAsset {
-                            source_node_index: 0,
-                            name: None,
-                            parent_source_node_index: Some(1),
-                            scene_root_indices: vec![],
-                            local_rest: SourceNodeLocalRest::Matrix(Mat4::IDENTITY),
-                            bone: Some(0),
-                        },
-                        SourceNodeAsset {
-                            source_node_index: 1,
-                            name: None,
-                            parent_source_node_index: None,
-                            scene_root_indices: vec![0],
-                            local_rest: SourceNodeLocalRest::Matrix(Mat4::IDENTITY),
-                            bone: Some(1),
-                        },
-                    ],
-                    skins: Vec::new(),
-                },
-                ..SceneAssets::default()
-            },
-            source: Default::default(),
-        };
-        let capability = complete_capability();
-        let request = ScaleRequest {
-            operation: ScaleOperation::WholeDocumentLinearUnits { factor: 2.0 },
-            document: &doc,
-            capability: &capability,
-        };
-        assert!(matches!(
-            plan_scale(&request).unwrap_err(),
-            ScaleError::InvalidParent { node: 0, parent: 1 }
-        ));
-    }
-
     // --- skinned_bounds hardening (hardening gap 4) -----------------------
 
     #[test]
@@ -9279,11 +8397,32 @@ mod tests {
         let mut malformed = doc.clone();
         malformed.assets.meshes[0].primitives[0].positions[0] = Vec3::new(f32::NAN, 0.0, 0.0);
         // Base `POSITION` is a rewritten domain, so its finiteness is now a
-        // document-shape invariant checked at every entry point rather than
+        // scale-input invariant checked at every entry point rather than
         // something only the skinned-bounds walk happens to notice — which
         // is what makes it hold for the *candidate* a build returns, too.
         assert!(matches!(
             prove_scale(&malformed, &candidate, &plan).unwrap_err(),
+            ScaleError::InvalidMeshPrimitive {
+                reason: "non_finite_position",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn build_validates_the_candidate_it_generated_before_returning_it() {
+        let mut doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
+        doc.assets.meshes[0].primitives[0].positions[0] = Vec3::splat(f32::MAX);
+        let capability = complete_capability();
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::WholeDocumentLinearUnits { factor: 2.0 },
+            document: &doc,
+            capability: &capability,
+        })
+        .expect("the finite source and representable factor plan");
+
+        assert!(matches!(
+            build_scale_candidate(&doc, &plan).unwrap_err(),
             ScaleError::InvalidMeshPrimitive {
                 reason: "non_finite_position",
                 ..
@@ -9457,7 +8596,7 @@ mod tests {
         });
         assert!(matches!(
             build_scale_candidate(&mutated, &plan).unwrap_err(),
-            ScaleError::DuplicateClipTrack { .. }
+            ScaleError::InvalidDocumentShape(DocumentShapeError::DuplicateClipTrack { .. })
         ));
     }
 
@@ -9476,10 +8615,10 @@ mod tests {
         malformed_source.assets.instances[0].mesh = 99;
         assert!(matches!(
             prove_scale(&malformed_source, &candidate, &plan).unwrap_err(),
-            ScaleError::InvalidMeshInstance {
-                reason: "mesh_index_out_of_range",
+            ScaleError::InvalidDocumentShape(DocumentShapeError::MeshInstanceShape {
+                violation: MeshInstanceShapeViolation::MeshIndexOutOfRange,
                 ..
-            }
+            })
         ));
     }
 
@@ -16134,7 +15273,7 @@ mod tests {
     fn a_document_whose_skin_slots_dominate_its_work_is_refused() {
         // The shape the old `bones + vertices` charge undercounted without
         // bound: many instances, many slots each, almost no vertices. Nothing
-        // in `validate_scene_assets` limits either count — it only range-checks
+        // in `validate_scale_input` limits either count — it only range-checks
         // joint ids — so `skin_joints` may repeat a joint and an instance list
         // may be arbitrarily long.
         //
@@ -16972,7 +16111,7 @@ mod tests {
     /// walk, a dangling `parent_source_node_index` — are reached here from a
     /// *projected* node's chain, and from that direction they are shadowed:
     /// rest/bind planning requires [`SourceSkeletonCoverage::Complete`], and
-    /// under that coverage [`validate_parent_chain_agreement`] has already
+    /// under that coverage [`crate::model::validate_document_shape`] has already
     /// established that every projected node's ancestor chain terminates,
     /// stays inside the table, and agrees with a skeleton that is acyclic and
     /// orders every parent before its child. Each test below pins both halves:
@@ -17013,7 +16152,7 @@ mod tests {
     /// an unprojected one with [`ScaleError::SourceNodeNotNormalized`], before
     /// composing a single world matrix. So this walk only ever starts at a
     /// projected node, whose whole chain
-    /// [`validate_parent_chain_agreement`] has already accepted.
+    /// [`crate::model::validate_document_shape`] has already accepted.
     fn source_world_reject_reason(document: &Document, start: usize) -> ScaleError {
         let by_source_index = source_node_index_map(document);
         let mut cache = BTreeMap::new();
@@ -17058,7 +16197,7 @@ mod tests {
 
     #[test]
     fn an_unprojected_skin_joint_with_a_dangling_parent_is_refused_by_planning() {
-        // Node 5 names no bone, so `validate_parent_chain_agreement` skips it
+        // Node 5 names no bone, so the shared projection check skips it
         // — and the skin names it a joint, so the closure walks its chain and
         // finds node 99 absent. The guard is not shadowed here; it is the
         // refusal.
@@ -17129,10 +16268,10 @@ mod tests {
         // node 2 while `Skeleton::parent` says bone 0.
         assert_eq!(
             rest_bind_reject_reason(&doc),
-            ScaleError::ParentChainDisagreement {
+            ScaleError::InvalidDocumentShape(DocumentShapeError::SourceProjection {
                 source_node_index: 1,
-                reason: "projection_and_skeleton_parents_differ",
-            }
+                violation: SourceProjectionViolation::NearestProjectedParentMismatch,
+            })
         );
     }
 
@@ -17159,10 +16298,10 @@ mod tests {
         // of node 2 while `Skeleton::parent` says bone 0 is a root.
         assert_eq!(
             rest_bind_reject_reason(&doc),
-            ScaleError::ParentChainDisagreement {
+            ScaleError::InvalidDocumentShape(DocumentShapeError::SourceProjection {
                 source_node_index: 0,
-                reason: "projection_and_skeleton_parents_differ",
-            }
+                violation: SourceProjectionViolation::NearestProjectedParentMismatch,
+            })
         );
     }
 
@@ -17182,10 +16321,10 @@ mod tests {
         // does not carry is an ancestor no bone can be found for.
         assert_eq!(
             rest_bind_reject_reason(&doc),
-            ScaleError::ParentChainDisagreement {
+            ScaleError::InvalidDocumentShape(DocumentShapeError::SourceProjection {
                 source_node_index: 0,
-                reason: "parent_source_node_is_missing",
-            }
+                violation: SourceProjectionViolation::ParentSourceNodeMissing,
+            })
         );
     }
 
@@ -17213,7 +16352,7 @@ mod tests {
 
         let cases: [StructureMismatchCase; 14] = [
             // The extra bone is a parentless copy of the root, so it passes
-            // `validate_document_shape` (which runs first) and reaches the
+            // `validate_scale_input` (which runs first) and reaches the
             // parity clause rather than a shape guard. This is the row the
             // sampling budget depends on: `per_sample_work_units` measures
             // only the source skeleton while `sample_time_obligations` poses
@@ -17589,7 +16728,7 @@ mod tests {
         // The candidate remains internally coherent, so #309's per-document
         // chain validation accepts it. It is the exact source/candidate
         // topology comparison that must refuse the operation rewrite.
-        validate_document_shape(&reparented).unwrap();
+        validate_scale_input(&reparented).unwrap();
         assert_eq!(
             prove_scale(
                 &doc,
@@ -17618,7 +16757,7 @@ mod tests {
         // Both sides declare their raw rows non-authoritative, so this
         // refusal can only come from normalized `Bone::parent` parity.
         changed.skeleton.bones[prop].parent = Some(2);
-        validate_document_shape(&changed).unwrap();
+        validate_scale_input(&changed).unwrap();
 
         assert_eq!(
             prove_scale(&doc, &ScaleCandidate { document: changed }, &plan).unwrap_err(),
@@ -17639,7 +16778,7 @@ mod tests {
         // Coverage unavailable deliberately makes the candidate's projection
         // non-authoritative to its own validation. It must not make that
         // identity disappear from the source/candidate comparison.
-        validate_document_shape(&changed).unwrap();
+        validate_scale_input(&changed).unwrap();
         assert_eq!(
             prove_scale(&doc, &ScaleCandidate { document: changed }, &plan).unwrap_err(),
             ScaleError::CandidateStructureMismatch {
@@ -17671,7 +16810,7 @@ mod tests {
             },
             bone: None,
         });
-        validate_document_shape(&changed).unwrap();
+        validate_scale_input(&changed).unwrap();
         assert_eq!(
             prove_scale(&doc, &ScaleCandidate { document: changed }, &plan).unwrap_err(),
             ScaleError::CandidateStructureMismatch {
@@ -17712,7 +16851,7 @@ mod tests {
             .find(|node| node.source_node_index == 101)
             .unwrap()
             .parent_source_node_index = Some(100);
-        validate_document_shape(&changed).unwrap();
+        validate_scale_input(&changed).unwrap();
         assert_eq!(
             prove_scale(&doc, &ScaleCandidate { document: changed }, &plan).unwrap_err(),
             ScaleError::CandidateStructureMismatch {
@@ -17748,7 +16887,7 @@ mod tests {
                 _ => node.bone,
             };
         }
-        validate_document_shape(&changed).unwrap();
+        validate_scale_input(&changed).unwrap();
         assert_eq!(
             prove_scale(&doc, &ScaleCandidate { document: changed }, &plan).unwrap_err(),
             ScaleError::CandidateStructureMismatch {
@@ -17766,7 +16905,7 @@ mod tests {
         let mut reordered = candidate.into_document();
         reordered.assets.source_skeleton.nodes.reverse();
 
-        validate_document_shape(&reordered).unwrap();
+        validate_scale_input(&reordered).unwrap();
         prove_scale(
             &doc,
             &ScaleCandidate {
@@ -17814,7 +16953,7 @@ mod tests {
         // The retained rows happen to be coherent, so the candidate is valid
         // in isolation; source/candidate coverage identity must refuse the
         // unilateral upgrade.
-        validate_document_shape(&upgraded).unwrap();
+        validate_scale_input(&upgraded).unwrap();
         assert_eq!(
             prove_scale(&doc, &ScaleCandidate { document: upgraded }, &plan).unwrap_err(),
             ScaleError::CandidateStructureMismatch {
@@ -17840,10 +16979,10 @@ mod tests {
         let capability = complete_capability();
         let plan = whole_document_plan(&doc, &capability);
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
-        let expected = ScaleError::InvalidMeshInstance {
+        let expected = ScaleError::InvalidDocumentShape(DocumentShapeError::MeshInstanceShape {
             instance_index: 1,
-            reason: "node_index_out_of_range",
-        };
+            violation: MeshInstanceShapeViolation::NodeIndexOutOfRange,
+        });
 
         let mut broken_source = doc.clone();
         broken_source.assets.instances[1].node = doc.skeleton.bones.len();

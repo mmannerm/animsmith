@@ -97,6 +97,11 @@ The shared scale-input validation also refuses any finite negative primary
 skin weight. Such a value cannot describe the convex skin blend required by
 the model: it exits 1 at the plan stage with rejection kind
 `negative-skin-weight` and publishes no artifact or evidence file.
+Structural failures retain their specific evidence kinds even though the core
+API now reports them through `ScaleError::InvalidDocumentShape`: for example,
+an invalid parent projection is `parent-chain-disagreement`, a malformed track
+is `invalid-track-shape`, and an invalid mesh instance is
+`invalid-mesh-instance`.
 
 One invocation plans, rewrites, reloads and proves the candidate, re-runs the
 whole rewrite to check the bytes are deterministic, and re-reads the staged

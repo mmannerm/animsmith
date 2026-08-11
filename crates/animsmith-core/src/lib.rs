@@ -143,12 +143,14 @@ pub use glam;
 pub use metrics::MetricGrids;
 pub use model::{
     AdditionalInfluenceSet, AffineDomainViolation, Bone, BoneId, Clip, DecodedImageColorType,
-    Document, ImageContainerFormat, ImageSourceKind, ImageUnavailableReason, Interpolation,
-    MaterialResourceAssets, MaterialResourceCoverage, MaterialTextureSlot, Property, Skeleton,
-    SourceImageAsset, SourceImageInspection, SourceInfo, SourceInverseBindAccessor,
-    SourceInverseBindAccessorStatus, SourceMaterialAsset, SourceMaterialTextureBinding,
-    SourceNodeAsset, SourceNodeLocalRest, SourceSkeletonAssets, SourceSkeletonCoverage,
-    SourceSkinAsset, SourceSkinAttachment, SourceTextureAsset, Track, TrackValues, Transform,
+    Document, DocumentShapeError, ImageContainerFormat, ImageSourceKind, ImageUnavailableReason,
+    Interpolation, MaterialResourceAssets, MaterialResourceCoverage, MaterialTextureSlot,
+    MeshInstanceShapeViolation, Property, Skeleton, SourceImageAsset, SourceImageInspection,
+    SourceInfo, SourceInverseBindAccessor, SourceInverseBindAccessorStatus, SourceMaterialAsset,
+    SourceMaterialTextureBinding, SourceNodeAsset, SourceNodeLocalRest, SourceProjectionViolation,
+    SourceSkeletonAssets, SourceSkeletonCoverage, SourceSkinAsset, SourceSkinAttachment,
+    SourceTextureAsset, Track, TrackShapeViolation, TrackValues, Transform,
+    validate_document_shape,
 };
 pub use profile::{
     ResolvedRoles, RigProfile, Role, builtin_profiles, detect_profile, resolve_configured_roles,

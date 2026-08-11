@@ -71,8 +71,10 @@ Embedders can opt into
 `animsmith_core::bake_static_mesh_transforms` to bake accumulated static
 rest transforms into mesh-local positions and inverse-transpose normalized
 normals. The operation returns a canonical identity-root document plus
-deterministic per-instance evidence. It validates the complete input before
-constructing output and fails closed for animation, skinning, ambiguous mesh
+deterministic per-instance evidence. It validates the input fields the static
+operation consumes before constructing output, while raw source-projection
+evidence that it discards is intentionally irrelevant. It fails closed for
+animation, skinning, ambiguous mesh
 instancing, malformed data, reflections, and ill-conditioned transforms.
 Model-supported material factors and embedded base-color, normal, metallic-roughness, and occlusion textures
 are preserved.

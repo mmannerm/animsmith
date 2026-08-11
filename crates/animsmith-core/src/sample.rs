@@ -104,6 +104,16 @@ pub fn default_frame_count(clip: &Clip) -> usize {
 
 /// Sample `clip` on a uniform `frames`-sample grid and FK to model space.
 ///
+/// Sampling is intentionally tolerant and storage-driven rather than a shape
+/// validation step. Tracks with an empty timeline or a target bone outside
+/// `skeleton` are skipped. `TrackValues::Vec3s` writes translation or scale
+/// according to [`Track::property`], ignores the rotation property, and uses
+/// [`Vec3::ZERO`] for missing values (so a missing scale value is zero, not
+/// the transform scale default of one). `TrackValues::Quats` writes rotation
+/// regardless of [`Track::property`] and uses [`Quat::IDENTITY`] for missing
+/// values. This tolerant behaviour is distinct from strict operations, which
+/// should call [`crate::validate_document_shape`] at their own boundary.
+///
 /// # Panics
 ///
 /// Panics if a skeleton bone's parent index is outside
@@ -181,6 +191,11 @@ pub enum TrackSample {
 
 /// Sample a single track at `t` with the same semantics the grid uses
 /// (clamp at ends, glTF interpolation, shortest-path slerp).
+///
+/// Hostile or incomplete tracks are tolerated: empty/non-finite timelines
+/// choose a clamped segment where possible, and missing values default to zero
+/// vectors or the identity quaternion. This function does not validate a
+/// [`crate::Document`] because it receives only one track.
 pub fn sample_track(track: &Track, t: f32) -> TrackSample {
     match &track.values {
         TrackValues::Vec3s(_) => TrackSample::Vec3(sample_vec3(track, t)),
@@ -213,9 +228,9 @@ fn segment(times: &[f32], t: f32) -> (usize, usize, f32) {
     (k0, k1, u)
 }
 
-/// Clamped value fetch: loaders enforce times/values length agreement,
-/// but `Document`s are plain data an embedder can build by hand — an
-/// inconsistent track samples as the type default, never a panic.
+/// Clamped value fetch: loaders enforce times/values length agreement, but
+/// `Document`s are plain data an embedder can build by hand — an inconsistent
+/// track reads the storage type's default value and never panics.
 fn value_at<T: Copy + Default>(vals: &[T], index: usize) -> T {
     vals.get(index).copied().unwrap_or_default()
 }
@@ -336,6 +351,33 @@ mod tests {
         let grid = sample_clip(&skeleton, &clip, 2);
 
         let _ = grid.local(0, grid.bone_count());
+    }
+
+    #[test]
+    fn out_of_range_clip_track_is_skipped() {
+        let skeleton = Skeleton {
+            bones: vec![Bone {
+                name: "root".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            }],
+        };
+        let clip = Clip {
+            name: "hostile".into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 1,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0],
+                values: TrackValues::Vec3s(vec![Vec3::splat(42.0)]),
+            }],
+        };
+
+        let grid = sample_clip(&skeleton, &clip, 2);
+        assert_eq!(grid.local(0, 0), Transform::IDENTITY);
+        assert_eq!(grid.local(1, 0), Transform::IDENTITY);
     }
 
     /// Issue #24: a NaN first key time made both clamp guards fail,

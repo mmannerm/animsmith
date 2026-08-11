@@ -261,6 +261,20 @@ emitted document to its existing single generated scene; preserving authored
 multi-scene membership across `transform`/`convert` is not part of the static
 measurement contract.
 
+`validate_document_shape` is the model-owned snapshot check for the structural
+invariants full-shape strict operations such as scale share: finite
+parent-before-child rest topology, source identity/projection topology,
+clip/track storage, and scene instance/inverse-bind references. `Document`
+remains publicly mutable, so a
+successful check is not a durable token; strict operations revalidate every
+input at every public boundary. This is deliberately not universal model
+validity. Measurement can retain finite instance evidence from hierarchy
+branches unrelated to a malformed chain, sampling remains panic-free and
+tolerant of hostile standalone tracks, and static baking validates only the
+fields its static operation consumes. Scale's
+negative-weight, finite-position, capability, closure, affine, parity, and
+proof rules remain operation-specific.
+
 Ingestion is **triangle-list only** — the target inputs are skinned game
 rigs, and the model and writer carry no primitive-topology field. A
 non-`TRIANGLES` glTF primitive (points, lines, strips, fans) is skipped
@@ -1851,7 +1865,7 @@ names two independent witnesses of the same quantity, measured from
 deliberately different state: planning classifies the raw source projection's
 node-local rests composed through the raw parent chain, and proof reads the
 normalized skeleton's bone rests composed through its own parent chain.
-Document-shape validation requires the two chains to *agree* — under
+Strict scale-input shape validation requires the two chains to *agree* — under
 `Complete` source-skeleton coverage, which this operation requires anyway, a
 projection that contradicts its own skeleton is refused before either witness
 is taken — but nothing reconciles the two *readings*: each is still composed

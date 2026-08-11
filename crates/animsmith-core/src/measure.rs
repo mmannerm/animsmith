@@ -14,6 +14,7 @@ use crate::model::{
     DecodedImageColorType, Document, ImageContainerFormat, ImageSourceKind, ImageUnavailableReason,
     MaterialResourceCoverage, MaterialTextureSlot, MeshAsset, SourceImageInspection,
     SourceInverseBindAccessorStatus, SourceNodeLocalRest, SourceSkeletonCoverage,
+    tolerant_world_rest_matrices,
 };
 use crate::profile::ResolvedRoles;
 use crate::sample::PoseGrid;
@@ -728,24 +729,6 @@ fn matrix_is_finite(matrix: Mat4) -> bool {
         .all(|component| component.is_finite())
 }
 
-fn static_world_matrices(doc: &Document) -> Vec<Option<Mat4>> {
-    let mut worlds = Vec::with_capacity(doc.skeleton.bones.len());
-    for bone in &doc.skeleton.bones {
-        let local = bone.rest.to_mat4();
-        let world = match bone.parent {
-            Some(parent) => worlds
-                .get(parent)
-                .copied()
-                .flatten()
-                .map(|parent_world| parent_world * local),
-            None => Some(local),
-        }
-        .filter(|matrix| matrix_is_finite(*matrix));
-        worlds.push(world);
-    }
-    worlds
-}
-
 fn matrix_to_columns(matrix: Mat4) -> [f32; 16] {
     matrix.to_cols_array()
 }
@@ -1452,7 +1435,7 @@ pub fn measure_assets(doc: &Document) -> AssetMeasurements {
         .iter()
         .map(measure_mesh_definition)
         .collect::<Vec<_>>();
-    let worlds = static_world_matrices(doc);
+    let worlds = tolerant_world_rest_matrices(&doc.skeleton);
     let mut node_aggregates = vec![NodeAggregate::default(); doc.skeleton.bones.len()];
     let mut node_instances = Vec::with_capacity(doc.assets.instances.len());
 
@@ -2813,6 +2796,95 @@ mod tests {
             measured.scenes[0].static_scene_world_aabb,
             measured.node_instances[0].static_node_world_aabb,
             "partial aggregate retains the finite instance"
+        );
+    }
+
+    #[test]
+    fn malformed_skeleton_chain_does_not_hide_an_unrelated_instance() {
+        let doc = Document {
+            skeleton: Skeleton {
+                bones: vec![
+                    Bone {
+                        name: "malformed".into(),
+                        parent: Some(1),
+                        rest: Transform::IDENTITY,
+                        inverse_bind: None,
+                    },
+                    Bone {
+                        name: "malformed_child".into(),
+                        parent: Some(0),
+                        rest: Transform::IDENTITY,
+                        inverse_bind: None,
+                    },
+                    Bone {
+                        name: "valid_root".into(),
+                        parent: None,
+                        rest: Transform {
+                            translation: Vec3::X,
+                            ..Transform::IDENTITY
+                        },
+                        inverse_bind: None,
+                    },
+                    Bone {
+                        name: "valid_instance".into(),
+                        parent: Some(2),
+                        rest: Transform {
+                            translation: Vec3::Y,
+                            ..Transform::IDENTITY
+                        },
+                        inverse_bind: None,
+                    },
+                ],
+            },
+            assets: SceneAssets {
+                meshes: vec![MeshAsset {
+                    name: "point".into(),
+                    source_mesh_index: 0,
+                    primitives: vec![Primitive {
+                        positions: vec![Vec3::X],
+                        ..Primitive::default()
+                    }],
+                }],
+                instances: vec![
+                    crate::model::MeshInstance {
+                        source_node_index: 10,
+                        node: 0,
+                        mesh: 0,
+                        ..crate::model::MeshInstance::default()
+                    },
+                    crate::model::MeshInstance {
+                        source_node_index: 11,
+                        node: 3,
+                        mesh: 0,
+                        ..crate::model::MeshInstance::default()
+                    },
+                ],
+                scenes: vec![SceneAsset {
+                    source_scene_index: 0,
+                    name: None,
+                    roots: vec![0, 2],
+                }],
+                ..SceneAssets::default()
+            },
+            ..Document::default()
+        };
+
+        let measured = measure_assets(&doc);
+        assert_eq!(
+            measured.node_instances[0].static_node_world_aabb_unavailable_reason,
+            Some(StaticNodeAabbUnavailableReason::NonFiniteTransform)
+        );
+        assert_eq!(
+            measured.node_instances[1].static_node_world_aabb,
+            Some(Aabb {
+                min: [2.0, 1.0, 0.0],
+                max: [2.0, 1.0, 0.0],
+            })
+        );
+        assert_eq!(measured.scenes[0].excluded_instance_count, 1);
+        assert_eq!(
+            measured.scenes[0].static_scene_world_aabb,
+            measured.node_instances[1].static_node_world_aabb
         );
     }
 

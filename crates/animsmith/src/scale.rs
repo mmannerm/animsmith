@@ -77,7 +77,7 @@ use animsmith_core::scale::{
     ScaleDomainRewrites, ScaleError, ScaleOperation, ScalePlan, ScaleProof, ScaleRequest,
     ScaleTolerancePolicy, plan_scale,
 };
-use animsmith_core::{InputIdentity, ToolInfo};
+use animsmith_core::{DocumentShapeError, InputIdentity, ToolInfo};
 use animsmith_gltf::{
     GltfCapabilityManifest, GltfCapabilityViolation, GltfContainerKind, GltfRawJsonDifference,
     GltfRawJsonDifferenceKind, GltfRawJsonDifferenceSummary, GltfScaleArtifact,
@@ -611,17 +611,28 @@ fn scale_error_kind(error: &ScaleError) -> &'static str {
         ScaleError::ProofResidualExceeded { .. } => "proof-residual-exceeded",
         ScaleError::ProofSamplingBudgetExceeded { .. } => "proof-sampling-budget-exceeded",
         ScaleError::MissingProofEvidence { .. } => "missing-proof-evidence",
-        ScaleError::DuplicateSourceNodeIndex { .. } => "duplicate-source-node-index",
-        ScaleError::DuplicateSourceSkinIndex { .. } => "duplicate-source-skin-index",
-        ScaleError::DuplicateClipTrack { .. } => "duplicate-clip-track",
-        ScaleError::InvalidTrackShape { .. } => "invalid-track-shape",
-        ScaleError::InvalidMeshInstance { .. } => "invalid-mesh-instance",
+        ScaleError::InvalidDocumentShape(error) => document_shape_error_kind(error),
         ScaleError::MissingInverseBind { .. } => "missing-inverse-bind",
         ScaleError::InvalidMeshPrimitive { .. } => "invalid-mesh-primitive",
         ScaleError::NegativeSkinWeight { .. } => "negative-skin-weight",
         ScaleError::InvalidSkinnedPrimitive { .. } => "invalid-skinned-primitive",
         ScaleError::CandidateStructureMismatch { .. } => "candidate-structure-mismatch",
         _ => "unclassified-scale-error",
+    }
+}
+
+fn document_shape_error_kind(error: &DocumentShapeError) -> &'static str {
+    match error {
+        DocumentShapeError::NonFiniteSkeletonRest { .. }
+        | DocumentShapeError::NonFiniteBoneInverseBind { .. } => "non-finite-transform",
+        DocumentShapeError::InvalidSkeletonParent { .. } => "invalid-parent",
+        DocumentShapeError::DuplicateSourceNodeIndex { .. } => "duplicate-source-node-index",
+        DocumentShapeError::DuplicateSourceSkinIndex { .. } => "duplicate-source-skin-index",
+        DocumentShapeError::SourceProjection { .. } => "parent-chain-disagreement",
+        DocumentShapeError::DuplicateClipTrack { .. } => "duplicate-clip-track",
+        DocumentShapeError::TrackShape { .. } => "invalid-track-shape",
+        DocumentShapeError::MeshInstanceShape { .. } => "invalid-mesh-instance",
+        _ => "unclassified-document-shape-error",
     }
 }
 
@@ -1211,6 +1222,76 @@ fn emit_rejection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use animsmith_core::{
+        MeshInstanceShapeViolation, Property, SourceProjectionViolation, TrackShapeViolation,
+    };
+
+    #[test]
+    fn shared_document_shape_errors_keep_specific_evidence_kinds() {
+        let cases = [
+            (
+                DocumentShapeError::NonFiniteSkeletonRest { node: 0 },
+                "non-finite-transform",
+            ),
+            (
+                DocumentShapeError::InvalidSkeletonParent { node: 1, parent: 2 },
+                "invalid-parent",
+            ),
+            (
+                DocumentShapeError::DuplicateSourceNodeIndex {
+                    source_node_index: 3,
+                },
+                "duplicate-source-node-index",
+            ),
+            (
+                DocumentShapeError::DuplicateSourceSkinIndex {
+                    source_skin_index: 4,
+                },
+                "duplicate-source-skin-index",
+            ),
+            (
+                DocumentShapeError::SourceProjection {
+                    source_node_index: 5,
+                    violation: SourceProjectionViolation::ParentSourceNodeMissing,
+                },
+                "parent-chain-disagreement",
+            ),
+            (
+                DocumentShapeError::DuplicateClipTrack {
+                    clip_index: 6,
+                    node: 7,
+                    property: Property::Translation,
+                },
+                "duplicate-clip-track",
+            ),
+            (
+                DocumentShapeError::TrackShape {
+                    clip_index: 8,
+                    node: 9,
+                    violation: TrackShapeViolation::EmptyTimes,
+                },
+                "invalid-track-shape",
+            ),
+            (
+                DocumentShapeError::MeshInstanceShape {
+                    instance_index: 10,
+                    violation: MeshInstanceShapeViolation::MeshIndexOutOfRange,
+                },
+                "invalid-mesh-instance",
+            ),
+            (
+                DocumentShapeError::NonFiniteBoneInverseBind { node: 11 },
+                "non-finite-transform",
+            ),
+        ];
+
+        for (error, expected) in cases {
+            assert_eq!(
+                scale_error_kind(&ScaleError::InvalidDocumentShape(error)),
+                expected
+            );
+        }
+    }
 
     #[test]
     fn a_non_finite_evidence_value_refuses_to_serialize() {

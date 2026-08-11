@@ -166,3 +166,41 @@ fn sampling_clamps_outside_key_range() {
     assert_eq!(grid.local(4, 0).translation, Vec3::new(3.0, 0.0, 0.0));
     assert!((grid.local(2, 0).translation.x - 2.0).abs() < 1e-6);
 }
+
+#[test]
+fn sample_clip_short_vec3_scale_values_use_zero_storage_default() {
+    let mut skel = two_bone_skeleton();
+    skel.bones[0].rest.scale = Vec3::splat(3.0);
+    let c = clip(vec![Track {
+        bone: 0,
+        property: Property::Scale,
+        interpolation: Interpolation::Linear,
+        times: vec![0.0, 1.0],
+        values: TrackValues::Vec3s(vec![Vec3::splat(2.0)]),
+    }]);
+
+    let grid = sample_clip(&skel, &c, 2);
+    assert_eq!(grid.local(0, 0).scale, Vec3::splat(2.0));
+    assert_eq!(grid.local(1, 0).scale, Vec3::ZERO);
+}
+
+#[test]
+fn sample_clip_quat_storage_drives_rotation_for_mismatched_property() {
+    let mut skel = two_bone_skeleton();
+    skel.bones[0].rest.rotation = Quat::from_rotation_x(0.25);
+    skel.bones[0].rest.scale = Vec3::splat(3.0);
+    let rotation = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+    let c = clip(vec![Track {
+        bone: 0,
+        property: Property::Scale,
+        interpolation: Interpolation::Linear,
+        times: vec![0.0, 1.0],
+        values: TrackValues::Quats(vec![rotation]),
+    }]);
+
+    let grid = sample_clip(&skel, &c, 2);
+    assert!(grid.local(0, 0).rotation.angle_between(rotation) < 1e-6);
+    assert_eq!(grid.local(1, 0).rotation, Quat::IDENTITY);
+    assert_eq!(grid.local(0, 0).scale, Vec3::splat(3.0));
+    assert_eq!(grid.local(1, 0).scale, Vec3::splat(3.0));
+}

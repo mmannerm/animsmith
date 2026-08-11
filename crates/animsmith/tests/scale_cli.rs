@@ -152,21 +152,68 @@ fn rest_bind_scale_rig_with_negative_weight_glb(
     );
     assert!(influence_index < 4, "requested influence is in a VEC4");
 
+    let weight_offset = f32_accessor_component_offset(
+        &json,
+        json_length,
+        accessor_index,
+        vertex_index,
+        influence_index,
+        4,
+    );
+    asset[weight_offset..weight_offset + size_of::<f32>()].copy_from_slice(&weight.to_le_bytes());
+    asset
+}
+
+/// Locate one `f32` component through the GLB's accessor and buffer-view
+/// metadata. Tests that corrupt a semantic input field should survive fixture
+/// repacking rather than depending on a literal BIN offset.
+fn f32_accessor_component_offset(
+    json: &Value,
+    json_length: usize,
+    accessor_index: usize,
+    element_index: usize,
+    component_index: usize,
+    component_count: usize,
+) -> usize {
+    let accessor = &json["accessors"][accessor_index];
+    assert_eq!(accessor["componentType"], 5126, "the accessor is f32");
+    assert!(
+        element_index < accessor["count"].as_u64().expect("an accessor count") as usize,
+        "requested element is in the accessor"
+    );
+    assert!(
+        component_index < component_count,
+        "requested component is in the accessor element"
+    );
     let view_index = accessor["bufferView"]
         .as_u64()
-        .expect("WEIGHTS_0 has a buffer view") as usize;
+        .expect("the accessor has a buffer view") as usize;
     let view = &json["bufferViews"][view_index];
     assert_eq!(view["buffer"].as_u64(), Some(0), "the GLB has one buffer");
     let view_offset = view["byteOffset"].as_u64().unwrap_or(0) as usize;
     let accessor_offset = accessor["byteOffset"].as_u64().unwrap_or(0) as usize;
-    let stride = view["byteStride"].as_u64().unwrap_or(16) as usize;
+    let packed_stride = component_count * size_of::<f32>();
+    let stride = view["byteStride"].as_u64().unwrap_or(packed_stride as u64) as usize;
     let bin_payload = 20 + json_length + 8;
-    let weight_offset = bin_payload
+    bin_payload
         + view_offset
         + accessor_offset
-        + vertex_index * stride
-        + influence_index * size_of::<f32>();
-    asset[weight_offset..weight_offset + size_of::<f32>()].copy_from_slice(&weight.to_le_bytes());
+        + element_index * stride
+        + component_index * size_of::<f32>()
+}
+
+fn rest_bind_scale_rig_with_non_finite_inverse_bind_glb() -> Vec<u8> {
+    let mut asset = rest_bind_scale_rig_glb();
+    let json_length = u32::from_le_bytes(asset[12..16].try_into().unwrap()) as usize;
+    let json: Value = serde_json::from_slice(&asset[20..20 + json_length])
+        .expect("the synthetic GLB has a JSON chunk");
+    let accessor_index = json["skins"][0]["inverseBindMatrices"]
+        .as_u64()
+        .expect("the rig skin has inverse-bind evidence") as usize;
+    let accessor = &json["accessors"][accessor_index];
+    assert_eq!(accessor["type"], "MAT4", "inverse binds are matrices");
+    let offset = f32_accessor_component_offset(&json, json_length, accessor_index, 0, 0, 16);
+    asset[offset..offset + size_of::<f32>()].copy_from_slice(&f32::NAN.to_le_bytes());
     asset
 }
 
@@ -864,6 +911,40 @@ fn a_negative_primary_skin_weight_is_a_typed_plan_refusal_and_publishes_nothing(
             "{operation} record: {record}"
         );
     }
+}
+
+#[test]
+fn a_shared_document_shape_failure_keeps_its_cli_kind_and_publishes_nothing() {
+    let fixture = Fixture::with_asset(rest_bind_scale_rig_with_non_finite_inverse_bind_glb());
+    let output = fixture.rest_bind("0.01", "json");
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    assert!(!fixture.path("out.glb").exists());
+    assert!(!fixture.path("out.json").exists());
+
+    let record: Value = serde_json::from_str(&stdout(&output)).expect("stdout is one JSON record");
+    assert_schema_valid(&record);
+    assert_eq!(record["outcome"], "rejected");
+    assert_eq!(record["result"], Value::Null);
+    assert_eq!(record["rejection"]["stage"], "plan");
+    assert_eq!(record["rejection"]["kind"], "invalid-mesh-instance");
+    assert_eq!(record["rejection"]["violations"], serde_json::json!([]));
+    assert_eq!(
+        record["rejection"]["artifact_proof_differences"],
+        Value::Null
+    );
+    assert!(
+        record["rejection"]["detail"]
+            .as_str()
+            .expect("a rejection detail")
+            .contains("mesh instance 0 is invalid (non_finite_inverse_bind)"),
+        "record: {record}"
+    );
 }
 
 #[test]
