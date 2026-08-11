@@ -2332,6 +2332,158 @@ mod tests {
     }
 
     #[test]
+    fn document_shape_finds_duplicates_that_do_not_involve_the_first_item() {
+        let mut document = Document::default();
+        document.assets.source_skeleton.skins = [4, 5, 5]
+            .into_iter()
+            .map(|source_skin_index| SourceSkinAsset {
+                source_skin_index,
+                ..SourceSkinAsset::default()
+            })
+            .collect();
+        assert_eq!(
+            validate_document_shape(&document),
+            Err(DocumentShapeError::DuplicateSourceSkinIndex {
+                source_skin_index: 5,
+            })
+        );
+
+        let scale_track = Track {
+            property: Property::Scale,
+            values: TrackValues::Vec3s(vec![Vec3::ONE]),
+            ..valid_track()
+        };
+        let mut document = track_document(valid_track());
+        document.clips[0].tracks.push(scale_track.clone());
+        document.clips[0].tracks.push(scale_track);
+        assert_eq!(
+            validate_document_shape(&document),
+            Err(DocumentShapeError::DuplicateClipTrack {
+                clip_index: 0,
+                node: 0,
+                property: Property::Scale,
+            })
+        );
+    }
+
+    #[test]
+    fn document_shape_checks_later_tracks_and_inverse_binds() {
+        let mut document = track_document(valid_track());
+        document.clips[0].tracks.push(Track {
+            property: Property::Scale,
+            times: Vec::new(),
+            values: TrackValues::Vec3s(Vec::new()),
+            ..valid_track()
+        });
+        assert_eq!(
+            validate_document_shape(&document),
+            Err(DocumentShapeError::TrackShape {
+                clip_index: 0,
+                node: 0,
+                violation: TrackShapeViolation::EmptyTimes,
+            })
+        );
+
+        let scale_track = Track {
+            property: Property::Scale,
+            values: TrackValues::Vec3s(vec![Vec3::ONE]),
+            ..valid_track()
+        };
+        let mut document = track_document(valid_track());
+        document.clips.push(Clip {
+            name: "later".into(),
+            duration_s: 0.0,
+            tracks: vec![scale_track.clone(), scale_track],
+        });
+        assert_eq!(
+            validate_document_shape(&document),
+            Err(DocumentShapeError::DuplicateClipTrack {
+                clip_index: 1,
+                node: 0,
+                property: Property::Scale,
+            })
+        );
+
+        let mut document = track_document(valid_track());
+        document.clips.push(Clip {
+            name: "later".into(),
+            duration_s: 0.0,
+            tracks: vec![Track {
+                property: Property::Scale,
+                times: Vec::new(),
+                values: TrackValues::Vec3s(Vec::new()),
+                ..valid_track()
+            }],
+        });
+        assert_eq!(
+            validate_document_shape(&document),
+            Err(DocumentShapeError::TrackShape {
+                clip_index: 1,
+                node: 0,
+                violation: TrackShapeViolation::EmptyTimes,
+            })
+        );
+
+        let mut columns = Mat4::IDENTITY.to_cols_array();
+        columns[15] = f32::NAN;
+        let non_finite_inverse_bind = Mat4::from_cols_array(&columns);
+
+        let mut document = instance_document();
+        document.skeleton.bones.push(bone(Some(0)));
+        document.assets.instances[0].skin_joints = vec![0, 1];
+        document.assets.instances[0].skin_ibms = vec![Mat4::IDENTITY, non_finite_inverse_bind];
+        assert_eq!(
+            validate_document_shape(&document),
+            Err(DocumentShapeError::MeshInstanceShape {
+                instance_index: 0,
+                violation: MeshInstanceShapeViolation::NonFiniteSkinInverseBind,
+            })
+        );
+
+        let mut document = instance_document();
+        document.assets.instances.push(MeshInstance {
+            node: 0,
+            mesh: 0,
+            skin_joints: vec![0],
+            skin_ibms: vec![non_finite_inverse_bind],
+            ..MeshInstance::default()
+        });
+        assert_eq!(
+            validate_document_shape(&document),
+            Err(DocumentShapeError::MeshInstanceShape {
+                instance_index: 1,
+                violation: MeshInstanceShapeViolation::NonFiniteSkinInverseBind,
+            })
+        );
+
+        let mut document = instance_document();
+        document.assets.instances.push(MeshInstance {
+            node: 0,
+            mesh: 0,
+            skin_joints: vec![0],
+            skin_ibms: vec![Mat4::IDENTITY, Mat4::IDENTITY],
+            ..MeshInstance::default()
+        });
+        assert_eq!(
+            validate_document_shape(&document),
+            Err(DocumentShapeError::MeshInstanceShape {
+                instance_index: 1,
+                violation: MeshInstanceShapeViolation::SkinInverseBindCountMismatch,
+            })
+        );
+
+        let mut document = one_bone_document();
+        document.skeleton.bones.push(Bone {
+            inverse_bind: Some(non_finite_inverse_bind),
+            ..bone(Some(0))
+        });
+        assert_eq!(
+            validate_document_shape(&document),
+            Err(DocumentShapeError::NonFiniteBoneInverseBind { node: 1 })
+        );
+    }
+
+    #[test]
     fn document_shape_violation_names_remain_machine_stable() {
         let source_projection = [
             (

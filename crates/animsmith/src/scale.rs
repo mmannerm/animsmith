@@ -1291,6 +1291,67 @@ mod tests {
                 expected
             );
         }
+
+        for violation in [
+            SourceProjectionViolation::ProjectedBoneOutOfRange,
+            SourceProjectionViolation::TwoSourceNodesProjectToOneBone,
+            SourceProjectionViolation::ParentSourceNodeMissing,
+            SourceProjectionViolation::CyclicUnprojectedSourceParentChain,
+            SourceProjectionViolation::NearestProjectedParentMismatch,
+            SourceProjectionViolation::ProjectedBoneHasUnprojectedSkeletonChild,
+        ] {
+            assert_eq!(
+                scale_error_kind(&ScaleError::InvalidDocumentShape(
+                    DocumentShapeError::SourceProjection {
+                        source_node_index: 0,
+                        violation,
+                    },
+                )),
+                "parent-chain-disagreement",
+                "source projection violation {violation}"
+            );
+        }
+
+        for violation in [
+            TrackShapeViolation::BoneIndexOutOfRange,
+            TrackShapeViolation::EmptyTimes,
+            TrackShapeViolation::NonFiniteTime,
+            TrackShapeViolation::TimesNotStrictlyIncreasing,
+            TrackShapeViolation::ValueCountMismatch,
+            TrackShapeViolation::ValueTypeMismatchesProperty,
+            TrackShapeViolation::NonFiniteValue,
+        ] {
+            assert_eq!(
+                scale_error_kind(&ScaleError::InvalidDocumentShape(
+                    DocumentShapeError::TrackShape {
+                        clip_index: 0,
+                        node: 0,
+                        violation,
+                    },
+                )),
+                "invalid-track-shape",
+                "track-shape violation {violation}"
+            );
+        }
+
+        for violation in [
+            MeshInstanceShapeViolation::NodeIndexOutOfRange,
+            MeshInstanceShapeViolation::MeshIndexOutOfRange,
+            MeshInstanceShapeViolation::SkinJointOutOfRange,
+            MeshInstanceShapeViolation::SkinInverseBindCountMismatch,
+            MeshInstanceShapeViolation::NonFiniteSkinInverseBind,
+        ] {
+            assert_eq!(
+                scale_error_kind(&ScaleError::InvalidDocumentShape(
+                    DocumentShapeError::MeshInstanceShape {
+                        instance_index: 0,
+                        violation,
+                    },
+                )),
+                "invalid-mesh-instance",
+                "mesh-instance violation {violation}"
+            );
+        }
     }
 
     #[test]
