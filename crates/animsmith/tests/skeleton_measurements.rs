@@ -735,7 +735,15 @@ fn cli_measure_publishes_a_canonical_multi_joint_uniform_summary() {
             .collect::<Vec<_>>();
         assert_ne!(factors[0], factors[1], "joint factors must be distinct");
         factors.sort_by(f64::total_cmp);
-        let expected_mean = factors.iter().sum::<f64>() / factors.len() as f64;
+        assert_eq!(
+            factors
+                .iter()
+                .map(|factor| factor.to_bits())
+                .collect::<Vec<_>>(),
+            [0x3ff0_0000_0000_0000, 0x3ff0_0008_0000_0000],
+            "the fixture must publish the independently pinned joint factors"
+        );
+        let expected_mean = f64::from_bits(0x3ff0_0004_0000_0000);
         let summary = &skin["joint_bind_linear_summary"];
         assert_eq!(summary["classification"], "consistent_uniform");
         assert_eq!(summary["joint_count"], 2);

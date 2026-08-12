@@ -1971,6 +1971,61 @@ mod tests {
     }
 
     #[test]
+    fn linear_measurement_uses_the_shared_canonical_mean_in_every_axis_order() {
+        // The raw Appendix D v6 counterexample is strongly sheared, and
+        // measurement deliberately classifies shear before equal-axis shape.
+        // This pair-tolerant companion makes the mean observable: ascending
+        // association lands on the inclusive 1e-5 axis band, while authored
+        // association rejects four of the six proper signed permutations.
+        let columns = [
+            Vec3::new(
+                f32::from_bits(0x3f7f_fd59),
+                f32::from_bits(0x3bd8_d637),
+                0.0,
+            ),
+            Vec3::new(
+                -f32::from_bits(0x3bd8_d69d),
+                f32::from_bits(0x3f7f_fdd1),
+                0.0,
+            ),
+            Vec3::Z,
+        ];
+        let permutations = [
+            Mat3::from_cols(columns[0], columns[1], columns[2]),
+            Mat3::from_cols(-columns[0], columns[2], columns[1]),
+            Mat3::from_cols(-columns[1], columns[0], columns[2]),
+            Mat3::from_cols(columns[1], columns[2], columns[0]),
+            Mat3::from_cols(columns[2], columns[0], columns[1]),
+            Mat3::from_cols(-columns[2], columns[1], columns[0]),
+        ];
+        let policy = PositiveUniformAffineTolerance {
+            equal_axis: LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE,
+            relative_orthogonality: LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE,
+            singular_determinant_relative: LINEAR_CLASSIFICATION_SINGULAR_TOLERANCE,
+        };
+        let expected_mean = f64::from_bits(0x3fef_ffeb_074a_771d);
+
+        for (index, linear) in permutations.into_iter().enumerate() {
+            let measured = measure_linear_transform(Mat4::from_mat3(linear));
+            assert_eq!(
+                measured.classification,
+                LinearTransformClassification::UnitOrthonormal,
+                "canonical mean must give proper permutation {index} one stable class"
+            );
+            assert_eq!(
+                measured.uniform_scale,
+                Some(expected_mean),
+                "measurement must publish the canonical mean for permutation {index}"
+            );
+            assert_eq!(
+                classify_positive_uniform_affine(linear, policy),
+                Ok(expected_mean),
+                "the shared classifier must consume the same mean for permutation {index}"
+            );
+        }
+    }
+
+    #[test]
     fn linear_measurement_reports_axis_lengths_in_xyz_column_order() {
         let measured = measure_linear_transform(Mat4::from_scale(Vec3::new(2.0, 3.0, 5.0)));
 
@@ -2089,6 +2144,12 @@ mod tests {
                     * facts.mean_axis_length,
             "measurement intentionally does not use the operation classifier's common-factor band"
         );
+        let measured = measure_linear_transform(Mat4::from_mat3(pair_normalized_shear));
+        assert_eq!(
+            measured.classification,
+            LinearTransformClassification::Sheared,
+            "public measurement must use the XY pair product, not mean squared"
+        );
         for shear in [3.0e-5, -3.0e-5] {
             let signed_shear = Mat3::from_cols(Vec3::X, Vec3::new(shear, 2.0, 0.0), Vec3::Z);
             assert_eq!(
@@ -2177,6 +2238,40 @@ mod tests {
         assert_eq!(
             measure_linear_transform(reflected_shear).classification,
             LinearTransformClassification::Reflected
+        );
+    }
+
+    #[test]
+    fn linear_measurement_uses_axis_length_product_for_singularity() {
+        let linear = Mat3::from_cols(
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 100.0, 0.0),
+            Vec3::new(100.0, 0.0, 0.001),
+        );
+        let facts = AffineGeometryFacts::from_linear(linear).unwrap();
+        let determinant = facts.determinant.abs();
+        let product_threshold =
+            LINEAR_CLASSIFICATION_SINGULAR_TOLERANCE * facts.axis_length_product;
+        let mean_cubed_threshold =
+            LINEAR_CLASSIFICATION_SINGULAR_TOLERANCE * facts.mean_axis_length.powi(3);
+
+        assert!(
+            determinant > product_threshold,
+            "the true axis-length-product threshold must not classify this matrix as singular"
+        );
+        assert!(
+            determinant <= mean_cubed_threshold,
+            "a mean-cubed threshold must disagree on this singularity boundary fixture"
+        );
+
+        let measured = measure_linear_transform(Mat4::from_mat3(linear));
+        assert_eq!(
+            measured.classification,
+            LinearTransformClassification::Sheared
+        );
+        assert_eq!(
+            measured.orientation,
+            Some(LinearTransformOrientation::Positive)
         );
     }
 
@@ -2369,9 +2464,9 @@ mod tests {
         let expected_factor_bits = [
             0x3ff0_0000_110e_4203,
             0x3ff0_0000_2d55_0083,
-            0x3fef_ffff_b3bb_b2b7,
+            0x3fef_ffff_b3bb_b2b8,
         ];
-        let expected_mean = f64::from_bits(0x3ff0_0000_0815_b3f5);
+        let expected_mean = f64::from_bits(0x3ff0_0000_0815_b3f6);
         let permutations = [
             [0usize, 1usize, 2usize],
             [0, 2, 1],

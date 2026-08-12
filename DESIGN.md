@@ -2063,10 +2063,11 @@ Near the shear boundary, the symmetric average base and binary64 dot products
 can also refuse inputs that the former first-column/binary32 check accepted.
 
 **Measurement shares facts, not the positive-only verdict.** Measurements v12
-derives axis lengths, their authored-axis-order mean, determinant, axis-length
-product, and XY/XZ/YZ dot products from the same crate-private widened `f64`
-fact record. It also uses the shared symmetric mean/longer-operand equal-axis
-predicate, which removes v11's privileged-X result and reconciles the finite
+derives axis lengths, their canonical ascending-order mean, determinant,
+axis-length product, and XY/XZ/YZ dot products from the same crate-private
+widened `f64` fact record. It also uses the shared symmetric
+mean/longer-operand equal-axis predicate, which removes v11's privileged-X
+result and reconciles the finite
 `diag(1, 1, 1.000012)` fixture. Measurement still asks a different question:
 it keeps finite partial evidence for singular, reflected, sheared, and
 non-uniform inputs; normalizes each orthogonality comparison by that axis
