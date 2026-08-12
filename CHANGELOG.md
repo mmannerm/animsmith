@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- [**breaking**] *(scale)* advance the Appendix D tolerance policy to
+  `appendix-d-v6`: finite widened affine axis lengths are sorted ascending
+  before averaging, making classification and observed factors independent of
+  authored axis order; the pre-1.0 `APPENDIX_D_V5` associated constant is
+  removed ([#361](https://github.com/mmannerm/animsmith/issues/361))
 - [**breaking**] *(core)* expose typed `validate_document_shape` snapshot
   validation and collapse scale's former structural error variants into
   `ScaleError::InvalidDocumentShape` ([#293](https://github.com/mmannerm/animsmith/issues/293))

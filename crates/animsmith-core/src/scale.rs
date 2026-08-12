@@ -31,7 +31,7 @@
 //! the caller's source document mutated — the half-built candidate is
 //! simply dropped. [`prove_scale`] independently re-derives the plan's
 //! claims from the source and candidate documents and reports the observed
-//! residual maxima against the fixed [`ScaleTolerancePolicy::APPENDIX_D_V5`]
+//! residual maxima against the fixed [`ScaleTolerancePolicy::APPENDIX_D_V6`]
 //! tolerance identity.
 //!
 //! Those residuals are the producer evidence record of §D.6, which is why
@@ -66,8 +66,16 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Fixed Appendix D tolerance identity and thresholds. Classification and
 /// proof share this one versioned policy and compute in `f64`, narrowing
 /// only at the writer model boundary. There is exactly one supported
-/// instance, [`ScaleTolerancePolicy::APPENDIX_D_V5`]: a policy change is a
+/// instance, [`ScaleTolerancePolicy::APPENDIX_D_V6`]: a policy change is a
 /// new policy identity, not a runtime knob.
+///
+/// The superseded v5 identity is deliberately not retained as an alias:
+///
+/// ```compile_fail
+/// use animsmith_core::ScaleTolerancePolicy;
+///
+/// let _ = ScaleTolerancePolicy::APPENDIX_D_V5;
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub struct ScaleTolerancePolicy {
@@ -103,7 +111,7 @@ pub struct ScaleTolerancePolicy {
     /// measure, so the input band and this postcondition are directly
     /// commensurable (DESIGN.md Appendix D §D.1). This value is *derived*
     /// from [`Self::common_factor`] rather than declared independently: see
-    /// [`Self::APPENDIX_D_V5`] for the composition argument and
+    /// [`Self::APPENDIX_D_V6`] for the composition argument and
     /// [`Self::UNIT_SCALE_BANDS`] for the multiplier.
     pub postcondition_unit_scale_residual: f64,
     /// Maximum sampled proof work [`prove_scale`] will perform, in
@@ -145,7 +153,7 @@ pub struct ScaleTolerancePolicy {
     /// cancelled two of them one composition earlier. A purely relative band
     /// is then derived from the small number and the error from the large
     /// one, and [`prove_scale`] refuses a correct candidate that
-    /// [`plan_scale`] accepted. See [`Self::APPENDIX_D_V5`] for the
+    /// [`plan_scale`] accepted. See [`Self::APPENDIX_D_V6`] for the
     /// measurement this count comes from and DESIGN.md Appendix D §D.1 for
     /// which magnitude each obligation takes it from.
     ///
@@ -165,13 +173,13 @@ impl ScaleTolerancePolicy {
     /// [`Self::postcondition_unit_scale_residual`] is derived from.
     ///
     /// Three of them are analytic and one is float headroom; see
-    /// [`Self::APPENDIX_D_V5`].
+    /// [`Self::APPENDIX_D_V6`].
     pub const UNIT_SCALE_BANDS: f64 = 4.0;
 
-    /// The only supported tolerance policy: DESIGN.md Appendix D, version 5.
+    /// The only supported tolerance policy: DESIGN.md Appendix D, version 6.
     ///
-    /// Version 5 supersedes `appendix-d-v4`, which superseded v3, v2 and v1.
-    /// Each identity change is a change of *meaning*, not a retune:
+    /// Version 6 supersedes `appendix-d-v5`, which superseded v4, v3, v2 and
+    /// v1. Each identity change is a change of *meaning*, not a retune:
     ///
     /// 1. [`Self::postcondition_unit_scale_residual`] is a per-axis
     ///    (L-infinity) residual derived from [`Self::common_factor`], instead
@@ -209,6 +217,12 @@ impl ScaleTolerancePolicy {
     ///    recurrence constructs rest and sampled poses, and its result reaches
     ///    RestTranslation, Trajectory, SkinMatrix and Bounds through their
     ///    existing consumers.
+    /// 6. v6 changes only the association of the shared affine axis-length
+    ///    mean: the three finite widened lengths are sorted ascending before
+    ///    the ordinary sum and division by three. This removes authored-column
+    ///    order from the classifier, planning, and proof witness without
+    ///    changing any numeric threshold, the v5 parent-chain provenance
+    ///    recurrence, or the evidence schema.
     ///
     /// `postcondition_unit_scale_residual` is
     /// `UNIT_SCALE_BANDS * common_factor = 4e-5`, rounded up to the next
@@ -253,8 +267,8 @@ impl ScaleTolerancePolicy {
     /// catch — a dropped rebase, a factor applied twice, a stale no-op — is
     /// `>= 1e-3`, so `6.1e-5` still leaves better than a `16x` detection
     /// margin.
-    pub const APPENDIX_D_V5: Self = Self {
-        id: "appendix-d-v5",
+    pub const APPENDIX_D_V6: Self = Self {
+        id: "appendix-d-v6",
         relative_orthogonality: 1e-5,
         equal_axis: 1e-5,
         common_factor: 1e-5,
@@ -426,7 +440,7 @@ impl ScaleTolerancePolicy {
     /// The expected ceiling on [`ScaleProof::observed_factor_divergence`]:
     /// [`Self::common_factor`] plus
     /// [`Self::postcondition_unit_scale_residual`], `7.103515625e-5` under
-    /// [`Self::APPENDIX_D_V5`].
+    /// [`Self::APPENDIX_D_V6`].
     ///
     /// [`ScalePlan::observed_factor`] and [`ScaleProof::observed_factor`] are
     /// two independent witnesses of the same quantity, measured from
@@ -1576,7 +1590,7 @@ fn plan_whole_document(document: &Document, factor: f64) -> Result<ScalePlan, Sc
     let boned = !affected_nodes.is_empty();
     Ok(ScalePlan {
         operation: ScaleOperation::WholeDocumentLinearUnits { factor },
-        tolerance_policy: ScaleTolerancePolicy::APPENDIX_D_V5,
+        tolerance_policy: ScaleTolerancePolicy::APPENDIX_D_V6,
         affected_nodes,
         transform_only_attachments: Vec::new(),
         common_factor: factor,
@@ -1722,7 +1736,7 @@ fn plan_rest_bind(
     let domain = derive_rest_bind_plan_domain(document, source_skin_index, source_root_node_index)?;
     let by_source_index = source_node_index_map(document);
 
-    let tol = ScaleTolerancePolicy::APPENDIX_D_V5;
+    let tol = ScaleTolerancePolicy::APPENDIX_D_V6;
     let mut world_cache: BTreeMap<usize, Mat4> = BTreeMap::new();
     let mut node_factor: BTreeMap<BoneId, f64> = BTreeMap::new();
     for &source in &domain.source_nodes {
@@ -2149,8 +2163,9 @@ impl WorldPose {
 ///
 /// The policy models coherent translation-column rounding as additive across
 /// links instead of depth-flat `max` or RSS/depth heuristics. This is the
-/// empirically calibrated Appendix D v5 recurrence, not a universal
-/// componentwise forward-error proof for the inherited linear block.
+/// empirically calibrated Appendix D v5 recurrence, retained unchanged by
+/// v6, not a universal componentwise forward-error proof for the inherited
+/// linear block.
 fn child_translation_rounding_magnitude(parent: WorldBonePose, local: Mat4) -> f64 {
     parent.translation_rounding_magnitude
         + translation_composition_rounding_base(parent.matrix, local)
@@ -2940,7 +2955,7 @@ pub fn prove_scale(
             // `a_shrinking_conversion_holds_rest_translation_to_the_candidate_s_own_chain`
             // pins the opposite direction, where the source side is the larger
             // one and reading it admits a `100x` larger build error; and
-            // `the_rest_translation_v5_floor_is_an_adjacent_f32_transition`
+            // `the_rest_translation_v6_floor_is_an_adjacent_f32_transition`
             // pins the size of the term from above.
             check_and_track_f32_rounded(
                 ProofResidualKind::RestTranslation,
@@ -4191,7 +4206,7 @@ fn check_trajectory_residual_at(
         // cancels, which a clip over a rest pose that already cancels is the
         // simplest way to build:
         // `a_sampled_pose_whose_parent_chain_cancels_still_proves_its_trajectory`
-        // and `the_trajectory_v5_floor_is_an_adjacent_f32_transition`
+        // and `the_trajectory_v6_floor_is_an_adjacent_f32_transition`
         // are those fixtures, and
         // `a_shrinking_conversion_holds_trajectory_to_the_candidate_s_own_chain`
         // is the one that separates the candidate's chain from the source's.
@@ -6139,7 +6154,7 @@ mod tests {
                 Vec3::new(0.0, 0.0, c),
             )
         };
-        let tol = ScaleTolerancePolicy::APPENDIX_D_V5;
+        let tol = ScaleTolerancePolicy::APPENDIX_D_V6;
         assert!(classify_affine(basis(y0_down), &tol).is_ok());
         assert!(classify_affine(basis(y0), &tol).is_ok());
         assert_eq!(
@@ -6149,11 +6164,11 @@ mod tests {
     }
 
     #[test]
-    fn appendix_d_v5_rejects_the_shared_policy_divergence_fixture() {
+    fn appendix_d_v6_rejects_the_shared_policy_divergence_fixture() {
         assert_eq!(
             classify_affine(
                 crate::model::affine_test_fixtures::tolerance_divergence_basis(),
-                &ScaleTolerancePolicy::APPENDIX_D_V5,
+                &ScaleTolerancePolicy::APPENDIX_D_V6,
             ),
             Err(AffineDomainViolation::NonUniformScale)
         );
@@ -6165,7 +6180,7 @@ mod tests {
             equal_axis: 1.0e-4,
             relative_orthogonality: 1.0e-5,
             singular_determinant_relative: 1.0e-7,
-            ..ScaleTolerancePolicy::APPENDIX_D_V5
+            ..ScaleTolerancePolicy::APPENDIX_D_V6
         };
 
         assert!(
@@ -6212,7 +6227,7 @@ mod tests {
         assert_eq!(
             classify_affine(
                 determinant_boundary_basis(5.0e-7),
-                &ScaleTolerancePolicy::APPENDIX_D_V5,
+                &ScaleTolerancePolicy::APPENDIX_D_V6,
             ),
             Err(AffineDomainViolation::Singular),
             "the production singularity band must differ from the strict test policy"
@@ -6229,6 +6244,36 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn rest_bind_planning_refuses_every_appendix_d_v6_mean_permutation() {
+        // The shared helper's exact fixture lies on the association-sensitive
+        // equal-axis boundary. Exercise the public producer boundary, not
+        // just the classifier: no accepted plan means no candidate can be
+        // constructed or handed to `prove_scale` under a different factor.
+        for (permutation, linear) in
+            crate::model::affine_test_fixtures::appendix_d_v6_mean_permutations()
+                .into_iter()
+                .enumerate()
+        {
+            let error = reject_case(|rest| {
+                *rest = SourceNodeLocalRest::Matrix(Mat4::from_cols(
+                    linear.x_axis.extend(0.0),
+                    linear.y_axis.extend(0.0),
+                    linear.z_axis.extend(0.0),
+                    Vec4::W,
+                ));
+            });
+            assert_eq!(
+                error,
+                ScaleError::InvalidAffineDomain {
+                    node: 0,
+                    reason: AffineDomainViolation::NonUniformScale,
+                },
+                "orientation-preserving permutation {permutation}"
+            );
+        }
     }
 
     #[test]
@@ -6702,7 +6747,7 @@ mod tests {
         // The sum is exact: `2^-14` is a power of two well above `fl(1e-5)`'s
         // last bit, and the rounded sum is the same binary64 value the
         // decimal literal denotes.
-        let policy = ScaleTolerancePolicy::APPENDIX_D_V5;
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V6;
         assert_eq!(policy.common_factor, 1e-5);
         assert_eq!(policy.postcondition_unit_scale_residual, 2f64.powi(-14));
         assert_eq!(
@@ -7547,6 +7592,52 @@ mod tests {
         assert!(
             proof.unit_scale_residual <= plan.tolerance_policy().postcondition_unit_scale_residual
         );
+    }
+
+    #[test]
+    fn observed_factor_from_source_uses_the_canonical_appendix_d_v6_mean() {
+        // Planning correctly refuses these association-sensitive inputs, but
+        // proof deliberately does not re-classify its source. Drive the
+        // production proof helper directly with every proper permutation so
+        // an authored-column-order sum cannot survive solely on that path.
+        let doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
+        let capability = complete_capability();
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 1.0,
+            },
+            document: &doc,
+            capability: &capability,
+        })
+        .expect("the unit document supplies a valid rest/bind plan");
+        let expected = 0x3ff1_09ef_b555_6f3f;
+
+        for (permutation, linear) in
+            crate::model::affine_test_fixtures::appendix_d_v6_mean_permutations()
+                .into_iter()
+                .enumerate()
+        {
+            let source_worlds = WorldPose {
+                bones: vec![WorldBonePose {
+                    matrix: Mat4::from_cols(
+                        linear.x_axis.extend(0.0),
+                        linear.y_axis.extend(0.0),
+                        linear.z_axis.extend(0.0),
+                        Vec4::W,
+                    ),
+                    translation_rounding_magnitude: 0.0,
+                }],
+            };
+            assert_eq!(
+                observed_factor_from_source(&doc, &source_worlds, &plan)
+                    .unwrap()
+                    .to_bits(),
+                expected,
+                "orientation-preserving permutation {permutation}"
+            );
+        }
     }
 
     #[test]
@@ -9238,7 +9329,7 @@ mod tests {
     /// `1.0000000000…e-5`), so the in-band cases must be accepted: the
     /// rejections above are the shear magnitude talking and not the shape.
     fn assert_only_this_column_pair_decides_shear(pair: ShearPair) {
-        let tol = ScaleTolerancePolicy::APPENDIX_D_V5;
+        let tol = ScaleTolerancePolicy::APPENDIX_D_V6;
         // Written as exact dyadics rather than decimal literals, so the
         // binary32 bits are readable straight off the page: `2^-15` and
         // `2^-17`.
@@ -11487,7 +11578,7 @@ mod tests {
         // The residual really is above the per-axis-only band, so this
         // fixture is exercising the new term rather than passing for want of
         // a defect. `2.44e-4` is `2^-12`, one ulp of `2048`.
-        let policy = ScaleTolerancePolicy::APPENDIX_D_V5;
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V6;
         assert!(
             proof.bounds_residual > policy.scalar_tolerance(5.982, 5.982),
             "bounds residual {} no longer exceeds the per-axis band",
@@ -11566,7 +11657,7 @@ mod tests {
     /// composition that produced it ran on `6.4e6`.
     ///
     /// This is the rig DESIGN.md §D.1 and
-    /// [`ScaleTolerancePolicy::APPENDIX_D_V5`] quote the cost of the rounding
+    /// [`ScaleTolerancePolicy::APPENDIX_D_V6`] quote the cost of the rounding
     /// term on, so the two fixtures that read it share one definition.
     fn far_joint_document() -> Document {
         rotating_rig_document(
@@ -11650,7 +11741,7 @@ mod tests {
     fn the_far_joint_rig_admits_a_four_unit_bind_shift_and_refuses_the_next_one_up() {
         // The documented cost of the rounding term, pinned rather than
         // recomputed by hand each time it is quoted. DESIGN.md §D.1 and
-        // `APPENDIX_D_V5` both state this floor, and nothing else in the tree
+        // `APPENDIX_D_V6` both state this floor, and nothing else in the tree
         // held them to it — an earlier revision stated `4.09`, which is on the
         // *accepted* side of the real floor and so described a bracket that
         // does not exist.
@@ -12039,7 +12130,7 @@ mod tests {
             "the two documents' composition magnitudes are 3190x apart, and the candidate's \
              arithmetic is what both obligations must be given room for",
         );
-        let policy = ScaleTolerancePolicy::APPENDIX_D_V5;
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V6;
         let source_band = policy.f32_rounded_tolerance(0.0, 0.0, source_slot);
         assert!(
             proof.skin_matrix_residual > source_band,
@@ -12074,7 +12165,7 @@ mod tests {
         // `1.3e-5` at `0.01` and `1.3e-7` at `1e-4`, against `1.9e-3` under the
         // `max` at both — `100x` and `10_000x` of recovered discriminating
         // power, tracking the factor as it should.
-        let policy = ScaleTolerancePolicy::APPENDIX_D_V5;
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V6;
         for (factor, shift) in [(0.01f64, 1e-4f32), (1e-4, 1e-6)] {
             let (doc, plan, candidate) = far_joint_conversion_at(factor);
             let source_slot = rig_slot_magnitude(&doc);
@@ -12140,7 +12231,7 @@ mod tests {
         // That is `100x` and `9797x` of recovered discriminating power — the
         // second short of `10_000x` only because the `1e-6` absolute band
         // starts to pay at that size.
-        let policy = ScaleTolerancePolicy::APPENDIX_D_V5;
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V6;
         for &factor in &[0.01f64, 1e-4] {
             let doc = cancelling_blend_document_reaching(1e6);
             let capability = complete_capability();
@@ -12485,7 +12576,7 @@ mod tests {
         let world_translation = worlds.bones[joint].matrix.w_axis.truncate().length() as f64;
         assert!(
             proof.rest_translation_residual
-                > ScaleTolerancePolicy::APPENDIX_D_V5
+                > ScaleTolerancePolicy::APPENDIX_D_V6
                     .scalar_tolerance(world_translation, world_translation),
             "rest translation residual {} no longer exceeds the per-axis band its own \
              translation buys",
@@ -12559,7 +12650,7 @@ mod tests {
             "the two documents' chain magnitudes are 3190x apart, and the candidate's \
              arithmetic is what this obligation must be given room for",
         );
-        let policy = ScaleTolerancePolicy::APPENDIX_D_V5;
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V6;
         assert!(
             proof.rest_translation_residual > policy.f32_rounded_tolerance(0.0, 0.0, source_chain),
             "rest translation residual {} no longer exceeds what the source side's chain \
@@ -12648,7 +12739,7 @@ mod tests {
         else {
             panic!("expected a refused rest translation, got {error:?}");
         };
-        let policy = ScaleTolerancePolicy::APPENDIX_D_V5;
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V6;
         assert!(
             observed > tolerance,
             "rest translation band moved: observed {observed}, tolerance {tolerance}"
@@ -12661,7 +12752,7 @@ mod tests {
     }
 
     #[test]
-    fn the_rest_translation_v5_floor_is_an_adjacent_f32_transition() {
+    fn the_rest_translation_v6_floor_is_an_adjacent_f32_transition() {
         // The over-acceptance direction for `RestTranslation`, which the
         // acceptance fixtures above cannot reach: a term that is merely
         // *present* is not yet a term of the right size. Search the complete
@@ -13499,7 +13590,7 @@ mod tests {
         assert_eq!(proof.sample_time_count, 2);
         let source_chain =
             rest_world_pose(&doc.skeleton).unwrap().bones[2].translation_rounding_magnitude;
-        let policy = ScaleTolerancePolicy::APPENDIX_D_V5;
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V6;
         assert!(
             proof.trajectory_residual > policy.f32_rounded_tolerance(0.0, 0.0, source_chain),
             "trajectory residual {} no longer exceeds what the source side's chain buys, so \
@@ -13646,7 +13737,7 @@ mod tests {
              rounding its world translation carries is its ancestors', and only the inherited \
              chain magnitude names it",
         );
-        let policy = ScaleTolerancePolicy::APPENDIX_D_V5;
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V6;
         assert!(
             proof.rest_translation_residual > policy.f32_rounded_tolerance(0.0, 0.0, own_link),
             "rest translation residual {} no longer exceeds what the leaf's own link buys, so \
@@ -13688,7 +13779,7 @@ mod tests {
              prove, for the rest fixture's reason",
         );
         assert_eq!(proof.sample_time_count, 2);
-        let policy = ScaleTolerancePolicy::APPENDIX_D_V5;
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V6;
         assert!(
             proof.trajectory_residual > policy.f32_rounded_tolerance(0.0, 0.0, own_link),
             "trajectory residual {} no longer exceeds what the sampled leaf's own link buys, so \
@@ -13762,7 +13853,7 @@ mod tests {
         };
         let source_chain = rest_world_pose(&doc.skeleton).unwrap().bones[UNSKINNED_SIBLING_BONE]
             .translation_rounding_magnitude;
-        let policy = ScaleTolerancePolicy::APPENDIX_D_V5;
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V6;
         assert!(
             observed > tolerance,
             "trajectory band moved: observed {observed}, tolerance {tolerance}"
@@ -13775,7 +13866,7 @@ mod tests {
     }
 
     #[test]
-    fn the_trajectory_v5_floor_is_an_adjacent_f32_transition() {
+    fn the_trajectory_v6_floor_is_an_adjacent_f32_transition() {
         // The over-acceptance direction for `Trajectory`, as above. Both keys
         // move together so the displacement is present at every sample rather
         // than only at the cancelling one, which is the shape of a track that
@@ -13904,11 +13995,11 @@ mod tests {
     /// `scalar_tolerance` at a single magnitude, for fixtures that assert a
     /// residual exceeds the band the *component alone* would have bought.
     fn policy_scalar_tolerance_at(magnitude: f64) -> f64 {
-        ScaleTolerancePolicy::APPENDIX_D_V5.scalar_tolerance(magnitude, magnitude)
+        ScaleTolerancePolicy::APPENDIX_D_V6.scalar_tolerance(magnitude, magnitude)
     }
 
     #[test]
-    fn the_bounds_v5_floor_is_an_adjacent_f32_transition() {
+    fn the_bounds_v6_floor_is_an_adjacent_f32_transition() {
         // Isolate the cost #337 adds to Bounds. The sole point's million-unit
         // x coordinate makes MeshPosition's own relative band wider than the
         // searched y defect, while the cancelling joint chain still dominates
@@ -13964,7 +14055,7 @@ mod tests {
     }
 
     #[test]
-    fn the_skin_matrix_v5_floor_is_an_adjacent_f32_transition() {
+    fn the_skin_matrix_v6_floor_is_an_adjacent_f32_transition() {
         // Shift the inverse bind of the joint at the cancellation point. This
         // cannot affect rest, tracks or stored positions; SkinMatrix runs
         // before Bounds, so the typed refused endpoint isolates the chain-derived
@@ -14022,7 +14113,7 @@ mod tests {
         // the relative band `scalar_relative` already declares. Stated as a
         // ratio rather than as two literals so it holds at every magnitude
         // rather than at the one a fixture happened to pick.
-        let policy = ScaleTolerancePolicy::APPENDIX_D_V5;
+        let policy = ScaleTolerancePolicy::APPENDIX_D_V6;
         for magnitude in [1e-6, 1.0, 3190.0, 1e9] {
             let plain = policy.scalar_tolerance(magnitude, magnitude);
             let rounded = policy.f32_rounded_tolerance(magnitude, magnitude, magnitude);
@@ -14275,7 +14366,7 @@ mod tests {
         else {
             panic!("expected the bounds obligation, got {error:?}");
         };
-        let old_unweighted_tolerance = ScaleTolerancePolicy::APPENDIX_D_V5.f32_rounded_tolerance(
+        let old_unweighted_tolerance = ScaleTolerancePolicy::APPENDIX_D_V6.f32_rounded_tolerance(
             0.0,
             0.0,
             old_unweighted_base,
@@ -14721,12 +14812,12 @@ mod tests {
     // --- Tolerance policy identity -----------------------------------------
 
     #[test]
-    fn the_appendix_d_v5_tolerance_identity_is_pinned_through_plan_and_proof() {
+    fn the_appendix_d_v6_tolerance_identity_is_pinned_through_plan_and_proof() {
         // DESIGN.md Appendix D §D.1/§D.6: producers record this identity and
         // these thresholds in evidence, so a change to either is a new policy
         // identity rather than a silent retune.
-        fn assert_appendix_d_v5(policy: ScaleTolerancePolicy) {
-            assert_eq!(policy.id, "appendix-d-v5");
+        fn assert_appendix_d_v6(policy: ScaleTolerancePolicy) {
+            assert_eq!(policy.id, "appendix-d-v6");
             assert_eq!(policy.f32_rounding_ulps, 4);
             assert_eq!(policy.relative_orthogonality, 1e-5);
             assert_eq!(policy.equal_axis, 1e-5);
@@ -14790,10 +14881,10 @@ mod tests {
         let capability = complete_capability();
 
         let whole_document = whole_document_plan(&doc, &capability);
-        assert_appendix_d_v5(whole_document.tolerance_policy());
+        assert_appendix_d_v6(whole_document.tolerance_policy());
         let candidate = build_scale_candidate(&doc, &whole_document).unwrap();
         let proof = prove_scale(&doc, &candidate, &whole_document).unwrap();
-        assert_appendix_d_v5(proof.tolerance_policy);
+        assert_appendix_d_v6(proof.tolerance_policy);
 
         let rest_bind = plan_scale(&ScaleRequest {
             operation: ScaleOperation::RestBindUniformScale {
@@ -14805,10 +14896,10 @@ mod tests {
             capability: &capability,
         })
         .unwrap();
-        assert_appendix_d_v5(rest_bind.tolerance_policy());
+        assert_appendix_d_v6(rest_bind.tolerance_policy());
         let candidate = build_scale_candidate(&doc, &rest_bind).unwrap();
         let proof = prove_scale(&doc, &candidate, &rest_bind).unwrap();
-        assert_appendix_d_v5(proof.tolerance_policy);
+        assert_appendix_d_v6(proof.tolerance_policy);
     }
 
     // --- Tolerance boundary and reported maxima ----------------------------
@@ -14822,7 +14913,7 @@ mod tests {
         // actually lands on the bound. `next_up` is the immediately larger
         // `f64`, so the accept/reject pair below straddles the bound with no
         // representable value in between.
-        let bound = ScaleTolerancePolicy::APPENDIX_D_V5.postcondition_unit_scale_residual;
+        let bound = ScaleTolerancePolicy::APPENDIX_D_V6.postcondition_unit_scale_residual;
         assert_eq!(
             check_residual(ProofResidualKind::UnitScale, bound, bound),
             Ok(())
@@ -15155,7 +15246,7 @@ mod tests {
         assert_eq!(
             prove_scale(&doc, &candidate, &plan).unwrap_err(),
             ScaleError::ProofSamplingBudgetExceeded {
-                policy_id: "appendix-d-v5",
+                policy_id: "appendix-d-v6",
                 sample_times: 200_000,
                 per_sample_cost: 2_007,
                 work: 401_400_000,
@@ -15188,7 +15279,7 @@ mod tests {
     fn work_unit_plan(prove_skin: bool, prove_bounds: bool) -> ScalePlan {
         ScalePlan {
             operation: ScaleOperation::WholeDocumentLinearUnits { factor: 1.0 },
-            tolerance_policy: ScaleTolerancePolicy::APPENDIX_D_V5,
+            tolerance_policy: ScaleTolerancePolicy::APPENDIX_D_V6,
             affected_nodes: vec![1, 2],
             transform_only_attachments: Vec::new(),
             common_factor: 1.0,
@@ -15340,7 +15431,7 @@ mod tests {
         assert_eq!(
             prove_scale(&doc, &candidate, &plan).unwrap_err(),
             ScaleError::ProofSamplingBudgetExceeded {
-                policy_id: "appendix-d-v5",
+                policy_id: "appendix-d-v6",
                 sample_times: 26_484,
                 per_sample_cost: 15_104,
                 work: 400_014_336,
@@ -15380,7 +15471,7 @@ mod tests {
         assert_eq!(
             prove_scale(&doc, &candidate, &plan).unwrap_err(),
             ScaleError::ProofSamplingBudgetExceeded {
-                policy_id: "appendix-d-v5",
+                policy_id: "appendix-d-v6",
                 sample_times: 19_995,
                 per_sample_cost: 20_007,
                 work: 400_039_965,
@@ -15405,13 +15496,13 @@ mod tests {
         // literal, and `20_001 * 20_000 = 400_020_000` is the next
         // representable step up in `sample_times` — one more sample time of
         // the same document.
-        let tol = ScaleTolerancePolicy::APPENDIX_D_V5;
+        let tol = ScaleTolerancePolicy::APPENDIX_D_V6;
         assert_eq!(tol.proof_sample_work_budget, 400_000_000);
         assert_eq!(check_sampling_budget(&tol, 20_000, 20_000), Ok(()));
         assert_eq!(
             check_sampling_budget(&tol, 20_001, 20_000),
             Err(ScaleError::ProofSamplingBudgetExceeded {
-                policy_id: "appendix-d-v5",
+                policy_id: "appendix-d-v6",
                 sample_times: 20_001,
                 per_sample_cost: 20_000,
                 work: 400_020_000,
@@ -15423,7 +15514,7 @@ mod tests {
         assert_eq!(
             check_sampling_budget(&tol, 400_000_001, 1),
             Err(ScaleError::ProofSamplingBudgetExceeded {
-                policy_id: "appendix-d-v5",
+                policy_id: "appendix-d-v6",
                 sample_times: 400_000_001,
                 per_sample_cost: 1,
                 work: 400_000_001,
@@ -15446,12 +15537,12 @@ mod tests {
         // uses them: `check_sampling_budget` takes the two numbers and the
         // policy, and nothing about the arithmetic depends on where they came
         // from.
-        let tol = ScaleTolerancePolicy::APPENDIX_D_V5;
+        let tol = ScaleTolerancePolicy::APPENDIX_D_V6;
         let sample_times = 9_223_372_036_854_775_808; // 2^63
         assert_eq!(
             check_sampling_budget(&tol, sample_times, 2),
             Err(ScaleError::ProofSamplingBudgetExceeded {
-                policy_id: "appendix-d-v5",
+                policy_id: "appendix-d-v6",
                 sample_times,
                 per_sample_cost: 2,
                 work: u64::MAX,
@@ -18003,10 +18094,10 @@ mod tests {
     /// site*, where this sweep's own helpers do not read it, moves nothing this
     /// test measures. That
     /// direction is held by four chain-dominant adjacent-binary32 searches —
-    /// `the_bounds_v5_floor_is_an_adjacent_f32_transition`,
-    /// `the_skin_matrix_v5_floor_is_an_adjacent_f32_transition`,
-    /// `the_rest_translation_v5_floor_is_an_adjacent_f32_transition`, and
-    /// `the_trajectory_v5_floor_is_an_adjacent_f32_transition` — plus the
+    /// `the_bounds_v6_floor_is_an_adjacent_f32_transition`,
+    /// `the_skin_matrix_v6_floor_is_an_adjacent_f32_transition`,
+    /// `the_rest_translation_v6_floor_is_an_adjacent_f32_transition`, and
+    /// `the_trajectory_v6_floor_is_an_adjacent_f32_transition` — plus the
     /// far-joint and factor-direction brackets. Each names a fixture-local
     /// floor, not a universal smallest defect. This sweep is a one-directional
     /// instrument and says so.
@@ -18146,7 +18237,7 @@ mod tests {
             overall.bounds,
             overall.skin_matrix,
             overall.rest_translation,
-            ScaleTolerancePolicy::APPENDIX_D_V5.f32_rounding_ulps,
+            ScaleTolerancePolicy::APPENDIX_D_V6.f32_rounding_ulps,
         );
         println!(
             "deep-chain calibration: {deep_cases} cases through 512 links; worst per-comparison \
@@ -18310,7 +18401,7 @@ mod tests {
             overall.skin_matrix,
             overall.rest_translation,
         );
-        let allowed = f64::from(ScaleTolerancePolicy::APPENDIX_D_V5.f32_rounding_ulps);
+        let allowed = f64::from(ScaleTolerancePolicy::APPENDIX_D_V6.f32_rounding_ulps);
         assert!(
             overall.bounds < allowed
                 && overall.skin_matrix < allowed

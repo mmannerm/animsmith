@@ -724,8 +724,12 @@ selected domain fail before any output is written.
 
 Classification and proof share one versioned tolerance policy and compute in
 `f64`, narrowing only at the writer model boundary. The current policy identity
-is `appendix-d-v5`. Relative orthogonality, equal-axis, and common-factor
-tolerance is `1e-5`; an axis is unequal when
+is `appendix-d-v6`. The three finite widened axis lengths are sorted in
+ascending order before their arithmetic mean is accumulated and divided by
+three. This canonical association rule makes the common factor independent of
+authored axis order, including when the sum lies on an equal-axis boundary.
+Relative orthogonality, equal-axis, and common-factor tolerance is `1e-5`; an
+axis is unequal when
 `abs(length - average) > 1e-5 * max(average, length)`, relative to the longer
 of the two and to nothing else; a determinant is singular when
 `abs(det) <= 1e-6 * product(axis_lengths)`; scalar/vector comparison uses
@@ -735,6 +739,13 @@ residual exactly equal to its bound is accepted. Exact float equality is
 forbidden. The implementation records every threshold and observed maximum
 residual in evidence, so noisy values such as `100.000015` can be accepted for
 an explicit, reviewable reason rather than by implementation accident.
+
+This is a pre-1.0 policy-identity cutover: the former public
+`ScaleTolerancePolicy::APPENDIX_D_V5` associated constant is removed rather
+than retained as an alias for the new axis-order-independent meaning. Evidence
+records therefore use `appendix-d-v6`; historical v5 algorithm and calibration
+text below remains for provenance only and does not describe a supported
+runtime policy.
 
 **The `f32`-rounding term, per obligation.** The scalar band above is stated
 relative to the quantity being *compared*. For five of proof's obligations
@@ -750,7 +761,7 @@ then refuses. Sweeping a rotating rig at a declared factor of `3190`, that
 happened on `86 %` of rotations before this policy, with residuals up to
 `9.8e-4` against a `6.1e-5` band.
 
-`appendix-d-v5` therefore declares one further quantity, `f32_rounding_ulps =
+`appendix-d-v6` therefore retains the further quantity `f32_rounding_ulps =
 4`, and the five obligations that compare `f32`-rounded arithmetic use
 
 ```text
@@ -1090,7 +1101,8 @@ dimension because one composition happens per link. Its maximum over links
 stayed flat while coherent rounding accumulated with depth, and correctly
 built candidates began refusing at depth 180.
 
-v5 replaces the depth-flat maximum with an empirically calibrated additive
+**Historical v5 algorithm and calibration (retained for provenance).** The v5
+policy replaced the depth-flat maximum with an empirically calibrated additive
 provenance recurrence rather than increasing the count. For a root,
 `C_root = 0`. For child `i`, with parent world `W_p` and local matrix `L_i`,
 
@@ -1133,9 +1145,9 @@ The later fixed stages retain the measured scalar maximum: SkinMatrix maxes
 the accumulated chain against the `W * B` operand magnitude, and Bounds feeds
 that slot base through v4's weight-proportional blend. A fully analytic matrix
 error propagation would add stages componentwise, but it would be a broader
-model with a different detection cost. v5 makes no such claim; the retained
-fixed-stage envelope is justified by the checked-in shallow and deep
-calibration and by the isolated floors below.
+model with a different detection cost. v5 made no such claim, and v6 retains
+that boundary; the fixed-stage envelope is justified by the checked-in shallow
+and deep calibration and by the isolated floors below.
 
 A residual above the count is evidence about the *magnitude* before it is
 evidence about the count. Three revisions have now found the magnitude wrong
@@ -1250,7 +1262,7 @@ the rotation and on the operand magnitudes rather than on the magnitude of
 the result.
 
 That "no constant" is a constraint on the magnitudes too, not just on the
-skinning. Bounds are compared per axis, and `appendix-d-v5` therefore does not
+skinning. Bounds are compared per axis, and `appendix-d-v6` therefore does not
 derive a magnitude by squaring the blended point into an L2 length: that would
 overflow at `sqrt(f32::MAX)` even though every component remains finite.
 `a_rig_whose_skinned_extent_passes_the_square_root_of_f32_max_still_proves`
@@ -1877,7 +1889,7 @@ relationship from two separate policy fields.
 
 The expected ceiling on that divergence is **the sum of two bands the policy
 already declares**: the common-factor band plus the postcondition unit-scale
-residual (`1e-5 + 2^-14 = 7.103515625e-5` under `appendix-d-v5`). Planning
+residual (`1e-5 + 2^-14 = 7.103515625e-5` under `appendix-d-v6`). Planning
 binds its witness to the declared factor within the first band or refuses;
 and for a candidate this operation built from the source under proof, that
 candidate's composed root scale is the proof witness divided by the declared
@@ -2021,7 +2033,7 @@ foundation; it is not silently widened or renamed into this contract.
 **Shared affine classification, distinct acceptance contracts.** The core uses
 one typed, symmetric `f64` positive-uniform `Mat3` classifier for both Appendix
 D and skinned bind-pose canonicalization. Appendix D retains
-`appendix-d-v5`'s `1e-5` equal-axis/orthogonality and `1e-6`
+`appendix-d-v6`'s `1e-5` equal-axis/orthogonality and `1e-6`
 relative-determinant thresholds. The canonicalization input
 `source_to_meters_y_up` retains its numeric `1e-4` equal-axis/orthogonality
 thresholds and exact-zero determinant threshold; these are compatibility with

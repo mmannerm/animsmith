@@ -11,7 +11,7 @@ use animsmith_core::{
     SkinnedBindPoseCanonicalizationOptions, SkinnedBindPosePlacement, Transform,
     canonicalize_skinned_bind_pose,
 };
-use glam::{Mat3, Mat4, Quat, Vec3};
+use glam::{Mat3, Mat4, Quat, Vec3, Vec4};
 
 const EPSILON: f32 = 2.0e-5;
 
@@ -308,6 +308,47 @@ fn canonicalization_pins_the_shared_symmetric_axis_band() {
             reason: "non_uniform_or_sheared"
         }
     ));
+}
+
+#[test]
+fn canonicalization_uses_the_canonical_axis_mean_for_every_proper_permutation() {
+    // These widened axis lengths sit on opposite sides of the inclusive
+    // 1e-4 band under the two possible binary64 sum associations. The shared
+    // ascending association accepts them; an authored-column-order sum
+    // rejects four of the six proper signed permutations.
+    let a = f32::from_bits(0x3f7f_f628);
+    let columns = [
+        Vec3::new(a, f32::from_bits(0x3a22_bde9), 0.0),
+        Vec3::new(-f32::from_bits(0x3a2b_c2b4), a, 0.0),
+        Vec3::Z,
+    ];
+    let permutations = [
+        Mat3::from_cols(columns[0], columns[1], columns[2]),
+        Mat3::from_cols(-columns[0], columns[2], columns[1]),
+        Mat3::from_cols(-columns[1], columns[0], columns[2]),
+        Mat3::from_cols(columns[1], columns[2], columns[0]),
+        Mat3::from_cols(columns[2], columns[0], columns[1]),
+        Mat3::from_cols(-columns[2], columns[1], columns[0]),
+    ];
+
+    for (permutation, linear) in permutations.into_iter().enumerate() {
+        let transform = Mat4::from_cols(
+            linear.x_axis.extend(0.0),
+            linear.y_axis.extend(0.0),
+            linear.z_axis.extend(0.0),
+            Vec4::W,
+        );
+        canonicalize_skinned_bind_pose(
+            &source_document(),
+            SkinnedBindPoseCanonicalizationOptions {
+                source_to_meters_y_up: transform,
+                placement: SkinnedBindPosePlacement::Preserve,
+            },
+        )
+        .unwrap_or_else(|error| {
+            panic!("canonical mean rejected proper permutation {permutation}: {error:?}")
+        });
+    }
 }
 
 #[test]
