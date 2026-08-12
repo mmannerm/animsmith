@@ -189,7 +189,7 @@ fn record_violation(facts: &mut ScaleCapabilityFacts, kind: GltfCapabilityViolat
         // members beside it, and decomposes `matrix` to TRS while dropping a
         // projective last row: in both shapes the source carries transform
         // members the normalized model does not represent.
-        Kind::ConflictingNodeTransform | Kind::NonAffineNodeMatrix => {
+        Kind::ConflictingNodeTransform | Kind::NonAffineNodeMatrix | Kind::AnimatedMatrixNode => {
             facts.unknown_source_members_present = true;
         }
     }
@@ -237,12 +237,32 @@ fn manifest_violations(manifest: &GltfCapabilityManifest) -> Vec<GltfCapabilityV
             ),
         );
     }
+    // Animation and node counts are independently controlled by the source.
+    // Index matrix-authored nodes once instead of rescanning every node for
+    // every channel, which would make this untrusted-input pass quadratic.
+    let matrix_nodes = manifest
+        .nodes
+        .iter()
+        .filter_map(|node| {
+            (node.rest_kind == crate::capability::GltfNodeRestKind::Matrix)
+                .then_some(node.node_index)
+        })
+        .collect::<BTreeSet<_>>();
     for channel in &manifest.animation_channels {
         if channel.target_path == "weights" {
             add(
                 Kind::MorphWeights,
                 format!(
                     "/animations/{}/channels/{}/target/path",
+                    channel.animation_index, channel.channel_index
+                ),
+            );
+        }
+        if matrix_nodes.contains(&channel.target_node_index) {
+            add(
+                Kind::AnimatedMatrixNode,
+                format!(
+                    "/animations/{}/channels/{}/target",
                     channel.animation_index, channel.channel_index
                 ),
             );
@@ -1617,6 +1637,39 @@ mod tests {
         }];
         let facts = capability_facts(&manifest);
         assert!(facts.morph_weights_present);
+        assert!(!facts.is_supported());
+    }
+
+    #[test]
+    fn an_animated_matrix_node_is_rederived_from_manifest_identity() {
+        use crate::capability::{
+            GltfAnimationChannelCapability, GltfNodeCapability, GltfNodeRestKind,
+        };
+        let mut manifest = manifest();
+        manifest.nodes = vec![GltfNodeCapability {
+            node_index: 9,
+            rest_kind: GltfNodeRestKind::Matrix,
+            mesh_index: None,
+            skin_index: None,
+        }];
+        manifest.animation_channels = vec![GltfAnimationChannelCapability {
+            animation_index: 3,
+            channel_index: 4,
+            target_node_index: 9,
+            target_path: "scale".to_owned(),
+            interpolation: "STEP".to_owned(),
+            input_accessor_index: 5,
+            output_accessor_index: 6,
+        }];
+        assert_eq!(
+            manifest_violations(&manifest),
+            vec![GltfCapabilityViolation {
+                kind: GltfCapabilityViolationKind::AnimatedMatrixNode,
+                location: "/animations/3/channels/4/target".to_owned(),
+            }]
+        );
+        let facts = capability_facts(&manifest);
+        assert!(facts.unknown_source_members_present);
         assert!(!facts.is_supported());
     }
 }

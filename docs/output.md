@@ -36,11 +36,11 @@ required `--evidence` path, and prints the same record to stdout under
 The paired GLB and evidence are prepared before publication, so an operator
 failure emits neither new destination and restores any prior pair.
 
-`scale` writes a separate scale-evidence v2 document to its required
+`scale` writes a separate scale-evidence v3 document to its required
 `--evidence` path, and prints the same record to stdout under
 `--format json`. Its immutable identity is
-`urn:animsmith:schema:scale-evidence:2`; its retrievable schema is
-[`scale-evidence-v2.schema.json`](schemas/scale-evidence-v2.schema.json). The
+`urn:animsmith:schema:scale-evidence:3`; its retrievable schema is
+[`scale-evidence-v3.schema.json`](schemas/scale-evidence-v3.schema.json). The
 artifact and its evidence are prepared as temporaries and published as one
 pair, so a refusal or an operator failure emits neither destination and
 restores any prior pair.
@@ -249,7 +249,7 @@ consumer-boundary semantics.
 
 ## `scale`
 
-`scale` writes scale evidence v2 beside its artifact. One record serves both
+`scale` writes scale evidence v3 beside its artifact. One record serves both
 outcomes, discriminated by `outcome`:
 
 | `outcome` | `result` | `rejection` | Published | Exit |
@@ -305,13 +305,23 @@ are deliberately not serialized, so identical arguments produce byte-identical
 evidence. Nothing in the record carries a timestamp.
 
 The normative contract is
-[`scale-evidence-v2.schema.json`](schemas/scale-evidence-v2.schema.json).
-The current CLI emits v2 exclusively; the immutable
-[`scale-evidence-v1.schema.json`](schemas/scale-evidence-v1.schema.json)
-remains available for historical records.
+[`scale-evidence-v3.schema.json`](schemas/scale-evidence-v3.schema.json).
+The current CLI emits v3 exclusively; immutable
+[`scale-evidence-v1.schema.json`](schemas/scale-evidence-v1.schema.json) and
+[`scale-evidence-v2.schema.json`](schemas/scale-evidence-v2.schema.json)
+remain available for historical records.
+
+For rest/bind, `result.domain_rewrites.scale_animation` is `true`: every
+stored scale VEC3 is rebased by its topology multiplier — `1 / s` at the
+selected root, `1` at strict affected descendants and unaffected nodes —
+including both cubic-spline tangent elements. It is `false` for whole-document
+conversion, which preserves dimensionless scale channels. The raw preflight
+also refuses an animation channel targeting a node authored with `matrix` as
+`animated_matrix_node`; no artifact or evidence file is written for that
+refusal.
 
 For an `artifact-proof-failed` refusal from the exact raw-JSON-preservation
-walk, v2 adds
+walk, v2 added
 `rejection.artifact_proof_differences`: the artifact proof's bounded,
 deterministically ordered raw-JSON difference sample. `items` has one to 16
 entries, each with a JSON-pointer `location` and an

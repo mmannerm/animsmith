@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- [**breaking**] *(scale)* advance scale evidence to immutable v3: rest/bind
+  now rebases valid affected-node scale animation (including cubic-spline
+  tangents), publishes `result.domain_rewrites.scale_animation`, and raw glTF
+  preflight refuses animation channels targeting a node authored with `matrix`.
+  The immutable v1/v2 schemas remain historical, and the pre-1.0 public
+  `ScaleError::AffectedScaleAnimation` variant is removed ([#352](https://github.com/mmannerm/animsmith/issues/352))
 - [**breaking**] *(scale)* advance the Appendix D tolerance policy to
   `appendix-d-v6`: finite widened affine axis lengths are sorted ascending
   before averaging, making classification and observed factors independent of

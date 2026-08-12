@@ -1537,10 +1537,13 @@ representable as TRS. The node-local translation is multiplied by the
 parent's `s_parent`; rotation is unchanged; and the local scale is multiplied
 by the dimensionless ratio `s_parent / s_i`. Translation animation values and
 both cubic translation tangents receive the same parent-basis multiplier.
-The initial implementation rejects scale-animation channels in the affected
-domain: although their values are dimensionless, accepting them could
-reintroduce time-varying attachment scale and needs a separate proven rebase
-contract. Rotation tracks and key times remain unchanged.
+Scale animation is the same local-scale component over time, so every stored
+VEC3 scale element receives `s_parent / s_i` too: the selected closure root
+receives `1 / s`, a strict affected descendant receives `s / s = 1`, and an
+unaffected node receives `1`. This is a topology rule, not a
+constant-track predicate: `LINEAR`, `STEP`, and every value plus in/out
+tangent of `CUBICSPLINE` are rebased. Rotation tracks and key times remain
+unchanged.
 
 A node that declares `matrix` rather than TRS members takes the same rule in
 component form. Writing `L_i'` out in glTF's column-major order, the nine
@@ -1576,26 +1579,36 @@ the affected nodes' composed scale to one while preserving their world
 translations and orientations, animation trajectories, skinned vertices, and
 bounds.
 
-**Disagreeing multipliers on one shared payload reject.** Unlike the
-whole-document conversion, whose every converted use takes the same `q`, this
-operation's multiplier depends on which node or skin slot reaches a payload.
-Two logical uses of one accessor can therefore demand different multipliers,
-and no single rewrite satisfies both: a translation output reached from the
-closure root and from a child, or from an affected and an unaffected node; an
-accessor used as both mesh `POSITION` and a translation output; or one
-inverse-bind store shared by two skins whose joints straddle the closure. The
-raw capability preflight does not reject these — its aliasing classification is
-scale-bearing versus dimensionless, and every pair above is scale-bearing on
-both sides — and the source is valid; it is the *plan* that makes the sharing
-unsatisfiable, because "rebase affected translation animation values" and
-"preserve declared unaffected payloads" cannot both hold for one payload.
-Splitting the payload is not the remedy, because it changes array lengths and
-destroys the identities the proof pins. The frontend therefore builds a
-payload-to-multiplier map covering every scale-bearing payload, factor-one ones
-included, and refuses on disagreement with a typed error naming both claimants
-and both multipliers. Uses that agree impose no restriction however many reach
-one payload, and a declared factor of one makes every multiplier one, so the
-refusal cannot fire on a no-op.
+**Conflicting raw accessor claims reject.** Unlike whole-document conversion,
+whose converted uses all take the same `q`, rest/bind derives a typed claim for
+**every** raw accessor use, not only a scale-bearing write. A claim records the
+accessor's expected component shape and its multiplier. Translation outputs,
+scale outputs, and inverse-bind slots carry their topology- or slot-derived
+multiplier. Factor-one preservation claims cover mesh attributes and indices,
+sampler inputs, rotation and weights outputs, and sampler outputs that no
+channel selects. The latter are still sampler-referenced payloads, not unused
+bytes that the raw proof may overlook.
+
+One accessor index must have compatible component shape and one multiplier
+across all of those claims. Thus a translation or scale output reached from the
+closure root and from a child, from an affected and unaffected node, or an
+accessor used both as mesh `POSITION` and a translation or scale output can
+reject; so can a same-index type conflict even when both factors are one. One
+inverse-bind store shared by skins whose joints straddle the closure is the
+same problem. Splitting the payload is not a remedy, because it changes array
+lengths and destroys the identities the proof pins.
+
+Distinct accessor indices are checked too: if their resolved byte ranges
+overlap and either claim rewrites bytes, the operation refuses rather than
+silently corrupt a preserved neighbour. Direct-image `bufferView` consumers
+are not accessors and have their own separate image-overlap refusal. Within
+the source domain admitted by the common conservative capability preflight,
+uses whose claims agree impose no additional rest/bind restriction however
+many reach one accessor. The preflight can still refuse a
+scale-bearing/dimensionless alias or overlapping raw range before this ledger
+runs. A declared factor of one makes every rest/bind multiplier one, so this
+ledger's factor disagreement cannot fire on a no-op; it does not broaden the
+preflight's supported raw domain.
 
 ### D.3 Worked synthetic cases
 
@@ -1667,7 +1680,7 @@ inspect the raw input or a loader-supplied complete inventory before mutation.
 |---|---|---|---|
 | Rest hierarchy | `Bone::rest.translation`; source glTF TRS/matrix also exists as read-side evidence | Scale translations; conjugate retained matrices | Rebase affected translations/scales; preserve orientations |
 | Translation animation | Values and cubic tangent triplets are retained | Multiply values and both tangents by `q` | Multiply by the affected parent-basis factor |
-| Rotation and scale animation | Retained as dimensionless values | Leave unchanged | Rotation unchanged; initially reject affected scale tracks |
+| Rotation and scale animation | Retained as dimensionless values | Leave unchanged | Rotation unchanged; rebase each scale VEC3 by `s_parent / s_i`, including cubic tangents |
 | Root motion and velocity | Derived from translation tracks | Convert tracks, then recompute | Preserve sampled trajectory and derived velocity |
 | Base mesh geometry | Base `POSITION` and normals are retained | Scale positions; normals unchanged | Leave positions and normals unchanged |
 | Morphs | Morph deltas and morph-weight animation are not retained | Reject until `POSITION` deltas can be scaled and all data preserved | Reject until full morph preservation is proven |
@@ -1676,8 +1689,9 @@ inspect the raw input or a loader-supplied complete inventory before mutation.
 | Collision/custom data | No semantic model for extras or extensions | Reject unless a registered handler covers every length | Reject when affected unless exact preservation is proven |
 | Other vertex/source data | Several attributes, non-triangle modes, and extension payloads are not writer-preserved | Reject on the normalized-model route | Reject on the normalized-model route |
 | Out-of-contract node transforms | A `matrix` beside a TRS member, or a `matrix` whose last row is not **exactly** `(0, 0, 0, 1)` — compared exactly at the gate, never within tolerance (§D.3 case 4) — parses but is not glTF 2.0 | Reject: which transform the author meant is unknowable, and `U M U^-1` leaves `3, 7, 11` unconverted where the basis change owes them `1 / q`, while a `15` other than one is invariant under the rewrite and so would be published still asserting a projective divide (§D.2) | Reject for the same reason, with `1 / s_i` for `1 / q` |
-| Aliased buffer payloads | An `image` reads a `bufferView` directly and never becomes an accessor | Reject when its bytes overlap a scale-bearing accessor | Reject when its bytes overlap a rewritten accessor |
-| Shared scale-bearing payloads | One accessor reached by several logical uses; the preflight classifies use kinds, not identities | Convert once per unique accessor: every use takes the same `q` | Reject when two uses demand different multipliers (§D.2); convert once when they agree |
+| Animation targeting a matrix node | glTF 2.0 requires an animated node to use TRS; a typed reader can otherwise decompose `matrix` and lose that source distinction | Reject at raw preflight | Reject at raw preflight |
+| Shared raw accessor payloads | Every accessor use has a component-shape and multiplier claim; preserved uses carry factor one | Convert once per unique accessor: every converted use takes `q` | Reject same-index type/factor conflicts and overlapping distinct accessors when either range is rewritten (§D.2) |
+| Image payload aliases | An `image` reads a `bufferView` directly and never becomes an accessor | Reject when its bytes overlap a rewritten accessor | Reject when its bytes overlap a rewritten accessor |
 
 The current glTF writer rebuilds nodes as TRS, emits only modeled triangle
 attributes, creates skin/holder structures, and does not preserve arbitrary
@@ -1689,7 +1703,7 @@ preflight and explicitly bounded writer work. Unknown extensions or extras,
 unmodeled morphs, cameras, lights, collision metadata, non-triangle primitives,
 unmodeled vertex attributes, secondary influence payloads, malformed or
 missing inverse binds, node transforms outside the glTF 2.0 contract, and image
-payloads sharing bytes with a scale-bearing accessor fail closed. FBX support
+payloads sharing bytes with a rewritten accessor fail closed. FBX support
 follows only after its loader can prove the declared boundary; evidence must
 state that FBX curves were baked, not preserved as authored curves.
 
@@ -1697,15 +1711,17 @@ Source validity is decided once, at the preflight, and not re-derived per
 operation. The preflight's byte-disjointness inspection therefore ranges more
 than accessors. glTF 2.0 core declares four `bufferView` consumers: an
 accessor's own `bufferView`, a sparse accessor's `indices` and `values` views,
-and an `image`'s `bufferView`. The inspection ranges the accessor views of
-every accessor a mesh, skin or sampler references, and every image view; a
-referenced sparse accessor is refused outright before disjointness matters, and
+and an `image`'s `bufferView`. The inspection ranges every accessor a mesh or
+skin references, every sampler input and output — including an output whose
+sampler no animation channel selects — and every image view. A referenced
+sparse accessor is refused outright before disjointness matters, and
 extension-defined consumers are unreachable while every extension is itself a
-refusal. It does **not** range an accessor no mesh, skin or sampler references,
-nor that accessor's sparse views — a document may therefore still carry
-unreferenced payload aliasing a converted range. Each operation keeps its own
-guard as defence in depth, since the guard is what must hold if the gate is
-ever relaxed, but it shares the gate's classifier rather than re-deriving one.
+refusal. It does **not** range a truly unused accessor that no mesh, skin, or
+sampler references, nor that accessor's sparse views — a document may
+therefore still carry unused payload aliasing a converted range. Each operation
+keeps its own guard as defence in depth, since the guard is what must hold if
+the gate is ever relaxed, but it shares the gate's classifier rather than
+re-deriving one.
 
 ### D.5 Separate-clip compatibility
 
@@ -1752,7 +1768,7 @@ inventory of every §D.4 domain — and may enable an operation only over the
 domains that inventory covers.
 
 The exact raw-JSON-preservation refusal is diagnostic evidence as well as a
-refusal: the current scale-evidence v2 record carries up to the first 16
+refusal: the current scale-evidence v3 record carries up to the first 16
 deterministic differences, each as a pointer and an added/removed/changed
 direction, plus the omitted remainder; the full count is the retained length
 plus that remainder. The field is null when the exact-preservation walk did

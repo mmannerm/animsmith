@@ -265,6 +265,10 @@ pub enum GltfCapabilityViolationKind {
     /// A node `matrix` is not TRS-decomposable: its last row is not
     /// `(0, 0, 0, 1)`.
     NonAffineNodeMatrix,
+    /// An animation targets a node that authored its rest transform as a
+    /// `matrix`. glTF animation channels replace TRS properties, so there is
+    /// no raw TRS property this operation can reparameterize safely.
+    AnimatedMatrixNode,
     /// An `image` reads a buffer view overlapping a scale-bearing accessor.
     ImagePayloadOverlap,
 }
@@ -1027,12 +1031,24 @@ fn inventory_animations(
                     format!("/animations/{animation_index}/channels/{channel_index}/target/path"),
                 );
             }
+            let target_node_index = as_index(target.get("node")).unwrap_or(usize::MAX);
+            if manifest
+                .nodes
+                .get(target_node_index)
+                .is_some_and(|node| node.rest_kind == GltfNodeRestKind::Matrix)
+            {
+                violation(
+                    violations,
+                    GltfCapabilityViolationKind::AnimatedMatrixNode,
+                    format!("/animations/{animation_index}/channels/{channel_index}/target"),
+                );
+            }
             manifest
                 .animation_channels
                 .push(GltfAnimationChannelCapability {
                     animation_index,
                     channel_index,
-                    target_node_index: as_index(target.get("node")).unwrap_or(usize::MAX),
+                    target_node_index,
                     target_path,
                     interpolation: sampler
                         .get("interpolation")
@@ -1505,12 +1521,21 @@ fn collect_accessor_uses(root: &Map<String, Value>) -> BTreeMap<usize, BTreeSet<
                 .and_then(Value::as_array)
                 .map(Vec::as_slice)
                 .unwrap_or_default();
+            let referenced: BTreeSet<usize> = channels
+                .iter()
+                .filter_map(|channel| as_index(channel.get("sampler")))
+                .collect();
+            for (sampler_index, sampler) in samplers.iter().enumerate() {
+                add(as_index(sampler.get("input")), AccessorUse::Dimensionless);
+                if !referenced.contains(&sampler_index) {
+                    add(as_index(sampler.get("output")), AccessorUse::Dimensionless);
+                }
+            }
             for channel in channels {
                 let sampler_index = as_index(channel.get("sampler")).unwrap_or(usize::MAX);
                 let Some(sampler) = samplers.get(sampler_index) else {
                     continue;
                 };
-                add(as_index(sampler.get("input")), AccessorUse::Dimensionless);
                 let path = channel
                     .get("target")
                     .and_then(|target| target.get("path"))
@@ -1554,6 +1579,23 @@ pub(crate) fn dense_f32_accessor_range(
         return None;
     }
     Some((range.buffer, range.start, range.end))
+}
+
+/// The complete resolved range of any dense used accessor, irrespective of
+/// component type or stride.
+///
+/// Rest/bind rewriting uses this only for operation-specific alias checks:
+/// a rewritten `f32` accessor must not overlap bytes owned by a preserved
+/// integer attribute, index accessor, or animation sampler. Keeping range
+/// arithmetic here gives that guard exactly the same layout interpretation
+/// as the common preflight.
+pub(crate) fn resolved_accessor_range(
+    root: &Map<String, Value>,
+    buffers: &[Vec<u8>],
+    accessor_index: usize,
+) -> Option<(usize, usize, usize)> {
+    accessor_range(root, buffers, accessor_index)
+        .map(|range| (range.buffer, range.start, range.end))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1965,4 +2007,31 @@ fn indexed_nested_member(pointer: &str, prefix: &str, nested: &str) -> bool {
         return false;
     };
     !outer.is_empty() && !outer.contains('/') && !inner.is_empty() && !inner.contains('/')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn accessor_use_inventory_claims_orphan_sampler_fields_without_self_conflicting_channels() {
+        let root = json!({
+            "animations": [{
+                "samplers": [
+                    { "input": 1, "output": 2 },
+                    { "input": 3, "output": 4 }
+                ],
+                "channels": [{
+                    "sampler": 0,
+                    "target": { "node": 0, "path": "translation" }
+                }]
+            }]
+        });
+        let uses = collect_accessor_uses(root.as_object().expect("root"));
+        assert_eq!(uses[&1], BTreeSet::from([AccessorUse::Dimensionless]));
+        assert_eq!(uses[&2], BTreeSet::from([AccessorUse::ScaleBearing]));
+        assert_eq!(uses[&3], BTreeSet::from([AccessorUse::Dimensionless]));
+        assert_eq!(uses[&4], BTreeSet::from([AccessorUse::Dimensionless]));
+    }
 }

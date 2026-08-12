@@ -366,10 +366,10 @@ stderr, whatever the format, and emits nothing on stdout; a run whose stdout
 itself fails mid-record is the one exception, leaving a truncated record there
 and reporting the write failure on stderr without changing the exit code.
 
-`scale` writes scale evidence v2 to its required `--evidence` path, with
-immutable identity `urn:animsmith:schema:scale-evidence:2`; see
+`scale` writes scale evidence v3 to its required `--evidence` path, with
+immutable identity `urn:animsmith:schema:scale-evidence:3`; see
 [output.md](output.md) and
-[`scale-evidence-v2.schema.json`](schemas/scale-evidence-v2.schema.json). The
+[`scale-evidence-v3.schema.json`](schemas/scale-evidence-v3.schema.json). The
 same record is what `scale --format json` prints to stdout, for a refusal as
 well as for a published pair. For an `artifact-proof-failed` refusal from the
 exact-preservation walk, `rejection.artifact_proof_differences` names up to 16
@@ -377,6 +377,18 @@ raw JSON locations the walk found different; `omitted` counts locations beyond
 that fixed cap, and the full count is `items.length + omitted`. The field is
 `null` for other artifact-proof claims and for capability refusals, whose
 `violations` array retains its existing meaning.
+
+For `scale rest-bind`, valid scale animation is rebased, not refused:
+`result.domain_rewrites.scale_animation` is `true`, and every stored scale
+VEC3 uses the topology multiplier (`1 / s` at the selected root and `1` at
+strict descendants or outside the closure). This includes every in/value/out
+element of a cubic-spline sampler; it is not limited to constant tracks.
+Whole-document conversion leaves dimensionless scale animation unchanged and
+records `scale_animation: false`. Raw glTF preflight rejects an animation
+channel targeting a node authored with `matrix` as
+`animated_matrix_node`, with no output or evidence file.
+The v1 and v2 scale-evidence schemas remain immutable historical contracts;
+the current CLI emits v3 only.
 
 Machine-readable lint rejects `--allow` so it cannot erase evidence. The flag
 remains a presentation and exit-policy convenience for text and Markdown.

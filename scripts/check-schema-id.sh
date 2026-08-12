@@ -72,7 +72,20 @@ fi
 check_schema docs/schemas/conversion-evidence-v1.schema.json urn:animsmith:schema:conversion-evidence:1 docs/output.md
 check_schema docs/schemas/conversion-evidence-v2.schema.json urn:animsmith:schema:conversion-evidence:2 docs/output.md docs/cli.md
 check_schema docs/schemas/scale-evidence-v1.schema.json urn:animsmith:schema:scale-evidence:1
-check_schema docs/schemas/scale-evidence-v2.schema.json urn:animsmith:schema:scale-evidence:2 crates/animsmith/src/scale.rs docs/output.md docs/cli.md
+check_schema docs/schemas/scale-evidence-v2.schema.json urn:animsmith:schema:scale-evidence:2
+check_schema docs/schemas/scale-evidence-v3.schema.json urn:animsmith:schema:scale-evidence:3 crates/animsmith/src/scale.rs docs/output.md docs/cli.md
+if ! cmp -s docs/schemas/scale-evidence-v2.schema.json <(
+  sed \
+    -e 's/urn:animsmith:schema:scale-evidence:3/urn:animsmith:schema:scale-evidence:2/g' \
+    -e 's/animsmith scale evidence v3/animsmith scale evidence v2/' \
+    -e 's/"const": 3/"const": 2/' \
+    -e 's/"rest_hierarchy", "translation_animation", "scale_animation", "inverse_binds", "base_mesh_positions"/"rest_hierarchy", "translation_animation", "inverse_binds", "base_mesh_positions"/' \
+    -e '/"scale_animation": { "type": "boolean" },/d' \
+    -e 's/, "animated_matrix_node"//' \
+    docs/schemas/scale-evidence-v3.schema.json
+); then
+  fail 'scale-evidence-v3 must differ from immutable scale-evidence-v2 only by identity, scale-animation rewrite evidence, and animated-matrix-node'
+fi
 
 # Current-contract descriptions must not send readers back to the immutable
 # output-v2 schema. Keep these exact statements aligned with the current outer

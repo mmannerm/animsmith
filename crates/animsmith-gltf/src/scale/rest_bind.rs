@@ -24,14 +24,15 @@
 //! | node `matrix` linear part | `* 1/s` | unchanged |
 //! | node `matrix` translation column | unchanged | `* s` |
 //! | translation sampler `output` (values **and** both `CUBICSPLINE` tangents) | unchanged | `* s` |
+//! | scale sampler `output` (values **and** both `CUBICSPLINE` tangents) | `* 1/s` | unchanged |
 //! | `inverseBindMatrices` rows 0..2 of the node's own slot | `* s` | `* s` |
 //!
 //! Inverse binds are the one domain whose multiplier is `s_i` rather than
 //! `s_parent`, because `B_i' = C_i^-1 * B_i = scale(s_i) * B_i` — every
 //! affected joint's slot scales, the root's included. Mesh `POSITION`,
-//! normals, rotation tracks, key times, and every scale/rotation sampler are
-//! left byte-identical: the source's world geometry is already correct and
-//! this operation only changes how it is parameterized.
+//! normals, rotation tracks, key times, and scale tracks away from the
+//! closure root are left byte-identical: the source's world geometry is
+//! already correct and this operation only changes how it is parameterized.
 //!
 //! # The aliasing refusal this operation needs and #280 does not provide
 //!
@@ -59,16 +60,24 @@
 //! both `VEC3`-shaped, and two translation outputs are trivially the same
 //! type.
 //!
-//! So this module builds an accessor-to-factor map covering *every*
-//! scale-bearing accessor — including the ones whose factor is `1`, which is
-//! exactly what makes the `POSITION`/translation-output cross detectable —
-//! and refuses on disagreement with
+//! So this module builds an accessor-to-factor map covering every raw
+//! accessor use this operation rewrites or promises to preserve. Factor-one
+//! claims include every mesh attribute and index, morph attribute, sampler
+//! input, rotation/weights output, unaffected scale output, and unreferenced
+//! sampler output. That is exactly what makes the
+//! `NORMAL`/root-scale-output and orphan-output crosses detectable. It
+//! refuses same-index disagreement with
 //! [`GltfScaleRewriteError::ConflictingRestBindFactor`], naming both
-//! claimants and both factors so an operator can fix the file. An accessor
-//! every claimant agrees on is fine however many uses reach it, so a
-//! `POSITION` shared by two primitives, a time accessor shared by three
-//! samplers, and a translation output shared by two nodes with the same
-//! multiplier all still convert.
+//! claimants and both factors so an operator can fix the file. Inside the raw
+//! domain the common conservative preflight already admits, an accessor every
+//! claimant agrees on adds no rest/bind-specific refusal: a `POSITION` shared
+//! by two primitives, a time accessor shared by three samplers, and a
+//! translation output shared by two nodes with the same multiplier all still
+//! convert. This does not newly admit a scale-bearing/dimensionless alias the
+//! common preflight already refuses. A second guard resolves all those raw
+//! ranges and refuses distinct accessor indices whose bytes overlap when
+//! either one is rewritten; same-index agreement alone cannot prevent that
+//! corruption.
 //!
 //! # Absent `inverseBindMatrices`
 //!
@@ -84,7 +93,10 @@
 use super::bytes;
 use super::{GltfScaleArtifact, GltfScaleRewriteError};
 use crate::LoadError;
-use crate::capability::{GltfScaleSource, declared};
+use crate::capability::{
+    GltfCapabilityViolation, GltfCapabilityViolationKind, GltfScaleSource, declared,
+    resolved_accessor_range,
+};
 use animsmith_core::scale::{ScaleOperation, ScalePlan, ScaleRequest, plan_scale};
 use animsmith_core::{BoneId, Document};
 use serde_json::{Map, Value};
@@ -366,9 +378,20 @@ fn cross_check_domain(
 /// Which components of one accessor element a rest/bind claim covers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RestBindComponents {
-    /// Every component: a `VEC3` translation sampler `output` (values and
-    /// both `CUBICSPLINE` tangents alike) or a mesh `POSITION`.
-    All,
+    /// One scalar component.
+    Scalar,
+    /// Every component of `VEC2`.
+    Vec2,
+    /// Every component of `VEC3`.
+    Vec3,
+    /// Every component of `VEC4`.
+    Vec4,
+    /// Every component of `MAT2`.
+    Mat2,
+    /// Every component of `MAT3`.
+    Mat3,
+    /// Every component of `MAT4`.
+    Mat4,
     /// Column-major `MAT4` rows 0..2 — components `0,1,2, 4,5,6, 8,9,10,
     /// 12,13,14`. `B' = scale(s) * B` scales every output row and leaves the
     /// homogeneous row `3,7,11,15` alone.
@@ -378,17 +401,74 @@ pub(crate) enum RestBindComponents {
 impl RestBindComponents {
     pub(crate) fn covers(self, component: usize) -> bool {
         match self {
-            Self::All => true,
+            Self::Scalar
+            | Self::Vec2
+            | Self::Vec3
+            | Self::Vec4
+            | Self::Mat2
+            | Self::Mat3
+            | Self::Mat4 => true,
             Self::Mat4Rows => component % 4 != 3,
         }
     }
 
-    fn required_accessor_type(self) -> Option<&'static str> {
+    pub(crate) fn required_accessor_type(self) -> &'static str {
         match self {
-            Self::All => None,
-            Self::Mat4Rows => Some("MAT4"),
+            Self::Scalar => "SCALAR",
+            Self::Vec2 => "VEC2",
+            Self::Vec3 => "VEC3",
+            Self::Vec4 => "VEC4",
+            Self::Mat2 => "MAT2",
+            Self::Mat3 => "MAT3",
+            Self::Mat4 | Self::Mat4Rows => "MAT4",
         }
     }
+}
+
+fn accessor_components(
+    root: &Map<String, Value>,
+    accessor_index: usize,
+) -> Result<RestBindComponents, GltfScaleRewriteError> {
+    let kind = array(root, "accessors")
+        .get(accessor_index)
+        .and_then(|accessor| accessor.get("type"))
+        .and_then(Value::as_str);
+    match kind {
+        Some("SCALAR") => Ok(RestBindComponents::Scalar),
+        Some("VEC2") => Ok(RestBindComponents::Vec2),
+        Some("VEC3") => Ok(RestBindComponents::Vec3),
+        Some("VEC4") => Ok(RestBindComponents::Vec4),
+        Some("MAT2") => Ok(RestBindComponents::Mat2),
+        Some("MAT3") => Ok(RestBindComponents::Mat3),
+        Some("MAT4") => Ok(RestBindComponents::Mat4),
+        _ => Err(GltfScaleRewriteError::UnrewritableAccessor {
+            accessor_index,
+            location: format!("/accessors/{accessor_index}"),
+        }),
+    }
+}
+
+fn typed_claim(
+    root: &Map<String, Value>,
+    accessor_index: usize,
+    components: RestBindComponents,
+    factors: RestBindFactors,
+    location: String,
+) -> Result<RestBindClaim, GltfScaleRewriteError> {
+    if accessor_components(root, accessor_index)?.required_accessor_type()
+        != components.required_accessor_type()
+    {
+        return Err(GltfScaleRewriteError::UnrewritableAccessor {
+            accessor_index,
+            location: format!("/accessors/{accessor_index}"),
+        });
+    }
+    Ok(RestBindClaim {
+        components,
+        factors,
+        count: accessor_count(root, accessor_index)?,
+        location,
+    })
 }
 
 /// The per-element factors one claim demands.
@@ -406,6 +486,53 @@ impl RestBindFactors {
         match self {
             Self::Uniform(factor) => *factor,
             Self::PerElement(factors) => factors.get(element).copied().unwrap_or(1.0),
+        }
+    }
+
+    fn is_identity(&self, count: usize) -> bool {
+        if count == 0 {
+            return true;
+        }
+        match self {
+            Self::Uniform(factor) => *factor == 1.0,
+            Self::PerElement(factors) => factors.iter().take(count).all(|&factor| factor == 1.0),
+        }
+    }
+
+    fn uniform_factor(&self, count: usize) -> Option<f64> {
+        match self {
+            Self::Uniform(factor) => Some(*factor),
+            Self::PerElement(factors) => {
+                let first = self.at(0);
+                let explicit_agrees = factors
+                    .iter()
+                    .take(count)
+                    .skip(1)
+                    .all(|&factor| factor == first);
+                let implicit_agrees = count <= factors.len() || first == 1.0;
+                (explicit_agrees && implicit_agrees).then_some(first)
+            }
+        }
+    }
+
+    fn first_disagreement(&self, other: &Self, count: usize) -> Option<usize> {
+        match (self, other) {
+            (Self::Uniform(left), Self::Uniform(right)) => {
+                (count != 0 && left != right).then_some(0)
+            }
+            (Self::Uniform(left), Self::PerElement(right)) => right
+                .iter()
+                .take(count)
+                .position(|right| left != right)
+                .or_else(|| (count > right.len() && *left != 1.0).then_some(right.len())),
+            (Self::PerElement(left), Self::Uniform(right)) => left
+                .iter()
+                .take(count)
+                .position(|left| left != right)
+                .or_else(|| (count > left.len() && *right != 1.0).then_some(left.len())),
+            (Self::PerElement(left), Self::PerElement(right)) => (0..count
+                .min(left.len().max(right.len())))
+                .find(|&element| self.at(element) != other.at(element)),
         }
     }
 }
@@ -452,7 +579,7 @@ impl RestBindClaim {
     /// Whether this claim changes nothing, so the accessor is not rewritten
     /// at all.
     pub(crate) fn is_identity(&self) -> bool {
-        (0..self.count).all(|element| self.factors.at(element) == 1.0)
+        self.factors.is_identity(self.count)
     }
 
     /// The single factor every element of this claim shares, when there is
@@ -462,27 +589,28 @@ impl RestBindClaim {
     /// with mixed per-slot factors has no such conversion and its bounds are
     /// re-derived from the rewritten payload instead.
     pub(crate) fn uniform_factor(&self) -> Option<f64> {
-        let first = self.factors.at(0);
-        (1..self.count)
-            .all(|element| self.factors.at(element) == first)
-            .then_some(first)
+        self.factors.uniform_factor(self.count)
     }
 
     /// The first element at which two claims on one accessor disagree.
     fn first_disagreement(&self, other: &Self) -> Option<usize> {
         if self.components != other.components {
-            return Some(0);
+            // Two masks over the same declared type are equivalent when both
+            // uses preserve every value. This matters for an unaffected IBM
+            // shared with another MAT4 role: no write is required, so the
+            // narrower IBM row mask is not a real disagreement.
+            return (!self.is_identity() || !other.is_identity()).then_some(0);
         }
-        (0..self.count.max(other.count))
-            .find(|&element| self.factors.at(element) != other.factors.at(element))
+        self.factors
+            .first_disagreement(&other.factors, self.count.max(other.count))
     }
 }
 
 /// Build the accessor-to-factor map, refusing every disagreement.
 ///
-/// Covers every scale-bearing accessor, factor-`1` ones included: an accessor
-/// used as mesh `POSITION` *and* as an affected translation `output` is only
-/// detectable because `POSITION` claims `1` here rather than being skipped.
+/// Covers every raw accessor use, factor-`1` ones included. This is what
+/// makes an affected animation output aliased with a normal, index, key-time,
+/// preserved output, or otherwise orphaned sampler output detectable.
 pub(crate) fn collect_rest_bind_claims(
     root: &Map<String, Value>,
     domain: &RestBindDomain,
@@ -512,6 +640,20 @@ pub(crate) fn collect_rest_bind_claims(
         Ok(())
     };
 
+    let identity = |root: &Map<String, Value>,
+                    accessor_index: usize,
+                    location: String|
+     -> Result<RestBindClaim, GltfScaleRewriteError> {
+        let components = accessor_components(root, accessor_index)?;
+        typed_claim(
+            root,
+            accessor_index,
+            components,
+            RestBindFactors::Uniform(1.0),
+            location,
+        )
+    };
+
     for (mesh_index, mesh) in array(root, "meshes").iter().enumerate() {
         for (primitive_index, primitive) in mesh
             .get("primitives")
@@ -519,26 +661,54 @@ pub(crate) fn collect_rest_bind_claims(
             .iter()
             .enumerate()
         {
-            let Some(accessor_index) = as_index(
-                primitive
-                    .get("attributes")
-                    .and_then(|attributes| attributes.get("POSITION")),
-            ) else {
-                continue;
-            };
-            let count = accessor_count(root, accessor_index)?;
-            claim(
-                accessor_index,
-                RestBindClaim {
-                    components: RestBindComponents::All,
-                    factors: RestBindFactors::Uniform(1.0),
-                    count,
-                    location: format!(
-                        "/meshes/{mesh_index}/primitives/{primitive_index}/attributes/POSITION"
-                    ),
-                },
-                &mut claims,
-            )?;
+            let base = format!("/meshes/{mesh_index}/primitives/{primitive_index}");
+            if let Some(attributes) = primitive.get("attributes").and_then(Value::as_object) {
+                for (semantic, value) in attributes {
+                    let Some(accessor_index) = as_index(Some(value)) else {
+                        continue;
+                    };
+                    claim(
+                        accessor_index,
+                        identity(
+                            root,
+                            accessor_index,
+                            format!("{base}/attributes/{semantic}"),
+                        )?,
+                        &mut claims,
+                    )?;
+                }
+            }
+            if let Some(accessor_index) = as_index(primitive.get("indices")) {
+                claim(
+                    accessor_index,
+                    identity(root, accessor_index, format!("{base}/indices"))?,
+                    &mut claims,
+                )?;
+            }
+            for (target_index, target) in primitive
+                .get("targets")
+                .map_or(&[][..], value_array)
+                .iter()
+                .enumerate()
+            {
+                let Some(target) = target.as_object() else {
+                    continue;
+                };
+                for (semantic, value) in target {
+                    let Some(accessor_index) = as_index(Some(value)) else {
+                        continue;
+                    };
+                    claim(
+                        accessor_index,
+                        identity(
+                            root,
+                            accessor_index,
+                            format!("{base}/targets/{target_index}/{semantic}"),
+                        )?,
+                        &mut claims,
+                    )?;
+                }
+            }
         }
     }
 
@@ -575,18 +745,51 @@ pub(crate) fn collect_rest_bind_claims(
         }
         claim(
             accessor_index,
-            RestBindClaim {
-                components: RestBindComponents::Mat4Rows,
-                factors: RestBindFactors::PerElement(factors),
-                count,
-                location: format!("/skins/{skin_index}/inverseBindMatrices"),
-            },
+            typed_claim(
+                root,
+                accessor_index,
+                RestBindComponents::Mat4Rows,
+                RestBindFactors::PerElement(factors),
+                format!("/skins/{skin_index}/inverseBindMatrices"),
+            )?,
             &mut claims,
         )?;
     }
 
     for (animation_index, animation) in array(root, "animations").iter().enumerate() {
         let samplers = animation.get("samplers").map_or(&[][..], value_array);
+        let referenced: BTreeSet<usize> = animation
+            .get("channels")
+            .map_or(&[][..], value_array)
+            .iter()
+            .filter_map(|channel| as_index(channel.get("sampler")))
+            .collect();
+        for (sampler_index, sampler) in samplers.iter().enumerate() {
+            if let Some(accessor_index) = as_index(sampler.get("input")) {
+                claim(
+                    accessor_index,
+                    identity(
+                        root,
+                        accessor_index,
+                        format!("/animations/{animation_index}/samplers/{sampler_index}/input"),
+                    )?,
+                    &mut claims,
+                )?;
+            }
+            if !referenced.contains(&sampler_index)
+                && let Some(accessor_index) = as_index(sampler.get("output"))
+            {
+                claim(
+                    accessor_index,
+                    identity(
+                        root,
+                        accessor_index,
+                        format!("/animations/{animation_index}/samplers/{sampler_index}/output"),
+                    )?,
+                    &mut claims,
+                )?;
+            }
+        }
         for (channel_index, channel) in animation
             .get("channels")
             .map_or(&[][..], value_array)
@@ -594,13 +797,12 @@ pub(crate) fn collect_rest_bind_claims(
             .enumerate()
         {
             let target = channel.get("target");
-            if target
+            let Some(path) = target
                 .and_then(|target| target.get("path"))
                 .and_then(Value::as_str)
-                != Some("translation")
-            {
+            else {
                 continue;
-            }
+            };
             let Some(node) = as_index(target.and_then(|target| target.get("node"))) else {
                 continue;
             };
@@ -610,20 +812,95 @@ pub(crate) fn collect_rest_bind_claims(
             else {
                 continue;
             };
-            let count = accessor_count(root, accessor_index)?;
+            let (components, factor) = match path {
+                "translation" => (RestBindComponents::Vec3, domain.parent_factor(node)),
+                "scale" => (RestBindComponents::Vec3, domain.local_scale_factor(node)),
+                "rotation" | "weights" => {
+                    let components = accessor_components(root, accessor_index)?;
+                    (components, 1.0)
+                }
+                _ => continue,
+            };
             claim(
                 accessor_index,
-                RestBindClaim {
-                    components: RestBindComponents::All,
-                    factors: RestBindFactors::Uniform(domain.parent_factor(node)),
-                    count,
-                    location: format!("/animations/{animation_index}/channels/{channel_index}"),
-                },
+                typed_claim(
+                    root,
+                    accessor_index,
+                    components,
+                    RestBindFactors::Uniform(factor),
+                    format!("/animations/{animation_index}/channels/{channel_index}"),
+                )?,
                 &mut claims,
             )?;
         }
     }
     Ok(claims)
+}
+
+/// Refuse distinct raw accessor identities whose byte ranges overlap when at
+/// least one is rewritten by this operation.
+fn reject_rest_bind_accessor_overlaps(
+    root: &Map<String, Value>,
+    buffers: &[Vec<u8>],
+    claims: &BTreeMap<usize, RestBindClaim>,
+) -> Result<(), GltfScaleRewriteError> {
+    let mut ranges = Vec::with_capacity(claims.len());
+    for (&accessor_index, claim) in claims {
+        let (buffer, start, end) = resolved_accessor_range(root, buffers, accessor_index)
+            .ok_or_else(|| GltfScaleRewriteError::UnrewritableAccessor {
+                accessor_index,
+                location: format!("/accessors/{accessor_index}"),
+            })?;
+        if start < end {
+            ranges.push((buffer, start, end, accessor_index, !claim.is_identity()));
+        }
+    }
+    let Some((left, right)) = first_rewrite_overlap(&mut ranges) else {
+        return Ok(());
+    };
+    let violations = BTreeSet::from([left, right])
+        .into_iter()
+        .map(|accessor_index| GltfCapabilityViolation {
+            kind: GltfCapabilityViolationKind::OverlappingAccessorRanges,
+            location: format!("/accessors/{accessor_index}"),
+        })
+        .collect::<Vec<_>>();
+    let count = violations.len();
+    Err(GltfScaleRewriteError::Capability { violations, count })
+}
+
+/// First deterministic conflicting pair in `O(n log n)` time.
+fn first_rewrite_overlap(
+    ranges: &mut [(usize, usize, usize, usize, bool)],
+) -> Option<(usize, usize)> {
+    ranges.sort_unstable();
+    let mut active_buffer = None;
+    let mut prior_any: Option<(usize, usize)> = None;
+    let mut prior_rewritten: Option<(usize, usize)> = None;
+    for &(buffer, start, end, accessor_index, rewritten) in ranges.iter() {
+        if active_buffer != Some(buffer) {
+            active_buffer = Some(buffer);
+            prior_any = None;
+            prior_rewritten = None;
+        }
+        let prior = if rewritten {
+            prior_any
+        } else {
+            prior_rewritten
+        };
+        if let Some((prior_end, prior_index)) = prior
+            && start < prior_end
+        {
+            return Some((prior_index, accessor_index));
+        }
+        if prior_any.is_none_or(|(prior_end, _)| end > prior_end) {
+            prior_any = Some((end, accessor_index));
+        }
+        if rewritten && prior_rewritten.is_none_or(|(prior_end, _)| end > prior_end) {
+            prior_rewritten = Some((end, accessor_index));
+        }
+    }
+    None
 }
 
 // --- Node JSON rewrites -----------------------------------------------------
@@ -743,7 +1020,7 @@ pub(crate) fn collect_node_rebases(
 /// planning rejection — invalid or unrepresentable factor, invalid selector,
 /// incomplete closure, unskinned geometry in the closure, non-uniform,
 /// sheared, reflected, singular or non-finite affine, factor mismatch, mixed
-/// factor, affected scale animation, malformed track or instance data —
+/// factor, malformed track or instance data —
 /// [`GltfScaleRewriteError::ConflictingRestBindFactor`] when two logical uses
 /// of one accessor demand different factors,
 /// [`GltfScaleRewriteError::ClosureMismatch`] or
@@ -802,6 +1079,7 @@ pub fn rewrite_rest_bind(
     cross_check_domain(source.document(), &plan, &domain, &parents, &projection)?;
 
     let claims = collect_rest_bind_claims(root, &domain)?;
+    reject_rest_bind_accessor_overlaps(root, source.resolved_buffers(), &claims)?;
     let rewritten: BTreeMap<usize, RestBindClaim> = claims
         .into_iter()
         .filter(|(_, claim)| !claim.is_identity())
@@ -821,7 +1099,7 @@ pub fn rewrite_rest_bind(
                 root,
                 source.resolved_buffers(),
                 accessor_index,
-                claim.components.required_accessor_type(),
+                Some(claim.components.required_accessor_type()),
             )?,
             claim,
         ));
@@ -1452,12 +1730,56 @@ mod tests {
     }
 
     #[test]
+    fn a_scale_role_cannot_reinterpret_a_vec4_accessor_as_vec3() {
+        // This malformed cross-type alias panics in the upstream animation
+        // reader before a public `GltfScaleSource` can be built, so exercise
+        // the raw operation guard directly. Accessor 2 is the mesh's VEC4
+        // WEIGHTS_0 payload; a scale output is required to be VEC3.
+        let source = source();
+        let root = root_object(&source);
+        let parents = raw_parents(&root).expect("raw parents");
+        let domain = RestBindDomain {
+            root: 0,
+            closure: raw_closure(&root, &parents, 0, 0).expect("raw closure"),
+            factor: 0.01,
+        };
+        let mut doctored = root;
+        doctored.insert(
+            "animations".to_owned(),
+            json!([{
+                "samplers": [{ "input": 0, "interpolation": "LINEAR", "output": 2 }],
+                "channels": [{ "sampler": 0, "target": { "node": 0, "path": "scale" } }]
+            }]),
+        );
+        match collect_rest_bind_claims(&doctored, &domain) {
+            Err(GltfScaleRewriteError::UnrewritableAccessor {
+                accessor_index,
+                location,
+            }) => {
+                assert_eq!(accessor_index, 2);
+                assert_eq!(location, "/accessors/2");
+            }
+            other => panic!("expected an explicit accessor-type refusal, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn the_mat4_row_mask_covers_exactly_the_three_output_rows() {
         let covered: Vec<usize> = (0..16)
             .filter(|&component| RestBindComponents::Mat4Rows.covers(component))
             .collect();
         assert_eq!(covered, vec![0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14]);
-        assert!((0..16).all(|component| RestBindComponents::All.covers(component)));
+        for components in [
+            RestBindComponents::Scalar,
+            RestBindComponents::Vec2,
+            RestBindComponents::Vec3,
+            RestBindComponents::Vec4,
+            RestBindComponents::Mat2,
+            RestBindComponents::Mat3,
+            RestBindComponents::Mat4,
+        ] {
+            assert!((0..16).all(|component| components.covers(component)));
+        }
     }
 
     #[test]
@@ -1487,5 +1809,71 @@ mod tests {
             assert_eq!(domain.local_scale_factor(9), 1.0);
             assert_eq!(domain.node_factor(9), 1.0);
         }
+    }
+
+    #[test]
+    fn overlap_sweep_covers_both_role_orders_nested_spans_and_skips_empty_ranges() {
+        type Range = (usize, usize, usize, usize, bool);
+        type Case = (&'static str, Vec<Range>, Option<(usize, usize)>);
+        let cases: [Case; 4] = [
+            (
+                "preserved before rewritten",
+                vec![(0, 0, 20, 1, false), (0, 5, 10, 2, true)],
+                Some((1, 2)),
+            ),
+            (
+                "rewritten before preserved",
+                vec![(0, 0, 20, 1, true), (0, 5, 10, 2, false)],
+                Some((1, 2)),
+            ),
+            (
+                "a long preserved span still reaches a later rewrite",
+                vec![
+                    (0, 0, 200, 1, false),
+                    (0, 50, 60, 2, false),
+                    (0, 70, 80, 3, true),
+                ],
+                Some((1, 3)),
+            ),
+            (
+                "empty and adjacent spans are disjoint",
+                vec![
+                    (0, 0, 10, 1, true),
+                    (0, 10, 10, 2, false),
+                    (0, 10, 20, 3, false),
+                ],
+                None,
+            ),
+        ];
+        for (name, mut ranges, expected) in cases {
+            ranges.retain(|(_, start, end, _, _)| start < end);
+            assert_eq!(first_rewrite_overlap(&mut ranges), expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn uniform_rewriter_factors_are_constant_time_for_huge_counts() {
+        let identity = RestBindClaim {
+            components: RestBindComponents::Vec3,
+            factors: RestBindFactors::Uniform(1.0),
+            count: usize::MAX,
+            location: "/huge/identity".to_owned(),
+        };
+        let scaled = RestBindClaim {
+            components: RestBindComponents::Vec3,
+            factors: RestBindFactors::Uniform(100.0),
+            count: usize::MAX,
+            location: "/huge/scaled".to_owned(),
+        };
+        assert!(identity.is_identity());
+        assert_eq!(identity.uniform_factor(), Some(1.0));
+        assert_eq!(scaled.uniform_factor(), Some(100.0));
+        assert_eq!(scaled.first_disagreement(&identity), Some(0));
+        let mut empty_scaled = scaled.clone();
+        empty_scaled.count = 0;
+        let mut empty_identity = identity.clone();
+        empty_identity.count = 0;
+        assert!(empty_scaled.is_identity());
+        assert_eq!(empty_scaled.first_disagreement(&empty_identity), None);
     }
 }
