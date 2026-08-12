@@ -68,6 +68,14 @@ use std::collections::{BTreeMap, BTreeSet};
 /// only at the writer model boundary. There is exactly one supported
 /// instance, [`ScaleTolerancePolicy::APPENDIX_D_V6`]: a policy change is a
 /// new policy identity, not a runtime knob.
+///
+/// The superseded v5 identity is deliberately not retained as an alias:
+///
+/// ```compile_fail
+/// use animsmith_core::ScaleTolerancePolicy;
+///
+/// let _ = ScaleTolerancePolicy::APPENDIX_D_V5;
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub struct ScaleTolerancePolicy {
