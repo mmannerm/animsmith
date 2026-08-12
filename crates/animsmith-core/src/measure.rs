@@ -11,15 +11,15 @@ use crate::metrics::{
     rotation_range_deg,
 };
 use crate::model::{
-    DecodedImageColorType, Document, ImageContainerFormat, ImageSourceKind, ImageUnavailableReason,
-    MaterialResourceCoverage, MaterialTextureSlot, MeshAsset, SourceImageInspection,
-    SourceInverseBindAccessorStatus, SourceNodeLocalRest, SourceSkeletonCoverage,
-    tolerant_world_rest_matrices,
+    AffineGeometryFacts, DecodedImageColorType, Document, ImageContainerFormat, ImageSourceKind,
+    ImageUnavailableReason, MaterialResourceCoverage, MaterialTextureSlot, MeshAsset,
+    SourceImageInspection, SourceInverseBindAccessorStatus, SourceNodeLocalRest,
+    SourceSkeletonCoverage, tolerant_world_rest_matrices, values_equal_to_mean,
 };
 use crate::profile::ResolvedRoles;
 use crate::sample::PoseGrid;
 use crate::transform::analyze_duplicate_loop_endpoint;
-use glam::{Mat4, Vec3};
+use glam::{Mat3, Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -510,7 +510,8 @@ pub struct SkinBindLinearSummaryMeasurements {
     pub available_joint_count: usize,
     /// Number of slots without an available joint-bind-to-mesh matrix.
     pub unavailable_joint_count: usize,
-    /// Shared factor for [`SkinBindLinearSummaryClassification::ConsistentUniform`].
+    /// Canonical arithmetic mean factor for
+    /// [`SkinBindLinearSummaryClassification::ConsistentUniform`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub consistent_uniform_scale: Option<f64>,
 }
@@ -893,23 +894,16 @@ fn invertible_matrix(matrix: Mat4) -> Option<Mat4> {
     matrix_is_finite(inverse).then_some(inverse)
 }
 
-fn relatively_equal(left: f64, right: f64) -> bool {
-    let scale = left.abs().max(right.abs());
-    if scale == 0.0 {
-        left == right
-    } else {
-        (left - right).abs() <= LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE * scale
-    }
-}
-
 /// Derive deterministic scale, orientation, and shape facts from an affine
 /// matrix's linear 3x3 part.
 ///
 /// Singularity is tested relative to the product of the three axis lengths,
 /// so the classification does not depend on whether the transform happens to
-/// use metre, centimetre, or another uniformly scaled coordinates. Reflection
-/// takes precedence over shear and scale-shape classes; the other numeric facts
-/// remain available on reflected observations.
+/// use metre, centimetre, or another uniformly scaled coordinate system.
+/// Orthogonality remains pair-normalized rather than using the positive-uniform
+/// operation classifier's common-factor band. Public precedence is singular,
+/// reflected, sheared, unit/uniform, then non-uniform; the other numeric facts
+/// remain available on reflected and singular observations.
 pub fn measure_linear_transform(matrix: Mat4) -> LinearTransformMeasurements {
     if !matrix_is_finite(matrix) {
         return LinearTransformMeasurements {
@@ -923,63 +917,33 @@ pub fn measure_linear_transform(matrix: Mat4) -> LinearTransformMeasurements {
 
     // Matrices are stored as f32, but scale-cubed determinants can overflow or
     // underflow f32 even when every source component is finite and the matrix
-    // is well-conditioned. Derive all reported facts in f64 so the relative
-    // classification remains stable across the complete finite f32 range.
-    let matrix = matrix.to_cols_array();
-    let columns = [
-        [
-            f64::from(matrix[0]),
-            f64::from(matrix[1]),
-            f64::from(matrix[2]),
-        ],
-        [
-            f64::from(matrix[4]),
-            f64::from(matrix[5]),
-            f64::from(matrix[6]),
-        ],
-        [
-            f64::from(matrix[8]),
-            f64::from(matrix[9]),
-            f64::from(matrix[10]),
-        ],
-    ];
-    let axis_lengths = columns.map(|column| {
-        column
-            .into_iter()
-            .map(|component| component * component)
-            .sum::<f64>()
-            .sqrt()
-    });
-    let [x, y, z] = columns;
-    let determinant = x[0] * (y[1] * z[2] - y[2] * z[1]) - y[0] * (x[1] * z[2] - x[2] * z[1])
-        + z[0] * (x[1] * y[2] - x[2] * y[1]);
-    let scale_product = axis_lengths.into_iter().product::<f64>();
+    // is well-conditioned. The model-owned fact seam widens every input before
+    // deriving lengths, determinant, product, mean, and dot products.
+    let facts = match AffineGeometryFacts::from_linear(Mat3::from_mat4(matrix)) {
+        Ok(facts) => facts,
+        Err(_) => return unavailable_linear_transform(),
+    };
 
-    let singular = scale_product == 0.0
-        || determinant.abs() <= LINEAR_CLASSIFICATION_SINGULAR_TOLERANCE * scale_product;
+    let singular = facts.axis_length_product == 0.0
+        || facts.determinant.abs()
+            <= LINEAR_CLASSIFICATION_SINGULAR_TOLERANCE * facts.axis_length_product;
     let orientation = if singular {
         LinearTransformOrientation::Zero
-    } else if determinant < 0.0 {
+    } else if facts.determinant < 0.0 {
         LinearTransformOrientation::Negative
     } else {
         LinearTransformOrientation::Positive
     };
     let orthogonal = [(0usize, 1usize), (0, 2), (1, 2)]
         .into_iter()
-        .all(|(left, right)| {
-            let length_product = axis_lengths[left] * axis_lengths[right];
-            let dot = columns[left]
-                .into_iter()
-                .zip(columns[right])
-                .map(|(left, right)| left * right)
-                .sum::<f64>();
+        .zip(facts.cross_axis_dots)
+        .all(|((left, right), dot)| {
+            let length_product = facts.axis_lengths[left] * facts.axis_lengths[right];
             length_product == 0.0
                 || dot.abs() <= LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE * length_product
         });
-    let uniform = relatively_equal(axis_lengths[0], axis_lengths[1])
-        && relatively_equal(axis_lengths[0], axis_lengths[2]);
-    let uniform_scale = (orthogonal && uniform)
-        .then_some((axis_lengths[0] + axis_lengths[1] + axis_lengths[2]) / 3.0);
+    let uniform = facts.has_equal_axis_lengths(LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE);
+    let uniform_scale = (orthogonal && uniform).then_some(facts.mean_axis_length);
     let unit = uniform_scale
         .is_some_and(|scale| (scale - 1.0).abs() <= LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE);
     let classification = if singular {
@@ -998,8 +962,8 @@ pub fn measure_linear_transform(matrix: Mat4) -> LinearTransformMeasurements {
 
     LinearTransformMeasurements {
         classification,
-        axis_lengths: Some(axis_lengths),
-        determinant: Some(determinant),
+        axis_lengths: Some(facts.axis_lengths),
+        determinant: Some(facts.determinant),
         orientation: Some(orientation),
         uniform_scale,
     }
@@ -1031,17 +995,23 @@ pub(crate) fn summarize_skin_bind_linear(
                 | LinearTransformClassification::UniformScaled
         )
     }) {
-        let first = available[0]
-            .uniform_scale
-            .expect("uniform classifications carry a scale");
-        if available.iter().all(|linear| {
-            linear
-                .uniform_scale
-                .is_some_and(|scale| relatively_equal(scale, first))
-        }) {
+        let mut factors = available
+            .iter()
+            .map(|linear| {
+                linear
+                    .uniform_scale
+                    .expect("uniform classifications carry a scale")
+            })
+            .collect::<Vec<_>>();
+        // Joint order is source metadata, not geometry. Canonicalize the sum
+        // order, compare every factor symmetrically with the mean, and report
+        // that mean so neither classification nor evidence privileges joint 0.
+        factors.sort_by(f64::total_cmp);
+        let mean = factors.iter().sum::<f64>() / factors.len() as f64;
+        if values_equal_to_mean(&factors, mean, LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE) {
             (
                 SkinBindLinearSummaryClassification::ConsistentUniform,
-                Some(first),
+                Some(mean),
             )
         } else {
             (SkinBindLinearSummaryClassification::MixedUniform, None)
@@ -1823,11 +1793,11 @@ pub(crate) fn measure_frame_grid(
 mod tests {
     use super::*;
     use crate::model::{
-        AdditionalInfluenceSet, Bone, Clip, Document, Interpolation, MeshAsset, Primitive,
-        Property, SceneAsset, SceneAssets, Skeleton, SourceInverseBindAccessor,
-        SourceInverseBindAccessorStatus, SourceNodeAsset, SourceNodeLocalRest,
-        SourceSkeletonAssets, SourceSkeletonCoverage, SourceSkinAsset, SourceSkinAttachment, Track,
-        TrackValues, Transform,
+        AdditionalInfluenceSet, AffineDomainViolation, Bone, Clip, Document, Interpolation,
+        MeshAsset, PositiveUniformAffineTolerance, Primitive, Property, SceneAsset, SceneAssets,
+        Skeleton, SourceInverseBindAccessor, SourceInverseBindAccessorStatus, SourceNodeAsset,
+        SourceNodeLocalRest, SourceSkeletonAssets, SourceSkeletonCoverage, SourceSkinAsset,
+        SourceSkinAttachment, Track, TrackValues, Transform, classify_positive_uniform_affine,
     };
     use crate::profile::Role;
     use glam::{Mat4, Quat, Vec3};
@@ -1953,6 +1923,395 @@ mod tests {
     }
 
     #[test]
+    fn linear_measurement_reconciles_equal_axis_fixtures_in_every_axis_order() {
+        let permutations = |[x, y, z]: [f32; 3]| {
+            [
+                Vec3::new(x, y, z),
+                Vec3::new(x, z, y),
+                Vec3::new(y, x, z),
+                Vec3::new(y, z, x),
+                Vec3::new(z, x, y),
+                Vec3::new(z, y, x),
+            ]
+        };
+        let policy = PositiveUniformAffineTolerance {
+            equal_axis: LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE,
+            relative_orthogonality: LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE,
+            singular_determinant_relative: LINEAR_CLASSIFICATION_SINGULAR_TOLERANCE,
+        };
+
+        for diagonal in permutations([1.0, 1.0, 1.000_012]) {
+            let measured = measure_linear_transform(Mat4::from_scale(diagonal));
+            assert_eq!(
+                measured.classification,
+                LinearTransformClassification::UnitOrthonormal,
+                "issue fixture {diagonal:?}"
+            );
+            assert_eq!(
+                classify_positive_uniform_affine(Mat3::from_diagonal(diagonal), policy),
+                measured
+                    .uniform_scale
+                    .ok_or(AffineDomainViolation::NonFinite),
+                "measurement and Appendix D share the equal-axis decision"
+            );
+        }
+
+        // The old measurement compared only X-Y and X-Z, so this exact shape
+        // changed class when either extreme occupied X. Mean-relative
+        // comparison gives every column permutation the same class.
+        let high = f32::from_bits(0x3f80_004b);
+        let low = f32::from_bits(0x3f7f_ff69);
+        for diagonal in permutations([1.0, high, low]) {
+            assert_eq!(
+                measure_linear_transform(Mat4::from_scale(diagonal)).classification,
+                LinearTransformClassification::UnitOrthonormal,
+                "axis-order counterexample {diagonal:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn linear_measurement_uses_the_shared_canonical_mean_in_every_axis_order() {
+        // The raw Appendix D v6 counterexample is strongly sheared, and
+        // measurement deliberately classifies shear before equal-axis shape.
+        // This pair-tolerant companion makes the mean observable: ascending
+        // association lands on the inclusive 1e-5 axis band, while authored
+        // association rejects four of the six proper signed permutations.
+        let columns = [
+            Vec3::new(
+                f32::from_bits(0x3f7f_fd59),
+                f32::from_bits(0x3bd8_d637),
+                0.0,
+            ),
+            Vec3::new(
+                -f32::from_bits(0x3bd8_d69d),
+                f32::from_bits(0x3f7f_fdd1),
+                0.0,
+            ),
+            Vec3::Z,
+        ];
+        let permutations = [
+            Mat3::from_cols(columns[0], columns[1], columns[2]),
+            Mat3::from_cols(-columns[0], columns[2], columns[1]),
+            Mat3::from_cols(-columns[1], columns[0], columns[2]),
+            Mat3::from_cols(columns[1], columns[2], columns[0]),
+            Mat3::from_cols(columns[2], columns[0], columns[1]),
+            Mat3::from_cols(-columns[2], columns[1], columns[0]),
+        ];
+        let policy = PositiveUniformAffineTolerance {
+            equal_axis: LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE,
+            relative_orthogonality: LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE,
+            singular_determinant_relative: LINEAR_CLASSIFICATION_SINGULAR_TOLERANCE,
+        };
+        let expected_mean = f64::from_bits(0x3fef_ffeb_074a_771d);
+
+        for (index, linear) in permutations.into_iter().enumerate() {
+            let measured = measure_linear_transform(Mat4::from_mat3(linear));
+            assert_eq!(
+                measured.classification,
+                LinearTransformClassification::UnitOrthonormal,
+                "canonical mean must give proper permutation {index} one stable class"
+            );
+            assert_eq!(
+                measured.uniform_scale,
+                Some(expected_mean),
+                "measurement must publish the canonical mean for permutation {index}"
+            );
+            assert_eq!(
+                classify_positive_uniform_affine(linear, policy),
+                Ok(expected_mean),
+                "the shared classifier must consume the same mean for permutation {index}"
+            );
+        }
+    }
+
+    #[test]
+    fn linear_measurement_reports_axis_lengths_in_xyz_column_order() {
+        let measured = measure_linear_transform(Mat4::from_scale(Vec3::new(2.0, 3.0, 5.0)));
+
+        assert_eq!(measured.axis_lengths, Some([2.0, 3.0, 5.0]));
+    }
+
+    #[test]
+    fn affine_consumers_widen_each_pair_dot_before_comparison() {
+        // These equal-band axes put the widened dot just beyond both callers'
+        // fixed orthogonality thresholds, while an f32 dot rounded before
+        // widening lands just inside. The three placements make each named
+        // pair independently own that public classification boundary.
+        let x = Vec3::new(
+            f32::from_bits(0x3fd8_2778),
+            f32::from_bits(0x3fd9_ea4a),
+            0.0,
+        );
+        let y = Vec3::new(
+            f32::from_bits(0xbfd9_e92c),
+            f32::from_bits(0x3fd8_2778),
+            0.0,
+        );
+        let z = Vec3::new(0.0, 0.0, f32::from_bits(0x4019_77cc));
+        let widened_dot = x.as_dvec3().dot(y.as_dvec3()).abs();
+        let f32_first_dot = f64::from(x.dot(y).abs());
+        let x_length = x.as_dvec3().length();
+        let y_length = y.as_dvec3().length();
+        let z_length = f64::from(z.z);
+        let pair_tolerance = LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE * x_length * y_length;
+        let mean = (x_length + y_length + z_length) / 3.0;
+        let common_tolerance = LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE * mean * mean;
+        let policy = PositiveUniformAffineTolerance {
+            equal_axis: LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE,
+            relative_orthogonality: LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE,
+            singular_determinant_relative: LINEAR_CLASSIFICATION_SINGULAR_TOLERANCE,
+        };
+
+        assert!(f32_first_dot <= pair_tolerance && widened_dot > pair_tolerance);
+        assert!(f32_first_dot <= common_tolerance && widened_dot > common_tolerance);
+
+        for (pair, linear) in [
+            ("positive XY", Mat3::from_cols(x, y, z)),
+            ("negative XY", Mat3::from_cols(x, -y, -z)),
+            ("positive XZ", Mat3::from_cols(x, -z, y)),
+            ("negative XZ", Mat3::from_cols(x, z, -y)),
+            ("positive YZ", Mat3::from_cols(z, x, y)),
+            ("negative YZ", Mat3::from_cols(-z, x, -y)),
+        ] {
+            let measured = measure_linear_transform(Mat4::from_mat3(linear));
+            assert_eq!(
+                measured.classification,
+                LinearTransformClassification::Sheared,
+                "measurement must compare the widened {pair} dot"
+            );
+            assert_eq!(
+                classify_positive_uniform_affine(linear, policy),
+                Err(AffineDomainViolation::Sheared),
+                "the positive-uniform classifier must compare the same widened {pair} dot"
+            );
+        }
+    }
+
+    #[test]
+    fn linear_measurement_pins_equal_axis_boundaries_and_extreme_finite_scales() {
+        let on_long_edge = Vec3::new(99_998.5, 99_998.5, 100_000.0);
+        let measured = measure_linear_transform(Mat4::from_scale(on_long_edge));
+        assert_eq!(
+            measured.classification,
+            LinearTransformClassification::UniformScaled
+        );
+        assert_eq!(measured.uniform_scale, Some(99_999.0));
+
+        let short = 99_998.5;
+        let outside = 100_000.0 + 0.007_812_5;
+        for diagonal in [
+            Vec3::new(outside, short, short),
+            Vec3::new(short, outside, short),
+            Vec3::new(short, short, outside),
+        ] {
+            assert_eq!(
+                measure_linear_transform(Mat4::from_scale(diagonal)).classification,
+                LinearTransformClassification::NonUniform
+            );
+        }
+
+        for scale in [f32::from_bits(1), f32::MIN_POSITIVE, f32::MAX] {
+            let measured = measure_linear_transform(Mat4::from_scale(Vec3::splat(scale)));
+            assert_eq!(
+                measured.classification,
+                LinearTransformClassification::UniformScaled,
+                "complete finite f32 scale range at {scale:e}"
+            );
+            assert_eq!(measured.uniform_scale, Some(f64::from(scale)));
+            assert!(measured.determinant.is_some_and(f64::is_finite));
+        }
+    }
+
+    #[test]
+    fn linear_measurement_pins_pair_normalization_and_public_precedence() {
+        let pair_normalized_shear = Mat3::from_cols(
+            Vec3::X,
+            Vec3::new(3.0e-5, 2.0, 0.0),
+            Vec3::new(0.0, 0.0, 3.0),
+        );
+        let facts = AffineGeometryFacts::from_linear(pair_normalized_shear).unwrap();
+        assert!(
+            facts.cross_axis_dots[0].abs()
+                > LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE
+                    * facts.axis_lengths[0]
+                    * facts.axis_lengths[1]
+        );
+        assert!(
+            facts.cross_axis_dots[0].abs()
+                <= LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE
+                    * facts.mean_axis_length
+                    * facts.mean_axis_length,
+            "measurement intentionally does not use the operation classifier's common-factor band"
+        );
+        let measured = measure_linear_transform(Mat4::from_mat3(pair_normalized_shear));
+        assert_eq!(
+            measured.classification,
+            LinearTransformClassification::Sheared,
+            "public measurement must use the XY pair product, not mean squared"
+        );
+        for shear in [3.0e-5, -3.0e-5] {
+            let signed_shear = Mat3::from_cols(Vec3::X, Vec3::new(shear, 2.0, 0.0), Vec3::Z);
+            assert_eq!(
+                measure_linear_transform(Mat4::from_mat3(signed_shear)).classification,
+                LinearTransformClassification::Sheared,
+                "orthogonality is independent of the dot-product sign"
+            );
+        }
+        for (pair, linear) in [
+            (
+                "XZ",
+                Mat3::from_cols(
+                    Vec3::X,
+                    Vec3::new(0.0, 100.0, 0.0),
+                    Vec3::new(1.5e-5, 0.0, 1.0),
+                ),
+            ),
+            (
+                "negative XZ",
+                Mat3::from_cols(
+                    Vec3::X,
+                    Vec3::new(0.0, 100.0, 0.0),
+                    Vec3::new(-1.5e-5, 0.0, 1.0),
+                ),
+            ),
+            (
+                "YZ",
+                Mat3::from_cols(
+                    Vec3::new(100.0, 0.0, 0.0),
+                    Vec3::Y,
+                    Vec3::new(0.0, 1.5e-5, 1.0),
+                ),
+            ),
+            (
+                "negative YZ",
+                Mat3::from_cols(
+                    Vec3::new(100.0, 0.0, 0.0),
+                    Vec3::Y,
+                    Vec3::new(0.0, -1.5e-5, 1.0),
+                ),
+            ),
+        ] {
+            assert_eq!(
+                measure_linear_transform(Mat4::from_mat3(linear)).classification,
+                LinearTransformClassification::Sheared,
+                "{pair} dot must use that pair's own length product"
+            );
+        }
+        assert_eq!(
+            classify_positive_uniform_affine(
+                pair_normalized_shear,
+                PositiveUniformAffineTolerance {
+                    equal_axis: LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE,
+                    relative_orthogonality: LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE,
+                    singular_determinant_relative: LINEAR_CLASSIFICATION_SINGULAR_TOLERANCE,
+                },
+            ),
+            Err(AffineDomainViolation::NonUniformScale),
+            "the positive-uniform operation classifier intentionally rejects shape before shear"
+        );
+
+        let singular_reflected_shear = Mat4::from_cols(
+            (-Vec3::X).extend(0.0),
+            Vec3::new(0.5, 1.0e-8, 0.0).extend(0.0),
+            Vec3::Z.extend(0.0),
+            glam::Vec4::W,
+        );
+        let singular = measure_linear_transform(singular_reflected_shear);
+        assert_eq!(
+            singular.classification,
+            LinearTransformClassification::Singular
+        );
+        assert_eq!(
+            singular.orientation,
+            Some(LinearTransformOrientation::Zero),
+            "singularity owns the public orientation before determinant sign"
+        );
+        assert!(singular.determinant.is_some_and(|value| value < 0.0));
+
+        let reflected_shear = Mat4::from_cols(
+            (-Vec3::X).extend(0.0),
+            Vec3::new(0.5, 1.0, 0.0).extend(0.0),
+            Vec3::Z.extend(0.0),
+            glam::Vec4::W,
+        );
+        assert_eq!(
+            measure_linear_transform(reflected_shear).classification,
+            LinearTransformClassification::Reflected
+        );
+    }
+
+    #[test]
+    fn linear_measurement_uses_axis_length_product_for_singularity() {
+        let linear = Mat3::from_cols(
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 100.0, 0.0),
+            Vec3::new(100.0, 0.0, 0.001),
+        );
+        let facts = AffineGeometryFacts::from_linear(linear).unwrap();
+        let determinant = facts.determinant.abs();
+        let product_threshold =
+            LINEAR_CLASSIFICATION_SINGULAR_TOLERANCE * facts.axis_length_product;
+        let mean_cubed_threshold =
+            LINEAR_CLASSIFICATION_SINGULAR_TOLERANCE * facts.mean_axis_length.powi(3);
+
+        assert!(
+            determinant > product_threshold,
+            "the true axis-length-product threshold must not classify this matrix as singular"
+        );
+        assert!(
+            determinant <= mean_cubed_threshold,
+            "a mean-cubed threshold must disagree on this singularity boundary fixture"
+        );
+
+        let measured = measure_linear_transform(Mat4::from_mat3(linear));
+        assert_eq!(
+            measured.classification,
+            LinearTransformClassification::Sheared
+        );
+        assert_eq!(
+            measured.orientation,
+            Some(LinearTransformOrientation::Positive)
+        );
+    }
+
+    #[test]
+    fn linear_measurement_is_atomic_for_non_finite_mat4_components() {
+        for index in 0..16 {
+            let mut columns = Mat4::IDENTITY.to_cols_array();
+            columns[index] = f32::NAN;
+            assert_eq!(
+                measure_linear_transform(Mat4::from_cols_array(&columns)),
+                unavailable_linear_transform(),
+                "component {index} must make every numeric fact unavailable"
+            );
+        }
+    }
+
+    #[test]
+    fn linear_measurement_reports_the_canonical_widened_determinant() {
+        let linear = Mat3::from_cols(
+            Vec3::new(
+                f32::from_bits(0x3ff3_5574),
+                f32::from_bits(0x3f0e_fa3c),
+                0.0,
+            ),
+            Vec3::new(
+                f32::from_bits(0x3ff5_5e17),
+                f32::from_bits(0x3f10_2c31),
+                0.0,
+            ),
+            Vec3::Z,
+        );
+        let measured = measure_linear_transform(Mat4::from_mat3(linear));
+        assert_eq!(
+            measured.determinant.map(f64::to_bits),
+            Some(0x3eb4_b98f_a000_0000)
+        );
+        assert_ne!(measured.determinant, Some(f64::from(linear.determinant())));
+    }
+
+    #[test]
     fn skin_bind_summary_covers_every_stable_aggregate_class() {
         let available_joint = |joint_index, matrix| SkinJointMeasurements {
             joint_index,
@@ -2070,6 +2429,167 @@ mod tests {
             0,
             None,
         );
+    }
+
+    #[test]
+    fn skin_bind_summary_is_joint_order_invariant_and_reports_the_mean() {
+        let matrix_from_bits = |columns: [[u32; 4]; 4]| {
+            Mat4::from_cols(
+                glam::Vec4::from_array(columns[0].map(f32::from_bits)),
+                glam::Vec4::from_array(columns[1].map(f32::from_bits)),
+                glam::Vec4::from_array(columns[2].map(f32::from_bits)),
+                glam::Vec4::from_array(columns[3].map(f32::from_bits)),
+            )
+        };
+        let raw_inverse_binds = [
+            matrix_from_bits([
+                [0xbcde_4500, 0xbd7b_2918, 0x3f7f_6c80, 0],
+                [0x3f40_907c, 0xbf28_9ba8, 0xbca4_0480, 0],
+                [0x3f28_8afa, 0x3f3f_fdef, 0x3d83_0f78, 0],
+                [0, 0, 0, 0x3f80_0000],
+            ]),
+            matrix_from_bits([
+                [0x3da5_7c20, 0xbf7e_c9a2, 0xbd5d_55e0, 0],
+                [0x3e48_71f6, 0xbd18_d560, 0x3f7a_dda0, 0],
+                [0xbf7a_31a0, 0xbdb7_d42c, 0x3e44_6898, 0],
+                [0, 0, 0, 0x3f80_0000],
+            ]),
+            matrix_from_bits([
+                [0xbee1_b0e8, 0xbd50_c238, 0xbf65_6a79, 0],
+                [0xbf62_2552, 0xbe1c_0be8, 0x3ee2_e94f, 0],
+                [0xbe22_f8bc, 0x3f7c_ac66, 0x3cb5_7540, 0],
+                [0, 0, 0, 0x3f80_0000],
+            ]),
+        ];
+        let expected_factor_bits = [
+            0x3ff0_0000_110e_4203,
+            0x3ff0_0000_2d55_0083,
+            0x3fef_ffff_b3bb_b2b8,
+        ];
+        let expected_mean = f64::from_bits(0x3ff0_0000_0815_b3f6);
+        let permutations = [
+            [0usize, 1usize, 2usize],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ];
+
+        for order in permutations {
+            let doc = Document {
+                assets: SceneAssets {
+                    source_skeleton: SourceSkeletonAssets {
+                        coverage: SourceSkeletonCoverage::Complete,
+                        nodes: (0..3)
+                            .map(|source_node_index| SourceNodeAsset {
+                                source_node_index,
+                                name: Some(format!("joint_{source_node_index}")),
+                                parent_source_node_index: None,
+                                scene_root_indices: vec![0],
+                                local_rest: SourceNodeLocalRest::Matrix(Mat4::IDENTITY),
+                                bone: None,
+                            })
+                            .collect(),
+                        skins: vec![SourceSkinAsset {
+                            source_skin_index: 0,
+                            name: Some("order_invariant_uniform_bind_scale".into()),
+                            skeleton_root_source_node_index: Some(0),
+                            joint_source_node_indices: order.to_vec(),
+                            inverse_bind_accessor: SourceInverseBindAccessor {
+                                status: SourceInverseBindAccessorStatus::Available,
+                                declared_count: Some(3),
+                                matrices: order.map(|index| raw_inverse_binds[index]).to_vec(),
+                            },
+                            attachments: Vec::new(),
+                        }],
+                    },
+                    ..SceneAssets::default()
+                },
+                ..Document::default()
+            };
+
+            let measured = measure_assets(&doc);
+            let skin = &measured.skins[0];
+            assert_eq!(
+                skin.joints
+                    .iter()
+                    .map(|joint| {
+                        let linear = joint
+                            .joint_bind_to_mesh
+                            .linear
+                            .expect("finite invertible raw inverse binds are measurable");
+                        assert_eq!(
+                            linear.classification,
+                            LinearTransformClassification::UnitOrthonormal
+                        );
+                        linear
+                            .uniform_scale
+                            .expect("uniform joint binds carry their factor")
+                            .to_bits()
+                    })
+                    .collect::<Vec<_>>(),
+                order.map(|index| expected_factor_bits[index]).to_vec(),
+                "source joint order {order:?}"
+            );
+            assert_eq!(
+                skin.joint_bind_linear_summary,
+                SkinBindLinearSummaryMeasurements {
+                    classification: SkinBindLinearSummaryClassification::ConsistentUniform,
+                    joint_count: 3,
+                    available_joint_count: 3,
+                    unavailable_joint_count: 0,
+                    consistent_uniform_scale: Some(expected_mean),
+                },
+                "source joint order {order:?}"
+            );
+        }
+        assert_ne!(
+            expected_mean, 1.0,
+            "the summary reports its mean, not joint 0"
+        );
+    }
+
+    #[test]
+    fn skin_bind_summary_classification_is_mean_relative_in_every_joint_order() {
+        let factors = [
+            1.0_f32,
+            f32::from_bits(0x3f80_004b),
+            f32::from_bits(0x3f7f_ff69),
+        ];
+        let mut sorted_factors = factors.map(f64::from);
+        sorted_factors.sort_by(f64::total_cmp);
+        let expected_mean = sorted_factors.into_iter().sum::<f64>() / factors.len() as f64;
+        let permutations = [
+            [0usize, 1usize, 2usize],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ];
+
+        for order in permutations {
+            let joints = order.map(|index| SkinJointMeasurements {
+                joint_index: index,
+                node_index: index,
+                joint_bind_to_mesh: available_derived_matrix(Mat4::from_scale(Vec3::splat(
+                    factors[index],
+                ))),
+                mesh_bind_world: available_derived_matrix(Mat4::IDENTITY),
+            });
+            assert_eq!(
+                summarize_skin_bind_linear(&joints),
+                SkinBindLinearSummaryMeasurements {
+                    classification: SkinBindLinearSummaryClassification::ConsistentUniform,
+                    joint_count: 3,
+                    available_joint_count: 3,
+                    unavailable_joint_count: 0,
+                    consistent_uniform_scale: Some(expected_mean),
+                },
+                "high/low factors straddle the first-joint band in order {order:?}"
+            );
+        }
     }
 
     #[test]

@@ -227,12 +227,12 @@ enum Cmd {
     },
     /// Compare animation measurements.
     #[command(
-        long_about = "Compare the measurements of two inputs (asset files or prior single-file `measure` or `lint` JSON) and report movement beyond significance thresholds. Exits 1 on significant movement."
+        long_about = "Compare the measurements of two inputs (asset files or one-file output-v6 `measure` or `lint` JSON carrying measurements-v12) and report movement beyond significance thresholds. Exits 1 on significant movement."
     )]
     Diff {
-        /// Before input: asset file or single-file v5 `measure`/`lint` JSON report.
+        /// Before input: asset file or one-file output-v6 `measure`/`lint` JSON report.
         a: PathBuf,
-        /// After input: asset file or single-file v5 `measure`/`lint` JSON report.
+        /// After input: asset file or one-file output-v6 `measure`/`lint` JSON report.
         b: PathBuf,
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
@@ -961,8 +961,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
     }
 }
 
-/// Measurements for `diff`: an asset file (measured now) or a prior
-/// single-file `measure`/`lint` JSON report.
+/// Measurements for `diff`: an asset file (measured now) or a one-file
+/// output-v6 `measure`/`lint` JSON report carrying measurements-v12.
 fn load_measurements(
     path: &Path,
     config: &Config,
@@ -977,7 +977,7 @@ fn load_measurements(
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         let report: MeasurementReportInput = serde_json::from_str(&text)
             .map_err(|e| format!("bad JSON in {}: {e}", path.display()))?;
-        // Only the current output-v5 envelope with measurement contract v11 is
+        // Only the current output-v6 envelope with measurement contract v12 is
         // accepted. Older report shapes are intentionally not retained while
         // the project is alpha.
         let file_count = report.file_count();
@@ -1004,7 +1004,8 @@ fn load_measurements(
 
 /// Add `diff` consumer policy and operator remediation to neutral core errors.
 fn diff_report_error(error: &MeasurementReportError, file_count: Option<usize>) -> String {
-    const REMEDIATION: &str = "regenerate it with `animsmith measure --format json`";
+    const REMEDIATION: &str =
+        "regenerate it from the original asset with `animsmith measure --format json <asset>`";
     if let Some(found) = file_count.filter(|found| *found != 1)
         && error.file_index().is_some()
     {
@@ -1014,6 +1015,10 @@ fn diff_report_error(error: &MeasurementReportError, file_count: Option<usize>) 
         MeasurementReportError::MissingOutputVersion => {
             format!("is not an animsmith report envelope (no `schema_version`); {REMEDIATION}")
         }
+        MeasurementReportError::UnsupportedOutputVersion { found } => format!(
+            "has schema_version {found}; this build reads schema_version {}; {REMEDIATION}",
+            animsmith_core::OUTPUT_SCHEMA_VERSION
+        ),
         MeasurementReportError::WrongOutputIdentity => format!(
             "does not identify output contract {}; {REMEDIATION}",
             animsmith_core::OUTPUT_SCHEMA_ID
@@ -1039,7 +1044,7 @@ fn diff_report_error(error: &MeasurementReportError, file_count: Option<usize>) 
                 format!("has no versioned measurement contract; {REMEDIATION}")
             }
             MeasurementFileError::UnsupportedMeasurementVersion { found } => format!(
-                "has measurement schema_version {found}; this build reads measurement schema_version {}",
+                "has measurement schema_version {found}; this build reads measurement schema_version {}; {REMEDIATION}",
                 animsmith_core::MEASUREMENTS_SCHEMA_VERSION
             ),
             MeasurementFileError::WrongMeasurementIdentity => format!(
@@ -1159,7 +1164,7 @@ mod tests {
 
         assert_eq!(
             diff_report_error(&error, Some(1)),
-            "has invalid measurements: measurement value meshes[0].aabb.min[0] must be finite; regenerate it with `animsmith measure --format json`"
+            "has invalid measurements: measurement value meshes[0].aabb.min[0] must be finite; regenerate it from the original asset with `animsmith measure --format json <asset>`"
         );
     }
 }

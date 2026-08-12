@@ -248,6 +248,38 @@ fn rest_world_scale_classifies_local_inherited_compensated_and_affine_failures()
 }
 
 #[test]
+fn rest_world_scale_consumes_the_symmetric_uniform_measurement() {
+    let issue_scale = Vec3::new(1.0, 1.0, 1.000_012);
+    let doc = document(vec![node(
+        0,
+        "socket",
+        None,
+        SourceNodeLocalRest::Matrix(Mat4::from_scale(issue_scale)),
+    )]);
+
+    let measured = measure_assets(&doc);
+    let linear = measured.skeleton_nodes[0].rest_world_linear;
+    assert_eq!(
+        linear.classification,
+        LinearTransformClassification::UnitOrthonormal
+    );
+    assert!(
+        linear
+            .uniform_scale
+            .is_some_and(|scale| (scale - 1.000_004).abs() < 1.0e-7)
+    );
+
+    let evaluation = evaluate(&doc, &config(&["socket"], 1.000_004, 1.0e-6));
+    assert_eq!(evaluation.evaluation(), EvaluationState::Complete);
+    assert_eq!(evaluation.evaluated_scopes().len(), 1);
+    assert!(evaluation.gaps().is_empty());
+    assert!(
+        evaluation.findings().is_empty(),
+        "the v11 first-axis rule incorrectly reported this shared uniform-affine fixture"
+    );
+}
+
+#[test]
 fn rest_world_scale_reports_selector_miss_and_ambiguity_without_guessing() {
     let doc = document(vec![
         node(0, "root", None, trs(Vec3::ONE)),

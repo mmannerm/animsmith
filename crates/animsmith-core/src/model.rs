@@ -42,6 +42,85 @@ pub(crate) struct PositiveUniformAffineTolerance {
     pub(crate) singular_determinant_relative: f64,
 }
 
+/// Policy-neutral geometric facts for one affine linear part.
+///
+/// Every derived operation widens the source `f32` columns to `f64` first.
+/// Callers deliberately apply their own tolerance and precedence policies to
+/// this one fact record: strict positive-uniform operations reject a domain
+/// violation, while measurement retains finite descriptive evidence.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct AffineGeometryFacts {
+    pub(crate) axis_lengths: [f64; 3],
+    pub(crate) mean_axis_length: f64,
+    pub(crate) determinant: f64,
+    pub(crate) axis_length_product: f64,
+    /// Widened dot products in XY, XZ, YZ order.
+    pub(crate) cross_axis_dots: [f64; 3],
+}
+
+impl AffineGeometryFacts {
+    /// Derive the complete finite fact record, or reject it atomically.
+    ///
+    /// The scalar triple product's operation order is part of the established
+    /// Appendix D classifier behavior and must not be replaced with an f32
+    /// determinant or a differently associated f64 expansion.
+    pub(crate) fn from_linear(linear: Mat3) -> Result<Self, AffineDomainViolation> {
+        if !linear.is_finite() {
+            return Err(AffineDomainViolation::NonFinite);
+        }
+        let columns = [
+            linear.x_axis.as_dvec3(),
+            linear.y_axis.as_dvec3(),
+            linear.z_axis.as_dvec3(),
+        ];
+        let axis_lengths = affine_axis_lengths(linear);
+        let mean_axis_length = average_affine_axis_length(axis_lengths);
+        let determinant = columns[2].dot(columns[0].cross(columns[1]));
+        let axis_length_product = axis_lengths[0] * axis_lengths[1] * axis_lengths[2];
+        let cross_axis_dots = [
+            columns[0].dot(columns[1]),
+            columns[0].dot(columns[2]),
+            columns[1].dot(columns[2]),
+        ];
+        if axis_lengths.iter().any(|value| !value.is_finite())
+            || !mean_axis_length.is_finite()
+            || !determinant.is_finite()
+            || !axis_length_product.is_finite()
+            || cross_axis_dots.iter().any(|value| !value.is_finite())
+        {
+            return Err(AffineDomainViolation::NonFinite);
+        }
+        Ok(Self {
+            axis_lengths,
+            mean_axis_length,
+            determinant,
+            axis_length_product,
+            cross_axis_dots,
+        })
+    }
+
+    /// Whether every axis lies within a symmetric mean-relative band.
+    ///
+    /// Comparing every value to the mean removes the privileged-X behavior
+    /// of pairwise-from-X tests. The longer-operand base keeps the predicate
+    /// symmetric around the mean, and `<=` makes the boundary inclusive.
+    pub(crate) fn has_equal_axis_lengths(self, relative_tolerance: f64) -> bool {
+        values_equal_to_mean(
+            &self.axis_lengths,
+            self.mean_axis_length,
+            relative_tolerance,
+        )
+    }
+}
+
+/// Whether every finite value lies within a symmetric relative band around
+/// `mean`, using the longer operand as the relative base.
+pub(crate) fn values_equal_to_mean(values: &[f64], mean: f64, relative_tolerance: f64) -> bool {
+    values
+        .iter()
+        .all(|&value| (value - mean).abs() <= relative_tolerance * mean.abs().max(value.abs()))
+}
+
 /// Classify an affine linear part as an orientation-preserving positive
 /// uniform scale and return its common factor.
 ///
@@ -52,20 +131,8 @@ pub(crate) fn classify_positive_uniform_affine(
     linear: Mat3,
     tolerance: PositiveUniformAffineTolerance,
 ) -> Result<f64, AffineDomainViolation> {
-    if !linear.is_finite() {
-        return Err(AffineDomainViolation::NonFinite);
-    }
-    let columns = [
-        linear.x_axis.as_dvec3(),
-        linear.y_axis.as_dvec3(),
-        linear.z_axis.as_dvec3(),
-    ];
-    let lengths = affine_axis_lengths(linear);
-    if lengths.iter().any(|length| !length.is_finite()) {
-        return Err(AffineDomainViolation::NonFinite);
-    }
-    let average = average_affine_axis_length(lengths);
-    if average <= 0.0 {
+    let facts = AffineGeometryFacts::from_linear(linear)?;
+    if facts.mean_axis_length <= 0.0 {
         return Err(AffineDomainViolation::Singular);
     }
 
@@ -75,37 +142,33 @@ pub(crate) fn classify_positive_uniform_affine(
     // Expand the scalar triple product from the widened columns. Calling
     // `Mat3::determinant` here would perform the derived arithmetic in f32
     // before widening and moves the singular boundary.
-    let determinant = columns[2].dot(columns[0].cross(columns[1]));
-    if !determinant.is_finite() {
-        return Err(AffineDomainViolation::NonFinite);
-    }
-    let axis_product = lengths[0] * lengths[1] * lengths[2];
-    if determinant.abs() <= tolerance.singular_determinant_relative * axis_product {
+    if facts.determinant.abs()
+        <= tolerance.singular_determinant_relative * facts.axis_length_product
+    {
         return Err(AffineDomainViolation::Singular);
     }
     // This is a relative band with no unit floor: a floor would become an
     // absolute tolerance for sub-unit transforms. The longer-operand base
     // keeps the comparison symmetric, and `>` makes the boundary inclusive.
-    if lengths
-        .iter()
-        .any(|&length| (length - average).abs() > tolerance.equal_axis * average.max(length))
-    {
+    if !facts.has_equal_axis_lengths(tolerance.equal_axis) {
         return Err(AffineDomainViolation::NonUniformScale);
     }
 
     // Scale the dot-product band by the square of the common factor. As with
     // the axis band, equality is accepted and only a value beyond it rejects.
-    let orthogonality_tolerance = tolerance.relative_orthogonality * average * average;
-    if columns[0].dot(columns[1]).abs() > orthogonality_tolerance
-        || columns[0].dot(columns[2]).abs() > orthogonality_tolerance
-        || columns[1].dot(columns[2]).abs() > orthogonality_tolerance
+    let orthogonality_tolerance =
+        tolerance.relative_orthogonality * facts.mean_axis_length * facts.mean_axis_length;
+    if facts
+        .cross_axis_dots
+        .iter()
+        .any(|dot| dot.abs() > orthogonality_tolerance)
     {
         return Err(AffineDomainViolation::Sheared);
     }
-    if determinant < 0.0 {
+    if facts.determinant < 0.0 {
         return Err(AffineDomainViolation::Reflected);
     }
-    Ok(average)
+    Ok(facts.mean_axis_length)
 }
 
 /// The three column lengths of a linear part, widened to `f64` first.
@@ -2889,6 +2952,66 @@ mod tests {
             ),
             Ok(f64::from(large_uniform))
         );
+    }
+
+    #[test]
+    fn affine_geometry_facts_pin_every_widened_field_and_slot() {
+        let linear = Mat3::from_cols(
+            Vec3::new(1.0, 2.0, 3.0),
+            Vec3::new(4.0, 5.0, 6.0),
+            Vec3::new(7.0, 8.0, 10.0),
+        );
+
+        let facts = AffineGeometryFacts::from_linear(linear).expect("finite widened facts");
+        assert_eq!(
+            facts.axis_lengths.map(f64::to_bits),
+            [
+                0x400d_eeea_1168_3f49,
+                0x4021_8cc8_21d6_d3e3,
+                0x402d_3064_dcc8_ae67,
+            ]
+        );
+        assert_eq!(facts.mean_axis_length.to_bits(), 0x4022_12f7_d653_30b4);
+        assert_eq!(facts.determinant.to_bits(), 0xc008_0000_0000_0000);
+        assert_eq!(facts.axis_length_product.to_bits(), 0x407d_f2e3_88f2_1b01);
+        assert_eq!(
+            facts.cross_axis_dots.map(f64::to_bits),
+            [
+                0x4040_0000_0000_0000,
+                0x404a_8000_0000_0000,
+                0x4060_0000_0000_0000,
+            ],
+            "cross-axis slots are XY, XZ, YZ"
+        );
+    }
+
+    #[test]
+    fn affine_geometry_facts_widen_every_dot_product_before_multiplying() {
+        let x = Vec3::new(
+            f32::from_bits(0x3ff3_5574),
+            f32::from_bits(0x3f0e_fa3c),
+            0.0,
+        );
+        let y = Vec3::new(
+            f32::from_bits(0x3ff5_5e17),
+            f32::from_bits(0x3f10_2c31),
+            0.0,
+        );
+        let widened_dot = x.as_dvec3().dot(y.as_dvec3());
+        let f32_then_widened = f64::from(x.dot(y));
+
+        for (slot, linear) in [
+            (0, Mat3::from_cols(x, y, Vec3::Z)),
+            (1, Mat3::from_cols(x, Vec3::Z, y)),
+            (2, Mat3::from_cols(Vec3::Z, x, y)),
+        ] {
+            let facts = AffineGeometryFacts::from_linear(linear).expect("finite widened facts");
+            assert_eq!(facts.cross_axis_dots[slot], widened_dot);
+            assert_ne!(
+                facts.cross_axis_dots[slot], f32_then_widened,
+                "dot slot {slot} must multiply and add in f64, not widen an f32 result"
+            );
+        }
     }
 
     #[test]

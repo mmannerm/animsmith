@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before averaging, making classification and observed factors independent of
   authored axis order; the pre-1.0 `APPENDIX_D_V5` associated constant is
   removed ([#361](https://github.com/mmannerm/animsmith/issues/361))
+- [**breaking**] *(output)* advance measure, lint, and diff JSON to output v6
+  and publish corrected affine linear-transform observations as measurements
+  v12. The JSON shapes and vocabularies are unchanged, but the outer immutable
+  identity advances because its schema statically pins the nested measurement
+  URN; current `diff` rejects v5/v11 reports and directs operators to regenerate
+  them from the original asset ([#355](https://github.com/mmannerm/animsmith/issues/355))
 - [**breaking**] *(core)* expose typed `validate_document_shape` snapshot
   validation and collapse scale's former structural error variants into
   `ScaleError::InvalidDocumentShape` ([#293](https://github.com/mmannerm/animsmith/issues/293))

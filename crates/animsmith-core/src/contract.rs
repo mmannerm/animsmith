@@ -29,13 +29,13 @@ use crate::profile::ResolvedRoles;
 use crate::{Document, Severity};
 
 /// Current outer result-envelope version.
-pub const OUTPUT_SCHEMA_VERSION: u32 = 5;
+pub const OUTPUT_SCHEMA_VERSION: u32 = 6;
 /// Immutable identity of the current outer result envelope.
-pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:5";
+pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:6";
 /// Current nested measurement-contract version.
-pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 11;
+pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 12;
 /// Immutable identity of the current nested measurement contract.
-pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:11";
+pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:12";
 
 /// Source checkout identity for the producing animsmith build.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -50,7 +50,7 @@ impl ToolSource {
     /// Packaged or otherwise provenance-free builds use `None` for fields they
     /// cannot establish rather than claiming a clean checkout. Revisions that
     /// are not full 40-character hexadecimal Git object ids are dropped so an
-    /// envelope constructed through this API remains within output v5.
+    /// envelope constructed through this API remains within output v6.
     pub fn new(revision: Option<String>, dirty: Option<bool>) -> Self {
         let revision = revision.filter(|revision| {
             revision.len() == 40 && revision.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -1800,17 +1800,17 @@ mod measurement_report_input_tests {
     use super::*;
 
     #[test]
-    fn unsupported_nested_version_is_rejected_before_current_shape_decode() {
+    fn v11_nested_version_is_rejected_before_current_shape_decode() {
         let report: MeasurementReportInput = serde_json::from_value(serde_json::json!({
             "schema_version": OUTPUT_SCHEMA_VERSION,
             "schema": OUTPUT_SCHEMA_ID,
             "command": "measure",
             "files": [{
-                "path": "measurements-v10.json",
+                "path": "measurements-v11.json",
                 "input": { "sha256": "0".repeat(64), "bytes": 0 },
                 "measurements": {
-                    "schema_version": 10,
-                    "schema": "urn:animsmith:schema:measurements:10",
+                    "schema_version": 11,
+                    "schema": "urn:animsmith:schema:measurements:11",
                     "skeleton_nodes": [{
                         "node_index": 0,
                         "scene_root_indices": [],
@@ -1837,7 +1837,7 @@ mod measurement_report_input_tests {
             report.into_files(),
             Err(MeasurementReportError::File {
                 file_index: 0,
-                source: MeasurementFileError::UnsupportedMeasurementVersion { found: 10 },
+                source: MeasurementFileError::UnsupportedMeasurementVersion { found: 11 },
             })
         ));
     }
