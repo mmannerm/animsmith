@@ -25,7 +25,7 @@
 //! [`plan_scale`] is pure and fail-closed: it never mutates its input and
 //! returns a typed [`ScaleError`] for every unsupported affine domain,
 //! incomplete closure, incomplete capability, invalid selector, invalid
-//! factor, or affected scale-animation track. [`build_scale_candidate`]
+//! factor. [`build_scale_candidate`]
 //! builds a new [`ScaleCandidate`] document from an accepted [`ScalePlan`];
 //! because it only ever reads its `&Document` input, a failure cannot leave
 //! the caller's source document mutated — the half-built candidate is
@@ -862,14 +862,6 @@ pub enum ScaleError {
         /// The node with the mismatched factor.
         node: BoneId,
     },
-    /// A scale-animation track targets an affected node.
-    #[error("clip {clip_index} animates scale on affected node {node}")]
-    AffectedScaleAnimation {
-        /// Index into `document.clips` of the offending clip.
-        clip_index: usize,
-        /// Affected node targeted by the scale track.
-        node: BoneId,
-    },
     /// A proof residual exceeded the fixed tolerance policy.
     #[error("proof residual {observed} for {kind:?} exceeds tolerance {tolerance}")]
     ProofResidualExceeded {
@@ -1083,6 +1075,12 @@ pub struct ScaleDomainRewrites {
     pub rest_hierarchy: bool,
     /// Translation animation values and cubic tangents are rewritten.
     pub translation_animation: bool,
+    /// Scale-animation values and cubic tangents are rebased.
+    ///
+    /// This is true only for rest/bind conversion. Its topology-derived
+    /// multiplier is `s_parent / s_node`, which cancels the rest-scale
+    /// reparameterization at the selected root and is one everywhere else.
+    pub scale_animation: bool,
     /// Per-bone and per-instance inverse bind matrices are rewritten.
     pub inverse_binds: bool,
     /// Base mesh `POSITION` values are rewritten.
@@ -1302,7 +1300,7 @@ impl ScalePlan {
 ///
 /// Returns a typed [`ScaleError`] for every unsupported factor, selector,
 /// capability gap, affine domain, closure incompleteness, factor mismatch,
-/// or affected scale-animation track.
+/// or invalid document shape.
 pub fn plan_scale(request: &ScaleRequest<'_>) -> Result<ScalePlan, ScaleError> {
     if !request.capability.is_supported() {
         return Err(ScaleError::IncompleteCapability);
@@ -1599,6 +1597,7 @@ fn plan_whole_document(document: &Document, factor: f64) -> Result<ScalePlan, Sc
         domain_rewrites: ScaleDomainRewrites {
             rest_hierarchy: true,
             translation_animation: true,
+            scale_animation: false,
             inverse_binds: true,
             base_mesh_positions: true,
         },
@@ -1682,17 +1681,6 @@ fn derive_rest_bind_plan_domain(
         .copied()
         .filter(|&bone| bone != scaled_root_bone && !joint_bones.contains(&bone))
         .collect();
-
-    for (clip_index, clip) in document.clips.iter().enumerate() {
-        for track in &clip.tracks {
-            if track.property == Property::Scale && affected_nodes.contains(&track.bone) {
-                return Err(ScaleError::AffectedScaleAnimation {
-                    clip_index,
-                    node: track.bone,
-                });
-            }
-        }
-    }
 
     let affected: BTreeSet<BoneId> = affected_nodes.iter().copied().collect();
     let skinned = has_skinned_evidence(document, &affected);
@@ -1794,6 +1782,7 @@ fn plan_rest_bind(
         domain_rewrites: ScaleDomainRewrites {
             rest_hierarchy: true,
             translation_animation: true,
+            scale_animation: true,
             inverse_binds: true,
             base_mesh_positions: false,
         },
@@ -2252,9 +2241,7 @@ impl ScaleCandidate {
 ///
 /// # Errors
 ///
-/// Returns [`ScaleError::AffectedScaleAnimation`] if a scale track targets
-/// an affected node in `document` (including one added after `plan` was
-/// computed), [`ScaleError::PlanDocumentMismatch`] if `document` derives a
+/// Returns [`ScaleError::PlanDocumentMismatch`] if `document` derives a
 /// different plan inventory, [`ScaleError::BoneIndexOutOfRange`] if an
 /// affected node in `plan` is out of range for `document`,
 /// [`ScaleError::MissingInverseBind`]
@@ -2412,14 +2399,14 @@ fn build_rest_bind(document: &Document, plan: &ScalePlan) -> Result<Document, Sc
             };
         }
     }
-    if plan.domain_rewrites.translation_animation {
-        for (clip_index, clip) in candidate.clips.iter_mut().enumerate() {
+    if plan.domain_rewrites.translation_animation || plan.domain_rewrites.scale_animation {
+        for clip in &mut candidate.clips {
             for track in &mut clip.tracks {
                 if !affected.contains(&track.bone) {
                     continue;
                 }
                 match track.property {
-                    Property::Translation => {
+                    Property::Translation if plan.domain_rewrites.translation_animation => {
                         let s_parent = parent_factor(track.bone)?;
                         if let TrackValues::Vec3s(values) = &mut track.values {
                             for value in values.iter_mut() {
@@ -2427,12 +2414,24 @@ fn build_rest_bind(document: &Document, plan: &ScalePlan) -> Result<Document, Sc
                             }
                         }
                     }
-                    Property::Scale => {
-                        return Err(ScaleError::AffectedScaleAnimation {
-                            clip_index,
-                            node: track.bone,
-                        });
+                    Property::Scale if plan.domain_rewrites.scale_animation => {
+                        let multiplier = scale_animation_multiplier(
+                            document,
+                            track.bone,
+                            &affected,
+                            plan.common_factor,
+                        );
+                        if let TrackValues::Vec3s(values) = &mut track.values {
+                            for value in values {
+                                // `Vec3` is the storage boundary. Form the
+                                // product in f64 and narrow each component
+                                // exactly once, including cubic tangents.
+                                *value = (value.as_dvec3() * multiplier).as_vec3();
+                            }
+                        }
                     }
+                    Property::Translation => {}
+                    Property::Scale => {}
                     Property::Rotation => {}
                 }
             }
@@ -3718,6 +3717,69 @@ fn translation_multiplier(
     }
 }
 
+/// The local-scale multiplier which preserves animated pose scale across a
+/// rest/bind basis reparameterization.
+///
+/// The builder changes local rest scale by `s_parent / s_node`. Because an
+/// animation scale *replaces* rather than multiplies the rest scale, an
+/// animated value needs that same multiplier relative to the original value:
+/// the selected closure root is `1 / s`, every affected strict descendant is
+/// `s / s = 1`, and nodes outside the closure remain one. Whole-document
+/// conversion does not change local scale at all.
+fn scale_animation_multiplier(
+    document: &Document,
+    node: BoneId,
+    affected: &BTreeSet<BoneId>,
+    common_factor: f64,
+) -> f64 {
+    if !affected.contains(&node) {
+        return 1.0;
+    }
+    match document
+        .skeleton
+        .bones
+        .get(node)
+        .and_then(|bone| bone.parent)
+    {
+        Some(parent) if affected.contains(&parent) => 1.0,
+        _ => 1.0 / common_factor,
+    }
+}
+
+/// Independently derive the scale-track boundary root the proof expects.
+///
+/// This deliberately does not call [`scale_animation_multiplier`]: the
+/// builder and proof must derive the selected-root boundary separately, or a
+/// wrong builder helper could leave a root scale track unchanged and teach the
+/// proof to accept it.
+fn proof_scale_animation_root(
+    source: &Document,
+    plan: &ScalePlan,
+) -> Result<Option<BoneId>, ScaleError> {
+    let ScaleOperation::RestBindUniformScale {
+        source_root_node_index,
+        ..
+    } = plan.operation
+    else {
+        return Ok(None);
+    };
+    // Unlike the builder's parent/affected-boundary derivation, proof starts
+    // from the operation's authored root selector and the source projection.
+    // Agreement therefore requires two independent descriptions of which
+    // bone owns the only non-unit local scale multiplier.
+    let selected_root = source
+        .assets
+        .source_skeleton
+        .nodes
+        .iter()
+        .find(|asset| asset.source_node_index == source_root_node_index)
+        .and_then(|asset| asset.bone)
+        .ok_or(ScaleError::PlanDocumentMismatch {
+            reason: "selected_root_projection_mismatch",
+        })?;
+    Ok(Some(selected_root))
+}
+
 /// Prove every retained per-element payload directly, not merely its shape.
 ///
 /// [`validate_candidate_structure`] establishes that source and candidate
@@ -3746,6 +3808,14 @@ fn check_candidate_values(
     tol: &ScaleTolerancePolicy,
     proof: &mut ScaleProof,
 ) -> Result<(), ScaleError> {
+    // Resolve the authored selector once. Both node and track counts come
+    // from untrusted input, so rescanning the projection for every scale
+    // track would make proof quadratic in otherwise valid documents.
+    let proof_scale_animation_root = if plan.domain_rewrites.scale_animation {
+        proof_scale_animation_root(source, plan)?
+    } else {
+        None
+    };
     for (source_clip, candidate_clip) in source.clips.iter().zip(candidate.clips.iter()) {
         // Paired positionally: `validate_candidate_structure` already proved
         // each pair agrees on `(bone, property, interpolation, times)` and on
@@ -3754,12 +3824,15 @@ fn check_candidate_values(
         {
             match (&track.values, &candidate_track.values) {
                 (TrackValues::Vec3s(before), TrackValues::Vec3s(after)) => {
-                    // Scale tracks are dimensionless and never rewritten by
-                    // either operation (an affected one is refused outright
-                    // at plan time), so their multiplier is one.
                     let multiplier = match track.property {
                         Property::Translation if plan.domain_rewrites.translation_animation => {
                             translation_multiplier(source, track.bone, affected, plan)
+                        }
+                        Property::Scale
+                            if plan.domain_rewrites.scale_animation
+                                && proof_scale_animation_root == Some(track.bone) =>
+                        {
+                            1.0 / plan.common_factor
                         }
                         _ => 1.0,
                     };
@@ -5409,7 +5482,18 @@ mod tests {
 
     #[test]
     fn rest_bind_factor_one_on_unit_rig_is_a_deterministic_no_op() {
-        let doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
+        let mut doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
+        doc.clips.push(Clip {
+            name: "scale".into(),
+            duration_s: 0.0,
+            tracks: vec![Track {
+                bone: 0,
+                property: Property::Scale,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0],
+                values: TrackValues::Vec3s(vec![Vec3::new(2.0, 3.0, 4.0)]),
+            }],
+        });
         let capability = complete_capability();
         let request = ScaleRequest {
             operation: ScaleOperation::RestBindUniformScale {
@@ -5426,6 +5510,10 @@ mod tests {
             candidate.document().skeleton.bones[1].rest.translation,
             Vec3::new(0.0, 1.0, 0.0)
         );
+        let TrackValues::Vec3s(values) = &candidate.document().clips[0].tracks[0].values else {
+            panic!("expected vec3 scale track");
+        };
+        assert_eq!(values, &[Vec3::new(2.0, 3.0, 4.0)]);
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
         assert!(proof.rest_translation_residual < 1e-9);
     }
@@ -8234,20 +8322,30 @@ mod tests {
         );
     }
 
-    // --- Scale-animation refusal ----------------------------------------
+    // --- Scale-animation rebase -----------------------------------------
 
     #[test]
-    fn scale_track_on_an_affected_node_is_refused_by_planning() {
+    fn rest_bind_rebases_root_scale_animation_values_and_cubic_tangents() {
         let mut doc = compensated_document();
         doc.clips.push(Clip {
             name: "clip".into(),
             duration_s: 1.0,
             tracks: vec![Track {
-                bone: 1,
+                // The selected closure root. Scale animation replaces rest
+                // scale, so identity becomes 1 / 0.01 = 100 rather than
+                // being retained as a dimensionless value.
+                bone: 0,
                 property: Property::Scale,
-                interpolation: Interpolation::Linear,
-                times: vec![0.0],
-                values: TrackValues::Vec3s(vec![Vec3::ONE]),
+                interpolation: Interpolation::CubicSpline,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Vec3s(vec![
+                    Vec3::new(-2.0, 3.0, -4.0),    // in tangent @ 0
+                    Vec3::ONE,                     // value @ 0
+                    Vec3::new(5.0, -6.0, 7.0),     // out tangent @ 0
+                    Vec3::new(-8.0, 9.0, -10.0),   // in tangent @ 1
+                    Vec3::new(11.0, -12.0, 13.0),  // value @ 1
+                    Vec3::new(-14.0, 15.0, -16.0), // out tangent @ 1
+                ]),
             }],
         });
         let capability = complete_capability();
@@ -8260,16 +8358,216 @@ mod tests {
             document: &doc,
             capability: &capability,
         };
+        let plan = plan_scale(&request).unwrap();
+        assert!(plan.domain_rewrites().scale_animation);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let TrackValues::Vec3s(values) = &candidate.document().clips[0].tracks[0].values else {
+            panic!("expected vec3 scale track");
+        };
+        let expected = [
+            Vec3::new(-200.0, 300.0, -400.0),
+            Vec3::splat(100.0),
+            Vec3::new(500.0, -600.0, 700.0),
+            Vec3::new(-800.0, 900.0, -1000.0),
+            Vec3::new(1100.0, -1200.0, 1300.0),
+            Vec3::new(-1400.0, 1500.0, -1600.0),
+        ];
+        assert_eq!(values, &expected);
+        prove_scale(&doc, &candidate, &plan).unwrap();
+    }
+
+    #[test]
+    fn rest_bind_rebases_every_constant_identity_root_scale_key() {
+        let mut doc = compensated_document();
+        doc.clips.push(Clip {
+            name: "constant identity".into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 0,
+                property: Property::Scale,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Vec3s(vec![Vec3::ONE, Vec3::ONE]),
+            }],
+        });
+        let capability = complete_capability();
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 0.01,
+            },
+            document: &doc,
+            capability: &capability,
+        })
+        .unwrap();
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let TrackValues::Vec3s(values) = &candidate.document().clips[0].tracks[0].values else {
+            panic!("expected vec3 scale track");
+        };
+        assert_eq!(values, &[Vec3::splat(100.0), Vec3::splat(100.0)]);
+        prove_scale(&doc, &candidate, &plan).unwrap();
+    }
+
+    #[test]
+    fn rest_bind_preserves_strict_descendant_and_unaffected_scale_tracks() {
+        let mut doc = parent_boundary_document();
+        doc.clips.push(Clip {
+            name: "scale".into(),
+            duration_s: 1.0,
+            tracks: vec![
+                Track {
+                    // The selected root itself is rebased by 1 / s.
+                    bone: 1,
+                    property: Property::Scale,
+                    interpolation: Interpolation::Linear,
+                    times: vec![0.0],
+                    values: TrackValues::Vec3s(vec![Vec3::ONE]),
+                },
+                Track {
+                    // Its parent is affected, so s_parent / s_i is one.
+                    bone: 2,
+                    property: Property::Scale,
+                    interpolation: Interpolation::Linear,
+                    times: vec![0.0],
+                    values: TrackValues::Vec3s(vec![Vec3::new(2.0, 3.0, 4.0)]),
+                },
+                Track {
+                    // The boundary parent is outside the closure.
+                    bone: 0,
+                    property: Property::Scale,
+                    interpolation: Interpolation::Linear,
+                    times: vec![0.0],
+                    values: TrackValues::Vec3s(vec![Vec3::new(5.0, 6.0, 7.0)]),
+                },
+            ],
+        });
+        let capability = complete_capability();
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 1,
+                expected_factor: 0.01,
+            },
+            document: &doc,
+            capability: &capability,
+        })
+        .unwrap();
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let tracks = &candidate.document().clips[1].tracks;
+        let TrackValues::Vec3s(root) = &tracks[0].values else {
+            panic!("expected vec3 root scale track");
+        };
+        let TrackValues::Vec3s(descendant) = &tracks[1].values else {
+            panic!("expected vec3 descendant scale track");
+        };
+        let TrackValues::Vec3s(unaffected) = &tracks[2].values else {
+            panic!("expected vec3 unaffected scale track");
+        };
+        assert_eq!(root, &[Vec3::splat(100.0)]);
+        assert_eq!(descendant, &[Vec3::new(2.0, 3.0, 4.0)]);
+        assert_eq!(unaffected, &[Vec3::new(5.0, 6.0, 7.0)]);
+        prove_scale(&doc, &candidate, &plan).unwrap();
+    }
+
+    #[test]
+    fn rest_bind_scale_animation_uses_f64_reciprocal_then_one_f32_narrowing() {
+        let mut nodes = compensated_rig();
+        nodes[0].scale = Vec3::splat(0.03);
+        let child_world = Mat4::from_scale_rotation_translation(
+            nodes[0].scale,
+            nodes[1].rotation,
+            Vec3::new(0.0, 3.0, 0.0),
+        );
+        let mut doc = rig_document(&nodes, &[1], 0, child_world.inverse());
+        let original = Vec3::new(0.7, -1.3, 2.9);
+        doc.clips.push(Clip {
+            name: "scale".into(),
+            duration_s: 0.0,
+            tracks: vec![Track {
+                bone: 0,
+                property: Property::Scale,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0],
+                values: TrackValues::Vec3s(vec![original]),
+            }],
+        });
+        let capability = complete_capability();
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 0.03,
+            },
+            document: &doc,
+            capability: &capability,
+        })
+        .unwrap();
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let proof_root = proof_scale_animation_root(&doc, &plan).unwrap();
+        assert_eq!(proof_root, Some(0));
+        let proof_multiplier = if proof_root == Some(0) {
+            1.0 / plan.common_factor()
+        } else {
+            1.0
+        };
+        assert_eq!(proof_multiplier, 1.0f64 / 0.03f64);
+        assert_ne!(
+            proof_multiplier,
+            f64::from(1.0f32 / 0.03f32),
+            "the proof must not round the factor or reciprocal through f32"
+        );
+        let TrackValues::Vec3s(values) = &candidate.document().clips[0].tracks[0].values else {
+            panic!("expected vec3 scale track");
+        };
+        assert_eq!(
+            values[0],
+            (original.as_dvec3() * proof_multiplier).as_vec3()
+        );
+        prove_scale(&doc, &candidate, &plan).unwrap();
+    }
+
+    #[test]
+    fn proof_names_a_root_scale_track_left_at_its_source_value() {
+        let mut doc = compensated_document();
+        doc.clips.push(Clip {
+            name: "scale".into(),
+            duration_s: 0.0,
+            tracks: vec![Track {
+                bone: 0,
+                property: Property::Scale,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0],
+                values: TrackValues::Vec3s(vec![Vec3::ONE]),
+            }],
+        });
+        let capability = complete_capability();
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 0.01,
+            },
+            document: &doc,
+            capability: &capability,
+        })
+        .unwrap();
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        // Simulate a builder that failed to rewrite the closure-root scale
+        // track. The direct proof expectation must refuse it before sampled
+        // obligations can hide the error behind another residual kind.
+        let mut no_root_rewrite = candidate.into_document();
+        no_root_rewrite.clips[0].tracks[0].values = TrackValues::Vec3s(vec![Vec3::ONE]);
         assert!(matches!(
-            plan_scale(&request).unwrap_err(),
-            ScaleError::AffectedScaleAnimation {
-                clip_index: 0,
-                node: 1
+            prove_scale(&doc, &ScaleCandidate::from_document(no_root_rewrite), &plan).unwrap_err(),
+            ScaleError::ProofResidualExceeded {
+                kind: ProofResidualKind::TrackValue,
+                ..
             }
         ));
     }
 
-    // --- Mid-build failure and source-mutation safety -------------------
+    // --- Stale-plan inventory -------------------------------------------
 
     #[test]
     fn build_scale_candidate_rejects_a_scale_track_added_after_planning_without_mutating_the_document()
@@ -8288,15 +8586,15 @@ mod tests {
         // Plan against the clean document through the public API.
         let plan = plan_scale(&request).unwrap();
 
-        // Mutate a *different* document after planning: build_scale_candidate
-        // must independently reject the now-invalid state rather than trust
-        // the plan was computed against what it was handed.
+        // Mutate a *different* document after planning. The added affected
+        // track creates sample evidence, so the replayed plan inventory must
+        // reject it before a builder can omit that proof work.
         let mut mutated = doc.clone();
         mutated.clips.push(Clip {
             name: "clip".into(),
             duration_s: 1.0,
             tracks: vec![Track {
-                bone: 1,
+                bone: 0,
                 property: Property::Scale,
                 interpolation: Interpolation::Linear,
                 times: vec![0.0],
@@ -8307,7 +8605,12 @@ mod tests {
         let original_clip_count = mutated.clips.len();
 
         let error = build_scale_candidate(&mutated, &plan).unwrap_err();
-        assert!(matches!(error, ScaleError::AffectedScaleAnimation { .. }));
+        assert_eq!(
+            error,
+            ScaleError::PlanDocumentMismatch {
+                reason: "proof_obligations_mismatch"
+            }
+        );
         assert_eq!(
             mutated.skeleton.bones[0].rest.translation,
             original_translation
@@ -15287,6 +15590,7 @@ mod tests {
             domain_rewrites: ScaleDomainRewrites {
                 rest_hierarchy: false,
                 translation_animation: false,
+                scale_animation: false,
                 inverse_binds: false,
                 base_mesh_positions: false,
             },

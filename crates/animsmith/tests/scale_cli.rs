@@ -19,8 +19,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 const SCALE_EVIDENCE_SCHEMA: &str =
-    include_str!("../../../docs/schemas/scale-evidence-v2.schema.json");
-const SCALE_EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:scale-evidence:2";
+    include_str!("../../../docs/schemas/scale-evidence-v3.schema.json");
+const SCALE_EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:scale-evidence:3";
 
 fn animsmith() -> Command {
     Command::new(env!("CARGO_BIN_EXE_animsmith"))
@@ -242,7 +242,7 @@ fn rest_bind_publishes_a_pair_whose_evidence_names_the_appendix_d6_policy() {
 
     let record = read_json(&fixture.path("out.json"));
     assert_schema_valid(&record);
-    assert_eq!(record["schema_version"], 2);
+    assert_eq!(record["schema_version"], 3);
     assert_eq!(record["schema"], SCALE_EVIDENCE_SCHEMA_ID);
     assert_eq!(record["command"], "scale");
     assert_eq!(record["outcome"], "published");
@@ -386,6 +386,7 @@ fn rest_bind_publishes_a_pair_whose_evidence_names_the_appendix_d6_policy() {
         serde_json::json!({
             "rest_hierarchy": true,
             "translation_animation": true,
+            "scale_animation": true,
             "inverse_binds": true,
             "base_mesh_positions": false
         }),
@@ -508,6 +509,10 @@ fn whole_document_publishes_the_exact_binary32_narrowing_residuals_the_factor_co
     );
     assert_eq!(result["affected"]["source_skins"], serde_json::json!([0]));
     assert_eq!(result["domain_rewrites"]["base_mesh_positions"], true);
+    assert_eq!(
+        result["domain_rewrites"]["scale_animation"], false,
+        "whole-document conversion preserves dimensionless scale channels"
+    );
     // §D.7: this operation's factor has no measurable source counterpart, so
     // both witnesses are the declared factor and they cannot diverge.
     assert_eq!(result["factors"]["planned_observed"], 0.01);
@@ -769,7 +774,7 @@ fn a_refused_run_publishes_nothing_and_leaves_a_prior_pair_byte_identical() {
 }
 
 #[test]
-fn scale_evidence_v2_schema_pins_artifact_proof_difference_shape() {
+fn scale_evidence_v3_schema_pins_artifact_proof_difference_shape() {
     // Start with a real refusal so the fixture remains a full producer
     // record, then replace only the nullable diagnostic payload.
     let fixture = Fixture::new();
@@ -1105,6 +1110,95 @@ fn an_unsupported_source_domain_is_refused_with_its_typed_violations() {
     // so a consumer can see what else the source declared.
     assert_eq!(record["capability"]["camera_count"], 1);
     assert_eq!(record["capability"]["container"], "gltf");
+}
+
+#[test]
+fn an_animation_targeting_a_matrix_node_is_a_typed_preflight_refusal() {
+    // glTF requires an animated node to use TRS. The raw guard must enforce
+    // that source-contract rule before operation planning: the typed parser
+    // can otherwise decompose the matrix and lose the authoring distinction.
+    // This is a complete, self-contained two-key scale sampler so an invalid
+    // accessor cannot accidentally be the reason the source was refused.
+    let fixture = Fixture::new();
+    std::fs::write(
+        fixture.path("matrix-animation.gltf"),
+        br#"{
+          "asset":{"version":"2.0"},
+          "buffers":[{"uri":"data:application/octet-stream;base64,AAAAAACAPwAAgD8AAIA/AACAPwAAgD8AAIA/AACAPwA=","byteLength":32}],
+          "bufferViews":[
+            {"buffer":0,"byteOffset":0,"byteLength":8},
+            {"buffer":0,"byteOffset":8,"byteLength":24}
+          ],
+          "accessors":[
+            {"bufferView":0,"componentType":5126,"count":2,"type":"SCALAR"},
+            {"bufferView":1,"componentType":5126,"count":2,"type":"VEC3"}
+          ],
+          "nodes":[{"matrix":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]}],
+          "animations":[{
+            "samplers":[{"input":0,"output":1,"interpolation":"LINEAR"}],
+            "channels":[{"sampler":0,"target":{"node":0,"path":"scale"}}]
+          }],
+          "scenes":[{"nodes":[0]}],"scene":0
+        }"#,
+    )
+    .expect("writes a matrix-animation fixture");
+
+    let output = animsmith()
+        .current_dir(fixture.dir.path())
+        .args([
+            "scale",
+            "whole-document",
+            "matrix-animation.gltf",
+            "-o",
+            "out.gltf",
+            "--factor",
+            "0.01",
+            "--evidence",
+            "out.json",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    assert!(!fixture.path("out.gltf").exists());
+    assert!(!fixture.path("out.json").exists());
+
+    let record: Value = serde_json::from_str(&stdout(&output)).expect("stdout is one JSON record");
+    assert_schema_valid(&record);
+    assert_eq!(record["outcome"], "rejected");
+    assert_eq!(record["result"], Value::Null);
+    assert_eq!(record["rejection"]["stage"], "preflight");
+    assert_eq!(record["rejection"]["kind"], "unsupported-source-domain");
+    assert_eq!(
+        record["rejection"]["violations"],
+        serde_json::json!([{
+            "location": "/animations/0/channels/0/target",
+            "kind": "animated_matrix_node"
+        }]),
+        "the violation identifies the raw channel target, not a normalized bone"
+    );
+    assert_eq!(
+        record["capability"]["animation_channels"],
+        serde_json::json!([{
+            "animation_index": 0,
+            "channel_index": 0,
+            "target_node_index": 0,
+            "target_path": "scale",
+            "interpolation": "LINEAR",
+            "input_accessor_index": 0,
+            "output_accessor_index": 1
+        }]),
+        "the refused record retains the raw manifest identities"
+    );
+    assert_eq!(record["capability"]["nodes"][0]["node_index"], 0);
+    assert_eq!(record["capability"]["nodes"][0]["rest_kind"], "matrix");
 }
 
 #[test]

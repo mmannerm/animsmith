@@ -314,14 +314,78 @@ fn rig(interpolation: &str) -> (Value, Vec<u8>) {
     (value, buffer)
 }
 
+/// Add one scale channel backed by a new dense `f32 VEC3` accessor.
+fn add_scale_track(
+    value: &mut Value,
+    buffer: &mut [u8],
+    offset: usize,
+    input_accessor: usize,
+    node: usize,
+    interpolation: &str,
+    values: &[f32],
+) -> usize {
+    let payload = f32_bytes(values);
+    buffer[offset..offset + payload.len()].copy_from_slice(&payload);
+    let view_index = value["bufferViews"].as_array().expect("bufferViews").len();
+    value["bufferViews"]
+        .as_array_mut()
+        .expect("bufferViews")
+        .push(json!({
+            "buffer": 0,
+            "byteOffset": offset,
+            "byteLength": payload.len()
+        }));
+    let accessor_index = value["accessors"].as_array().expect("accessors").len();
+    value["accessors"]
+        .as_array_mut()
+        .expect("accessors")
+        .push(json!({
+            "bufferView": view_index,
+            "componentType": 5126,
+            "count": values.len() / 3,
+            "type": "VEC3"
+        }));
+    let sampler_index = value["animations"][0]["samplers"]
+        .as_array()
+        .expect("samplers")
+        .len();
+    value["animations"][0]["samplers"]
+        .as_array_mut()
+        .expect("samplers")
+        .push(json!({
+            "input": input_accessor,
+            "interpolation": interpolation,
+            "output": accessor_index
+        }));
+    value["animations"][0]["channels"]
+        .as_array_mut()
+        .expect("channels")
+        .push(json!({
+            "sampler": sampler_index,
+            "target": { "node": node, "path": "scale" }
+        }));
+    value["buffers"][0]["uri"] = json!(data_uri(buffer));
+    accessor_index
+}
+
+/// A rig source, its rewritten artifact at `factor`, and the plan the
+/// artifact must prove against.
+fn rebased_at(
+    name: &str,
+    value: &Value,
+    factor: f64,
+) -> (GltfScaleSource, GltfScaleArtifact, ScalePlan) {
+    let source = accepted(name, value);
+    let plan = plan_for(&source, factor);
+    let artifact = rewrite_rest_bind(&source, 0, 0, factor)
+        .unwrap_or_else(|error| panic!("{name} should rebase: {error:?}"));
+    (source, artifact, plan)
+}
+
 /// A rig source, its rewritten artifact at `s = 0.01`, and the plan the
 /// artifact must prove against.
 fn rebased(name: &str, value: &Value) -> (GltfScaleSource, GltfScaleArtifact, ScalePlan) {
-    let source = accepted(name, value);
-    let plan = plan_for(&source, 0.01);
-    let artifact = rewrite_rest_bind(&source, 0, 0, 0.01)
-        .unwrap_or_else(|error| panic!("{name} should rebase: {error:?}"));
-    (source, artifact, plan)
+    rebased_at(name, value, 0.01)
 }
 
 /// Every mesh instance's identity, in document order: where it hangs, which
@@ -354,6 +418,78 @@ fn plan_error(error: GltfScaleRewriteError) -> ScaleError {
     match error {
         GltfScaleRewriteError::Plan(error) => error,
         other => panic!("expected a shared-plan rejection, got {other:?}"),
+    }
+}
+
+#[test]
+fn common_preflight_ranges_orphan_sampler_outputs_without_self_conflicting_referenced_ones() {
+    let (value, _) = rig("LINEAR");
+    accepted("ordinary-referenced-translation.gltf", &value);
+
+    let mut same_index = value.clone();
+    same_index["animations"][0]["samplers"]
+        .as_array_mut()
+        .expect("samplers")
+        .push(json!({ "input": 4, "interpolation": "LINEAR", "output": 5 }));
+    match preflight_scale_source_bytes(
+        Path::new("translation-orphan-same-index.gltf"),
+        &bytes(&same_index),
+    ) {
+        Err(GltfScalePreflightError::Unsupported {
+            violations, count, ..
+        }) => {
+            assert_eq!(count, 1);
+            assert_eq!(
+                violations,
+                vec![animsmith_gltf::GltfCapabilityViolation {
+                    kind: GltfCapabilityViolationKind::ConflictingAccessorUse,
+                    location: "/accessors/5".to_owned(),
+                }]
+            );
+        }
+        other => panic!("expected same-index orphan refusal, got {other:?}"),
+    }
+
+    let mut distinct = value;
+    distinct["accessors"]
+        .as_array_mut()
+        .expect("accessors")
+        .push(json!({
+            "bufferView": 5,
+            "componentType": 5126,
+            "count": 2,
+            "type": "VEC3"
+        }));
+    distinct["animations"][0]["samplers"]
+        .as_array_mut()
+        .expect("samplers")
+        .push(json!({ "input": 4, "interpolation": "LINEAR", "output": 7 }));
+    match preflight_scale_source_bytes(
+        Path::new("translation-orphan-overlap.gltf"),
+        &bytes(&distinct),
+    ) {
+        Err(GltfScalePreflightError::Unsupported {
+            violations, count, ..
+        }) => {
+            assert_eq!(count, 2);
+            assert_eq!(
+                violations
+                    .into_iter()
+                    .map(|violation| (violation.kind, violation.location))
+                    .collect::<Vec<_>>(),
+                vec![
+                    (
+                        GltfCapabilityViolationKind::OverlappingAccessorRanges,
+                        "/accessors/5".to_owned()
+                    ),
+                    (
+                        GltfCapabilityViolationKind::OverlappingAccessorRanges,
+                        "/accessors/7".to_owned()
+                    )
+                ]
+            );
+        }
+        other => panic!("expected distinct-range orphan refusal, got {other:?}"),
     }
 }
 
@@ -509,7 +645,7 @@ fn the_rebased_artifact_proves_and_reports_its_evidence() {
 
 #[test]
 fn a_wide_raw_hierarchy_proves_unaffected_world_rest_by_bone_identity() {
-    let buffer = rig_buffer("LINEAR");
+    let mut buffer = rig_buffer("LINEAR");
     let mut value = rig_json("LINEAR", &buffer);
     // Raw node order is deliberately unrelated to the loader's
     // parent-before-child DFS BoneId order:
@@ -530,6 +666,15 @@ fn a_wide_raw_hierarchy_proves_unaffected_world_rest_by_bone_identity() {
     value["skins"][0]["skeleton"] = json!(1);
     value["animations"][0]["channels"][0]["target"]["node"] = json!(2);
     value["animations"][0]["channels"][1]["target"]["node"] = json!(2);
+    add_scale_track(
+        &mut value,
+        &mut buffer,
+        at::SPARE,
+        4,
+        1,
+        "LINEAR",
+        &[1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+    );
 
     let source = accepted("wide-bone-order.gltf", &value);
     let prop_bone = source
@@ -849,6 +994,10 @@ fn a_matrix_authored_hierarchy_rebases_its_linear_part_at_the_root_and_its_trans
         "matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 100.0, 0.0, 1.0],
         "children": [2]
     });
+    // Animated nodes must author TRS. Keep this case about matrix-authored
+    // *rest* transforms by targeting the TRS descendant instead.
+    value["animations"][0]["channels"][0]["target"]["node"] = json!(2);
+    value["animations"][0]["channels"][1]["target"]["node"] = json!(2);
     let (source, artifact, plan) = rebased("matrix.gltf", &value);
     let (json, _) = artifact_parts(&artifact);
 
@@ -1264,6 +1413,211 @@ fn one_inverse_bind_accessor_shared_by_two_skins_with_different_slots_is_refused
 }
 
 #[test]
+fn a_root_scale_output_shared_with_a_normal_is_refused() {
+    let (mut value, mut buffer) = rig("LINEAR");
+    let accessor = add_scale_track(
+        &mut value,
+        &mut buffer,
+        at::SPARE,
+        4,
+        0,
+        "LINEAR",
+        &[1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+    );
+    value["meshes"][0]["primitives"][0]["attributes"]["NORMAL"] = json!(accessor);
+    let (actual, element, first, first_factor, second, second_factor) =
+        conflict("root-scale-normal.gltf", &value);
+    assert_eq!(actual, accessor);
+    assert_eq!(element, 0);
+    assert_eq!(first, "/meshes/0/primitives/0/attributes/NORMAL");
+    assert_eq!(first_factor, 1.0);
+    assert_eq!(second, "/animations/0/channels/2");
+    assert_eq!(second_factor, 100.0);
+}
+
+#[test]
+fn a_descendant_scale_output_shared_with_a_normal_is_preserved_and_proves() {
+    let (mut value, buffer) = rig("LINEAR");
+    let (mut value, mut buffer) = with_three_key_times(&mut value, buffer);
+    let accessor = add_scale_track(
+        &mut value,
+        &mut buffer,
+        at::SPARE + 16,
+        7,
+        1,
+        "STEP",
+        &[1.0, 1.0, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0],
+    );
+    value["meshes"][0]["primitives"][0]["attributes"]["NORMAL"] = json!(accessor);
+    let authored = buffer[at::SPARE + 16..at::SPARE + 52].to_vec();
+    let (source, artifact, plan) = rebased("descendant-scale-normal.gltf", &value);
+    let (_, buffers) = artifact_parts(&artifact);
+    assert_eq!(&buffers[0][at::SPARE + 16..at::SPARE + 52], &authored);
+    assert!(!artifact.rewritten_accessors().contains(&accessor));
+    prove_rewritten_rest_bind(&source, &artifact, &plan).expect("compatible alias proves");
+}
+
+#[test]
+fn one_scale_output_shared_by_the_root_and_a_descendant_is_refused() {
+    // Both uses are scale channels, so the common scale-bearing/dimensionless
+    // preflight cannot distinguish them. The rest/bind ledger must still see
+    // the root's `1 / s` beside the strict descendant's factor one.
+    let (mut value, mut buffer) = rig("LINEAR");
+    let accessor = add_scale_track(
+        &mut value,
+        &mut buffer,
+        at::SPARE,
+        4,
+        0,
+        "LINEAR",
+        &[1.0, 1.0, 1.0, 2.0, 2.0, 2.0],
+    );
+    value["animations"][0]["channels"]
+        .as_array_mut()
+        .expect("channels")
+        .push(json!({ "sampler": 2, "target": { "node": 1, "path": "scale" } }));
+
+    let (actual, element, first, first_factor, second, second_factor) =
+        conflict("root-descendant-shared-scale.gltf", &value);
+    assert_eq!(actual, accessor);
+    assert_eq!(element, 0);
+    assert_eq!(first, "/animations/0/channels/2");
+    assert_eq!(first_factor, 100.0);
+    assert_eq!(second, "/animations/0/channels/3");
+    assert_eq!(second_factor, 1.0);
+}
+
+#[test]
+fn two_descendants_may_share_one_scale_output_at_factor_one() {
+    let (mut value, mut buffer) = rig("LINEAR");
+    let authored = [1.0, 2.0, 3.0, 1.5, 2.5, 3.5];
+    let accessor = add_scale_track(&mut value, &mut buffer, at::SPARE, 4, 1, "STEP", &authored);
+    value["animations"][0]["channels"]
+        .as_array_mut()
+        .expect("channels")
+        .push(json!({ "sampler": 2, "target": { "node": 2, "path": "scale" } }));
+
+    let (source, artifact, plan) = rebased("descendants-shared-scale.gltf", &value);
+    let (_, buffers) = artifact_parts(&artifact);
+    assert_eq!(
+        read_f32(&buffers[0][at::SPARE..at::SPARE + 24]),
+        authored,
+        "the shared factor-one output stays byte-identical"
+    );
+    assert!(!artifact.rewritten_accessors().contains(&accessor));
+    prove_rewritten_rest_bind(&source, &artifact, &plan).expect("compatible scale sharing proves");
+}
+
+#[test]
+fn a_root_scale_output_shared_with_an_orphan_sampler_output_is_refused() {
+    let (mut value, mut buffer) = rig("LINEAR");
+    let accessor = add_scale_track(
+        &mut value,
+        &mut buffer,
+        at::SPARE,
+        4,
+        0,
+        "LINEAR",
+        &[1.0, 1.0, 1.0, 2.0, 2.0, 2.0],
+    );
+    value["animations"][0]["samplers"]
+        .as_array_mut()
+        .expect("samplers")
+        .push(json!({ "input": 4, "interpolation": "LINEAR", "output": accessor }));
+    let (actual, _, first, first_factor, second, second_factor) =
+        conflict("root-scale-orphan-output.gltf", &value);
+    assert_eq!(actual, accessor);
+    assert_eq!(first, "/animations/0/samplers/3/output");
+    assert_eq!(first_factor, 1.0);
+    assert_eq!(second, "/animations/0/channels/2");
+    assert_eq!(second_factor, 100.0);
+}
+
+#[test]
+fn distinct_overlapping_root_scale_and_normal_accessors_are_refused_by_the_operation() {
+    let (mut value, buffer) = rig("LINEAR");
+    let (mut value, mut buffer) = with_three_key_times(&mut value, buffer);
+    let scale_accessor = add_scale_track(
+        &mut value,
+        &mut buffer,
+        at::SPARE + 16,
+        7,
+        0,
+        "STEP",
+        &[1.0, 1.0, 1.0, 1.5, 1.5, 1.5, 2.0, 2.0, 2.0],
+    );
+    let normal_accessor = value["accessors"].as_array().expect("accessors").len();
+    let shared_view = value["accessors"][scale_accessor]["bufferView"].clone();
+    value["accessors"]
+        .as_array_mut()
+        .expect("accessors")
+        .push(json!({
+            "bufferView": shared_view,
+            "componentType": 5126,
+            "count": 3,
+            "type": "VEC3"
+        }));
+    value["meshes"][0]["primitives"][0]["attributes"]["NORMAL"] = json!(normal_accessor);
+
+    let source = accepted("overlapping-root-scale-normal.gltf", &value);
+    match rewrite_rest_bind(&source, 0, 0, 0.01) {
+        Err(GltfScaleRewriteError::Capability { violations, count }) => {
+            assert_eq!(count, 2);
+            assert_eq!(
+                violations
+                    .into_iter()
+                    .map(|violation| (violation.kind, violation.location))
+                    .collect::<Vec<_>>(),
+                vec![
+                    (
+                        GltfCapabilityViolationKind::OverlappingAccessorRanges,
+                        format!("/accessors/{scale_accessor}")
+                    ),
+                    (
+                        GltfCapabilityViolationKind::OverlappingAccessorRanges,
+                        format!("/accessors/{normal_accessor}")
+                    )
+                ]
+            );
+        }
+        other => panic!("expected operation-specific overlap refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn distinct_non_overlapping_root_scale_and_normal_accessors_still_rebase() {
+    let (mut value, buffer) = rig("LINEAR");
+    let (mut value, mut buffer) = with_three_key_times(&mut value, buffer);
+    let normal_accessor = value["accessors"].as_array().expect("accessors").len();
+    value["bufferViews"]
+        .as_array_mut()
+        .expect("bufferViews")
+        .push(json!({ "buffer": 0, "byteOffset": at::SPARE + 16, "byteLength": 36 }));
+    value["accessors"]
+        .as_array_mut()
+        .expect("accessors")
+        .push(json!({
+            "bufferView": 8,
+            "componentType": 5126,
+            "count": 3,
+            "type": "VEC3"
+        }));
+    value["meshes"][0]["primitives"][0]["attributes"]["NORMAL"] = json!(normal_accessor);
+    let scale_accessor = add_scale_track(
+        &mut value,
+        &mut buffer,
+        at::SPARE + 64,
+        7,
+        0,
+        "STEP",
+        &[1.0, 1.0, 1.0, 1.5, 1.5, 1.5, 2.0, 2.0, 2.0],
+    );
+    let (source, artifact, plan) = rebased("disjoint-root-scale-normal.gltf", &value);
+    assert!(artifact.rewritten_accessors().contains(&scale_accessor));
+    prove_rewritten_rest_bind(&source, &artifact, &plan).expect("disjoint control proves");
+}
+
+#[test]
 fn two_affected_nodes_sharing_one_translation_output_still_rebase_once() {
     // The must-not-over-reject mirror of the first two refusals: two channels
     // targeting two *different* affected non-root nodes agree on `s`, so the
@@ -1375,6 +1729,58 @@ fn a_sheared_root_matrix_is_refused() {
 }
 
 #[test]
+fn an_animation_targeting_a_matrix_node_is_rejected_with_raw_identity() {
+    let (mut value, mut buffer) = rig("LINEAR");
+    value["nodes"][3] = json!({
+        "name": "holder",
+        "mesh": 0,
+        "skin": 0,
+        "matrix": [
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+            0.0, 0.0, 0.0, 1.0
+        ]
+    });
+    // Put raw node 3 first in scene traversal. It would normalize as BoneId
+    // 0, so the diagnostic can only pass by retaining the authored raw node
+    // identity rather than accidentally reporting a normalized bone index.
+    value["scenes"][0]["nodes"] = json!([3, 0]);
+    add_scale_track(
+        &mut value,
+        &mut buffer,
+        at::SPARE,
+        4,
+        3,
+        "LINEAR",
+        &[1.0, 1.0, 1.0, 2.0, 2.0, 2.0],
+    );
+    match preflight_scale_source_bytes(Path::new("animated-matrix.gltf"), &bytes(&value)) {
+        Err(GltfScalePreflightError::Unsupported {
+            manifest,
+            violations,
+            count,
+        }) => {
+            assert_eq!(count, 1);
+            assert_eq!(violations.len(), 1);
+            assert_eq!(
+                violations[0].kind,
+                GltfCapabilityViolationKind::AnimatedMatrixNode
+            );
+            assert_eq!(violations[0].location, "/animations/0/channels/2/target");
+            let channel = &manifest.animation_channels[2];
+            assert_eq!(channel.animation_index, 0);
+            assert_eq!(channel.channel_index, 2);
+            assert_eq!(channel.target_node_index, 3);
+            assert_eq!(channel.target_path, "scale");
+            assert_eq!(channel.input_accessor_index, 4);
+            assert_eq!(channel.output_accessor_index, 7);
+        }
+        other => panic!("expected animated-matrix preflight refusal, got {other:?}"),
+    }
+}
+
+#[test]
 fn a_reflected_root_scale_is_refused() {
     let (mut value, _) = rig("LINEAR");
     value["nodes"][0]["scale"] = json!([-0.01, 0.01, 0.01]);
@@ -1413,36 +1819,194 @@ fn a_joint_with_its_own_extra_scale_is_a_mixed_factor() {
 }
 
 #[test]
-fn a_scale_track_on_an_affected_node_is_refused() {
+fn a_root_linear_scale_track_absorbs_the_inverse_factor() {
     let (mut value, mut buffer) = rig("LINEAR");
-    // The scale output needs an accessor of its own: reusing the translation
-    // output would make one accessor both scale-bearing and dimensionless,
-    // which #280 refuses as `ConflictingAccessorUse` before the affected
-    // scale track under test is ever planned.
-    buffer[at::SPARE..at::SPARE + 24].copy_from_slice(&f32_bytes(&[1.0, 1.0, 1.0, 2.0, 2.0, 2.0]));
-    value["buffers"][0]["uri"] = json!(data_uri(&buffer));
-    value["bufferViews"]
-        .as_array_mut()
-        .expect("bufferViews")
-        .push(json!({ "buffer": 0, "byteOffset": at::SPARE, "byteLength": 24 }));
-    value["accessors"]
-        .as_array_mut()
-        .expect("accessors")
-        .push(json!({ "bufferView": 7, "componentType": 5126, "count": 2, "type": "VEC3" }));
-    value["animations"][0]["samplers"]
-        .as_array_mut()
-        .expect("samplers")
-        .push(json!({ "input": 4, "interpolation": "LINEAR", "output": 7 }));
-    value["animations"][0]["channels"]
-        .as_array_mut()
-        .expect("channels")
-        .push(json!({ "sampler": 2, "target": { "node": 1, "path": "scale" } }));
-    match plan_error(refused("scale-track.gltf", &value, 0.01)) {
-        ScaleError::AffectedScaleAnimation { clip_index, node } => {
-            assert_eq!(clip_index, 0);
-            assert_eq!(node, 1);
+    let accessor = add_scale_track(
+        &mut value,
+        &mut buffer,
+        at::SPARE,
+        4,
+        0,
+        "LINEAR",
+        &[1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+    );
+    let (source, artifact, plan) = rebased("root-scale-linear.gltf", &value);
+    let (_, buffers) = artifact_parts(&artifact);
+    assert_eq!(
+        read_f32(&buffers[0][at::SPARE..at::SPARE + 24]),
+        vec![100.0, 100.0, 100.0, 100.0, 100.0, 100.0]
+    );
+    assert!(artifact.rewritten_accessors().contains(&accessor));
+    prove_rewritten_rest_bind(&source, &artifact, &plan).expect("root scale proves");
+}
+
+#[test]
+fn every_root_scale_interpolation_uses_the_f64_reciprocal_then_one_f32_narrowing() {
+    let authored = [
+        0.7, -1.3, 2.9, 1.1, -2.3, 3.7, 0.2, -0.4, 0.8, -1.7, 2.1, -3.3, 4.1, -5.3, 6.7, -0.9, 1.9,
+        -2.7,
+    ];
+    let multiplier = 1.0f64 / 0.03f64;
+    assert_ne!(multiplier, f64::from(1.0f32 / 0.03f32));
+    for (interpolation, value_count) in [("LINEAR", 6), ("STEP", 6), ("CUBICSPLINE", 18)] {
+        let (mut value, mut buffer) = rig("LINEAR");
+        value["nodes"][0]["scale"] = json!([0.03, 0.03, 0.03]);
+        let authored = &authored[..value_count];
+        add_scale_track(
+            &mut value,
+            &mut buffer,
+            at::SPARE,
+            4,
+            0,
+            interpolation,
+            authored,
+        );
+        let name = format!("root-scale-f64-{interpolation}.gltf");
+        let (source, artifact, plan) = rebased_at(&name, &value, 0.03);
+        let (_, buffers) = artifact_parts(&artifact);
+        let expected = authored
+            .iter()
+            .map(|&value| (f64::from(value) * multiplier) as f32)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            read_f32(&buffers[0][at::SPARE..at::SPARE + value_count * 4]),
+            expected,
+            "{interpolation} must use the same single-narrowing arithmetic"
+        );
+        prove_rewritten_rest_bind(&source, &artifact, &plan).unwrap_or_else(|error| {
+            panic!("non-dyadic {interpolation} root scale proves: {error}")
+        });
+    }
+}
+
+#[test]
+fn a_root_step_scale_track_absorbs_the_inverse_factor() {
+    let (mut value, mut buffer) = rig("LINEAR");
+    add_scale_track(
+        &mut value,
+        &mut buffer,
+        at::SPARE,
+        4,
+        0,
+        "STEP",
+        &[1.0, 1.0, 1.0, 3.0, 3.0, 3.0],
+    );
+    let (source, artifact, plan) = rebased("root-scale-step.gltf", &value);
+    let (_, buffers) = artifact_parts(&artifact);
+    assert_eq!(
+        read_f32(&buffers[0][at::SPARE..at::SPARE + 24]),
+        vec![100.0, 100.0, 100.0, 300.0, 300.0, 300.0]
+    );
+    prove_rewritten_rest_bind(&source, &artifact, &plan).expect("root STEP scale proves");
+}
+
+#[test]
+fn a_root_cubic_scale_track_rebases_values_and_both_tangents() {
+    let (mut value, mut buffer) = rig("LINEAR");
+    let authored: Vec<f32> = (1..=18).map(|value| value as f32).collect();
+    add_scale_track(
+        &mut value,
+        &mut buffer,
+        at::SPARE,
+        4,
+        0,
+        "CUBICSPLINE",
+        &authored,
+    );
+    let (source, artifact, plan) = rebased("root-scale-cubic.gltf", &value);
+    let (_, buffers) = artifact_parts(&artifact);
+    let expected: Vec<f32> = (1..=18).map(|value| value as f32 * 100.0).collect();
+    assert_eq!(
+        read_f32(&buffers[0][at::SPARE..at::SPARE + 72]),
+        expected,
+        "all six VEC3 elements, including both tangents per key, take 1/s"
+    );
+    prove_rewritten_rest_bind(&source, &artifact, &plan).expect("root cubic scale proves");
+}
+
+#[test]
+fn descendant_and_outside_scale_tracks_are_byte_exact() {
+    for (location, node) in [("descendant", 1usize), ("outside", 3)] {
+        for (interpolation, authored) in [
+            (
+                "LINEAR",
+                (1..=6).map(|value| value as f32 * 1.25).collect::<Vec<_>>(),
+            ),
+            (
+                "STEP",
+                (1..=6).map(|value| value as f32 * 1.5).collect::<Vec<_>>(),
+            ),
+            (
+                "CUBICSPLINE",
+                (1..=18)
+                    .map(|value| value as f32 * 1.75)
+                    .collect::<Vec<_>>(),
+            ),
+        ] {
+            let (mut value, mut buffer) = rig("LINEAR");
+            add_scale_track(
+                &mut value,
+                &mut buffer,
+                at::SPARE,
+                4,
+                node,
+                interpolation,
+                &authored,
+            );
+            let name = format!("{location}-scale-{interpolation}.gltf");
+            let (source, artifact, plan) = rebased(&name, &value);
+            let (_, buffers) = artifact_parts(&artifact);
+            let byte_len = authored.len() * 4;
+            assert_eq!(
+                &buffers[0][at::SPARE..at::SPARE + byte_len],
+                &f32_bytes(&authored),
+                "{location} {interpolation} scale has multiplier one"
+            );
+            prove_rewritten_rest_bind(&source, &artifact, &plan).expect("identity scale proves");
         }
-        other => panic!("expected AffectedScaleAnimation, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_unit_root_scale_track_is_byte_exact() {
+    for (interpolation, authored) in [
+        (
+            "LINEAR",
+            (1..=6).map(|value| value as f32 * 1.25).collect::<Vec<_>>(),
+        ),
+        (
+            "STEP",
+            (1..=6).map(|value| value as f32 * 1.5).collect::<Vec<_>>(),
+        ),
+        (
+            "CUBICSPLINE",
+            (1..=18)
+                .map(|value| value as f32 * 1.75)
+                .collect::<Vec<_>>(),
+        ),
+    ] {
+        let (mut value, mut buffer) = unit_rig();
+        add_scale_track(
+            &mut value,
+            &mut buffer,
+            at::SPARE,
+            4,
+            0,
+            interpolation,
+            &authored,
+        );
+        let name = format!("unit-root-scale-{interpolation}.gltf");
+        let source = accepted(&name, &value);
+        let plan = plan_for(&source, 1.0);
+        let artifact = rewrite_rest_bind(&source, 0, 0, 1.0).expect("unit scale rewrites");
+        let (_, buffers) = artifact_parts(&artifact);
+        let byte_len = authored.len() * 4;
+        assert_eq!(
+            &buffers[0][at::SPARE..at::SPARE + byte_len],
+            &f32_bytes(&authored),
+            "root {interpolation} scale is byte-identical at factor one"
+        );
+        prove_rewritten_rest_bind(&source, &artifact, &plan).expect("unit scale proves");
     }
 }
 

@@ -8,12 +8,13 @@
 //! layer runs it on the reloaded artifact and then proves what that model
 //! cannot see:
 //!
-//! 1. every raw source payload the normalized document does not model;
+//! 1. every claimed raw payload referenced by a mesh, skin, or animation
+//!    sampler, plus the raw JSON complement;
 //! 2. byte preservation of every buffer byte outside the rewritten accessor
 //!    ranges — which is also what proves mesh `POSITION`, normals, `TANGENT`,
-//!    `COLOR_n`, secondary influences, key times, and every rotation and
-//!    scale sampler come through byte-for-byte, since #280 has already proved
-//!    those ranges disjoint from every scale-bearing accessor;
+//!    `COLOR_n`, secondary influences, key times, every rotation sampler, and
+//!    every scale sampler away from the closure root come through
+//!    byte-for-byte;
 //! 3. array identities, plus honest reporting: the accessor indices and JSON
 //!    pointers the artifact says it rewrote are exactly the ones this
 //!    module's own scan derives;
@@ -21,7 +22,10 @@
 //!    for the multiplier §D.2 requires of *that* element's domain, and that
 //!    every element inside a rewritten accessor whose multiplier is one is
 //!    bit-identical;
-//! 5. determinism, container integrity, and `min`/`max` consistency.
+//! 5. every independently derived rewritten accessor range is disjoint from
+//!    every other raw accessor use and direct-image payload, even where #280
+//!    classified the accessor use as dimensionless;
+//! 6. determinism, container integrity, and `min`/`max` consistency.
 //!
 //! # Why the domain is derived twice, by two different routes
 //!
@@ -51,7 +55,7 @@ use super::proof::{
 };
 use super::rest_bind::{RestBindComponents, RestBindDomain, rewrite_rest_bind};
 use super::{GltfScaleArtifact, GltfScaleRewriteError};
-use crate::capability::{GltfScaleSource, declared, raw_json_bytes};
+use crate::capability::{GltfScaleSource, declared, raw_json_bytes, resolved_accessor_range};
 use crate::{LoadError, load_bytes, resolve_buffers};
 use animsmith_core::scale::{
     ScaleCandidate, ScaleOperation, ScalePlan, ScaleTolerancePolicy, prove_scale,
@@ -65,12 +69,71 @@ use std::path::Path;
 /// its entries must have received.
 type NodeMemberExpectation<'a> = (&'static str, usize, &'a dyn Fn(usize) -> f64);
 
+/// Scale-output multiplier derived in the proof from the plan-resolved raw
+/// domain, without calling the rewriter's factor helper.
+fn expected_scale_output_factor(domain: &RestBindDomain, node: usize) -> f64 {
+    if node == domain.root && domain.closure.contains(&node) {
+        1.0 / domain.factor
+    } else {
+        1.0
+    }
+}
+
 /// One accessor's independently derived rebase expectation.
 #[derive(Debug, Clone, PartialEq)]
 struct ExpectedRebase {
     components: RestBindComponents,
-    /// One multiplier per accessor element.
-    element_factors: Vec<f64>,
+    factors: ExpectedFactors,
+    count: usize,
+}
+
+/// Compact independently derived per-element multipliers.
+#[derive(Debug, Clone, PartialEq)]
+enum ExpectedFactors {
+    /// Every declared element receives one factor, stored in constant space.
+    Uniform(f64),
+    /// One factor per inverse-bind slot; this is the only non-uniform domain.
+    PerElement(Vec<f64>),
+}
+
+impl ExpectedFactors {
+    fn at(&self, element: usize) -> f64 {
+        match self {
+            Self::Uniform(factor) => *factor,
+            Self::PerElement(factors) => factors.get(element).copied().unwrap_or(1.0),
+        }
+    }
+
+    fn is_identity(&self, count: usize) -> bool {
+        if count == 0 {
+            return true;
+        }
+        match self {
+            Self::Uniform(factor) => *factor == 1.0,
+            Self::PerElement(factors) => factors.iter().take(count).all(|&factor| factor == 1.0),
+        }
+    }
+
+    fn first_disagreement(&self, other: &Self, count: usize) -> Option<usize> {
+        match (self, other) {
+            (Self::Uniform(left), Self::Uniform(right)) => {
+                (count != 0 && left != right).then_some(0)
+            }
+            (Self::Uniform(left), Self::PerElement(right)) => right
+                .iter()
+                .take(count)
+                .position(|right| left != right)
+                .or_else(|| (count > right.len() && *left != 1.0).then_some(right.len())),
+            (Self::PerElement(left), Self::Uniform(right)) => left
+                .iter()
+                .take(count)
+                .position(|left| left != right)
+                .or_else(|| (count > left.len() && *right != 1.0).then_some(left.len())),
+            (Self::PerElement(left), Self::PerElement(right)) => (0..count
+                .min(left.len().max(right.len())))
+                .find(|&element| self.at(element) != other.at(element)),
+        }
+    }
 }
 
 impl ExpectedRebase {
@@ -78,18 +141,23 @@ impl ExpectedRebase {
         if !self.components.covers(component) {
             return 1.0;
         }
-        self.element_factors.get(element).copied().unwrap_or(1.0)
+        self.factors.at(element)
     }
 
     fn is_identity(&self) -> bool {
-        self.element_factors.iter().all(|&factor| factor == 1.0)
+        self.factors.is_identity(self.count)
     }
 
-    fn required_accessor_type(&self) -> Option<&'static str> {
-        match self.components {
-            RestBindComponents::All => None,
-            RestBindComponents::Mat4Rows => Some("MAT4"),
+    fn required_accessor_type(&self) -> &'static str {
+        self.components.required_accessor_type()
+    }
+
+    fn first_disagreement(&self, other: &Self) -> Option<usize> {
+        if self.components != other.components {
+            return (!self.is_identity() || !other.is_identity()).then_some(0);
         }
+        self.factors
+            .first_disagreement(&other.factors, self.count.max(other.count))
     }
 }
 
@@ -178,6 +246,7 @@ pub fn prove_rewritten_rest_bind(
     )?;
 
     let expected = expected_rebases(source_root, &domain, source_skin_index)?;
+    check_expected_accessor_disjointness(source_root, source.resolved_buffers(), &expected)?;
     let rewritten: BTreeMap<usize, ExpectedRebase> = expected
         .into_iter()
         .filter(|(_, rebase)| !rebase.is_identity())
@@ -193,7 +262,7 @@ pub fn prove_rewritten_rest_bind(
 
     let mut spans = Vec::with_capacity(rewritten.len());
     for (&accessor_index, rebase) in &rewritten {
-        let required = rebase.required_accessor_type();
+        let required = Some(rebase.required_accessor_type());
         let span = bytes::accessor_span_typed(
             source_root,
             source.resolved_buffers(),
@@ -364,6 +433,45 @@ fn expected_rebases(
                 location: format!("/accessors/{accessor_index}"),
             })
     };
+    let components = |accessor_index: usize| -> Result<RestBindComponents, GltfScaleRewriteError> {
+        let kind = array(root.get("accessors"))
+            .get(accessor_index)
+            .and_then(|accessor| accessor.get("type"))
+            .and_then(Value::as_str);
+        match kind {
+            Some("SCALAR") => Ok(RestBindComponents::Scalar),
+            Some("VEC2") => Ok(RestBindComponents::Vec2),
+            Some("VEC3") => Ok(RestBindComponents::Vec3),
+            Some("VEC4") => Ok(RestBindComponents::Vec4),
+            Some("MAT2") => Ok(RestBindComponents::Mat2),
+            Some("MAT3") => Ok(RestBindComponents::Mat3),
+            Some("MAT4") => Ok(RestBindComponents::Mat4),
+            _ => Err(GltfScaleRewriteError::UnrewritableAccessor {
+                accessor_index,
+                location: format!("/accessors/{accessor_index}"),
+            }),
+        }
+    };
+    let expectation = |accessor_index: usize,
+                       required: RestBindComponents,
+                       factor: f64|
+     -> Result<ExpectedRebase, GltfScaleRewriteError> {
+        if components(accessor_index)?.required_accessor_type() != required.required_accessor_type()
+        {
+            return Err(GltfScaleRewriteError::UnrewritableAccessor {
+                accessor_index,
+                location: format!("/accessors/{accessor_index}"),
+            });
+        }
+        Ok(ExpectedRebase {
+            components: required,
+            factors: ExpectedFactors::Uniform(factor),
+            count: count(accessor_index)?,
+        })
+    };
+    let identity = |accessor_index: usize| -> Result<ExpectedRebase, GltfScaleRewriteError> {
+        expectation(accessor_index, components(accessor_index)?, 1.0)
+    };
     // The selected skin must exist: the plan resolved it, and a proof that
     // silently skipped it would never derive the inverse-bind expectation
     // that is this operation's whole point.
@@ -376,42 +484,44 @@ fn expected_rebases(
     }
 
     let mut out: BTreeMap<usize, ExpectedRebase> = BTreeMap::new();
-    let mut record = |accessor_index: usize, rebase: ExpectedRebase| {
-        // First claimant wins — and this scan visits meshes, then skins, then
-        // animations, which is exactly `collect_rest_bind_claims`'s order. So
-        // on a *shared* accessor this is not a second opinion: it necessarily
-        // keeps the claimant the rewriter kept, and would agree with a wrong
-        // choice as readily as with a right one.
-        //
-        // What this scan is independent about is *which* accessors are
-        // rebased and by *what* factors: both are re-derived here from the
-        // raw JSON and §D.2's table rather than read back from the rewriter.
-        // Conflict resolution is not in that set. It rests entirely on
-        // `ConflictingRestBindFactor` having fired first — `rewrite_rest_bind`
-        // refuses every source whose claimants disagree, so no artifact
-        // reaches this proof needing an accessor arbitrated at all. That is a
-        // dependency on the rewriter, stated here rather than assumed, and
-        // the four refusal fixtures in `tests/scale_rest_bind.rs` are what
-        // hold it up.
-        out.entry(accessor_index).or_insert(rebase);
-    };
+    let mut record =
+        |accessor_index: usize, rebase: ExpectedRebase| -> Result<(), GltfScaleRewriteError> {
+            if let Some(existing) = out.get(&accessor_index) {
+                if existing.first_disagreement(&rebase).is_some() {
+                    return Err(failed(
+                        "one accessor has one independently derived rest/bind factor",
+                        accessor_index as f64,
+                        0.0,
+                    ));
+                }
+            } else {
+                out.insert(accessor_index, rebase);
+            }
+            Ok(())
+        };
 
     for mesh in array(root.get("meshes")) {
         for primitive in array(mesh.get("primitives")) {
-            let Some(accessor_index) = index(
-                primitive
-                    .get("attributes")
-                    .and_then(|attributes| attributes.get("POSITION")),
-            ) else {
-                continue;
-            };
-            record(
-                accessor_index,
-                ExpectedRebase {
-                    components: RestBindComponents::All,
-                    element_factors: vec![1.0; count(accessor_index)?],
-                },
-            );
+            if let Some(attributes) = primitive.get("attributes").and_then(Value::as_object) {
+                for value in attributes.values() {
+                    if let Some(accessor_index) = index(Some(value)) {
+                        record(accessor_index, identity(accessor_index)?)?;
+                    }
+                }
+            }
+            if let Some(accessor_index) = index(primitive.get("indices")) {
+                record(accessor_index, identity(accessor_index)?)?;
+            }
+            for target in array(primitive.get("targets")) {
+                let Some(target) = target.as_object() else {
+                    continue;
+                };
+                for value in target.values() {
+                    if let Some(accessor_index) = index(Some(value)) {
+                        record(accessor_index, identity(accessor_index)?)?;
+                    }
+                }
+            }
         }
     }
     for skin in array(root.get("skins")) {
@@ -432,25 +542,45 @@ fn expected_rebases(
                 count(accessor_index)? as f64,
             ));
         }
+        if components(accessor_index)?.required_accessor_type() != "MAT4" {
+            return Err(GltfScaleRewriteError::UnrewritableAccessor {
+                accessor_index,
+                location: format!("/accessors/{accessor_index}"),
+            });
+        }
         record(
             accessor_index,
             ExpectedRebase {
                 components: RestBindComponents::Mat4Rows,
-                element_factors: factors,
+                count: factors.len(),
+                factors: ExpectedFactors::PerElement(factors),
             },
-        );
+        )?;
     }
     for animation in array(root.get("animations")) {
         let samplers = array(animation.get("samplers"));
+        let referenced: BTreeSet<usize> = array(animation.get("channels"))
+            .iter()
+            .filter_map(|channel| index(channel.get("sampler")))
+            .collect();
+        for (sampler_index, sampler) in samplers.iter().enumerate() {
+            if let Some(accessor_index) = index(sampler.get("input")) {
+                record(accessor_index, identity(accessor_index)?)?;
+            }
+            if !referenced.contains(&sampler_index)
+                && let Some(accessor_index) = index(sampler.get("output"))
+            {
+                record(accessor_index, identity(accessor_index)?)?;
+            }
+        }
         for channel in array(animation.get("channels")) {
             let target = channel.get("target");
-            if target
+            let Some(path) = target
                 .and_then(|target| target.get("path"))
                 .and_then(Value::as_str)
-                != Some("translation")
-            {
+            else {
                 continue;
-            }
+            };
             let Some(node) = index(target.and_then(|target| target.get("node"))) else {
                 continue;
             };
@@ -460,16 +590,150 @@ fn expected_rebases(
             else {
                 continue;
             };
-            record(
-                accessor_index,
-                ExpectedRebase {
-                    components: RestBindComponents::All,
-                    element_factors: vec![domain.parent_factor(node); count(accessor_index)?],
-                },
-            );
+            let rebase = match path {
+                "translation" => expectation(
+                    accessor_index,
+                    RestBindComponents::Vec3,
+                    domain.parent_factor(node),
+                )?,
+                "scale" => expectation(
+                    accessor_index,
+                    RestBindComponents::Vec3,
+                    expected_scale_output_factor(domain, node),
+                )?,
+                "rotation" | "weights" => identity(accessor_index)?,
+                _ => continue,
+            };
+            record(accessor_index, rebase)?;
         }
     }
     Ok(out)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum ExpectedRangeOwner {
+    Accessor(usize),
+    Image(usize),
+}
+
+/// Independently require every accessor this proof expects to rewrite to be
+/// byte-disjoint from every other raw accessor use, including image payloads.
+fn check_expected_accessor_disjointness(
+    root: &Map<String, Value>,
+    buffers: &[Vec<u8>],
+    expected: &BTreeMap<usize, ExpectedRebase>,
+) -> Result<(), GltfScaleRewriteError> {
+    let mut ranges = Vec::with_capacity(expected.len());
+    for (&accessor_index, rebase) in expected {
+        let (buffer, start, end) = resolved_accessor_range(root, buffers, accessor_index)
+            .ok_or_else(|| GltfScaleRewriteError::UnrewritableAccessor {
+                accessor_index,
+                location: format!("/accessors/{accessor_index}"),
+            })?;
+        if start < end {
+            ranges.push((
+                buffer,
+                start,
+                end,
+                ExpectedRangeOwner::Accessor(accessor_index),
+                !rebase.is_identity(),
+            ));
+        }
+    }
+
+    // Derive direct-image ranges from raw JSON here rather than asking the
+    // rewriter's image guard which spans it protected. Images are the one
+    // glTF core consumer of a bufferView that is not represented by an
+    // accessor claim, so omitting them would let a broken writer overwrite
+    // image bytes and then exclude those bytes from the preservation walk as
+    // an expected rewritten accessor span.
+    let views = root
+        .get("bufferViews")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let images = root
+        .get("images")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    for (image_index, image) in images.iter().enumerate() {
+        let Some(view_index) = image
+            .get("bufferView")
+            .and_then(Value::as_u64)
+            .and_then(|index| usize::try_from(index).ok())
+        else {
+            continue;
+        };
+        let range = || -> Option<(usize, usize, usize)> {
+            let view = views.get(view_index)?.as_object()?;
+            let buffer = view
+                .get("buffer")?
+                .as_u64()
+                .and_then(|index| usize::try_from(index).ok())?;
+            let start: usize = view
+                .get("byteOffset")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                .try_into()
+                .ok()?;
+            let length: usize = view.get("byteLength")?.as_u64()?.try_into().ok()?;
+            let end = start.checked_add(length)?;
+            (end <= buffers.get(buffer)?.len()).then_some((buffer, start, end))
+        }();
+        let Some((buffer, start, end)) = range else {
+            return Err(failed(
+                "every claimed image payload resolves to a bounded raw buffer range",
+                image_index as f64,
+                0.0,
+            ));
+        };
+        if start < end {
+            ranges.push((
+                buffer,
+                start,
+                end,
+                ExpectedRangeOwner::Image(image_index),
+                false,
+            ));
+        }
+    }
+    ranges.sort_unstable();
+    let mut active_buffer = None;
+    let mut prior_any: Option<(usize, ExpectedRangeOwner)> = None;
+    let mut prior_rewritten: Option<(usize, ExpectedRangeOwner)> = None;
+    for (buffer, start, end, owner, rewritten) in ranges {
+        if active_buffer != Some(buffer) {
+            active_buffer = Some(buffer);
+            prior_any = None;
+            prior_rewritten = None;
+        }
+        let prior = if rewritten {
+            prior_any
+        } else {
+            prior_rewritten
+        };
+        if let Some((prior_end, _)) = prior
+            && start < prior_end
+        {
+            return Err(failed(
+                "every rewritten accessor range is disjoint from every other raw accessor use",
+                match owner {
+                    ExpectedRangeOwner::Accessor(index) | ExpectedRangeOwner::Image(index) => {
+                        index as f64
+                    }
+                },
+                0.0,
+            ));
+        }
+        if prior_any.is_none_or(|(prior_end, _)| end > prior_end) {
+            prior_any = Some((end, owner));
+        }
+        if rewritten && prior_rewritten.is_none_or(|(prior_end, _)| end > prior_end) {
+            prior_rewritten = Some((end, owner));
+        }
+    }
+    Ok(())
 }
 
 // --- Claims -----------------------------------------------------------------
@@ -988,6 +1252,49 @@ mod tests {
     }
 
     #[test]
+    fn the_proof_derives_scale_output_factors_directly_in_f64() {
+        let domain = RestBindDomain {
+            root: 2,
+            closure: BTreeSet::from([2, 3]),
+            factor: 0.03,
+        };
+        let root = expected_scale_output_factor(&domain, 2);
+        assert_eq!(root, 1.0f64 / 0.03f64);
+        assert_ne!(
+            root,
+            f64::from(1.0f32 / 0.03f32),
+            "the proof must not round the factor or reciprocal through f32"
+        );
+        assert_eq!(expected_scale_output_factor(&domain, 3), 1.0);
+        assert_eq!(expected_scale_output_factor(&domain, 9), 1.0);
+    }
+
+    #[test]
+    fn uniform_expectations_are_constant_space_even_for_huge_accessor_counts() {
+        let identity = ExpectedRebase {
+            components: RestBindComponents::Vec3,
+            factors: ExpectedFactors::Uniform(1.0),
+            count: usize::MAX,
+        };
+        let scaled = ExpectedRebase {
+            components: RestBindComponents::Vec3,
+            factors: ExpectedFactors::Uniform(1.0 / 0.03),
+            count: usize::MAX,
+        };
+        assert!(identity.is_identity());
+        assert_eq!(identity.multiplier(usize::MAX - 1, 2), 1.0);
+        assert!(!scaled.is_identity());
+        assert_eq!(scaled.first_disagreement(&identity), Some(0));
+        assert!(matches!(identity.factors, ExpectedFactors::Uniform(1.0)));
+        let mut empty_scaled = scaled.clone();
+        empty_scaled.count = 0;
+        let mut empty_identity = identity.clone();
+        empty_identity.count = 0;
+        assert!(empty_scaled.is_identity());
+        assert_eq!(empty_scaled.first_disagreement(&empty_identity), None);
+    }
+
+    #[test]
     fn a_skin_whose_joints_outnumber_its_inverse_binds_fails_the_proofs_own_scan() {
         // The proof's mirror of `collect_rest_bind_claims`'s joint-count
         // guard. The rewriter refuses such a source first, so no artifact
@@ -1025,6 +1332,155 @@ mod tests {
             }
             other => panic!("expected a skin-selector refusal, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_root_scale_output_aliased_with_either_orphan_sampler_accessor_fails_the_proofs_scan() {
+        let (source, _, plan) = fixture();
+        let domain =
+            domain_from_skeleton(source.document(), &plan, 0, FACTOR).expect("ordinary document");
+        for (name, orphan) in [
+            (
+                "input",
+                json!({ "input": 5, "interpolation": "LINEAR", "output": 4 }),
+            ),
+            (
+                "output",
+                json!({ "input": 4, "interpolation": "LINEAR", "output": 5 }),
+            ),
+        ] {
+            let mut value = source.raw_json().clone();
+            value["animations"][0]["channels"][0]["target"] = json!({ "node": 0, "path": "scale" });
+            value["animations"][0]["samplers"]
+                .as_array_mut()
+                .expect("samplers")
+                .push(orphan);
+            let root = object(&value).expect("source root");
+            match expected_rebases(root, &domain, 0) {
+                Err(GltfScaleRewriteError::ArtifactProofFailed { claim, .. }) => assert_eq!(
+                    claim, "one accessor has one independently derived rest/bind factor",
+                    "orphan {name}"
+                ),
+                other => panic!(
+                    "orphan {name}: expected the proof's independent alias refusal, got {other:?}"
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn distinct_overlapping_root_scale_and_normal_accessors_fail_the_proofs_own_scan() {
+        let (source, _, plan) = fixture();
+        let domain =
+            domain_from_skeleton(source.document(), &plan, 0, FACTOR).expect("ordinary document");
+        let mut value = source.raw_json().clone();
+        value["animations"][0]["channels"][0]["target"] = json!({ "node": 0, "path": "scale" });
+        value["accessors"]
+            .as_array_mut()
+            .expect("accessors")
+            .push(json!({
+                "bufferView": 5,
+                "componentType": 5126,
+                "count": 2,
+                "type": "VEC3"
+            }));
+        value["meshes"][0]["primitives"][0]["attributes"]["NORMAL"] = json!(6);
+        let root = object(&value).expect("source root");
+        let expected = expected_rebases(root, &domain, 0).expect("roles do not share an index");
+        match check_expected_accessor_disjointness(root, source.resolved_buffers(), &expected) {
+            Err(GltfScaleRewriteError::ArtifactProofFailed { claim, .. }) => assert_eq!(
+                claim,
+                "every rewritten accessor range is disjoint from every other raw accessor use"
+            ),
+            other => panic!("expected the proof's independent range refusal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn root_scale_overlapping_an_image_fails_the_full_artifact_proofs_own_scan() {
+        // Build the candidate while no image exists, then add the same image
+        // declaration to source and artifact. This deliberately bypasses the
+        // writer's image-overlap guard while leaving the artifact otherwise
+        // exactly as that writer produced it. Common preflight accepts this
+        // source because a scale output is dimensionless for whole-document
+        // conversion; the rest/bind proof must independently know that this
+        // operation rewrites the root output.
+        let mut buffer = fixture_buffer();
+        buffer[at::TRANSLATION..at::TRANSLATION + 24].copy_from_slice(&f32_bytes(&[1.0; 6]));
+        let mut value = fixture_json(&buffer, true);
+        value["animations"][0]["channels"][0]["target"] = json!({ "node": 0, "path": "scale" });
+
+        let clean_bytes = serde_json::to_vec(&value).expect("clean fixture serializes");
+        let clean_source =
+            preflight_scale_source_bytes(Path::new("root-scale-clean.gltf"), &clean_bytes)
+                .expect("root scale without an image preflights");
+        let mut artifact = rewrite_rest_bind(&clean_source, 0, 0, FACTOR)
+            .expect("the clean source reaches the writer");
+
+        value["images"] = json!([{ "bufferView": 5, "mimeType": "image/png" }]);
+        let aliased_bytes = serde_json::to_vec(&value).expect("aliased fixture serializes");
+        let source =
+            preflight_scale_source_bytes(Path::new("root-scale-image-alias.gltf"), &aliased_bytes)
+                .expect("common preflight does not classify scale output as length-bearing");
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: FACTOR,
+            },
+            document: source.document(),
+            capability: &super::super::capability_facts(source.manifest()),
+        })
+        .expect("plan");
+
+        let mut artifact_json = artifact_value(&artifact);
+        artifact_json["images"] = value["images"].clone();
+        put_artifact_value(&mut artifact, &artifact_json);
+
+        expect_claim(
+            &source,
+            &artifact,
+            &plan,
+            "every rewritten accessor range is disjoint from every other raw accessor use",
+        );
+    }
+
+    #[test]
+    fn a_direct_image_adjacent_to_a_rewritten_span_proves_through_the_public_flow() {
+        // The translation output occupies [180, 204); the image starts at
+        // 204 exactly. Both the writer guard and the proof-local scan use
+        // half-open ranges, so rejecting every direct image or treating
+        // adjacency as overlap breaks this full public-flow control.
+        let buffer = fixture_buffer();
+        let mut value = fixture_json(&buffer, true);
+        value["bufferViews"]
+            .as_array_mut()
+            .expect("bufferViews")
+            .push(json!({
+                "buffer": 0,
+                "byteOffset": at::SPARE,
+                "byteLength": at::LENGTH - at::SPARE
+            }));
+        value["images"] = json!([{ "bufferView": 6, "mimeType": "image/png" }]);
+
+        let bytes = serde_json::to_vec(&value).expect("adjacent-image fixture serializes");
+        let source = preflight_scale_source_bytes(Path::new("adjacent-image.gltf"), &bytes)
+            .expect("an adjacent direct image preflights");
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: FACTOR,
+            },
+            document: source.document(),
+            capability: &super::super::capability_facts(source.manifest()),
+        })
+        .expect("plan");
+        let artifact = rewrite_rest_bind(&source, 0, 0, FACTOR)
+            .expect("an adjacent image does not block the rewrite");
+
+        prove_rewritten_rest_bind(&source, &artifact, &plan)
+            .expect("an adjacent image proves through the public flow");
     }
 
     #[test]
@@ -1170,6 +1626,54 @@ mod tests {
             &plan,
             "an unrebased element of a rewritten accessor is bit-identical",
         );
+    }
+
+    #[test]
+    fn the_raw_payload_checker_independently_refuses_an_unrebased_root_scale() {
+        // Call the raw checker directly so the normalized core proof cannot
+        // own this refusal. The expectation uses the proof's own root-factor
+        // derivation and the stored payload deliberately remains at source
+        // identity instead of the required `1 / s`.
+        let (source, artifact, plan) = fixture();
+        let mut proof = prove_rewritten_rest_bind(&source, &artifact, &plan).expect("control");
+        let domain = RestBindDomain {
+            root: 0,
+            closure: BTreeSet::from([0, 1, 2]),
+            factor: FACTOR,
+        };
+        let factor = expected_scale_output_factor(&domain, 0);
+        let source_buffers = vec![f32_bytes(&[1.0, 1.0, 1.0])];
+        let artifact_buffers = source_buffers.clone();
+        let span = AccessorSpan {
+            accessor_index: 7,
+            buffer: 0,
+            start: 0,
+            end: 12,
+            components: 3,
+        };
+        let expected = BTreeMap::from([(
+            7,
+            ExpectedRebase {
+                components: RestBindComponents::Vec3,
+                factors: ExpectedFactors::Uniform(factor),
+                count: 1,
+            },
+        )]);
+
+        match check_rewritten_payloads(
+            &source_buffers,
+            &artifact_buffers,
+            &[span],
+            &expected,
+            &plan.tolerance_policy(),
+            &mut proof,
+        ) {
+            Err(GltfScaleRewriteError::ArtifactProofFailed { claim, .. }) => assert_eq!(
+                claim,
+                "every rebased element is the single narrowing of before * m"
+            ),
+            other => panic!("expected raw root-scale refusal, got {other:?}"),
+        }
     }
 
     #[test]

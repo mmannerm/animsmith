@@ -91,8 +91,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-const SCALE_EVIDENCE_SCHEMA_VERSION: u32 = 2;
-pub(crate) const SCALE_EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:scale-evidence:2";
+const SCALE_EVIDENCE_SCHEMA_VERSION: u32 = 3;
+pub(crate) const SCALE_EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:scale-evidence:3";
 
 // --- Request ---------------------------------------------------------------
 
@@ -364,6 +364,7 @@ struct AffectedRecord {
 struct DomainRewritesRecord {
     rest_hierarchy: bool,
     translation_animation: bool,
+    scale_animation: bool,
     inverse_binds: bool,
     base_mesh_positions: bool,
 }
@@ -373,6 +374,7 @@ impl From<ScaleDomainRewrites> for DomainRewritesRecord {
         Self {
             rest_hierarchy: rewrites.rest_hierarchy,
             translation_animation: rewrites.translation_animation,
+            scale_animation: rewrites.scale_animation,
             inverse_binds: rewrites.inverse_binds,
             base_mesh_positions: rewrites.base_mesh_positions,
         }
@@ -530,7 +532,7 @@ impl From<GltfRawJsonDifferenceKind> for ArtifactProofDifferenceKindRecord {
     }
 }
 
-/// The immutable versioned scale-evidence contract, `scale-evidence:2`.
+/// The immutable versioned scale-evidence contract, `scale-evidence:3`.
 ///
 /// One schema serves both outcomes, discriminated by `outcome`: a published
 /// run carries `result` and a `null` `rejection`, a refused run the reverse.
@@ -607,7 +609,6 @@ fn scale_error_kind(error: &ScaleError) -> &'static str {
         ScaleError::InvalidAffineDomain { .. } => "invalid-affine-domain",
         ScaleError::FactorMismatch { .. } => "factor-mismatch",
         ScaleError::MixedFactor { .. } => "mixed-factor",
-        ScaleError::AffectedScaleAnimation { .. } => "affected-scale-animation",
         ScaleError::ProofResidualExceeded { .. } => "proof-residual-exceeded",
         ScaleError::ProofSamplingBudgetExceeded { .. } => "proof-sampling-budget-exceeded",
         ScaleError::MissingProofEvidence { .. } => "missing-proof-evidence",
