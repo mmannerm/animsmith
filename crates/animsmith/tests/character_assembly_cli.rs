@@ -9,9 +9,9 @@ use std::process::{Command, Output, Stdio};
 
 const RIGGED_TRIANGLE_FBX: &str = include_str!("../../animsmith-fbx/testdata/rigged_triangle.fbx");
 const RECIPE_SCHEMA: &str =
-    include_str!("../../../docs/schemas/character-assembly-recipe-v2.schema.json");
+    include_str!("../../../docs/schemas/character-assembly-recipe-v3.schema.json");
 const EVIDENCE_SCHEMA: &str =
-    include_str!("../../../docs/schemas/character-assembly-evidence-v2.schema.json");
+    include_str!("../../../docs/schemas/character-assembly-evidence-v3.schema.json");
 
 fn write_inputs(dir: &Path) {
     std::fs::create_dir(dir.join("inputs")).expect("creates input root");
@@ -21,8 +21,8 @@ fn write_inputs(dir: &Path) {
 
 fn success_recipe() -> &'static str {
     concat!(
-        "schema_version = 2\n",
-        "schema = \"urn:animsmith:schema:character-assembly-recipe:2\"\n",
+        "schema_version = 3\n",
+        "schema = \"urn:animsmith:schema:character-assembly-recipe:3\"\n",
         "input_root = \"inputs\"\n",
         "base_input = \"base.fbx\"\n",
         "mesh_instances = [\"tri\"]\n",
@@ -122,10 +122,10 @@ fn assembles_schema_valid_byte_stable_character_and_evidence() {
         std::fs::read(dir.path().join("character.assembly.json")).expect("reads evidence");
     let evidence: Value = serde_json::from_slice(&first_evidence).expect("evidence JSON");
     assert_schema_valid(&evidence, EVIDENCE_SCHEMA);
-    assert_eq!(evidence["schema_version"], 2);
+    assert_eq!(evidence["schema_version"], 3);
     assert_eq!(
         evidence["schema"],
-        "urn:animsmith:schema:character-assembly-evidence:2"
+        "urn:animsmith:schema:character-assembly-evidence:3"
     );
     assert_eq!(
         evidence["recipe"]["effective"]["prune_constant_tracks"], false,
@@ -165,6 +165,10 @@ fn assembles_schema_valid_byte_stable_character_and_evidence() {
     assert_eq!(evidence["clips"][0]["dropped_closing_endpoint"], true);
     assert_eq!(evidence["clips"][0]["hold_frames"], 3);
     assert_eq!(evidence["transforms"]["removed_mesh_instances"], 0);
+    assert_eq!(
+        evidence["transforms"]["removed_nodes"],
+        serde_json::json!([])
+    );
     assert_eq!(evidence["transforms"]["canonicalized_skin"], true);
     assert_eq!(evidence["transforms"]["ground_and_center"], true);
     assert_eq!(
@@ -285,7 +289,7 @@ fn json_format_prints_the_published_evidence_bytes_verbatim() {
 
     let record: Value = serde_json::from_slice(&output.stdout).expect("stdout is one JSON record");
     assert_eq!(
-        record["schema"], "urn:animsmith:schema:character-assembly-evidence:2",
+        record["schema"], "urn:animsmith:schema:character-assembly-evidence:3",
         "no second schema and no envelope around the record"
     );
     assert_schema_valid(&record, EVIDENCE_SCHEMA);
@@ -407,21 +411,31 @@ fn rejects_unsupported_malformed_escaping_and_missing_input_selections() {
     let cases = [
         (
             success_recipe()
-                .replacen("schema_version = 2", "schema_version = 1", 1)
+                .replacen("schema_version = 3", "schema_version = 1", 1)
                 .replacen(
-                    "urn:animsmith:schema:character-assembly-recipe:2",
+                    "urn:animsmith:schema:character-assembly-recipe:3",
                     "urn:animsmith:schema:character-assembly-recipe:1",
                     1,
                 ),
             "unsupported assembly recipe identity",
         ),
         (
-            success_recipe().replacen("schema_version = 2", "schema_version = 3", 1),
+            success_recipe().replacen("schema_version = 3", "schema_version = 2", 1),
+            "unsupported assembly recipe identity",
+        ),
+        (
+            success_recipe()
+                .replacen("schema_version = 3", "schema_version = 2", 1)
+                .replacen(
+                    "urn:animsmith:schema:character-assembly-recipe:3",
+                    "urn:animsmith:schema:character-assembly-recipe:2",
+                    1,
+                ),
             "unsupported assembly recipe identity",
         ),
         (
             success_recipe().replacen(
-                "urn:animsmith:schema:character-assembly-recipe:2",
+                "urn:animsmith:schema:character-assembly-recipe:3",
                 "urn:animsmith:schema:character-assembly-recipe:1",
                 1,
             ),
@@ -429,7 +443,7 @@ fn rejects_unsupported_malformed_escaping_and_missing_input_selections() {
         ),
         (
             success_recipe().replacen(
-                "urn:animsmith:schema:character-assembly-recipe:2",
+                "urn:animsmith:schema:character-assembly-recipe:3",
                 "urn:animsmith:schema:character-assembly-recipe:99",
                 1,
             ),
@@ -464,12 +478,40 @@ fn rejects_unsupported_malformed_escaping_and_missing_input_selections() {
             "has no take \"missing\"",
         ),
         (
+            success_recipe().replacen(
+                "fps = 30.0",
+                "fps = 30.0\nremove_nodes = [\"missing-node\"]",
+                1,
+            ),
+            "selected node name \"missing-node\" is missing",
+        ),
+        (
+            success_recipe().replacen(
+                "fps = 30.0",
+                "fps = 30.0\nremove_nodes = [\"animsmith-canonical-root\"]",
+                1,
+            ),
+            "selected node closures contain the entire assembled skeleton",
+        ),
+        (
             success_recipe().replacen("frame_window = [1, 31]", "frame_window = [31, 1]", 1),
             "frame_window must be one-based and increasing",
         ),
         (
             success_recipe().replacen("fps = 30.0", "fps = 30.0\nunknown_field = true", 1),
             "unknown field `unknown_field`",
+        ),
+        (
+            success_recipe().replacen(
+                "fps = 30.0",
+                "fps = 30.0\nremove_nodes = [\"prop\", \"prop\"]",
+                1,
+            ),
+            "remove_nodes contains duplicate entry \"prop\"",
+        ),
+        (
+            success_recipe().replacen("fps = 30.0", "fps = 30.0\nremove_nodes = [\"\"]", 1),
+            "remove_nodes entries must not be empty",
         ),
     ];
     for (ordinal, (recipe, expected)) in cases.into_iter().enumerate() {
@@ -491,26 +533,39 @@ fn rejects_unsupported_malformed_escaping_and_missing_input_selections() {
     let validator = jsonschema::validator_for(&schema).expect("recipe schema compiles");
     for invalid in [
         success_recipe()
-            .replacen("schema_version = 2", "schema_version = 1", 1)
+            .replacen("schema_version = 3", "schema_version = 1", 1)
             .replacen(
-                "urn:animsmith:schema:character-assembly-recipe:2",
+                "urn:animsmith:schema:character-assembly-recipe:3",
                 "urn:animsmith:schema:character-assembly-recipe:1",
                 1,
             ),
-        success_recipe().replacen("schema_version = 2", "schema_version = 3", 1),
+        success_recipe().replacen("schema_version = 3", "schema_version = 2", 1),
+        success_recipe()
+            .replacen("schema_version = 3", "schema_version = 2", 1)
+            .replacen(
+                "urn:animsmith:schema:character-assembly-recipe:3",
+                "urn:animsmith:schema:character-assembly-recipe:2",
+                1,
+            ),
         success_recipe().replacen(
-            "urn:animsmith:schema:character-assembly-recipe:2",
+            "urn:animsmith:schema:character-assembly-recipe:3",
             "urn:animsmith:schema:character-assembly-recipe:1",
             1,
         ),
         success_recipe().replacen(
-            "urn:animsmith:schema:character-assembly-recipe:2",
+            "urn:animsmith:schema:character-assembly-recipe:3",
             "urn:animsmith:schema:character-assembly-recipe:99",
             1,
         ),
         success_recipe().replacen("fps = 30.0", "fps = 30.0\nrest_bind_scale = true", 1),
         format!("{}\n[rest_bind_scale]\nfactor = 0.01\n", success_recipe()),
         success_recipe().replacen("fps = 30.0", "fps = 30.0\nunknown_field = true", 1),
+        success_recipe().replacen(
+            "fps = 30.0",
+            "fps = 30.0\nremove_nodes = [\"prop\", \"prop\"]",
+            1,
+        ),
+        success_recipe().replacen("fps = 30.0", "fps = 30.0\nremove_nodes = [\"\"]", 1),
         success_recipe().replacen(
             "frame_window = [1, 31]",
             "frame_window = [1, 31]\ntime_window = [0.0, 1.0]",
@@ -737,8 +792,8 @@ fn invalid_recipe_leaves_no_partial_outputs() {
     let dir = tempfile::tempdir().expect("creates temp directory");
     write_inputs(dir.path());
     let recipe = concat!(
-        "schema_version = 2\n",
-        "schema = \"urn:animsmith:schema:character-assembly-recipe:2\"\n",
+        "schema_version = 3\n",
+        "schema = \"urn:animsmith:schema:character-assembly-recipe:3\"\n",
         "input_root = \"inputs\"\n",
         "base_input = \"base.fbx\"\n",
         "\n",
@@ -1116,8 +1171,8 @@ fn assembles_synthetic_skinned_recipe_with_complete_public_provenance() {
     )
     .expect("writes role config");
     let recipe = concat!(
-        "schema_version = 2\n",
-        "schema = \"urn:animsmith:schema:character-assembly-recipe:2\"\n",
+        "schema_version = 3\n",
+        "schema = \"urn:animsmith:schema:character-assembly-recipe:3\"\n",
         "input_root = \"inputs\"\n",
         "base_input = \"base.glb\"\n",
         "mesh_instances = [\"body_mesh_skinned\"]\n",
@@ -1540,8 +1595,8 @@ fn assembly_constant_track_pruning_is_opt_in_protected_and_deterministic() {
             dir.join("recipe.toml"),
             format!(
                 concat!(
-                    "schema_version = 2\n",
-                    "schema = \"urn:animsmith:schema:character-assembly-recipe:2\"\n",
+                    "schema_version = 3\n",
+                    "schema = \"urn:animsmith:schema:character-assembly-recipe:3\"\n",
                     "input_root = \"inputs\"\n",
                     "base_input = \"base.glb\"\n",
                     "prune_constant_tracks = {prune_constant_tracks}\n",
@@ -1590,7 +1645,7 @@ fn assembly_constant_track_pruning_is_opt_in_protected_and_deterministic() {
     let disabled_record: Value =
         serde_json::from_slice(&disabled_evidence).expect("parses disabled evidence");
     assert_schema_valid(&disabled_record, EVIDENCE_SCHEMA);
-    assert_eq!(disabled_record["schema_version"], 2);
+    assert_eq!(disabled_record["schema_version"], 3);
     assert_eq!(
         disabled_record["recipe"]["effective"]["prune_constant_tracks"],
         false
@@ -1743,6 +1798,300 @@ fn assembly_constant_track_pruning_is_opt_in_protected_and_deterministic() {
 }
 
 #[test]
+fn assembly_removes_an_unreferenced_subtree_after_pruning_and_completion() {
+    use animsmith_core::glam::Vec3;
+    use animsmith_core::model::{
+        Bone, Clip, Document, Interpolation, MeshAsset, MeshInstance, Primitive, Property,
+        SceneAssets, Skeleton, Track, TrackValues, Transform,
+    };
+
+    fn translation(bone: usize, values: [Vec3; 2]) -> Track {
+        Track {
+            bone,
+            property: Property::Translation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Vec3s(values.into()),
+        }
+    }
+
+    let dir = tempfile::tempdir().expect("creates subtree fixture directory");
+    let inputs = dir.path().join("inputs");
+    std::fs::create_dir(&inputs).expect("creates input root");
+    let skeleton = Skeleton {
+        bones: vec![
+            Bone {
+                name: "rig_root".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            },
+            Bone {
+                name: "kept_joint".into(),
+                parent: Some(0),
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            },
+            Bone {
+                name: "vendor_prop".into(),
+                parent: Some(0),
+                rest: Transform {
+                    translation: Vec3::X,
+                    ..Transform::IDENTITY
+                },
+                inverse_bind: None,
+            },
+            Bone {
+                name: "vendor_prop_tip".into(),
+                parent: Some(2),
+                rest: Transform {
+                    translation: Vec3::Y,
+                    ..Transform::IDENTITY
+                },
+                inverse_bind: None,
+            },
+            Bone {
+                name: "second_root".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            },
+            Bone {
+                name: "moving".into(),
+                parent: Some(4),
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            },
+            Bone {
+                name: "removable_root".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            },
+        ],
+    };
+    let base = Document {
+        skeleton: skeleton.clone(),
+        assets: SceneAssets {
+            meshes: vec![
+                MeshAsset {
+                    name: "body".into(),
+                    source_mesh_index: 0,
+                    primitives: vec![Primitive {
+                        indices: vec![0, 1, 2],
+                        positions: vec![Vec3::ZERO, Vec3::X, Vec3::Y],
+                        joints: vec![[0, 0, 0, 0]; 3],
+                        weights: vec![[1.0, 0.0, 0.0, 0.0]; 3],
+                        ..Primitive::default()
+                    }],
+                },
+                MeshAsset {
+                    name: "preexisting_orphan".into(),
+                    source_mesh_index: 1,
+                    primitives: vec![Primitive {
+                        indices: vec![0, 1, 2],
+                        positions: vec![Vec3::ZERO, Vec3::X, Vec3::Y],
+                        ..Primitive::default()
+                    }],
+                },
+            ],
+            instances: vec![MeshInstance {
+                source_node_index: 17,
+                node: 1,
+                mesh: 0,
+                skin_joints: vec![0],
+                skin_ibms: vec![animsmith_core::glam::Mat4::IDENTITY],
+            }],
+            ..SceneAssets::default()
+        },
+        ..Document::default()
+    };
+    animsmith_gltf::write::write(&base, &inputs.join("base.glb")).expect("writes base GLB");
+    let source = Document {
+        skeleton,
+        clips: vec![Clip {
+            name: "take".into(),
+            duration_s: 1.0,
+            tracks: vec![
+                translation(5, [Vec3::ZERO, Vec3::Z]),
+                Track {
+                    bone: 5,
+                    property: Property::Scale,
+                    interpolation: Interpolation::Step,
+                    times: vec![0.0, 1.0],
+                    values: TrackValues::Vec3s(vec![Vec3::ONE, Vec3::ONE]),
+                },
+                translation(2, [Vec3::X, Vec3::X]),
+                translation(3, [Vec3::Y, Vec3::Y]),
+            ],
+        }],
+        ..Document::default()
+    };
+    animsmith_gltf::write::write(&source, &inputs.join("motion.glb")).expect("writes motion GLB");
+    let successful_recipe = concat!(
+        "schema_version = 3\n",
+        "schema = \"urn:animsmith:schema:character-assembly-recipe:3\"\n",
+        "input_root = \"inputs\"\n",
+        "base_input = \"base.glb\"\n",
+        "complete_tracks = true\n",
+        "prune_constant_tracks = true\n",
+        "remove_nodes = [\"vendor_prop\", \"removable_root\"]\n\n",
+        "[[clips]]\n",
+        "name = \"take\"\n",
+        "input = \"motion.glb\"\n",
+        "take = \"take\"\n",
+    );
+    let parsed_recipe: toml::Value = toml::from_str(successful_recipe).expect("recipe TOML");
+    assert_schema_valid(
+        &serde_json::to_value(parsed_recipe).expect("recipe JSON value"),
+        RECIPE_SCHEMA,
+    );
+    std::fs::write(dir.path().join("recipe.toml"), successful_recipe).expect("writes recipe");
+
+    let first = run(dir.path());
+    assert!(
+        first.status.success(),
+        "assembly failed: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let artifact = std::fs::read(dir.path().join("character.glb")).expect("reads artifact");
+    let evidence_bytes =
+        std::fs::read(dir.path().join("character.assembly.json")).expect("reads evidence");
+    let evidence: Value = serde_json::from_slice(&evidence_bytes).expect("parses evidence");
+    assert_schema_valid(&evidence, EVIDENCE_SCHEMA);
+    assert_eq!(evidence["clips"][0]["completed_tracks"], 4);
+    assert_eq!(
+        evidence["transforms"]["removed_nodes"],
+        serde_json::json!([
+            {
+                "name": "vendor_prop",
+                "original_node_index": 2,
+                "original_parent_node_index": 0,
+                "selected": true,
+            },
+            {
+                "name": "vendor_prop_tip",
+                "original_node_index": 3,
+                "original_parent_node_index": 2,
+                "selected": false,
+            },
+            {
+                "name": "removable_root",
+                "original_node_index": 6,
+                "original_parent_node_index": null,
+                "selected": true,
+            },
+        ])
+    );
+    assert!(
+        evidence["clips"][0]["bone_remaps"]
+            .as_array()
+            .is_some_and(|remaps| remaps
+                .iter()
+                .any(|remap| { remap["base_bone"] == "moving" && remap["base_index"] == 5 })),
+        "legacy remap indices name the pre-removal skeleton"
+    );
+    assert!(
+        evidence["clips"][0]["pruned_constant_tracks"]
+            .as_array()
+            .is_some_and(|tracks| tracks
+                .iter()
+                .any(|track| { track["bone"] == "vendor_prop" && track["bone_index"] == 2 })),
+        "a pruned track can name a node later removed from the artifact"
+    );
+    assert!(
+        evidence["clips"][0]["pruned_constant_tracks"]
+            .as_array()
+            .is_some_and(|tracks| tracks
+                .iter()
+                .any(|track| { track["bone"] == "moving" && track["bone_index"] == 5 })),
+        "a pruned surviving track keeps its pre-removal BoneId"
+    );
+    let document = animsmith_gltf::load(&dir.path().join("character.glb"))
+        .expect("projected artifact reloads");
+    // The glTF round-trip appends mesh-holder nodes after the normalized
+    // authored hierarchy. Pin that hierarchy here and check every loaded node
+    // for the two selected closures below.
+    assert_eq!(
+        document
+            .skeleton
+            .bones
+            .iter()
+            .take(4)
+            .map(|bone| (bone.name.as_str(), bone.parent))
+            .collect::<Vec<_>>(),
+        [
+            ("rig_root", None),
+            ("kept_joint", Some(0)),
+            ("second_root", None),
+            ("moving", Some(2)),
+        ]
+    );
+    assert!(
+        document
+            .skeleton
+            .bones
+            .iter()
+            .all(|bone| !bone.name.starts_with("vendor_prop") && bone.name != "removable_root")
+    );
+    assert!(
+        document.clips[0]
+            .tracks
+            .iter()
+            .any(|track| track.bone == 3 && track.property == Property::Translation)
+    );
+    assert_eq!(document.assets.instances[0].skin_joints, [0]);
+    assert_eq!(
+        document.assets.meshes.len(),
+        2,
+        "node removal does not run GC"
+    );
+
+    let second = run(dir.path());
+    assert!(second.status.success());
+    assert_eq!(
+        std::fs::read(dir.path().join("character.glb")).unwrap(),
+        artifact
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("character.assembly.json")).unwrap(),
+        evidence_bytes
+    );
+
+    for (selector, expected) in [
+        (
+            "missing_prop",
+            "selected node name \"missing_prop\" is missing",
+        ),
+        ("moving", "still targets selected node"),
+        ("rig_root", "skin joint 0 references selected node 0"),
+    ] {
+        std::fs::write(
+            dir.path().join("recipe.toml"),
+            successful_recipe.replacen("vendor_prop", selector, 1),
+        )
+        .expect("writes refusing recipe");
+        let refusal = run(dir.path());
+        assert_eq!(refusal.status.code(), Some(2), "selector {selector}");
+        assert!(
+            String::from_utf8_lossy(&refusal.stderr).contains(expected),
+            "selector {selector}: expected {expected:?}, got {}",
+            String::from_utf8_lossy(&refusal.stderr)
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("character.glb")).unwrap(),
+            artifact,
+            "a refused selector cannot replace the artifact"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("character.assembly.json")).unwrap(),
+            evidence_bytes,
+            "a refused selector cannot replace the evidence"
+        );
+    }
+}
+
+#[test]
 fn assembly_prunes_after_completion_without_recreating_removed_channels() {
     use animsmith_core::glam::Vec3;
     use animsmith_core::model::{
@@ -1805,8 +2154,8 @@ fn assembly_prunes_after_completion_without_recreating_removed_channels() {
     std::fs::write(
         dir.path().join("recipe.toml"),
         concat!(
-            "schema_version = 2\n",
-            "schema = \"urn:animsmith:schema:character-assembly-recipe:2\"\n",
+            "schema_version = 3\n",
+            "schema = \"urn:animsmith:schema:character-assembly-recipe:3\"\n",
             "input_root = \"inputs\"\n",
             "base_input = \"base.glb\"\n",
             "complete_tracks = true\n",
@@ -1942,8 +2291,8 @@ fn assembly_normalizes_quaternion_hemispheres_before_pruning() {
     std::fs::write(
         dir.path().join("recipe.toml"),
         concat!(
-            "schema_version = 2\n",
-            "schema = \"urn:animsmith:schema:character-assembly-recipe:2\"\n",
+            "schema_version = 3\n",
+            "schema = \"urn:animsmith:schema:character-assembly-recipe:3\"\n",
             "input_root = \"inputs\"\n",
             "base_input = \"base.glb\"\n",
             "prune_constant_tracks = true\n\n",

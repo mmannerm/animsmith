@@ -32,11 +32,12 @@ evidence, and publication. DCC automation is outside this command.
 Start from [`examples/character-assembly.toml`](../examples/character-assembly.toml):
 
 ```toml
-schema_version = 2
-schema = "urn:animsmith:schema:character-assembly-recipe:2"
+schema_version = 3
+schema = "urn:animsmith:schema:character-assembly-recipe:3"
 input_root = "inputs"
 base_input = "base-character.fbx"
 mesh_instances = ["character-mesh"]
+remove_nodes = ["sword-placeholder"]
 complete_tracks = true
 canonicalize_skin = true
 ground_and_center = true
@@ -122,20 +123,59 @@ other assembly transforms. The carve-out uses the effective output clip's
 evidence is preserved without retaining unrelated tracks. Set it to `false` or
 omit it to retain every otherwise eligible track.
 
+`remove_nodes = [...]` selects exact, case-sensitive names from the
+post-canonicalization base skeleton and removes each selected node together
+with its complete descendant subtree. Every name must resolve exactly once;
+an absent or ambiguous name fails rather than being skipped. Overlapping
+ancestor and descendant selections are allowed and their union is removed
+once, in original parent-before-child node order. Selecting the entire
+skeleton is refused. Surviving descendants are never reparented because every
+descendant of a removed node belongs to the removal closure.
+
+Removal is planned before track completion, and closure nodes are excluded
+from completion targets. The structural projection is applied only after
+clip processing and constant-track pruning. It is
+refused if a final track still targets the closure, if a mesh instance is
+attached to it, or if a selected node remains referenced by a skin joint or
+complete source-skin identity. Per-clip `strip_bones` and constant-track
+pruning can make an animated decorative subtree removable; `remove_nodes`
+never weakens the final-reference refusal. The effective clip's
+`animates_bones` configuration still protects named tracks from pruning, so a
+protected surviving track causes removal to fail. `[rig] required_bones` is a
+lint presence policy, not a node-removal selector or protection list.
+
+Errors are deterministic and no output is published on any refusal. Recipe
+schema and value validation precede input loading. After the base's selected
+mesh and canonicalization steps, selectors and their descendant closure are
+resolved deterministically and the whole-skeleton rule is checked. After all
+clip transforms, every surviving track, mesh attachment, skin reference, and
+complete source-skin fact is checked before the hierarchy is changed. The
+reported refusal identifies the offending stored record; traversal order is
+an implementation detail rather than a wire contract.
+
+Accepted projection preserves the original order and parent links of every
+surviving node, remaps all surviving node references through one stable map,
+and clears optional source-native skeleton projection because it can no longer
+describe the authored source completely. Node removal performs no mesh,
+material, or texture garbage collection. A mesh instance inside the closure
+is refused, so accepted removal cannot newly orphan its resources; the earlier
+explicit `mesh_instances` selection and its existing resource pruning remain
+the only assembly resource-selection pass.
+
 An optional `material_texture_recipe` reuses the exact material-name recipe
 boundary described in [Material texture recipes](material-texture-recipes.md),
 including BaseColor, normal, metallic-roughness, and occlusion slots.
 
 The normative current recipe schema is
-[`character-assembly-recipe-v2.schema.json`](schemas/character-assembly-recipe-v2.schema.json).
-Recipe v1 remains an immutable historical contract. To migrate, change
-`schema_version` and `schema` to v2, then choose `prune_constant_tracks`; its
-default is `false`, so an otherwise unchanged v1 recipe keeps its behavior.
+[`character-assembly-recipe-v3.schema.json`](schemas/character-assembly-recipe-v3.schema.json).
+Recipe v1 and v2 remain immutable historical contracts. To migrate from v2,
+change `schema_version` and `schema` to v3, then add `remove_nodes` or omit it
+to request no node projection. V3 still applies its current shared snapshot validation.
 
 ## Evidence and determinism
 
 The current evidence identity is
-`urn:animsmith:schema:character-assembly-evidence:2`. It records the effective
+`urn:animsmith:schema:character-assembly-evidence:3`. It records the effective
 recipe, recipe and input SHA-256 digests, the selected configuration file's
 declared path and digest (or an explicit built-in-defaults marker), selected takes and windows, exact
 source/base bone remap names and indices, and track
@@ -144,15 +184,25 @@ operation counts, start/end/delta facts for named translation tracks removed by
 final artifact digest and counts. When pruning is enabled, each clip records
 the exact removed tracks in `pruned_constant_tracks`: the index in the
 completed, normalized output clip immediately before pruning (retaining its
-pre-prune authored order), exact output bone name and index, TRS property,
-interpolation, and key count.
-The array is empty when pruning is disabled or no track is removed. See
-[`character-assembly-evidence-v2.schema.json`](schemas/character-assembly-evidence-v2.schema.json).
+pre-prune authored order), exact bone name and `bone_index` in the
+post-canonicalization/pre-node-removal skeleton, TRS property, interpolation,
+and key count. `bone_remaps.base_index` uses that same pre-removal coordinate
+space. Consumers derive a surviving final index by subtracting earlier
+`transforms.removed_nodes[].original_node_index` entries; a pruned track whose
+node is later removed intentionally has no final-artifact node index.
+The array is empty when pruning is disabled or no track is removed. The
+top-level `transforms.removed_nodes` array records every projected node exactly
+once in original pre-removal node order: its exact name, original node index,
+nullable original parent index, and whether the recipe selected it directly
+rather than through an ancestor. It is empty when `remove_nodes` is omitted or
+empty. See
+[`character-assembly-evidence-v3.schema.json`](schemas/character-assembly-evidence-v3.schema.json).
 
-Evidence v1 remains an immutable historical contract and does not describe
-pruning. Consumers migrating from v1 must accept evidence v2 and verify the
-recorded track list against the effective output clip; do not infer the list
-from `required_bones`.
+Evidence v1 and v2 remain immutable historical contracts; v1 does not describe
+pruning and neither historical version describes structural node removal.
+Consumers migrating to v3 must verify `removed_nodes` against the effective
+recipe and output hierarchy rather than inferring removal from track evidence
+or lint configuration.
 
 Given identical recipe bytes, input and config bytes, tool build, paths, and
 platform, repeated runs emit byte-identical GLB and evidence. Evidence keeps

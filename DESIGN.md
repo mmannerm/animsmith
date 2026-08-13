@@ -166,8 +166,25 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   selection, clip slicing/endpoint/hold/gait operations, named channel removal,
   rest-track completion, quaternion cleanup, opt-in constant-track pruning
   after all other transforms while protecting effective-clip `animates_bones`
-  names, bind-consistent skin canonicalization, material recipes, and
-  deterministic GLB/evidence emission.
+  names, fail-closed exact-name node-subtree removal after animation transforms,
+  bind-consistent skin canonicalization, material recipes, and deterministic
+  GLB/evidence emission. Node-subtree removal refuses any surviving track,
+  mesh-instance, skin-joint, or complete source-skin reference; it remaps the
+  surviving hierarchy but does not reparent descendants or garbage-collect
+  mesh, material, or texture resources.
+  Character-assembly recipe/evidence v3 owns that node-removal contract.
+  Selectors resolve by exact unique name against the post-canonicalization base;
+  their descendant union is planned before completion, excluded from completion
+  targets, and projected after clip processing and constant-track pruning.
+  `animates_bones` may therefore retain a protected track and force refusal,
+  while `[rig] required_bones` remains lint presence policy rather than an
+  assembly selector. Accepted non-empty projection clears optional source-native
+  skeleton identity, because it cannot remain a complete account after authored
+  deletion. Because mesh-bearing nodes are refused, removal cannot newly orphan
+  asset resources; only the earlier explicit mesh-instance selection performs
+  resource pruning. Evidence lists every removed node once in original
+  parent-before-child order, distinguishes direct selectors from descendants,
+  and retains original node and parent indices.
   Archive extraction, gameplay naming and acceptance policy, cache/generation
   policy, and publication remain with the consumer.
 
@@ -692,9 +709,10 @@ These decisions record result-contract ownership after output v3 finalization:
 
 **Status (2026-08-04): accepted design; the standalone glTF rest/bind
 transform is implemented, while assembly integration remains deferred to
-recipe/evidence v3.** Existing commands, APIs, schemas, and
-character-assembly recipe/evidence v2 keep their current behaviour; v2's
-opt-in constant-track pruning is not a rest-scale transform.
+recipe/evidence v4.** Existing commands, APIs, schemas, and
+character-assembly recipe/evidence v3 keep their current behaviour; v3's
+opt-in constant-track pruning and node-subtree removal are not rest-scale
+transforms.
 
 ### D.1 Problem and two distinct operations
 
@@ -1938,11 +1956,11 @@ descriptions of one rest pose. How far apart those are is a fact about the
 input, not a residual this proof owns. Recording both witnesses and
 their divergence introduces no band of its own and no new policy identity.
 
-Migration is opt-in. `assemble.canonicalize_skin` in recipe v2 remains the
+Migration is opt-in. `assemble.canonicalize_skin` in recipe v3 remains the
 existing unanimated bind-geometry operation with identity source-to-metre
 conversion; it does not gain rest-scale rewriting, and old recipes are not
 silently reinterpreted. A later assembly integration requires recipe/evidence
-v3 and explicit basis-compatibility evidence. Consumers that invert scaled
+v4 and explicit basis-compatibility evidence. Consumers that invert scaled
 inverse binds with the rigid-only shortcut `-A^T t` can observe a change by
 `s^2`; that exposes a pre-existing consumer error because the shortcut is valid
 only for an orthonormal linear part, not a geometry change made by this
@@ -1971,7 +1989,7 @@ change requires a new policy identity and compatibility review.
 
 The single-document producer has no `animsmith.toml` key and no separate plan
 file in its first version: mutation must not become an incidental effect of a
-lint configuration. Later assembly support is an explicit recipe-v3 block:
+lint configuration. Later assembly support is an explicit recipe-v4 block:
 
 ```toml
 [rest_bind_scale]
@@ -1981,7 +1999,7 @@ expected_factor = 0.01
 ```
 
 The block has no defaults and is absent by default. Assembly validates every
-base and clip basis before applying it. Recipe v2 rejects this block as an
+base and clip basis before applying it. Recipe v3 rejects this block as an
 unknown field and retains its current semantics.
 
 The public `animsmith-core` shape is a non-exhaustive `ScaleOperation` with
@@ -2050,7 +2068,7 @@ single-document operation and preserve assembly's currently insufficient
 separate-clip proof. A standalone command with unrelated duplicate math was
 also rejected. The chosen end state is one shared core transform-plan and proof
 layer with distinct, explicit frontends: a dedicated single-document producer
-and, later, an assembly-v3 integration. The existing
+and, later, an assembly-v4 integration. The existing
 `canonicalize_skinned_bind_pose` remains the narrower unanimated bind-geometry
 foundation; it is not silently widened or renamed into this contract.
 
@@ -2112,7 +2130,7 @@ auditable issues, in order:
 3. a preservation-safe glTF whole-document unit rewrite;
 4. the restricted animated rest/bind reparameterization with analytic fixtures;
 5. a dedicated atomic CLI producer and new evidence contract;
-6. explicit assembly recipe/evidence v3 integration with basis fingerprints;
+6. explicit assembly recipe/evidence v4 integration with basis fingerprints;
 7. FBX support only after complete ufbx-side capability evidence exists.
 
 The live roadmap remains issue #165. On acceptance, that ledger records this

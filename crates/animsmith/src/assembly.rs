@@ -24,10 +24,10 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::ExitCode;
 
-const RECIPE_SCHEMA_VERSION: u32 = 2;
-const RECIPE_SCHEMA_ID: &str = "urn:animsmith:schema:character-assembly-recipe:2";
-const EVIDENCE_SCHEMA_VERSION: u32 = 2;
-const EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:character-assembly-evidence:2";
+const RECIPE_SCHEMA_VERSION: u32 = 3;
+const RECIPE_SCHEMA_ID: &str = "urn:animsmith:schema:character-assembly-recipe:3";
+const EVIDENCE_SCHEMA_VERSION: u32 = 3;
+const EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:character-assembly-evidence:3";
 
 fn default_fps() -> f64 {
     30.0
@@ -50,6 +50,8 @@ struct AssemblyRecipe {
     complete_tracks: bool,
     #[serde(default)]
     prune_constant_tracks: bool,
+    #[serde(default)]
+    remove_nodes: Vec<String>,
     #[serde(default)]
     canonicalize_skin: bool,
     #[serde(default)]
@@ -151,10 +153,20 @@ struct PrunedConstantTrackEvidence {
     key_count: usize,
 }
 
+/// One node removed by the final structural projection.
+#[derive(Debug, Clone, Serialize)]
+struct RemovedNodeEvidence {
+    name: String,
+    original_node_index: usize,
+    original_parent_node_index: Option<usize>,
+    selected: bool,
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct AssemblyTransformEvidence {
     retained_mesh_instances: Vec<String>,
     removed_mesh_instances: usize,
+    removed_nodes: Vec<RemovedNodeEvidence>,
     canonicalized_skin: bool,
     ground_and_center: bool,
     source_world_to_canonical: Option<[f32; 16]>,
@@ -306,6 +318,7 @@ fn validate_recipe(recipe: &AssemblyRecipe) -> Result<(), String> {
         return Err("clips must contain at least one entry".into());
     }
     unique_nonempty(&recipe.mesh_instances, "mesh_instances")?;
+    unique_nonempty(&recipe.remove_nodes, "remove_nodes")?;
     let mut names = BTreeSet::new();
     for clip in &recipe.clips {
         if clip.name.is_empty() || clip.take.is_empty() {
@@ -561,6 +574,10 @@ fn assemble(
     } else {
         None
     };
+    ensure_unique_bones(&base.skeleton, "post-canonicalization base input")?;
+    let node_removal =
+        animsmith_core::assembly::plan_node_subtree_removal(&base, &recipe.remove_nodes)
+            .map_err(|error| format!("cannot plan node removal: {error}"))?;
 
     let mut loaded = BTreeMap::<PathBuf, Document>::new();
     let mut clip_evidence = Vec::with_capacity(recipe.clips.len());
@@ -658,6 +675,7 @@ fn assemble(
             .iter()
             .flat_map(|clip| clip.tracks.iter().map(|track| track.bone)),
     );
+    completion_targets.retain(|bone| !node_removal.removes(*bone));
     let base_bones_by_name = base
         .skeleton
         .bones
@@ -741,6 +759,18 @@ fn assemble(
         evidence.emitted_tracks = clip.tracks.len();
     }
     base.clips = output_clips;
+    let removed_nodes = node_removal
+        .removed_nodes()
+        .iter()
+        .map(|node| RemovedNodeEvidence {
+            name: node.name.clone(),
+            original_node_index: node.original_node_index,
+            original_parent_node_index: node.original_parent_node_index,
+            selected: node.selected,
+        })
+        .collect();
+    animsmith_core::assembly::apply_node_subtree_removal(&mut base, &node_removal)
+        .map_err(|error| format!("cannot remove selected nodes: {error}"))?;
 
     let artifact_temp = tempfile::Builder::new()
         .prefix(".animsmith-assemble-")
@@ -773,6 +803,7 @@ fn assemble(
         transforms: AssemblyTransformEvidence {
             retained_mesh_instances,
             removed_mesh_instances,
+            removed_nodes,
             canonicalized_skin: recipe.canonicalize_skin,
             ground_and_center: recipe.ground_and_center,
             source_world_to_canonical: canonicalization
@@ -1281,7 +1312,7 @@ mod tests {
     #[test]
     fn recipe_rejects_duplicate_outputs_and_conflicting_windows() {
         let recipe = AssemblyRecipe {
-            schema_version: 2,
+            schema_version: RECIPE_SCHEMA_VERSION,
             schema: RECIPE_SCHEMA_ID.into(),
             input_root: None,
             base_input: "base.glb".into(),
@@ -1289,6 +1320,7 @@ mod tests {
             material_texture_recipe: None,
             complete_tracks: false,
             prune_constant_tracks: false,
+            remove_nodes: vec![],
             canonicalize_skin: false,
             ground_and_center: false,
             fps: 30.0,
