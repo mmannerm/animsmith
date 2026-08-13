@@ -1959,6 +1959,7 @@ fn assembly_removes_an_unreferenced_subtree_after_pruning_and_completion() {
         std::fs::read(dir.path().join("character.assembly.json")).expect("reads evidence");
     let evidence: Value = serde_json::from_slice(&evidence_bytes).expect("parses evidence");
     assert_schema_valid(&evidence, EVIDENCE_SCHEMA);
+    assert_eq!(evidence["clips"][0]["completed_tracks"], 4);
     assert_eq!(
         evidence["transforms"]["removed_nodes"],
         serde_json::json!([
