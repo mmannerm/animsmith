@@ -32,14 +32,15 @@ evidence, and publication. DCC automation is outside this command.
 Start from [`examples/character-assembly.toml`](../examples/character-assembly.toml):
 
 ```toml
-schema_version = 1
-schema = "urn:animsmith:schema:character-assembly-recipe:1"
+schema_version = 2
+schema = "urn:animsmith:schema:character-assembly-recipe:2"
 input_root = "inputs"
 base_input = "base-character.fbx"
 mesh_instances = ["character-mesh"]
 complete_tracks = true
 canonicalize_skin = true
 ground_and_center = true
+prune_constant_tracks = true
 fps = 30.0
 
 [[clips]]
@@ -114,24 +115,44 @@ animation tracks by the same offset. Inconsistent skin transforms, singular
 normal transforms, or shared mesh definitions that require incompatible bakes
 are rejected.
 
+`prune_constant_tracks = true` removes tracks that the existing core constant-
+track predicate proves constant, after completion, quaternion cleanup, and all
+other assembly transforms. The carve-out uses the effective output clip's
+`animates_bones` exact names; it never uses `required_bones`, so declared motion
+evidence is preserved without retaining unrelated tracks. Set it to `false` or
+omit it to retain every otherwise eligible track.
+
 An optional `material_texture_recipe` reuses the exact material-name recipe
 boundary described in [Material texture recipes](material-texture-recipes.md),
 including BaseColor, normal, metallic-roughness, and occlusion slots.
 
-The normative recipe schema is
-[`character-assembly-recipe-v1.schema.json`](schemas/character-assembly-recipe-v1.schema.json).
+The normative current recipe schema is
+[`character-assembly-recipe-v2.schema.json`](schemas/character-assembly-recipe-v2.schema.json).
+Recipe v1 remains an immutable historical contract. To migrate, change
+`schema_version` and `schema` to v2, then choose `prune_constant_tracks`; its
+default is `false`, so an otherwise unchanged v1 recipe keeps its behavior.
 
 ## Evidence and determinism
 
-The evidence identity is
-`urn:animsmith:schema:character-assembly-evidence:1`. It records the effective
+The current evidence identity is
+`urn:animsmith:schema:character-assembly-evidence:2`. It records the effective
 recipe, recipe and input SHA-256 digests, the selected configuration file's
 declared path and digest (or an explicit built-in-defaults marker), selected takes and windows, exact
 source/base bone remap names and indices, and track
 operation counts, start/end/delta facts for named translation tracks removed by
 `strip_bones`, mesh selection, canonicalization flags, tool identity, and the
-final artifact digest and counts. See
-[`character-assembly-evidence-v1.schema.json`](schemas/character-assembly-evidence-v1.schema.json).
+final artifact digest and counts. When pruning is enabled, each clip records
+the exact removed tracks in `pruned_constant_tracks`: the index in the
+completed, normalized output clip immediately before pruning (retaining its
+pre-prune authored order), exact output bone name and index, TRS property,
+interpolation, and key count.
+The array is empty when pruning is disabled or no track is removed. See
+[`character-assembly-evidence-v2.schema.json`](schemas/character-assembly-evidence-v2.schema.json).
+
+Evidence v1 remains an immutable historical contract and does not describe
+pruning. Consumers migrating from v1 must accept evidence v2 and verify the
+recorded track list against the effective output clip; do not infer the list
+from `required_bones`.
 
 Given identical recipe bytes, input and config bytes, tool build, paths, and
 platform, repeated runs emit byte-identical GLB and evidence. Evidence keeps

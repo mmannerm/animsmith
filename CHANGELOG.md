@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- [**breaking**] *(assemble)* advance the character-assembly recipe and
+  evidence contracts to immutable v2. Recipes can opt into constant-track
+  pruning after all other transforms; evidence records each removed track by
+  original index, exact output bone identity, TRS property, interpolation, and
+  key count. Recipe/evidence v1 remain immutable historical contracts, and the
+  new recipe option defaults to `false` ([#349](https://github.com/mmannerm/animsmith/issues/349))
 - [**breaking**] *(scale)* advance scale evidence to immutable v3: rest/bind
   now rebases valid affected-node scale animation (including cubic-spline
   tangents), publishes `result.domain_rewrites.scale_animation`, and raw glTF

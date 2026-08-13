@@ -28,11 +28,11 @@ schema is
 This lets producers pin conversion provenance independently of measurement
 and lint evidence.
 
-`assemble` writes a separate character-assembly-evidence v1 document to its
+`assemble` writes a separate character-assembly-evidence v2 document to its
 required `--evidence` path, and prints the same record to stdout under
 `--format json`. Its immutable identity is
-`urn:animsmith:schema:character-assembly-evidence:1`; its retrievable schema is
-[`character-assembly-evidence-v1.schema.json`](schemas/character-assembly-evidence-v1.schema.json).
+`urn:animsmith:schema:character-assembly-evidence:2`; its retrievable schema is
+[`character-assembly-evidence-v2.schema.json`](schemas/character-assembly-evidence-v2.schema.json).
 The paired GLB and evidence are prepared before publication, so an operator
 failure emits neither new destination and restores any prior pair.
 
@@ -232,20 +232,30 @@ recipes](material-texture-recipes.md) for containment and image semantics.
 
 ## `assemble`
 
-`assemble` writes character-assembly evidence v1 beside its GLB. The evidence
+`assemble` writes character-assembly evidence v2 beside its GLB. The evidence
 binds the effective recipe and its SHA-256, every base/clip/recipe/texture input
 and digest, selected source takes and windows, exact track-operation counts,
 removed named-bone translation deltas, mesh and skin canonicalization, tool
-identity, and the final artifact digest and counts. Paths remain
+identity, and the final artifact digest and counts. When `prune_constant_tracks`
+is enabled, each clip also records the exact removed tracks in
+`pruned_constant_tracks`, including each track's index in the completed,
+normalized output clip immediately before pruning (the pre-prune authored
+order). The array is empty when pruning is disabled or no track is removed.
+Paths remain
 operator-declared; canonical host paths used for containment checks are not
 serialized.
 
 The normative recipe and evidence contracts are
-[`character-assembly-recipe-v1.schema.json`](schemas/character-assembly-recipe-v1.schema.json)
+[`character-assembly-recipe-v2.schema.json`](schemas/character-assembly-recipe-v2.schema.json)
 and
-[`character-assembly-evidence-v1.schema.json`](schemas/character-assembly-evidence-v1.schema.json).
+[`character-assembly-evidence-v2.schema.json`](schemas/character-assembly-evidence-v2.schema.json).
+The recipe identity is
+`urn:animsmith:schema:character-assembly-recipe:2`; v1 remains an immutable
+historical contract.
 See [multi-source character assembly](character-assembly.md) for operation and
-consumer-boundary semantics.
+consumer-boundary semantics. The v1 recipe and evidence schemas remain
+immutable historical contracts; migrate by selecting recipe/evidence v2, with
+pruning disabled by default for an otherwise equivalent recipe.
 
 ## `scale`
 

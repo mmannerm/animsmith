@@ -7,8 +7,9 @@ use crate::checks::constant_track::{is_constant_track, quaternion_angular_delta}
 use crate::metrics::foot_cycle_metrics;
 use crate::model::{BoneId, Clip, Interpolation, Property, Skeleton, Track, TrackValues};
 use crate::profile::ResolvedRoles;
-use crate::sample::{TrackSample, default_frame_count, sample_clip, sample_track};
+use crate::sample::{PoseGrid, TrackSample, default_frame_count, sample_clip, sample_track};
 use glam::{Quat, Vec3};
+use std::collections::BTreeSet;
 use std::fmt;
 use thiserror::Error;
 
@@ -178,6 +179,15 @@ pub fn prune_constant_tracks(
     clip: &mut Clip,
     protected_bones: &[BoneId],
 ) -> PruneConstantTracksOutcome {
+    prune_constant_tracks_impl(skeleton, clip, protected_bones, || {})
+}
+
+fn prune_constant_tracks_impl(
+    skeleton: &Skeleton,
+    clip: &mut Clip,
+    protected_bones: &[BoneId],
+    mut record_sampled_trial: impl FnMut(),
+) -> PruneConstantTracksOutcome {
     let candidates: Vec<ConstantTrackPruneRecord> = clip
         .tracks
         .iter()
@@ -231,7 +241,9 @@ pub fn prune_constant_tracks(
     }
 
     let source = clip.clone();
-    let mut accepted = Vec::new();
+    let duplicate_channels = duplicate_track_channels(&source);
+    let protected_bones: BTreeSet<_> = protected_bones.iter().copied().collect();
+    let mut accepted = BTreeSet::new();
     let mut removed_records = Vec::new();
     let mut retained = Vec::new();
     for record in candidates {
@@ -249,14 +261,26 @@ pub fn prune_constant_tracks(
             });
             continue;
         }
+        let exact_rest_channel = source
+            .tracks
+            .get(record.original_track_index)
+            .zip(skeleton.bones.get(record.bone))
+            .is_some_and(|(track, bone)| {
+                !duplicate_channels.contains(&track_channel_key(track))
+                    && authored_track_is_exact_rest_equivalent(track, &bone.rest, &original)
+            });
+        if exact_rest_channel {
+            accepted.insert(record.original_track_index);
+            removed_records.push(record);
+            continue;
+        }
+        record_sampled_trial();
         let mut trial = source.clone();
-        let mut removed: Vec<usize> = accepted.clone();
-        removed.push(record.original_track_index);
         trial.tracks = source
             .tracks
             .iter()
             .enumerate()
-            .filter(|(index, _)| !removed.contains(index))
+            .filter(|(index, _)| *index != record.original_track_index && !accepted.contains(index))
             .map(|(_, track)| track.clone())
             .collect();
         let trial_grid = sample_clip(skeleton, &trial, frames);
@@ -271,7 +295,7 @@ pub fn prune_constant_tracks(
                 reason: ConstantTrackRetentionReason::PoseChanged,
             });
         } else {
-            accepted.push(record.original_track_index);
+            accepted.insert(record.original_track_index);
             removed_records.push(record);
         }
     }
@@ -288,6 +312,343 @@ pub fn prune_constant_tracks(
         removed: removed_records,
         retained,
     }
+}
+
+#[cfg(test)]
+mod constant_track_fast_path_tests {
+    use super::*;
+    use crate::model::{Bone, Transform};
+
+    #[test]
+    fn thousands_of_unique_exact_rest_channels_require_no_sampled_trials() {
+        const CANDIDATE_COUNT: usize = 2_048;
+        let skeleton = Skeleton {
+            bones: (0..CANDIDATE_COUNT)
+                .map(|bone| Bone {
+                    name: format!("bone-{bone}"),
+                    parent: None,
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                })
+                .collect(),
+        };
+        let mut tracks: Vec<_> = (0..CANDIDATE_COUNT)
+            .map(|bone| Track {
+                bone,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::ZERO]),
+            })
+            .collect();
+        tracks.push(Track {
+            bone: 0,
+            property: Property::Rotation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Quats(vec![Quat::IDENTITY, Quat::from_rotation_z(0.2)]),
+        });
+        let mut clip = Clip {
+            name: "large-exact-rest".into(),
+            duration_s: 1.0,
+            tracks,
+        };
+        let mut sampled_trials = 0;
+
+        let outcome = prune_constant_tracks_impl(&skeleton, &mut clip, &[], || {
+            sampled_trials += 1;
+        });
+
+        assert_eq!(outcome.removed.len(), CANDIDATE_COUNT);
+        assert!(outcome.retained.is_empty());
+        assert_eq!(sampled_trials, 0);
+        assert_eq!(clip.tracks.len(), 1);
+        assert_eq!(clip.tracks[0].property, Property::Rotation);
+    }
+
+    fn sampled_trials_for(tracks: Vec<Track>) -> usize {
+        let skeleton = Skeleton {
+            bones: vec![Bone {
+                name: "root".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            }],
+        };
+        let mut clip = Clip {
+            name: "route".into(),
+            duration_s: 1.0,
+            tracks,
+        };
+        let mut sampled_trials = 0;
+        let _ = prune_constant_tracks_impl(&skeleton, &mut clip, &[], || sampled_trials += 1);
+        sampled_trials
+    }
+
+    fn vector_track(property: Property, interpolation: Interpolation, value: Vec3) -> Track {
+        Track {
+            bone: 0,
+            property,
+            interpolation,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Vec3s(vec![value, value]),
+        }
+    }
+
+    fn moving_rotation() -> Track {
+        Track {
+            bone: 0,
+            property: Property::Rotation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Quats(vec![Quat::IDENTITY, Quat::from_rotation_z(0.2)]),
+        }
+    }
+
+    fn moving_scale() -> Track {
+        Track {
+            bone: 0,
+            property: Property::Scale,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Vec3s(vec![Vec3::ONE, Vec3::splat(2.0)]),
+        }
+    }
+
+    #[test]
+    fn exact_route_and_sampled_fallback_domains_are_independently_pinned() {
+        for (property, interpolation, value) in [
+            (Property::Translation, Interpolation::Linear, Vec3::ZERO),
+            (Property::Translation, Interpolation::Step, Vec3::ZERO),
+            (Property::Scale, Interpolation::Linear, Vec3::ONE),
+            (Property::Scale, Interpolation::Step, Vec3::ONE),
+        ] {
+            assert_eq!(
+                sampled_trials_for(vec![
+                    vector_track(property, interpolation, value),
+                    moving_rotation(),
+                ]),
+                0,
+                "{property:?}/{interpolation:?} exact-rest channels use the bounded route"
+            );
+        }
+
+        let zero = Quat::from_xyzw(0.0, 0.0, 0.0, 0.0);
+        let sampled_cases = [
+            (
+                2,
+                vec![
+                    Track {
+                        bone: 0,
+                        property: Property::Rotation,
+                        interpolation: Interpolation::Linear,
+                        times: vec![0.0, 1.0],
+                        values: TrackValues::Quats(vec![Quat::IDENTITY, -Quat::IDENTITY]),
+                    },
+                    vector_track(Property::Translation, Interpolation::Linear, Vec3::X),
+                    moving_scale(),
+                ],
+            ),
+            (
+                1,
+                vec![
+                    Track {
+                        bone: 0,
+                        property: Property::Translation,
+                        interpolation: Interpolation::CubicSpline,
+                        times: vec![0.0, 1.0],
+                        values: TrackValues::Vec3s(vec![
+                            Vec3::ZERO,
+                            Vec3::ZERO,
+                            Vec3::ZERO,
+                            Vec3::ZERO,
+                            Vec3::ZERO,
+                            Vec3::ZERO,
+                        ]),
+                    },
+                    moving_rotation(),
+                ],
+            ),
+            (
+                2,
+                vec![
+                    vector_track(Property::Scale, Interpolation::Linear, Vec3::ONE),
+                    vector_track(Property::Scale, Interpolation::Linear, Vec3::ONE),
+                    moving_rotation(),
+                ],
+            ),
+            (
+                1,
+                vec![
+                    vector_track(Property::Translation, Interpolation::Linear, Vec3::X),
+                    moving_rotation(),
+                ],
+            ),
+            (
+                1,
+                vec![
+                    vector_track(
+                        Property::Translation,
+                        Interpolation::Linear,
+                        Vec3::splat(CONSTANT_TRACK_PRUNE_VEC3_TOLERANCE * 0.5),
+                    ),
+                    moving_rotation(),
+                ],
+            ),
+            (
+                2,
+                vec![
+                    Track {
+                        bone: 0,
+                        property: Property::Rotation,
+                        interpolation: Interpolation::CubicSpline,
+                        times: vec![0.0, 1.0],
+                        values: TrackValues::Quats(vec![
+                            zero,
+                            Quat::IDENTITY,
+                            zero,
+                            zero,
+                            Quat::IDENTITY,
+                            zero,
+                        ]),
+                    },
+                    vector_track(Property::Translation, Interpolation::Linear, Vec3::X),
+                    moving_scale(),
+                ],
+            ),
+            (
+                1,
+                vec![
+                    vector_track(
+                        Property::Translation,
+                        Interpolation::Linear,
+                        Vec3::new(-0.0, 0.0, 0.0),
+                    ),
+                    moving_rotation(),
+                ],
+            ),
+        ];
+        for (expected_trials, tracks) in sampled_cases {
+            assert_eq!(
+                sampled_trials_for(tracks),
+                expected_trials,
+                "each rotation, cubic, duplicate, non-rest, tolerance, and bit-distinct case retains its own sampled proof"
+            );
+        }
+    }
+
+    #[test]
+    fn linear_endpoints_that_round_on_the_grid_retain_the_sampled_proof() {
+        let rest_value = Vec3::splat(12_000.0);
+        let skeleton = Skeleton {
+            bones: vec![Bone {
+                name: "large".into(),
+                parent: None,
+                rest: Transform {
+                    translation: rest_value,
+                    ..Transform::IDENTITY
+                },
+                inverse_bind: None,
+            }],
+        };
+        let rotation_times = (0..=200).map(|key| key as f32 / 200.0).collect::<Vec<_>>();
+        let rotation_values = rotation_times
+            .iter()
+            .map(|time| Quat::from_rotation_z(*time * 0.2))
+            .collect::<Vec<_>>();
+        let mut clip = Clip {
+            name: "linear-rounding".into(),
+            duration_s: 1.0,
+            tracks: vec![
+                vector_track(Property::Translation, Interpolation::Linear, rest_value),
+                Track {
+                    bone: 0,
+                    property: Property::Rotation,
+                    interpolation: Interpolation::Linear,
+                    times: rotation_times,
+                    values: TrackValues::Quats(rotation_values),
+                },
+            ],
+        };
+        let mut sampled_trials = 0;
+
+        let outcome = prune_constant_tracks_impl(&skeleton, &mut clip, &[], || {
+            sampled_trials += 1;
+        });
+
+        assert_eq!(sampled_trials, 1);
+        assert!(outcome.removed.is_empty());
+        assert_eq!(clip.tracks.len(), 2);
+        assert!((0..=200).any(|frame| {
+            matches!(
+                sample_track(&clip.tracks[0], frame as f32 / 200.0),
+                TrackSample::Vec3(value) if !vec3_bits_eq(value, rest_value)
+            )
+        }));
+    }
+}
+
+fn track_channel_key(track: &Track) -> (BoneId, u8) {
+    let property = match track.property {
+        Property::Translation => 0,
+        Property::Rotation => 1,
+        Property::Scale => 2,
+    };
+    (track.bone, property)
+}
+
+fn duplicate_track_channels(clip: &Clip) -> BTreeSet<(BoneId, u8)> {
+    let mut seen = BTreeSet::new();
+    let mut duplicates = BTreeSet::new();
+    for track in &clip.tracks {
+        if !seen.insert(track_channel_key(track)) {
+            duplicates.insert(track_channel_key(track));
+        }
+    }
+    duplicates
+}
+
+/// Whether deleting this sole authored vector channel produces its rest
+/// component exactly, without relying on the sampled tolerance check. This is
+/// only a stronger acceptance route for tracks that `is_constant_track`
+/// already classified as candidates; rotation and cubic candidates retain the
+/// sampled trial path.
+fn authored_track_is_exact_rest_equivalent(
+    track: &Track,
+    rest: &crate::model::Transform,
+    original: &PoseGrid,
+) -> bool {
+    let rest_value = match track.property {
+        Property::Translation => rest.translation,
+        Property::Scale => rest.scale,
+        Property::Rotation => return false,
+    };
+    let TrackValues::Vec3s(values) = &track.values else {
+        return false;
+    };
+    if !values.iter().all(|value| vec3_bits_eq(*value, rest_value)) {
+        return false;
+    }
+    match track.interpolation {
+        Interpolation::Step => true,
+        Interpolation::Linear => (0..original.frame_count()).all(|frame| {
+            let local = original.local(frame, track.bone);
+            let value = match track.property {
+                Property::Translation => local.translation,
+                Property::Scale => local.scale,
+                Property::Rotation => unreachable!("rotation was excluded above"),
+            };
+            vec3_bits_eq(value, rest_value)
+        }),
+        _ => false,
+    }
+}
+
+fn vec3_bits_eq(a: Vec3, b: Vec3) -> bool {
+    a.to_array()
+        .into_iter()
+        .zip(b.to_array())
+        .all(|(a, b)| a.to_bits() == b.to_bits())
 }
 
 fn valid_sampling_target(skeleton: &Skeleton, clip: &Clip) -> bool {

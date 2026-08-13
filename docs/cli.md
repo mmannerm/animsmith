@@ -285,6 +285,15 @@ uses one input as the authoritative skinned base, and exact-name remaps selected
 takes from other FBX or glTF inputs. It writes a GLB and assembly-evidence JSON
 as a rollback-safe publication pair. The command owns generic asset transforms;
 source extraction, project policy, and publication remain consumer concerns.
+The current recipe/evidence pair is v2. Set `prune_constant_tracks = true` to
+remove only tracks proven constant after all other transforms; effective output
+clip `animates_bones` exact names are retained, while `required_bones` is never
+used as the carve-out. Evidence records every removed track and is empty when
+pruning is disabled or removes nothing. Recipe/evidence v1 remain immutable
+historical contracts.
+The recipe identity is
+`urn:animsmith:schema:character-assembly-recipe:2`; see
+[`character-assembly-recipe-v2.schema.json`](schemas/character-assembly-recipe-v2.schema.json).
 
 ## Static mesh transform bake
 
@@ -356,9 +365,9 @@ It records the requested options, counts from the written artifact, exact
 static-mesh transforms when requested, and recipe provenance when a material
 texture recipe is used. `text` is the default human-readable write summary.
 
-`assemble` writes evidence v1 to its required `--evidence` path, with immutable
-identity `urn:animsmith:schema:character-assembly-evidence:1`; see
-[`character-assembly-evidence-v1.schema.json`](schemas/character-assembly-evidence-v1.schema.json).
+`assemble` writes evidence v2 to its required `--evidence` path, with immutable
+identity `urn:animsmith:schema:character-assembly-evidence:2`; see
+[`character-assembly-evidence-v2.schema.json`](schemas/character-assembly-evidence-v2.schema.json).
 `assemble --format json` prints the same record to stdout — the identical bytes
 the evidence file receives, serialized once — in place of the default `text`
 publication summary. Every `assemble` failure still exits 2 with prose on

@@ -600,3 +600,205 @@ fn single_key_pins_and_rotation_above_tolerance_are_not_candidates() {
     assert!(outcome.removed.is_empty() && outcome.retained.is_empty());
     assert_eq!(changing_rotation.tracks.len(), 2);
 }
+
+#[test]
+fn exact_rest_vector_channels_coexist_with_cubic_rotation_and_slow_candidates() {
+    let skeleton = Skeleton {
+        bones: (0..3)
+            .map(|bone| Bone {
+                name: format!("bone-{bone}"),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            })
+            .collect(),
+    };
+    let mut clip = clip(vec![
+        vec_track(
+            Property::Translation,
+            Interpolation::Linear,
+            vec![Vec3::ZERO, Vec3::ZERO],
+        ),
+        vec_track(
+            Property::Scale,
+            Interpolation::Step,
+            vec![Vec3::ONE, Vec3::ONE],
+        ),
+        Track {
+            bone: 1,
+            ..vec_track(
+                Property::Translation,
+                Interpolation::CubicSpline,
+                vec![
+                    Vec3::ZERO,
+                    Vec3::ZERO,
+                    Vec3::ZERO,
+                    Vec3::ZERO,
+                    Vec3::ZERO,
+                    Vec3::ZERO,
+                ],
+            )
+        },
+        Track {
+            bone: 1,
+            interpolation: Interpolation::Linear,
+            ..quat_track(vec![Quat::IDENTITY, -Quat::IDENTITY])
+        },
+        Track {
+            bone: 2,
+            ..quat_track(vec![Quat::IDENTITY, Quat::from_rotation_y(0.2)])
+        },
+    ]);
+    let original = clip.clone();
+
+    let outcome = prune_constant_tracks(&skeleton, &mut clip, &[]);
+
+    assert_eq!(
+        outcome
+            .removed
+            .iter()
+            .map(|record| record.original_track_index)
+            .collect::<Vec<_>>(),
+        [0, 1, 2, 3]
+    );
+    assert!(outcome.retained.is_empty());
+    assert_original_grid_equal(&skeleton, &original, &clip);
+}
+
+#[test]
+fn duplicate_channels_retain_the_existing_sampled_trial_semantics() {
+    let skeleton = Skeleton {
+        bones: vec![
+            Bone {
+                name: "root".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            },
+            Bone {
+                name: "tip".into(),
+                parent: Some(0),
+                rest: Transform {
+                    translation: Vec3::new(100.0, 0.0, 0.0),
+                    ..Transform::IDENTITY
+                },
+                inverse_bind: None,
+            },
+        ],
+    };
+    let mut clip = clip(vec![
+        vec_track(
+            Property::Scale,
+            Interpolation::Linear,
+            vec![Vec3::ONE, Vec3::ONE],
+        ),
+        vec_track(
+            Property::Scale,
+            Interpolation::Linear,
+            vec![
+                Vec3::ONE + Vec3::splat(CONSTANT_TRACK_PRUNE_VEC3_TOLERANCE * 0.5),
+                Vec3::ONE + Vec3::splat(CONSTANT_TRACK_PRUNE_VEC3_TOLERANCE * 0.5),
+            ],
+        ),
+        Track {
+            bone: 1,
+            ..quat_track(vec![Quat::IDENTITY, Quat::from_rotation_x(0.2)])
+        },
+    ]);
+    let original = clip.clone();
+
+    let outcome = prune_constant_tracks(&skeleton, &mut clip, &[]);
+
+    assert_eq!(
+        outcome
+            .removed
+            .iter()
+            .map(|record| record.original_track_index)
+            .collect::<Vec<_>>(),
+        [0]
+    );
+    assert_eq!(outcome.retained.len(), 1);
+    assert_eq!(outcome.retained[0].record.original_track_index, 1);
+    assert_eq!(
+        outcome.retained[0].reason,
+        ConstantTrackRetentionReason::PoseChanged
+    );
+    assert_original_grid_equal(&skeleton, &original, &clip);
+}
+
+#[test]
+fn fast_candidates_preserve_authored_order_and_last_writable_reason() {
+    let skeleton = skeleton(Transform::IDENTITY);
+    let mut clip = clip(vec![
+        vec_track(
+            Property::Translation,
+            Interpolation::Linear,
+            vec![Vec3::ZERO, Vec3::ZERO],
+        ),
+        vec_track(
+            Property::Scale,
+            Interpolation::Step,
+            vec![Vec3::ONE, Vec3::ONE],
+        ),
+    ]);
+
+    let outcome = prune_constant_tracks(&skeleton, &mut clip, &[]);
+
+    assert_eq!(
+        outcome
+            .removed
+            .iter()
+            .map(|record| record.original_track_index)
+            .collect::<Vec<_>>(),
+        [0]
+    );
+    assert_eq!(outcome.retained.len(), 1);
+    assert_eq!(outcome.retained[0].record.original_track_index, 1);
+    assert_eq!(
+        outcome.retained[0].reason,
+        ConstantTrackRetentionReason::LastWritableTrack
+    );
+}
+
+#[test]
+fn thousands_of_unique_exact_rest_channels_are_pruned_in_authored_order() {
+    const CANDIDATE_COUNT: usize = 2_048;
+    let skeleton = Skeleton {
+        bones: (0..CANDIDATE_COUNT)
+            .map(|bone| Bone {
+                name: format!("bone-{bone}"),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            })
+            .collect(),
+    };
+    let mut tracks: Vec<_> = (0..CANDIDATE_COUNT)
+        .map(|bone| Track {
+            bone,
+            ..vec_track(
+                Property::Translation,
+                Interpolation::Linear,
+                vec![Vec3::ZERO, Vec3::ZERO],
+            )
+        })
+        .collect();
+    tracks.push(quat_track(vec![Quat::IDENTITY, Quat::from_rotation_z(0.2)]));
+    let mut clip = clip(tracks);
+    let original = clip.clone();
+
+    let outcome = prune_constant_tracks(&skeleton, &mut clip, &[]);
+
+    assert_eq!(outcome.removed.len(), CANDIDATE_COUNT);
+    assert_eq!(
+        outcome
+            .removed
+            .iter()
+            .map(|record| record.original_track_index)
+            .collect::<Vec<_>>(),
+        (0..CANDIDATE_COUNT).collect::<Vec<_>>()
+    );
+    assert!(outcome.retained.is_empty());
+    assert_eq!(clip.tracks.len(), 1);
+    assert_original_grid_equal(&skeleton, &original, &clip);
+}

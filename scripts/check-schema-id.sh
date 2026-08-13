@@ -74,6 +74,8 @@ check_schema docs/schemas/conversion-evidence-v2.schema.json urn:animsmith:schem
 check_schema docs/schemas/scale-evidence-v1.schema.json urn:animsmith:schema:scale-evidence:1
 check_schema docs/schemas/scale-evidence-v2.schema.json urn:animsmith:schema:scale-evidence:2
 check_schema docs/schemas/scale-evidence-v3.schema.json urn:animsmith:schema:scale-evidence:3 crates/animsmith/src/scale.rs docs/output.md docs/cli.md
+check_schema docs/schemas/character-assembly-recipe-v2.schema.json urn:animsmith:schema:character-assembly-recipe:2 docs/character-assembly.md docs/cli.md docs/output.md examples/character-assembly.toml
+check_schema docs/schemas/character-assembly-evidence-v2.schema.json urn:animsmith:schema:character-assembly-evidence:2 docs/character-assembly.md docs/cli.md docs/output.md
 if ! cmp -s docs/schemas/scale-evidence-v2.schema.json <(
   sed \
     -e 's/urn:animsmith:schema:scale-evidence:3/urn:animsmith:schema:scale-evidence:2/g' \
@@ -85,6 +87,28 @@ if ! cmp -s docs/schemas/scale-evidence-v2.schema.json <(
     docs/schemas/scale-evidence-v3.schema.json
 ); then
   fail 'scale-evidence-v3 must differ from immutable scale-evidence-v2 only by identity, scale-animation rewrite evidence, and animated-matrix-node'
+fi
+if ! cmp -s docs/schemas/character-assembly-recipe-v1.schema.json <(
+  sed \
+    -e 's/urn:animsmith:schema:character-assembly-recipe:2/urn:animsmith:schema:character-assembly-recipe:1/g' \
+    -e 's/animsmith character assembly recipe v2/animsmith character assembly recipe v1/' \
+    -e 's/"const": 2/"const": 1/' \
+    -e '/^    "prune_constant_tracks": {$/,/^    },$/d' \
+    docs/schemas/character-assembly-recipe-v2.schema.json
+); then
+  fail 'character-assembly-recipe-v2 must differ from immutable character-assembly-recipe-v1 only by identity and prune_constant_tracks'
+fi
+if ! cmp -s docs/schemas/character-assembly-evidence-v1.schema.json <(
+  sed \
+    -e 's/urn:animsmith:schema:character-assembly-evidence:2/urn:animsmith:schema:character-assembly-evidence:1/g' \
+    -e 's/animsmith character assembly evidence v2/animsmith character assembly evidence v1/' \
+    -e 's/"const": 2/"const": 1/' \
+    -e 's/, "pruned_constant_tracks"//' \
+    -e '/"pruned_constant_tracks":/d' \
+    -e '/^    "pruned_constant_track": {/,/^    },$/d' \
+    docs/schemas/character-assembly-evidence-v2.schema.json
+); then
+  fail 'character-assembly-evidence-v2 must differ from immutable character-assembly-evidence-v1 only by identity and pruned_constant_tracks'
 fi
 
 # Current-contract descriptions must not send readers back to the immutable
