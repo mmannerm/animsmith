@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - [**breaking**] *(assemble)* advance the character-assembly recipe and
+  evidence contracts to immutable v3. Recipes can exact-name base nodes for
+  fail-closed subtree removal after animation transforms, and evidence records
+  every removed node in original hierarchy order. Recipe/evidence v1 and v2
+  remain immutable historical contracts ([#350](https://github.com/mmannerm/animsmith/issues/350))
+- [**breaking**] *(assemble)* advance the character-assembly recipe and
   evidence contracts to immutable v2. Recipes can opt into constant-track
   pruning after all other transforms; evidence records each removed track by
   original index, exact output bone identity, TRS property, interpolation, and

@@ -1,8 +1,9 @@
-schema_version = 2
-schema = "urn:animsmith:schema:character-assembly-recipe:2"
+schema_version = 3
+schema = "urn:animsmith:schema:character-assembly-recipe:3"
 input_root = "inputs"
 base_input = "base-character.fbx"
 mesh_instances = ["character-mesh"]
+remove_nodes = ["sword-placeholder"]
 complete_tracks = true
 canonicalize_skin = true
 ground_and_center = true

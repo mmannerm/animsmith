@@ -74,8 +74,10 @@ check_schema docs/schemas/conversion-evidence-v2.schema.json urn:animsmith:schem
 check_schema docs/schemas/scale-evidence-v1.schema.json urn:animsmith:schema:scale-evidence:1
 check_schema docs/schemas/scale-evidence-v2.schema.json urn:animsmith:schema:scale-evidence:2
 check_schema docs/schemas/scale-evidence-v3.schema.json urn:animsmith:schema:scale-evidence:3 crates/animsmith/src/scale.rs docs/output.md docs/cli.md
-check_schema docs/schemas/character-assembly-recipe-v2.schema.json urn:animsmith:schema:character-assembly-recipe:2 docs/character-assembly.md docs/cli.md docs/output.md examples/character-assembly.toml
-check_schema docs/schemas/character-assembly-evidence-v2.schema.json urn:animsmith:schema:character-assembly-evidence:2 docs/character-assembly.md docs/cli.md docs/output.md
+check_schema docs/schemas/character-assembly-recipe-v2.schema.json urn:animsmith:schema:character-assembly-recipe:2
+check_schema docs/schemas/character-assembly-recipe-v3.schema.json urn:animsmith:schema:character-assembly-recipe:3 crates/animsmith/src/assembly.rs docs/character-assembly.md docs/cli.md docs/output.md examples/character-assembly.toml
+check_schema docs/schemas/character-assembly-evidence-v2.schema.json urn:animsmith:schema:character-assembly-evidence:2
+check_schema docs/schemas/character-assembly-evidence-v3.schema.json urn:animsmith:schema:character-assembly-evidence:3 crates/animsmith/src/assembly.rs docs/character-assembly.md docs/cli.md docs/output.md
 if ! cmp -s docs/schemas/scale-evidence-v2.schema.json <(
   sed \
     -e 's/urn:animsmith:schema:scale-evidence:3/urn:animsmith:schema:scale-evidence:2/g' \
@@ -109,6 +111,30 @@ if ! cmp -s docs/schemas/character-assembly-evidence-v1.schema.json <(
     docs/schemas/character-assembly-evidence-v2.schema.json
 ); then
   fail 'character-assembly-evidence-v2 must differ from immutable character-assembly-evidence-v1 only by identity and pruned_constant_tracks'
+fi
+if ! cmp -s docs/schemas/character-assembly-recipe-v2.schema.json <(
+  sed \
+    -e 's/urn:animsmith:schema:character-assembly-recipe:3/urn:animsmith:schema:character-assembly-recipe:2/g' \
+    -e 's/animsmith character assembly recipe v3/animsmith character assembly recipe v2/' \
+    -e 's/"const": 3/"const": 2/' \
+    -e '/^    "remove_nodes": {$/,/^    },$/d' \
+    docs/schemas/character-assembly-recipe-v3.schema.json
+); then
+  fail 'character-assembly-recipe-v3 must differ from immutable character-assembly-recipe-v2 only by identity and remove_nodes'
+fi
+if ! cmp -s docs/schemas/character-assembly-evidence-v2.schema.json <(
+  sed \
+    -e 's/urn:animsmith:schema:character-assembly-evidence:3/urn:animsmith:schema:character-assembly-evidence:2/g' \
+    -e 's/animsmith character assembly evidence v3/animsmith character assembly evidence v2/' \
+    -e 's/"const": 3/"const": 2/' \
+    -e 's/, "removed_nodes"//' \
+    -e '/"removed_nodes":/d' \
+    -e '/^    "removed_node": {/,/^    },$/d' \
+    -e '/        "base_index": {$/,/^        }$/c\        "base_index": { "type": "integer", "minimum": 0 }' \
+    -e '/        "bone_index": {$/,/^        },$/c\        "bone_index": { "type": "integer", "minimum": 0 },' \
+    docs/schemas/character-assembly-evidence-v3.schema.json
+); then
+  fail 'character-assembly-evidence-v3 must differ from immutable character-assembly-evidence-v2 only by identity, removed_nodes, and pre-removal index descriptions'
 fi
 
 # Current-contract descriptions must not send readers back to the immutable

@@ -84,7 +84,8 @@ are preserved.
 `animsmith_core::assembly` provides exact-name clip remapping onto an
 authoritative skeleton, named-bone track stripping, optional rest-pose channel
 completion for all or an explicit base-bone selection, deterministic quaternion hemisphere cleanup, and endpoint-key
-removal. It rejects ambiguous or missing referenced names rather than guessing
+removal. It also plans and transactionally applies exact-name node-subtree
+projection while refusing live animation, mesh, and skin references. It rejects ambiguous or missing referenced names rather than guessing
 at a retargeting relationship. For a final-pose hold, use the existing
 `animsmith_core::transform::hold_extend` helper.
 
