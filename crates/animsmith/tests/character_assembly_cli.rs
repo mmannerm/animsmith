@@ -9,9 +9,9 @@ use std::process::{Command, Output, Stdio};
 
 const RIGGED_TRIANGLE_FBX: &str = include_str!("../../animsmith-fbx/testdata/rigged_triangle.fbx");
 const RECIPE_SCHEMA: &str =
-    include_str!("../../../docs/schemas/character-assembly-recipe-v1.schema.json");
+    include_str!("../../../docs/schemas/character-assembly-recipe-v2.schema.json");
 const EVIDENCE_SCHEMA: &str =
-    include_str!("../../../docs/schemas/character-assembly-evidence-v1.schema.json");
+    include_str!("../../../docs/schemas/character-assembly-evidence-v2.schema.json");
 
 fn write_inputs(dir: &Path) {
     std::fs::create_dir(dir.join("inputs")).expect("creates input root");
@@ -21,8 +21,8 @@ fn write_inputs(dir: &Path) {
 
 fn success_recipe() -> &'static str {
     concat!(
-        "schema_version = 1\n",
-        "schema = \"urn:animsmith:schema:character-assembly-recipe:1\"\n",
+        "schema_version = 2\n",
+        "schema = \"urn:animsmith:schema:character-assembly-recipe:2\"\n",
         "input_root = \"inputs\"\n",
         "base_input = \"base.fbx\"\n",
         "mesh_instances = [\"tri\"]\n",
@@ -122,10 +122,23 @@ fn assembles_schema_valid_byte_stable_character_and_evidence() {
         std::fs::read(dir.path().join("character.assembly.json")).expect("reads evidence");
     let evidence: Value = serde_json::from_slice(&first_evidence).expect("evidence JSON");
     assert_schema_valid(&evidence, EVIDENCE_SCHEMA);
-    assert_eq!(evidence["schema_version"], 1);
+    assert_eq!(evidence["schema_version"], 2);
     assert_eq!(
         evidence["schema"],
-        "urn:animsmith:schema:character-assembly-evidence:1"
+        "urn:animsmith:schema:character-assembly-evidence:2"
+    );
+    assert_eq!(
+        evidence["recipe"]["effective"]["prune_constant_tracks"], false,
+        "omitting the v2 recipe flag preserves the historical behavior"
+    );
+    let recipe_schema: Value = serde_json::from_str(RECIPE_SCHEMA).expect("recipe schema JSON");
+    assert_eq!(
+        recipe_schema["properties"]["prune_constant_tracks"]["type"],
+        "boolean"
+    );
+    assert_eq!(
+        recipe_schema["properties"]["prune_constant_tracks"]["default"],
+        false
     );
     assert_eq!(evidence["recipe"]["effective"]["input_root"], "inputs");
     assert_eq!(evidence["config"]["source"], "file");
@@ -272,7 +285,7 @@ fn json_format_prints_the_published_evidence_bytes_verbatim() {
 
     let record: Value = serde_json::from_slice(&output.stdout).expect("stdout is one JSON record");
     assert_eq!(
-        record["schema"], "urn:animsmith:schema:character-assembly-evidence:1",
+        record["schema"], "urn:animsmith:schema:character-assembly-evidence:2",
         "no second schema and no envelope around the record"
     );
     assert_schema_valid(&record, EVIDENCE_SCHEMA);
@@ -393,8 +406,42 @@ fn the_text_summary_escapes_a_control_character_in_a_declared_path() {
 fn rejects_unsupported_malformed_escaping_and_missing_input_selections() {
     let cases = [
         (
-            success_recipe().replacen("schema_version = 1", "schema_version = 2", 1),
+            success_recipe()
+                .replacen("schema_version = 2", "schema_version = 1", 1)
+                .replacen(
+                    "urn:animsmith:schema:character-assembly-recipe:2",
+                    "urn:animsmith:schema:character-assembly-recipe:1",
+                    1,
+                ),
             "unsupported assembly recipe identity",
+        ),
+        (
+            success_recipe().replacen("schema_version = 2", "schema_version = 3", 1),
+            "unsupported assembly recipe identity",
+        ),
+        (
+            success_recipe().replacen(
+                "urn:animsmith:schema:character-assembly-recipe:2",
+                "urn:animsmith:schema:character-assembly-recipe:1",
+                1,
+            ),
+            "unsupported assembly recipe identity",
+        ),
+        (
+            success_recipe().replacen(
+                "urn:animsmith:schema:character-assembly-recipe:2",
+                "urn:animsmith:schema:character-assembly-recipe:99",
+                1,
+            ),
+            "unsupported assembly recipe identity",
+        ),
+        (
+            success_recipe().replacen("fps = 30.0", "fps = 30.0\nrest_bind_scale = true", 1),
+            "unknown field `rest_bind_scale`",
+        ),
+        (
+            format!("{}\n[rest_bind_scale]\nfactor = 0.01\n", success_recipe()),
+            "unknown field `rest_bind_scale`",
         ),
         (
             success_recipe().replacen(
@@ -443,7 +490,26 @@ fn rejects_unsupported_malformed_escaping_and_missing_input_selections() {
     let schema: Value = serde_json::from_str(RECIPE_SCHEMA).expect("recipe schema JSON");
     let validator = jsonschema::validator_for(&schema).expect("recipe schema compiles");
     for invalid in [
-        success_recipe().replacen("schema_version = 1", "schema_version = 2", 1),
+        success_recipe()
+            .replacen("schema_version = 2", "schema_version = 1", 1)
+            .replacen(
+                "urn:animsmith:schema:character-assembly-recipe:2",
+                "urn:animsmith:schema:character-assembly-recipe:1",
+                1,
+            ),
+        success_recipe().replacen("schema_version = 2", "schema_version = 3", 1),
+        success_recipe().replacen(
+            "urn:animsmith:schema:character-assembly-recipe:2",
+            "urn:animsmith:schema:character-assembly-recipe:1",
+            1,
+        ),
+        success_recipe().replacen(
+            "urn:animsmith:schema:character-assembly-recipe:2",
+            "urn:animsmith:schema:character-assembly-recipe:99",
+            1,
+        ),
+        success_recipe().replacen("fps = 30.0", "fps = 30.0\nrest_bind_scale = true", 1),
+        format!("{}\n[rest_bind_scale]\nfactor = 0.01\n", success_recipe()),
         success_recipe().replacen("fps = 30.0", "fps = 30.0\nunknown_field = true", 1),
         success_recipe().replacen(
             "frame_window = [1, 31]",
@@ -671,8 +737,8 @@ fn invalid_recipe_leaves_no_partial_outputs() {
     let dir = tempfile::tempdir().expect("creates temp directory");
     write_inputs(dir.path());
     let recipe = concat!(
-        "schema_version = 1\n",
-        "schema = \"urn:animsmith:schema:character-assembly-recipe:1\"\n",
+        "schema_version = 2\n",
+        "schema = \"urn:animsmith:schema:character-assembly-recipe:2\"\n",
         "input_root = \"inputs\"\n",
         "base_input = \"base.fbx\"\n",
         "\n",
@@ -1050,8 +1116,8 @@ fn assembles_synthetic_skinned_recipe_with_complete_public_provenance() {
     )
     .expect("writes role config");
     let recipe = concat!(
-        "schema_version = 1\n",
-        "schema = \"urn:animsmith:schema:character-assembly-recipe:1\"\n",
+        "schema_version = 2\n",
+        "schema = \"urn:animsmith:schema:character-assembly-recipe:2\"\n",
         "input_root = \"inputs\"\n",
         "base_input = \"base.glb\"\n",
         "mesh_instances = [\"body_mesh_skinned\"]\n",
@@ -1319,4 +1385,602 @@ fn assembles_synthetic_skinned_recipe_with_complete_public_provenance() {
             first_evidence
         );
     }
+}
+
+#[test]
+fn assembly_constant_track_pruning_is_opt_in_protected_and_deterministic() {
+    use animsmith_core::glam::{Quat, Vec3};
+    use animsmith_core::model::{
+        Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
+    };
+
+    fn track(bone: usize, property: Property, values: Vec<Vec3>) -> Track {
+        Track {
+            bone,
+            property,
+            interpolation: Interpolation::Linear,
+            times: (0..values.len()).map(|key| key as f32).collect(),
+            values: TrackValues::Vec3s(values),
+        }
+    }
+
+    fn write_fixture(dir: &Path, prune_constant_tracks: bool) {
+        let inputs = dir.join("inputs");
+        std::fs::create_dir(&inputs).expect("creates input root");
+        let skeleton = Skeleton {
+            bones: vec![
+                Bone {
+                    name: "moving".into(),
+                    parent: None,
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "removable".into(),
+                    parent: None,
+                    rest: Transform {
+                        translation: Vec3::new(1.0, 0.0, 0.0),
+                        ..Transform::IDENTITY
+                    },
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "protected".into(),
+                    parent: None,
+                    rest: Transform {
+                        translation: Vec3::new(2.0, 0.0, 0.0),
+                        ..Transform::IDENTITY
+                    },
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "held".into(),
+                    parent: None,
+                    rest: Transform {
+                        translation: Vec3::new(3.0, 0.0, 0.0),
+                        ..Transform::IDENTITY
+                    },
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "scale-removable".into(),
+                    parent: None,
+                    rest: Transform {
+                        scale: Vec3::splat(2.0),
+                        ..Transform::IDENTITY
+                    },
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "protected-extra".into(),
+                    parent: None,
+                    rest: Transform {
+                        translation: Vec3::new(5.0, 0.0, 0.0),
+                        ..Transform::IDENTITY
+                    },
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "rotation-removable".into(),
+                    parent: None,
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "stripped-before".into(),
+                    parent: None,
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+            ],
+        };
+        animsmith_gltf::write::write(
+            &Document {
+                skeleton: skeleton.clone(),
+                ..Document::default()
+            },
+            &inputs.join("base.glb"),
+        )
+        .expect("writes base fixture");
+        let source = Document {
+            skeleton,
+            clips: vec![
+                Clip {
+                    name: "opt_source".into(),
+                    duration_s: 1.0,
+                    tracks: vec![
+                        track(7, Property::Translation, vec![Vec3::ZERO, Vec3::ZERO]),
+                        track(0, Property::Translation, vec![Vec3::ZERO, Vec3::X]),
+                        track(1, Property::Translation, vec![Vec3::X, Vec3::X]),
+                        track(
+                            2,
+                            Property::Translation,
+                            vec![Vec3::new(2.0, 0.0, 0.0), Vec3::new(2.0, 0.0, 0.0)],
+                        ),
+                        // This has one source key. `hold_frames` must run before
+                        // pruning to make the synthetic held track a multi-key
+                        // constant candidate, recorded below with key_count two.
+                        track(3, Property::Translation, vec![Vec3::new(3.0, 0.0, 0.0)]),
+                        Track {
+                            interpolation: Interpolation::Step,
+                            ..track(4, Property::Scale, vec![Vec3::splat(2.0), Vec3::splat(2.0)])
+                        },
+                        track(
+                            5,
+                            Property::Translation,
+                            vec![Vec3::new(5.0, 0.0, 0.0), Vec3::new(5.0, 0.0, 0.0)],
+                        ),
+                        Track {
+                            bone: 6,
+                            property: Property::Rotation,
+                            interpolation: Interpolation::CubicSpline,
+                            times: vec![0.0, 1.0],
+                            values: TrackValues::Quats(vec![
+                                Quat::from_xyzw(0.0, 0.0, 0.0, 0.0),
+                                Quat::IDENTITY,
+                                Quat::from_xyzw(0.0, 0.0, 0.0, 0.0),
+                                Quat::from_xyzw(0.0, 0.0, 0.0, 0.0),
+                                -Quat::IDENTITY,
+                                Quat::from_xyzw(0.0, 0.0, 0.0, 0.0),
+                            ]),
+                        },
+                    ],
+                },
+                Clip {
+                    name: "single_source".into(),
+                    duration_s: 0.0,
+                    tracks: vec![track(1, Property::Translation, vec![Vec3::X])],
+                },
+            ],
+            ..Document::default()
+        };
+        animsmith_gltf::write::write(&source, &inputs.join("clips.glb"))
+            .expect("writes source fixture");
+        std::fs::write(
+            dir.join("recipe.toml"),
+            format!(
+                concat!(
+                    "schema_version = 2\n",
+                    "schema = \"urn:animsmith:schema:character-assembly-recipe:2\"\n",
+                    "input_root = \"inputs\"\n",
+                    "base_input = \"base.glb\"\n",
+                    "prune_constant_tracks = {prune_constant_tracks}\n",
+                    "fps = 30.0\n\n",
+                    "[[clips]]\n",
+                    "name = \"opt_in\"\n",
+                    "input = \"clips.glb\"\n",
+                    "take = \"opt_source\"\n",
+                    "hold_frames = 1\n",
+                    "strip_bones = [\"stripped-before\"]\n\n",
+                    "[[clips]]\n",
+                    "name = \"last_writable\"\n",
+                    "input = \"clips.glb\"\n",
+                    "take = \"single_source\"\n",
+                    "hold_frames = 1\n",
+                ),
+                prune_constant_tracks = prune_constant_tracks
+            ),
+        )
+        .expect("writes assembly recipe");
+        // `required_bones` is deliberately not a pruning protection source;
+        // `animates_bones` is. The output assertions distinguish both.
+        std::fs::write(
+            dir.join("animsmith.toml"),
+            concat!(
+                "[rig]\n",
+                "required_bones = [\"removable\"]\n\n",
+                "[clips.opt_in]\n",
+                "animates_bones = [\"protected\"]\n",
+            ),
+        )
+        .expect("writes pruning config");
+    }
+
+    let disabled = tempfile::tempdir().expect("creates disabled fixture directory");
+    write_fixture(disabled.path(), false);
+    let first = run(disabled.path());
+    assert!(
+        first.status.success(),
+        "disabled assembly failed: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let disabled_glb = std::fs::read(disabled.path().join("character.glb")).expect("reads GLB");
+    let disabled_evidence =
+        std::fs::read(disabled.path().join("character.assembly.json")).expect("reads evidence");
+    let disabled_record: Value =
+        serde_json::from_slice(&disabled_evidence).expect("parses disabled evidence");
+    assert_schema_valid(&disabled_record, EVIDENCE_SCHEMA);
+    assert_eq!(disabled_record["schema_version"], 2);
+    assert_eq!(
+        disabled_record["recipe"]["effective"]["prune_constant_tracks"],
+        false
+    );
+    assert_eq!(disabled_record["clips"][0]["emitted_tracks"], 7);
+    assert_eq!(
+        disabled_record["clips"][0]["pruned_constant_tracks"],
+        serde_json::json!([])
+    );
+    let second = run(disabled.path());
+    assert!(
+        second.status.success(),
+        "second disabled assembly failed: {}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    assert_eq!(
+        std::fs::read(disabled.path().join("character.glb")).unwrap(),
+        disabled_glb,
+        "disabled artifact is byte stable"
+    );
+    assert_eq!(
+        std::fs::read(disabled.path().join("character.assembly.json")).unwrap(),
+        disabled_evidence,
+        "disabled evidence is byte stable"
+    );
+
+    let enabled = tempfile::tempdir().expect("creates enabled fixture directory");
+    write_fixture(enabled.path(), true);
+    let output = run(enabled.path());
+    assert!(
+        output.status.success(),
+        "enabled assembly failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let enabled_glb = std::fs::read(enabled.path().join("character.glb")).expect("reads GLB");
+    let enabled_evidence =
+        std::fs::read(enabled.path().join("character.assembly.json")).expect("reads evidence");
+    let second = run(enabled.path());
+    assert!(
+        second.status.success(),
+        "second enabled assembly failed: {}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    assert_eq!(
+        std::fs::read(enabled.path().join("character.glb")).unwrap(),
+        enabled_glb,
+        "enabled artifact is byte stable"
+    );
+    assert_eq!(
+        std::fs::read(enabled.path().join("character.assembly.json")).unwrap(),
+        enabled_evidence,
+        "enabled evidence is byte stable"
+    );
+    let evidence: Value =
+        serde_json::from_slice(&enabled_evidence).expect("parses enabled evidence");
+    assert_schema_valid(&evidence, EVIDENCE_SCHEMA);
+    let opt_in = evidence["clips"]
+        .as_array()
+        .expect("clip evidence")
+        .iter()
+        .find(|clip| clip["name"] == "opt_in")
+        .expect("opt-in evidence");
+    assert_eq!(opt_in["emitted_tracks"], 2);
+    assert_eq!(
+        opt_in["pruned_constant_tracks"],
+        serde_json::json!([
+            {
+                "original_track_index": 1,
+                "bone": "removable",
+                "bone_index": 1,
+                "property": "translation",
+                "interpolation": "linear",
+                "key_count": 3,
+            },
+            {
+                "original_track_index": 3,
+                "bone": "held",
+                "bone_index": 3,
+                "property": "translation",
+                "interpolation": "linear",
+                "key_count": 2,
+            },
+            {
+                "original_track_index": 4,
+                "bone": "scale-removable",
+                "bone_index": 4,
+                "property": "scale",
+                "interpolation": "step",
+                "key_count": 3,
+            },
+            {
+                "original_track_index": 5,
+                "bone": "protected-extra",
+                "bone_index": 5,
+                "property": "translation",
+                "interpolation": "linear",
+                "key_count": 3,
+            },
+            {
+                "original_track_index": 6,
+                "bone": "rotation-removable",
+                "bone_index": 6,
+                "property": "rotation",
+                "interpolation": "cubic_spline",
+                "key_count": 3,
+            },
+        ]),
+        "the exact pruning boundary records both safe removals, including the held one-key source"
+    );
+    let last_writable = evidence["clips"]
+        .as_array()
+        .expect("clip evidence")
+        .iter()
+        .find(|clip| clip["name"] == "last_writable")
+        .expect("last-writable evidence");
+    assert_eq!(last_writable["emitted_tracks"], 1);
+    assert_eq!(
+        last_writable["pruned_constant_tracks"],
+        serde_json::json!([])
+    );
+
+    let assembled = animsmith_gltf::load(&enabled.path().join("character.glb"))
+        .expect("loads enabled artifact");
+    let opt_in = assembled
+        .clips
+        .iter()
+        .find(|clip| clip.name == "opt_in")
+        .expect("opt-in output clip");
+    assert!(
+        opt_in
+            .tracks
+            .iter()
+            .any(|track| track.bone == 0 && track.property == Property::Translation),
+        "the non-constant track survives"
+    );
+    assert!(
+        opt_in
+            .tracks
+            .iter()
+            .any(|track| track.bone == 2 && track.property == Property::Translation),
+        "the exact animates_bones target survives"
+    );
+    assert!(
+        opt_in
+            .tracks
+            .iter()
+            .all(|track| ![1, 3, 4, 5, 6].contains(&track.bone)),
+        "required_bones and name substrings do not protect tracks, and pruning runs after hold"
+    );
+}
+
+#[test]
+fn assembly_prunes_after_completion_without_recreating_removed_channels() {
+    use animsmith_core::glam::Vec3;
+    use animsmith_core::model::{
+        Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
+    };
+
+    let track = |bone, values| Track {
+        bone,
+        property: Property::Translation,
+        interpolation: Interpolation::Linear,
+        times: vec![0.0, 1.0],
+        values: TrackValues::Vec3s(values),
+    };
+    let dir = tempfile::tempdir().expect("creates completion fixture directory");
+    let inputs = dir.path().join("inputs");
+    std::fs::create_dir(&inputs).expect("creates input root");
+    let skeleton = Skeleton {
+        bones: vec![
+            Bone {
+                name: "moving".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            },
+            Bone {
+                name: "rest-channel".into(),
+                parent: None,
+                rest: Transform {
+                    translation: Vec3::new(2.0, 0.0, 0.0),
+                    ..Transform::IDENTITY
+                },
+                inverse_bind: None,
+            },
+        ],
+    };
+    animsmith_gltf::write::write(
+        &Document {
+            skeleton: skeleton.clone(),
+            ..Document::default()
+        },
+        &inputs.join("base.glb"),
+    )
+    .expect("writes base fixture");
+    animsmith_gltf::write::write(
+        &Document {
+            skeleton,
+            clips: vec![Clip {
+                name: "source".into(),
+                duration_s: 1.0,
+                tracks: vec![
+                    track(0, vec![Vec3::ZERO, Vec3::X]),
+                    track(1, vec![Vec3::new(2.0, 0.0, 0.0), Vec3::new(2.0, 0.0, 0.0)]),
+                ],
+            }],
+            ..Document::default()
+        },
+        &inputs.join("clips.glb"),
+    )
+    .expect("writes source fixture");
+    std::fs::write(
+        dir.path().join("recipe.toml"),
+        concat!(
+            "schema_version = 2\n",
+            "schema = \"urn:animsmith:schema:character-assembly-recipe:2\"\n",
+            "input_root = \"inputs\"\n",
+            "base_input = \"base.glb\"\n",
+            "complete_tracks = true\n",
+            "prune_constant_tracks = true\n\n",
+            "[[clips]]\n",
+            "name = \"completed\"\n",
+            "input = \"clips.glb\"\n",
+            "take = \"source\"\n",
+        ),
+    )
+    .expect("writes assembly recipe");
+    std::fs::write(dir.path().join("animsmith.toml"), b"").expect("writes empty config");
+
+    let output = run(dir.path());
+    assert!(
+        output.status.success(),
+        "assembly failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let evidence: Value = serde_json::from_slice(
+        &std::fs::read(dir.path().join("character.assembly.json")).expect("reads evidence"),
+    )
+    .expect("parses evidence");
+    assert_schema_valid(&evidence, EVIDENCE_SCHEMA);
+    assert_eq!(evidence["clips"][0]["completed_tracks"], 4);
+    assert_eq!(evidence["clips"][0]["emitted_tracks"], 5);
+    assert_eq!(
+        evidence["clips"][0]["pruned_constant_tracks"],
+        serde_json::json!([{
+            "original_track_index": 1,
+            "bone": "rest-channel",
+            "bone_index": 1,
+            "property": "translation",
+            "interpolation": "linear",
+            "key_count": 2,
+        }])
+    );
+
+    let assembled =
+        animsmith_gltf::load(&dir.path().join("character.glb")).expect("loads completed artifact");
+    let clip = &assembled.clips[0];
+    assert!(
+        clip.tracks
+            .iter()
+            .all(|track| track.bone != 1 || track.property != Property::Translation),
+        "completion must not recreate the channel pruned after it"
+    );
+    for property in [Property::Rotation, Property::Scale] {
+        assert!(
+            clip.tracks
+                .iter()
+                .any(|track| track.bone == 1 && track.property == property),
+            "completion-created {property:?} survives as a one-key pin"
+        );
+    }
+}
+
+#[test]
+fn assembly_normalizes_quaternion_hemispheres_before_pruning() {
+    use animsmith_core::glam::{Quat, Vec3};
+    use animsmith_core::model::{
+        Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
+    };
+
+    let zero = Quat::from_xyzw(0.0, 0.0, 0.0, 0.0);
+    let dir = tempfile::tempdir().expect("creates quaternion fixture directory");
+    let inputs = dir.path().join("inputs");
+    std::fs::create_dir(&inputs).expect("creates input root");
+    let skeleton = Skeleton {
+        bones: vec![
+            Bone {
+                name: "sign-equivalent".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            },
+            Bone {
+                name: "grid-clock".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            },
+        ],
+    };
+    let sign_equivalent_track = Track {
+        bone: 0,
+        property: Property::Rotation,
+        interpolation: Interpolation::CubicSpline,
+        times: vec![0.0, 1.0],
+        values: TrackValues::Quats(vec![
+            zero,
+            Quat::IDENTITY,
+            zero,
+            zero,
+            -Quat::IDENTITY,
+            zero,
+        ]),
+    };
+    assert!(matches!(
+        animsmith_core::sample::sample_track(&sign_equivalent_track, 0.5),
+        animsmith_core::sample::TrackSample::Quat(value) if !value.is_finite()
+    ));
+    animsmith_gltf::write::write(
+        &Document {
+            skeleton: skeleton.clone(),
+            ..Document::default()
+        },
+        &inputs.join("base.glb"),
+    )
+    .expect("writes base fixture");
+    animsmith_gltf::write::write(
+        &Document {
+            skeleton,
+            clips: vec![Clip {
+                name: "source".into(),
+                duration_s: 1.0,
+                tracks: vec![
+                    sign_equivalent_track,
+                    Track {
+                        bone: 1,
+                        property: Property::Translation,
+                        interpolation: Interpolation::Linear,
+                        times: vec![0.0, 0.5, 1.0],
+                        values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::X, Vec3::ZERO]),
+                    },
+                ],
+            }],
+            ..Document::default()
+        },
+        &inputs.join("clips.glb"),
+    )
+    .expect("writes source fixture");
+    std::fs::write(
+        dir.path().join("recipe.toml"),
+        concat!(
+            "schema_version = 2\n",
+            "schema = \"urn:animsmith:schema:character-assembly-recipe:2\"\n",
+            "input_root = \"inputs\"\n",
+            "base_input = \"base.glb\"\n",
+            "prune_constant_tracks = true\n\n",
+            "[[clips]]\n",
+            "name = \"normalized\"\n",
+            "input = \"clips.glb\"\n",
+            "take = \"source\"\n",
+        ),
+    )
+    .expect("writes assembly recipe");
+    std::fs::write(dir.path().join("animsmith.toml"), b"").expect("writes empty config");
+
+    let output = run(dir.path());
+    assert!(
+        output.status.success(),
+        "assembly failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let evidence: Value = serde_json::from_slice(
+        &std::fs::read(dir.path().join("character.assembly.json")).expect("reads evidence"),
+    )
+    .expect("parses evidence");
+    assert_schema_valid(&evidence, EVIDENCE_SCHEMA);
+    assert_eq!(
+        evidence["clips"][0]["pruned_constant_tracks"],
+        serde_json::json!([{
+            "original_track_index": 0,
+            "bone": "sign-equivalent",
+            "bone_index": 0,
+            "property": "rotation",
+            "interpolation": "cubic_spline",
+            "key_count": 2,
+        }]),
+        "hemisphere normalization must make the sign-equivalent cubic track safely removable"
+    );
+    let assembled =
+        animsmith_gltf::load(&dir.path().join("character.glb")).expect("loads artifact");
+    assert_eq!(assembled.clips[0].tracks.len(), 1);
+    assert_eq!(assembled.clips[0].tracks[0].bone, 1);
 }

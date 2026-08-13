@@ -1,11 +1,12 @@
-schema_version = 1
-schema = "urn:animsmith:schema:character-assembly-recipe:1"
+schema_version = 2
+schema = "urn:animsmith:schema:character-assembly-recipe:2"
 input_root = "inputs"
 base_input = "base-character.fbx"
 mesh_instances = ["character-mesh"]
 complete_tracks = true
 canonicalize_skin = true
 ground_and_center = true
+prune_constant_tracks = true
 fps = 30.0
 
 [[clips]]

@@ -24,10 +24,10 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::ExitCode;
 
-const RECIPE_SCHEMA_VERSION: u32 = 1;
-const RECIPE_SCHEMA_ID: &str = "urn:animsmith:schema:character-assembly-recipe:1";
-const EVIDENCE_SCHEMA_VERSION: u32 = 1;
-const EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:character-assembly-evidence:1";
+const RECIPE_SCHEMA_VERSION: u32 = 2;
+const RECIPE_SCHEMA_ID: &str = "urn:animsmith:schema:character-assembly-recipe:2";
+const EVIDENCE_SCHEMA_VERSION: u32 = 2;
+const EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:character-assembly-evidence:2";
 
 fn default_fps() -> f64 {
     30.0
@@ -48,6 +48,8 @@ struct AssemblyRecipe {
     material_texture_recipe: Option<PathBuf>,
     #[serde(default)]
     complete_tracks: bool,
+    #[serde(default)]
+    prune_constant_tracks: bool,
     #[serde(default)]
     canonicalize_skin: bool,
     #[serde(default)]
@@ -112,6 +114,7 @@ struct AssemblyClipEvidence {
     completed_tracks: usize,
     stripped_tracks: usize,
     stripped_bone_motion: Vec<StrippedBoneMotionEvidence>,
+    pruned_constant_tracks: Vec<PrunedConstantTrackEvidence>,
     duration_s: f64,
     frame_window: Option<[u32; 2]>,
     time_window: Option<[f64; 2]>,
@@ -135,6 +138,17 @@ struct StrippedBoneMotionEvidence {
     translation_end: Option<[f32; 3]>,
     translation_delta: Option<[f32; 3]>,
     duration_s: Option<f64>,
+}
+
+/// One constant track removed from a completed and normalized output clip.
+#[derive(Debug, Clone, Serialize)]
+struct PrunedConstantTrackEvidence {
+    original_track_index: usize,
+    bone: String,
+    bone_index: usize,
+    property: &'static str,
+    interpolation: &'static str,
+    key_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -623,6 +637,7 @@ fn assemble(
             completed_tracks: 0,
             stripped_tracks,
             stripped_bone_motion,
+            pruned_constant_tracks: Vec::new(),
             duration_s: clip.duration_s,
             frame_window: clip_recipe.frame_window,
             time_window: clip_recipe.time_window,
@@ -676,6 +691,53 @@ fn assemble(
         validate_unique_channels(clip, &base.skeleton)?;
         normalize_quaternion_magnitudes(clip)?;
         animsmith_core::assembly::normalize_quaternion_hemispheres(clip);
+        if recipe.prune_constant_tracks {
+            // `animates_bones` is a per-clip motion contract. Keep its exact-name
+            // tracks even when they are mechanically constant, so a later lint
+            // can still observe that authored channel. `required_bones` is only
+            // a skeleton-presence contract and deliberately does not protect a
+            // track here.
+            let protected_bones = config
+                .expectations_for(&clip.name)
+                .animates_bones
+                .as_deref()
+                .map(|names| {
+                    base.skeleton
+                        .bones
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(index, bone)| {
+                            names.iter().any(|name| name == &bone.name).then_some(index)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let outcome = animsmith_core::transform::prune_constant_tracks(
+                &base.skeleton,
+                clip,
+                &protected_bones,
+            );
+            evidence.pruned_constant_tracks = outcome
+                .removed
+                .into_iter()
+                .map(|record| {
+                    let bone = base.skeleton.bones.get(record.bone).ok_or_else(|| {
+                        format!(
+                            "constant-track pruning reported missing bone {} for clip {:?}",
+                            record.bone, clip.name
+                        )
+                    })?;
+                    Ok(PrunedConstantTrackEvidence {
+                        original_track_index: record.original_track_index,
+                        bone: bone.name.clone(),
+                        bone_index: record.bone,
+                        property: record.property.as_str(),
+                        interpolation: interpolation_name(record.interpolation),
+                        key_count: record.key_count,
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+        }
         evidence.emitted_tracks = clip.tracks.len();
     }
     base.clips = output_clips;
@@ -742,6 +804,14 @@ fn assemble(
         materials: summary.materials,
         evidence_bytes,
     })
+}
+
+fn interpolation_name(interpolation: Interpolation) -> &'static str {
+    match interpolation {
+        Interpolation::Linear => "linear",
+        Interpolation::Step => "step",
+        Interpolation::CubicSpline => "cubic_spline",
+    }
 }
 
 fn artifact_evidence(
@@ -1211,13 +1281,14 @@ mod tests {
     #[test]
     fn recipe_rejects_duplicate_outputs_and_conflicting_windows() {
         let recipe = AssemblyRecipe {
-            schema_version: 1,
+            schema_version: 2,
             schema: RECIPE_SCHEMA_ID.into(),
             input_root: None,
             base_input: "base.glb".into(),
             mesh_instances: vec![],
             material_texture_recipe: None,
             complete_tracks: false,
+            prune_constant_tracks: false,
             canonicalize_skin: false,
             ground_and_center: false,
             fps: 30.0,
