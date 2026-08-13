@@ -763,8 +763,10 @@ pub enum ScaleError {
         "document.assets.source_skeleton coverage is not complete: rest/bind planning requires a format-neutral source-node/source-skin projection"
     )]
     IncompleteSourceSkeleton,
-    /// A source node in the affected closure did not normalize to a
-    /// document skeleton bone.
+    /// A selected root, selected skin joint, or terminal affected source row
+    /// did not normalize to a document skeleton bone. Unprojected rows are
+    /// otherwise accepted only when they are strict connectors between
+    /// projected rows.
     #[error("source node {source_node_index} did not normalize to a document skeleton bone")]
     SourceNodeNotNormalized {
         /// The unnormalized source-node index.
@@ -776,9 +778,9 @@ pub enum ScaleError {
         /// The source node with the non-finite transform.
         source_node_index: usize,
     },
-    /// A transform composed during scale planning or proof is non-finite.
-    /// Entry-time skeleton rest failures are reported through
-    /// [`ScaleError::InvalidDocumentShape`].
+    /// A transform composed during scale planning, candidate construction,
+    /// or proof is non-finite. Entry-time skeleton rest failures are reported
+    /// through [`ScaleError::InvalidDocumentShape`].
     #[error("node {node} has a non-finite rest transform")]
     NonFiniteTransform {
         /// The node with the non-finite transform.
@@ -1189,6 +1191,7 @@ pub struct ScalePlan {
     operation: ScaleOperation,
     tolerance_policy: ScaleTolerancePolicy,
     affected_nodes: Vec<BoneId>,
+    rest_bind_source_topology: Vec<(usize, Option<usize>, Option<BoneId>)>,
     transform_only_attachments: Vec<BoneId>,
     common_factor: f64,
     observed_factor: f64,
@@ -1207,13 +1210,15 @@ impl ScalePlan {
         self.tolerance_policy
     }
 
-    /// Affected node closure, in ascending bone-id order.
+    /// Affected normalized-node closure, in ascending bone-id order.
     ///
     /// For [`ScaleOperation::WholeDocumentLinearUnits`] this is every node
     /// in the document. For [`ScaleOperation::RestBindUniformScale`] this is
     /// the closed connected hierarchy of DESIGN.md Appendix D §D.2: the
-    /// scaled ancestor, every selected skin joint and the paths between
-    /// them, and every descendant transform-only attachment.
+    /// scaled ancestor, every selected skin joint and the normalized paths
+    /// between them, and every descendant transform-only attachment. Raw
+    /// source-only connector rows on those paths are not normalized nodes
+    /// and therefore do not appear in this list.
     pub fn affected_nodes(&self) -> &[BoneId] {
         &self.affected_nodes
     }
@@ -1590,6 +1595,7 @@ fn plan_whole_document(document: &Document, factor: f64) -> Result<ScalePlan, Sc
         operation: ScaleOperation::WholeDocumentLinearUnits { factor },
         tolerance_policy: ScaleTolerancePolicy::APPENDIX_D_V6,
         affected_nodes,
+        rest_bind_source_topology: Vec::new(),
         transform_only_attachments: Vec::new(),
         common_factor: factor,
         // Declared, not measured — see [`ScalePlan::observed_factor`].
@@ -1623,8 +1629,9 @@ fn plan_whole_document(document: &Document, factor: f64) -> Result<ScalePlan, Sc
 }
 
 struct RestBindPlanDomain {
-    source_nodes: BTreeSet<usize>,
     bone_of_source: BTreeMap<usize, BoneId>,
+    connector_tail_by_source: BTreeMap<usize, usize>,
+    source_topology: Vec<(usize, Option<usize>, Option<BoneId>)>,
     scaled_root_bone: BoneId,
     affected_nodes: Vec<BoneId>,
     transform_only_attachments: Vec<BoneId>,
@@ -1657,15 +1664,85 @@ fn derive_rest_bind_plan_domain(
     let source_nodes =
         rest_bind_affected_closure(document, &by_source_index, skin, source_root_node_index)?;
 
-    let mut bone_of_source: BTreeMap<usize, BoneId> = BTreeMap::new();
-    for &source in &source_nodes {
-        let asset = by_source_index[&source];
-        let bone = asset.bone.ok_or(ScaleError::SourceNodeNotNormalized {
-            source_node_index: source,
-        })?;
-        bone_of_source.insert(source, bone);
+    let scaled_root_bone = by_source_index[&source_root_node_index].bone.ok_or(
+        ScaleError::SourceNodeNotNormalized {
+            source_node_index: source_root_node_index,
+        },
+    )?;
+    for &joint in &skin.joint_source_node_indices {
+        if by_source_index[&joint].bone.is_none() {
+            return Err(ScaleError::SourceNodeNotNormalized {
+                source_node_index: joint,
+            });
+        }
     }
-    let scaled_root_bone = bone_of_source[&source_root_node_index];
+
+    let bone_of_source: BTreeMap<usize, BoneId> = source_nodes
+        .iter()
+        .filter_map(|source| by_source_index[source].bone.map(|bone| (*source, bone)))
+        .collect();
+
+    // A source row without a normalized bone is admitted only as a strict
+    // connector between two projected rows. Record only each projected
+    // successor's immediate connector tail. Candidate construction memoizes
+    // the ordered ancestor product per connector row, keeping both storage and
+    // work linear when many projected successors share a long connector chain.
+    let mut connector_tail_by_source = BTreeMap::new();
+    let mut used_connectors = BTreeSet::new();
+    for &source in bone_of_source.keys() {
+        if source == source_root_node_index {
+            continue;
+        }
+        if let Some(parent) = by_source_index[&source]
+            .parent_source_node_index
+            .filter(|parent| {
+                source_nodes.contains(parent) && by_source_index[parent].bone.is_none()
+            })
+        {
+            connector_tail_by_source.insert(source, parent);
+        }
+    }
+    let mut pending: Vec<usize> = connector_tail_by_source.values().copied().collect();
+    while let Some(source) = pending.pop() {
+        if !used_connectors.insert(source) {
+            continue;
+        }
+        let asset = by_source_index[&source];
+        if let Some(parent) = asset.parent_source_node_index.filter(|parent| {
+            source_nodes.contains(parent) && by_source_index[parent].bone.is_none()
+        }) {
+            pending.push(parent);
+        }
+    }
+    if used_connectors.iter().any(|source| {
+        let SourceNodeLocalRest::Matrix(matrix) = &by_source_index[source].local_rest else {
+            return false;
+        };
+        matrix.x_axis.w != 0.0
+            || matrix.y_axis.w != 0.0
+            || matrix.z_axis.w != 0.0
+            || matrix.w_axis.w != 1.0
+    }) {
+        return Err(ScaleError::IncompleteClosure {
+            reason: "non_affine_connector_source_transform",
+        });
+    }
+    if let Some(&terminal) = source_nodes
+        .iter()
+        .find(|source| by_source_index[source].bone.is_none() && !used_connectors.contains(source))
+    {
+        return Err(ScaleError::SourceNodeNotNormalized {
+            source_node_index: terminal,
+        });
+    }
+
+    let source_topology = source_nodes
+        .iter()
+        .map(|source| {
+            let asset = by_source_index[source];
+            (*source, asset.parent_source_node_index, asset.bone)
+        })
+        .collect();
 
     let affected_nodes: Vec<BoneId> = {
         let set: BTreeSet<BoneId> = bone_of_source.values().copied().collect();
@@ -1688,8 +1765,9 @@ fn derive_rest_bind_plan_domain(
     let attached = !transform_only_attachments.is_empty();
 
     Ok(RestBindPlanDomain {
-        source_nodes,
         bone_of_source,
+        connector_tail_by_source,
+        source_topology,
         scaled_root_bone,
         affected_nodes,
         transform_only_attachments,
@@ -1727,9 +1805,8 @@ fn plan_rest_bind(
     let tol = ScaleTolerancePolicy::APPENDIX_D_V6;
     let mut world_cache: BTreeMap<usize, Mat4> = BTreeMap::new();
     let mut node_factor: BTreeMap<BoneId, f64> = BTreeMap::new();
-    for &source in &domain.source_nodes {
+    for (&source, &bone) in &domain.bone_of_source {
         let world = source_world_matrix(source, &by_source_index, &mut world_cache)?;
-        let bone = domain.bone_of_source[&source];
         let linear = Mat3::from_mat4(world);
         let factor = classify_affine(linear, &tol)
             .map_err(|reason| ScaleError::InvalidAffineDomain { node: bone, reason })?;
@@ -1772,6 +1849,7 @@ fn plan_rest_bind(
         },
         tolerance_policy: tol,
         affected_nodes: domain.affected_nodes,
+        rest_bind_source_topology: domain.source_topology,
         transform_only_attachments: domain.transform_only_attachments,
         common_factor: expected_factor,
         // The measured source fact, kept alongside the declared factor the
@@ -1808,32 +1886,40 @@ fn validate_plan_document_inventory(
     document: &Document,
     plan: &ScalePlan,
 ) -> Result<(), ScaleError> {
-    let (affected_nodes, transform_only_attachments, proof_obligations) = match plan.operation {
-        ScaleOperation::WholeDocumentLinearUnits { factor } => {
-            let derived = plan_whole_document(document, factor)?;
-            (
-                derived.affected_nodes,
-                derived.transform_only_attachments,
-                derived.proof_obligations,
-            )
-        }
-        ScaleOperation::RestBindUniformScale {
-            source_skin_index,
-            source_root_node_index,
-            ..
-        } => {
-            let domain =
-                derive_rest_bind_plan_domain(document, source_skin_index, source_root_node_index)?;
-            (
-                domain.affected_nodes,
-                domain.transform_only_attachments,
-                domain.proof_obligations,
-            )
-        }
-    };
+    let (affected_nodes, rest_bind_source_topology, transform_only_attachments, proof_obligations) =
+        match plan.operation {
+            ScaleOperation::WholeDocumentLinearUnits { factor } => {
+                let derived = plan_whole_document(document, factor)?;
+                (
+                    derived.affected_nodes,
+                    derived.rest_bind_source_topology,
+                    derived.transform_only_attachments,
+                    derived.proof_obligations,
+                )
+            }
+            ScaleOperation::RestBindUniformScale {
+                source_skin_index,
+                source_root_node_index,
+                ..
+            } => {
+                let domain = derive_rest_bind_plan_domain(
+                    document,
+                    source_skin_index,
+                    source_root_node_index,
+                )?;
+                (
+                    domain.affected_nodes,
+                    domain.source_topology,
+                    domain.transform_only_attachments,
+                    domain.proof_obligations,
+                )
+            }
+        };
 
     let reason = if affected_nodes != plan.affected_nodes {
         Some("affected_nodes_mismatch")
+    } else if rest_bind_source_topology != plan.rest_bind_source_topology {
+        Some("affected_source_topology_mismatch")
     } else if transform_only_attachments != plan.transform_only_attachments {
         Some("transform_only_attachments_mismatch")
     } else if proof_obligations != plan.proof_obligations {
@@ -1888,6 +1974,23 @@ fn rest_bind_affected_closure(
     skin: &SourceSkinAsset,
     source_root_node_index: usize,
 ) -> Result<BTreeSet<usize>, ScaleError> {
+    rest_bind_affected_closure_with_ancestor_steps(
+        document,
+        by_source_index,
+        skin,
+        source_root_node_index,
+    )
+    .map(|(domain, _)| domain)
+}
+
+/// Closure implementation whose lookup count lets tests pin the ancestor
+/// phase's linear bound without timing assertions.
+fn rest_bind_affected_closure_with_ancestor_steps(
+    document: &Document,
+    by_source_index: &BTreeMap<usize, &SourceNodeAsset>,
+    skin: &SourceSkinAsset,
+    source_root_node_index: usize,
+) -> Result<(BTreeSet<usize>, usize), ScaleError> {
     // Built up front so every insertion below — root, joint, ancestor-path
     // helper, or later descendant — is checked against the same evidence,
     // rather than only the descendants a later BFS happens to visit.
@@ -1910,6 +2013,8 @@ fn rest_bind_affected_closure(
     };
 
     let mut domain = BTreeSet::new();
+    let mut reaches_root = BTreeSet::from([source_root_node_index]);
+    let mut ancestor_steps = 0usize;
     reject_if_unskinned(source_root_node_index)?;
     domain.insert(source_root_node_index);
     for &joint in &skin.joint_source_node_indices {
@@ -1920,18 +2025,13 @@ fn rest_bind_affected_closure(
         }
         reject_if_unskinned(joint)?;
         let mut cursor = joint;
-        domain.insert(cursor);
-        // Bound the ancestor walk by the known node count: a well-formed
-        // source has each node at most one hop closer to the root, but this
-        // module is format-neutral and must not assume an upstream loader
-        // already rejected a cyclic or forward-referencing parent chain.
-        let mut steps = 0usize;
+        let mut pending = Vec::new();
+        let mut visiting = BTreeSet::new();
         loop {
-            if cursor == source_root_node_index {
+            if reaches_root.contains(&cursor) {
                 break;
             }
-            steps += 1;
-            if steps > by_source_index.len() {
+            if !visiting.insert(cursor) || visiting.len() > by_source_index.len() {
                 return Err(ScaleError::IncompleteClosure {
                     reason: "cyclic_or_unbounded_source_parent_chain",
                 });
@@ -1945,10 +2045,11 @@ fn rest_bind_affected_closure(
                 .ok_or(ScaleError::IncompleteClosure {
                     reason: "dangling_source_parent_node_index",
                 })?;
+            ancestor_steps = ancestor_steps.saturating_add(1);
+            pending.push(cursor);
             match asset.parent_source_node_index {
                 Some(parent) => {
                     reject_if_unskinned(parent)?;
-                    domain.insert(parent);
                     cursor = parent;
                 }
                 None => {
@@ -1957,6 +2058,10 @@ fn rest_bind_affected_closure(
                     });
                 }
             }
+        }
+        for source in pending {
+            domain.insert(source);
+            reaches_root.insert(source);
         }
     }
 
@@ -2002,7 +2107,7 @@ fn rest_bind_affected_closure(
             queue.push(child);
         }
     }
-    Ok(domain)
+    Ok((domain, ancestor_steps))
 }
 
 /// Compose `start`'s raw rest-world matrix from
@@ -2336,6 +2441,19 @@ fn build_whole_document(document: &Document, factor: f64) -> Result<Document, Sc
 fn build_rest_bind(document: &Document, plan: &ScalePlan) -> Result<Document, ScaleError> {
     let affected = plan.affected_set();
     let s = check_factor_narrows(plan.common_factor, plan.common_factor)?;
+    let ScaleOperation::RestBindUniformScale {
+        source_skin_index,
+        source_root_node_index,
+        ..
+    } = plan.operation
+    else {
+        return Err(ScaleError::PlanDocumentMismatch {
+            reason: "rest_bind_builder_received_other_operation",
+        });
+    };
+    let domain = derive_rest_bind_plan_domain(document, source_skin_index, source_root_node_index)?;
+    let by_source_index = source_node_index_map(document);
+    let mut connector_product_by_tail = BTreeMap::new();
     let parent_factor = |node: BoneId| -> Result<f32, ScaleError> {
         let bone = document
             .skeleton
@@ -2383,18 +2501,37 @@ fn build_rest_bind(document: &Document, plan: &ScalePlan) -> Result<Document, Sc
             };
             let s_parent = parent_factor(bone)?;
             let s_node = node_factor(bone);
-            node.local_rest = match &node.local_rest {
-                SourceNodeLocalRest::Trs {
-                    translation,
-                    rotation,
-                    scale,
-                } => SourceNodeLocalRest::Trs {
-                    translation: *translation * s_parent,
-                    rotation: *rotation,
-                    scale: *scale * (s_parent / s_node),
-                },
-                SourceNodeLocalRest::Matrix(matrix) => {
-                    SourceNodeLocalRest::Matrix(rebase_matrix(*matrix, s_parent, s_node))
+            let connector_tail = domain
+                .connector_tail_by_source
+                .get(&node.source_node_index)
+                .copied();
+            node.local_rest = if let Some(connector_tail) = connector_tail {
+                rebase_source_local_through_connector_bridge(
+                    &node.local_rest,
+                    connector_tail,
+                    &by_source_index,
+                    &mut connector_product_by_tail,
+                    s_parent,
+                    s_node,
+                    bone,
+                )?
+            } else {
+                // Keep the established direct-edge path bit-for-bit: besides
+                // avoiding needless matrix work, its precise f32 rounding is
+                // part of the already calibrated proof contract.
+                match &node.local_rest {
+                    SourceNodeLocalRest::Trs {
+                        translation,
+                        rotation,
+                        scale,
+                    } => SourceNodeLocalRest::Trs {
+                        translation: *translation * s_parent,
+                        rotation: *rotation,
+                        scale: *scale * (s_parent / s_node),
+                    },
+                    SourceNodeLocalRest::Matrix(matrix) => {
+                        SourceNodeLocalRest::Matrix(rebase_matrix(*matrix, s_parent, s_node))
+                    }
                 }
             };
         }
@@ -2482,6 +2619,107 @@ fn build_rest_bind(document: &Document, plan: &ScalePlan) -> Result<Document, Sc
         }
     }
     Ok(candidate)
+}
+
+/// Move a projected successor's rest/bind correction through an ordered
+/// chain of unchanged, unprojected source transforms.
+///
+/// If `H` is the parent-to-child product of the connector locals and `L` is
+/// the projected successor's authored local, preserving every connector
+/// exactly requires `L' = H^-1 S_parent H L S_node^-1`. A multiplier-only
+/// rewrite of `L` is wrong whenever `H` has a nonzero translation.
+fn rebase_source_local_through_connector_bridge(
+    local_rest: &SourceNodeLocalRest,
+    connector_tail: usize,
+    by_source_index: &BTreeMap<usize, &SourceNodeAsset>,
+    connector_product_by_tail: &mut BTreeMap<usize, Mat4>,
+    s_parent: f32,
+    s_node: f32,
+    bone: BoneId,
+) -> Result<SourceNodeLocalRest, ScaleError> {
+    if s_parent == 1.0 && s_node == 1.0 {
+        return Ok(local_rest.clone());
+    }
+    let connector =
+        memoized_connector_product(connector_tail, by_source_index, connector_product_by_tail)?;
+    let connector_linear_inverse = Mat3::from_mat4(connector).inverse();
+    let bridge_offset = connector_linear_inverse * (connector.w_axis.truncate() * (s_parent - 1.0));
+    if !connector_linear_inverse.x_axis.is_finite()
+        || !connector_linear_inverse.y_axis.is_finite()
+        || !connector_linear_inverse.z_axis.is_finite()
+        || !bridge_offset.is_finite()
+    {
+        return Err(ScaleError::NonFiniteTransform { node: bone });
+    }
+    // For affine H=[A,t], H^-1*S_parent*H contributes only the translation
+    // A^-1*((s_parent-1)*t) beyond the established direct-edge rewrite. Use
+    // that direct implementation so equal endpoint factors preserve authored
+    // matrix linear bits and the homogeneous row exactly.
+    let rebased = match local_rest {
+        SourceNodeLocalRest::Trs {
+            translation,
+            rotation,
+            scale,
+        } => SourceNodeLocalRest::Trs {
+            translation: *translation * s_parent + bridge_offset,
+            rotation: *rotation,
+            scale: *scale * (s_parent / s_node),
+        },
+        SourceNodeLocalRest::Matrix(matrix) => {
+            let mut rebased = rebase_matrix(*matrix, s_parent, s_node);
+            rebased.w_axis += bridge_offset.extend(0.0);
+            SourceNodeLocalRest::Matrix(rebased)
+        }
+    };
+    if !mat4_is_finite(local_rest_matrix(&rebased)) {
+        return Err(ScaleError::NonFiniteTransform { node: bone });
+    }
+    Ok(rebased)
+}
+
+/// Return the ordered connector product from its nearest projected ancestor
+/// through `connector_tail`, caching every traversed prefix once.
+fn memoized_connector_product(
+    connector_tail: usize,
+    by_source_index: &BTreeMap<usize, &SourceNodeAsset>,
+    connector_product_by_tail: &mut BTreeMap<usize, Mat4>,
+) -> Result<Mat4, ScaleError> {
+    let mut pending = Vec::new();
+    let mut cursor = connector_tail;
+    let mut product = loop {
+        if let Some(&cached) = connector_product_by_tail.get(&cursor) {
+            break cached;
+        }
+        let asset = by_source_index
+            .get(&cursor)
+            .ok_or(ScaleError::IncompleteClosure {
+                reason: "dangling_connector_source_node_index",
+            })?;
+        if asset.bone.is_some() {
+            break Mat4::IDENTITY;
+        }
+        pending.push(cursor);
+        cursor = asset
+            .parent_source_node_index
+            .ok_or(ScaleError::IncompleteClosure {
+                reason: "connector_without_projected_ancestor",
+            })?;
+    };
+    while let Some(source) = pending.pop() {
+        let asset = by_source_index
+            .get(&source)
+            .ok_or(ScaleError::IncompleteClosure {
+                reason: "dangling_connector_source_node_index",
+            })?;
+        product *= local_rest_matrix(&asset.local_rest);
+        connector_product_by_tail.insert(source, product);
+    }
+    connector_product_by_tail
+        .get(&connector_tail)
+        .copied()
+        .ok_or(ScaleError::IncompleteClosure {
+            reason: "empty_connector_bridge",
+        })
 }
 
 /// `B' = U B U^-1` for a uniform `U = scale(q)`: the translation column
@@ -5570,6 +5808,499 @@ mod tests {
         );
         let ibm = child_world.inverse();
         rig_document(&nodes, &[1], 0, ibm)
+    }
+
+    /// Replace the direct raw edge from projected bone 0 to projected bone 1
+    /// with the supplied unprojected matrix rows. `raw_child` and
+    /// `normalized_child` deliberately remain separate: the former is the
+    /// authored local below the connectors, while the latter is their
+    /// collapsed `H * L` representation in the normalized skeleton.
+    fn compensated_document_with_connectors(
+        connectors: &[Mat4],
+        raw_child: Transform,
+        normalized_child: Transform,
+    ) -> Document {
+        assert!(!connectors.is_empty());
+        let mut doc = compensated_document();
+        doc.skeleton.bones[1].rest = normalized_child;
+
+        let child_source = doc
+            .assets
+            .source_skeleton
+            .nodes
+            .iter_mut()
+            .find(|node| node.bone == Some(1))
+            .expect("the fixture projects bone 1");
+        child_source.local_rest = SourceNodeLocalRest::Trs {
+            translation: raw_child.translation,
+            rotation: raw_child.rotation,
+            scale: raw_child.scale,
+        };
+        child_source.parent_source_node_index = Some(10 + connectors.len() - 1);
+
+        for (offset, &matrix) in connectors.iter().enumerate() {
+            let mut connector =
+                SourceNodeAsset::new(10 + offset, SourceNodeLocalRest::Matrix(matrix));
+            connector.parent_source_node_index = Some(if offset == 0 { 0 } else { 9 + offset });
+            doc.assets.source_skeleton.nodes.push(connector);
+        }
+
+        let root = &doc.skeleton.bones[0].rest;
+        let root_world =
+            Mat4::from_scale_rotation_translation(root.scale, root.rotation, root.translation);
+        let child_local = Mat4::from_scale_rotation_translation(
+            normalized_child.scale,
+            normalized_child.rotation,
+            normalized_child.translation,
+        );
+        doc.assets.instances[0].skin_ibms[0] = (root_world * child_local).inverse();
+        doc
+    }
+
+    fn matrix_with_columns(x: Vec4, y: Vec4, z: Vec4, translation: Vec3) -> Mat4 {
+        Mat4::from_cols(x, y, z, translation.extend(1.0))
+    }
+
+    fn assert_source_local_rest_exact(
+        actual: &SourceNodeLocalRest,
+        expected: &SourceNodeLocalRest,
+    ) {
+        match (actual, expected) {
+            (SourceNodeLocalRest::Matrix(actual), SourceNodeLocalRest::Matrix(expected)) => {
+                assert_eq!(actual.to_cols_array(), expected.to_cols_array());
+            }
+            (
+                SourceNodeLocalRest::Trs {
+                    translation: actual_translation,
+                    rotation: actual_rotation,
+                    scale: actual_scale,
+                },
+                SourceNodeLocalRest::Trs {
+                    translation: expected_translation,
+                    rotation: expected_rotation,
+                    scale: expected_scale,
+                },
+            ) => {
+                assert_eq!(*actual_translation, *expected_translation);
+                assert_eq!(*actual_rotation, *expected_rotation);
+                assert_eq!(*actual_scale, *expected_scale);
+            }
+            _ => panic!("source local-rest representation changed"),
+        }
+    }
+
+    #[test]
+    fn rest_bind_rebases_a_projected_successor_through_one_unchanged_connector() {
+        // H = T(50, 0, 0) * diag(-2, -2, 2), L = T(100, 0, 0) * S(.5).
+        // The normalized child stores H * L = T(-150, 0, 0) * Rz(pi).
+        // Moving the 0.01 correction through unchanged H requires the raw
+        // successor translation 25.75; the old multiplier-only rewrite would
+        // produce 1.0 and is therefore decisively distinguished.
+        let connector = matrix_with_columns(
+            Vec4::new(-2.0, 0.0, 0.0, 0.0),
+            Vec4::new(0.0, -2.0, 0.0, 0.0),
+            Vec4::new(0.0, 0.0, 2.0, 0.0),
+            Vec3::new(50.0, 0.0, 0.0),
+        );
+        let raw_child = Transform {
+            translation: Vec3::new(100.0, 0.0, 0.0),
+            rotation: Quat::IDENTITY,
+            scale: Vec3::splat(0.5),
+        };
+        let normalized_child = Transform {
+            translation: Vec3::new(-150.0, 0.0, 0.0),
+            rotation: Quat::from_rotation_z(std::f32::consts::PI),
+            scale: Vec3::ONE,
+        };
+        let doc = compensated_document_with_connectors(&[connector], raw_child, normalized_child);
+        let capability = complete_capability();
+        let plan = compensated_rest_bind_plan(&doc, &capability);
+        assert_eq!(plan.affected_nodes(), &[0, 1, 2]);
+        assert!(!plan.affected_nodes().contains(&10));
+
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let connector_after = candidate
+            .document()
+            .assets
+            .source_skeleton
+            .nodes
+            .iter()
+            .find(|node| node.source_node_index == 10)
+            .unwrap();
+        assert_source_local_rest_exact(
+            &connector_after.local_rest,
+            &SourceNodeLocalRest::Matrix(connector),
+        );
+        let child_after = candidate
+            .document()
+            .assets
+            .source_skeleton
+            .nodes
+            .iter()
+            .find(|node| node.bone == Some(1))
+            .unwrap();
+        assert_source_local_rest_exact(
+            &child_after.local_rest,
+            &SourceNodeLocalRest::Trs {
+                translation: Vec3::new(25.75, 0.0, 0.0),
+                rotation: Quat::IDENTITY,
+                scale: Vec3::splat(0.5),
+            },
+        );
+        assert_eq!(
+            candidate.document().skeleton.bones[1].rest.translation,
+            Vec3::new(-1.5, 0.0, 0.0)
+        );
+        prove_scale(&doc, &candidate, &plan).unwrap();
+    }
+
+    #[test]
+    fn rest_bind_multiplies_two_unchanged_connectors_in_parent_to_child_order() {
+        // H1 has linear 2*Rz(90) and translation (10, 0); H2 has linear
+        // .5*Rz(-90) and translation (0, 20). In authored order H1*H2 is
+        // exactly T(-30, 0), so H1*H2*T(30, 40) collapses to T(0, 40).
+        // Reversing the two helpers produces a different translation.
+        let h1 = matrix_with_columns(
+            Vec4::new(0.0, 2.0, 0.0, 0.0),
+            Vec4::new(-2.0, 0.0, 0.0, 0.0),
+            Vec4::new(0.0, 0.0, 2.0, 0.0),
+            Vec3::new(10.0, 0.0, 0.0),
+        );
+        let h2 = matrix_with_columns(
+            Vec4::new(0.0, -0.5, 0.0, 0.0),
+            Vec4::new(0.5, 0.0, 0.0, 0.0),
+            Vec4::new(0.0, 0.0, 0.5, 0.0),
+            Vec3::new(0.0, 20.0, 0.0),
+        );
+        let raw_child = Transform {
+            translation: Vec3::new(30.0, 40.0, 0.0),
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
+        };
+        let normalized_child = Transform {
+            translation: Vec3::new(0.0, 40.0, 0.0),
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
+        };
+        let doc = compensated_document_with_connectors(&[h1, h2], raw_child, normalized_child);
+        let capability = complete_capability();
+        let plan = compensated_rest_bind_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+
+        for (source, expected) in [(10, h1), (11, h2)] {
+            let connector_after = candidate
+                .document()
+                .assets
+                .source_skeleton
+                .nodes
+                .iter()
+                .find(|node| node.source_node_index == source)
+                .unwrap();
+            assert_source_local_rest_exact(
+                &connector_after.local_rest,
+                &SourceNodeLocalRest::Matrix(expected),
+            );
+        }
+        let child_after = candidate
+            .document()
+            .assets
+            .source_skeleton
+            .nodes
+            .iter()
+            .find(|node| node.bone == Some(1))
+            .unwrap();
+        assert_source_local_rest_exact(
+            &child_after.local_rest,
+            &SourceNodeLocalRest::Trs {
+                translation: Vec3::new(30.0, 0.39999998, 0.0),
+                rotation: Quat::IDENTITY,
+                scale: Vec3::ONE,
+            },
+        );
+        assert_eq!(
+            candidate.document().skeleton.bones[1].rest.translation,
+            Vec3::new(0.0, 0.39999998, 0.0)
+        );
+        prove_scale(&doc, &candidate, &plan).unwrap();
+    }
+
+    #[test]
+    fn rest_bind_classifies_projected_endpoints_not_nonuniform_connector_rows() {
+        let connector = Mat4::from_scale(Vec3::new(2.0, 3.0, 4.0));
+        assert!(
+            classify_affine(
+                Mat3::from_mat4(connector),
+                &ScaleTolerancePolicy::APPENDIX_D_V6
+            )
+            .is_err(),
+            "the connector itself must be outside the accepted affine domain"
+        );
+        let raw_child = Transform {
+            translation: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::new(0.5, 1.0 / 3.0, 0.25),
+        };
+        let normalized_child = Transform::default();
+        let doc = compensated_document_with_connectors(&[connector], raw_child, normalized_child);
+        let capability = complete_capability();
+        let plan = compensated_rest_bind_plan(&doc, &capability);
+        assert_eq!(plan.affected_nodes(), &[0, 1, 2]);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        prove_scale(&doc, &candidate, &plan).unwrap();
+    }
+
+    #[test]
+    fn rest_bind_refuses_a_projective_unprojected_connector() {
+        let projective =
+            matrix_with_columns(Vec4::new(1.0, 0.0, 0.0, 0.25), Vec4::Y, Vec4::Z, Vec3::ZERO);
+        let rest = Transform::default();
+        let doc = compensated_document_with_connectors(&[projective], rest, rest);
+        let capability = complete_capability();
+        assert_eq!(
+            plan_scale(&ScaleRequest {
+                operation: ScaleOperation::RestBindUniformScale {
+                    source_skin_index: 0,
+                    source_root_node_index: 0,
+                    expected_factor: 0.01,
+                },
+                document: &doc,
+                capability: &capability,
+            })
+            .unwrap_err(),
+            ScaleError::IncompleteClosure {
+                reason: "non_affine_connector_source_transform"
+            }
+        );
+    }
+
+    #[test]
+    fn bridged_matrix_successor_preserves_linear_and_homogeneous_bits() {
+        let connector = Mat4::from_translation(Vec3::new(50.0, 0.0, 0.0));
+        let raw_child_matrix = Mat4::from_cols(
+            Vec4::X,
+            Vec4::new(0.0, 1.0, 0.0, 0.0),
+            Vec4::new(0.0, 0.0, 1.0, 0.0),
+            Vec4::new(100.0, 0.0, 0.0, 1.0),
+        );
+        let mut doc = compensated_document_with_connectors(
+            &[connector],
+            Transform {
+                translation: Vec3::new(100.0, 0.0, 0.0),
+                ..Transform::default()
+            },
+            Transform {
+                translation: Vec3::new(150.0, 0.0, 0.0),
+                ..Transform::default()
+            },
+        );
+        doc.assets
+            .source_skeleton
+            .nodes
+            .iter_mut()
+            .find(|node| node.bone == Some(1))
+            .unwrap()
+            .local_rest = SourceNodeLocalRest::Matrix(raw_child_matrix);
+        let capability = complete_capability();
+        let plan = compensated_rest_bind_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let SourceNodeLocalRest::Matrix(rebased) = candidate
+            .document()
+            .assets
+            .source_skeleton
+            .nodes
+            .iter()
+            .find(|node| node.bone == Some(1))
+            .unwrap()
+            .local_rest
+        else {
+            panic!("matrix successor changed representation");
+        };
+        assert_eq!(rebased.x_axis, raw_child_matrix.x_axis);
+        assert_eq!(rebased.y_axis, raw_child_matrix.y_axis);
+        assert_eq!(rebased.z_axis, raw_child_matrix.z_axis);
+        assert_eq!(
+            Vec4::new(
+                rebased.x_axis.w,
+                rebased.y_axis.w,
+                rebased.z_axis.w,
+                rebased.w_axis.w,
+            ),
+            Vec4::new(0.0, 0.0, 0.0, 1.0)
+        );
+        assert_eq!(rebased.w_axis.truncate(), Vec3::new(-48.5, 0.0, 0.0));
+    }
+
+    #[test]
+    fn connector_bridge_no_op_returns_the_authored_local_before_any_walk() {
+        let local = SourceNodeLocalRest::Matrix(Mat4::from_cols_array(&[
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0,
+        ]));
+        let mut cache = BTreeMap::new();
+        let rebased = rebase_source_local_through_connector_bridge(
+            &local,
+            usize::MAX,
+            &BTreeMap::new(),
+            &mut cache,
+            1.0,
+            1.0,
+            1,
+        );
+        assert_source_local_rest_exact(&rebased.unwrap(), &local);
+        assert!(cache.is_empty());
+    }
+
+    #[test]
+    fn an_unrepresentable_connector_rebase_names_the_projected_bone() {
+        let mut root = SourceNodeAsset::new(0, SourceNodeLocalRest::Matrix(Mat4::IDENTITY));
+        root.bone = Some(0);
+        let mut connector = SourceNodeAsset::new(
+            10,
+            SourceNodeLocalRest::Matrix(Mat4::from_scale(Vec3::new(0.0, 1.0, 1.0))),
+        );
+        connector.parent_source_node_index = Some(0);
+        let by_source_index = BTreeMap::from([(0, &root), (10, &connector)]);
+        let mut cache = BTreeMap::new();
+        assert_eq!(
+            rebase_source_local_through_connector_bridge(
+                &SourceNodeLocalRest::Matrix(Mat4::IDENTITY),
+                10,
+                &by_source_index,
+                &mut cache,
+                0.01,
+                0.01,
+                7,
+            )
+            .unwrap_err(),
+            ScaleError::NonFiniteTransform { node: 7 }
+        );
+    }
+
+    #[test]
+    fn a_shared_connector_chain_keeps_tail_and_product_storage_linear() {
+        const CONNECTORS: usize = 64;
+        const PROJECTED_CHILDREN: usize = 64;
+        let mut nodes = vec![RigNode {
+            parent: None,
+            source_node_index: 0,
+            translation: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::splat(0.01),
+        }];
+        nodes.extend((1..=PROJECTED_CHILDREN).map(|source| rig(Some(0), source, Vec3::ZERO)));
+        let skin_bones: Vec<BoneId> = (1..=PROJECTED_CHILDREN).collect();
+        let mut doc = rig_document(&nodes, &skin_bones, 0, Mat4::IDENTITY);
+        for offset in 0..CONNECTORS {
+            let source = 100 + offset;
+            let mut connector =
+                SourceNodeAsset::new(source, SourceNodeLocalRest::Matrix(Mat4::IDENTITY));
+            connector.parent_source_node_index = Some(if offset == 0 { 0 } else { source - 1 });
+            doc.assets.source_skeleton.nodes.push(connector);
+        }
+        let tail = 100 + CONNECTORS - 1;
+        for child in doc
+            .assets
+            .source_skeleton
+            .nodes
+            .iter_mut()
+            .filter(|node| node.bone.is_some_and(|bone| bone != 0))
+        {
+            child.parent_source_node_index = Some(tail);
+        }
+
+        let domain = derive_rest_bind_plan_domain(&doc, 0, 0).unwrap();
+        assert_eq!(domain.connector_tail_by_source.len(), PROJECTED_CHILDREN);
+        assert!(
+            domain
+                .connector_tail_by_source
+                .values()
+                .all(|&source| source == tail)
+        );
+        assert_eq!(
+            domain.source_topology.len(),
+            1 + CONNECTORS + PROJECTED_CHILDREN
+        );
+
+        let by_source_index = source_node_index_map(&doc);
+        let skin = resolve_rest_bind_skin(&doc, 0).unwrap();
+        let (_, ancestor_steps) =
+            rest_bind_affected_closure_with_ancestor_steps(&doc, &by_source_index, skin, 0)
+                .unwrap();
+        assert_eq!(ancestor_steps, CONNECTORS + PROJECTED_CHILDREN);
+
+        let mut cache = BTreeMap::new();
+        for &connector_tail in domain.connector_tail_by_source.values() {
+            assert_eq!(
+                memoized_connector_product(connector_tail, &by_source_index, &mut cache).unwrap(),
+                Mat4::IDENTITY
+            );
+        }
+        assert_eq!(cache.len(), CONNECTORS);
+    }
+
+    #[test]
+    fn a_stale_plan_cannot_replay_across_connector_topology_changes() {
+        let identity = Mat4::IDENTITY;
+        let rest = Transform::default();
+        let doc = compensated_document_with_connectors(&[identity], rest, rest);
+        let capability = complete_capability();
+        let plan = compensated_rest_bind_plan(&doc, &capability);
+
+        let mut changed = doc.clone();
+        changed.assets.source_skeleton.nodes.push(SourceNodeAsset {
+            source_node_index: 11,
+            name: None,
+            parent_source_node_index: Some(10),
+            scene_root_indices: Vec::new(),
+            local_rest: SourceNodeLocalRest::Matrix(Mat4::IDENTITY),
+            bone: None,
+        });
+        changed
+            .assets
+            .source_skeleton
+            .nodes
+            .iter_mut()
+            .find(|node| node.bone == Some(1))
+            .unwrap()
+            .parent_source_node_index = Some(11);
+        validate_scale_input(&changed).unwrap();
+        assert_eq!(
+            build_scale_candidate(&changed, &plan).unwrap_err(),
+            ScaleError::PlanDocumentMismatch {
+                reason: "affected_source_topology_mismatch"
+            }
+        );
+        assert_eq!(
+            prove_scale(
+                &changed,
+                &ScaleCandidate::from_document(changed.clone()),
+                &plan,
+            )
+            .unwrap_err(),
+            ScaleError::PlanDocumentMismatch {
+                reason: "affected_source_topology_mismatch"
+            }
+        );
+    }
+
+    #[test]
+    fn a_replayed_plan_allows_connector_numeric_changes_when_topology_is_identical() {
+        let rest = Transform::default();
+        let doc = compensated_document_with_connectors(&[Mat4::IDENTITY], rest, rest);
+        let capability = complete_capability();
+        let plan = compensated_rest_bind_plan(&doc, &capability);
+
+        let mut numerically_changed = doc.clone();
+        numerically_changed
+            .assets
+            .source_skeleton
+            .nodes
+            .iter_mut()
+            .find(|node| node.source_node_index == 10)
+            .unwrap()
+            .local_rest =
+            SourceNodeLocalRest::Matrix(Mat4::from_translation(Vec3::new(5.0, 0.0, 0.0)));
+        let candidate = build_scale_candidate(&numerically_changed, &plan).unwrap();
+        prove_scale(&numerically_changed, &candidate, &plan).unwrap();
     }
 
     #[test]
@@ -15584,6 +16315,7 @@ mod tests {
             operation: ScaleOperation::WholeDocumentLinearUnits { factor: 1.0 },
             tolerance_policy: ScaleTolerancePolicy::APPENDIX_D_V6,
             affected_nodes: vec![1, 2],
+            rest_bind_source_topology: Vec::new(),
             transform_only_attachments: Vec::new(),
             common_factor: 1.0,
             observed_factor: 1.0,
@@ -16595,6 +17327,48 @@ mod tests {
             rest_bind_reject_reason(&doc),
             ScaleError::IncompleteClosure {
                 reason: "skin_joint_source_node_missing"
+            }
+        );
+    }
+
+    #[test]
+    fn a_valid_unprojected_selected_joint_is_refused_as_not_normalized() {
+        let mut doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
+        let mut joint = SourceNodeAsset::new(5, SourceNodeLocalRest::Matrix(Mat4::IDENTITY));
+        joint.parent_source_node_index = Some(0);
+        doc.assets.source_skeleton.nodes.push(joint);
+        doc.assets.source_skeleton.skins[0]
+            .joint_source_node_indices
+            .push(5);
+        assert_eq!(
+            rest_bind_reject_reason(&doc),
+            ScaleError::SourceNodeNotNormalized {
+                source_node_index: 5
+            }
+        );
+    }
+
+    #[test]
+    fn an_unprojected_selected_root_is_refused_as_not_normalized() {
+        let mut doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
+        doc.assets.source_skeleton.nodes[0].bone = None;
+        // Keep the remaining projected row's normalized parent consistent:
+        // its raw nearest *projected* ancestor is now absent as well.
+        doc.skeleton.bones[1].parent = None;
+        let capability = complete_capability();
+        assert_eq!(
+            plan_scale(&ScaleRequest {
+                operation: ScaleOperation::RestBindUniformScale {
+                    source_skin_index: 0,
+                    source_root_node_index: 0,
+                    expected_factor: 1.0,
+                },
+                document: &doc,
+                capability: &capability,
+            })
+            .unwrap_err(),
+            ScaleError::SourceNodeNotNormalized {
+                source_node_index: 0
             }
         );
     }
@@ -17872,6 +18646,7 @@ mod tests {
             operation: plan.operation(),
             tolerance_policy: plan.tolerance_policy(),
             affected_nodes: plan.affected_nodes().to_vec(),
+            rest_bind_source_topology: plan.rest_bind_source_topology.clone(),
             transform_only_attachments: plan.transform_only_attachments().to_vec(),
             common_factor: plan.common_factor(),
             observed_factor: plan.observed_factor(),
