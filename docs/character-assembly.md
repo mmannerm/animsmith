@@ -170,7 +170,7 @@ The normative current recipe schema is
 [`character-assembly-recipe-v3.schema.json`](schemas/character-assembly-recipe-v3.schema.json).
 Recipe v1 and v2 remain immutable historical contracts. To migrate from v2,
 change `schema_version` and `schema` to v3, then add `remove_nodes` or omit it
-for an empty, behavior-preserving default.
+to request no node projection. V3 still applies its current shared snapshot validation.
 
 ## Evidence and determinism
 

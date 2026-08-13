@@ -261,7 +261,8 @@ The recipe identity is
 historical contracts.
 See [multi-source character assembly](character-assembly.md) for operation and
 consumer-boundary semantics. Migrate from v2 by selecting recipe/evidence v3;
-an omitted `remove_nodes` list keeps the v2 behavior.
+an omitted `remove_nodes` list requests no node projection; v3 still applies its
+current shared snapshot validation.
 
 ## `scale`
 
