@@ -175,7 +175,7 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   Character-assembly recipe/evidence v3 owns that node-removal contract.
   Selectors resolve by exact unique name against the post-canonicalization base;
   their descendant union is planned before completion, excluded from completion
-  targets, and projected after quaternion cleanup and constant-track pruning.
+  targets, and projected after clip processing and constant-track pruning.
   `animates_bones` may therefore retain a protected track and force refusal,
   while `[rig] required_bones` remains lint presence policy rather than an
   assembly selector. Accepted non-empty projection clears optional source-native

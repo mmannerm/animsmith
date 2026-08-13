@@ -134,7 +134,7 @@ descendant of a removed node belongs to the removal closure.
 
 Removal is planned before track completion, and closure nodes are excluded
 from completion targets. The structural projection is applied only after
-completion, quaternion normalization, and constant-track pruning. It is
+clip processing and constant-track pruning. It is
 refused if a final track still targets the closure, if a mesh instance is
 attached to it, or if a selected node remains referenced by a skin joint or
 complete source-skin identity. Per-clip `strip_bones` and constant-track

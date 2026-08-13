@@ -940,6 +940,7 @@ mod node_subtree_removal_tests {
     fn apply_stably_remaps_every_normalized_bone_reference_and_clears_source_projection() {
         let mut document = fixture();
         let retained_inverse_bind = glam::Mat4::from_translation(Vec3::new(7.0, 8.0, 9.0));
+        let retained_material = format!("{:?}", document.assets.materials[0]);
         document.skeleton.bones[4].inverse_bind = Some(retained_inverse_bind);
         let plan = plan_prop(&document);
 
@@ -967,13 +968,10 @@ mod node_subtree_removal_tests {
         assert_eq!(document.assets.instances[0].skin_joints, [0, 2]);
         assert_eq!(document.assets.scenes[0].roots, [0, 1]);
         assert_eq!(document.assets.meshes[0].name, "kept-mesh");
+        assert_eq!(document.assets.materials.len(), 1);
         assert_eq!(
-            document.assets.materials[0]
-                .base_color_texture
-                .as_ref()
-                .unwrap()
-                .bytes,
-            [1, 2, 3, 4]
+            format!("{:?}", document.assets.materials[0]),
+            retained_material
         );
         assert!(
             document.assets.source_skeleton.coverage == SourceSkeletonCoverage::Unavailable
