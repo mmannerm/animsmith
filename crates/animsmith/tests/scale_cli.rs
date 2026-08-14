@@ -508,10 +508,17 @@ fn whole_document_publishes_the_exact_binary32_narrowing_residuals_the_factor_co
         serde_json::json!([0, 1, 2, 3])
     );
     assert_eq!(result["affected"]["source_skins"], serde_json::json!([0]));
-    assert_eq!(result["domain_rewrites"]["base_mesh_positions"], true);
     assert_eq!(
-        result["domain_rewrites"]["scale_animation"], false,
-        "whole-document conversion preserves dimensionless scale channels"
+        result["domain_rewrites"],
+        serde_json::json!({
+            "rest_hierarchy": true,
+            "translation_animation": true,
+            "scale_animation": false,
+            "inverse_binds": true,
+            "base_mesh_positions": true
+        }),
+        "whole-document conversion rewrites every linear domain while preserving \
+         dimensionless scale channels"
     );
     // §D.7: this operation's factor has no measurable source counterpart, so
     // both witnesses are the declared factor and they cannot diverge.

@@ -1148,20 +1148,23 @@ enum SourceLocalKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SourceNodeLedgerRole {
-    WholeDocumentRewrite,
+    WholeDocumentRewrite {
+        projected_node: Option<BoneId>,
+    },
     RestBindProjected {
         node: BoneId,
         connector_tail: Option<usize>,
     },
     RestBindConnector,
-    Preserve,
+    Preserve {
+        projected_node: Option<BoneId>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SourceNodeLedgerRow {
     source_node_index: usize,
     parent_source_node_index: Option<usize>,
-    projected_node: Option<BoneId>,
     local_kind: SourceLocalKind,
     role: SourceNodeLedgerRole,
 }
@@ -1309,6 +1312,65 @@ impl ScaleStructureLedger {
                 .instances
                 .iter()
                 .any(|row| row.role == InstanceLedgerRole::RewriteBinds),
+        }
+    }
+
+    /// Classify an already-established exact ledger mismatch without
+    /// participating in the acceptance decision.
+    ///
+    /// [`validate_plan_document_inventory`] compares the two complete ledgers
+    /// first. These derived views exist only to retain the established stable
+    /// reason strings; they cannot make unequal ledgers compare equal.
+    fn mismatch_reason(&self, other: &Self, rest_bind: bool) -> &'static str {
+        debug_assert_ne!(self, other);
+        if self.affected_nodes().ne(other.affected_nodes()) {
+            "affected_nodes_mismatch"
+        } else if self
+            .source_nodes
+            .iter()
+            .filter(|row| !matches!(row.role, SourceNodeLedgerRole::Preserve { .. }))
+            .ne(other
+                .source_nodes
+                .iter()
+                .filter(|row| !matches!(row.role, SourceNodeLedgerRole::Preserve { .. })))
+        {
+            "affected_source_topology_mismatch"
+        } else if self
+            .transform_only_attachments()
+            .ne(other.transform_only_attachments())
+        {
+            "transform_only_attachments_mismatch"
+        } else if [
+            ScaleProofObligation::Rest,
+            ScaleProofObligation::UnitScalePostcondition,
+            ScaleProofObligation::TransformOnlyAffine,
+            ScaleProofObligation::KeyTranslation,
+            ScaleProofObligation::CubicInterior,
+            ScaleProofObligation::Trajectory,
+            ScaleProofObligation::SkinAndBounds,
+        ]
+        .into_iter()
+        .any(|obligation| {
+            self.requires_proof(rest_bind, obligation)
+                != other.requires_proof(rest_bind, obligation)
+        }) {
+            "proof_obligations_mismatch"
+        } else if self.source_coverage != other.source_coverage {
+            "source_coverage_mismatch"
+        } else if self.nodes != other.nodes {
+            "node_ledger_mismatch"
+        } else if self.source_nodes != other.source_nodes {
+            "source_node_ledger_mismatch"
+        } else if self.clip_count != other.clip_count || self.tracks != other.tracks {
+            "track_ledger_mismatch"
+        } else if self.mesh_count != other.mesh_count || self.primitives != other.primitives {
+            "primitive_ledger_mismatch"
+        } else if self.instances != other.instances {
+            "instance_ledger_mismatch"
+        } else if self.source_skins != other.source_skins {
+            "source_skin_ledger_mismatch"
+        } else {
+            "scale_ledger_mismatch"
         }
     }
 }
@@ -1817,18 +1879,21 @@ fn derive_structure_ledger(
         .map(|node| SourceNodeLedgerRow {
             source_node_index: node.source_node_index,
             parent_source_node_index: node.parent_source_node_index,
-            projected_node: node.bone,
             local_kind: match &node.local_rest {
                 SourceNodeLocalRest::Trs { .. } => SourceLocalKind::Trs,
                 SourceNodeLocalRest::Matrix(_) => SourceLocalKind::Matrix,
             },
             role: if whole_document {
-                SourceNodeLedgerRole::WholeDocumentRewrite
+                SourceNodeLedgerRole::WholeDocumentRewrite {
+                    projected_node: node.bone,
+                }
             } else {
                 source_roles
                     .get(&node.source_node_index)
                     .copied()
-                    .unwrap_or(SourceNodeLedgerRole::Preserve)
+                    .unwrap_or(SourceNodeLedgerRole::Preserve {
+                        projected_node: node.bone,
+                    })
             },
         })
         .collect();
@@ -2222,61 +2287,10 @@ fn validate_plan_document_inventory(
         ),
     };
     let stored = plan.ledger();
-
-    let stored_affected: Vec<_> = stored.affected_nodes().collect();
-    let derived_affected: Vec<_> = derived.affected_nodes().collect();
-    let stored_attachments: Vec<_> = stored.transform_only_attachments().collect();
-    let derived_attachments: Vec<_> = derived.transform_only_attachments().collect();
-    let stored_affected_source: Vec<_> = stored
-        .source_nodes
-        .iter()
-        .filter(|row| !matches!(row.role, SourceNodeLedgerRole::Preserve))
-        .collect();
-    let derived_affected_source: Vec<_> = derived
-        .source_nodes
-        .iter()
-        .filter(|row| !matches!(row.role, SourceNodeLedgerRole::Preserve))
-        .collect();
-    let obligations = [
-        ScaleProofObligation::Rest,
-        ScaleProofObligation::UnitScalePostcondition,
-        ScaleProofObligation::TransformOnlyAffine,
-        ScaleProofObligation::KeyTranslation,
-        ScaleProofObligation::CubicInterior,
-        ScaleProofObligation::Trajectory,
-        ScaleProofObligation::SkinAndBounds,
-    ];
-
-    let reason = if stored_affected != derived_affected {
-        Some("affected_nodes_mismatch")
-    } else if stored_affected_source != derived_affected_source {
-        Some("affected_source_topology_mismatch")
-    } else if stored_attachments != derived_attachments {
-        Some("transform_only_attachments_mismatch")
-    } else if obligations.into_iter().any(|obligation| {
-        stored.requires_proof(rest_bind, obligation)
-            != derived.requires_proof(rest_bind, obligation)
-    }) {
-        Some("proof_obligations_mismatch")
-    } else if stored.source_coverage != derived.source_coverage {
-        Some("source_coverage_mismatch")
-    } else if stored.nodes != derived.nodes {
-        Some("node_ledger_mismatch")
-    } else if stored.source_nodes != derived.source_nodes {
-        Some("source_node_ledger_mismatch")
-    } else if stored.clip_count != derived.clip_count || stored.tracks != derived.tracks {
-        Some("track_ledger_mismatch")
-    } else if stored.mesh_count != derived.mesh_count || stored.primitives != derived.primitives {
-        Some("primitive_ledger_mismatch")
-    } else if stored.instances != derived.instances {
-        Some("instance_ledger_mismatch")
-    } else if stored.source_skins != derived.source_skins {
-        Some("source_skin_ledger_mismatch")
-    } else {
-        None
-    };
-    if let Some(reason) = reason {
-        return Err(ScaleError::PlanDocumentMismatch { reason });
+    if stored != &derived {
+        return Err(ScaleError::PlanDocumentMismatch {
+            reason: stored.mismatch_reason(&derived, rest_bind),
+        });
     }
     Ok(())
 }
@@ -10742,17 +10756,26 @@ mod tests {
     #[test]
     fn typed_ledger_rejects_exact_inventory_changes_that_keep_obligations_unchanged() {
         let capability = complete_capability();
+        let assert_replay_mismatch =
+            |replayed: &Document, plan: &ScalePlan, reason: &'static str| {
+                let expected = ScaleError::PlanDocumentMismatch { reason };
+                assert_eq!(build_scale_candidate(replayed, plan).unwrap_err(), expected);
+                assert_eq!(
+                    prove_scale(
+                        replayed,
+                        &ScaleCandidate::from_document(replayed.clone()),
+                        plan,
+                    )
+                    .unwrap_err(),
+                    expected,
+                );
+            };
 
         let doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
         let plan = whole_document_plan(&doc, &capability);
         let mut changed_node = doc.clone();
         changed_node.skeleton.bones[0].inverse_bind = Some(Mat4::IDENTITY);
-        assert_eq!(
-            build_scale_candidate(&changed_node, &plan).unwrap_err(),
-            ScaleError::PlanDocumentMismatch {
-                reason: "node_ledger_mismatch"
-            }
-        );
+        assert_replay_mismatch(&changed_node, &plan, "node_ledger_mismatch");
 
         let doc = mid_chain_closure_document();
         let plan = mid_chain_closure_plan(&doc);
@@ -10765,11 +10788,10 @@ mod tests {
             .find(|node| node.source_node_index == 0)
             .unwrap();
         preserved.local_rest = SourceNodeLocalRest::Matrix(Mat4::IDENTITY);
-        assert_eq!(
-            build_scale_candidate(&changed_preserved_source, &plan).unwrap_err(),
-            ScaleError::PlanDocumentMismatch {
-                reason: "source_node_ledger_mismatch"
-            }
+        assert_replay_mismatch(
+            &changed_preserved_source,
+            &plan,
+            "source_node_ledger_mismatch",
         );
 
         let mut doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
@@ -10791,12 +10813,7 @@ mod tests {
             panic!("expected translation track")
         };
         values.push(Vec3::ONE);
-        assert_eq!(
-            build_scale_candidate(&changed_track_shape, &plan).unwrap_err(),
-            ScaleError::PlanDocumentMismatch {
-                reason: "track_ledger_mismatch"
-            }
-        );
+        assert_replay_mismatch(&changed_track_shape, &plan, "track_ledger_mismatch");
 
         let doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
         let plan = whole_document_plan(&doc, &capability);
@@ -10805,39 +10822,81 @@ mod tests {
         primitive.positions.push(Vec3::ZERO);
         primitive.joints.push([0; 4]);
         primitive.weights.push([1.0, 0.0, 0.0, 0.0]);
-        assert_eq!(
-            build_scale_candidate(&changed_primitive_shape, &plan).unwrap_err(),
-            ScaleError::PlanDocumentMismatch {
-                reason: "primitive_ledger_mismatch"
-            }
-        );
+        assert_replay_mismatch(&changed_primitive_shape, &plan, "primitive_ledger_mismatch");
 
         let mut changed_instance_identity = doc.clone();
         changed_instance_identity.assets.instances[0].node = 0;
-        assert_eq!(
-            build_scale_candidate(&changed_instance_identity, &plan).unwrap_err(),
-            ScaleError::PlanDocumentMismatch {
-                reason: "instance_ledger_mismatch"
-            }
+        assert_replay_mismatch(
+            &changed_instance_identity,
+            &plan,
+            "instance_ledger_mismatch",
         );
 
         let mut changed_source_skin = doc.clone();
         changed_source_skin.assets.source_skeleton.skins[0].skeleton_root_source_node_index =
             Some(0);
-        assert_eq!(
-            build_scale_candidate(&changed_source_skin, &plan).unwrap_err(),
-            ScaleError::PlanDocumentMismatch {
-                reason: "source_skin_ledger_mismatch"
-            }
-        );
+        assert_replay_mismatch(&changed_source_skin, &plan, "source_skin_ledger_mismatch");
 
         let mut changed_coverage = doc.clone();
         changed_coverage.assets.source_skeleton.coverage = SourceSkeletonCoverage::Unavailable;
-        assert_eq!(
-            build_scale_candidate(&changed_coverage, &plan).unwrap_err(),
-            ScaleError::PlanDocumentMismatch {
-                reason: "source_coverage_mismatch"
-            }
+        assert_replay_mismatch(&changed_coverage, &plan, "source_coverage_mismatch");
+
+        let (mut doc, _) = compensated_document_with_unskinned_prop();
+        for source_node_index in [100, 101] {
+            doc.assets.source_skeleton.nodes.push(SourceNodeAsset {
+                source_node_index,
+                name: None,
+                parent_source_node_index: None,
+                scene_root_indices: vec![0],
+                local_rest: SourceNodeLocalRest::Trs {
+                    translation: Vec3::ZERO,
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
+                bone: None,
+            });
+        }
+        let plan = whole_document_plan(&doc, &capability);
+        let mut changed_raw_parent = doc.clone();
+        changed_raw_parent
+            .assets
+            .source_skeleton
+            .nodes
+            .iter_mut()
+            .find(|node| node.source_node_index == 101)
+            .unwrap()
+            .parent_source_node_index = Some(100);
+        validate_scale_input(&changed_raw_parent).unwrap();
+        assert_replay_mismatch(
+            &changed_raw_parent,
+            &plan,
+            "affected_source_topology_mismatch",
+        );
+
+        let doc = rig_document(
+            &[
+                rig(None, 0, Vec3::ZERO),
+                rig(Some(0), 1, Vec3::ZERO),
+                rig(Some(0), 2, Vec3::ZERO),
+            ],
+            &[1],
+            0,
+            Mat4::IDENTITY,
+        );
+        let plan = whole_document_plan(&doc, &capability);
+        let mut changed_projection = doc.clone();
+        for node in &mut changed_projection.assets.source_skeleton.nodes {
+            node.bone = match node.source_node_index {
+                1 => Some(2),
+                2 => Some(1),
+                _ => node.bone,
+            };
+        }
+        validate_scale_input(&changed_projection).unwrap();
+        assert_replay_mismatch(
+            &changed_projection,
+            &plan,
+            "affected_source_topology_mismatch",
         );
     }
 
@@ -12803,10 +12862,10 @@ mod tests {
         assert_eq!(plan.affected_nodes(), &[0, 1, 2]);
         assert_eq!(plan.transform_only_attachments(), &[2]);
 
-        // Claim the existing transform-only child as another joint of the
-        // selected source skin. The closure still contains exactly the same
-        // bones, but the off-origin affine obligation would disappear under
-        // the stale plan's new source classification.
+        // Replace the selected joint with the existing transform-only child.
+        // The skin and closure cardinalities stay fixed, but the off-origin
+        // affine obligation would disappear under the stale plan's new source
+        // classification.
         let mut reclassified = doc.clone();
         let child_source = reclassified
             .assets
@@ -12816,14 +12875,23 @@ mod tests {
             .find(|node| node.bone == Some(2))
             .unwrap()
             .source_node_index;
-        reclassified.assets.source_skeleton.skins[0]
-            .joint_source_node_indices
-            .push(child_source);
+        reclassified.assets.source_skeleton.skins[0].joint_source_node_indices[0] = child_source;
+        validate_scale_input(&reclassified).unwrap();
+        let expected = ScaleError::PlanDocumentMismatch {
+            reason: "transform_only_attachments_mismatch",
+        };
         assert_eq!(
             build_scale_candidate(&reclassified, &plan).unwrap_err(),
-            ScaleError::PlanDocumentMismatch {
-                reason: "transform_only_attachments_mismatch"
-            }
+            expected,
+        );
+        assert_eq!(
+            prove_scale(
+                &reclassified,
+                &ScaleCandidate::from_document(reclassified.clone()),
+                &plan,
+            )
+            .unwrap_err(),
+            expected,
         );
     }
 
@@ -20116,12 +20184,36 @@ mod tests {
         assert!(plan.requires_proof(ScaleProofObligation::Rest));
         assert!(plan.requires_proof(ScaleProofObligation::UnitScalePostcondition));
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
-        prove_scale(&doc, &candidate, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+        assert!(proof.skin_matrix_comparisons > 0);
+        assert!(proof.bounds_comparisons > 0);
+        assert_eq!(
+            [
+                plan.rewrites(ScaleRewriteDomain::RestHierarchy),
+                plan.rewrites(ScaleRewriteDomain::TranslationAnimation),
+                plan.rewrites(ScaleRewriteDomain::ScaleAnimation),
+                plan.rewrites(ScaleRewriteDomain::InverseBinds),
+                plan.rewrites(ScaleRewriteDomain::BaseMeshPositions),
+            ],
+            [true, true, true, true, false],
+        );
 
         let empty = Document::default();
         let whole = whole_document_plan(&empty, &capability);
         assert!(!whole.requires_proof(ScaleProofObligation::Rest));
         assert!(!whole.requires_proof(ScaleProofObligation::UnitScalePostcondition));
+        assert_eq!(
+            [
+                whole.rewrites(ScaleRewriteDomain::RestHierarchy),
+                whole.rewrites(ScaleRewriteDomain::TranslationAnimation),
+                whole.rewrites(ScaleRewriteDomain::ScaleAnimation),
+                whole.rewrites(ScaleRewriteDomain::InverseBinds),
+                whole.rewrites(ScaleRewriteDomain::BaseMeshPositions),
+            ],
+            [true, true, false, true, true],
+        );
+        let candidate = build_scale_candidate(&empty, &whole).unwrap();
+        prove_scale(&empty, &candidate, &whole).unwrap();
     }
 
     // ----------------------------------------------------------------------
