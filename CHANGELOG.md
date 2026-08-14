@@ -7,6 +7,124 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/mmannerm/animsmith/compare/v0.1.0...v0.2.0) - 2026-08-14
+
+### Added
+
+- *(assemble)* [**breaking**] remove selected node subtrees
+- *(assemble)* [**breaking**] expose constant-track pruning
+- *(scale)* [**breaking**] rebase rest-bind scale animation
+- *(cli)* serialize each evidence record once and give assemble --format ([#340](https://github.com/mmannerm/animsmith/pull/340))
+- *(core)* refuse a document whose two parent chains disagree ([#331](https://github.com/mmannerm/animsmith/pull/331))
+- *(core)* count what each residual actually compared ([#322](https://github.com/mmannerm/animsmith/pull/322))
+- *(cli)* publish scale artifacts and evidence as an atomic pair
+- *(core)* add scale planning and proof contracts
+- *(lint)* validate selected rest-world scale
+- *(measure)* expose transform scale domains
+- prune provably constant animation tracks
+- detect time-complement sync pairs
+- add sync-group timing diagnostics
+- add required bone presence check
+- add angular loop seam continuity
+- detect duplicate loop endpoints
+- add loop continuity checks
+- measure mesh geometry centroid
+- measure skeleton rest-pose domains
+- report material and image measurements
+- report additional skin influence sets
+- add pinned clip duration expectations
+- *(inspect)* inventory mesh instances
+- *(cli)* verify complete assembly publication
+- support PBR material texture slots
+- *(cli)* add recipe-driven character assembly
+- *(convert)* apply material texture recipes
+- *(convert)* bake static mesh transforms
+- *(convert)* preserve normal textures
+- *(measure)* define static asset bound domains
+- [**breaking**] finalize result contract v2
+- add provisional v2 evaluation results
+- *(core)* [**breaking**] share affine classification
+- *(core)* make the proof record correct before it is frozen
+- *(core)* publish the observed factor and prove unaffected binds
+- *(core)* derive the scale tolerance policy and bound proof work
+- *(gltf)* rewrite whole-document linear units on raw bytes
+- *(core)* canonicalize skinned bind poses
+- *(core)* add character assembly clip operations
+- *(gltf)* reparameterize animated rest and bind hierarchies on raw bytes
+- *(gltf)* add raw scale capability preflight
+- bind reports to input bytes
+
+### Fixed
+
+- *(measure)* close final audit gaps
+- *(measure)* [**breaking**] reconcile shared affine facts
+- *(core)* [**breaking**] canonicalize the affine scale mean
+- *(scale)* make artifact diagnostics structural
+- *(scale)* expose artifact proof differences
+- *(scale)* accumulate parent-chain rounding provenance
+- *(scale)* prove unchanged skeleton placement
+- *(scale)* reject negative primary skin weights
+- *(core)* tolerate f32 rounding a rotation hid from the comparison base ([#333](https://github.com/mmannerm/animsmith/pull/333))
+- *(cli)* flush a published temp through a writable handle
+- *(cli)* a symlinked input must not be read through and then overwritten
+- *(core)* close fail-open and precision defects in scale proof
+- report emissive material texture bindings
+- honor inclusive loop continuity caps
+- align skeleton schema states
+- simplify skeleton coverage states
+- harden skeleton measurement validation
+- resolve encoded external resource paths
+- preserve per-primitive influence mismatches
+- reject invalid duration pins
+- *(inspect)* emit copyable TOML selectors
+- *(inspect)* mirror assembly name ambiguity
+- *(cli)* reject linked assembly textures
+- *(cli)* gate assembly config provenance
+- *(cli)* simplify loaded config evidence
+- *(cli)* bind assembly config evidence
+- *(cli)* satisfy assembly lint gates
+- *(lint)* separate scale diagnostic ownership
+- *(convert)* harden recipe path and image contracts
+- *(convert)* preserve normal texture bake state
+- *(convert)* harden static bake validation
+- *(cli)* stream human-readable output
+- preserve diff cardinality error precedence
+- address final result-contract audit
+- close final contract audit gaps
+- enforce schema-valid embedded results
+- validate embedded rig evidence
+- close final result contract audit gaps
+- close audit coverage gaps
+- address result contract review findings
+- harden final result contract
+- close result contract audit gaps
+- preserve v1 contracts in evaluation preview
+- *(core)* widen connector planning spans
+- *(core)* widen bridged linear rebase
+- *(core)* widen bridged translation sum
+- *(core)* close connector proof gaps
+- *(core)* compose rest-bind through static connectors
+- *(scale)* bind calibration to production comparisons
+- *(scale)* prove mesh-instance placement, not just its payloads ([#324](https://github.com/mmannerm/animsmith/pull/324))
+- *(core)* retract the impossibility claim and pin what it hid
+- *(core)* bound the candidate side and correct the policy's own arithmetic
+- *(core)* make the closure property true and charge the work proof does
+- *(core)* report the rotation residual in the unit it declares
+- *(lint)* preserve large scale ordering
+- *(lint)* quantize derived scale evidence
+- *(lint)* honor authored scale boundaries
+- stabilize milliradian track comparisons
+- preserve empty clip warning behavior
+- retain expected duration on degenerate clips
+- *(core)* derive skinned geometry bind space
+- *(convert)* order bake evidence by source node
+- bind rig evidence to resolved skeleton
+- *(gltf)* refuse geometry accessors the reader cannot decode ([#326](https://github.com/mmannerm/animsmith/pull/326))
+- *(gltf)* stop reading JSON null as a declared member, and wire the guards
+- *(gltf)* move two source-validity checks into the capability gate
+- *(gltf)* refuse out-of-contract nodes and pin the proof's claims
+- keep image dimensions policy-neutral
+
 ### Added
 
 - *(convert)* preserve normal textures through FBX ingestion and glTF scene round-trips, including glTF normal scale ([#222](https://github.com/mmannerm/animsmith/issues/222))
