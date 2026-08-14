@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - *(convert)* preserve normal textures through FBX ingestion and glTF scene round-trips, including glTF normal scale ([#222](https://github.com/mmannerm/animsmith/issues/222))
 
+### Fixed
+
+- *(core)* allow rest/bind scale planning to compose through finite static
+  source-node connectors between projected joints while preserving each
+  connector local transform, rebasing only its projected successor, and
+  independently proving that connector span's exact raw write set
+  ([#332](https://github.com/mmannerm/animsmith/issues/332))
+
 ### Changed
 
 - [**breaking**] *(assemble)* advance the character-assembly recipe and

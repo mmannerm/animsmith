@@ -864,21 +864,25 @@ pub struct SourceNodeAsset {
     pub scene_root_indices: Vec<usize>,
     /// Authored local-rest representation.
     pub local_rest: SourceNodeLocalRest,
-    /// The core [`BoneId`] this source node normalized to, when the loader's
-    /// topology derivation kept it reachable from a scene root.
+    /// The core [`BoneId`] this source node normalized to, when the loader
+    /// retained it as an independent normalized node.
     ///
-    /// `None` means the loader dropped this source node during
-    /// normalization (for example, it was unreachable from any root and so
-    /// never became a [`Skeleton`] bone). Format-neutral consumers that need
-    /// to resolve a raw source-node selector (for example
+    /// `None` means this source row has no independent [`Skeleton`] bone. A
+    /// loader may have dropped an unreachable node, or it may have folded a
+    /// static connector's authored local rest into the next projected node.
+    /// The row remains authoritative source identity and local-rest evidence
+    /// under [`SourceSkeletonCoverage::Complete`]. Format-neutral consumers
+    /// that need to resolve a raw source-node selector (for example
     /// [`crate::scale::ScaleOperation::RestBindUniformScale`]'s
     /// `source_root_node_index`/skin joints) into the normalized
     /// [`Skeleton`] must use this field rather than assuming source-node
     /// order equals bone order.
     ///
     /// With [`SourceSkeletonCoverage::Complete`] coverage, the `Some` rows
-    /// must form a downward-closed, parent-preserving projection into the
-    /// normalized skeleton; [`validate_document_shape`] verifies that fact.
+    /// must form a downward-closed, nearest-projected-parent-preserving
+    /// projection into the normalized skeleton. Unprojected source rows may
+    /// occur between projected ancestors; [`validate_document_shape`]
+    /// verifies that relation.
     pub bone: Option<BoneId>,
 }
 
@@ -1419,9 +1423,13 @@ fn validate_source_projection(document: &Document) -> Result<(), DocumentShapeEr
         .map(|node| (node.source_node_index, node))
         .collect();
     let unprojected_rows = source_skeleton.nodes.len() - bone_of_source.len();
+    // Cache only successful suffix resolutions. A malformed suffix still
+    // fails on the first projected row that reaches it, preserving that row
+    // as the error owner; a later row is never visited after the error.
+    let mut resolved_unprojected = BTreeMap::<usize, Option<BoneId>>::new();
     for (node, skeleton_parent) in skeleton_parents {
         let mut cursor = node.parent_source_node_index;
-        let mut steps = 0usize;
+        let mut unresolved_suffix = Vec::new();
         let projected_parent = loop {
             let Some(parent_source_node_index) = cursor else {
                 break None;
@@ -1429,14 +1437,17 @@ fn validate_source_projection(document: &Document) -> Result<(), DocumentShapeEr
             if let Some(&bone) = bone_of_source.get(&parent_source_node_index) {
                 break Some(bone);
             }
+            if let Some(&projected_parent) = resolved_unprojected.get(&parent_source_node_index) {
+                break projected_parent;
+            }
             let parent = by_source_index.get(&parent_source_node_index).ok_or(
                 DocumentShapeError::SourceProjection {
                     source_node_index: node.source_node_index,
                     violation: SourceProjectionViolation::ParentSourceNodeMissing,
                 },
             )?;
-            steps += 1;
-            if steps > unprojected_rows {
+            unresolved_suffix.push(parent_source_node_index);
+            if unresolved_suffix.len() > unprojected_rows {
                 return Err(DocumentShapeError::SourceProjection {
                     source_node_index: node.source_node_index,
                     violation: SourceProjectionViolation::CyclicUnprojectedSourceParentChain,
@@ -1444,6 +1455,9 @@ fn validate_source_projection(document: &Document) -> Result<(), DocumentShapeEr
             }
             cursor = parent.parent_source_node_index;
         };
+        for source_node_index in unresolved_suffix {
+            resolved_unprojected.insert(source_node_index, projected_parent);
+        }
         if projected_parent != skeleton_parent {
             return Err(DocumentShapeError::SourceProjection {
                 source_node_index: node.source_node_index,
@@ -1685,6 +1699,56 @@ mod tests {
         });
 
         assert_eq!(validate_document_shape(&document), Ok(()));
+    }
+
+    #[test]
+    fn shared_unprojected_parent_suffix_preserves_each_projected_parent() {
+        const CONNECTORS: usize = 64;
+        const PROJECTED_CHILDREN: usize = 64;
+
+        let mut nodes = Vec::with_capacity(1 + CONNECTORS + PROJECTED_CHILDREN);
+        nodes.push(source_node(0, None, Some(0)));
+        for source_node_index in 1..=CONNECTORS {
+            nodes.push(source_node(
+                source_node_index,
+                Some(source_node_index - 1),
+                None,
+            ));
+        }
+        for child in 0..PROJECTED_CHILDREN {
+            nodes.push(source_node(
+                1 + CONNECTORS + child,
+                Some(CONNECTORS),
+                Some(1 + child),
+            ));
+        }
+        let document = Document {
+            skeleton: Skeleton {
+                bones: std::iter::once(bone(None))
+                    .chain((0..PROJECTED_CHILDREN).map(|_| bone(Some(0))))
+                    .collect(),
+            },
+            assets: SceneAssets {
+                source_skeleton: SourceSkeletonAssets {
+                    coverage: SourceSkeletonCoverage::Complete,
+                    nodes,
+                    ..SourceSkeletonAssets::default()
+                },
+                ..SceneAssets::default()
+            },
+            ..Document::default()
+        };
+
+        assert_eq!(validate_document_shape(&document), Ok(()));
+        let mut mismatched = document.clone();
+        mismatched.skeleton.bones[PROJECTED_CHILDREN].parent = None;
+        assert_eq!(
+            validate_document_shape(&mismatched),
+            Err(DocumentShapeError::SourceProjection {
+                source_node_index: CONNECTORS + PROJECTED_CHILDREN,
+                violation: SourceProjectionViolation::NearestProjectedParentMismatch,
+            })
+        );
     }
 
     #[test]

@@ -1536,8 +1536,16 @@ part within tolerance of `s R_i`, where `s > 0` is one common factor and `R_i`
 is a proper rotation. The affected domain is a closed connected hierarchy:
 the scaled ancestor, all selected skin joints and paths between them, and all
 descendant nodes whose attachment transform would otherwise inherit `s`.
-Crossing into a second factor, an unclassified helper, or an instance outside
-that closure rejects the plan.
+A strict source-node connector with no normalized bone may occur on a path
+between two projected nodes when its only modeled contribution is its authored
+static local rest, which must be finite and affine. Planning composes that
+local in source order; the connector does not become an affected normalized
+node, its authored local is preserved exactly, and no proof obligation names
+it. The selected root and every selected skin joint must still project to
+normalized bones. An
+unprojected descendant or attachment that would itself need rewriting, a
+second effective factor, or an instance outside the closure still rejects the
+plan.
 
 For affected node `i`, define the constant basis correction
 `C_i = scale(1 / s_i)`, where the initial contract admits `s_i = s` inside the
@@ -1553,23 +1561,57 @@ and the corresponding local matrix is
 L_i'(t) = C_parent^-1 * L_i(t) * C_i .
 ```
 
-Because every admitted `C` is a positive uniform scale, the result remains
-representable as TRS. The node-local translation is multiplied by the
-parent's `s_parent`; rotation is unchanged; and the local scale is multiplied
-by the dimensionless ratio `s_parent / s_i`. Translation animation values and
-both cubic translation tangents receive the same parent-basis multiplier.
-Scale animation is the same local-scale component over time, so every stored
-VEC3 scale element receives `s_parent / s_i` too: the selected closure root
-receives `1 / s`, a strict affected descendant receives `s / s = 1`, and an
-unaffected node receives `1`. This is a topology rule, not a
-constant-track predicate: `LINEAR`, `STEP`, and every value plus in/out
-tangent of `CUBICSPLINE` are rebased. Rotation tracks and key times remain
-unchanged.
+The same rule remains valid across a preserved static connector, but it does
+not reduce to skipping that connector or blindly applying the projected
+parent's scalar to the next raw local. Let `H` be the ordered product of
+unprojected connector locals between projected parent `p` and projected node
+`i`, and let `L_i` be `i`'s authored local after that connector span. Since
+`H` is preserved, the projected successor's authored local must become
 
-A node that declares `matrix` rather than TRS members takes the same rule in
-component form. Writing `L_i'` out in glTF's column-major order, the nine
-linear entries (`0,1,2, 4,5,6, 8,9,10`) are multiplied by `s_parent / s_i`
-and the three translation entries (`12, 13, 14`) by `s_parent`. Components
+```text
+L_i' = H^-1 * C_p^-1 * H * L_i * C_i .
+```
+
+Then `W_p' * H * L_i' = W_p * H * L_i * C_i`, as required. A translated
+connector makes the conjugation's additive translation term observable, so a
+non-identity connector fixture is required; an identity-only fixture cannot
+distinguish composition from omission. This is a static-rest rule only:
+`SourceNodeAsset` carries no raw animation channel for an unprojected row, so
+support for a frontend that drops an animated connector requires a separate
+source-animation inventory and rewrite contract.
+
+Because every admitted `C` is a positive uniform scale, the result remains
+representable as TRS. On a direct projected edge (`H = I`) — including the
+normalized `Bone` local into which a loader has already folded a connector —
+the node-local translation is multiplied by the parent's `s_parent`, rotation
+is unchanged, and local scale is multiplied by the dimensionless ratio
+`s_parent / s_i`. For a raw projected successor after a preserved connector,
+the linear part receives that same ratio but its translation is instead
+determined by `H^-1 * C_p^-1 * H * L_i * C_i`; a translated `H` contributes
+an additive term, so the simple translation multiplier must not be applied to
+that raw local. The connector product, inverse, additive term, complete
+bridged translation sum, and bridged linear ratio application are evaluated
+in `f64`, then each final source-local component is narrowed once to the
+`f32` model boundary. Direct projected edges retain their established `f32`
+arithmetic and association. Planning likewise keeps each admitted connector
+span widened until its projected endpoint, so a built candidate that retains
+Complete source projection remains a consumable factor-one planner input even
+when the preserved connector-only product exceeds `f32`. Translation
+animation values and both cubic translation
+tangents on normalized nodes receive the existing parent-basis multiplier.
+Scale animation on those normalized nodes is the same local-scale component
+over time, so every stored VEC3 scale element receives `s_parent / s_i` too:
+the selected closure root receives `1 / s`, a strict affected descendant
+receives `s / s = 1`, and an unaffected node receives `1`. This is a topology
+rule, not a constant-track predicate: `LINEAR`, `STEP`, and every value plus
+in/out tangent of `CUBICSPLINE` are rebased. Rotation tracks and key times
+remain unchanged.
+
+A node on a direct projected edge that declares `matrix` rather than TRS
+members takes the same rule in component form. Writing `L_i'` out in glTF's
+column-major order, the nine linear entries (`0,1,2, 4,5,6, 8,9,10`) are
+multiplied by `s_parent / s_i` and the three translation entries
+(`12, 13, 14`) by `s_parent`. Components
 `3, 7, 11, 15` are written back exactly as authored, which is the correct
 rebase only because the §D.4 gate has already proved them exactly
 `(0, 0, 0, 1)`: the basis change multiplies `3, 7, 11` by `1 / s_i`, a no-op
@@ -1577,7 +1619,9 @@ on an exact zero and on nothing else, and leaves `15` alone at any value, so
 what the gate buys there is not the arithmetic but the premise — a `matrix`
 is the node's whole transform, with no projective divide this record models,
 only when `15` is exactly one. §D.3 case 4 records why that gate compares
-exactly rather than within tolerance.
+exactly rather than within tolerance. A raw projected successor after a
+preserved connector is governed by the full `H` product above, not this
+component shortcut.
 
 Mesh positions, morph deltas, and normals remain unchanged because their world
 geometry is already correct. Each inverse bind is regenerated from the
@@ -1699,8 +1743,8 @@ inspect the raw input or a loader-supplied complete inventory before mutation.
 
 | Domain | Current model boundary | Unit conversion | Reparameterization |
 |---|---|---|---|
-| Rest hierarchy | `Bone::rest.translation`; source glTF TRS/matrix also exists as read-side evidence | Scale translations; conjugate retained matrices | Rebase affected translations/scales; preserve orientations |
-| Translation animation | Values and cubic tangent triplets are retained | Multiply values and both tangents by `q` | Multiply by the affected parent-basis factor |
+| Rest hierarchy | `Bone::rest`; source-node TRS/matrix also exists as read-side evidence | Scale translations; conjugate retained matrices | Rebase affected normalized/projected locals; compose and exactly preserve static unprojected connector locals; preserve orientations |
+| Translation animation | Values and cubic tangent triplets are retained for normalized nodes | Multiply values and both tangents by `q` | Multiply by the affected parent-basis factor; infer no raw animation support for an unprojected connector |
 | Rotation and scale animation | Retained as dimensionless values | Leave unchanged | Rotation unchanged; rebase each scale VEC3 by `s_parent / s_i`, including cubic tangents |
 | Root motion and velocity | Derived from translation tracks | Convert tracks, then recompute | Preserve sampled trajectory and derived velocity |
 | Base mesh geometry | Base `POSITION` and normals are retained | Scale positions; normals unchanged | Leave positions and normals unchanged |
@@ -1713,6 +1757,13 @@ inspect the raw input or a loader-supplied complete inventory before mutation.
 | Animation targeting a matrix node | glTF 2.0 requires an animated node to use TRS; a typed reader can otherwise decompose `matrix` and lose that source distinction | Reject at raw preflight | Reject at raw preflight |
 | Shared raw accessor payloads | Every accessor use has a component-shape and multiplier claim; preserved uses carry factor one | Convert once per unique accessor: every converted use takes `q` | Reject same-index type/factor conflicts and overlapping distinct accessors when either range is rewritten (§D.2) |
 | Image payload aliases | An `image` reads a `bufferView` directly and never becomes an accessor | Reject when its bytes overlap a rewritten accessor | Reject when its bytes overlap a rewritten accessor |
+
+The connector exception is deliberately narrower than general helper-node
+support. The source projection can attest an unprojected row's identity,
+parent, and authored local rest, but not a raw animation channel targeting
+that row. A frontend that omits such a channel from the normalized model has
+not preserved it and cannot cite the static connector rule as evidence that
+it is safe to rewrite.
 
 The current glTF writer rebuilds nodes as TRS, emits only modeled triangle
 attributes, creates skin/holder structures, and does not preserve arbitrary
@@ -1838,12 +1889,19 @@ within versioned tolerances:
   ledger. Whole-document conversion has no unaffected complement, but its
   global topology comparison remains in force. Before either operation builds
   or proves, it re-derives the supplied source's structural planning inventory
-  and requires the same affected domain, transform-only attachments, and proof
-  obligations. Operation-fixed rewrite and tolerance policy fields are not
-  source inventory. Numeric affine/factor classification is not repeated
-  there, so proof's normalized-skeleton witness remains independent of
-  planning's raw-projection witness; a structurally stale plan still cannot
-  omit a newly added bone or payload from every proof walk. The
+  and requires the same projected affected domain, ordered unprojected
+  connector spans, transform-only attachments, and proof obligations.
+  For an admitted connector span, proof also independently requires every
+  connector local to remain bit-exact and derives the projected successor's
+  expected bridged source local from the source topology. This is an exact
+  structural/write-set check outside the residual ledger: the connector owns
+  no normalized residual obligation, but a writer and proof cannot agree on a
+  wrong connector rebase by sharing the writer's product calculation.
+  Operation-fixed rewrite and tolerance policy fields are not source
+  inventory. Numeric affine/factor classification is not repeated there, so
+  proof's normalized-skeleton witness remains independent of planning's
+  raw-projection witness; a structurally stale plan still cannot omit a newly
+  added bone, connector, or payload from every proof walk. The
   unaffected-bind comparison is over stored evidence, in the resolution order
   the model defines (per-instance array, then the bone convenience value). A
   slot exactly one side records is a rewritten skin and is refused;
@@ -1919,6 +1977,12 @@ names two independent witnesses of the same quantity, measured from
 deliberately different state: planning classifies the raw source projection's
 node-local rests composed through the raw parent chain, and proof reads the
 normalized skeleton's bone rests composed through its own parent chain.
+The raw composition includes every preserved static connector local. The
+normalized witness reads the corresponding folded transform through the next
+projected bone; the connector itself has no normalized identity and therefore
+owns no residual obligation. Proof separately checks exact connector
+preservation and the analytic bridged source local at each projected
+successor before recording normalized residuals.
 Strict scale-input shape validation requires the two chains to *agree* — under
 `Complete` source-skeleton coverage, which this operation requires anyway, a
 projection that contradicts its own skeleton is refused before either witness
