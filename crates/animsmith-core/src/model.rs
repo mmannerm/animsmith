@@ -1384,19 +1384,6 @@ fn validate_source_skeleton_identity(
 /// the selected source closure while its parent moves, leaving its displaced
 /// world rest outside every declared proof walk.
 fn validate_source_projection(document: &Document) -> Result<(), DocumentShapeError> {
-    let mut validation_steps = 0usize;
-    validate_source_projection_counting(document, &mut validation_steps)
-}
-
-/// Shared implementation for [`validate_source_projection`].
-///
-/// `validation_steps` counts non-empty ancestor cursors examined. Keeping the
-/// counter outside the cache makes the unit test below able to pin the linear
-/// walk without giving the production validator a second implementation.
-fn validate_source_projection_counting(
-    document: &Document,
-    validation_steps: &mut usize,
-) -> Result<(), DocumentShapeError> {
     let source_skeleton = &document.assets.source_skeleton;
     if source_skeleton.coverage != SourceSkeletonCoverage::Complete {
         return Ok(());
@@ -1447,7 +1434,6 @@ fn validate_source_projection_counting(
             let Some(parent_source_node_index) = cursor else {
                 break None;
             };
-            *validation_steps += 1;
             if let Some(&bone) = bone_of_source.get(&parent_source_node_index) {
                 break Some(bone);
             }
@@ -1494,13 +1480,6 @@ fn validate_source_projection_counting(
         }
     }
     Ok(())
-}
-
-#[cfg(test)]
-fn source_projection_validation_steps(document: &Document) -> Result<usize, DocumentShapeError> {
-    let mut validation_steps = 0usize;
-    validate_source_projection_counting(document, &mut validation_steps)?;
-    Ok(validation_steps)
 }
 
 fn validate_clip_tracks(document: &Document) -> Result<(), DocumentShapeError> {
@@ -1723,7 +1702,7 @@ mod tests {
     }
 
     #[test]
-    fn shared_unprojected_parent_suffix_is_validated_in_linear_steps() {
+    fn shared_unprojected_parent_suffix_preserves_each_projected_parent() {
         const CONNECTORS: usize = 64;
         const PROJECTED_CHILDREN: usize = 64;
 
@@ -1761,10 +1740,14 @@ mod tests {
         };
 
         assert_eq!(validate_document_shape(&document), Ok(()));
+        let mut mismatched = document.clone();
+        mismatched.skeleton.bones[PROJECTED_CHILDREN].parent = None;
         assert_eq!(
-            source_projection_validation_steps(&document),
-            Ok(CONNECTORS + PROJECTED_CHILDREN),
-            "the shared suffix is walked once, then reached once per projected child"
+            validate_document_shape(&mismatched),
+            Err(DocumentShapeError::SourceProjection {
+                source_node_index: CONNECTORS + PROJECTED_CHILDREN,
+                violation: SourceProjectionViolation::NearestProjectedParentMismatch,
+            })
         );
     }
 

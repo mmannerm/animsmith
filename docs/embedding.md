@@ -240,7 +240,9 @@ static source connector with no independent normalized bone when it lies
 strictly between projected nodes in the selected rest/bind domain. The
 connector's authored local rest is preserved and no proof obligation names it;
 `ScalePlan::affected_nodes` remains the normalized Bone-keyed rewrite/proof
-domain. This does not imply support for a raw animation channel targeting an
+domain. Proof still checks connector preservation and the projected
+successor's bridged source local as exact structural invariants outside the
+numeric residual ledger. This does not imply support for a raw animation channel targeting an
 unprojected connector. A frontend that wants to raw-preflight a glTF source
 before calling into this module can use `animsmith_gltf::preflight_scale_source`
 and project its `GltfCapabilityManifest` down to `ScaleCapabilityFacts` with

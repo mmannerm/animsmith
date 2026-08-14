@@ -58,7 +58,7 @@ use crate::model::{
     validate_document_shape as validate_model_document_shape, world_rest_matrices,
 };
 use crate::sample::{TrackSample, sample_track};
-use glam::{DVec3, Mat3, Mat4, Quat, Vec3, Vec4};
+use glam::{DMat3, DMat4, DVec3, Mat3, Mat4, Quat, Vec3, Vec4};
 use std::collections::{BTreeMap, BTreeSet};
 
 // --- Tolerance policy ----------------------------------------------------
@@ -1001,8 +1001,11 @@ pub enum ScaleError {
     /// it hangs off, the source node it came from, the mesh it draws, or the
     /// joints it binds — disagrees with its source counterpart. Proof pairs
     /// source and candidate structure by identity or index, which requires
-    /// this parity to hold — an extra, missing, re-parented, relocated, or
-    /// otherwise rewritten unchanged value is never silently ignored.
+    /// this parity to hold. For rest/bind this also covers an admitted static
+    /// connector local that changed bits or a projected successor whose raw
+    /// local is not the independently derived bridged rebase. An extra,
+    /// missing, re-parented, relocated, or otherwise rewritten unchanged
+    /// value is never silently ignored.
     #[error("candidate document structure does not match source ({reason})")]
     CandidateStructureMismatch {
         /// Stable machine-readable reason.
@@ -1974,23 +1977,6 @@ fn rest_bind_affected_closure(
     skin: &SourceSkinAsset,
     source_root_node_index: usize,
 ) -> Result<BTreeSet<usize>, ScaleError> {
-    rest_bind_affected_closure_with_ancestor_steps(
-        document,
-        by_source_index,
-        skin,
-        source_root_node_index,
-    )
-    .map(|(domain, _)| domain)
-}
-
-/// Closure implementation whose lookup count lets tests pin the ancestor
-/// phase's linear bound without timing assertions.
-fn rest_bind_affected_closure_with_ancestor_steps(
-    document: &Document,
-    by_source_index: &BTreeMap<usize, &SourceNodeAsset>,
-    skin: &SourceSkinAsset,
-    source_root_node_index: usize,
-) -> Result<(BTreeSet<usize>, usize), ScaleError> {
     // Built up front so every insertion below — root, joint, ancestor-path
     // helper, or later descendant — is checked against the same evidence,
     // rather than only the descendants a later BFS happens to visit.
@@ -2014,7 +2000,6 @@ fn rest_bind_affected_closure_with_ancestor_steps(
 
     let mut domain = BTreeSet::new();
     let mut reaches_root = BTreeSet::from([source_root_node_index]);
-    let mut ancestor_steps = 0usize;
     reject_if_unskinned(source_root_node_index)?;
     domain.insert(source_root_node_index);
     for &joint in &skin.joint_source_node_indices {
@@ -2045,7 +2030,6 @@ fn rest_bind_affected_closure_with_ancestor_steps(
                 .ok_or(ScaleError::IncompleteClosure {
                     reason: "dangling_source_parent_node_index",
                 })?;
-            ancestor_steps = ancestor_steps.saturating_add(1);
             pending.push(cursor);
             match asset.parent_source_node_index {
                 Some(parent) => {
@@ -2107,7 +2091,7 @@ fn rest_bind_affected_closure_with_ancestor_steps(
             queue.push(child);
         }
     }
-    Ok((domain, ancestor_steps))
+    Ok(domain)
 }
 
 /// Compose `start`'s raw rest-world matrix from
@@ -2181,6 +2165,40 @@ fn local_rest_matrix(rest: &SourceNodeLocalRest) -> Mat4 {
             scale,
         } => Mat4::from_scale_rotation_translation(*scale, *rotation, *translation),
         SourceNodeLocalRest::Matrix(matrix) => *matrix,
+    }
+}
+
+/// Bit-exact equality for authored source-local evidence.
+///
+/// `SourceNodeLocalRest` deliberately preserves representation as well as
+/// value. In particular, `-0.0` and authored quaternion signs are bytes the
+/// rest/bind write set does not own on an unchanged connector, so ordinary
+/// float equality is too weak for the structural proof below.
+fn source_local_rest_bits_equal(left: &SourceNodeLocalRest, right: &SourceNodeLocalRest) -> bool {
+    match (left, right) {
+        (SourceNodeLocalRest::Matrix(left), SourceNodeLocalRest::Matrix(right)) => {
+            left.to_cols_array().map(f32::to_bits) == right.to_cols_array().map(f32::to_bits)
+        }
+        (
+            SourceNodeLocalRest::Trs {
+                translation: left_translation,
+                rotation: left_rotation,
+                scale: left_scale,
+            },
+            SourceNodeLocalRest::Trs {
+                translation: right_translation,
+                rotation: right_rotation,
+                scale: right_scale,
+            },
+        ) => {
+            left_translation.to_array().map(f32::to_bits)
+                == right_translation.to_array().map(f32::to_bits)
+                && left_rotation.to_array().map(f32::to_bits)
+                    == right_rotation.to_array().map(f32::to_bits)
+                && left_scale.to_array().map(f32::to_bits)
+                    == right_scale.to_array().map(f32::to_bits)
+        }
+        _ => false,
     }
 }
 
@@ -2519,20 +2537,7 @@ fn build_rest_bind(document: &Document, plan: &ScalePlan) -> Result<Document, Sc
                 // Keep the established direct-edge path bit-for-bit: besides
                 // avoiding needless matrix work, its precise f32 rounding is
                 // part of the already calibrated proof contract.
-                match &node.local_rest {
-                    SourceNodeLocalRest::Trs {
-                        translation,
-                        rotation,
-                        scale,
-                    } => SourceNodeLocalRest::Trs {
-                        translation: *translation * s_parent,
-                        rotation: *rotation,
-                        scale: *scale * (s_parent / s_node),
-                    },
-                    SourceNodeLocalRest::Matrix(matrix) => {
-                        SourceNodeLocalRest::Matrix(rebase_matrix(*matrix, s_parent, s_node))
-                    }
-                }
+                rebase_source_local_rest(&node.local_rest, s_parent, s_node, None)
             };
         }
     }
@@ -2621,6 +2626,43 @@ fn build_rest_bind(document: &Document, plan: &ScalePlan) -> Result<Document, Sc
     Ok(candidate)
 }
 
+/// Apply the established projected-local rebase, optionally adding the
+/// connector-conjugation translation after that exact direct arithmetic.
+///
+/// `None` deliberately avoids adding a zero: direct-edge f32 association and
+/// signed-zero behavior are part of the calibrated Appendix D contract.
+fn rebase_source_local_rest(
+    local_rest: &SourceNodeLocalRest,
+    s_parent: f32,
+    s_node: f32,
+    bridge_offset: Option<Vec3>,
+) -> SourceNodeLocalRest {
+    match local_rest {
+        SourceNodeLocalRest::Trs {
+            translation,
+            rotation,
+            scale,
+        } => {
+            let translation = match bridge_offset {
+                Some(offset) => *translation * s_parent + offset,
+                None => *translation * s_parent,
+            };
+            SourceNodeLocalRest::Trs {
+                translation,
+                rotation: *rotation,
+                scale: *scale * (s_parent / s_node),
+            }
+        }
+        SourceNodeLocalRest::Matrix(matrix) => {
+            let mut rebased = rebase_matrix(*matrix, s_parent, s_node);
+            if let Some(offset) = bridge_offset {
+                rebased.w_axis += offset.extend(0.0);
+            }
+            SourceNodeLocalRest::Matrix(rebased)
+        }
+    }
+}
+
 /// Move a projected successor's rest/bind correction through an ordered
 /// chain of unchanged, unprojected source transforms.
 ///
@@ -2632,7 +2674,7 @@ fn rebase_source_local_through_connector_bridge(
     local_rest: &SourceNodeLocalRest,
     connector_tail: usize,
     by_source_index: &BTreeMap<usize, &SourceNodeAsset>,
-    connector_product_by_tail: &mut BTreeMap<usize, Mat4>,
+    connector_product_by_tail: &mut BTreeMap<usize, DMat4>,
     s_parent: f32,
     s_node: f32,
     bone: BoneId,
@@ -2642,8 +2684,14 @@ fn rebase_source_local_through_connector_bridge(
     }
     let connector =
         memoized_connector_product(connector_tail, by_source_index, connector_product_by_tail)?;
-    let connector_linear_inverse = Mat3::from_mat4(connector).inverse();
-    let bridge_offset = connector_linear_inverse * (connector.w_axis.truncate() * (s_parent - 1.0));
+    let connector_linear_inverse = DMat3::from_cols(
+        connector.x_axis.truncate(),
+        connector.y_axis.truncate(),
+        connector.z_axis.truncate(),
+    )
+    .inverse();
+    let bridge_offset =
+        connector_linear_inverse * (connector.w_axis.truncate() * (f64::from(s_parent) - 1.0));
     if !connector_linear_inverse.x_axis.is_finite()
         || !connector_linear_inverse.y_axis.is_finite()
         || !connector_linear_inverse.z_axis.is_finite()
@@ -2655,22 +2703,11 @@ fn rebase_source_local_through_connector_bridge(
     // A^-1*((s_parent-1)*t) beyond the established direct-edge rewrite. Use
     // that direct implementation so equal endpoint factors preserve authored
     // matrix linear bits and the homogeneous row exactly.
-    let rebased = match local_rest {
-        SourceNodeLocalRest::Trs {
-            translation,
-            rotation,
-            scale,
-        } => SourceNodeLocalRest::Trs {
-            translation: *translation * s_parent + bridge_offset,
-            rotation: *rotation,
-            scale: *scale * (s_parent / s_node),
-        },
-        SourceNodeLocalRest::Matrix(matrix) => {
-            let mut rebased = rebase_matrix(*matrix, s_parent, s_node);
-            rebased.w_axis += bridge_offset.extend(0.0);
-            SourceNodeLocalRest::Matrix(rebased)
-        }
-    };
+    let bridge_offset = bridge_offset.as_vec3();
+    if !bridge_offset.is_finite() {
+        return Err(ScaleError::NonFiniteTransform { node: bone });
+    }
+    let rebased = rebase_source_local_rest(local_rest, s_parent, s_node, Some(bridge_offset));
     if !mat4_is_finite(local_rest_matrix(&rebased)) {
         return Err(ScaleError::NonFiniteTransform { node: bone });
     }
@@ -2682,13 +2719,19 @@ fn rebase_source_local_through_connector_bridge(
 fn memoized_connector_product(
     connector_tail: usize,
     by_source_index: &BTreeMap<usize, &SourceNodeAsset>,
-    connector_product_by_tail: &mut BTreeMap<usize, Mat4>,
-) -> Result<Mat4, ScaleError> {
+    connector_product_by_tail: &mut BTreeMap<usize, DMat4>,
+) -> Result<DMat4, ScaleError> {
     let mut pending = Vec::new();
+    let mut visited = BTreeSet::new();
     let mut cursor = connector_tail;
     let mut product = loop {
         if let Some(&cached) = connector_product_by_tail.get(&cursor) {
             break cached;
+        }
+        if !visited.insert(cursor) {
+            return Err(ScaleError::IncompleteClosure {
+                reason: "cyclic_connector_source_parent_chain",
+            });
         }
         let asset = by_source_index
             .get(&cursor)
@@ -2696,7 +2739,7 @@ fn memoized_connector_product(
                 reason: "dangling_connector_source_node_index",
             })?;
         if asset.bone.is_some() {
-            break Mat4::IDENTITY;
+            break DMat4::IDENTITY;
         }
         pending.push(cursor);
         cursor = asset
@@ -2711,7 +2754,7 @@ fn memoized_connector_product(
             .ok_or(ScaleError::IncompleteClosure {
                 reason: "dangling_connector_source_node_index",
             })?;
-        product *= local_rest_matrix(&asset.local_rest);
+        product *= local_rest_matrix(&asset.local_rest).as_dmat4();
         connector_product_by_tail.insert(source, product);
     }
     connector_product_by_tail
@@ -2720,6 +2763,210 @@ fn memoized_connector_product(
         .ok_or(ScaleError::IncompleteClosure {
             reason: "empty_connector_bridge",
         })
+}
+
+/// Independently compose one proof-side connector product.
+///
+/// This intentionally does not call [`memoized_connector_product`]: the raw
+/// source-projection check must not certify a writer bug by deriving its
+/// expectation through the writer's own product cache.
+fn proof_connector_product(
+    connector_tail: usize,
+    by_source_index: &BTreeMap<usize, &SourceNodeAsset>,
+    connector_product_by_tail: &mut BTreeMap<usize, DMat4>,
+) -> Result<DMat4, ScaleError> {
+    let mut suffix = Vec::new();
+    let mut visited = BTreeSet::new();
+    let mut cursor = connector_tail;
+    let mut product = loop {
+        if let Some(&cached) = connector_product_by_tail.get(&cursor) {
+            break cached;
+        }
+        if !visited.insert(cursor) {
+            return Err(ScaleError::IncompleteClosure {
+                reason: "cyclic_connector_source_parent_chain",
+            });
+        }
+        let node = by_source_index
+            .get(&cursor)
+            .ok_or(ScaleError::IncompleteClosure {
+                reason: "dangling_connector_source_node_index",
+            })?;
+        if node.bone.is_some() {
+            break DMat4::IDENTITY;
+        }
+        suffix.push(cursor);
+        cursor = node
+            .parent_source_node_index
+            .ok_or(ScaleError::IncompleteClosure {
+                reason: "connector_without_projected_ancestor",
+            })?;
+    };
+    while let Some(source) = suffix.pop() {
+        let node = by_source_index
+            .get(&source)
+            .ok_or(ScaleError::IncompleteClosure {
+                reason: "dangling_connector_source_node_index",
+            })?;
+        product *= local_rest_matrix(&node.local_rest).as_dmat4();
+        connector_product_by_tail.insert(source, product);
+    }
+    connector_product_by_tail
+        .get(&connector_tail)
+        .copied()
+        .ok_or(ScaleError::IncompleteClosure {
+            reason: "empty_connector_bridge",
+        })
+}
+
+/// Independently derive the exact f32 local that a bridged projected source
+/// row must carry in the candidate.
+fn proof_expected_bridged_source_local(
+    local_rest: &SourceNodeLocalRest,
+    connector: DMat4,
+    s_parent: f32,
+    s_node: f32,
+    bone: BoneId,
+) -> Result<SourceNodeLocalRest, ScaleError> {
+    if s_parent == 1.0 && s_node == 1.0 {
+        return Ok(local_rest.clone());
+    }
+    let inverse = DMat3::from_cols(
+        connector.x_axis.truncate(),
+        connector.y_axis.truncate(),
+        connector.z_axis.truncate(),
+    )
+    .inverse();
+    let offset = inverse * (connector.w_axis.truncate() * (f64::from(s_parent) - 1.0));
+    if !inverse.x_axis.is_finite()
+        || !inverse.y_axis.is_finite()
+        || !inverse.z_axis.is_finite()
+        || !offset.is_finite()
+    {
+        return Err(ScaleError::NonFiniteTransform { node: bone });
+    }
+    let offset = offset.as_vec3();
+    if !offset.is_finite() {
+        return Err(ScaleError::NonFiniteTransform { node: bone });
+    }
+    let expected = match local_rest {
+        SourceNodeLocalRest::Trs {
+            translation,
+            rotation,
+            scale,
+        } => SourceNodeLocalRest::Trs {
+            translation: *translation * s_parent + offset,
+            rotation: *rotation,
+            scale: *scale * (s_parent / s_node),
+        },
+        SourceNodeLocalRest::Matrix(matrix) => {
+            let mut expected = rebase_matrix(*matrix, s_parent, s_node);
+            expected.w_axis += offset.extend(0.0);
+            SourceNodeLocalRest::Matrix(expected)
+        }
+    };
+    if !mat4_is_finite(local_rest_matrix(&expected)) {
+        return Err(ScaleError::NonFiniteTransform { node: bone });
+    }
+    Ok(expected)
+}
+
+/// Verify the connector-specific raw source projection outside the numeric
+/// residual ledger.
+///
+/// Connector rows own no published proof residual: they are preserved raw
+/// structure, not normalized rewrite/proof nodes. They are nevertheless part
+/// of the proof boundary. This check independently requires every admitted
+/// connector local to remain bit-exact and every projected successor below a
+/// connector span to equal the analytic bridged rebase.
+fn check_rest_bind_connector_projection(
+    source: &Document,
+    candidate: &Document,
+    plan: &ScalePlan,
+) -> Result<(), ScaleError> {
+    let ScaleOperation::RestBindUniformScale {
+        source_skin_index,
+        source_root_node_index,
+        ..
+    } = plan.operation
+    else {
+        return Ok(());
+    };
+    let domain = derive_rest_bind_plan_domain(source, source_skin_index, source_root_node_index)?;
+    if domain.connector_tail_by_source.is_empty() {
+        return Ok(());
+    }
+    let source_nodes = source_node_index_map(source);
+    let candidate_nodes = source_node_index_map(candidate);
+    for &(source_node_index, _, bone) in &domain.source_topology {
+        if bone.is_some() {
+            continue;
+        }
+        let before =
+            source_nodes
+                .get(&source_node_index)
+                .ok_or(ScaleError::CandidateStructureMismatch {
+                    reason: "connector_source_node_missing",
+                })?;
+        let after = candidate_nodes.get(&source_node_index).ok_or(
+            ScaleError::CandidateStructureMismatch {
+                reason: "connector_source_node_missing",
+            },
+        )?;
+        if !source_local_rest_bits_equal(&before.local_rest, &after.local_rest) {
+            return Err(ScaleError::CandidateStructureMismatch {
+                reason: "connector_source_local_mismatch",
+            });
+        }
+    }
+
+    let affected = plan.affected_set();
+    let s = check_factor_narrows(plan.common_factor, plan.common_factor)?;
+    let mut products = BTreeMap::new();
+    for (&successor_source, &connector_tail) in &domain.connector_tail_by_source {
+        let source_successor =
+            source_nodes
+                .get(&successor_source)
+                .ok_or(ScaleError::CandidateStructureMismatch {
+                    reason: "bridged_source_node_missing",
+                })?;
+        let candidate_successor = candidate_nodes.get(&successor_source).ok_or(
+            ScaleError::CandidateStructureMismatch {
+                reason: "bridged_source_node_missing",
+            },
+        )?;
+        let bone = source_successor
+            .bone
+            .ok_or(ScaleError::SourceNodeNotNormalized {
+                source_node_index: successor_source,
+            })?;
+        let parent = source
+            .skeleton
+            .bones
+            .get(bone)
+            .ok_or(ScaleError::BoneIndexOutOfRange { index: bone })?
+            .parent;
+        let s_parent = if parent.is_some_and(|parent| affected.contains(&parent)) {
+            s
+        } else {
+            1.0
+        };
+        let s_node = if affected.contains(&bone) { s } else { 1.0 };
+        let connector = proof_connector_product(connector_tail, &source_nodes, &mut products)?;
+        let expected = proof_expected_bridged_source_local(
+            &source_successor.local_rest,
+            connector,
+            s_parent,
+            s_node,
+            bone,
+        )?;
+        if !source_local_rest_bits_equal(&candidate_successor.local_rest, &expected) {
+            return Err(ScaleError::CandidateStructureMismatch {
+                reason: "bridged_source_local_mismatch",
+            });
+        }
+    }
+    Ok(())
 }
 
 /// `B' = U B U^-1` for a uniform `U = scale(q)`: the translation column
@@ -3079,6 +3326,7 @@ pub fn prove_scale(
     validate_plan_document_inventory(source, plan)?;
     validate_scale_input(candidate)?;
     validate_candidate_structure(source, candidate)?;
+    check_rest_bind_connector_projection(source, candidate, plan)?;
     let tol = plan.tolerance_policy;
     let affected = plan.affected_set();
     let source_worlds = rest_world_pose(&source.skeleton)?;
@@ -5867,7 +6115,10 @@ mod tests {
     ) {
         match (actual, expected) {
             (SourceNodeLocalRest::Matrix(actual), SourceNodeLocalRest::Matrix(expected)) => {
-                assert_eq!(actual.to_cols_array(), expected.to_cols_array());
+                assert_eq!(
+                    actual.to_cols_array().map(f32::to_bits),
+                    expected.to_cols_array().map(f32::to_bits)
+                );
             }
             (
                 SourceNodeLocalRest::Trs {
@@ -5881,9 +6132,18 @@ mod tests {
                     scale: expected_scale,
                 },
             ) => {
-                assert_eq!(*actual_translation, *expected_translation);
-                assert_eq!(*actual_rotation, *expected_rotation);
-                assert_eq!(*actual_scale, *expected_scale);
+                assert_eq!(
+                    actual_translation.to_array().map(f32::to_bits),
+                    expected_translation.to_array().map(f32::to_bits)
+                );
+                assert_eq!(
+                    actual_rotation.to_array().map(f32::to_bits),
+                    expected_rotation.to_array().map(f32::to_bits)
+                );
+                assert_eq!(
+                    actual_scale.to_array().map(f32::to_bits),
+                    expected_scale.to_array().map(f32::to_bits)
+                );
             }
             _ => panic!("source local-rest representation changed"),
         }
@@ -5913,6 +6173,22 @@ mod tests {
             scale: Vec3::ONE,
         };
         let doc = compensated_document_with_connectors(&[connector], raw_child, normalized_child);
+        let by_source_index = source_node_index_map(&doc);
+        let mut source_world_cache = BTreeMap::new();
+        let child_source = doc
+            .assets
+            .source_skeleton
+            .nodes
+            .iter()
+            .find(|node| node.bone == Some(1))
+            .unwrap()
+            .source_node_index;
+        let child_source_world =
+            source_world_matrix(child_source, &by_source_index, &mut source_world_cache).unwrap();
+        assert_eq!(
+            child_source_world.w_axis.truncate(),
+            Vec3::new(-1.5, 0.0, 0.0)
+        );
         let capability = complete_capability();
         let plan = compensated_rest_bind_plan(&doc, &capability);
         assert_eq!(plan.affected_nodes(), &[0, 1, 2]);
@@ -5951,15 +6227,218 @@ mod tests {
             candidate.document().skeleton.bones[1].rest.translation,
             Vec3::new(-1.5, 0.0, 0.0)
         );
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+        assert_eq!(proof.rest_translation_comparisons, 3);
+        assert_eq!(proof.rest_rotation_comparisons, 3);
+        assert_eq!(proof.unit_scale_comparisons, 3);
+        assert_eq!(proof.transform_only_affine_comparisons, 1);
+        assert_eq!(proof.skin_matrix_comparisons, 1);
+        assert_eq!(proof.bounds_comparisons, 6);
+        assert!(proof.rest_translation_residual < 1e-4);
+        assert!(proof.rest_rotation_residual <= plan.tolerance_policy().rotation_residual_radians);
+        assert!(
+            proof.unit_scale_residual <= plan.tolerance_policy().postcondition_unit_scale_residual
+        );
+        assert!(proof.skin_matrix_residual < 1e-4);
+        assert!(proof.bounds_residual < 1e-4);
+
+        let mut changed_connector = candidate.document().clone();
+        let connector = changed_connector
+            .assets
+            .source_skeleton
+            .nodes
+            .iter_mut()
+            .find(|node| node.source_node_index == 10)
+            .unwrap();
+        let SourceNodeLocalRest::Matrix(matrix) = &mut connector.local_rest else {
+            panic!("fixture connector changed representation");
+        };
+        matrix.w_axis.x += 1.0;
+        assert_eq!(
+            prove_scale(
+                &doc,
+                &ScaleCandidate::from_document(changed_connector),
+                &plan,
+            )
+            .unwrap_err(),
+            ScaleError::CandidateStructureMismatch {
+                reason: "connector_source_local_mismatch"
+            }
+        );
+
+        let mut unrebased_successor = candidate.document().clone();
+        unrebased_successor
+            .assets
+            .source_skeleton
+            .nodes
+            .iter_mut()
+            .find(|node| node.bone == Some(1))
+            .unwrap()
+            .local_rest = doc
+            .assets
+            .source_skeleton
+            .nodes
+            .iter()
+            .find(|node| node.bone == Some(1))
+            .unwrap()
+            .local_rest
+            .clone();
+        assert_eq!(
+            prove_scale(
+                &doc,
+                &ScaleCandidate::from_document(unrebased_successor),
+                &plan,
+            )
+            .unwrap_err(),
+            ScaleError::CandidateStructureMismatch {
+                reason: "bridged_source_local_mismatch"
+            }
+        );
+    }
+
+    #[test]
+    fn rest_bind_composes_and_preserves_a_trs_connector() {
+        let raw_child = Transform {
+            translation: Vec3::new(100.0, 0.0, 0.0),
+            ..Transform::default()
+        };
+        let normalized_child = Transform {
+            translation: Vec3::new(150.0, 0.0, 0.0),
+            ..Transform::default()
+        };
+        let mut doc = compensated_document_with_connectors(
+            &[Mat4::from_translation(Vec3::new(50.0, 0.0, 0.0))],
+            raw_child,
+            normalized_child,
+        );
+        let connector_before = SourceNodeLocalRest::Trs {
+            translation: Vec3::new(50.0, 0.0, 0.0),
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
+        };
+        doc.assets
+            .source_skeleton
+            .nodes
+            .iter_mut()
+            .find(|node| node.source_node_index == 10)
+            .unwrap()
+            .local_rest = connector_before.clone();
+
+        let capability = complete_capability();
+        let plan = compensated_rest_bind_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let connector_after = candidate
+            .document()
+            .assets
+            .source_skeleton
+            .nodes
+            .iter()
+            .find(|node| node.source_node_index == 10)
+            .unwrap();
+        assert_source_local_rest_exact(&connector_after.local_rest, &connector_before);
+        let child_after = candidate
+            .document()
+            .assets
+            .source_skeleton
+            .nodes
+            .iter()
+            .find(|node| node.bone == Some(1))
+            .unwrap();
+        assert_source_local_rest_exact(
+            &child_after.local_rest,
+            &SourceNodeLocalRest::Trs {
+                translation: Vec3::new(-48.5, 0.0, 0.0),
+                rotation: Quat::IDENTITY,
+                scale: Vec3::ONE,
+            },
+        );
+        assert_eq!(
+            candidate.document().skeleton.bones[1].rest.translation,
+            Vec3::new(1.5, 0.0, 0.0)
+        );
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+        assert_eq!(proof.rest_translation_comparisons, 3);
+        assert_eq!(proof.unit_scale_comparisons, 3);
+    }
+
+    #[test]
+    fn rest_bind_composes_a_connector_between_two_non_root_projected_joints() {
+        let mut doc = compensated_document();
+        let connector_before = SourceNodeLocalRest::Trs {
+            translation: Vec3::new(50.0, 0.0, 0.0),
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
+        };
+        let mut connector = SourceNodeAsset::new(10, connector_before.clone());
+        connector.parent_source_node_index = Some(1);
+        doc.assets.source_skeleton.nodes.push(connector);
+
+        let successor_before = SourceNodeLocalRest::Trs {
+            translation: Vec3::new(-49.0, 0.0, 0.0),
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
+        };
+        let successor = doc
+            .assets
+            .source_skeleton
+            .nodes
+            .iter_mut()
+            .find(|node| node.bone == Some(2))
+            .unwrap();
+        successor.parent_source_node_index = Some(10);
+        successor.local_rest = successor_before.clone();
+
+        doc.assets.source_skeleton.skins[0]
+            .joint_source_node_indices
+            .push(2);
+        doc.assets.instances[0].skin_joints.push(2);
+        let bone_two_world = rest_world_pose(&doc.skeleton)
+            .unwrap()
+            .bone(2)
+            .unwrap()
+            .matrix;
+        doc.assets.instances[0]
+            .skin_ibms
+            .push(bone_two_world.inverse());
+
+        let capability = complete_capability();
+        let plan = compensated_rest_bind_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let source_nodes = &candidate.document().assets.source_skeleton.nodes;
+        assert_source_local_rest_exact(
+            &source_nodes
+                .iter()
+                .find(|node| node.source_node_index == 10)
+                .unwrap()
+                .local_rest,
+            &connector_before,
+        );
+        assert_source_local_rest_exact(
+            &source_nodes
+                .iter()
+                .find(|node| node.bone == Some(2))
+                .unwrap()
+                .local_rest,
+            &SourceNodeLocalRest::Trs {
+                translation: Vec3::new(-49.0, 0.0, 0.0) * 0.01 + Vec3::new(-49.5, 0.0, 0.0),
+                rotation: Quat::IDENTITY,
+                scale: Vec3::ONE,
+            },
+        );
+        assert_eq!(
+            candidate.document().skeleton.bones[2].rest.translation,
+            Vec3::new(0.01, 0.0, 0.0)
+        );
         prove_scale(&doc, &candidate, &plan).unwrap();
     }
 
     #[test]
-    fn rest_bind_multiplies_two_unchanged_connectors_in_parent_to_child_order() {
+    fn rest_bind_multiplies_three_unchanged_connectors_in_parent_to_child_order() {
         // H1 has linear 2*Rz(90) and translation (10, 0); H2 has linear
         // .5*Rz(-90) and translation (0, 20). In authored order H1*H2 is
-        // exactly T(-30, 0), so H1*H2*T(30, 40) collapses to T(0, 40).
-        // Reversing the two helpers produces a different translation.
+        // exactly T(-30, 0). H3 adds T(5, 0), so the full product is
+        // T(-25, 0) and H1*H2*H3*T(25, 40) collapses to T(0, 40).
+        // Reversing or omitting any helper produces a different translation.
         let h1 = matrix_with_columns(
             Vec4::new(0.0, 2.0, 0.0, 0.0),
             Vec4::new(-2.0, 0.0, 0.0, 0.0),
@@ -5972,8 +6451,9 @@ mod tests {
             Vec4::new(0.0, 0.0, 0.5, 0.0),
             Vec3::new(0.0, 20.0, 0.0),
         );
+        let h3 = Mat4::from_translation(Vec3::new(5.0, 0.0, 0.0));
         let raw_child = Transform {
-            translation: Vec3::new(30.0, 40.0, 0.0),
+            translation: Vec3::new(25.0, 40.0, 0.0),
             rotation: Quat::IDENTITY,
             scale: Vec3::ONE,
         };
@@ -5982,12 +6462,12 @@ mod tests {
             rotation: Quat::IDENTITY,
             scale: Vec3::ONE,
         };
-        let doc = compensated_document_with_connectors(&[h1, h2], raw_child, normalized_child);
+        let doc = compensated_document_with_connectors(&[h1, h2, h3], raw_child, normalized_child);
         let capability = complete_capability();
         let plan = compensated_rest_bind_plan(&doc, &capability);
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
 
-        for (source, expected) in [(10, h1), (11, h2)] {
+        for (source, expected) in [(10, h1), (11, h2), (12, h3)] {
             let connector_after = candidate
                 .document()
                 .assets
@@ -6012,7 +6492,7 @@ mod tests {
         assert_source_local_rest_exact(
             &child_after.local_rest,
             &SourceNodeLocalRest::Trs {
-                translation: Vec3::new(30.0, 0.39999998, 0.0),
+                translation: Vec3::new(25.0, 0.39999998, 0.0),
                 rotation: Quat::IDENTITY,
                 scale: Vec3::ONE,
             },
@@ -6020,6 +6500,44 @@ mod tests {
         assert_eq!(
             candidate.document().skeleton.bones[1].rest.translation,
             Vec3::new(0.0, 0.39999998, 0.0)
+        );
+        prove_scale(&doc, &candidate, &plan).unwrap();
+    }
+
+    #[test]
+    fn compensated_connector_product_is_widened_before_the_f32_candidate_boundary() {
+        // The full projected source chain stays finite because the .01 root
+        // and 1e-40 successor compensate the two 1e20 connectors. The
+        // connector-only product is 1e40, however, and therefore overflows a
+        // Mat4 before the compensation can be applied. Planning already
+        // accepts the finite endpoint; build and proof must retain that same
+        // domain by carrying H in f64 until the final source-local result.
+        let huge = Mat4::from_scale(Vec3::splat(1e20));
+        let raw_child = Transform {
+            translation: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::splat(1e-40),
+        };
+        let doc =
+            compensated_document_with_connectors(&[huge, huge], raw_child, Transform::default());
+        let capability = complete_capability();
+        let plan = compensated_rest_bind_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let successor = candidate
+            .document()
+            .assets
+            .source_skeleton
+            .nodes
+            .iter()
+            .find(|node| node.bone == Some(1))
+            .unwrap();
+        assert_source_local_rest_exact(
+            &successor.local_rest,
+            &SourceNodeLocalRest::Trs {
+                translation: Vec3::ZERO,
+                rotation: Quat::IDENTITY,
+                scale: Vec3::splat(1e-40),
+            },
         );
         prove_scale(&doc, &candidate, &plan).unwrap();
     }
@@ -6041,7 +6559,19 @@ mod tests {
             scale: Vec3::new(0.5, 1.0 / 3.0, 0.25),
         };
         let normalized_child = Transform::default();
-        let doc = compensated_document_with_connectors(&[connector], raw_child, normalized_child);
+        let mut doc =
+            compensated_document_with_connectors(&[connector], raw_child, normalized_child);
+        doc.assets
+            .source_skeleton
+            .nodes
+            .iter_mut()
+            .find(|node| node.source_node_index == 10)
+            .unwrap()
+            .local_rest = SourceNodeLocalRest::Trs {
+            translation: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::new(2.0, 3.0, 4.0),
+        };
         let capability = complete_capability();
         let plan = compensated_rest_bind_plan(&doc, &capability);
         assert_eq!(plan.affected_nodes(), &[0, 1, 2]);
@@ -6131,52 +6661,113 @@ mod tests {
     }
 
     #[test]
-    fn connector_bridge_no_op_returns_the_authored_local_before_any_walk() {
-        let local = SourceNodeLocalRest::Matrix(Mat4::from_cols_array(&[
-            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0,
-        ]));
-        let mut cache = BTreeMap::new();
-        let rebased = rebase_source_local_through_connector_bridge(
-            &local,
-            usize::MAX,
-            &BTreeMap::new(),
-            &mut cache,
-            1.0,
-            1.0,
-            1,
-        );
-        assert_source_local_rest_exact(&rebased.unwrap(), &local);
-        assert!(cache.is_empty());
-    }
-
-    #[test]
-    fn an_unrepresentable_connector_rebase_names_the_projected_bone() {
-        let mut root = SourceNodeAsset::new(0, SourceNodeLocalRest::Matrix(Mat4::IDENTITY));
-        root.bone = Some(0);
-        let mut connector = SourceNodeAsset::new(
-            10,
-            SourceNodeLocalRest::Matrix(Mat4::from_scale(Vec3::new(0.0, 1.0, 1.0))),
-        );
+    fn connector_bridge_factor_one_is_a_public_bit_exact_no_op() {
+        let mut doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
+        let connector_before = SourceNodeLocalRest::Trs {
+            translation: Vec3::new(50.0, 0.0, 0.0),
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
+        };
+        let mut connector = SourceNodeAsset::new(10, connector_before.clone());
         connector.parent_source_node_index = Some(0);
-        let by_source_index = BTreeMap::from([(0, &root), (10, &connector)]);
-        let mut cache = BTreeMap::new();
-        assert_eq!(
-            rebase_source_local_through_connector_bridge(
-                &SourceNodeLocalRest::Matrix(Mat4::IDENTITY),
-                10,
-                &by_source_index,
-                &mut cache,
-                0.01,
-                0.01,
-                7,
-            )
-            .unwrap_err(),
-            ScaleError::NonFiniteTransform { node: 7 }
+        doc.assets.source_skeleton.nodes.push(connector);
+        let child_before = SourceNodeLocalRest::Trs {
+            translation: Vec3::new(-50.0, 1.0, 0.0),
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
+        };
+        let child = doc
+            .assets
+            .source_skeleton
+            .nodes
+            .iter_mut()
+            .find(|node| node.bone == Some(1))
+            .unwrap();
+        child.parent_source_node_index = Some(10);
+        child.local_rest = child_before.clone();
+
+        let capability = complete_capability();
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 1.0,
+            },
+            document: &doc,
+            capability: &capability,
+        })
+        .unwrap();
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let source_nodes = &candidate.document().assets.source_skeleton.nodes;
+        assert_source_local_rest_exact(
+            &source_nodes
+                .iter()
+                .find(|node| node.source_node_index == 10)
+                .unwrap()
+                .local_rest,
+            &connector_before,
         );
+        assert_source_local_rest_exact(
+            &source_nodes
+                .iter()
+                .find(|node| node.bone == Some(1))
+                .unwrap()
+                .local_rest,
+            &child_before,
+        );
+        assert_eq!(
+            candidate.document().skeleton.bones[1].rest.translation,
+            Vec3::new(0.0, 1.0, 0.0)
+        );
+        prove_scale(&doc, &candidate, &plan).unwrap();
     }
 
     #[test]
-    fn a_shared_connector_chain_keeps_tail_and_product_storage_linear() {
+    fn a_finite_but_unrepresentable_connector_rebase_is_atomic() {
+        // H and L compensate to a finite projected endpoint, so planning
+        // accepts the document. Moving the .01 basis through H requires an
+        // approximately -9.9e39 raw translation, which cannot be represented
+        // by the f32 source-local model boundary and must fail before a
+        // candidate can escape.
+        let connector = Mat4::from_scale_rotation_translation(
+            Vec3::splat(1e-20),
+            Quat::IDENTITY,
+            Vec3::splat(1e20),
+        );
+        let doc = compensated_document_with_connectors(
+            &[connector],
+            Transform {
+                translation: Vec3::ZERO,
+                rotation: Quat::IDENTITY,
+                scale: Vec3::splat(1e20),
+            },
+            Transform {
+                translation: Vec3::splat(1e20),
+                rotation: Quat::IDENTITY,
+                scale: Vec3::ONE,
+            },
+        );
+        let capability = complete_capability();
+        let plan = compensated_rest_bind_plan(&doc, &capability);
+        assert_eq!(
+            build_scale_candidate(&doc, &plan).unwrap_err(),
+            ScaleError::NonFiniteTransform { node: 1 }
+        );
+        assert_source_local_rest_exact(
+            &doc.assets
+                .source_skeleton
+                .nodes
+                .iter()
+                .find(|node| node.source_node_index == 10)
+                .unwrap()
+                .local_rest,
+            &SourceNodeLocalRest::Matrix(connector),
+        );
+        assert_eq!(doc.skeleton.bones[1].rest.translation, Vec3::splat(1e20));
+    }
+
+    #[test]
+    fn a_shared_connector_chain_plans_builds_and_proves_through_public_apis() {
         const CONNECTORS: usize = 64;
         const PROJECTED_CHILDREN: usize = 64;
         let mut nodes = vec![RigNode {
@@ -6207,49 +6798,97 @@ mod tests {
             child.parent_source_node_index = Some(tail);
         }
 
-        let domain = derive_rest_bind_plan_domain(&doc, 0, 0).unwrap();
-        assert_eq!(domain.connector_tail_by_source.len(), PROJECTED_CHILDREN);
-        assert!(
-            domain
-                .connector_tail_by_source
-                .values()
-                .all(|&source| source == tail)
-        );
-        assert_eq!(
-            domain.source_topology.len(),
-            1 + CONNECTORS + PROJECTED_CHILDREN
-        );
-
-        let by_source_index = source_node_index_map(&doc);
-        let skin = resolve_rest_bind_skin(&doc, 0).unwrap();
-        let (_, ancestor_steps) =
-            rest_bind_affected_closure_with_ancestor_steps(&doc, &by_source_index, skin, 0)
+        let capability = complete_capability();
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 0.01,
+            },
+            document: &doc,
+            capability: &capability,
+        })
+        .unwrap();
+        assert_eq!(plan.affected_nodes().len(), 1 + PROJECTED_CHILDREN);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        for source in 100..100 + CONNECTORS {
+            let before = doc
+                .assets
+                .source_skeleton
+                .nodes
+                .iter()
+                .find(|node| node.source_node_index == source)
                 .unwrap();
-        assert_eq!(ancestor_steps, CONNECTORS + PROJECTED_CHILDREN);
-
-        let mut cache = BTreeMap::new();
-        for &connector_tail in domain.connector_tail_by_source.values() {
-            assert_eq!(
-                memoized_connector_product(connector_tail, &by_source_index, &mut cache).unwrap(),
-                Mat4::IDENTITY
-            );
+            let after = candidate
+                .document()
+                .assets
+                .source_skeleton
+                .nodes
+                .iter()
+                .find(|node| node.source_node_index == source)
+                .unwrap();
+            assert_source_local_rest_exact(&after.local_rest, &before.local_rest);
         }
-        assert_eq!(cache.len(), CONNECTORS);
+        prove_scale(&doc, &candidate, &plan).unwrap();
     }
 
     #[test]
     fn a_stale_plan_cannot_replay_across_connector_topology_changes() {
         let identity = Mat4::IDENTITY;
         let rest = Transform::default();
-        let doc = compensated_document_with_connectors(&[identity], rest, rest);
+        let doc = compensated_document_with_connectors(&[identity, identity], rest, rest);
         let capability = complete_capability();
         let plan = compensated_rest_bind_plan(&doc, &capability);
 
+        let mut reordered = doc.clone();
+        reordered
+            .assets
+            .source_skeleton
+            .nodes
+            .iter_mut()
+            .find(|node| node.source_node_index == 10)
+            .unwrap()
+            .parent_source_node_index = Some(11);
+        reordered
+            .assets
+            .source_skeleton
+            .nodes
+            .iter_mut()
+            .find(|node| node.source_node_index == 11)
+            .unwrap()
+            .parent_source_node_index = Some(0);
+        reordered
+            .assets
+            .source_skeleton
+            .nodes
+            .iter_mut()
+            .find(|node| node.bone == Some(1))
+            .unwrap()
+            .parent_source_node_index = Some(10);
+        validate_scale_input(&reordered).unwrap();
+        assert_eq!(
+            build_scale_candidate(&reordered, &plan).unwrap_err(),
+            ScaleError::PlanDocumentMismatch {
+                reason: "affected_source_topology_mismatch"
+            }
+        );
+        assert_eq!(
+            prove_scale(
+                &reordered,
+                &ScaleCandidate::from_document(reordered.clone()),
+                &plan,
+            )
+            .unwrap_err(),
+            ScaleError::PlanDocumentMismatch {
+                reason: "affected_source_topology_mismatch"
+            }
+        );
+
         let mut changed = doc.clone();
         changed.assets.source_skeleton.nodes.push(SourceNodeAsset {
-            source_node_index: 11,
+            source_node_index: 12,
             name: None,
-            parent_source_node_index: Some(10),
+            parent_source_node_index: Some(11),
             scene_root_indices: Vec::new(),
             local_rest: SourceNodeLocalRest::Matrix(Mat4::IDENTITY),
             bone: None,
@@ -6261,7 +6900,7 @@ mod tests {
             .iter_mut()
             .find(|node| node.bone == Some(1))
             .unwrap()
-            .parent_source_node_index = Some(11);
+            .parent_source_node_index = Some(12);
         validate_scale_input(&changed).unwrap();
         assert_eq!(
             build_scale_candidate(&changed, &plan).unwrap_err(),

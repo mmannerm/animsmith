@@ -1883,6 +1883,12 @@ within versioned tolerances:
   or proves, it re-derives the supplied source's structural planning inventory
   and requires the same projected affected domain, ordered unprojected
   connector spans, transform-only attachments, and proof obligations.
+  For an admitted connector span, proof also independently requires every
+  connector local to remain bit-exact and derives the projected successor's
+  expected bridged source local from the source topology. This is an exact
+  structural/write-set check outside the residual ledger: the connector owns
+  no normalized residual obligation, but a writer and proof cannot agree on a
+  wrong connector rebase by sharing the writer's product calculation.
   Operation-fixed rewrite and tolerance policy fields are not source
   inventory. Numeric affine/factor classification is not repeated there, so
   proof's normalized-skeleton witness remains independent of planning's
@@ -1966,7 +1972,9 @@ normalized skeleton's bone rests composed through its own parent chain.
 The raw composition includes every preserved static connector local. The
 normalized witness reads the corresponding folded transform through the next
 projected bone; the connector itself has no normalized identity and therefore
-owns no proof obligation.
+owns no residual obligation. Proof separately checks exact connector
+preservation and the analytic bridged source local at each projected
+successor before recording normalized residuals.
 Strict scale-input shape validation requires the two chains to *agree* — under
 `Complete` source-skeleton coverage, which this operation requires anyway, a
 projection that contradicts its own skeleton is refused before either witness
