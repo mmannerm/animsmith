@@ -6302,10 +6302,11 @@ mod tests {
         );
         let connector_before = SourceNodeLocalRest::Trs {
             // The connector write set does not own authored float bits. Keep
-            // a noncanonical zero so value equality cannot stand in for the
-            // promised byte-exact preservation.
+            // a noncanonical zero and the negative identity quaternion sign
+            // so value equality cannot stand in for the promised byte-exact
+            // preservation.
             translation: Vec3::new(50.0, -0.0, 0.0),
-            rotation: Quat::IDENTITY,
+            rotation: Quat::from_xyzw(0.0, 0.0, 0.0, -1.0),
             scale: Vec3::ONE,
         };
         doc.assets
@@ -6370,6 +6371,32 @@ mod tests {
             prove_scale(
                 &doc,
                 &ScaleCandidate::from_document(changed_connector),
+                &plan,
+            )
+            .unwrap_err(),
+            ScaleError::CandidateStructureMismatch {
+                reason: "connector_source_local_mismatch"
+            }
+        );
+
+        let mut changed_quaternion_sign = candidate.document().clone();
+        let SourceNodeLocalRest::Trs { rotation, .. } = &mut changed_quaternion_sign
+            .assets
+            .source_skeleton
+            .nodes
+            .iter_mut()
+            .find(|node| node.source_node_index == 10)
+            .unwrap()
+            .local_rest
+        else {
+            panic!("fixture connector changed representation");
+        };
+        assert_eq!(rotation.w.to_bits(), (-1.0f32).to_bits());
+        *rotation = Quat::IDENTITY;
+        assert_eq!(
+            prove_scale(
+                &doc,
+                &ScaleCandidate::from_document(changed_quaternion_sign),
                 &plan,
             )
             .unwrap_err(),
@@ -6628,6 +6655,41 @@ mod tests {
         assert_eq!(translation.y.to_bits(), 0.0f32.to_bits());
         assert_eq!(translation.z.to_bits(), 0.0f32.to_bits());
         prove_scale(&doc, &candidate, &plan).unwrap();
+    }
+
+    #[test]
+    fn planning_composes_connector_translation_into_the_raw_source_world() {
+        // Both connector locals are finite, but the selected root followed by
+        // S(1e20) * T(f32::MAX) has a non-finite world translation. Dropping
+        // connector translation while retaining its linear part would make
+        // the compensated successor appear to be a valid .01 endpoint.
+        let connector_scale = Mat4::from_scale(Vec3::splat(1e20));
+        let connector_translation = Mat4::from_translation(Vec3::splat(f32::MAX));
+        let doc = compensated_document_with_connectors(
+            &[connector_scale, connector_translation],
+            Transform {
+                translation: Vec3::ZERO,
+                rotation: Quat::IDENTITY,
+                scale: Vec3::splat(1e-20),
+            },
+            Transform::default(),
+        );
+        let capability = complete_capability();
+        assert_eq!(
+            plan_scale(&ScaleRequest {
+                operation: ScaleOperation::RestBindUniformScale {
+                    source_skin_index: 0,
+                    source_root_node_index: 0,
+                    expected_factor: 0.01,
+                },
+                document: &doc,
+                capability: &capability,
+            })
+            .unwrap_err(),
+            ScaleError::NonFiniteSourceTransform {
+                source_node_index: 11
+            }
+        );
     }
 
     #[test]
