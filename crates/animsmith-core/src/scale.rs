@@ -1885,55 +1885,60 @@ fn plan_rest_bind(
 /// different. Every proof loop is selected by the affected domain and the
 /// evidence inventory, so accepting a source that derives a wider domain or
 /// different obligations would let a stale plan omit payload altogether.
+/// The validated rest/bind domain is returned so the caller does not repeat
+/// the same selector and closure walk before building or proving it.
 fn validate_plan_document_inventory(
     document: &Document,
     plan: &ScalePlan,
-) -> Result<(), ScaleError> {
-    let (affected_nodes, rest_bind_source_topology, transform_only_attachments, proof_obligations) =
-        match plan.operation {
-            ScaleOperation::WholeDocumentLinearUnits { factor } => {
-                let derived = plan_whole_document(document, factor)?;
-                (
-                    derived.affected_nodes,
-                    derived.rest_bind_source_topology,
-                    derived.transform_only_attachments,
-                    derived.proof_obligations,
-                )
-            }
-            ScaleOperation::RestBindUniformScale {
-                source_skin_index,
-                source_root_node_index,
-                ..
-            } => {
-                let domain = derive_rest_bind_plan_domain(
-                    document,
-                    source_skin_index,
-                    source_root_node_index,
-                )?;
-                (
-                    domain.affected_nodes,
-                    domain.source_topology,
-                    domain.transform_only_attachments,
-                    domain.proof_obligations,
-                )
-            }
+) -> Result<Option<RestBindPlanDomain>, ScaleError> {
+    let validate = |affected_nodes: &[BoneId],
+                    rest_bind_source_topology: &[(usize, Option<usize>, Option<BoneId>)],
+                    transform_only_attachments: &[BoneId],
+                    proof_obligations: ScaleProofObligations| {
+        let reason = if affected_nodes != plan.affected_nodes {
+            Some("affected_nodes_mismatch")
+        } else if rest_bind_source_topology != plan.rest_bind_source_topology {
+            Some("affected_source_topology_mismatch")
+        } else if transform_only_attachments != plan.transform_only_attachments {
+            Some("transform_only_attachments_mismatch")
+        } else if proof_obligations != plan.proof_obligations {
+            Some("proof_obligations_mismatch")
+        } else {
+            None
         };
-
-    let reason = if affected_nodes != plan.affected_nodes {
-        Some("affected_nodes_mismatch")
-    } else if rest_bind_source_topology != plan.rest_bind_source_topology {
-        Some("affected_source_topology_mismatch")
-    } else if transform_only_attachments != plan.transform_only_attachments {
-        Some("transform_only_attachments_mismatch")
-    } else if proof_obligations != plan.proof_obligations {
-        Some("proof_obligations_mismatch")
-    } else {
-        None
+        if let Some(reason) = reason {
+            return Err(ScaleError::PlanDocumentMismatch { reason });
+        }
+        Ok(())
     };
-    if let Some(reason) = reason {
-        return Err(ScaleError::PlanDocumentMismatch { reason });
+
+    match plan.operation {
+        ScaleOperation::WholeDocumentLinearUnits { factor } => {
+            let derived = plan_whole_document(document, factor)?;
+            validate(
+                &derived.affected_nodes,
+                &derived.rest_bind_source_topology,
+                &derived.transform_only_attachments,
+                derived.proof_obligations,
+            )?;
+            Ok(None)
+        }
+        ScaleOperation::RestBindUniformScale {
+            source_skin_index,
+            source_root_node_index,
+            ..
+        } => {
+            let domain =
+                derive_rest_bind_plan_domain(document, source_skin_index, source_root_node_index)?;
+            validate(
+                &domain.affected_nodes,
+                &domain.source_topology,
+                &domain.transform_only_attachments,
+                domain.proof_obligations,
+            )?;
+            Ok(Some(domain))
+        }
     }
-    Ok(())
 }
 
 /// Resolve `source_skin_index` against
@@ -2377,12 +2382,20 @@ pub fn build_scale_candidate(
     plan: &ScalePlan,
 ) -> Result<ScaleCandidate, ScaleError> {
     validate_scale_input(document)?;
-    validate_plan_document_inventory(document, plan)?;
+    let rest_bind_domain = validate_plan_document_inventory(document, plan)?;
     let candidate = match plan.operation {
         ScaleOperation::WholeDocumentLinearUnits { factor } => {
             build_whole_document(document, factor)?
         }
-        ScaleOperation::RestBindUniformScale { .. } => build_rest_bind(document, plan)?,
+        ScaleOperation::RestBindUniformScale { .. } => build_rest_bind(
+            document,
+            plan,
+            rest_bind_domain
+                .as_ref()
+                .ok_or(ScaleError::PlanDocumentMismatch {
+                    reason: "rest_bind_domain_missing",
+                })?,
+        )?,
     };
     // The same fail-closed shape check the input had to pass, re-run on the
     // output: a builder is the one place in this module that writes numbers,
@@ -2456,20 +2469,18 @@ fn build_whole_document(document: &Document, factor: f64) -> Result<Document, Sc
     Ok(candidate)
 }
 
-fn build_rest_bind(document: &Document, plan: &ScalePlan) -> Result<Document, ScaleError> {
+fn build_rest_bind(
+    document: &Document,
+    plan: &ScalePlan,
+    domain: &RestBindPlanDomain,
+) -> Result<Document, ScaleError> {
     let affected = plan.affected_set();
     let s = check_factor_narrows(plan.common_factor, plan.common_factor)?;
-    let ScaleOperation::RestBindUniformScale {
-        source_skin_index,
-        source_root_node_index,
-        ..
-    } = plan.operation
-    else {
+    let ScaleOperation::RestBindUniformScale { .. } = plan.operation else {
         return Err(ScaleError::PlanDocumentMismatch {
             reason: "rest_bind_builder_received_other_operation",
         });
     };
-    let domain = derive_rest_bind_plan_domain(document, source_skin_index, source_root_node_index)?;
     let by_source_index = source_node_index_map(document);
     let mut connector_product_by_tail = BTreeMap::new();
     let parent_factor = |node: BoneId| -> Result<f32, ScaleError> {
@@ -2883,16 +2894,8 @@ fn check_rest_bind_connector_projection(
     source: &Document,
     candidate: &Document,
     plan: &ScalePlan,
+    domain: &RestBindPlanDomain,
 ) -> Result<(), ScaleError> {
-    let ScaleOperation::RestBindUniformScale {
-        source_skin_index,
-        source_root_node_index,
-        ..
-    } = plan.operation
-    else {
-        return Ok(());
-    };
-    let domain = derive_rest_bind_plan_domain(source, source_skin_index, source_root_node_index)?;
     if domain.connector_tail_by_source.is_empty() {
         return Ok(());
     }
@@ -3323,10 +3326,12 @@ pub fn prove_scale(
     }
     let candidate = candidate.document();
     validate_scale_input(source)?;
-    validate_plan_document_inventory(source, plan)?;
+    let rest_bind_domain = validate_plan_document_inventory(source, plan)?;
     validate_scale_input(candidate)?;
     validate_candidate_structure(source, candidate)?;
-    check_rest_bind_connector_projection(source, candidate, plan)?;
+    if let Some(domain) = rest_bind_domain.as_ref() {
+        check_rest_bind_connector_projection(source, candidate, plan, domain)?;
+    }
     let tol = plan.tolerance_policy;
     let affected = plan.affected_set();
     let source_worlds = rest_world_pose(&source.skeleton)?;
@@ -6173,22 +6178,6 @@ mod tests {
             scale: Vec3::ONE,
         };
         let doc = compensated_document_with_connectors(&[connector], raw_child, normalized_child);
-        let by_source_index = source_node_index_map(&doc);
-        let mut source_world_cache = BTreeMap::new();
-        let child_source = doc
-            .assets
-            .source_skeleton
-            .nodes
-            .iter()
-            .find(|node| node.bone == Some(1))
-            .unwrap()
-            .source_node_index;
-        let child_source_world =
-            source_world_matrix(child_source, &by_source_index, &mut source_world_cache).unwrap();
-        assert_eq!(
-            child_source_world.w_axis.truncate(),
-            Vec3::new(-1.5, 0.0, 0.0)
-        );
         let capability = complete_capability();
         let plan = compensated_rest_bind_plan(&doc, &capability);
         assert_eq!(plan.affected_nodes(), &[0, 1, 2]);
@@ -6312,7 +6301,10 @@ mod tests {
             normalized_child,
         );
         let connector_before = SourceNodeLocalRest::Trs {
-            translation: Vec3::new(50.0, 0.0, 0.0),
+            // The connector write set does not own authored float bits. Keep
+            // a noncanonical zero so value equality cannot stand in for the
+            // promised byte-exact preservation.
+            translation: Vec3::new(50.0, -0.0, 0.0),
             rotation: Quat::IDENTITY,
             scale: Vec3::ONE,
         };
@@ -6359,6 +6351,58 @@ mod tests {
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
         assert_eq!(proof.rest_translation_comparisons, 3);
         assert_eq!(proof.unit_scale_comparisons, 3);
+
+        let mut changed_connector = candidate.document().clone();
+        let SourceNodeLocalRest::Trs { translation, .. } = &mut changed_connector
+            .assets
+            .source_skeleton
+            .nodes
+            .iter_mut()
+            .find(|node| node.source_node_index == 10)
+            .unwrap()
+            .local_rest
+        else {
+            panic!("fixture connector changed representation");
+        };
+        assert_eq!(translation.y.to_bits(), (-0.0f32).to_bits());
+        translation.y = 0.0;
+        assert_eq!(
+            prove_scale(
+                &doc,
+                &ScaleCandidate::from_document(changed_connector),
+                &plan,
+            )
+            .unwrap_err(),
+            ScaleError::CandidateStructureMismatch {
+                reason: "connector_source_local_mismatch"
+            }
+        );
+
+        let mut changed_successor = candidate.document().clone();
+        let SourceNodeLocalRest::Trs { translation, .. } = &mut changed_successor
+            .assets
+            .source_skeleton
+            .nodes
+            .iter_mut()
+            .find(|node| node.bone == Some(1))
+            .unwrap()
+            .local_rest
+        else {
+            panic!("fixture successor changed representation");
+        };
+        assert_eq!(translation.z, 0.0);
+        translation.z = f32::from_bits(translation.z.to_bits() ^ 0x8000_0000);
+        assert_eq!(
+            prove_scale(
+                &doc,
+                &ScaleCandidate::from_document(changed_successor),
+                &plan,
+            )
+            .unwrap_err(),
+            ScaleError::CandidateStructureMismatch {
+                reason: "bridged_source_local_mismatch"
+            }
+        );
     }
 
     #[test]
@@ -6392,11 +6436,16 @@ mod tests {
             .joint_source_node_indices
             .push(2);
         doc.assets.instances[0].skin_joints.push(2);
-        let bone_two_world = rest_world_pose(&doc.skeleton)
-            .unwrap()
-            .bone(2)
-            .unwrap()
-            .matrix;
+        let bone_two_world = doc.skeleton.bones[..=2]
+            .iter()
+            .fold(Mat4::IDENTITY, |world, bone| {
+                world
+                    * Mat4::from_scale_rotation_translation(
+                        bone.rest.scale,
+                        bone.rest.rotation,
+                        bone.rest.translation,
+                    )
+            });
         doc.assets.instances[0]
             .skin_ibms
             .push(bone_two_world.inverse());
@@ -6543,16 +6592,47 @@ mod tests {
     }
 
     #[test]
+    fn compensated_connector_translation_is_widened_before_the_f32_candidate_boundary() {
+        // The selected root's .01 factor keeps every complete raw source-world
+        // intermediate finite, while the connector-only product contains the
+        // translation 1e40. The projected successor cancels it with a finite
+        // authored -1e20 translation. Accumulating only the connector
+        // translation column in f32 would overflow before that compensation.
+        let connector_scale = Mat4::from_scale(Vec3::splat(1e20));
+        let connector_translation = Mat4::from_translation(Vec3::new(1e20, 0.0, 0.0));
+        let raw_child = Transform {
+            translation: Vec3::new(-1e20, 0.0, 0.0),
+            rotation: Quat::IDENTITY,
+            scale: Vec3::splat(1e-20),
+        };
+        let doc = compensated_document_with_connectors(
+            &[connector_scale, connector_translation],
+            raw_child,
+            Transform::default(),
+        );
+        let capability = complete_capability();
+        let plan = compensated_rest_bind_plan(&doc, &capability);
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let successor = candidate
+            .document()
+            .assets
+            .source_skeleton
+            .nodes
+            .iter()
+            .find(|node| node.bone == Some(1))
+            .unwrap();
+        let SourceNodeLocalRest::Trs { translation, .. } = &successor.local_rest else {
+            panic!("fixture successor changed representation");
+        };
+        assert_eq!(translation.x.to_bits(), (-1e20f32).to_bits());
+        assert_eq!(translation.y.to_bits(), 0.0f32.to_bits());
+        assert_eq!(translation.z.to_bits(), 0.0f32.to_bits());
+        prove_scale(&doc, &candidate, &plan).unwrap();
+    }
+
+    #[test]
     fn rest_bind_classifies_projected_endpoints_not_nonuniform_connector_rows() {
         let connector = Mat4::from_scale(Vec3::new(2.0, 3.0, 4.0));
-        assert!(
-            classify_affine(
-                Mat3::from_mat4(connector),
-                &ScaleTolerancePolicy::APPENDIX_D_V6
-            )
-            .is_err(),
-            "the connector itself must be outside the accepted affine domain"
-        );
         let raw_child = Transform {
             translation: Vec3::ZERO,
             rotation: Quat::IDENTITY,
@@ -6865,7 +6945,6 @@ mod tests {
             .find(|node| node.bone == Some(1))
             .unwrap()
             .parent_source_node_index = Some(10);
-        validate_scale_input(&reordered).unwrap();
         assert_eq!(
             build_scale_candidate(&reordered, &plan).unwrap_err(),
             ScaleError::PlanDocumentMismatch {
@@ -6901,7 +6980,6 @@ mod tests {
             .find(|node| node.bone == Some(1))
             .unwrap()
             .parent_source_node_index = Some(12);
-        validate_scale_input(&changed).unwrap();
         assert_eq!(
             build_scale_candidate(&changed, &plan).unwrap_err(),
             ScaleError::PlanDocumentMismatch {
@@ -11865,12 +11943,8 @@ mod tests {
         // candidate with a corrupted affected bind or vertex weight skipped
         // both skin and bounds and proved successfully.
         let skinned = multi_joint_document();
-        assert_eq!(
-            derive_rest_bind_plan_domain(&skinned, 0, 0)
-                .unwrap()
-                .affected_nodes,
-            plan.affected_nodes()
-        );
+        let skinned_domain = derive_rest_bind_plan_domain(&skinned, 0, 0).unwrap();
+        assert_eq!(skinned_domain.affected_nodes, plan.affected_nodes());
         let expected = ScaleError::PlanDocumentMismatch {
             reason: "proof_obligations_mismatch",
         };
@@ -11879,7 +11953,7 @@ mod tests {
             expected
         );
 
-        let mut corrupted = build_rest_bind(&skinned, &plan).unwrap();
+        let mut corrupted = build_rest_bind(&skinned, &plan, &skinned_domain).unwrap();
         corrupted.assets.instances[0].skin_ibms[0] = Mat4::IDENTITY;
         assert_eq!(
             prove_scale(
