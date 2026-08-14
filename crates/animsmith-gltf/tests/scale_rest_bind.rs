@@ -5,8 +5,8 @@
 //! worked cases, or — for the noisy tolerance boundary — derived from
 //! [`ScaleTolerancePolicy::APPENDIX_D_V6`]'s own constants at test time. No
 //! assertion is stated against a value the code under test produced, and no
-//! rewritten value is cross-compared against
-//! [`animsmith_core::scale::build_scale_candidate`]: the two routes narrow to
+//! rewritten value is cross-compared against core's analytic reference
+//! candidate: the two routes narrow to
 //! `f32` at different points (core narrows the factor *before* multiplying;
 //! the raw route keeps `f64` to a single narrowing), so at `s = 0.01` core
 //! computes `0.99999998` where this route computes exactly `1.0`. Both

@@ -25,12 +25,11 @@
 //! [`plan_scale`] is pure and fail-closed: it never mutates its input and
 //! returns a typed [`ScaleError`] for every unsupported affine domain,
 //! incomplete closure, incomplete capability, invalid selector, invalid
-//! factor. [`build_scale_candidate`]
-//! builds a new [`ScaleCandidate`] document from an accepted [`ScalePlan`];
-//! because it only ever reads its `&Document` input, a failure cannot leave
-//! the caller's source document mutated — the half-built candidate is
-//! simply dropped. [`prove_scale`] independently re-derives the plan's
-//! claims from the source and candidate documents and reports the observed
+//! factor. An internal reference builder constructs analytic candidates for
+//! fixtures and calibration; production format frontends instead rewrite
+//! exact source bytes and wrap the emitted reload with
+//! [`ScaleCandidate::from_document`]. [`prove_scale`] independently re-derives
+//! the plan's claims from the source and candidate documents and reports the observed
 //! residual maxima against the fixed [`ScaleTolerancePolicy::APPENDIX_D_V6`]
 //! tolerance identity.
 //!
@@ -455,7 +454,8 @@ impl ScaleTolerancePolicy {
     /// - planning binds its witness to the caller's declared factor within
     ///   [`Self::common_factor`], or refuses with
     ///   [`ScaleError::FactorMismatch`]; and
-    /// - for a candidate [`build_scale_candidate`] produced from the source
+    /// - for a candidate the internal reference builder produced from the
+    ///   source
     ///   under proof, that candidate's composed root scale is the proof
     ///   witness divided by the declared factor, so the unit-scale
     ///   postcondition binds the proof witness to the declared factor within
@@ -694,8 +694,8 @@ pub struct ScaleRequest<'a> {
 
 // --- Errors ----------------------------------------------------------------
 
-/// Typed, fail-closed rejection from [`plan_scale`], [`build_scale_candidate`],
-/// or [`prove_scale`].
+/// Typed, fail-closed rejection from [`plan_scale`], reference candidate
+/// construction, or [`prove_scale`].
 #[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ScaleError {
@@ -804,9 +804,9 @@ pub enum ScaleError {
     /// This guards every boundary where a [`ScalePlan`] built from one
     /// document could be replayed against a different one: [`ScalePlan`]
     /// has no public constructor other than [`plan_scale`], but
-    /// [`build_scale_candidate`] and [`prove_scale`] each take the document
-    /// to operate on as a separate argument and must not trust that it
-    /// still matches the plan's shape.
+    /// reference candidate construction and [`prove_scale`] each take the
+    /// document to operate on as a separate argument and must not trust that
+    /// it still matches the plan's shape.
     #[error("bone index {index} is out of range for this document")]
     BoneIndexOutOfRange {
         /// The out-of-range index.
@@ -1535,9 +1535,9 @@ impl ScaleSourceTopologyRow {
 
 /// Pure, typed plan returned by [`plan_scale`].
 ///
-/// Planning never mutates its input document; it only inspects it. Building
-/// a candidate from an accepted plan is a distinct, separately fallible step
-/// ([`build_scale_candidate`]).
+/// Planning never mutates its input document; it only inspects it. Reference
+/// candidate construction from an accepted plan is a distinct, separately
+/// fallible fixture step.
 ///
 /// Every field is private: a [`ScalePlan`] can only be produced by
 /// [`plan_scale`], so an external caller cannot hand-construct or mutate one
@@ -1601,9 +1601,9 @@ impl ScalePlan {
     /// applied across [`Self::affected_nodes`].
     ///
     /// This is always the factor the *caller declared*, never the one
-    /// measured from the source: [`build_scale_candidate`] applies exactly
-    /// this value, and [`prove_scale`] states every analytic expectation in
-    /// terms of it. [`Self::observed_factor`] reports the measured
+    /// measured from the source: reference construction applies exactly this
+    /// value, and [`prove_scale`] states every analytic expectation in terms
+    /// of it. [`Self::observed_factor`] reports the measured
     /// counterpart, and the two are separate numbers on purpose — DESIGN.md
     /// Appendix D §D.6 requires producer evidence to record both.
     pub fn common_factor(&self) -> f64 {
@@ -1759,10 +1759,10 @@ pub fn plan_scale(request: &ScaleRequest<'_>) -> Result<ScalePlan, ScaleError> {
 /// Validate every public scale-input snapshot before reading or rewriting it.
 /// Shared structure is delegated to [`crate::model::validate_document_shape`];
 /// this adapter owns only scale's finite base-position and nonnegative primary
-/// skin-weight requirements. [`plan_scale`], [`build_scale_candidate`], and
-/// [`prove_scale`] all call it, including for generated and externally loaded
-/// candidates, because a mutable [`Document`] cannot carry a durable validation
-/// guarantee.
+/// skin-weight requirements. [`plan_scale`], reference candidate construction,
+/// and [`prove_scale`] all call it, including for generated and externally
+/// loaded candidates, because a mutable [`Document`] cannot carry a durable
+/// validation guarantee.
 ///
 /// Per-vertex primitive skinning shape (`joints`/`weights` parallel to
 /// `positions`) is deliberately not checked here: it is validated directly
@@ -3373,12 +3373,13 @@ fn rest_world_pose(skeleton: &Skeleton) -> Result<WorldPose, ScaleError> {
 
 // --- Candidate construction -------------------------------------------------
 
-/// A candidate document built from an accepted [`ScalePlan`].
+/// A candidate document supplied to [`prove_scale`].
 ///
-/// This type deliberately has no mutation method: [`build_scale_candidate`]
-/// is the only way to produce one, and it never partially mutates the
-/// caller's source document — a failure simply drops the half-built
-/// candidate before this type is constructed.
+/// This type deliberately has no mutation method. Its only public constructor,
+/// [`ScaleCandidate::from_document`], wraps the document a format frontend
+/// reloaded from its exact emitted artifact bytes. Reference and calibration
+/// tests use the non-default `fixtures` feature instead of a production
+/// candidate-building API.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct ScaleCandidate {
@@ -3386,9 +3387,8 @@ pub struct ScaleCandidate {
 }
 
 impl ScaleCandidate {
-    /// Wrap a candidate `document` that a format frontend produced by
-    /// rewriting its own exact source bytes, so it can be handed to
-    /// [`prove_scale`].
+    /// Wrap a candidate `document` that a format frontend reloaded from the
+    /// exact artifact bytes it emitted, so it can be handed to [`prove_scale`].
     ///
     /// DESIGN.md Appendix D §D.8 assigns "exact source rewriting" to the
     /// format frontend, which necessarily produces candidates this module did
@@ -3417,8 +3417,40 @@ impl ScaleCandidate {
     }
 }
 
-/// Build a candidate document from an accepted [`ScalePlan`], without
-/// mutating `document`.
+#[cfg(doctest)]
+mod candidate_api_contract {
+    /// Compile-fail coverage for the removed production-looking reference
+    /// builder. Each former path stays in its own compilation unit so restoring
+    /// one cannot be masked by the other remaining unavailable.
+    ///
+    /// ```compile_fail
+    /// use animsmith_core::build_scale_candidate;
+    /// ```
+    ///
+    /// ```compile_fail
+    /// use animsmith_core::scale::build_scale_candidate;
+    /// ```
+    ///
+    /// The reloaded-artifact wrapper remains opaque; external callers use its
+    /// explicit constructor rather than a struct literal.
+    ///
+    /// ```compile_fail
+    /// use animsmith_core::{Document, ScaleCandidate};
+    ///
+    /// let _ = ScaleCandidate {
+    ///     document: Document::default(),
+    /// };
+    /// ```
+    struct RemovedPublicBuilder;
+}
+
+/// Build the analytic reference candidate from an accepted [`ScalePlan`],
+/// without mutating `document`.
+///
+/// This is private implementation support. Cross-crate analytic tests opt in
+/// to `animsmith_core::fixtures::build_scale_reference_candidate`; production
+/// format frontends rewrite exact source bytes and use
+/// [`ScaleCandidate::from_document`] on the emitted reload.
 ///
 /// `document` need not be numerically identical to the document `plan` was
 /// computed against. Re-deriving its structural planning inventory must,
@@ -3436,7 +3468,8 @@ impl ScaleCandidate {
 /// any document-shape error — checked on the *candidate* as
 /// well as the input, so a build can never hand back a structurally invalid
 /// or non-finite document as `Ok`.
-pub fn build_scale_candidate(
+#[cfg_attr(not(any(test, feature = "fixtures")), allow(dead_code))]
+pub(crate) fn build_scale_candidate(
     document: &Document,
     plan: &ScalePlan,
 ) -> Result<ScaleCandidate, ScaleError> {
@@ -4953,7 +4986,7 @@ pub struct ScaleProof {
     /// It is not the route taken, for four reasons:
     ///
     /// - **Independence.** [`prove_scale`] does not require `candidate` to
-    ///   have come from [`build_scale_candidate`]; checking one that did not
+    ///   have come from reference construction; checking one that did not
     ///   is the reason it exists. Reading the reported measurement off the
     ///   artifact under test would let that artifact pick its own evidence
     ///   value. The observed factor is a fact about the *input*, so the input
@@ -6034,10 +6067,10 @@ fn proof_scale_animation_root(
 /// agree on clip/track/instance/mesh/primitive *counts* and on each track's
 /// `(bone, property, interpolation, times)` identity — but it never looks
 /// inside `values` or `positions`. Both are reachable through this module's
-/// public API without any structural mismatch: [`build_scale_candidate`] and
-/// [`prove_scale`] each take their document as a separate argument and do
-/// not require it to be the same one, so a candidate built from a doctored
-/// document can be proved against the real source. Without a direct
+/// public API without any structural mismatch:
+/// [`ScaleCandidate::from_document`] accepts an external document
+/// independently of the source supplied to [`prove_scale`], so a doctored
+/// candidate can be proved against the real source. Without a direct
 /// comparison a rotation key rewritten from `0.1` to `2.5` radians, or an
 /// interior mesh vertex moved anywhere at all, passes proof: the sampled
 /// obligations only look at translation, world *joint* transforms, and the
@@ -6750,7 +6783,7 @@ fn observed_factor_from_source(
 /// [`check_skin_and_bounds`] skips an instance with no joint in the affected
 /// closure entirely, and nothing else looked at one either — so a candidate
 /// that rewrote an unrelated skin's `skin_ibms` proved `Ok`. Reachable
-/// through the public API, since [`build_scale_candidate`] and
+/// through the public API, since [`ScaleCandidate::from_document`] and
 /// [`prove_scale`] do not require their two documents to be the same one.
 ///
 /// Three cases, kept distinct on purpose (issue #296):

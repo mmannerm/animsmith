@@ -24,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- [**breaking**] *(core)* remove the production-looking public
+  `build_scale_candidate` API. Format frontends remain responsible for exact
+  source rewriting and pass the emitted reload through
+  `ScaleCandidate::from_document` to independent core proof; analytic tests
+  can opt into the renamed reference constructor under the existing
+  non-default `fixtures` feature. Scale behavior, evidence v1/v2/v3, and the
+  `appendix-d-v6` policy remain unchanged
+  ([#381](https://github.com/mmannerm/animsmith/issues/381))
 - [**breaking**] *(core)* replace each public `ScaleProof` maximum/count field
   pair with one read-only `ScaleProofResidual`. Its `max()`, `comparisons()`,
   and `evaluated()` accessors keep a claim's measurements mechanically paired;
