@@ -6162,7 +6162,10 @@ mod tests {
         // successor translation 25.75; the old multiplier-only rewrite would
         // produce 1.0 and is therefore decisively distinguished.
         let connector = matrix_with_columns(
-            Vec4::new(-2.0, 0.0, 0.0, 0.0),
+            // Matrix connectors have their own byte-exact preservation arm;
+            // retain a negative zero so reconstructing the matrix numerically
+            // cannot satisfy that raw write-set claim.
+            Vec4::new(-2.0, -0.0, 0.0, 0.0),
             Vec4::new(0.0, -2.0, 0.0, 0.0),
             Vec4::new(0.0, 0.0, 2.0, 0.0),
             Vec3::new(50.0, 0.0, 0.0),
@@ -6247,6 +6250,32 @@ mod tests {
             prove_scale(
                 &doc,
                 &ScaleCandidate::from_document(changed_connector),
+                &plan,
+            )
+            .unwrap_err(),
+            ScaleError::CandidateStructureMismatch {
+                reason: "connector_source_local_mismatch"
+            }
+        );
+
+        let mut changed_matrix_zero = candidate.document().clone();
+        let SourceNodeLocalRest::Matrix(matrix) = &mut changed_matrix_zero
+            .assets
+            .source_skeleton
+            .nodes
+            .iter_mut()
+            .find(|node| node.source_node_index == 10)
+            .unwrap()
+            .local_rest
+        else {
+            panic!("fixture connector changed representation");
+        };
+        assert_eq!(matrix.x_axis.y.to_bits(), (-0.0f32).to_bits());
+        matrix.x_axis.y = 0.0;
+        assert_eq!(
+            prove_scale(
+                &doc,
+                &ScaleCandidate::from_document(changed_matrix_zero),
                 &plan,
             )
             .unwrap_err(),
