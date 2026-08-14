@@ -1589,10 +1589,11 @@ is unchanged, and local scale is multiplied by the dimensionless ratio
 the linear part receives that same ratio but its translation is instead
 determined by `H^-1 * C_p^-1 * H * L_i * C_i`; a translated `H` contributes
 an additive term, so the simple translation multiplier must not be applied to
-that raw local. The connector product, inverse, additive term, and complete
-bridged translation sum are evaluated in `f64`, then the final source-local
-translation is narrowed once to the `f32` model boundary. Direct projected
-edges retain their established `f32` arithmetic and association. Translation
+that raw local. The connector product, inverse, additive term, complete
+bridged translation sum, and bridged linear ratio application are evaluated
+in `f64`, then each final source-local component is narrowed once to the
+`f32` model boundary. Direct projected edges retain their established `f32`
+arithmetic and association. Translation
 animation values and both cubic translation
 tangents on normalized nodes receive the existing parent-basis multiplier.
 Scale animation on those normalized nodes is the same local-scale component

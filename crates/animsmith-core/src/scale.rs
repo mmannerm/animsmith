@@ -2660,19 +2660,38 @@ fn rebase_source_local_rest(
                 Some(offset) => (translation.as_dvec3() * f64::from(s_parent) + offset).as_vec3(),
                 None => *translation * s_parent,
             };
+            let scale = match bridge_offset {
+                Some(_) => {
+                    let ratio = f64::from(s_parent) / f64::from(s_node);
+                    (scale.as_dvec3() * ratio).as_vec3()
+                }
+                None => *scale * (s_parent / s_node),
+            };
             SourceNodeLocalRest::Trs {
                 translation,
                 rotation: *rotation,
-                scale: *scale * (s_parent / s_node),
+                scale,
             }
         }
         SourceNodeLocalRest::Matrix(matrix) => {
-            let mut rebased = rebase_matrix(*matrix, s_parent, s_node);
-            if let Some(offset) = bridge_offset {
+            let rebased = if let Some(offset) = bridge_offset {
+                let ratio = f64::from(s_parent) / f64::from(s_node);
+                let rebase_linear_column = |column: Vec4| {
+                    (column.truncate().as_dvec3() * ratio)
+                        .as_vec3()
+                        .extend(column.w)
+                };
                 let translation =
                     (matrix.w_axis.truncate().as_dvec3() * f64::from(s_parent) + offset).as_vec3();
-                rebased.w_axis = translation.extend(matrix.w_axis.w);
-            }
+                Mat4::from_cols(
+                    rebase_linear_column(matrix.x_axis),
+                    rebase_linear_column(matrix.y_axis),
+                    rebase_linear_column(matrix.z_axis),
+                    translation.extend(matrix.w_axis.w),
+                )
+            } else {
+                rebase_matrix(*matrix, s_parent, s_node)
+            };
             SourceNodeLocalRest::Matrix(rebased)
         }
     }
@@ -2716,9 +2735,9 @@ fn rebase_source_local_through_connector_bridge(
     }
     // For affine H=[A,t], H^-1*S_parent*H contributes only the translation
     // A^-1*((s_parent-1)*t) beyond the established direct-edge rewrite. Keep
-    // the full translation sum widened, while reusing the direct linear
-    // implementation so equal endpoint factors preserve authored matrix
-    // linear bits and the homogeneous row exactly.
+    // every complete bridged expression widened through its single model
+    // boundary, while direct projected edges retain their established f32
+    // association and signed-zero behavior.
     let rebased = rebase_source_local_rest(local_rest, s_parent, s_node, Some(bridge_offset));
     if !mat4_is_finite(local_rest_matrix(&rebased)) {
         return Err(ScaleError::NonFiniteTransform { node: bone });
@@ -2865,14 +2884,23 @@ fn proof_expected_bridged_source_local(
         } => SourceNodeLocalRest::Trs {
             translation: (translation.as_dvec3() * f64::from(s_parent) + offset).as_vec3(),
             rotation: *rotation,
-            scale: *scale * (s_parent / s_node),
+            scale: (scale.as_dvec3() * (f64::from(s_parent) / f64::from(s_node))).as_vec3(),
         },
         SourceNodeLocalRest::Matrix(matrix) => {
-            let mut expected = rebase_matrix(*matrix, s_parent, s_node);
+            let ratio = f64::from(s_parent) / f64::from(s_node);
+            let rebase_linear_column = |column: Vec4| {
+                (column.truncate().as_dvec3() * ratio)
+                    .as_vec3()
+                    .extend(column.w)
+            };
             let translation =
                 (matrix.w_axis.truncate().as_dvec3() * f64::from(s_parent) + offset).as_vec3();
-            expected.w_axis = translation.extend(matrix.w_axis.w);
-            SourceNodeLocalRest::Matrix(expected)
+            SourceNodeLocalRest::Matrix(Mat4::from_cols(
+                rebase_linear_column(matrix.x_axis),
+                rebase_linear_column(matrix.y_axis),
+                rebase_linear_column(matrix.z_axis),
+                translation.extend(matrix.w_axis.w),
+            ))
         }
     };
     if !mat4_is_finite(local_rest_matrix(&expected)) {
@@ -6798,6 +6826,77 @@ mod tests {
             assert_source_local_rest_exact(&successor.local_rest, &expected_successor);
             prove_scale(&doc, &candidate, &plan).unwrap();
         }
+    }
+
+    #[test]
+    fn bridged_matrix_linear_ratio_is_combined_before_the_f32_candidate_boundary() {
+        // The raw Matrix successor's 2^125 linear terms are compensated by
+        // the connector's 2^-125 scale. Both projected endpoint factors are
+        // 128, so the successor's required local ratio is exactly one. A
+        // sequential f32 `linear * s_parent * (1 / s_node)` overflows at the
+        // first multiplication even though the exact candidate is the
+        // authored finite matrix.
+        let factor = 128.0;
+        let connector_scale = f32::from_bits(0x0100_0000); // 2^-125
+        let successor_scale = f32::from_bits(0x7e00_0000); // 2^125
+        let authored_successor = Transform {
+            translation: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::splat(successor_scale),
+        };
+        let authored_successor_matrix = authored_successor.to_mat4();
+        let mut doc = compensated_document_with_connectors(
+            &[Mat4::from_scale(Vec3::splat(connector_scale))],
+            authored_successor,
+            Transform::default(),
+        );
+        doc.skeleton.bones[0].rest.scale = Vec3::splat(factor);
+        let SourceNodeLocalRest::Trs { scale, .. } = &mut doc
+            .assets
+            .source_skeleton
+            .nodes
+            .iter_mut()
+            .find(|node| node.bone == Some(0))
+            .unwrap()
+            .local_rest
+        else {
+            panic!("fixture root changed representation");
+        };
+        *scale = Vec3::splat(factor);
+        doc.assets
+            .source_skeleton
+            .nodes
+            .iter_mut()
+            .find(|node| node.bone == Some(1))
+            .unwrap()
+            .local_rest = SourceNodeLocalRest::Matrix(authored_successor_matrix);
+        doc.assets.instances[0].skin_ibms[0] = Mat4::from_scale(Vec3::splat(1.0 / factor));
+
+        let capability = complete_capability();
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: f64::from(factor),
+            },
+            document: &doc,
+            capability: &capability,
+        })
+        .unwrap();
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+        let successor = candidate
+            .document()
+            .assets
+            .source_skeleton
+            .nodes
+            .iter()
+            .find(|node| node.bone == Some(1))
+            .unwrap();
+        assert_source_local_rest_exact(
+            &successor.local_rest,
+            &SourceNodeLocalRest::Matrix(authored_successor_matrix),
+        );
+        prove_scale(&doc, &candidate, &plan).unwrap();
     }
 
     #[test]
