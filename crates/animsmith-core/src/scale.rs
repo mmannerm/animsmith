@@ -1388,7 +1388,6 @@ struct RestBindLedger {
     source_root_node_index: usize,
     expected_factor: f64,
     observed_factor: f64,
-    scaled_root_node: BoneId,
     structure: ScaleStructureLedger,
 }
 
@@ -2276,7 +2275,6 @@ fn plan_rest_bind(
             // The measured source fact, kept alongside the declared factor the
             // build applies rather than discarded once validated against it.
             observed_factor: observed_common,
-            scaled_root_node,
             structure: ledger,
         }),
     })
@@ -11215,6 +11213,27 @@ mod tests {
     }
 
     #[test]
+    fn proof_rejects_genuinely_missing_inverse_bind_evidence_instead_of_defaulting_to_identity() {
+        let doc = absent_inverse_bind_document(
+            SourceInverseBindAccessorStatus::Unreadable,
+            SourceSkeletonCoverage::Complete,
+        );
+        let capability = complete_capability();
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::WholeDocumentLinearUnits { factor: 2.0 },
+            document: &doc,
+            capability: &capability,
+        })
+        .unwrap();
+        let candidate = build_scale_candidate(&doc, &plan).unwrap();
+
+        assert_eq!(
+            prove_scale(&doc, &candidate, &plan).unwrap_err(),
+            ScaleError::MissingInverseBind { node: 0 }
+        );
+    }
+
+    #[test]
     fn replay_rejects_a_skin_bind_array_cleared_after_planning() {
         let doc = compensated_document();
         let capability = complete_capability();
@@ -12254,8 +12273,8 @@ mod tests {
         assert!(!plan.requires_proof(ScaleProofObligation::SkinAndBounds));
         // The skin equation reads the same instance walk and is gated on the
         // same evidence: with no skinned instance there is no `W_i * B_i` to
-        // evaluate either, and a declared `prove_skin` would report a `0.0`
-        // skin-matrix residual for a claim nothing checked.
+        // evaluate either, and a declared `SkinAndBounds` obligation would
+        // report a `0.0` skin-matrix residual for a claim nothing checked.
         assert!(!plan.requires_proof(ScaleProofObligation::SkinAndBounds));
         assert!(plan.rewrites(ScaleRewriteDomain::BaseMeshPositions));
     }
@@ -19987,9 +20006,9 @@ mod tests {
 
     #[test]
     fn an_unanimated_skinned_document_still_compares_its_skin_at_rest() {
-        // The permanent pin for what #317 was closed over: `prove_skin` and
-        // `prove_bounds` arm a **rest-pose** walk as well as the sampled
-        // loop, so a skinned document with no clips at all still compares its
+        // The permanent pin for what #317 was closed over: `SkinAndBounds`
+        // arms a **rest-pose** walk as well as the sampled loop, so a skinned
+        // document with no clips at all still compares its
         // skin matrices and its bounds. Gating those two obligations on the
         // presence of sample times — which that issue proposed — would leave
         // this document's only check unperformed while still publishing a
@@ -20194,7 +20213,7 @@ mod tests {
                 ("transform_only_affine", 0),
                 ("track_value", 0),
                 // The unskinned instance's base positions are still proved
-                // directly, which is the claim `prove_bounds` cannot make.
+                // directly, which is the claim `SkinAndBounds` cannot make.
                 ("mesh_position", 1),
                 ("key_translation", 0),
                 ("cubic_interior", 0),

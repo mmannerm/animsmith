@@ -1385,17 +1385,20 @@ proof walks the source and the candidate:
 
 ```text
 2 * bone_count
-  + sum over affected skinned instances of
-        (2 + [prove_skin]) * len(skin_joints)
-      + [prove_bounds] * 2 * (vertices over every primitive of its mesh)
+  + [SkinAndBounds] * sum over affected skinned instances of
+        3 * len(skin_joints)
+      + 2 * (vertices over every primitive of its mesh)
 ```
 
 Every sampled obligation poses both skeletons, hence the bone term. Only the
 *source* bone count is measured, which is sound because proof rejects a
 candidate whose bone count differs (`bone_count_mismatch`) before it charges
 anything: the candidate document is caller-supplied, so an unchecked candidate
-skeleton is proof work nothing has billed. The slot term is charged explicitly,
-per instance: nothing bounds the instance count, and nothing bounds
+skeleton is proof work nothing has billed. `SkinAndBounds` is one typed
+obligation because the skin-matrix and bounds walks share the same affected
+instances and cannot vary independently. Its slot term is charged explicitly,
+per instance: two document-side bind resolutions plus the source-side slot
+pairing. Nothing bounds the instance count, and nothing bounds
 `skin_joints`, which may repeat a joint, so slot work bears no relation to the
 bone count and must not be folded into it. `sample_time_count` counts key times
 *and* cubic-segment interior times, because both are evaluated. Exceeding the
