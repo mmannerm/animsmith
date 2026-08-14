@@ -668,13 +668,13 @@ fn the_rebased_artifact_proves_and_reports_its_evidence() {
 
     let core = proof.core;
     assert_eq!(core.tolerance_policy.id, "appendix-d-v6");
-    assert_eq!(core.unit_scale_residual, 0.0);
-    assert_eq!(core.transform_only_affine_residual, 0.0);
-    assert_eq!(core.skin_matrix_residual, 0.0);
-    assert_eq!(core.rest_translation_residual, 0.0);
-    assert_eq!(core.trajectory_residual, 0.0);
-    assert_eq!(core.mesh_position_residual, 0.0);
-    assert_eq!(core.bounds_residual, 0.0);
+    assert_eq!(core.unit_scale.max(), 0.0);
+    assert_eq!(core.transform_only_affine.max(), 0.0);
+    assert_eq!(core.skin_matrix.max(), 0.0);
+    assert_eq!(core.rest_translation.max(), 0.0);
+    assert_eq!(core.trajectory.max(), 0.0);
+    assert_eq!(core.mesh_position.max(), 0.0);
+    assert_eq!(core.bounds.max(), 0.0);
     // The observed factor is the `f32` the loader read for the root's
     // authored `0.01`; the declared factor is the exact `f64` decimal. §D.6
     // requires evidence to carry both, and they are not the same number.
@@ -976,7 +976,7 @@ fn a_skin_slot_outside_the_closure_keeps_its_bind_byte_identical() {
         "skin 1's only joint is the mesh holder, outside the closure"
     );
     let proof = prove_rewritten_rest_bind(&source, &artifact, &plan).expect("artifact proof");
-    assert_eq!(proof.core.unaffected_inverse_bind_residual, 0.0);
+    assert_eq!(proof.core.unaffected_inverse_bind.max(), 0.0);
 }
 
 #[test]
@@ -2283,13 +2283,13 @@ fn a_noisy_but_in_band_hierarchy_is_accepted_and_its_residual_is_reported() {
     // Accepted for a reviewable reason: the residual is recorded and it is
     // inside the derived postcondition bound, not merely non-zero-and-small.
     assert!(
-        proof.core.unit_scale_residual <= policy.postcondition_unit_scale_residual,
+        proof.core.unit_scale.max() <= policy.postcondition_unit_scale_residual,
         "unit-scale residual {} exceeds the derived bound {}",
-        proof.core.unit_scale_residual,
+        proof.core.unit_scale.max(),
         policy.postcondition_unit_scale_residual
     );
     assert!(
-        proof.core.unit_scale_residual > 0.0,
+        proof.core.unit_scale.max() > 0.0,
         "a noisy fixture whose residual is exactly zero is not testing the band"
     );
     assert!(plan.observed_factor() != plan.common_factor());

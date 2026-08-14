@@ -160,9 +160,9 @@ pub use scale::{
     ProofResidualKind, ScaleBoneRestField, ScaleCandidate, ScaleCapabilityCoverage,
     ScaleCapabilityFacts, ScaleError, ScaleFieldDisposition, ScaleFieldPlan, ScaleFieldTarget,
     ScaleOperation, ScalePayloadShapeRow, ScalePlan, ScalePlanLedger, ScaleProjectedRole,
-    ScaleProof, ScaleProofObligation, ScaleRequest, ScaleRewriteRule, ScaleSourceNodeKind,
-    ScaleSourceRestField, ScaleSourceTopologyRow, ScaleTolerancePolicy, build_scale_candidate,
-    plan_scale, prove_scale,
+    ScaleProof, ScaleProofObligation, ScaleProofResidual, ScaleRequest, ScaleRewriteRule,
+    ScaleSourceNodeKind, ScaleSourceRestField, ScaleSourceTopologyRow, ScaleTolerancePolicy,
+    build_scale_candidate, plan_scale, prove_scale,
 };
 pub use skinned_canonical::{
     SkinnedBindPoseCanonicalization, SkinnedBindPoseCanonicalizationError,

@@ -4570,23 +4570,300 @@ fn rebase_matrix(matrix: Mat4, s_parent: f32, s_node: f32) -> Mat4 {
 
 // --- Proof -------------------------------------------------------------
 
+mod proof_residual {
+    /// One proof claim's maximum residual and the comparisons behind it.
+    ///
+    /// A maximum of `0.0` can mean either an exact measurement or that no
+    /// comparison was made. [`Self::evaluated`] distinguishes those cases.
+    /// The two measurements are intentionally one read-only value so a
+    /// consumer cannot pair one claim's maximum with another claim's count.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    #[non_exhaustive]
+    pub struct ScaleProofResidual {
+        max: f64,
+        comparisons: usize,
+    }
+
+    impl ScaleProofResidual {
+        /// The maximum residual observed across this claim's comparisons.
+        #[must_use]
+        pub fn max(self) -> f64 {
+            self.max
+        }
+
+        /// The number of comparisons behind [`Self::max`].
+        #[must_use]
+        pub fn comparisons(self) -> usize {
+            self.comparisons
+        }
+
+        /// Whether the proof evaluated this claim at least once.
+        #[must_use]
+        pub fn evaluated(self) -> bool {
+            self.comparisons != 0
+        }
+
+        pub(super) const EMPTY: Self = Self {
+            max: 0.0,
+            comparisons: 0,
+        };
+
+        pub(super) fn record(&mut self, observed: f64) {
+            self.max = self.max.max(observed);
+            self.comparisons += 1;
+        }
+    }
+
+    #[cfg(doctest)]
+    mod api_contract {
+        /// Compile-fail coverage for the removed split API. Each field stays in
+        /// its own compilation unit so restoring one cannot be masked by a
+        /// different missing field.
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.rest_translation_residual;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.rest_translation_comparisons;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.rest_rotation_residual;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.rest_rotation_comparisons;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.unit_scale_residual;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.unit_scale_comparisons;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.transform_only_affine_residual;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.transform_only_affine_comparisons;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.track_value_residual;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.track_value_comparisons;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.mesh_position_residual;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.mesh_position_comparisons;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.key_translation_residual;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.key_translation_comparisons;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.cubic_interior_residual;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.cubic_interior_comparisons;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.trajectory_residual;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.trajectory_comparisons;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.skin_matrix_residual;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.skin_matrix_comparisons;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.bounds_residual;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.bounds_comparisons;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.unaffected_inverse_bind_residual;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.unaffected_inverse_bind_comparisons;
+        /// }
+        /// ```
+        ///
+        /// Direct construction and member-by-member mutation are also unavailable:
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProofResidual;
+        ///
+        /// let _ = ScaleProofResidual {
+        ///     max: 0.0,
+        ///     comparisons: 1,
+        /// };
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProofResidual;
+        ///
+        /// fn replace_max(mut residual: ScaleProofResidual) {
+        ///     residual.max = 1.0;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProofResidual;
+        ///
+        /// fn replace_count(mut residual: ScaleProofResidual) {
+        ///     residual.comparisons = 1;
+        /// }
+        /// ```
+
+        struct RemovedSplitFields;
+    }
+}
+
+pub use proof_residual::ScaleProofResidual;
+
 /// Observed residual maxima from [`prove_scale`], reported against
 /// [`ScalePlan::tolerance_policy`], each paired with the number of
 /// comparisons that produced it.
 ///
-/// **Read the count before the residual.** A maximum alone cannot
+/// **Read the paired value, not just its maximum.** A maximum alone cannot
 /// distinguish "compared, no deviation" from "nothing to compare": both read
 /// `0.0`, because every maximum starts there and is raised only by a loop
 /// that may have zero iterations. So a field for an obligation the plan does
-/// not require (see [`ScaleProofObligation`]) reports `0.0` — and reports a
-/// companion count of `0` that says so. A `0.0` with a count above zero is a
-/// measurement; a `0.0` with a count of zero is an absence, which DESIGN.md
-/// Appendix D §D.6 requires an evidence record to publish as an absence
-/// rather than as a checked zero.
+/// not require (see [`ScaleProofObligation`]) reports a
+/// [`ScaleProofResidual`] whose maximum and count are both zero. A `0.0`
+/// maximum with a count above zero is a measurement; a zero count is an
+/// absence, which DESIGN.md Appendix D §D.6 requires an evidence record to
+/// publish as an absence rather than as a checked zero.
 ///
 /// The counts are measurements, not proxies derived from obligation presence:
-/// each is written beside its maximum, by the single private recording method
-/// every comparison in [`prove_scale`] funnels through.
+/// each is stored with its maximum by the single private recording method
+/// every comparison in [`prove_scale`] funnels through. The pair's fields are
+/// private, so no producer can combine one claim's count with another claim's
+/// maximum.
 /// No comparison can raise a residual without being counted, and
 /// no count can rise without a comparison having been checked against the
 /// tolerance policy. A [`ScaleProofObligation`] may declare a proof walk, or
@@ -4597,11 +4874,9 @@ fn rebase_matrix(matrix: Mat4, s_parent: f32, s_node: f32) -> Mat4 {
 pub struct ScaleProof {
     /// The tolerance policy every residual below was checked against.
     pub tolerance_policy: ScaleTolerancePolicy,
-    /// Maximum rest-world translation residual across affected nodes.
-    pub rest_translation_residual: f64,
-    /// Comparisons behind [`Self::rest_translation_residual`]: one per
+    /// Maximum rest-world translation residual, with one comparison per
     /// affected node.
-    pub rest_translation_comparisons: usize,
+    pub rest_translation: ScaleProofResidual,
     /// Maximum rest-world rotation residual, in radians, directly comparable
     /// to [`ScaleTolerancePolicy::rotation_residual_radians`].
     ///
@@ -4609,75 +4884,43 @@ pub struct ScaleProof {
     /// `|q1 - q2| = 2 * sin(theta / 4)` and reported as the angle
     /// `theta = 4 * asin(chord / 2)` that chord represents, so this value and
     /// the tolerance it is checked against carry the same unit.
-    pub rest_rotation_residual: f64,
-    /// Comparisons behind [`Self::rest_rotation_residual`]: one per affected
-    /// node.
-    pub rest_rotation_comparisons: usize,
-    /// Maximum postcondition unit-scale residual (rest/bind only).
-    pub unit_scale_residual: f64,
-    /// Comparisons behind [`Self::unit_scale_residual`]: one per affected
-    /// node, and zero unless the plan declares the postcondition.
-    pub unit_scale_comparisons: usize,
+    /// Its count is one per affected node.
+    pub rest_rotation: ScaleProofResidual,
+    /// Maximum postcondition unit-scale residual, with one comparison per
+    /// affected node when the rest/bind plan declares the postcondition.
+    pub unit_scale: ScaleProofResidual,
     /// Maximum transform-only attachment full-affine residual (rest/bind
-    /// only).
-    pub transform_only_affine_residual: f64,
-    /// Comparisons behind [`Self::transform_only_affine_residual`]: one
-    /// probe point per transform-only attachment.
-    pub transform_only_affine_comparisons: usize,
+    /// only), with one probe-point comparison per attachment.
+    pub transform_only_affine: ScaleProofResidual,
     /// Maximum per-element animation-track value residual, across rewritten
-    /// translation elements and every retained rotation/scale element.
-    pub track_value_residual: f64,
-    /// Comparisons behind [`Self::track_value_residual`]: one per track
-    /// element of every clip, so a document with no clips — or with clips
-    /// whose tracks carry no values — reports zero.
-    pub track_value_comparisons: usize,
-    /// Maximum per-vertex base mesh `POSITION` residual.
-    pub mesh_position_residual: f64,
-    /// Comparisons behind [`Self::mesh_position_residual`]: one per vertex
-    /// of every mesh primitive, so a document with no mesh positions reports
-    /// zero.
-    pub mesh_position_comparisons: usize,
-    /// Maximum residual at any affected-track keyframe time.
-    pub key_translation_residual: f64,
-    /// Comparisons behind [`Self::key_translation_residual`]: one per
-    /// affected translation track per key time.
-    pub key_translation_comparisons: usize,
-    /// Maximum residual at any bounded cubic-segment interior time.
-    pub cubic_interior_residual: f64,
-    /// Comparisons behind [`Self::cubic_interior_residual`]: one per
-    /// affected translation track per cubic-segment interior time.
-    pub cubic_interior_comparisons: usize,
-    /// Maximum sampled world-space trajectory residual.
-    pub trajectory_residual: f64,
-    /// Comparisons behind [`Self::trajectory_residual`]: one per affected
-    /// node per sample time.
-    pub trajectory_comparisons: usize,
+    /// translation elements and every retained rotation/scale element. Its
+    /// count is one per track element across every clip.
+    pub track_value: ScaleProofResidual,
+    /// Maximum per-vertex base mesh `POSITION` residual, with one comparison
+    /// per vertex.
+    pub mesh_position: ScaleProofResidual,
+    /// Maximum residual at any affected-track keyframe time, with one
+    /// comparison per affected translation track per key time.
+    pub key_translation: ScaleProofResidual,
+    /// Maximum residual at any bounded cubic-segment interior time, with one
+    /// comparison per affected translation track per interior time.
+    pub cubic_interior: ScaleProofResidual,
+    /// Maximum sampled world-space trajectory residual, with one comparison
+    /// per affected node per sample time.
+    pub trajectory: ScaleProofResidual,
     /// Maximum skin-matrix (`W * B`) component residual, across rest and
-    /// every sampled key/cubic-interior time.
-    pub skin_matrix_residual: f64,
-    /// Comparisons behind [`Self::skin_matrix_residual`]: one per skin slot
-    /// of every affected skinned instance, at rest and again at every sample
-    /// time — so a skinned document with no clips still reports a count
-    /// above zero, from the rest-pose walk alone.
-    pub skin_matrix_comparisons: usize,
+    /// every sampled key/cubic-interior time. Its count is one per skin slot
+    /// of every affected skinned instance at each evaluated pose.
+    pub skin_matrix: ScaleProofResidual,
     /// Maximum skinned mesh bounds residual, across rest and every sampled
-    /// key/cubic-interior time.
-    pub bounds_residual: f64,
-    /// Comparisons behind [`Self::bounds_residual`]: six per evaluated pose
-    /// (three axes of each of the two extreme corners), at rest and again at
-    /// every sample time.
-    pub bounds_comparisons: usize,
+    /// key/cubic-interior time. Its count is six per evaluated pose.
+    pub bounds: ScaleProofResidual,
     /// Maximum stored inverse-bind residual over every skin slot outside the
     /// affected closure (see [`ProofResidualKind::UnaffectedInverseBind`]).
-    pub unaffected_inverse_bind_residual: f64,
-    /// Comparisons behind [`Self::unaffected_inverse_bind_residual`]: one
-    /// per skin slot of every instance outside the affected closure that
-    /// stores a bind on both sides, and zero unless the plan declares
-    /// [`ScaleProofObligation::UnaffectedInverseBinds`]. A document whose
-    /// every skin is inside the closure reports zero, as does a slot neither
-    /// side records — which §D.6 places outside this proof's scope rather
-    /// than proving.
-    pub unaffected_inverse_bind_comparisons: usize,
+    /// Its count is one per stored slot compared outside the closure and zero
+    /// unless the plan declares
+    /// [`ScaleProofObligation::UnaffectedInverseBinds`].
+    pub unaffected_inverse_bind: ScaleProofResidual,
     /// The operation's observed factor, re-derived by this proof from the
     /// documents it was handed rather than copied from
     /// [`ScalePlan::observed_factor`], so evidence does not depend on
@@ -4719,8 +4962,8 @@ pub struct ScaleProof {
     ///   `f32` and multiplies back in `f64`, so it reports a rounded
     ///   neighbour of the source measurement rather than the measurement.
     /// - **Sign.** The nearest already-published proxy,
-    ///   [`Self::unit_scale_residual`], is an absolute value, so
-    ///   `common_factor * (1 + unit_scale_residual)` reconstructs
+    ///   [`Self::unit_scale`]'s `max()`, is an absolute value, so
+    ///   `common_factor * (1 + unit_scale.max())` reconstructs
     ///   `s_observed` only when the observed factor is the *larger* of the
     ///   two and reflects it about the declared factor when it is not.
     /// - **Attribution.** That residual is also a maximum over every affected
@@ -4895,30 +5138,18 @@ pub fn prove_scale(
     let observed_factor = observed_factor_from_source(source, &source_worlds, plan)?;
     let mut proof = ScaleProof {
         tolerance_policy: tol,
-        rest_translation_residual: 0.0,
-        rest_translation_comparisons: 0,
-        rest_rotation_residual: 0.0,
-        rest_rotation_comparisons: 0,
-        unit_scale_residual: 0.0,
-        unit_scale_comparisons: 0,
-        transform_only_affine_residual: 0.0,
-        transform_only_affine_comparisons: 0,
-        track_value_residual: 0.0,
-        track_value_comparisons: 0,
-        mesh_position_residual: 0.0,
-        mesh_position_comparisons: 0,
-        key_translation_residual: 0.0,
-        key_translation_comparisons: 0,
-        cubic_interior_residual: 0.0,
-        cubic_interior_comparisons: 0,
-        trajectory_residual: 0.0,
-        trajectory_comparisons: 0,
-        skin_matrix_residual: 0.0,
-        skin_matrix_comparisons: 0,
-        bounds_residual: 0.0,
-        bounds_comparisons: 0,
-        unaffected_inverse_bind_residual: 0.0,
-        unaffected_inverse_bind_comparisons: 0,
+        rest_translation: ScaleProofResidual::EMPTY,
+        rest_rotation: ScaleProofResidual::EMPTY,
+        unit_scale: ScaleProofResidual::EMPTY,
+        transform_only_affine: ScaleProofResidual::EMPTY,
+        track_value: ScaleProofResidual::EMPTY,
+        mesh_position: ScaleProofResidual::EMPTY,
+        key_translation: ScaleProofResidual::EMPTY,
+        cubic_interior: ScaleProofResidual::EMPTY,
+        trajectory: ScaleProofResidual::EMPTY,
+        skin_matrix: ScaleProofResidual::EMPTY,
+        bounds: ScaleProofResidual::EMPTY,
+        unaffected_inverse_bind: ScaleProofResidual::EMPTY,
         observed_factor,
         planned_observed_factor: plan.observed_factor,
         observed_factor_divergence: relative_divergence(plan.observed_factor, observed_factor),
@@ -5542,34 +5773,6 @@ fn check_residual(
     Ok(())
 }
 
-/// One residual's maximum and comparison count, borrowed **together** so a
-/// comparison site that reaches one has already reached the other.
-///
-/// [`ScaleProof`] publishes the two as separate flat fields, because that is
-/// what a `#[non_exhaustive]` additive change permits and what the evidence
-/// schema reads. Pairing them here, and recording through [`Self::record`]
-/// rather than through either reference, makes "a maximum is never raised
-/// without its count" the single intended route to a residual field — not an
-/// enforced one: Rust privacy is module-scoped and this module is one file,
-/// so `*tally.max` or `*tally.comparisons` written on their own still
-/// compile. What enforces the convention is the hand-derived count vectors
-/// the tests state, starting with
-/// `a_whole_document_proof_counts_and_measures_every_comparison_it_makes`:
-/// they name every residual's count as a fact, so a comparison that skips
-/// its count and a count that skips its comparison each move them.
-struct ResidualTally<'a> {
-    max: &'a mut f64,
-    comparisons: &'a mut usize,
-}
-
-impl ResidualTally<'_> {
-    /// Record one comparison of `observed`.
-    fn record(&mut self, observed: f64) {
-        *self.max = self.max.max(observed);
-        *self.comparisons += 1;
-    }
-}
-
 impl ScaleProof {
     /// Record the raw ulp demand of one f32-rounded comparison at the exact
     /// point its residual and rounding base meet.
@@ -5617,56 +5820,23 @@ impl ScaleProof {
     /// source whose scaled root could not be resolved, and is only ever
     /// reported as [`ScaleError::MissingProofEvidence`] — so it has no pair
     /// and no comparison site reaches here with it.
-    fn tally(&mut self, kind: ProofResidualKind) -> Option<ResidualTally<'_>> {
-        let (max, comparisons) = match kind {
-            ProofResidualKind::RestTranslation => (
-                &mut self.rest_translation_residual,
-                &mut self.rest_translation_comparisons,
-            ),
-            ProofResidualKind::RestRotation => (
-                &mut self.rest_rotation_residual,
-                &mut self.rest_rotation_comparisons,
-            ),
-            ProofResidualKind::UnitScale => (
-                &mut self.unit_scale_residual,
-                &mut self.unit_scale_comparisons,
-            ),
-            ProofResidualKind::TransformOnlyAffine => (
-                &mut self.transform_only_affine_residual,
-                &mut self.transform_only_affine_comparisons,
-            ),
-            ProofResidualKind::TrackValue => (
-                &mut self.track_value_residual,
-                &mut self.track_value_comparisons,
-            ),
-            ProofResidualKind::MeshPosition => (
-                &mut self.mesh_position_residual,
-                &mut self.mesh_position_comparisons,
-            ),
-            ProofResidualKind::KeyTranslation => (
-                &mut self.key_translation_residual,
-                &mut self.key_translation_comparisons,
-            ),
-            ProofResidualKind::CubicInterior => (
-                &mut self.cubic_interior_residual,
-                &mut self.cubic_interior_comparisons,
-            ),
-            ProofResidualKind::Trajectory => (
-                &mut self.trajectory_residual,
-                &mut self.trajectory_comparisons,
-            ),
-            ProofResidualKind::SkinMatrix => (
-                &mut self.skin_matrix_residual,
-                &mut self.skin_matrix_comparisons,
-            ),
-            ProofResidualKind::Bounds => (&mut self.bounds_residual, &mut self.bounds_comparisons),
-            ProofResidualKind::UnaffectedInverseBind => (
-                &mut self.unaffected_inverse_bind_residual,
-                &mut self.unaffected_inverse_bind_comparisons,
-            ),
+    fn tally(&mut self, kind: ProofResidualKind) -> Option<&mut ScaleProofResidual> {
+        let tally = match kind {
+            ProofResidualKind::RestTranslation => &mut self.rest_translation,
+            ProofResidualKind::RestRotation => &mut self.rest_rotation,
+            ProofResidualKind::UnitScale => &mut self.unit_scale,
+            ProofResidualKind::TransformOnlyAffine => &mut self.transform_only_affine,
+            ProofResidualKind::TrackValue => &mut self.track_value,
+            ProofResidualKind::MeshPosition => &mut self.mesh_position,
+            ProofResidualKind::KeyTranslation => &mut self.key_translation,
+            ProofResidualKind::CubicInterior => &mut self.cubic_interior,
+            ProofResidualKind::Trajectory => &mut self.trajectory,
+            ProofResidualKind::SkinMatrix => &mut self.skin_matrix,
+            ProofResidualKind::Bounds => &mut self.bounds,
+            ProofResidualKind::UnaffectedInverseBind => &mut self.unaffected_inverse_bind,
             ProofResidualKind::ObservedFactor => return None,
         };
-        Some(ResidualTally { max, comparisons })
+        Some(tally)
     }
 }
 
@@ -5683,7 +5853,7 @@ fn record_and_check(
     tolerance: f64,
     proof: &mut ScaleProof,
 ) -> Result<(), ScaleError> {
-    if let Some(mut tally) = proof.tally(kind) {
+    if let Some(tally) = proof.tally(kind) {
         tally.record(observed);
     }
     check_residual(kind, observed, tolerance)
@@ -6045,7 +6215,7 @@ fn quat_equality_residual(before: Quat, after: Quat) -> f64 {
 /// evidence contract honest. DESIGN.md Appendix D §D.1 declares the bound as
 /// "shortest-path rotation residual is at most `1e-5` radians", §D.6 requires
 /// evidence to publish the tolerance policy *and* the observed residuals
-/// together, and [`ScaleProof::rest_rotation_residual`] is headed for the
+/// together, and [`ScaleProof::rest_rotation`] is headed for the
 /// immutable evidence format. A chord-valued residual sitting next to a
 /// radian-valued policy in that record would hand every reader the same
 /// factor-of-two misreading this conversion removes. Converting once, up
@@ -7390,8 +7560,8 @@ mod tests {
             Vec3::new(0.0, 1.0, 0.0)
         );
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
-        assert!(proof.rest_translation_residual < 1e-9);
-        assert!(proof.bounds_residual < 1e-6);
+        assert!(proof.rest_translation.max() < 1e-9);
+        assert!(proof.bounds.max() < 1e-6);
     }
 
     #[test]
@@ -7448,7 +7618,7 @@ mod tests {
         let ibm = candidate.document().assets.instances[0].skin_ibms[0];
         assert!(ibm.w_axis.abs_diff_eq(Vec4::new(0.0, 0.0, 0.0, 1.0), 1e-6));
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
-        assert!(proof.bounds_residual < 1e-6);
+        assert!(proof.bounds.max() < 1e-6);
     }
 
     #[test]
@@ -7497,8 +7667,8 @@ mod tests {
             }
         }
         let proof = prove_scale(&doc, &ScaleCandidate::from_document(converted), &plan).unwrap();
-        assert!(proof.rest_translation_residual < 1e-6);
-        assert!(proof.mesh_position_residual < 1e-6);
+        assert!(proof.rest_translation.max() < 1e-6);
+        assert!(proof.mesh_position.max() < 1e-6);
 
         // The constructor asserts nothing, and does not need to: the same
         // wrapper around an *unconverted* document is rejected by proof.
@@ -7556,8 +7726,8 @@ mod tests {
             assert!((*value - expected).length() < 1e-6);
         }
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
-        assert!(proof.cubic_interior_residual < 1e-4);
-        assert!(proof.trajectory_residual < 1e-4);
+        assert!(proof.cubic_interior.max() < 1e-4);
+        assert!(proof.trajectory.max() < 1e-4);
         assert!(proof.sample_time_count > 0);
     }
 
@@ -7622,7 +7792,7 @@ mod tests {
         };
         assert_eq!(values, &[Vec3::new(2.0, 3.0, 4.0)]);
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
-        assert!(proof.rest_translation_residual < 1e-9);
+        assert!(proof.rest_translation.max() < 1e-9);
     }
 
     #[test]
@@ -7836,19 +8006,19 @@ mod tests {
             Vec3::new(-1.5, 0.0, 0.0)
         );
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
-        assert_eq!(proof.rest_translation_comparisons, 3);
-        assert_eq!(proof.rest_rotation_comparisons, 3);
-        assert_eq!(proof.unit_scale_comparisons, 3);
-        assert_eq!(proof.transform_only_affine_comparisons, 1);
-        assert_eq!(proof.skin_matrix_comparisons, 1);
-        assert_eq!(proof.bounds_comparisons, 6);
-        assert!(proof.rest_translation_residual < 1e-4);
-        assert!(proof.rest_rotation_residual <= plan.tolerance_policy().rotation_residual_radians);
+        assert_eq!(proof.rest_translation.comparisons(), 3);
+        assert_eq!(proof.rest_rotation.comparisons(), 3);
+        assert_eq!(proof.unit_scale.comparisons(), 3);
+        assert_eq!(proof.transform_only_affine.comparisons(), 1);
+        assert_eq!(proof.skin_matrix.comparisons(), 1);
+        assert_eq!(proof.bounds.comparisons(), 6);
+        assert!(proof.rest_translation.max() < 1e-4);
+        assert!(proof.rest_rotation.max() <= plan.tolerance_policy().rotation_residual_radians);
         assert!(
-            proof.unit_scale_residual <= plan.tolerance_policy().postcondition_unit_scale_residual
+            proof.unit_scale.max() <= plan.tolerance_policy().postcondition_unit_scale_residual
         );
-        assert!(proof.skin_matrix_residual < 1e-4);
-        assert!(proof.bounds_residual < 1e-4);
+        assert!(proof.skin_matrix.max() < 1e-4);
+        assert!(proof.bounds.max() < 1e-4);
 
         let mut changed_connector = candidate.document().clone();
         let connector = changed_connector
@@ -7995,8 +8165,8 @@ mod tests {
             Vec3::new(1.5, 0.0, 0.0)
         );
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
-        assert_eq!(proof.rest_translation_comparisons, 3);
-        assert_eq!(proof.unit_scale_comparisons, 3);
+        assert_eq!(proof.rest_translation.comparisons(), 3);
+        assert_eq!(proof.unit_scale.comparisons(), 3);
 
         let mut changed_connector = candidate.document().clone();
         let SourceNodeLocalRest::Trs { translation, .. } = &mut changed_connector
@@ -9080,10 +9250,10 @@ mod tests {
         assert!((bones[2].rest.translation - Vec3::new(0.01, 0.0, 0.0)).length() < 1e-6);
 
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
-        assert!(proof.rest_translation_residual < 1e-4);
-        assert!(proof.unit_scale_residual < 1e-4);
-        assert!(proof.transform_only_affine_residual < 1e-4);
-        assert!(proof.skin_matrix_residual < 1e-3);
+        assert!(proof.rest_translation.max() < 1e-4);
+        assert!(proof.unit_scale.max() < 1e-4);
+        assert!(proof.transform_only_affine.max() < 1e-4);
+        assert!(proof.skin_matrix.max() < 1e-3);
     }
 
     #[test]
@@ -9264,13 +9434,13 @@ mod tests {
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
         // Two key times, from the one animated branch node.
         assert_eq!(proof.sample_time_count, 2);
-        assert!(proof.rest_translation_residual < 1e-6);
-        assert!(proof.unit_scale_residual < 1e-6);
-        assert!(proof.transform_only_affine_residual < 1e-6);
-        assert!(proof.trajectory_residual < 1e-6);
-        assert!(proof.key_translation_residual < 1e-6);
-        assert!(proof.skin_matrix_residual < 1e-4);
-        assert!(proof.bounds_residual < 1e-6);
+        assert!(proof.rest_translation.max() < 1e-6);
+        assert!(proof.unit_scale.max() < 1e-6);
+        assert!(proof.transform_only_affine.max() < 1e-6);
+        assert!(proof.trajectory.max() < 1e-6);
+        assert!(proof.key_translation.max() < 1e-6);
+        assert!(proof.skin_matrix.max() < 1e-4);
+        assert!(proof.bounds.max() < 1e-6);
     }
 
     // --- The `C_parent = I` boundary at the top of the domain ------------
@@ -9458,14 +9628,14 @@ mod tests {
         assert_eq!(proof.observed_factor, NEAR_UNIT_OBSERVED_FACTOR);
         // Two key times, no cubic segment.
         assert_eq!(proof.sample_time_count, 2);
-        assert!(proof.rest_translation_residual < 1e-4);
-        assert!(proof.unit_scale_residual < 1e-4);
-        assert!(proof.transform_only_affine_residual < 1e-4);
+        assert!(proof.rest_translation.max() < 1e-4);
+        assert!(proof.unit_scale.max() < 1e-4);
+        assert!(proof.transform_only_affine.max() < 1e-4);
         // Exactly zero: the one rewritten track's multiplier is one.
-        assert!(proof.track_value_residual < 1e-9);
-        assert!(proof.trajectory_residual < 1e-4);
-        assert!(proof.skin_matrix_residual < 1e-4);
-        assert!(proof.bounds_residual < 1e-4);
+        assert!(proof.track_value.max() < 1e-9);
+        assert!(proof.trajectory.max() < 1e-4);
+        assert!(proof.skin_matrix.max() < 1e-4);
+        assert!(proof.bounds.max() < 1e-4);
     }
 
     /// A rig whose scaled root sits under an ancestor that is itself scaled
@@ -9561,7 +9731,7 @@ mod tests {
             Vec3::splat(0.5)
         );
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
-        assert_eq!(proof.unit_scale_residual, 0.0);
+        assert_eq!(proof.unit_scale.max(), 0.0);
         assert_eq!(proof.observed_factor, NEAR_UNIT_OBSERVED_FACTOR);
     }
 
@@ -10159,10 +10329,10 @@ mod tests {
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
         assert_eq!(
-            proof.unit_scale_residual,
+            proof.unit_scale.max(),
             17.0 * 2f64.powi(-23),
             "unit scale residual {}",
-            proof.unit_scale_residual
+            proof.unit_scale.max()
         );
     }
 
@@ -10245,7 +10415,7 @@ mod tests {
         let candidate = build_scale_candidate(&proved, &plan).unwrap();
         let proof = prove_scale(&proved, &candidate, &plan).unwrap();
         assert_eq!(proof.observed_factor, NEAR_UNIT_OBSERVED_FACTOR);
-        assert_eq!(proof.unit_scale_residual, 0.0);
+        assert_eq!(proof.unit_scale.max(), 0.0);
     }
 
     // --- Reconciling the two observed factors (issue #306) ----------------
@@ -10367,7 +10537,7 @@ mod tests {
         let candidate = build_scale_candidate(&proved, &plan).unwrap();
         let proof = prove_scale(&proved, &candidate, &plan).unwrap();
 
-        assert_eq!(proof.unit_scale_residual, 1007.0 * 2f64.powi(-24));
+        assert_eq!(proof.unit_scale.max(), 1007.0 * 2f64.powi(-24));
         assert_eq!(proof.observed_factor_divergence, 751.0 / 10_737_525.0);
         let ceiling = plan.tolerance_policy().observed_factor_divergence_ceiling();
         assert!(
@@ -10426,7 +10596,7 @@ mod tests {
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
         assert_eq!(proof.observed_factor, 0.010_000_610_724_091_53);
-        assert_eq!(proof.unit_scale_residual, 2f64.powi(-14));
+        assert_eq!(proof.unit_scale.max(), 2f64.powi(-14));
         assert_eq!(proof.observed_factor_divergence, 763.0 / 10_738_074.0);
 
         let ceiling = plan.tolerance_policy().observed_factor_divergence_ceiling();
@@ -11160,9 +11330,9 @@ mod tests {
         // 2^-30` rounds to `(2^24 - 513) * 2^-24`. The larger deviation from
         // one is the second, `513 * 2^-24`, and the postcondition admits it
         // with room to spare.
-        assert_eq!(proof.unit_scale_residual, 513.0 * 2f64.powi(-24));
+        assert_eq!(proof.unit_scale.max(), 513.0 * 2f64.powi(-24));
         assert!(
-            proof.unit_scale_residual <= plan.tolerance_policy().postcondition_unit_scale_residual
+            proof.unit_scale.max() <= plan.tolerance_policy().postcondition_unit_scale_residual
         );
     }
 
@@ -11326,14 +11496,14 @@ mod tests {
             let proof = prove_scale(&doc, &candidate, &plan)
                 .unwrap_or_else(|error| panic!("scale {scale} must prove, got {error:?}"));
             assert_eq!(
-                proof.unit_scale_residual, expected_residual,
+                proof.unit_scale.max(),
+                expected_residual,
                 "scale {scale} unit-scale residual"
             );
             assert!(
-                proof.unit_scale_residual
-                    <= plan.tolerance_policy().postcondition_unit_scale_residual,
+                proof.unit_scale.max() <= plan.tolerance_policy().postcondition_unit_scale_residual,
                 "scale {scale} residual {} exceeds the declared bound",
-                proof.unit_scale_residual
+                proof.unit_scale.max()
             );
         }
     }
@@ -11401,7 +11571,7 @@ mod tests {
                 .unwrap_or_else(|error| panic!("n = {n} must build, got {error:?}"));
             let proof = prove_scale(&doc, &candidate, &plan)
                 .unwrap_or_else(|error| panic!("n = {n} must prove, got {error:?}"));
-            assert_eq!(proof.unit_scale_residual, f64::from(n) * 2f64.powi(-23));
+            assert_eq!(proof.unit_scale.max(), f64::from(n) * 2f64.powi(-23));
         }
     }
 
@@ -11476,14 +11646,14 @@ mod tests {
         .unwrap();
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
-        assert_eq!(proof.unit_scale_residual, 192.0 * 2f64.powi(-23));
+        assert_eq!(proof.unit_scale.max(), 192.0 * 2f64.powi(-23));
         let policy = plan.tolerance_policy();
-        assert!(proof.unit_scale_residual <= policy.postcondition_unit_scale_residual);
+        assert!(proof.unit_scale.max() <= policy.postcondition_unit_scale_residual);
         let two_bands = (1.0 - policy.common_factor).powi(-2) - 1.0;
         assert!(
-            proof.unit_scale_residual > two_bands,
+            proof.unit_scale.max() > two_bands,
             "residual {} does not exceed the two-band figure {two_bands}",
-            proof.unit_scale_residual
+            proof.unit_scale.max()
         );
     }
 
@@ -12703,7 +12873,7 @@ mod tests {
         let plan = plan_scale(&request).unwrap();
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
-        assert_eq!(proof.rest_rotation_residual, 0.0);
+        assert_eq!(proof.rest_rotation.max(), 0.0);
     }
 
     #[test]
@@ -12770,9 +12940,9 @@ mod tests {
         let inside = rotate_leaf(4.5e-6);
         let proof = prove_scale(&doc, &inside, &plan).unwrap();
         assert!(
-            (proof.rest_rotation_residual - 9.0e-6).abs() < 1e-9,
+            (proof.rest_rotation.max() - 9.0e-6).abs() < 1e-9,
             "residual {} is not the 9e-6 radian angle it measures",
-            proof.rest_rotation_residual
+            proof.rest_rotation.max()
         );
 
         // `1.1e-5 rad`: outside the declared bound, but only a `5.5e-6`
@@ -12858,13 +13028,13 @@ mod tests {
 
     #[test]
     fn the_reported_rest_rotation_residual_is_the_maximum_not_the_last_node_seen() {
-        // `ScaleProof::rest_rotation_residual` is a *maximum* over the
+        // `ScaleProof::rest_rotation.max()` is a *maximum* over the
         // affected nodes — so a proof that reported the last affected node's
         // residual instead of the largest would publish a smaller number than
         // it observed. #284 will freeze this as a published §D.6 evidence
         // field, which is exactly what makes
         // accept/reject-unchanged-but-record-false a defect. Like
-        // `unit_scale_residual`, this one is checked against a fixed policy
+        // `unit_scale.max()`, this one is checked against a fixed policy
         // bound rather than a before/after-derived tolerance, so it reaches
         // the shared fold through `record_and_check` rather than
         // `check_and_track`.
@@ -12920,14 +13090,14 @@ mod tests {
 
         let proof = prove_scale(&doc, &broken, &plan).unwrap();
         assert!(
-            (proof.rest_rotation_residual - 2f64.powi(-17)).abs() < 1e-15,
+            (proof.rest_rotation.max() - 2f64.powi(-17)).abs() < 1e-15,
             "residual {} is not the 2^-17 radian angle bone 2 carries",
-            proof.rest_rotation_residual
+            proof.rest_rotation.max()
         );
         // Stated as its own inequality so the assertion above cannot be read
         // as "whatever the last node happened to produce": bone 3's residual,
         // the one a last-node fold would publish, is exactly zero.
-        assert!(proof.rest_rotation_residual > 0.0);
+        assert!(proof.rest_rotation.max() > 0.0);
     }
 
     // --- f32 representability of the declared factor --------------------
@@ -13323,8 +13493,8 @@ mod tests {
         let plan = whole_document_plan(&doc, &capability);
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
-        assert_eq!(proof.track_value_residual, 0.0);
-        assert!(proof.mesh_position_residual < 1e-9);
+        assert_eq!(proof.track_value.max(), 0.0);
+        assert!(proof.mesh_position.max() < 1e-9);
     }
 
     #[test]
@@ -13797,11 +13967,11 @@ mod tests {
         // And it is an otherwise ordinary document, so the negative above is
         // the conjunction and not a document proof would have refused anyway.
         // Under a document-wide conjunction this same call returns `Ok` with
-        // `cubic_interior_residual` published as `0.0` from zero comparisons —
+        // `cubic_interior.max()` published as `0.0` from zero comparisons —
         // issue #302's falsehood exactly.
         let split_candidate = build_scale_candidate(&split, &split_plan).unwrap();
         let proof = prove_scale(&split, &split_candidate, &split_plan).unwrap();
-        assert_eq!(proof.cubic_interior_residual, 0.0);
+        assert_eq!(proof.cubic_interior.max(), 0.0);
 
         // The same two tracks in one clip: now the obligation has both halves,
         // and the cubic track supplying the interior time is a *rotation*
@@ -13855,7 +14025,7 @@ mod tests {
         // from an interior-time loop with nothing to iterate.
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
-        assert_eq!(proof.cubic_interior_residual, 0.0);
+        assert_eq!(proof.cubic_interior.max(), 0.0);
     }
 
     /// A four-bone chain whose §D.2 closure is a strict *interior* subset,
@@ -14212,7 +14382,7 @@ mod tests {
         assert_eq!(ibms.len(), 1);
         assert!(ibms[0].abs_diff_eq(Mat4::from_scale(Vec3::splat(0.01)), 1e-8));
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
-        assert!(proof.skin_matrix_residual < 1e-6);
+        assert!(proof.skin_matrix.max() < 1e-6);
     }
 
     // --- Source-skeleton freshness and idempotence -----------------------
@@ -14462,11 +14632,11 @@ mod tests {
         );
 
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
-        assert!(proof.rest_translation_residual < 1e-4);
-        assert!(proof.rest_rotation_residual < 1e-9);
-        assert!(proof.unit_scale_residual < 1e-4);
-        assert!(proof.transform_only_affine_residual < 1e-4);
-        assert!(proof.skin_matrix_residual < 1e-4);
+        assert!(proof.rest_translation.max() < 1e-4);
+        assert!(proof.rest_rotation.max() < 1e-9);
+        assert!(proof.unit_scale.max() < 1e-4);
+        assert!(proof.transform_only_affine.max() < 1e-4);
+        assert!(proof.skin_matrix.max() < 1e-4);
     }
 
     #[test]
@@ -15714,14 +15884,14 @@ mod tests {
         // a defect. `2.44e-4` is `2^-12`, one ulp of `2048`.
         let policy = ScaleTolerancePolicy::APPENDIX_D_V6;
         assert!(
-            proof.bounds_residual > policy.scalar_tolerance(5.982, 5.982),
+            proof.bounds.max() > policy.scalar_tolerance(5.982, 5.982),
             "bounds residual {} no longer exceeds the per-axis band",
-            proof.bounds_residual
+            proof.bounds.max()
         );
         assert!(
-            proof.skin_matrix_residual > policy.scalar_tolerance(1.0, 1.0),
+            proof.skin_matrix.max() > policy.scalar_tolerance(1.0, 1.0),
             "skin residual {} no longer exceeds the near-identity band",
-            proof.skin_matrix_residual
+            proof.skin_matrix.max()
         );
     }
 
@@ -15754,9 +15924,9 @@ mod tests {
         // The corner really is tiny relative to its own residual: without the
         // absolute term this comparison is `2.44e-4 <= 1.01e-6`.
         assert!(
-            proof.bounds_residual > policy_scalar_tolerance_at(0.002),
+            proof.bounds.max() > policy_scalar_tolerance_at(0.002),
             "bounds residual {} no longer exceeds the corner-derived band",
-            proof.bounds_residual
+            proof.bounds.max()
         );
     }
 
@@ -15780,9 +15950,9 @@ mod tests {
         let proof = prove_scale(&doc, &candidate, &plan)
             .expect("a distant joint's bounds must still prove");
         assert!(
-            proof.bounds_residual > 4.0 * 1.0 * f64::from(f32::EPSILON),
+            proof.bounds.max() > 4.0 * 1.0 * f64::from(f32::EPSILON),
             "bounds residual {} no longer exceeds four ulps of the skinned magnitude",
-            proof.bounds_residual
+            proof.bounds.max()
         );
     }
 
@@ -16119,9 +16289,9 @@ mod tests {
         let proof = prove_scale(&doc, &candidate, &plan)
             .expect("a correct candidate whose slots cancel a vertex must still prove");
         assert!(
-            proof.bounds_residual > 4.0 * slot_magnitude.max(1.0) * f64::from(f32::EPSILON),
+            proof.bounds.max() > 4.0 * slot_magnitude.max(1.0) * f64::from(f32::EPSILON),
             "bounds residual {} no longer exceeds four ulps of every stage but the vertex",
-            proof.bounds_residual
+            proof.bounds.max()
         );
     }
 
@@ -16182,10 +16352,10 @@ mod tests {
              transform ran on abs(W * B) * abs(p), and that is what the base must name",
         );
         assert!(
-            proof.bounds_residual > 4.0 * stages_without_the_transform * f64::from(f32::EPSILON),
+            proof.bounds.max() > 4.0 * stages_without_the_transform * f64::from(f32::EPSILON),
             "bounds residual {} no longer exceeds four ulps of every stage but the transform's \
              own operand product",
-            proof.bounds_residual
+            proof.bounds.max()
         );
     }
 
@@ -16267,16 +16437,15 @@ mod tests {
         let policy = ScaleTolerancePolicy::APPENDIX_D_V6;
         let source_band = policy.f32_rounded_tolerance(0.0, 0.0, source_slot);
         assert!(
-            proof.skin_matrix_residual > source_band,
+            proof.skin_matrix.max() > source_band,
             "skin matrix residual {} no longer exceeds the {source_band} the source side buys, \
              so this fixture no longer kills the unrebased source reading",
-            proof.skin_matrix_residual,
+            proof.skin_matrix.max(),
         );
         assert!(
-            proof.bounds_residual
-                > policy.f32_rounded_tolerance(0.0, 0.0, rig_bounds_magnitude(&doc)),
+            proof.bounds.max() > policy.f32_rounded_tolerance(0.0, 0.0, rig_bounds_magnitude(&doc)),
             "bounds residual {} no longer exceeds what the source side buys",
-            proof.bounds_residual,
+            proof.bounds.max(),
         );
     }
 
@@ -16469,7 +16638,7 @@ mod tests {
         let proof = prove_scale(&doc, &candidate, &plan)
             .expect("a correct candidate under a growing conversion must prove");
         assert!(
-            proof.skin_matrix_comparisons > 0 && proof.bounds_comparisons > 0,
+            proof.skin_matrix.comparisons() > 0 && proof.bounds.comparisons() > 0,
             "the growing-conversion fixture must evaluate both provisioned obligations",
         );
     }
@@ -16505,9 +16674,9 @@ mod tests {
              itself is finite, and squaring it is the proof's own arithmetic",
         );
         assert!(
-            proof.bounds_residual.is_finite(),
+            proof.bounds.max().is_finite(),
             "bounds residual {} is not finite",
-            proof.bounds_residual
+            proof.bounds.max()
         );
     }
 
@@ -16588,10 +16757,10 @@ mod tests {
              both operands are finite and so is their product",
         );
         assert!(
-            proof.skin_matrix_residual.is_finite() && proof.bounds_residual.is_finite(),
+            proof.skin_matrix.max().is_finite() && proof.bounds.max().is_finite(),
             "skin {} / bounds {} residual is not finite",
-            proof.skin_matrix_residual,
-            proof.bounds_residual
+            proof.skin_matrix.max(),
+            proof.bounds.max()
         );
     }
 
@@ -16696,9 +16865,9 @@ mod tests {
         let proof = prove_scale(&doc, &candidate, &plan)
             .expect("a correct candidate under a cancelling parent chain must prove");
         assert!(
-            proof.skin_matrix_residual > 4.0 * product * f64::from(f32::EPSILON),
+            proof.skin_matrix.max() > 4.0 * product * f64::from(f32::EPSILON),
             "skin residual {} no longer exceeds four ulps of the composition's own operands",
-            proof.skin_matrix_residual
+            proof.skin_matrix.max()
         );
         // The same cancellation is visible one obligation earlier: the world
         // translation it produced is `0.177` long and carries `3.19e6`'s
@@ -16709,12 +16878,12 @@ mod tests {
         // reach first.
         let world_translation = worlds.bones[joint].matrix.w_axis.truncate().length() as f64;
         assert!(
-            proof.rest_translation_residual
+            proof.rest_translation.max()
                 > ScaleTolerancePolicy::APPENDIX_D_V6
                     .scalar_tolerance(world_translation, world_translation),
             "rest translation residual {} no longer exceeds the per-axis band its own \
              translation buys",
-            proof.rest_translation_residual
+            proof.rest_translation.max()
         );
     }
 
@@ -16786,10 +16955,10 @@ mod tests {
         );
         let policy = ScaleTolerancePolicy::APPENDIX_D_V6;
         assert!(
-            proof.rest_translation_residual > policy.f32_rounded_tolerance(0.0, 0.0, source_chain),
+            proof.rest_translation.max() > policy.f32_rounded_tolerance(0.0, 0.0, source_chain),
             "rest translation residual {} no longer exceeds what the source side's chain \
              buys, so this fixture no longer separates the two sides",
-            proof.rest_translation_residual
+            proof.rest_translation.max()
         );
     }
 
@@ -17100,16 +17269,16 @@ mod tests {
             .expect("a displacement the bands admit must still prove");
         assert_eq!(
             (
-                clean.skin_matrix_residual,
-                clean.skin_matrix_comparisons,
-                clean.bounds_residual,
-                clean.bounds_comparisons,
+                clean.skin_matrix.max(),
+                clean.skin_matrix.comparisons(),
+                clean.bounds.max(),
+                clean.bounds.comparisons(),
             ),
             (
-                nudged.skin_matrix_residual,
-                nudged.skin_matrix_comparisons,
-                nudged.bounds_residual,
-                nudged.bounds_comparisons,
+                nudged.skin_matrix.max(),
+                nudged.skin_matrix.comparisons(),
+                nudged.bounds.max(),
+                nudged.bounds.comparisons(),
             ),
             "the defect axis moved a skinned residual, so SkinMatrix can refuse it and these              brackets no longer isolate the chain term",
         );
@@ -17329,7 +17498,7 @@ mod tests {
                 )
             });
             assert_eq!(proof.sample_time_count, 2);
-            assert!(proof.trajectory_comparisons > 0);
+            assert!(proof.trajectory.comparisons() > 0);
         }
     }
 
@@ -17351,10 +17520,10 @@ mod tests {
         let proof = prove_scale(&doc, &candidate, &plan)
             .expect("the correct closed-loop hierarchy must prove");
         assert_eq!(proof.sample_time_count, 2);
-        assert!(proof.rest_translation_comparisons > 0);
-        assert!(proof.trajectory_comparisons > 0);
-        assert!(proof.skin_matrix_comparisons > 0);
-        assert!(proof.bounds_comparisons > 0);
+        assert!(proof.rest_translation.comparisons() > 0);
+        assert!(proof.trajectory.comparisons() > 0);
+        assert!(proof.skin_matrix.comparisons() > 0);
+        assert!(proof.bounds.comparisons() > 0);
     }
 
     #[test]
@@ -17732,10 +17901,10 @@ mod tests {
             rest_world_pose(&doc.skeleton).unwrap().bones[2].translation_rounding_magnitude;
         let policy = ScaleTolerancePolicy::APPENDIX_D_V6;
         assert!(
-            proof.trajectory_residual > policy.f32_rounded_tolerance(0.0, 0.0, source_chain),
+            proof.trajectory.max() > policy.f32_rounded_tolerance(0.0, 0.0, source_chain),
             "trajectory residual {} no longer exceeds what the source side's chain buys, so \
              this fixture no longer exercises the sampled chain term",
-            proof.trajectory_residual
+            proof.trajectory.max()
         );
     }
 
@@ -17883,10 +18052,10 @@ mod tests {
         );
         let policy = ScaleTolerancePolicy::APPENDIX_D_V6;
         assert!(
-            proof.rest_translation_residual > policy.f32_rounded_tolerance(0.0, 0.0, own_link),
+            proof.rest_translation.max() > policy.f32_rounded_tolerance(0.0, 0.0, own_link),
             "rest translation residual {} no longer exceeds what the leaf's own link buys, so \
              dropping the inherited term would no longer refuse this correct candidate",
-            proof.rest_translation_residual,
+            proof.rest_translation.max(),
         );
     }
 
@@ -17925,11 +18094,11 @@ mod tests {
         assert_eq!(proof.sample_time_count, 2);
         let policy = ScaleTolerancePolicy::APPENDIX_D_V6;
         assert!(
-            proof.trajectory_residual > policy.f32_rounded_tolerance(0.0, 0.0, own_link),
+            proof.trajectory.max() > policy.f32_rounded_tolerance(0.0, 0.0, own_link),
             "trajectory residual {} no longer exceeds what the sampled leaf's own link buys, so \
              dropping the inherited term in `world_at_time` would no longer refuse this correct \
              candidate",
-            proof.trajectory_residual,
+            proof.trajectory.max(),
         );
     }
 
@@ -18129,10 +18298,10 @@ mod tests {
              operand is finite and so is the world they compose to",
         );
         assert!(
-            proof.skin_matrix_residual.is_finite() && proof.bounds_residual.is_finite(),
+            proof.skin_matrix.max().is_finite() && proof.bounds.max().is_finite(),
             "skin {} / bounds {} residual is not finite",
-            proof.skin_matrix_residual,
-            proof.bounds_residual
+            proof.skin_matrix.max(),
+            proof.bounds.max()
         );
     }
 
@@ -18850,11 +19019,11 @@ mod tests {
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
         // Two key times plus the analytic midpoint of the one cubic segment.
         assert_eq!(proof.sample_time_count, 3);
-        assert!(proof.key_translation_residual < 1e-4);
-        assert!(proof.cubic_interior_residual < 1e-4);
-        assert!(proof.trajectory_residual < 1e-4);
-        assert!(proof.skin_matrix_residual < 1e-4);
-        assert!(proof.bounds_residual < 1e-4);
+        assert!(proof.key_translation.max() < 1e-4);
+        assert!(proof.cubic_interior.max() < 1e-4);
+        assert!(proof.trajectory.max() < 1e-4);
+        assert!(proof.skin_matrix.max() < 1e-4);
+        assert!(proof.bounds.max() < 1e-4);
     }
 
     #[test]
@@ -19136,8 +19305,8 @@ mod tests {
         let boundary = ScaleCandidate { document: boundary };
 
         let proof = prove_scale(&doc, &boundary, &plan).unwrap();
-        assert_eq!(proof.unit_scale_residual, bound);
-        assert_eq!(proof.unit_scale_residual, 2f64.powi(-14));
+        assert_eq!(proof.unit_scale.max(), bound);
+        assert_eq!(proof.unit_scale.max(), 2f64.powi(-14));
     }
 
     #[test]
@@ -19172,23 +19341,24 @@ mod tests {
 
         let expected = 0.01_f64 - (0.01_f32 as f64);
         assert_eq!(expected, 2.235_174_181_158_816_6e-10);
-        assert_eq!(proof.rest_translation_residual, expected);
-        assert_eq!(proof.mesh_position_residual, expected);
-        assert_eq!(proof.bounds_residual, expected);
+        assert_eq!(proof.rest_translation.max(), expected);
+        assert_eq!(proof.mesh_position.max(), expected);
+        assert_eq!(proof.bounds.max(), expected);
         // The skin equation, by contrast, is genuinely exact here: proof
         // forms its expectation with the same binary32 `scale_translation_only`
         // the builder used, so there is nothing to round. Pinning it at zero
         // keeps the three nonzero maxima above attributable.
-        assert_eq!(proof.skin_matrix_residual, 0.0);
+        assert_eq!(proof.skin_matrix.max(), 0.0);
+        assert!(proof.skin_matrix.evaluated());
     }
 
     #[test]
     fn the_reported_unit_scale_residual_is_the_maximum_not_the_last_node_seen() {
-        // `ScaleProof::unit_scale_residual` is a *maximum* over the affected
+        // `ScaleProof::unit_scale.max()` is a *maximum* over the affected
         // nodes, and #284 will freeze it as a published evidence field, so a
         // proof that reported the last node's residual instead of the largest
         // would publish a smaller number than it observed — accept/reject
-        // unchanged, record false. This one and `rest_rotation_residual` are
+        // unchanged, record false. This one and `rest_rotation.max()` are
         // the two checked against a fixed policy bound rather than a
         // before/after-derived tolerance, so they reach the shared fold
         // through `record_and_check` rather than `check_and_track`; for each
@@ -19246,10 +19416,10 @@ mod tests {
         assert_eq!(plan.affected_nodes(), &[0, 1]);
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
-        assert_eq!(proof.unit_scale_residual, 64.0 * 2f64.powi(-23));
+        assert_eq!(proof.unit_scale.max(), 64.0 * 2f64.powi(-23));
         // Stated as its own inequality so the assertion above cannot be read
         // as "whatever the last node happened to produce".
-        assert!(proof.unit_scale_residual > 32.0 * 2f64.powi(-23));
+        assert!(proof.unit_scale.max() > 32.0 * 2f64.powi(-23));
     }
 
     #[test]
@@ -19520,7 +19690,7 @@ mod tests {
         // rest walk and three sampled walks then reuse that set.
         assert_eq!(affected_skin_classification_steps(), 10_001);
         assert_eq!(proof.sample_time_count, 3);
-        assert_eq!(proof.skin_matrix_comparisons, 4);
+        assert_eq!(proof.skin_matrix.comparisons(), 4);
     }
 
     #[test]
@@ -19857,7 +20027,7 @@ mod tests {
             );
         }
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
-        assert!(proof.skin_matrix_residual < 1e-4);
+        assert!(proof.skin_matrix.max() < 1e-4);
     }
 
     #[test]
@@ -19906,7 +20076,7 @@ mod tests {
         assert_eq!(materialized.len(), 1);
         assert!(materialized[0].abs_diff_eq(expected, 1e-5));
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
-        assert!(proof.skin_matrix_residual < 1e-4);
+        assert!(proof.skin_matrix.max() < 1e-4);
     }
 
     // --- Skins outside the affected closure (issue #296) -------------------
@@ -20026,7 +20196,7 @@ mod tests {
             doc.assets.instances[1].skin_ibms
         );
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
-        assert_eq!(proof.unaffected_inverse_bind_residual, 0.0);
+        assert_eq!(proof.unaffected_inverse_bind.max(), 0.0);
 
         // Doctored: `scale(2)` becomes `scale(3)`. Both are diagonal, so the
         // largest component difference — which is what `matrix_residual`
@@ -20048,7 +20218,7 @@ mod tests {
 
     #[test]
     fn a_successful_unaffected_bind_proof_reports_the_residual_maximum_it_observed() {
-        // Every other assertion on `unaffected_inverse_bind_residual` in this
+        // Every other assertion on `unaffected_inverse_bind.max()` in this
         // module reads `0.0`, which is the field's initialized value: none of
         // them can tell a proof that measured and folded a residual from one
         // that never wrote the field at all. #284 will serialize this number,
@@ -20091,7 +20261,7 @@ mod tests {
         nudged.assets.instances[1].skin_ibms[0] =
             bind(Vec3::new(2.0 + 2f32.powi(-18), 2.0 + 2f32.powi(-17), 2.0));
         let proof = prove_scale(&doc, &ScaleCandidate { document: nudged }, &plan).unwrap();
-        assert_eq!(proof.unaffected_inverse_bind_residual, 2f64.powi(-17));
+        assert_eq!(proof.unaffected_inverse_bind.max(), 2f64.powi(-17));
     }
 
     #[test]
@@ -20130,7 +20300,7 @@ mod tests {
         // source bind it was deliberately rebased away from, and this call
         // returns `ProofResidualExceeded { UnaffectedInverseBind }`.
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
-        assert_eq!(proof.unaffected_inverse_bind_residual, 0.0);
+        assert_eq!(proof.unaffected_inverse_bind.max(), 0.0);
     }
 
     #[test]
@@ -20191,7 +20361,7 @@ mod tests {
             &plan,
         )
         .unwrap();
-        assert_eq!(proof.unaffected_inverse_bind_residual, 0.0);
+        assert_eq!(proof.unaffected_inverse_bind.max(), 0.0);
     }
 
     #[test]
@@ -20206,7 +20376,7 @@ mod tests {
         let plan = compensated_rest_bind_plan(&doc, &capability);
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
-        assert_eq!(proof.unaffected_inverse_bind_residual, 0.0);
+        assert_eq!(proof.unaffected_inverse_bind.max(), 0.0);
 
         // Same arithmetic as the instance-array case above: a diagonal
         // `scale(2)` doctored to `scale(3)` differs by `1` per axis.
@@ -20243,8 +20413,8 @@ mod tests {
         // Appendix D §D.6 requires that to read as an absence — a count of
         // zero. A zero *residual* is also what comparing two identities
         // would publish, so it cannot tell the two apart on its own.
-        assert_eq!(proof.unaffected_inverse_bind_comparisons, 0);
-        assert_eq!(proof.unaffected_inverse_bind_residual, 0.0);
+        assert_eq!(proof.unaffected_inverse_bind.comparisons(), 0);
+        assert_eq!(proof.unaffected_inverse_bind.max(), 0.0);
     }
 
     #[test]
@@ -20936,10 +21106,11 @@ mod tests {
         // Nothing the proof measures reads the prop's node, so the relocated
         // candidate below produces exactly these residuals: every one of them
         // zero, on a document whose prop has moved five units.
-        assert_eq!(proof.rest_translation_residual, 0.0);
-        assert_eq!(proof.rest_rotation_residual, 0.0);
-        assert_eq!(proof.mesh_position_residual, 0.0);
-        assert_eq!(proof.unaffected_inverse_bind_residual, 0.0);
+        assert_eq!(proof.rest_translation.max(), 0.0);
+        assert_eq!(proof.rest_rotation.max(), 0.0);
+        assert!(proof.rest_rotation.evaluated());
+        assert_eq!(proof.mesh_position.max(), 0.0);
+        assert_eq!(proof.unaffected_inverse_bind.max(), 0.0);
 
         let mut relocated = candidate.document().clone();
         relocated.assets.instances[1].node = 2;
@@ -21327,23 +21498,23 @@ mod tests {
     /// to leave out.
     fn comparison_counts(proof: &ScaleProof) -> [(&'static str, usize); 12] {
         [
-            ("rest_translation", proof.rest_translation_comparisons),
-            ("rest_rotation", proof.rest_rotation_comparisons),
-            ("unit_scale", proof.unit_scale_comparisons),
+            ("rest_translation", proof.rest_translation.comparisons()),
+            ("rest_rotation", proof.rest_rotation.comparisons()),
+            ("unit_scale", proof.unit_scale.comparisons()),
             (
                 "transform_only_affine",
-                proof.transform_only_affine_comparisons,
+                proof.transform_only_affine.comparisons(),
             ),
-            ("track_value", proof.track_value_comparisons),
-            ("mesh_position", proof.mesh_position_comparisons),
-            ("key_translation", proof.key_translation_comparisons),
-            ("cubic_interior", proof.cubic_interior_comparisons),
-            ("trajectory", proof.trajectory_comparisons),
-            ("skin_matrix", proof.skin_matrix_comparisons),
-            ("bounds", proof.bounds_comparisons),
+            ("track_value", proof.track_value.comparisons()),
+            ("mesh_position", proof.mesh_position.comparisons()),
+            ("key_translation", proof.key_translation.comparisons()),
+            ("cubic_interior", proof.cubic_interior.comparisons()),
+            ("trajectory", proof.trajectory.comparisons()),
+            ("skin_matrix", proof.skin_matrix.comparisons()),
+            ("bounds", proof.bounds.comparisons()),
             (
                 "unaffected_inverse_bind",
-                proof.unaffected_inverse_bind_comparisons,
+                proof.unaffected_inverse_bind.comparisons(),
             ),
         ]
     }
@@ -21449,40 +21620,40 @@ mod tests {
         // Bone 1 sits at `(0, 1, 0)`; the candidate holds `(0, f32(0.01), 0)`
         // against an `f64` expectation of `(0, 0.01, 0)`, and a vector with
         // one non-zero component has that component's magnitude for a length.
-        assert_eq!(proof.rest_translation_residual, NARROWING_AT_ONE);
+        assert_eq!(proof.rest_translation.max(), NARROWING_AT_ONE);
         // The same node, posed through the clip: its own rotation track does
         // not move its translation column, and the translation track samples
         // to the same `(0, 1, 0)` at every one of the three times.
-        assert_eq!(proof.trajectory_residual, NARROWING_AT_ONE);
+        assert_eq!(proof.trajectory.max(), NARROWING_AT_ONE);
         // The track's own elements: the four tangents are `0` (exact under
         // any factor) and both values are `(0, 1, 0)`.
-        assert_eq!(proof.track_value_residual, NARROWING_AT_ONE);
-        assert_eq!(proof.key_translation_residual, NARROWING_AT_ONE);
-        assert_eq!(proof.cubic_interior_residual, NARROWING_AT_ONE);
+        assert_eq!(proof.track_value.max(), NARROWING_AT_ONE);
+        assert_eq!(proof.key_translation.max(), NARROWING_AT_ONE);
+        assert_eq!(proof.cubic_interior.max(), NARROWING_AT_ONE);
         // `mesh_position` is a per-vertex L2 norm, and this rig's extreme
         // vertices are `(1, 1, 1)` and `(-1, -1, -1)`: three components each
         // carrying the same narrowing, so `sqrt(3 * e^2)`.
-        assert_eq!(proof.mesh_position_residual, 3.871435245533232e-10);
+        assert_eq!(proof.mesh_position.max(), 3.871435245533232e-10);
         // Bounds are per axis, and the skinned maximum is at `y = 2`: the
         // vertex `(1, 1, 1)` skinned through `W = translate(0, 1, 0)`. Both
         // `0.02` and `2 * f32(0.01)` are exact doublings of their `y = 1`
         // counterparts, so the residual there is exactly twice the
         // narrowing — which is also what makes this a maximum over the six
         // axis comparisons rather than the only non-zero one.
-        assert_eq!(proof.bounds_residual, 2.0 * NARROWING_AT_ONE);
+        assert_eq!(proof.bounds.max(), 2.0 * NARROWING_AT_ONE);
         // A *measured* zero, and the reason the counts exist. The skin
         // equation's expectation is `scale_translation_only(W * B, f32(q))`
         // and the candidate composes `W' * B'` out of the same two `f32`
         // products, so the two sides agree bit for bit — an exact zero that
-        // `skin_matrix_comparisons = 4` distinguishes from the four residuals
+        // `skin_matrix.comparisons() = 4` distinguishes from the four residuals
         // above it that nothing walked.
-        assert_eq!(proof.skin_matrix_residual, 0.0);
+        assert_eq!(proof.skin_matrix.max(), 0.0);
         // Likewise exact, and structurally so: neither builder writes
         // `Bone::rest.rotation`, and `quat_equality_residual` of a
         // bit-identical pair is `0.0` by construction. No correct candidate
         // can make this one non-zero; `a_genuinely_rewritten_rest_rotation
         // _still_fails_proof` covers the incorrect ones.
-        assert_eq!(proof.rest_rotation_residual, 0.0);
+        assert_eq!(proof.rest_rotation.max(), 0.0);
     }
 
     #[test]
@@ -21504,6 +21675,8 @@ mod tests {
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
 
         assert_eq!(proof.sample_time_count, 0);
+        assert!(!proof.track_value.evaluated());
+        assert!(proof.mesh_position.evaluated());
         assert_eq!(
             comparison_counts(&proof),
             [
@@ -21661,16 +21834,16 @@ mod tests {
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
 
         // One slot of one instance outside the closure.
-        assert_eq!(proof.unaffected_inverse_bind_comparisons, 1);
+        assert_eq!(proof.unaffected_inverse_bind.comparisons(), 1);
         // A measured zero: rest/bind must leave an unrelated skin's stored
         // bind exactly as it found it, so the correct candidate's residual
         // here is `0.0` — indistinguishable, without the count, from the `0.0`
         // `compensated_document` reports for having no such skin at all.
-        assert_eq!(proof.unaffected_inverse_bind_residual, 0.0);
+        assert_eq!(proof.unaffected_inverse_bind.max(), 0.0);
         // The extra bone is outside the closure, so the rest walk is
         // unchanged, and the extra instance is not the skin obligation's.
-        assert_eq!(proof.rest_translation_comparisons, 3);
-        assert_eq!(proof.skin_matrix_comparisons, 1);
+        assert_eq!(proof.rest_translation.comparisons(), 3);
+        assert_eq!(proof.skin_matrix.comparisons(), 1);
     }
 
     #[test]
@@ -21942,10 +22115,10 @@ mod tests {
                 trajectory: proof.trajectory_f32_rounding_demand,
                 skin_matrix: proof.skin_matrix_f32_rounding_demand,
                 bounds: proof.bounds_f32_rounding_demand,
-                rest_comparisons: proof.rest_translation_comparisons,
-                trajectory_comparisons: proof.trajectory_comparisons,
-                skin_comparisons: proof.skin_matrix_comparisons,
-                bounds_comparisons: proof.bounds_comparisons,
+                rest_comparisons: proof.rest_translation.comparisons(),
+                trajectory_comparisons: proof.trajectory.comparisons(),
+                skin_comparisons: proof.skin_matrix.comparisons(),
+                bounds_comparisons: proof.bounds.comparisons(),
             }
         }
     }
@@ -21990,10 +22163,10 @@ mod tests {
         );
 
         let expected_counts = (
-            proof.rest_translation_comparisons,
-            proof.trajectory_comparisons,
-            proof.skin_matrix_comparisons,
-            proof.bounds_comparisons,
+            proof.rest_translation.comparisons(),
+            proof.trajectory.comparisons(),
+            proof.skin_matrix.comparisons(),
+            proof.bounds.comparisons(),
         );
         let measured = DeepChainWorst::from_proof(proof);
         assert_eq!(

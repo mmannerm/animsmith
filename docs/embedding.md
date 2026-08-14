@@ -218,10 +218,11 @@ inventory-matched walk is `MissingProofEvidence`. This catches added, removed,
 reordered, or retargeted payload even when a coarse list of affected domains
 would be unchanged. Numeric values may still vary under an identical ledger,
 so replay does not freeze source values. Neither refusal becomes a zero
-residual. `ScaleProof` publishes each residual maximum beside the number
-of comparisons it was taken over, both written at the point of comparison, so
-a `0.0` that was measured is distinguishable from one that nothing walked —
-read the count before the residual. `ScaleProof` records both observed-factor
+residual. Each named `ScaleProof` claim is one read-only `ScaleProofResidual`
+that carries its maximum and comparison count together, both written at the
+point of comparison. Its `evaluated()` method therefore distinguishes a
+measured `0.0` from one that nothing walked without letting an adapter combine
+one claim's count with another claim's maximum. `ScaleProof` records both observed-factor
 witnesses — the plan's, measured from the raw source projection, and the
 proof's, measured from the normalized skeleton — plus the relative divergence
 between them and the ceiling that divergence is expected to stay under
