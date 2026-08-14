@@ -238,14 +238,22 @@ against `Document::assets::source_skeleton` — never a normalized `BoneId` or
 mesh-instance ordinal. Under complete source coverage, planning may compose a
 static source connector with no independent normalized bone when it lies
 strictly between projected nodes in the selected rest/bind domain. The
-connector's authored local rest is preserved and no proof obligation names it;
-`ScalePlan::affected_nodes` remains the normalized Bone-keyed rewrite/proof
-domain. Proof still checks connector preservation and the projected
-successor's bridged source local as exact structural invariants outside the
-numeric residual ledger. This does not imply support for a raw animation channel targeting an
-unprojected connector. A frontend that wants to raw-preflight a glTF source
-before calling into this module can use `animsmith_gltf::preflight_scale_source`
-and project its `GltfCapabilityManifest` down to `ScaleCapabilityFacts` with
+connector's authored local rest is preserved and no numeric proof obligation
+names it. `ScalePlan` privately compiles that connector disposition, the
+projected successor's connector tail, normalized-node membership, payload
+shape, and preserve/write dispositions into one typed structural ledger.
+`ScalePlan::affected_nodes`, `ScalePlan::rewrites`, and
+`ScalePlan::requires_proof` are derived views; callers cannot separately
+combine rewrite flags, proof flags, or an optional rest/bind domain. Proof
+still checks connector preservation and the projected successor's bridged
+source local as exact structural invariants outside the numeric residual
+ledger. The structural ledger intentionally stores no numeric transform,
+track, position, or bind values, so proof independently re-derives numeric
+claims from the documents it receives. This does not imply support for a raw
+animation channel targeting an unprojected connector. A frontend that wants to
+raw-preflight a glTF source before calling into this module can use
+`animsmith_gltf::preflight_scale_source` and project its
+`GltfCapabilityManifest` down to `ScaleCapabilityFacts` with
 `animsmith_gltf::capability_facts`.
 
 For glTF/GLB, `animsmith_gltf::rewrite_linear_units` then performs the

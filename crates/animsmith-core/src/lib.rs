@@ -157,9 +157,9 @@ pub use profile::{
 };
 pub use sample::{PoseGrid, TrackSample, default_frame_count, sample_clip, sample_track};
 pub use scale::{
-    ProofResidualKind, ScaleCandidate, ScaleCapabilityCoverage, ScaleCapabilityFacts,
-    ScaleDomainRewrites, ScaleError, ScaleOperation, ScalePlan, ScaleProof, ScaleProofObligations,
-    ScaleRequest, ScaleTolerancePolicy, build_scale_candidate, plan_scale, prove_scale,
+    ProofResidualKind, ScaleCandidate, ScaleCapabilityCoverage, ScaleCapabilityFacts, ScaleError,
+    ScaleOperation, ScalePlan, ScaleProof, ScaleProofObligation, ScaleRequest, ScaleRewriteDomain,
+    ScaleTolerancePolicy, build_scale_candidate, plan_scale, prove_scale,
 };
 pub use skinned_canonical::{
     SkinnedBindPoseCanonicalization, SkinnedBindPoseCanonicalizationError,

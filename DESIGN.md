@@ -1885,23 +1885,33 @@ within versioned tolerances:
   ancestor was already constrained transitively by an affected descendant's
   world-rest residual. This is an exact semantic placement invariant, not a
   tolerance or a claim that equal matrices prove every stored local field was
-  retained; exact local write-set parity belongs to the artifact/obligation
-  ledger. Whole-document conversion has no unaffected complement, but its
-  global topology comparison remains in force. Before either operation builds
-  or proves, it re-derives the supplied source's structural planning inventory
-  and requires the same projected affected domain, ordered unprojected
-  connector spans, transform-only attachments, and proof obligations.
-  For an admitted connector span, proof also independently requires every
-  connector local to remain bit-exact and derives the projected successor's
-  expected bridged source local from the source topology. This is an exact
-  structural/write-set check outside the residual ledger: the connector owns
-  no normalized residual obligation, but a writer and proof cannot agree on a
-  wrong connector rebase by sharing the writer's product calculation.
-  Operation-fixed rewrite and tolerance policy fields are not source
-  inventory. Numeric affine/factor classification is not repeated there, so
-  proof's normalized-skeleton witness remains independent of planning's
-  raw-projection witness; a structurally stale plan still cannot omit a newly
-  added bone, connector, or payload from every proof walk. The
+  retained; exact local write-set parity belongs to the structural plan ledger
+  and artifact proof. Whole-document conversion has no unaffected complement, but its
+  global topology comparison remains in force. Planning compiles one
+  operation-typed structural ledger. Its rows identify every normalized node,
+  raw source node and connector disposition, track shape and disposition,
+  mesh primitive, instance/bind shape, and source-skin identity used by the
+  build or proof, including explicit preserve-world-rest rows for the
+  rest/bind complement. Before either operation builds or proves, it re-derives
+  that ledger from the supplied source and requires an exact match. The same
+  rows derive the affected closure, transform-only attachments, concrete write
+  loops, and evidence-gated proof obligations; there is no parallel set of
+  independently combinable rewrite or obligation flags and no optional
+  rest/bind domain that can be absent from a rest/bind plan. For an admitted
+  connector span, proof also independently requires every connector local to
+  remain bit-exact and derives the projected successor's expected bridged
+  source local from the source topology. The connector owns no normalized
+  residual obligation, but its typed preserve row and the successor's typed
+  tail reference prevent a writer and proof from agreeing on a wrong rebase by
+  sharing the writer's product calculation. Operation-fixed factor and
+  tolerance policy fields are not source inventory. The ledger records
+  identities, membership, local representation kinds, and payload shapes, not
+  local matrices, track values, positions, inverse-bind values, or sample
+  times. Numeric replay therefore remains intentional: affine/factor
+  classification is not copied into proof, so proof's normalized-skeleton
+  witness remains independent of planning's raw-projection witness; a
+  structurally stale plan still cannot omit a newly added bone, connector, or
+  payload from every proof walk. The
   unaffected-bind comparison is over stored evidence, in the resolution order
   the model defines (per-instance array, then the bone convenience value). A
   slot exactly one side records is a rewritten skin and is refused;
@@ -1920,10 +1930,10 @@ exactly the declared factor within tolerance while dimensionless facts remain
 equal. Both operations prove finite output, the skin equation, deterministic
 artifact bytes, and deterministic evidence bytes.
 
-**Every obligation above is gated on the evidence it needs, with three
-deliberate exceptions named at the end of this paragraph.** A plan declares
-an obligation only when the planned document carries the payload that
-obligation reads — a transform-only attachment in the closure for the
+**Every obligation above is derived from the typed ledger row that evidences
+it, with three deliberate exceptions named at the end of this paragraph.** A
+plan requires an obligation only when the planned document carries the payload
+that obligation reads — a transform-only attachment in the closure for the
 full-affine claim, an affected translation track for the key-time claim, an
 affected cubic segment with a translation track to read at its interior times,
 any affected track at all for the sampled trajectories, a skinned instance
@@ -2070,8 +2080,12 @@ The public `animsmith-core` shape is a non-exhaustive `ScaleOperation` with
 distinct `WholeDocumentLinearUnits { factor }` and
 `RestBindUniformScale { source_skin_index, source_root_node_index,
 expected_factor }` variants, carried by a `ScaleRequest`. Pure planning returns
-either a typed `ScalePlan` (affected closure, per-domain rewrites, tolerance
-policy, and proof obligations) or a typed `ScaleError`; proof returns a
+either a typed `ScalePlan` or a typed `ScaleError`. The plan privately owns one
+operation-typed structural/write ledger and exposes only derived queries:
+`affected_nodes`, `transform_only_attachments`, `rewrites(ScaleRewriteDomain)`,
+and `requires_proof(ScaleProofObligation)`, plus the factor and tolerance
+policy. This makes impossible rewrite/obligation combinations
+unrepresentable while keeping exact source inventory private. Proof returns a
 `ScaleProof` with the residual maxima that producer evidence serializes, each
 paired with the number of comparisons that produced it so a residual nothing
 walked is distinguishable from a measured zero (issue #319).

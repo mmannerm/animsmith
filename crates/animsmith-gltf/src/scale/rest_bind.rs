@@ -323,8 +323,9 @@ fn cross_check_domain(
     parents: &BTreeMap<usize, usize>,
     projection: &BoneProjection,
 ) -> Result<(), GltfScaleRewriteError> {
+    let affected_nodes = plan.affected_nodes();
     let mut planned = BTreeSet::new();
-    for &bone in plan.affected_nodes() {
+    for &bone in &affected_nodes {
         let source = *projection
             .source_of_bone
             .get(&bone)
@@ -338,7 +339,7 @@ fn cross_check_domain(
         });
     }
 
-    let affected_bones: BTreeSet<BoneId> = plan.affected_nodes().iter().copied().collect();
+    let affected_bones: BTreeSet<BoneId> = affected_nodes.into_iter().collect();
     for &source_node_index in &domain.closure {
         let bone = *projection.bone_of_source.get(&source_node_index).ok_or(
             GltfScaleRewriteError::UnusableSourceHierarchy {

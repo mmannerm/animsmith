@@ -359,7 +359,7 @@ fn domain_from_skeleton(
             return Err(GltfScaleRewriteError::AmbiguousSourceNodeProjection { bone });
         }
     }
-    let affected: BTreeSet<BoneId> = plan.affected_nodes().iter().copied().collect();
+    let affected: BTreeSet<BoneId> = plan.affected_nodes().into_iter().collect();
     let mut closure = BTreeSet::new();
     for &bone in &affected {
         let source = *source_of_bone

@@ -74,7 +74,7 @@ use crate::publish::{
 };
 use crate::{Format, render};
 use animsmith_core::scale::{
-    ScaleDomainRewrites, ScaleError, ScaleOperation, ScalePlan, ScaleProof, ScaleRequest,
+    ScaleError, ScaleOperation, ScalePlan, ScaleProof, ScaleRequest, ScaleRewriteDomain,
     ScaleTolerancePolicy, plan_scale,
 };
 use animsmith_core::{DocumentShapeError, InputIdentity, ToolInfo};
@@ -369,14 +369,14 @@ struct DomainRewritesRecord {
     base_mesh_positions: bool,
 }
 
-impl From<ScaleDomainRewrites> for DomainRewritesRecord {
-    fn from(rewrites: ScaleDomainRewrites) -> Self {
+impl From<&ScalePlan> for DomainRewritesRecord {
+    fn from(plan: &ScalePlan) -> Self {
         Self {
-            rest_hierarchy: rewrites.rest_hierarchy,
-            translation_animation: rewrites.translation_animation,
-            scale_animation: rewrites.scale_animation,
-            inverse_binds: rewrites.inverse_binds,
-            base_mesh_positions: rewrites.base_mesh_positions,
+            rest_hierarchy: plan.rewrites(ScaleRewriteDomain::RestHierarchy),
+            translation_animation: plan.rewrites(ScaleRewriteDomain::TranslationAnimation),
+            scale_animation: plan.rewrites(ScaleRewriteDomain::ScaleAnimation),
+            inverse_binds: plan.rewrites(ScaleRewriteDomain::InverseBinds),
+            base_mesh_positions: plan.rewrites(ScaleRewriteDomain::BaseMeshPositions),
         }
     }
 }
@@ -1114,7 +1114,7 @@ fn publish(
                 source_skins: artifact.affected_source_skins().to_vec(),
                 transform_only_attachment_count: plan.transform_only_attachments().len(),
             },
-            domain_rewrites: plan.domain_rewrites().into(),
+            domain_rewrites: (&plan).into(),
             proof: ProofRecord {
                 sample_time_count: proof.core.sample_time_count,
                 residuals: residuals(&proof.core),
