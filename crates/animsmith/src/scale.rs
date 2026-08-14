@@ -74,8 +74,8 @@ use crate::publish::{
 };
 use crate::{Format, render};
 use animsmith_core::scale::{
-    ScaleDomainRewrites, ScaleError, ScaleOperation, ScalePlan, ScaleProof, ScaleRequest,
-    ScaleTolerancePolicy, plan_scale,
+    ScaleError, ScaleOperation, ScalePlan, ScaleProof, ScaleRequest, ScaleTolerancePolicy,
+    plan_scale,
 };
 use animsmith_core::{DocumentShapeError, InputIdentity, ToolInfo};
 use animsmith_gltf::{
@@ -369,15 +369,36 @@ struct DomainRewritesRecord {
     base_mesh_positions: bool,
 }
 
-impl From<ScaleDomainRewrites> for DomainRewritesRecord {
-    fn from(rewrites: ScaleDomainRewrites) -> Self {
-        Self {
-            rest_hierarchy: rewrites.rest_hierarchy,
-            translation_animation: rewrites.translation_animation,
-            scale_animation: rewrites.scale_animation,
-            inverse_binds: rewrites.inverse_binds,
-            base_mesh_positions: rewrites.base_mesh_positions,
-        }
+impl DomainRewritesRecord {
+    /// Project the operation onto the five immutable evidence fields.
+    ///
+    /// Scale evidence v1-v3 froze these operation-level booleans. They describe
+    /// the two fixed public operation contracts, not the payload present in one
+    /// document and not an input to candidate construction or proof. Keeping
+    /// the total mapping private preserves those schemas without recreating a
+    /// public boolean bag beside the typed per-field ledger.
+    fn from_operation(operation: ScaleOperation) -> Result<Self, String> {
+        Ok(match operation {
+            ScaleOperation::WholeDocumentLinearUnits { .. } => Self {
+                rest_hierarchy: true,
+                translation_animation: true,
+                scale_animation: false,
+                inverse_binds: true,
+                base_mesh_positions: true,
+            },
+            ScaleOperation::RestBindUniformScale { .. } => Self {
+                rest_hierarchy: true,
+                translation_animation: true,
+                scale_animation: true,
+                inverse_binds: true,
+                base_mesh_positions: false,
+            },
+            _ => {
+                return Err(
+                    "the scale operation has no scale-evidence v3 domain projection".to_owned(),
+                );
+            }
+        })
     }
 }
 
@@ -1114,7 +1135,7 @@ fn publish(
                 source_skins: artifact.affected_source_skins().to_vec(),
                 transform_only_attachment_count: plan.transform_only_attachments().len(),
             },
-            domain_rewrites: plan.domain_rewrites().into(),
+            domain_rewrites: DomainRewritesRecord::from_operation(plan.operation())?,
             proof: ProofRecord {
                 sample_time_count: proof.core.sample_time_count,
                 residuals: residuals(&proof.core),

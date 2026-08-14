@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- [**breaking**] *(core)* replace the public scale domain-rewrite and
+  proof-obligation boolean bags/accessors with a non-exhaustive read-only typed
+  plan ledger covering global canonical topology, numeric-value-free payload
+  shape, explicit write-ownership dispositions with structural rewrite rules,
+  and derived proof obligations. Scale-evidence v1/v2/v3 (including v3's five
+  domain booleans), `ScaleProof` serialization, and the `appendix-d-v6` policy
+  remain unchanged ([#374](https://github.com/mmannerm/animsmith/issues/374))
 - [**breaking**] *(assemble)* advance the character-assembly recipe and
   evidence contracts to immutable v3. Recipes can exact-name base nodes for
   fail-closed subtree removal after animation transforms, and evidence records
