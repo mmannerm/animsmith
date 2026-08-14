@@ -72,17 +72,28 @@ format-neutral `ScaleCapabilityFacts` that `animsmith_core::scale::plan_scale`
 consumes, and `prove_rewritten_artifact` checks the emitted bytes against the
 claims a normalized `Document` cannot carry.
 
+Callers that already compiled a core scale plan can use `rewrite_scale_plan`
+to pass that same immutable plan through raw rewrite and artifact proof. The
+operation-specific writer functions remain convenience wrappers that compile
+and delegate to the same plan-taking path.
+
 The rewrite operates on the source's own JSON tree and buffer bytes and never
 routes through the normalized writer, so buffer bytes outside the converted
 accessor ranges, every array index, and every unmodeled source payload survive
 exactly. Node rest translations, node matrix translation columns, mesh
 `POSITION`, translation sampler outputs (including both `CUBICSPLINE`
 tangents), per-skin inverse-bind translation columns, and the corresponding
-accessor `min`/`max` are converted; rotations, scales, normals, UVs, weights,
-key times, and morph weights are not. Each accessor is converted once per
+accessor `min`/`max` are converted when the declared factor changes lengths;
+rotations, scales, normals, UVs, weights, key times, and morph weights are not.
+Each accessor is converted once per
 *unique* accessor index, so a `POSITION` shared by several primitives scales by
 `q`, never `q^2`. JSON object key order and float spelling are not preserved:
 output is deterministic, but it is not a minimal textual diff.
+At factor one, the compiled plan marks length-bearing node fields, accessor
+payloads, and authored bounds `PreserveExact`; the raw writer excludes them
+from its write set. Parsed JSON numeric values therefore avoid a needless
+`f32` narrowing, and accessor bytes remain authored, although ordinary JSON
+reserialization can still canonicalize lexical spelling.
 
 Camera, light, and extension length fields have no registered handler in this
 slice, and the preflight rejects those domains outright. Rest/bind

@@ -91,384 +91,26 @@
 //! therefore documents the case rather than mirroring core's materialization.
 
 use super::bytes;
+use super::plan::{
+    GltfScalePlan, RawAccessorTarget, RestBindComponents, accessor_type, plan_mismatch,
+};
 use super::{GltfScaleArtifact, GltfScaleRewriteError};
 use crate::LoadError;
 use crate::capability::{
     GltfCapabilityViolation, GltfCapabilityViolationKind, GltfScaleSource, declared,
     resolved_accessor_range,
 };
-use animsmith_core::scale::{ScaleOperation, ScalePlan, ScaleRequest, plan_scale};
-use animsmith_core::{BoneId, Document};
+use animsmith_core::scale::{
+    ScaleFieldDisposition, ScaleOperation, ScalePlan, ScaleRequest, ScaleRewriteRule,
+    ScaleSourceRestField, plan_scale,
+};
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
-// --- The affected domain ----------------------------------------------------
-
-/// The closed connected affected hierarchy of DESIGN.md Appendix D §D.2, in
-/// raw source-node identity space, plus the declared common factor.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct RestBindDomain {
-    /// Source-node index of the scaled ancestor: the one closure member whose
-    /// parent lies outside the closure.
-    pub(crate) root: usize,
-    /// Every source-node index in the closure, root included.
-    pub(crate) closure: BTreeSet<usize>,
-    /// The caller-declared common factor `s` the plan validated.
-    pub(crate) factor: f64,
-}
-
-impl RestBindDomain {
-    /// `s_parent(i)`: the multiplier this node's local translation, its
-    /// `matrix` translation column, and its translation animation values and
-    /// cubic tangents receive.
-    pub(crate) fn parent_factor(&self, node: usize) -> f64 {
-        if node != self.root && self.closure.contains(&node) {
-            self.factor
-        } else {
-            1.0
-        }
-    }
-
-    /// `s_i`: the factor this node's own basis correction removes, and so the
-    /// multiplier its inverse-bind rows receive.
-    pub(crate) fn node_factor(&self, node: usize) -> f64 {
-        if self.closure.contains(&node) {
-            self.factor
-        } else {
-            1.0
-        }
-    }
-
-    /// `s_parent / s_i`: the multiplier this node's local scale — or its
-    /// `matrix` linear part — receives.
-    ///
-    /// Exactly `1.0` for every affected node but the root, and for every
-    /// unaffected node: IEEE-754 division is exact for `x / x` at any finite
-    /// nonzero `x`, so the `!= 1.0` tests this module makes against it decide
-    /// "this location changes" without a tolerance and without depending on
-    /// the magnitude of `s`.
-    pub(crate) fn local_scale_factor(&self, node: usize) -> f64 {
-        self.parent_factor(node) / self.node_factor(node)
-    }
-}
-
-/// Parent links, derived from raw `/nodes/*/children`.
-///
-/// This is deliberately *not* `SourceNodeAsset::parent_source_node_index`:
-/// deriving the closure from the raw child arrays and then requiring it to
-/// equal the plan's is what turns a projection that contradicts the source
-/// into a typed refusal rather than a clean plan-build-prove cycle over the
-/// wrong hierarchy.
-fn raw_parents(root: &Map<String, Value>) -> Result<BTreeMap<usize, usize>, GltfScaleRewriteError> {
-    let mut parents = BTreeMap::new();
-    let nodes = root
-        .get("nodes")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default();
-    for (node_index, node) in nodes.iter().enumerate() {
-        for child in node
-            .get("children")
-            .and_then(Value::as_array)
-            .map(Vec::as_slice)
-            .unwrap_or_default()
-        {
-            let child = as_index(Some(child)).ok_or_else(|| {
-                LoadError::Malformed(format!(
-                    "/nodes/{node_index}/children entry is not an index"
-                ))
-            })?;
-            if parents.insert(child, node_index).is_some() {
-                return Err(GltfScaleRewriteError::UnusableSourceHierarchy {
-                    reason: "a node is named as a child by two parents",
-                });
-            }
-        }
-    }
-    Ok(parents)
-}
-
-/// Re-derive the affected closure from raw JSON alone.
-///
-/// Same construction as `animsmith_core::scale`'s: the scaled root, every
-/// joint of the selected skin, the ancestor path from each joint up to the
-/// root, and every descendant of all of those. The skin is resolved by
-/// `skins` array position, which is what a glTF source-skin index *is* — the
-/// loader records `skin.index()` as `SourceSkinAsset::source_skin_index`.
-fn raw_closure(
-    root: &Map<String, Value>,
-    parents: &BTreeMap<usize, usize>,
-    source_skin_index: usize,
-    source_root_node_index: usize,
-) -> Result<BTreeSet<usize>, GltfScaleRewriteError> {
-    let nodes = root
-        .get("nodes")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default();
-    if source_root_node_index >= nodes.len() {
-        return Err(GltfScaleRewriteError::UnusableSourceHierarchy {
-            reason: "the selected root node index is not a source node",
-        });
-    }
-    let skin = root
-        .get("skins")
-        .and_then(Value::as_array)
-        .and_then(|skins| skins.get(source_skin_index))
-        .ok_or(GltfScaleRewriteError::UnusableSourceHierarchy {
-            reason: "the selected skin index is not a source skin",
-        })?;
-
-    let mut closure = BTreeSet::from([source_root_node_index]);
-    for joint in skin
-        .get("joints")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default()
-    {
-        let joint = as_index(Some(joint)).ok_or_else(|| {
-            LoadError::Malformed(format!(
-                "/skins/{source_skin_index}/joints entry is not an index"
-            ))
-        })?;
-        let mut cursor = joint;
-        closure.insert(cursor);
-        // Bounded by the node count: a raw child array can name a cycle, and
-        // this walk must refuse rather than spin.
-        for step in 0..=nodes.len() {
-            if cursor == source_root_node_index {
-                break;
-            }
-            if step == nodes.len() {
-                return Err(GltfScaleRewriteError::UnusableSourceHierarchy {
-                    reason: "a skin joint's parent chain is cyclic or unbounded",
-                });
-            }
-            let Some(&parent) = parents.get(&cursor) else {
-                return Err(GltfScaleRewriteError::UnusableSourceHierarchy {
-                    reason: "a skin joint is not a descendant of the selected root node",
-                });
-            };
-            closure.insert(parent);
-            cursor = parent;
-        }
-    }
-
-    let mut children: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-    for (&child, &parent) in parents {
-        children.entry(parent).or_default().push(child);
-    }
-    let mut queue: Vec<usize> = closure.iter().copied().collect();
-    while let Some(node) = queue.pop() {
-        for &child in children.get(&node).into_iter().flatten() {
-            if closure.insert(child) {
-                queue.push(child);
-            }
-        }
-    }
-    Ok(closure)
-}
-
-/// Every mapping between raw source-node identity and normalized
-/// [`BoneId`], built defensively.
-struct BoneProjection {
-    bone_of_source: BTreeMap<usize, BoneId>,
-    source_of_bone: BTreeMap<BoneId, usize>,
-}
-
-fn bone_projection(document: &Document) -> Result<BoneProjection, GltfScaleRewriteError> {
-    let mut bone_of_source = BTreeMap::new();
-    let mut source_of_bone = BTreeMap::new();
-    for node in &document.assets.source_skeleton.nodes {
-        let Some(bone) = node.bone else {
-            continue;
-        };
-        bone_of_source.insert(node.source_node_index, bone);
-        // Two source nodes claiming one bone makes the inverse map
-        // last-write-wins, which would silently rewrite the wrong node's
-        // JSON. `animsmith_core` validates both keys — `source_node_index`
-        // for every document, `bone` as part of the chain-agreement injection
-        // it requires under `Complete` coverage — and rest/bind planning runs
-        // before this, so the refusal below is a second guard on the map this
-        // function is the one to build, not the only one.
-        if source_of_bone
-            .insert(bone, node.source_node_index)
-            .is_some()
-        {
-            return Err(GltfScaleRewriteError::AmbiguousSourceNodeProjection { bone });
-        }
-    }
-    Ok(BoneProjection {
-        bone_of_source,
-        source_of_bone,
-    })
-}
-
-/// Require the raw-JSON closure, the plan's closure, and the normalized
-/// skeleton's parent chain to describe the same hierarchy.
-///
-/// The plan speaks [`BoneId`] and walks
-/// `SourceNodeAsset::parent_source_node_index`; this rewriter speaks source
-/// node index and walks `/nodes/*/children`; sampling and proof walk
-/// `Skeleton::parent`. `animsmith_core`'s document-shape validation relates
-/// the projection to the skeleton — a document whose two parent chains
-/// disagree is refused there — but it cannot see the raw child arrays, which
-/// live in the JSON this crate parses and never become a [`Document`] field.
-/// That third description is the one only this layer can check, so all three
-/// are required to agree here before a byte is written.
-fn cross_check_domain(
-    document: &Document,
-    plan: &ScalePlan,
-    domain: &RestBindDomain,
-    parents: &BTreeMap<usize, usize>,
-    projection: &BoneProjection,
-) -> Result<(), GltfScaleRewriteError> {
-    let mut planned = BTreeSet::new();
-    for &bone in plan.affected_nodes() {
-        let source = *projection
-            .source_of_bone
-            .get(&bone)
-            .ok_or(GltfScaleRewriteError::AmbiguousSourceNodeProjection { bone })?;
-        planned.insert(source);
-    }
-    if planned != domain.closure {
-        return Err(GltfScaleRewriteError::ClosureMismatch {
-            planned: planned.into_iter().collect(),
-            derived: domain.closure.iter().copied().collect(),
-        });
-    }
-
-    let affected_bones: BTreeSet<BoneId> = plan.affected_nodes().iter().copied().collect();
-    for &source_node_index in &domain.closure {
-        let bone = *projection.bone_of_source.get(&source_node_index).ok_or(
-            GltfScaleRewriteError::UnusableSourceHierarchy {
-                reason: "an affected source node did not normalize to a skeleton bone",
-            },
-        )?;
-        let skeleton_parent = document
-            .skeleton
-            .bones
-            .get(bone)
-            .ok_or(GltfScaleRewriteError::UnusableSourceHierarchy {
-                reason: "an affected bone is out of range for the loaded skeleton",
-            })?
-            .parent;
-        if source_node_index == domain.root {
-            // The root's own parent lies outside the closure by construction.
-            // What must not happen is the skeleton placing it *inside*: that
-            // would make the root's `s_parent` `s` in every core-side
-            // composition while this rewriter used `1`.
-            if skeleton_parent.is_some_and(|parent| affected_bones.contains(&parent)) {
-                return Err(GltfScaleRewriteError::ParentChainDisagreement { source_node_index });
-            }
-            continue;
-        }
-        let raw_parent = parents.get(&source_node_index).copied();
-        let expected =
-            raw_parent.and_then(|parent| projection.bone_of_source.get(&parent).copied());
-        if skeleton_parent != expected {
-            return Err(GltfScaleRewriteError::ParentChainDisagreement { source_node_index });
-        }
-    }
-    Ok(())
-}
-
 // --- Accessor claims --------------------------------------------------------
 
-/// Which components of one accessor element a rest/bind claim covers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RestBindComponents {
-    /// One scalar component.
-    Scalar,
-    /// Every component of `VEC2`.
-    Vec2,
-    /// Every component of `VEC3`.
-    Vec3,
-    /// Every component of `VEC4`.
-    Vec4,
-    /// Every component of `MAT2`.
-    Mat2,
-    /// Every component of `MAT3`.
-    Mat3,
-    /// Every component of `MAT4`.
-    Mat4,
-    /// Column-major `MAT4` rows 0..2 — components `0,1,2, 4,5,6, 8,9,10,
-    /// 12,13,14`. `B' = scale(s) * B` scales every output row and leaves the
-    /// homogeneous row `3,7,11,15` alone.
-    Mat4Rows,
-}
-
-impl RestBindComponents {
-    pub(crate) fn covers(self, component: usize) -> bool {
-        match self {
-            Self::Scalar
-            | Self::Vec2
-            | Self::Vec3
-            | Self::Vec4
-            | Self::Mat2
-            | Self::Mat3
-            | Self::Mat4 => true,
-            Self::Mat4Rows => component % 4 != 3,
-        }
-    }
-
-    pub(crate) fn required_accessor_type(self) -> &'static str {
-        match self {
-            Self::Scalar => "SCALAR",
-            Self::Vec2 => "VEC2",
-            Self::Vec3 => "VEC3",
-            Self::Vec4 => "VEC4",
-            Self::Mat2 => "MAT2",
-            Self::Mat3 => "MAT3",
-            Self::Mat4 | Self::Mat4Rows => "MAT4",
-        }
-    }
-}
-
-fn accessor_components(
-    root: &Map<String, Value>,
-    accessor_index: usize,
-) -> Result<RestBindComponents, GltfScaleRewriteError> {
-    let kind = array(root, "accessors")
-        .get(accessor_index)
-        .and_then(|accessor| accessor.get("type"))
-        .and_then(Value::as_str);
-    match kind {
-        Some("SCALAR") => Ok(RestBindComponents::Scalar),
-        Some("VEC2") => Ok(RestBindComponents::Vec2),
-        Some("VEC3") => Ok(RestBindComponents::Vec3),
-        Some("VEC4") => Ok(RestBindComponents::Vec4),
-        Some("MAT2") => Ok(RestBindComponents::Mat2),
-        Some("MAT3") => Ok(RestBindComponents::Mat3),
-        Some("MAT4") => Ok(RestBindComponents::Mat4),
-        _ => Err(GltfScaleRewriteError::UnrewritableAccessor {
-            accessor_index,
-            location: format!("/accessors/{accessor_index}"),
-        }),
-    }
-}
-
-fn typed_claim(
-    root: &Map<String, Value>,
-    accessor_index: usize,
-    components: RestBindComponents,
-    factors: RestBindFactors,
-    location: String,
-) -> Result<RestBindClaim, GltfScaleRewriteError> {
-    if accessor_components(root, accessor_index)?.required_accessor_type()
-        != components.required_accessor_type()
-    {
-        return Err(GltfScaleRewriteError::UnrewritableAccessor {
-            accessor_index,
-            location: format!("/accessors/{accessor_index}"),
-        });
-    }
-    Ok(RestBindClaim {
-        components,
-        factors,
-        count: accessor_count(root, accessor_index)?,
-        location,
-    })
+fn writer_components_cover(components: RestBindComponents, component: usize) -> bool {
+    !matches!(components, RestBindComponents::Mat4Rows) || component % 4 != 3
 }
 
 /// The per-element factors one claim demands.
@@ -569,7 +211,7 @@ impl RestBindClaim {
     /// the preservation claim does not depend on that validation staying
     /// exactly where it is.
     pub(crate) fn multiplier(&self, element: usize, component: usize) -> Option<f64> {
-        if !self.components.covers(component) {
+        if !writer_components_cover(self.components, component) {
             return None;
         }
         let factor = self.factors.at(element);
@@ -606,14 +248,21 @@ impl RestBindClaim {
     }
 }
 
-/// Build the accessor-to-factor map, refusing every disagreement.
-///
-/// Covers every raw accessor use, factor-`1` ones included. This is what
-/// makes an affected animation output aliased with a normal, index, key-time,
-/// preserved output, or otherwise orphaned sampler output detectable.
-pub(crate) fn collect_rest_bind_claims(
-    root: &Map<String, Value>,
-    domain: &RestBindDomain,
+fn rest_bind_factor(
+    disposition: ScaleFieldDisposition,
+    factor: f64,
+) -> Result<f64, GltfScaleRewriteError> {
+    match disposition {
+        ScaleFieldDisposition::PreserveExact => Ok(1.0),
+        ScaleFieldDisposition::Rewrite(ScaleRewriteRule::RestBindParentBasis) => Ok(factor),
+        ScaleFieldDisposition::Rewrite(ScaleRewriteRule::RestBindLocalScale) => Ok(1.0 / factor),
+        _ => Err(plan_mismatch("invalid_rest_bind_field_disposition")),
+    }
+}
+
+fn collect_rest_bind_claims(
+    plan: &GltfScalePlan,
+    factor: f64,
 ) -> Result<BTreeMap<usize, RestBindClaim>, GltfScaleRewriteError> {
     let mut claims: BTreeMap<usize, RestBindClaim> = BTreeMap::new();
     let claim = |accessor_index: usize,
@@ -640,199 +289,44 @@ pub(crate) fn collect_rest_bind_claims(
         Ok(())
     };
 
-    let identity = |root: &Map<String, Value>,
-                    accessor_index: usize,
-                    location: String|
-     -> Result<RestBindClaim, GltfScaleRewriteError> {
-        let components = accessor_components(root, accessor_index)?;
-        typed_claim(
-            root,
-            accessor_index,
-            components,
-            RestBindFactors::Uniform(1.0),
-            location,
-        )
-    };
-
-    for (mesh_index, mesh) in array(root, "meshes").iter().enumerate() {
-        for (primitive_index, primitive) in mesh
-            .get("primitives")
-            .map_or(&[][..], value_array)
-            .iter()
-            .enumerate()
-        {
-            let base = format!("/meshes/{mesh_index}/primitives/{primitive_index}");
-            if let Some(attributes) = primitive.get("attributes").and_then(Value::as_object) {
-                for (semantic, value) in attributes {
-                    let Some(accessor_index) = as_index(Some(value)) else {
-                        continue;
-                    };
-                    claim(
-                        accessor_index,
-                        identity(
-                            root,
-                            accessor_index,
-                            format!("{base}/attributes/{semantic}"),
-                        )?,
-                        &mut claims,
-                    )?;
-                }
+    for binding in plan.accessor_bindings() {
+        let factors = match &binding.target {
+            RawAccessorTarget::PreserveExact => RestBindFactors::Uniform(1.0),
+            RawAccessorTarget::MeshNormals { .. } | RawAccessorTarget::MeshPositions { .. } => {
+                RestBindFactors::Uniform(1.0)
             }
-            if let Some(accessor_index) = as_index(primitive.get("indices")) {
-                claim(
-                    accessor_index,
-                    identity(root, accessor_index, format!("{base}/indices"))?,
-                    &mut claims,
-                )?;
+            RawAccessorTarget::InstanceInverseBind { source_skin_index } => {
+                let skin = plan.skin_binding(*source_skin_index)?;
+                RestBindFactors::PerElement(
+                    skin.slots
+                        .iter()
+                        .map(|slot| {
+                            let joint = slot.source_node_index;
+                            if plan.is_rest_bind_affected(joint) {
+                                factor
+                            } else {
+                                1.0
+                            }
+                        })
+                        .collect(),
+                )
             }
-            for (target_index, target) in primitive
-                .get("targets")
-                .map_or(&[][..], value_array)
-                .iter()
-                .enumerate()
-            {
-                let Some(target) = target.as_object() else {
-                    continue;
-                };
-                for (semantic, value) in target {
-                    let Some(accessor_index) = as_index(Some(value)) else {
-                        continue;
-                    };
-                    claim(
-                        accessor_index,
-                        identity(
-                            root,
-                            accessor_index,
-                            format!("{base}/targets/{target_index}/{semantic}"),
-                        )?,
-                        &mut claims,
-                    )?;
-                }
-            }
-        }
-    }
-
-    for (skin_index, skin) in array(root, "skins").iter().enumerate() {
-        let Some(accessor_index) = as_index(skin.get("inverseBindMatrices")) else {
-            continue;
+            RawAccessorTarget::Animation {
+                disposition,
+                property: _,
+                source_node_index: _,
+            } => RestBindFactors::Uniform(rest_bind_factor(*disposition, factor)?),
         };
-        let count = accessor_count(root, accessor_index)?;
-        let mut factors = Vec::with_capacity(count);
-        for joint in skin.get("joints").map_or(&[][..], value_array) {
-            let joint = as_index(Some(joint)).ok_or_else(|| {
-                LoadError::Malformed(format!("/skins/{skin_index}/joints entry is not an index"))
-            })?;
-            factors.push(domain.node_factor(joint));
-        }
-        // Without this a joint list longer than the accessor drops the
-        // surplus factors and a shorter one leaves the tail slots at `1`.
-        //
-        // It cannot fire through `rewrite_rest_bind`, and the gate-bypass
-        // seam does not change that. `manifest_violations` re-derives
-        // `InverseBindCountMismatch` from the manifest's own joint and
-        // inverse-bind counts, so `capability_facts` sets
-        // `inverse_bind_issues_present` for a bypassed source too and the
-        // rewriter refuses it with `Capability` before it reads a skin. The
-        // two #282 guards are reachable past the gate precisely because their
-        // violations are inventory-time only and leave no manifest trace.
-        // `a_skin_whose_joints_outnumber_its_inverse_binds_is_refused` pins
-        // what this names; nothing can pin that it is wired.
-        if factors.len() != count {
-            return Err(GltfScaleRewriteError::UnrewritableAccessor {
-                accessor_index,
-                location: format!("/accessors/{accessor_index}"),
-            });
-        }
         claim(
-            accessor_index,
-            typed_claim(
-                root,
-                accessor_index,
-                RestBindComponents::Mat4Rows,
-                RestBindFactors::PerElement(factors),
-                format!("/skins/{skin_index}/inverseBindMatrices"),
-            )?,
+            binding.accessor_index,
+            RestBindClaim {
+                components: binding.components,
+                factors,
+                count: binding.count,
+                location: binding.location.clone(),
+            },
             &mut claims,
         )?;
-    }
-
-    for (animation_index, animation) in array(root, "animations").iter().enumerate() {
-        let samplers = animation.get("samplers").map_or(&[][..], value_array);
-        let referenced: BTreeSet<usize> = animation
-            .get("channels")
-            .map_or(&[][..], value_array)
-            .iter()
-            .filter_map(|channel| as_index(channel.get("sampler")))
-            .collect();
-        for (sampler_index, sampler) in samplers.iter().enumerate() {
-            if let Some(accessor_index) = as_index(sampler.get("input")) {
-                claim(
-                    accessor_index,
-                    identity(
-                        root,
-                        accessor_index,
-                        format!("/animations/{animation_index}/samplers/{sampler_index}/input"),
-                    )?,
-                    &mut claims,
-                )?;
-            }
-            if !referenced.contains(&sampler_index)
-                && let Some(accessor_index) = as_index(sampler.get("output"))
-            {
-                claim(
-                    accessor_index,
-                    identity(
-                        root,
-                        accessor_index,
-                        format!("/animations/{animation_index}/samplers/{sampler_index}/output"),
-                    )?,
-                    &mut claims,
-                )?;
-            }
-        }
-        for (channel_index, channel) in animation
-            .get("channels")
-            .map_or(&[][..], value_array)
-            .iter()
-            .enumerate()
-        {
-            let target = channel.get("target");
-            let Some(path) = target
-                .and_then(|target| target.get("path"))
-                .and_then(Value::as_str)
-            else {
-                continue;
-            };
-            let Some(node) = as_index(target.and_then(|target| target.get("node"))) else {
-                continue;
-            };
-            let Some(accessor_index) = as_index(channel.get("sampler"))
-                .and_then(|sampler| samplers.get(sampler))
-                .and_then(|sampler| as_index(sampler.get("output")))
-            else {
-                continue;
-            };
-            let (components, factor) = match path {
-                "translation" => (RestBindComponents::Vec3, domain.parent_factor(node)),
-                "scale" => (RestBindComponents::Vec3, domain.local_scale_factor(node)),
-                "rotation" | "weights" => {
-                    let components = accessor_components(root, accessor_index)?;
-                    (components, 1.0)
-                }
-                _ => continue,
-            };
-            claim(
-                accessor_index,
-                typed_claim(
-                    root,
-                    accessor_index,
-                    components,
-                    RestBindFactors::Uniform(factor),
-                    format!("/animations/{animation_index}/channels/{channel_index}"),
-                )?,
-                &mut claims,
-            )?;
-        }
     }
     Ok(claims)
 }
@@ -945,7 +439,7 @@ impl NodeRebase {
     /// The multiplier entry `component` receives, or `None` when the entry is
     /// left exactly as authored.
     pub(crate) fn multiplier(self, component: usize) -> Option<f64> {
-        match self {
+        let factor = match self {
             Self::Translation(factor) | Self::Scale(factor) => Some(factor),
             Self::Matrix {
                 linear,
@@ -955,7 +449,8 @@ impl NodeRebase {
                 12..=14 => Some(translation),
                 _ => None,
             },
-        }
+        };
+        factor.filter(|&factor| factor != 1.0)
     }
 }
 
@@ -964,38 +459,82 @@ impl NodeRebase {
 /// A member whose multiplier is exactly `1.0` is not emitted, which is what
 /// makes a declared factor of one a deterministic no-op rather than a
 /// re-render of every affected node's transform.
-pub(crate) fn collect_node_rebases(
-    root: &Map<String, Value>,
-    domain: &RestBindDomain,
-) -> Vec<(usize, NodeRebase)> {
+fn collect_plan_node_rebases(
+    plan: &GltfScalePlan,
+    factor: f64,
+) -> Result<Vec<(usize, NodeRebase)>, GltfScaleRewriteError> {
     let mut out = Vec::new();
-    let nodes = array(root, "nodes");
-    for &node_index in &domain.closure {
-        let Some(node) = nodes.get(node_index) else {
-            continue;
-        };
-        let s_parent = domain.parent_factor(node_index);
-        let s_local = domain.local_scale_factor(node_index);
-        if declared(node, "matrix").is_some() {
-            if s_parent != 1.0 || s_local != 1.0 {
+    for node in plan.node_bindings().iter().filter(|node| {
+        matches!(
+            node.kind,
+            animsmith_core::scale::ScaleSourceNodeKind::Projected { .. }
+                | animsmith_core::scale::ScaleSourceNodeKind::Connector
+        )
+    }) {
+        let node_index = node.source_node_index;
+        if node.matrix_declared {
+            let linear = rest_bind_source_factor(
+                plan.source_rest(node_index, ScaleSourceRestField::MatrixLinear)?,
+                factor,
+                ScaleSourceRestField::MatrixLinear,
+            )?;
+            let translation = rest_bind_source_factor(
+                plan.source_rest(node_index, ScaleSourceRestField::MatrixTranslation)?,
+                factor,
+                ScaleSourceRestField::MatrixTranslation,
+            )?;
+            if linear != 1.0 || translation != 1.0 {
                 out.push((
                     node_index,
                     NodeRebase::Matrix {
-                        linear: s_local,
-                        translation: s_parent,
+                        linear,
+                        translation,
                     },
                 ));
             }
             continue;
         }
-        if s_parent != 1.0 && declared(node, "translation").is_some() {
-            out.push((node_index, NodeRebase::Translation(s_parent)));
+        let translation = rest_bind_source_factor(
+            plan.source_rest(node_index, ScaleSourceRestField::Translation)?,
+            factor,
+            ScaleSourceRestField::Translation,
+        )?;
+        if translation != 1.0 && node.translation_declared {
+            out.push((node_index, NodeRebase::Translation(translation)));
         }
-        if s_local != 1.0 {
-            out.push((node_index, NodeRebase::Scale(s_local)));
+        let scale = rest_bind_source_factor(
+            plan.source_rest(node_index, ScaleSourceRestField::Scale)?,
+            factor,
+            ScaleSourceRestField::Scale,
+        )?;
+        if scale != 1.0 {
+            out.push((node_index, NodeRebase::Scale(scale)));
         }
     }
-    out
+    Ok(out)
+}
+
+fn rest_bind_source_factor(
+    disposition: ScaleFieldDisposition,
+    factor: f64,
+    field: ScaleSourceRestField,
+) -> Result<f64, GltfScaleRewriteError> {
+    match disposition {
+        ScaleFieldDisposition::PreserveExact => Ok(1.0),
+        ScaleFieldDisposition::Rewrite(ScaleRewriteRule::RestBindSourceLocal {
+            connector_tail: None,
+        }) => match field {
+            ScaleSourceRestField::Translation | ScaleSourceRestField::MatrixTranslation => {
+                Ok(factor)
+            }
+            ScaleSourceRestField::Scale | ScaleSourceRestField::MatrixLinear => Ok(1.0 / factor),
+            _ => Err(plan_mismatch("invalid_rest_bind_source_field")),
+        },
+        ScaleFieldDisposition::Rewrite(ScaleRewriteRule::RestBindSourceLocal {
+            connector_tail: Some(_),
+        }) => Err(plan_mismatch("gltf_connector_source_rewrite_unsupported")),
+        _ => Err(plan_mismatch("invalid_rest_bind_source_field_disposition")),
+    }
 }
 
 // --- Rewrite ----------------------------------------------------------------
@@ -1045,13 +584,7 @@ pub fn rewrite_rest_bind(
     source_root_node_index: usize,
     expected_factor: f64,
 ) -> Result<GltfScaleArtifact, GltfScaleRewriteError> {
-    let manifest = source.manifest();
-    let facts = super::capability_facts(manifest);
-    if !facts.is_supported() {
-        let violations = super::manifest_violations(manifest);
-        let count = violations.len();
-        return Err(GltfScaleRewriteError::Capability { violations, count });
-    }
+    let facts = super::require_scale_capability(source.manifest())?;
     let operation = ScaleOperation::RestBindUniformScale {
         source_skin_index,
         source_root_node_index,
@@ -1063,22 +596,31 @@ pub fn rewrite_rest_bind(
         capability: &facts,
     })?;
 
+    rewrite_rest_bind_plan(source, &plan)
+}
+
+pub(crate) fn rewrite_rest_bind_plan(
+    source: &GltfScaleSource,
+    plan: &ScalePlan,
+) -> Result<GltfScaleArtifact, GltfScaleRewriteError> {
+    let manifest = source.manifest();
+    let ScaleOperation::RestBindUniformScale {
+        source_skin_index: _,
+        source_root_node_index: _,
+        expected_factor,
+    } = plan.operation()
+    else {
+        return Err(plan_mismatch("gltf_operation_plan_mismatch"));
+    };
+    let gltf_plan = GltfScalePlan::new(source, plan)?;
+
     let root = source
         .raw_json()
         .as_object()
         .ok_or_else(|| LoadError::Malformed("top-level glTF JSON is not an object".into()))?;
     super::reject_out_of_contract_nodes(root)?;
 
-    let parents = raw_parents(root)?;
-    let domain = RestBindDomain {
-        root: source_root_node_index,
-        closure: raw_closure(root, &parents, source_skin_index, source_root_node_index)?,
-        factor: expected_factor,
-    };
-    let projection = bone_projection(source.document())?;
-    cross_check_domain(source.document(), &plan, &domain, &parents, &projection)?;
-
-    let claims = collect_rest_bind_claims(root, &domain)?;
+    let claims = collect_rest_bind_claims(&gltf_plan, expected_factor)?;
     reject_rest_bind_accessor_overlaps(root, source.resolved_buffers(), &claims)?;
     let rewritten: BTreeMap<usize, RestBindClaim> = claims
         .into_iter()
@@ -1099,7 +641,7 @@ pub fn rewrite_rest_bind(
                 root,
                 source.resolved_buffers(),
                 accessor_index,
-                Some(claim.components.required_accessor_type()),
+                Some(accessor_type(claim.components)),
             )?,
             claim,
         ));
@@ -1121,7 +663,7 @@ pub fn rewrite_rest_bind(
 
     let mut json = source.raw_json().clone();
     let mut rewritten_json_pointers = Vec::new();
-    for (node_index, rebase) in collect_node_rebases(root, &domain) {
+    for (node_index, rebase) in collect_plan_node_rebases(&gltf_plan, expected_factor)? {
         rewrite_node_member(&mut json, node_index, rebase)?;
         rewritten_json_pointers.push(format!("/nodes/{node_index}/{}", rebase.member()));
     }
@@ -1129,7 +671,7 @@ pub fn rewrite_rest_bind(
         rewritten_json_pointers.extend(super::rewrite_accessor_bounds_with(
             &mut json,
             accessor_index,
-            &|component| claim.components.covers(component),
+            &|component| writer_components_cover(claim.components, component),
             claim.uniform_factor(),
             &extrema[&accessor_index],
         )?);
@@ -1145,7 +687,7 @@ pub fn rewrite_rest_bind(
             })
         })
         .collect();
-    let affected_source_skins = affected_skins(root, &domain)?;
+    let affected_source_skins = affected_skins_from_plan(&gltf_plan);
     let out = super::container::assemble(manifest, &json, &buffers, &modified)?;
     Ok(GltfScaleArtifact {
         container: manifest.container,
@@ -1155,38 +697,23 @@ pub fn rewrite_rest_bind(
         reencoded_buffers,
         // The raw closure this rewrite was driven by, in the same source-node
         // index space `source_root_node_index` selected it with.
-        affected_source_nodes: domain.closure.iter().copied().collect(),
+        affected_source_nodes: gltf_plan.affected_source_nodes(true),
         affected_source_skins,
         declared_factor: expected_factor,
-        operation,
+        operation: plan.operation(),
     })
 }
 
-/// Source-skin indices with at least one joint inside `domain`, ascending.
-///
-/// This is the same predicate [`collect_rest_bind_claims`] applies per slot:
-/// a skin is affected exactly when some slot of its `inverseBindMatrices`
-/// takes a factor other than one. A skin the closure does not reach at all is
-/// left out, which is what makes its binds provably untouched evidence rather
-/// than an unexplained absence.
-fn affected_skins(
-    root: &Map<String, Value>,
-    domain: &RestBindDomain,
-) -> Result<Vec<usize>, GltfScaleRewriteError> {
-    let mut affected = Vec::new();
-    for (skin_index, skin) in array(root, "skins").iter().enumerate() {
-        let mut touched = false;
-        for joint in skin.get("joints").map_or(&[][..], value_array) {
-            let joint = as_index(Some(joint)).ok_or_else(|| {
-                LoadError::Malformed(format!("/skins/{skin_index}/joints entry is not an index"))
-            })?;
-            touched |= domain.closure.contains(&joint);
-        }
-        if touched {
-            affected.push(skin_index);
-        }
-    }
-    Ok(affected)
+fn affected_skins_from_plan(plan: &GltfScalePlan) -> Vec<usize> {
+    plan.skin_bindings()
+        .iter()
+        .filter(|skin| {
+            skin.slots
+                .iter()
+                .any(|slot| plan.is_rest_bind_affected(slot.source_node_index))
+        })
+        .map(|skin| skin.source_skin_index)
+        .collect()
 }
 
 /// Rebase one node transform member in place, materializing an absent
@@ -1244,44 +771,14 @@ fn rewrite_node_member(
     Ok(())
 }
 
-// --- Small shared readers ---------------------------------------------------
-
-fn array<'a>(root: &'a Map<String, Value>, key: &str) -> &'a [Value] {
-    root.get(key).map_or(&[][..], value_array)
-}
-
-fn value_array(value: &Value) -> &[Value] {
-    value.as_array().map_or(&[][..], Vec::as_slice)
-}
-
-fn as_index(value: Option<&Value>) -> Option<usize> {
-    value?.as_u64()?.try_into().ok()
-}
-
-fn accessor_count(
-    root: &Map<String, Value>,
-    accessor_index: usize,
-) -> Result<usize, GltfScaleRewriteError> {
-    array(root, "accessors")
-        .get(accessor_index)
-        .and_then(|accessor| accessor.get("count"))
-        .and_then(Value::as_u64)
-        .and_then(|count| usize::try_from(count).ok())
-        .ok_or(GltfScaleRewriteError::UnrewritableAccessor {
-            accessor_index,
-            location: format!("/accessors/{accessor_index}"),
-        })
-}
-
 fn number(value: f32, location: &str) -> Result<Value, GltfScaleRewriteError> {
     super::number(value, location)
 }
 
 #[cfg(test)]
 mod tests {
-    //! Unit tests for the two things `rewrite_rest_bind` decides before it
-    //! writes a byte: what the affected hierarchy *is*, and whether the three
-    //! independent descriptions of it agree.
+    //! Unit tests for the structural checks `rewrite_rest_bind` performs
+    //! before it writes a byte.
     //!
     //! The agreement checks cannot be falsified by any glTF byte sequence.
     //! The raw child arrays, `SourceNodeAsset::parent_source_node_index` and
@@ -1290,7 +787,7 @@ mod tests {
     //! exactly why these are classification tests over a mutated `Document`
     //! rather than end-to-end ones. What they pin is that each disagreement
     //! is *named*, and — the direction that has caught more in this lane —
-    //! that the unmutated document still passes all three.
+    //! that the unmutated document still passes the canonical adapter.
     //!
     //! Every mutation goes to the `Document` handed straight to the checks,
     //! never through a re-plan, because `animsmith_core`'s own
@@ -1301,25 +798,15 @@ mod tests {
     //! to disagree with the *raw children* moves those two together, leaving
     //! the raw child arrays — the one description `animsmith_core` cannot
     //! see — as the sole dissenter; and a mutation core would itself refuse
-    //! pins nothing about reachability, only that this layer's second guard
-    //! on the same fact still names it. Their *wiring* is pinned separately,
-    //! through `capability::scale_source_with_document`: the seam hands the
-    //! rewriter a real source whose normalized projection contradicts its own
-    //! bytes, which is the one relaxation gate bypass cannot supply.
+    //! pins nothing about reachability, only that the adapter still names the
+    //! compatibility error while it binds the raw hierarchy to the compiled
+    //! plan. Their *wiring* is pinned through
+    //! `capability::scale_source_with_document`: the seam hands the rewriter a
+    //! real source whose normalized projection contradicts its own bytes,
+    //! which is the one relaxation gate bypass cannot supply.
     //!
-    //! One check in this module has neither. `collect_rest_bind_claims`'s
-    //! joint-count guard is unreachable behind #280's
-    //! `InverseBindCountMismatch`, which `manifest_violations` re-derives
-    //! from the manifest — so `rewrite_rest_bind`'s own `Capability` re-check
-    //! refuses such a source before it reads a skin whether or not the gate
-    //! was bypassed. It is classification-tested only, and said so here
-    //! rather than left looking end-to-end. Its mirror in
-    //! `rest_bind_proof::expected_rebases` is in the same position and
-    //! documented there.
-
     use super::*;
     use crate::preflight_scale_source_bytes;
-    use animsmith_core::scale::plan_scale;
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     use serde_json::json;
     use std::path::Path;
@@ -1405,172 +892,6 @@ mod tests {
         .expect("plan")
     }
 
-    fn root_object(source: &GltfScaleSource) -> Map<String, Value> {
-        source
-            .raw_json()
-            .as_object()
-            .expect("top-level object")
-            .clone()
-    }
-
-    /// Run all three agreement checks over `document`, with the raw hierarchy
-    /// and the closure taken from the unmodified source.
-    fn check(document: &Document, plan: &ScalePlan) -> Result<(), GltfScaleRewriteError> {
-        let source = source();
-        let root = root_object(&source);
-        let parents = raw_parents(&root).expect("raw parents");
-        let domain = RestBindDomain {
-            root: 0,
-            closure: raw_closure(&root, &parents, 0, 0).expect("raw closure"),
-            factor: 0.01,
-        };
-        let projection = bone_projection(document)?;
-        cross_check_domain(document, plan, &domain, &parents, &projection)
-    }
-
-    #[test]
-    fn the_three_hierarchy_descriptions_agree_for_an_ordinary_document() {
-        // The must-not-over-reject direction, and the reason the mutations
-        // below can be attributed: without it each could be "rejected" by a
-        // check that rejects everything.
-        let source = source();
-        let plan = plan(&source);
-        check(source.document(), &plan).expect("an ordinary document passes all three checks");
-        // And the closure itself is the §D.2 one: root, joint, attachment —
-        // and not the mesh holder, which is a sibling scene root.
-        let root = root_object(&source);
-        let parents = raw_parents(&root).expect("raw parents");
-        assert_eq!(
-            raw_closure(&root, &parents, 0, 0).expect("raw closure"),
-            BTreeSet::from([0, 1, 2])
-        );
-    }
-
-    #[test]
-    fn two_source_nodes_claiming_one_bone_are_refused() {
-        let source = source();
-        let plan = plan(&source);
-        let mut document = source.document().clone();
-        document.assets.source_skeleton.nodes[2].bone = Some(1);
-        match check(&document, &plan) {
-            Err(GltfScaleRewriteError::AmbiguousSourceNodeProjection { bone }) => {
-                assert_eq!(bone, 1);
-            }
-            other => panic!("expected AmbiguousSourceNodeProjection, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn a_plan_closure_the_raw_hierarchy_does_not_produce_is_refused() {
-        // Re-root the attachment in both normalized descriptions at once, so
-        // the plan's closure loses node 2 while the raw child arrays still
-        // hang it off node 1. Moving `Skeleton::parent` alongside
-        // `parent_source_node_index` is what keeps `animsmith_core`'s
-        // chain-agreement validation satisfied — dropping node 2 from the
-        // projection instead would be refused there, as an unprojected bone
-        // below a projected one — so the raw children stay the sole dissenter
-        // and this reaches the rewriter as a plan whose closure is genuinely
-        // smaller than the one the bytes describe.
-        let source = source();
-        let mut document = source.document().clone();
-        document.assets.source_skeleton.nodes[2].parent_source_node_index = None;
-        document.skeleton.bones[2].parent = None;
-        let plan = plan_scale(&ScaleRequest {
-            operation: ScaleOperation::RestBindUniformScale {
-                source_skin_index: 0,
-                source_root_node_index: 0,
-                expected_factor: 0.01,
-            },
-            document: &document,
-            capability: &super::super::capability_facts(source.manifest()),
-        })
-        .expect("a projection missing a node still plans, over a smaller closure");
-        match check(&document, &plan) {
-            Err(GltfScaleRewriteError::ClosureMismatch { planned, derived }) => {
-                assert_eq!(planned, vec![0, 1]);
-                assert_eq!(derived, vec![0, 1, 2]);
-            }
-            other => panic!("expected ClosureMismatch, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn a_skeleton_parent_that_contradicts_the_raw_children_is_refused() {
-        let source = source();
-        let plan = plan(&source);
-        let mut document = source.document().clone();
-        // Bone 2 is source node 2, whose raw parent is node 1 (bone 1).
-        document.skeleton.bones[2].parent = Some(0);
-        match check(&document, &plan) {
-            Err(GltfScaleRewriteError::ParentChainDisagreement { source_node_index }) => {
-                assert_eq!(source_node_index, 2);
-            }
-            other => panic!("expected ParentChainDisagreement, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn a_skeleton_that_places_the_closure_root_under_an_affected_node_is_refused() {
-        // The root's `s_parent` is one *because* its parent is outside the
-        // closure. A skeleton that says otherwise would make every core-side
-        // composition disagree with this rewriter about the one node whose
-        // local scale changes.
-        let source = source();
-        let plan = plan(&source);
-        let mut document = source.document().clone();
-        document.skeleton.bones[0].parent = Some(2);
-        match check(&document, &plan) {
-            Err(GltfScaleRewriteError::ParentChainDisagreement { source_node_index }) => {
-                assert_eq!(source_node_index, 0);
-            }
-            other => panic!("expected ParentChainDisagreement, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn a_raw_hierarchy_the_closure_cannot_be_derived_from_is_refused() {
-        let source = source();
-        let root = root_object(&source);
-        let parents = raw_parents(&root).expect("raw parents");
-        // The holder is a sibling scene root, so a skin whose joint is the
-        // holder has no ancestor path up to node 0.
-        let mut detached = root.clone();
-        detached["skins"] = json!([{ "joints": [3], "inverseBindMatrices": 3 }]);
-        match raw_closure(&detached, &parents, 0, 0) {
-            Err(GltfScaleRewriteError::UnusableSourceHierarchy { reason }) => {
-                assert_eq!(
-                    reason,
-                    "a skin joint is not a descendant of the selected root node"
-                );
-            }
-            other => panic!("expected UnusableSourceHierarchy, got {other:?}"),
-        }
-        // A node named as a child by two parents has no single parent link to
-        // walk, so the closure cannot be derived at all.
-        let mut two_parents = root.clone();
-        two_parents["nodes"][3]["children"] = json!([2]);
-        match raw_parents(&two_parents) {
-            Err(GltfScaleRewriteError::UnusableSourceHierarchy { reason }) => {
-                assert_eq!(reason, "a node is named as a child by two parents");
-            }
-            other => panic!("expected UnusableSourceHierarchy, got {other:?}"),
-        }
-        // A cyclic child chain must terminate the ancestor walk rather than
-        // spin. glTF forbids it and the typed parse does not, so this walk is
-        // the layer that has to bound itself.
-        let mut cyclic = root.clone();
-        cyclic["nodes"][2]["children"] = json!([0]);
-        let cyclic_parents = raw_parents(&cyclic).expect("each node still has one parent");
-        // Rooted at the holder, so the joint's walk up the 0 -> 2 -> 1 -> 0
-        // cycle never reaches the root and never runs out of parents either.
-        match raw_closure(&cyclic, &cyclic_parents, 0, 3) {
-            Err(GltfScaleRewriteError::UnusableSourceHierarchy { reason }) => {
-                assert_eq!(reason, "a skin joint's parent chain is cyclic or unbounded");
-            }
-            other => panic!("expected a bounded refusal, got {other:?}"),
-        }
-    }
-
     // --- The shared #282 guards are still wired into this rewrite ---------
     //
     // #280's preflight refuses both out-of-contract node transforms (#301)
@@ -1654,11 +975,99 @@ mod tests {
     }
 
     #[test]
-    fn rewrite_rest_bind_still_calls_the_hierarchy_cross_check() {
-        // The classification tests above call `cross_check_domain` directly,
-        // which pins *what* each disagreement is named and leaves the call
-        // site unevaluated: deleting `cross_check_domain(...)?` from
-        // `rewrite_rest_bind` changes no observable behaviour without this.
+    fn compatibility_precheck_names_an_ambiguous_source_projection() {
+        let source = source();
+        let plan = plan(&source);
+        let mut document = source.document().clone();
+        document.assets.source_skeleton.nodes[2].bone = Some(1);
+        let ambiguous = crate::capability::scale_source_with_document(source, document);
+
+        match super::super::plan::GltfScalePlan::new(&ambiguous, &plan) {
+            Err(GltfScaleRewriteError::AmbiguousSourceNodeProjection { bone }) => {
+                assert_eq!(bone, 1);
+            }
+            Ok(_) => panic!("expected AmbiguousSourceNodeProjection, got success"),
+            Err(error) => panic!("expected AmbiguousSourceNodeProjection, got {error:?}"),
+        }
+    }
+
+    #[test]
+    fn raw_source_skin_identity_is_cross_checked_through_the_plan_adapter() {
+        let cases = [
+            ("raw_source_skin_joint_mismatch", 0usize),
+            ("raw_source_skin_identity_mismatch", 1usize),
+            ("raw_source_skin_count_mismatch", 2usize),
+        ];
+
+        for (expected_reason, case) in cases {
+            let source = source();
+            let mut document = source.document().clone();
+            match case {
+                0 => {
+                    document.assets.source_skeleton.skins[0].joint_source_node_indices = vec![2];
+                }
+                1 => {
+                    document.assets.source_skeleton.skins[0].skeleton_root_source_node_index =
+                        Some(1);
+                }
+                2 => {
+                    document.assets.source_skeleton.skins.push(
+                        animsmith_core::model::SourceSkinAsset {
+                            source_skin_index: 1,
+                            ..Default::default()
+                        },
+                    );
+                }
+                _ => unreachable!(),
+            }
+            let plan = plan_scale(&ScaleRequest {
+                operation: ScaleOperation::WholeDocumentLinearUnits { factor: 2.0 },
+                document: &document,
+                capability: &super::super::capability_facts(source.manifest()),
+            })
+            .expect("the doctored source inventory still plans");
+            let retargeted = crate::capability::scale_source_with_document(source, document);
+
+            assert!(matches!(
+                super::super::plan::GltfScalePlan::new(&retargeted, &plan),
+                Err(GltfScaleRewriteError::Plan(
+                    animsmith_core::scale::ScaleError::PlanDocumentMismatch { reason }
+                )) if reason == expected_reason
+            ));
+        }
+    }
+
+    #[test]
+    fn rewrite_rest_bind_keeps_the_closure_mismatch_error_classification() {
+        let source = source();
+        let mut document = source.document().clone();
+        document.assets.source_skeleton.nodes[2].parent_source_node_index = None;
+        document.skeleton.bones[2].parent = None;
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 0.01,
+            },
+            document: &document,
+            capability: &super::super::capability_facts(source.manifest()),
+        })
+        .expect("a smaller canonical closure still plans");
+        let contradicting = crate::capability::scale_source_with_document(source, document);
+
+        match rewrite_rest_bind_plan(&contradicting, &plan) {
+            Err(GltfScaleRewriteError::ClosureMismatch { planned, derived }) => {
+                assert_eq!(planned, vec![0, 1]);
+                assert_eq!(derived, vec![0, 1, 2]);
+            }
+            other => panic!("expected ClosureMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rewrite_rest_bind_cross_checks_raw_children_with_plan_topology() {
+        // Deleting the numeric-free plan adapter from `rewrite_rest_bind`
+        // changes no ordinary fixture output without this mutation.
         // `capability::scale_source_with_document` is the `cfg(test)`-only
         // seam that supplies the relaxation no glTF byte sequence can — a
         // source whose normalized skeleton contradicts its own raw children.
@@ -1677,13 +1086,15 @@ mod tests {
                 assert_eq!(source_node_index, 2);
             }
             other => {
-                panic!("the wired cross-check must refuse a contradicting skeleton, got {other:?}")
+                panic!(
+                    "the plan topology check must refuse a contradicting skeleton, got {other:?}"
+                )
             }
         }
     }
 
     #[test]
-    fn the_wired_cross_check_still_accepts_an_untouched_document() {
+    fn the_plan_topology_check_accepts_an_untouched_document() {
         // The seam must not make every source refusable: the same source with
         // its own document handed back rebases. This is what keeps the test
         // above from passing for the wrong reason.
@@ -1695,78 +1106,9 @@ mod tests {
     }
 
     #[test]
-    fn a_skin_whose_joints_outnumber_its_inverse_binds_is_refused() {
-        // The fourth check of this module that no input can reach, and for
-        // the same reason as the three above: it is one layer's defence
-        // against another layer being relaxed. Unlike the two #282 guards the
-        // gate-bypass seam does not help — `InverseBindCountMismatch` is
-        // re-derivable from the manifest, so `rewrite_rest_bind`'s own
-        // `Capability` re-check refuses a bypassed source too. So this pins
-        // what the guard names over a doctored raw tree, and nothing pins
-        // that it is wired.
-        let source = source();
-        let root = root_object(&source);
-        let parents = raw_parents(&root).expect("raw parents");
-        let domain = RestBindDomain {
-            root: 0,
-            closure: raw_closure(&root, &parents, 0, 0).expect("raw closure"),
-            factor: 0.01,
-        };
-        let mut doctored = root.clone();
-        doctored["skins"][0]["joints"] = json!([1, 2]);
-        match collect_rest_bind_claims(&doctored, &domain) {
-            Err(GltfScaleRewriteError::UnrewritableAccessor {
-                accessor_index,
-                location,
-            }) => {
-                assert_eq!(accessor_index, 3);
-                assert_eq!(location, "/accessors/3");
-            }
-            other => panic!("expected UnrewritableAccessor, got {other:?}"),
-        }
-        // The must-not-over-reject direction, without which the above could
-        // be a guard that refuses every skin.
-        collect_rest_bind_claims(&root, &domain).expect("the fixture's own skin claims cleanly");
-    }
-
-    #[test]
-    fn a_scale_role_cannot_reinterpret_a_vec4_accessor_as_vec3() {
-        // This malformed cross-type alias panics in the upstream animation
-        // reader before a public `GltfScaleSource` can be built, so exercise
-        // the raw operation guard directly. Accessor 2 is the mesh's VEC4
-        // WEIGHTS_0 payload; a scale output is required to be VEC3.
-        let source = source();
-        let root = root_object(&source);
-        let parents = raw_parents(&root).expect("raw parents");
-        let domain = RestBindDomain {
-            root: 0,
-            closure: raw_closure(&root, &parents, 0, 0).expect("raw closure"),
-            factor: 0.01,
-        };
-        let mut doctored = root;
-        doctored.insert(
-            "animations".to_owned(),
-            json!([{
-                "samplers": [{ "input": 0, "interpolation": "LINEAR", "output": 2 }],
-                "channels": [{ "sampler": 0, "target": { "node": 0, "path": "scale" } }]
-            }]),
-        );
-        match collect_rest_bind_claims(&doctored, &domain) {
-            Err(GltfScaleRewriteError::UnrewritableAccessor {
-                accessor_index,
-                location,
-            }) => {
-                assert_eq!(accessor_index, 2);
-                assert_eq!(location, "/accessors/2");
-            }
-            other => panic!("expected an explicit accessor-type refusal, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn the_mat4_row_mask_covers_exactly_the_three_output_rows() {
         let covered: Vec<usize> = (0..16)
-            .filter(|&component| RestBindComponents::Mat4Rows.covers(component))
+            .filter(|&component| writer_components_cover(RestBindComponents::Mat4Rows, component))
             .collect();
         assert_eq!(covered, vec![0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14]);
         for components in [
@@ -1778,36 +1120,7 @@ mod tests {
             RestBindComponents::Mat3,
             RestBindComponents::Mat4,
         ] {
-            assert!((0..16).all(|component| components.covers(component)));
-        }
-    }
-
-    #[test]
-    fn the_local_scale_multiplier_is_exactly_one_off_the_closure_root() {
-        // Every "does this location change" decision in this module is an
-        // exact `!= 1.0` test against this quantity, so it must be exactly
-        // one — not one within a tolerance — at every factor the policy
-        // admits.
-        for factor in [1.0, 0.01, 1e-9, 1e9, 3.0 / 7.0] {
-            let domain = RestBindDomain {
-                root: 0,
-                closure: BTreeSet::from([0, 1, 2]),
-                factor,
-            };
-            for node in [1, 2] {
-                assert_eq!(domain.local_scale_factor(node), 1.0, "factor {factor}");
-                assert_eq!(domain.parent_factor(node), factor, "factor {factor}");
-            }
-            assert_eq!(domain.parent_factor(0), 1.0, "factor {factor}");
-            assert_eq!(
-                domain.local_scale_factor(0),
-                1.0 / factor,
-                "factor {factor}"
-            );
-            // A node outside the closure is untouched in both domains.
-            assert_eq!(domain.parent_factor(9), 1.0);
-            assert_eq!(domain.local_scale_factor(9), 1.0);
-            assert_eq!(domain.node_factor(9), 1.0);
+            assert!((0..16).all(|component| writer_components_cover(components, component)));
         }
     }
 

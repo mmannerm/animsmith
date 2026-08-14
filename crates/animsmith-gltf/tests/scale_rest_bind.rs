@@ -45,7 +45,7 @@ use animsmith_core::scale::{
 use animsmith_gltf::{
     GltfCapabilityViolationKind, GltfScaleArtifact, GltfScalePreflightError, GltfScaleRewriteError,
     GltfScaleSource, capability_facts, load_bytes, preflight_scale_source_bytes,
-    prove_rewritten_rest_bind, rewrite_rest_bind,
+    prove_rewritten_rest_bind, rewrite_rest_bind, rewrite_scale_plan,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
@@ -312,6 +312,63 @@ fn rig(interpolation: &str) -> (Value, Vec<u8>) {
     let buffer = rig_buffer(interpolation);
     let value = rig_json(interpolation, &buffer);
     (value, buffer)
+}
+
+#[test]
+fn a_rest_bind_plan_from_a_different_primitive_inventory_is_refused_before_raw_binding() {
+    let (mut planned_value, mut buffer) = rig("LINEAR");
+    buffer[at::SPARE..at::SPARE + 36]
+        .copy_from_slice(&f32_bytes(&[0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0]));
+    planned_value["buffers"][0]["uri"] = json!(data_uri(&buffer));
+    planned_value["bufferViews"]
+        .as_array_mut()
+        .expect("bufferViews")
+        .push(json!({ "buffer": 0, "byteOffset": at::SPARE, "byteLength": 36 }));
+    planned_value["accessors"]
+        .as_array_mut()
+        .expect("accessors")
+        .push(json!({ "bufferView": 7, "componentType": 5126, "count": 3, "type": "VEC3" }));
+    planned_value["meshes"][0]["primitives"][0]["attributes"]["NORMAL"] = json!(7);
+    let planned_source = accepted("planned-rest-normal.gltf", &planned_value);
+    let plan = plan_for(&planned_source, 0.01);
+
+    let mut replay_value = planned_value;
+    replay_value["meshes"][0]["primitives"][0]["attributes"]
+        .as_object_mut()
+        .expect("attributes")
+        .remove("NORMAL");
+    let replay_source = accepted("replay-rest-without-normal.gltf", &replay_value);
+
+    assert!(matches!(
+        rewrite_scale_plan(&replay_source, &plan),
+        Err(GltfScaleRewriteError::Plan(
+            ScaleError::PlanDocumentMismatch {
+                reason: "payload_shape_inventory_mismatch"
+            }
+        ))
+    ));
+}
+
+#[test]
+fn a_replayed_plan_revalidates_numeric_source_requirements_before_raw_binding() {
+    let (mut value, mut buffer) = rig("LINEAR");
+    let planned_source = accepted("planned-finite.gltf", &value);
+    let plan = plan_for(&planned_source, 0.01);
+
+    buffer[at::POSITION..at::POSITION + 4].copy_from_slice(&f32::NAN.to_le_bytes());
+    value["buffers"][0]["uri"] = json!(data_uri(&buffer));
+    let replay_source = accepted("replay-non-finite-position.gltf", &value);
+
+    assert!(matches!(
+        rewrite_scale_plan(&replay_source, &plan),
+        Err(GltfScaleRewriteError::Plan(
+            ScaleError::InvalidMeshPrimitive {
+                mesh_index: 0,
+                primitive_index: 0,
+                reason: "non_finite_position"
+            }
+        ))
+    ));
 }
 
 /// Add one scale channel backed by a new dense `f32 VEC3` accessor.
@@ -596,6 +653,8 @@ fn the_rebased_artifact_proves_and_reports_its_evidence() {
     // which corruption.
     let (value, _) = rig("LINEAR");
     let (source, artifact, plan) = rebased("case2-proof.gltf", &value);
+    let planned_artifact = rewrite_scale_plan(&source, &plan).expect("planned rewrite");
+    assert_eq!(planned_artifact.bytes(), artifact.bytes());
     let proof = prove_rewritten_rest_bind(&source, &artifact, &plan).expect("artifact proof");
 
     assert_eq!(proof.rewritten_accessor_count, 2);
@@ -810,14 +869,14 @@ fn the_closure_roots_own_inverse_bind_slot_still_takes_the_factor() {
 
 #[test]
 fn a_skin_straddling_the_closure_rebases_per_slot_and_re_derives_its_bounds() {
-    // A second skin whose slot 0 is inside the closure and slot 1 outside.
+    // A second skin whose slot 0 is outside the closure and slot 1 inside.
     // Its inverse-bind accessor therefore has no single conversion factor,
     // and an authored `min`/`max` on it has no single conversion either — so
     // the emitted bounds are re-derived from the rebased payload rather than
     // scaled by a factor that applies to only half of it.
     let (mut value, mut buffer) = rig("LINEAR");
-    buffer[at::SPARE..at::SPARE + 64].copy_from_slice(&f32_bytes(&INVERSE_BIND));
-    buffer[at::SPARE + 64..at::SPARE + 128].copy_from_slice(&f32_bytes(&IDENTITY_MAT4));
+    buffer[at::SPARE..at::SPARE + 64].copy_from_slice(&f32_bytes(&IDENTITY_MAT4));
+    buffer[at::SPARE + 64..at::SPARE + 128].copy_from_slice(&f32_bytes(&INVERSE_BIND));
     value["buffers"][0]["uri"] = json!(data_uri(&buffer));
     value["bufferViews"]
         .as_array_mut()
@@ -833,16 +892,16 @@ fn a_skin_straddling_the_closure_rebases_per_slot_and_re_derives_its_bounds() {
     value["skins"]
         .as_array_mut()
         .expect("skins")
-        .push(json!({ "joints": [1, 3], "inverseBindMatrices": 7 }));
+        .push(json!({ "joints": [3, 1], "inverseBindMatrices": 7 }));
 
     let (source, artifact, plan) = rebased("straddling-skin.gltf", &value);
     let (json, buffers) = artifact_parts(&artifact);
-    let mut expected = Vec::from(REBASED_INVERSE_BIND);
-    expected.extend_from_slice(&IDENTITY_MAT4);
+    let mut expected = Vec::from(IDENTITY_MAT4);
+    expected.extend_from_slice(&REBASED_INVERSE_BIND);
     assert_eq!(
         read_f32(&buffers[0][at::SPARE..at::SPARE + 128]),
         expected,
-        "slot 0 takes s and slot 1, outside the closure, is byte-identical"
+        "slot 0, outside the closure, is byte-identical and slot 1 takes s"
     );
     // Per-component extrema of those two matrices, with the homogeneous row
     // (components 3, 7, 11 and 15) left at its authored bound because this
@@ -874,7 +933,7 @@ fn a_skin_straddling_the_closure_rebases_per_slot_and_re_derives_its_bounds() {
     assert_eq!(
         artifact.affected_source_skins(),
         [0, 1],
-        "a skin straddling the boundary is affected: its slot 0 joint is inside"
+        "a skin straddling the boundary is affected even when its first joint is outside"
     );
     prove_rewritten_rest_bind(&source, &artifact, &plan).expect("artifact proof");
 }
@@ -999,7 +1058,10 @@ fn a_matrix_authored_hierarchy_rebases_its_linear_part_at_the_root_and_its_trans
     });
     value["nodes"][1] = json!({
         "name": "joint",
-        "matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 100.0, 0.0, 1.0],
+        // This first component narrows to exactly 1.0 in the frontend but its
+        // parsed JSON value must survive without that extra f32 narrowing
+        // because the joint's linear factor group is identity.
+        "matrix": [1.0000000000000002, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 100.0, 0.0, 1.0],
         "children": [2]
     });
     // Animated nodes must author TRS. Keep this case about matrix-authored
@@ -1022,10 +1084,22 @@ fn a_matrix_authored_hierarchy_rebases_its_linear_part_at_the_root_and_its_trans
     assert_eq!(
         json["nodes"][1]["matrix"],
         json!([
-            1.0, 0.0, 0.0, 0.0, //
-            0.0, 1.0, 0.0, 0.0, //
-            0.0, 0.0, 1.0, 0.0, //
-            0.0, 1.0, 0.0, 1.0
+            1.0000000000000002,
+            0.0,
+            0.0,
+            0.0, //
+            0.0,
+            1.0,
+            0.0,
+            0.0, //
+            0.0,
+            0.0,
+            1.0,
+            0.0, //
+            0.0,
+            1.0,
+            0.0,
+            1.0
         ]),
         "a non-root node's translation column takes s; its linear part is unchanged"
     );

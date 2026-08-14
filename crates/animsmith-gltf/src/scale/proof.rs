@@ -12,8 +12,8 @@
 //!    ranges;
 //! 3. array identities — every array length and every index-valued field,
 //!    plus honest reporting: the accessor indices and JSON pointers the
-//!    artifact says it rewrote are exactly the ones this module's own scan
-//!    derives;
+//!    artifact says it rewrote are exactly the ones the validated binding
+//!    inventory and proof-owned disposition checks derive;
 //! 4. determinism — rewriting the same source twice yields identical bytes;
 //! 5. container integrity — GLB header and chunk framing, 4-byte padding, and
 //!    declared buffer lengths;
@@ -27,21 +27,23 @@
 //! re-deriving them from raw bytes would be duplicate math with a second
 //! chance to be wrong.
 //!
-//! Every expected location is derived here by this module's own scan of the
-//! raw JSON, not by calling the rewriter's domain table. A proof that asks
-//! the implementation which locations it decided to change cannot fail when
-//! the implementation decides wrongly.
+//! Expected locations come from [`super::plan::GltfScalePlan`]'s validated,
+//! numeric-free raw binding inventory. This module independently interprets
+//! the compiled dispositions and derives all expected numeric values; it
+//! never asks the writer for a rule or multiplier.
 
 use super::bytes::{self, AccessorSpan};
-use super::rules::AccessorRule;
+use super::plan::{GltfScalePlan, RawAccessorTarget, plan_mismatch};
 use super::{
     GltfRawJsonDifference, GltfRawJsonDifferenceKind, GltfRawJsonDifferenceSummary,
     GltfScaleArtifact, GltfScaleRewriteError,
 };
 use crate::capability::{GltfContainerKind, GltfScaleSource, raw_json_bytes};
 use crate::{LoadError, load_bytes, resolve_buffers};
+use animsmith_core::Property;
 use animsmith_core::scale::{
-    ScaleCandidate, ScaleOperation, ScalePlan, ScaleProof, ScaleTolerancePolicy, prove_scale,
+    ScaleCandidate, ScaleFieldDisposition, ScaleOperation, ScalePlan, ScaleProof, ScaleRewriteRule,
+    ScaleSourceRestField, ScaleTolerancePolicy, prove_scale,
 };
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -50,6 +52,28 @@ use std::path::Path;
 const GLB_JSON_CHUNK: u32 = 0x4e4f_534a;
 const GLB_BIN_CHUNK: u32 = 0x004e_4942;
 const MAX_RAW_JSON_DIFFERENCES: usize = 16;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProofAccessorRule {
+    AllComponents,
+    Mat4TranslationColumn,
+}
+
+impl ProofAccessorRule {
+    fn required_accessor_type(self) -> Option<&'static str> {
+        match self {
+            Self::AllComponents => None,
+            Self::Mat4TranslationColumn => Some("MAT4"),
+        }
+    }
+}
+
+fn proof_scales_component(rule: ProofAccessorRule, component: usize) -> bool {
+    match rule {
+        ProofAccessorRule::AllComponents => true,
+        ProofAccessorRule::Mat4TranslationColumn => matches!(component, 12..=14),
+    }
+}
 
 /// Observed artifact-level evidence from [`prove_rewritten_artifact`] or
 /// [`super::prove_rewritten_rest_bind`].
@@ -128,6 +152,7 @@ pub fn prove_rewritten_artifact(
 
     check_container_integrity(artifact, artifact_root, &artifact_buffers)?;
     check_array_identities(source_root, artifact_root)?;
+    let gltf_plan = GltfScalePlan::new(source, plan)?;
 
     let mut proof = GltfScaleArtifactProof {
         core,
@@ -141,13 +166,14 @@ pub fn prove_rewritten_artifact(
     check_node_transforms(
         source_root,
         artifact_root,
+        &gltf_plan,
         factor,
         &tolerance,
         &mut converted_pointers,
         &mut proof,
     )?;
 
-    let expected = scale_bearing_accessors(source_root);
+    let expected = scale_bearing_accessors(&gltf_plan, factor != 1.0)?;
     if artifact.rewritten_accessors() != expected.keys().copied().collect::<Vec<_>>() {
         return Err(failed(
             "artifact reports exactly the accessors this proof independently derives",
@@ -159,10 +185,18 @@ pub fn prove_rewritten_artifact(
 
     let mut spans = Vec::with_capacity(expected.len());
     for (&accessor_index, &rule) in &expected {
-        let span =
-            bytes::accessor_span(source_root, source.resolved_buffers(), accessor_index, rule)?;
-        let artifact_span =
-            bytes::accessor_span(artifact_root, &artifact_buffers, accessor_index, rule)?;
+        let span = bytes::accessor_span_typed(
+            source_root,
+            source.resolved_buffers(),
+            accessor_index,
+            rule.required_accessor_type(),
+        )?;
+        let artifact_span = bytes::accessor_span_typed(
+            artifact_root,
+            &artifact_buffers,
+            accessor_index,
+            rule.required_accessor_type(),
+        )?;
         if span != artifact_span {
             return Err(failed(
                 "converted accessors keep their source byte layout",
@@ -223,7 +257,7 @@ pub fn prove_rewritten_artifact(
         &converted_spans,
     )?;
 
-    let repeat = super::rewrite_linear_units(source, factor)?;
+    let repeat = super::rewrite_scale_plan(source, plan)?;
     if repeat.bytes() != artifact.bytes() {
         return Err(failed(
             "rewriting the same source twice yields identical bytes",
@@ -349,6 +383,7 @@ pub(super) fn check_array_identities(
 fn check_node_transforms(
     source_root: &Map<String, Value>,
     artifact_root: &Map<String, Value>,
+    plan: &GltfScalePlan,
     factor: f64,
     tolerance: &ScaleTolerancePolicy,
     converted_pointers: &mut BTreeSet<String>,
@@ -364,14 +399,43 @@ fn check_node_transforms(
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .unwrap_or_default();
-    for (node_index, (before, after)) in source_nodes.iter().zip(artifact_nodes).enumerate() {
-        for (member, length, scales) in [
-            ("translation", 3usize, &[0usize, 1, 2] as &[usize]),
-            ("matrix", 16, &[12, 13, 14]),
+    for binding in plan.node_bindings() {
+        let node_index = binding.source_node_index;
+        let before = source_nodes
+            .get(node_index)
+            .ok_or_else(|| plan_mismatch("source_node_payload_missing"))?;
+        let after = artifact_nodes
+            .get(node_index)
+            .ok_or_else(|| plan_mismatch("artifact_node_payload_missing"))?;
+        for (member, field, length, scales) in [
+            (
+                "translation",
+                ScaleSourceRestField::Translation,
+                3usize,
+                &[0usize, 1, 2] as &[usize],
+            ),
+            (
+                "matrix",
+                ScaleSourceRestField::MatrixTranslation,
+                16,
+                &[12, 13, 14],
+            ),
         ] {
+            if (member == "translation" && !binding.translation_declared)
+                || (member == "matrix" && !binding.matrix_declared)
+            {
+                continue;
+            }
             let Some(source_values) = before.get(member).and_then(Value::as_array) else {
                 continue;
             };
+            let rewrites = validate_proof_whole_document_disposition(
+                plan.source_rest(node_index, field)?,
+                factor != 1.0,
+            )?;
+            if !rewrites {
+                continue;
+            }
             let pointer = format!("/nodes/{node_index}/{member}");
             let artifact_values = after
                 .get(member)
@@ -390,7 +454,7 @@ fn check_node_transforms(
                 if scales.contains(&component) {
                     track_length(before, after, factor, tolerance, proof)?;
                 } else {
-                    track_dimensionless(before, after, tolerance, proof)?;
+                    track_dimensionless(before, after, proof)?;
                 }
             }
             converted_pointers.insert(pointer);
@@ -404,7 +468,7 @@ fn check_node_transforms(
 fn check_converted_payloads(
     source_buffers: &[Vec<u8>],
     artifact_buffers: &[Vec<u8>],
-    spans: &[(AccessorSpan, AccessorRule)],
+    spans: &[(AccessorSpan, ProofAccessorRule)],
     factor: f64,
     tolerance: &ScaleTolerancePolicy,
     proof: &mut GltfScaleArtifactProof,
@@ -420,7 +484,7 @@ fn check_converted_payloads(
             ));
         }
         for (index, (&before, &after)) in before.iter().zip(&after).enumerate() {
-            if rule.scales_component(index % span.components) {
+            if proof_scales_component(rule, index % span.components) {
                 let expected = f64::from(before) * factor;
                 if after.to_bits() != (expected as f32).to_bits() {
                     return Err(failed(
@@ -455,7 +519,7 @@ fn check_accessor_bounds(
     source_root: &Map<String, Value>,
     artifact_root: &Map<String, Value>,
     artifact_buffers: &[Vec<u8>],
-    spans: &[(AccessorSpan, AccessorRule)],
+    spans: &[(AccessorSpan, ProofAccessorRule)],
     factor: f64,
     tolerance: &ScaleTolerancePolicy,
     converted_pointers: &mut BTreeSet<String>,
@@ -491,8 +555,8 @@ fn check_accessor_bounds(
             for component in 0..source_bounds.len() {
                 let before = numeric(&source_bounds[component], &pointer)?;
                 let after = numeric(&artifact_bounds[component], &pointer)?;
-                if !rule.scales_component(component) {
-                    track_dimensionless(before, after, tolerance, proof)?;
+                if !proof_scales_component(rule, component) {
+                    track_dimensionless(before, after, proof)?;
                     continue;
                 }
                 // A converted bound tracks `before * q` within the shared
@@ -701,92 +765,104 @@ fn collect_json_differences(
                 );
             }
         }
+        (Value::Number(before), Value::Number(after)) => {
+            if !json_numbers_have_identical_value_and_zero_sign(before, after) {
+                out.record(pointer.to_owned(), GltfRawJsonDifferenceKind::ValueChanged);
+            }
+        }
         (before, after) if before == after => {}
         _ => out.record(pointer.to_owned(), GltfRawJsonDifferenceKind::ValueChanged),
     }
 }
 
+/// JSON number equality with the authored sign bit preserved for zero.
+///
+/// `serde_json::Number` follows ordinary floating-point equality, under which
+/// `-0.0 == 0.0`. Raw glTF preservation is stricter: a writer may not
+/// canonicalize an untouched authored zero merely because its numeric value is
+/// unchanged.
+fn json_numbers_have_identical_value_and_zero_sign(
+    before: &serde_json::Number,
+    after: &serde_json::Number,
+) -> bool {
+    if before != after {
+        return false;
+    }
+    match (before.as_f64(), after.as_f64()) {
+        (Some(before), Some(after)) if before == 0.0 && after == 0.0 => {
+            before.to_bits() == after.to_bits()
+        }
+        _ => true,
+    }
+}
+
 // --- Independent domain scan ------------------------------------------------
 
-/// Every accessor a whole-document conversion must convert, derived here by
-/// this module's own scan of the raw JSON.
-///
-/// Deliberately a second implementation of the [`super::rules`] domain table:
-/// asking the rewriter which accessors it decided to convert would make this
-/// proof agree with the rewriter by construction. The map is keyed by unique
-/// accessor index for the same reason the rewriter's is — a `POSITION` shared
-/// by two primitives is one conversion, and a proof that counted it twice
-/// would expect `q^2`.
-fn scale_bearing_accessors(root: &Map<String, Value>) -> BTreeMap<usize, AccessorRule> {
+/// Every accessor a whole-document conversion must convert, selected from the
+/// shared structural inventory with a proof-owned disposition interpretation.
+/// The map is keyed by unique accessor index because a `POSITION` shared by
+/// two primitives is one conversion, not `q^2`.
+fn scale_bearing_accessors(
+    plan: &GltfScalePlan,
+    factor_changes: bool,
+) -> Result<BTreeMap<usize, ProofAccessorRule>, GltfScaleRewriteError> {
     let mut out = BTreeMap::new();
-    let index = |value: Option<&Value>| -> Option<usize> {
-        value?.as_u64().and_then(|index| index.try_into().ok())
-    };
-    for mesh in root
-        .get("meshes")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default()
-    {
-        for primitive in mesh
-            .get("primitives")
-            .and_then(Value::as_array)
-            .map(Vec::as_slice)
-            .unwrap_or_default()
-        {
-            if let Some(accessor) = index(
-                primitive
-                    .get("attributes")
-                    .and_then(|attributes| attributes.get("POSITION")),
-            ) {
-                out.insert(accessor, AccessorRule::AllComponents);
+    for binding in plan.accessor_bindings() {
+        let rule = match &binding.target {
+            RawAccessorTarget::MeshPositions { disposition } => {
+                validate_proof_whole_document_disposition(*disposition, factor_changes)?
+                    .then_some(ProofAccessorRule::AllComponents)
             }
+            RawAccessorTarget::InstanceInverseBind { source_skin_index } => {
+                let skin = plan.skin_binding(*source_skin_index)?;
+                let mut rewrite = None;
+                for slot in &skin.slots {
+                    let slot_rewrite = validate_proof_whole_document_disposition(
+                        slot.disposition
+                            .ok_or_else(|| plan_mismatch("inverse_bind_disposition_missing"))?,
+                        factor_changes,
+                    )?;
+                    match rewrite {
+                        Some(previous) if previous != slot_rewrite => {
+                            return Err(plan_mismatch("mixed_whole_document_accessor_disposition"));
+                        }
+                        Some(_) => {}
+                        None => rewrite = Some(slot_rewrite),
+                    }
+                }
+                rewrite
+                    .unwrap_or(false)
+                    .then_some(ProofAccessorRule::Mat4TranslationColumn)
+            }
+            RawAccessorTarget::Animation {
+                property: Property::Translation,
+                disposition,
+                ..
+            } => validate_proof_whole_document_disposition(*disposition, factor_changes)?
+                .then_some(ProofAccessorRule::AllComponents),
+            RawAccessorTarget::MeshNormals { .. } => None,
+            RawAccessorTarget::PreserveExact | RawAccessorTarget::Animation { .. } => None,
+        };
+        if let Some(rule) = rule {
+            out.insert(binding.accessor_index, rule);
         }
     }
-    for skin in root
-        .get("skins")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default()
-    {
-        if let Some(accessor) = index(skin.get("inverseBindMatrices")) {
-            out.insert(accessor, AccessorRule::Mat4TranslationColumn);
-        }
+    Ok(out)
+}
+
+/// Proof-owned interpretation of the whole-document structural rule.
+///
+/// Kept separate from the writer's identical match so sharing the field
+/// vocabulary cannot make the proof repeat a writer selection defect.
+fn validate_proof_whole_document_disposition(
+    disposition: ScaleFieldDisposition,
+    factor_changes: bool,
+) -> Result<bool, GltfScaleRewriteError> {
+    match (factor_changes, disposition) {
+        (true, ScaleFieldDisposition::Rewrite(ScaleRewriteRule::WholeDocumentLength)) => Ok(true),
+        (false, ScaleFieldDisposition::PreserveExact) => Ok(false),
+        _ => Err(plan_mismatch("invalid_whole_document_field_disposition")),
     }
-    for animation in root
-        .get("animations")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default()
-    {
-        let samplers = animation
-            .get("samplers")
-            .and_then(Value::as_array)
-            .map(Vec::as_slice)
-            .unwrap_or_default();
-        for channel in animation
-            .get("channels")
-            .and_then(Value::as_array)
-            .map(Vec::as_slice)
-            .unwrap_or_default()
-        {
-            let is_translation = channel
-                .get("target")
-                .and_then(|target| target.get("path"))
-                .and_then(Value::as_str)
-                == Some("translation");
-            if !is_translation {
-                continue;
-            }
-            if let Some(accessor) = index(channel.get("sampler"))
-                .and_then(|sampler| samplers.get(sampler))
-                .and_then(|sampler| index(sampler.get("output")))
-            {
-                out.insert(accessor, AccessorRule::AllComponents);
-            }
-        }
-    }
-    out
 }
 
 // --- Residual bookkeeping ---------------------------------------------------
@@ -815,17 +891,15 @@ pub(super) fn track_length(
 pub(super) fn track_dimensionless(
     before: f64,
     after: f64,
-    tolerance: &ScaleTolerancePolicy,
     proof: &mut GltfScaleArtifactProof,
 ) -> Result<(), GltfScaleRewriteError> {
     let residual = (after - before).abs();
     proof.dimensionless_residual = proof.dimensionless_residual.max(residual);
-    let bound = tolerance.scalar_tolerance(before, after);
-    if residual > bound {
+    if before.to_bits() != after.to_bits() {
         return Err(failed(
             "every dimensionless value inside a converted range is invariant",
             residual,
-            bound,
+            0.0,
         ));
     }
     Ok(())
@@ -954,16 +1028,27 @@ mod tests {
 
     fn fixture() -> (GltfScaleSource, GltfScaleArtifact, ScalePlan) {
         let value = fixture_json(&fixture_buffer());
+        fixture_from_value(&value)
+    }
+
+    fn fixture_from_value(value: &Value) -> (GltfScaleSource, GltfScaleArtifact, ScalePlan) {
+        fixture_from_value_with_factor(value, FACTOR)
+    }
+
+    fn fixture_from_value_with_factor(
+        value: &Value,
+        factor: f64,
+    ) -> (GltfScaleSource, GltfScaleArtifact, ScalePlan) {
         let bytes = serde_json::to_vec(&value).expect("fixture serializes");
         let source = preflight_scale_source_bytes(Path::new("proof-fixture.gltf"), &bytes)
             .expect("the fixture preflights cleanly");
         let plan = plan_scale(&ScaleRequest {
-            operation: ScaleOperation::WholeDocumentLinearUnits { factor: FACTOR },
+            operation: ScaleOperation::WholeDocumentLinearUnits { factor },
             document: source.document(),
             capability: &super::super::capability_facts(source.manifest()),
         })
         .expect("plan");
-        let artifact = super::super::rewrite_linear_units(&source, FACTOR).expect("rewrite");
+        let artifact = super::super::rewrite_linear_units(&source, factor).expect("rewrite");
         (source, artifact, plan)
     }
 
@@ -1064,6 +1149,87 @@ mod tests {
             &plan,
             "a converted accessor's dimensionless components are bit-identical",
         );
+    }
+
+    #[test]
+    fn a_dimensionless_node_matrix_component_must_be_exact_in_parsed_f64() {
+        let mut value = fixture_json(&fixture_buffer());
+        value["nodes"][0] = json!({
+            "name": "joint",
+            "matrix": [
+                1.0, 0.0, 0.0, 0.0,
+                0.0, 1.0, 0.0, 0.0,
+                0.0, 0.0, 1.0, 0.0,
+                0.0, 0.0, 0.0, 1.0
+            ]
+        });
+        let (source, mut artifact, plan) = fixture_from_value(&value);
+        let mut doctored = artifact_value(&artifact);
+        let adjacent = f64::from_bits(1.0f64.to_bits() + 1);
+        doctored["nodes"][0]["matrix"][0] = json!(adjacent);
+        put_artifact_value(&mut artifact, &doctored);
+        let error = prove_rewritten_artifact(&source, &artifact, &plan)
+            .expect_err("an adjacent identity-multiplier matrix value must be refused");
+        match error {
+            GltfScaleRewriteError::ArtifactProofFailed {
+                claim, observed, ..
+            } => {
+                assert_eq!(
+                    claim,
+                    "every dimensionless value inside a converted range is invariant"
+                );
+                assert_eq!(observed, adjacent - 1.0, "one adjacent matrix f64");
+            }
+            other => panic!("expected a dimensionless matrix residual, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_factor_one_matrix_translation_is_preserved_by_the_public_artifact_proof() {
+        let mut value = fixture_json(&fixture_buffer());
+        let authored = f64::from_bits(1.0f64.to_bits() + 1);
+        value["nodes"][1]["matrix"] = json!([
+            1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, authored, 0.0, 0.0, 1.0
+        ]);
+        let (source, mut artifact, plan) = fixture_from_value_with_factor(&value, 1.0);
+        assert!(artifact.rewritten_accessors().is_empty());
+        assert!(artifact.rewritten_json_pointers().is_empty());
+        assert_eq!(
+            artifact_value(&artifact)["nodes"][1]["matrix"][12]
+                .as_f64()
+                .expect("numeric matrix translation")
+                .to_bits(),
+            authored.to_bits()
+        );
+        prove_rewritten_artifact(&source, &artifact, &plan).expect("factor-one artifact proof");
+
+        let mut doctored = artifact_value(&artifact);
+        let adjacent = f64::from_bits(authored.to_bits() + 1);
+        doctored["nodes"][1]["matrix"][12] = json!(adjacent);
+        put_artifact_value(&mut artifact, &doctored);
+        let error = prove_rewritten_artifact(&source, &artifact, &plan)
+            .expect_err("a changed factor-one matrix translation must be refused");
+        match error {
+            GltfScaleRewriteError::ArtifactProofFailed {
+                claim,
+                observed,
+                raw_json_differences: Some(summary),
+                ..
+            } => {
+                assert_eq!(
+                    claim,
+                    "every raw JSON location outside the converted set is preserved exactly"
+                );
+                assert_eq!(observed, 1.0);
+                assert_eq!(summary.differences.len(), 1);
+                assert_eq!(summary.differences[0].pointer, "/nodes/1/matrix/12");
+                assert_eq!(
+                    summary.differences[0].kind,
+                    GltfRawJsonDifferenceKind::ValueChanged
+                );
+            }
+            other => panic!("expected a located raw JSON difference, got {other:?}"),
+        }
     }
 
     #[test]
@@ -1181,6 +1347,43 @@ mod tests {
                     },
                     GltfRawJsonDifference {
                         pointer: "/value".into(),
+                        kind: GltfRawJsonDifferenceKind::ValueChanged,
+                    },
+                ],
+                omitted: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn json_difference_collection_preserves_zero_sign_and_quaternion_sign() {
+        let before: Value = serde_json::from_str(
+            r#"{"extras":{"authoredZero":-0.0},"nodes":[{"rotation":[0.0,0.0,0.0,-1.0]}]}"#,
+        )
+        .expect("source JSON");
+        let after: Value = serde_json::from_str(
+            r#"{"extras":{"authoredZero":0.0},"nodes":[{"rotation":[0.0,0.0,0.0,1.0]}]}"#,
+        )
+        .expect("artifact JSON");
+        assert_eq!(
+            before["extras"]["authoredZero"]
+                .as_f64()
+                .expect("source zero")
+                .to_bits(),
+            (-0.0f64).to_bits()
+        );
+        let mut collector = RawJsonDifferenceCollector::default();
+        collect_json_differences(&before, &after, "", &BTreeSet::new(), &mut collector);
+        assert_eq!(
+            collector.finish(),
+            GltfRawJsonDifferenceSummary {
+                differences: vec![
+                    GltfRawJsonDifference {
+                        pointer: "/extras/authoredZero".into(),
+                        kind: GltfRawJsonDifferenceKind::ValueChanged,
+                    },
+                    GltfRawJsonDifference {
+                        pointer: "/nodes/0/rotation/3".into(),
                         kind: GltfRawJsonDifferenceKind::ValueChanged,
                     },
                 ],

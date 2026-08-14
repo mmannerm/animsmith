@@ -75,6 +75,7 @@
 
 mod bytes;
 mod container;
+mod plan;
 mod proof;
 mod rest_bind;
 mod rest_bind_proof;
@@ -140,6 +141,14 @@ pub use rest_bind_proof::prove_rewritten_rest_bind;
 /// independently re-resolves every accessor it touches rather than trusting
 /// these flags.
 pub fn capability_facts(manifest: &GltfCapabilityManifest) -> ScaleCapabilityFacts {
+    let violations = manifest_violations(manifest);
+    capability_facts_from_violations(manifest, &violations)
+}
+
+fn capability_facts_from_violations(
+    manifest: &GltfCapabilityManifest,
+    violations: &[GltfCapabilityViolation],
+) -> ScaleCapabilityFacts {
     let mut facts = ScaleCapabilityFacts::default();
     facts.coverage = ScaleCapabilityCoverage::Complete;
     if manifest
@@ -149,7 +158,7 @@ pub fn capability_facts(manifest: &GltfCapabilityManifest) -> ScaleCapabilityFac
     {
         facts.coverage = ScaleCapabilityCoverage::Unavailable;
     }
-    for violation in manifest_violations(manifest) {
+    for violation in violations {
         record_violation(&mut facts, violation.kind);
     }
     facts
@@ -345,6 +354,18 @@ fn manifest_violations(manifest: &GltfCapabilityManifest) -> Vec<GltfCapabilityV
         }
     }
     out
+}
+
+fn require_scale_capability(
+    manifest: &GltfCapabilityManifest,
+) -> Result<ScaleCapabilityFacts, GltfScaleRewriteError> {
+    let violations = manifest_violations(manifest);
+    let facts = capability_facts_from_violations(manifest, &violations);
+    if facts.is_supported() {
+        return Ok(facts);
+    }
+    let count = violations.len();
+    Err(GltfScaleRewriteError::Capability { violations, count })
 }
 
 fn is_secondary_influence(semantic: &str) -> bool {
@@ -751,9 +772,9 @@ pub enum GltfScaleRewriteError {
 /// [`animsmith_core::scale::plan_scale`], so it carries exactly the shared
 /// contract's `InvalidFactor` / `FactorNotRepresentable` boundary, and the
 /// source document's shape is validated before a byte is written. The plan
-/// itself does not drive the byte rewrite: the rewrite is driven by the raw
-/// domain table of DESIGN.md Appendix D §D.2, which sees source payloads the
-/// normalized document does not model.
+/// drives the byte rewrite's semantic membership. The glTF adapter separately
+/// validates raw topology, aliases, ranges, container fields, and payloads the
+/// normalized document does not model, then maps the typed rows onto them.
 ///
 /// # Errors
 ///
@@ -776,18 +797,53 @@ pub fn rewrite_linear_units(
     source: &GltfScaleSource,
     factor: f64,
 ) -> Result<GltfScaleArtifact, GltfScaleRewriteError> {
-    let manifest = source.manifest();
-    let facts = capability_facts(manifest);
-    if !facts.is_supported() {
-        let violations = manifest_violations(manifest);
-        let count = violations.len();
-        return Err(GltfScaleRewriteError::Capability { violations, count });
-    }
-    plan_scale(&ScaleRequest {
+    let facts = require_scale_capability(source.manifest())?;
+    let plan = plan_scale(&ScaleRequest {
         operation: ScaleOperation::WholeDocumentLinearUnits { factor },
         document: source.document(),
         capability: &facts,
     })?;
+
+    rewrite_linear_units_plan(source, &plan)
+}
+
+/// Apply one already-compiled core scale plan to the raw glTF source.
+///
+/// This is the shared writer boundary used when a caller will prove the
+/// artifact with the same immutable plan. The operation-specific public
+/// convenience functions remain available and compile a plan before
+/// delegating here.
+///
+/// # Errors
+///
+/// Returns the same capability, plan-replay, raw-layout, aliasing,
+/// representability, and container-write errors as the corresponding
+/// operation-specific writer. A plan for another document or a plan whose
+/// operation cannot be represented by this glTF boundary is rejected before
+/// a byte is written.
+pub fn rewrite_scale_plan(
+    source: &GltfScaleSource,
+    plan: &animsmith_core::scale::ScalePlan,
+) -> Result<GltfScaleArtifact, GltfScaleRewriteError> {
+    require_scale_capability(source.manifest())?;
+    match plan.operation() {
+        ScaleOperation::WholeDocumentLinearUnits { .. } => rewrite_linear_units_plan(source, plan),
+        ScaleOperation::RestBindUniformScale { .. } => {
+            rest_bind::rewrite_rest_bind_plan(source, plan)
+        }
+        _ => Err(plan::plan_mismatch("gltf_operation_plan_mismatch")),
+    }
+}
+
+fn rewrite_linear_units_plan(
+    source: &GltfScaleSource,
+    plan: &animsmith_core::scale::ScalePlan,
+) -> Result<GltfScaleArtifact, GltfScaleRewriteError> {
+    let manifest = source.manifest();
+    let ScaleOperation::WholeDocumentLinearUnits { factor } = plan.operation() else {
+        return Err(plan::plan_mismatch("gltf_operation_plan_mismatch"));
+    };
+    let gltf_plan = plan::GltfScalePlan::new(source, plan)?;
 
     let root = source
         .raw_json()
@@ -801,9 +857,7 @@ pub fn rewrite_linear_units(
     }
     reject_out_of_contract_nodes(root)?;
 
-    let accessor_rules = rules::collect_accessor_rules(root).map_err(|accessor_index| {
-        GltfScaleRewriteError::ConflictingRewriteRule { accessor_index }
-    })?;
+    let accessor_rules = rules::collect_accessor_rules(&gltf_plan, factor != 1.0)?;
     let mut spans = Vec::with_capacity(accessor_rules.len());
     for (&accessor_index, &rule) in &accessor_rules {
         spans.push((
@@ -826,7 +880,7 @@ pub fn rewrite_linear_units(
 
     let mut json = source.raw_json().clone();
     let mut rewritten_json_pointers = Vec::new();
-    for (pointer, rule) in rules::collect_json_rewrites(root) {
+    for (pointer, rule) in rules::collect_json_rewrites(&gltf_plan, factor != 1.0)? {
         rewrite_json_array(&mut json, &pointer, rule, factor)?;
         rewritten_json_pointers.push(pointer);
     }
@@ -865,10 +919,10 @@ pub fn rewrite_linear_units(
         // from the manifest's own vectors: the manifest inventories the same
         // arrays, but the closure is a claim about the source JSON and is
         // read from it.
-        affected_source_nodes: (0..raw_array_len(root, "nodes")).collect(),
+        affected_source_nodes: gltf_plan.affected_source_nodes(false),
         affected_source_skins: (0..raw_array_len(root, "skins")).collect(),
         declared_factor: factor,
-        operation: ScaleOperation::WholeDocumentLinearUnits { factor },
+        operation: plan.operation(),
     })
 }
 

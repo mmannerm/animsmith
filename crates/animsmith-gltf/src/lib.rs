@@ -87,6 +87,7 @@ pub use scale::{
     GltfRawJsonDifference, GltfRawJsonDifferenceKind, GltfRawJsonDifferenceSummary,
     GltfScaleArtifact, GltfScaleArtifactProof, GltfScaleRewriteError, capability_facts,
     prove_rewritten_artifact, prove_rewritten_rest_bind, rewrite_linear_units, rewrite_rest_bind,
+    rewrite_scale_plan,
 };
 
 use animsmith_core::model::{

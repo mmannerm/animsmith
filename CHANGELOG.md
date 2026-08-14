@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - *(convert)* preserve normal textures through FBX ingestion and glTF scene round-trips, including glTF normal scale ([#222](https://github.com/mmannerm/animsmith/issues/222))
+- *(gltf)* add `rewrite_scale_plan`, a plan-taking raw scale writer for callers
+  that reuse one compiled core plan across rewrite and artifact proof
+  ([#374](https://github.com/mmannerm/animsmith/issues/374))
 
 ### Fixed
 
@@ -28,6 +31,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and derived proof obligations. Scale-evidence v1/v2/v3 (including v3's five
   domain booleans), `ScaleProof` serialization, and the `appendix-d-v6` policy
   remain unchanged ([#374](https://github.com/mmannerm/animsmith/issues/374))
+- *(gltf)* drive both raw scale writers from the compiled typed plan, pass one
+  immutable plan through CLI rewrite and artifact proof, cross-check raw node
+  hierarchy against canonical source topology, validate the complete plan
+  inventory before raw replay, and keep proof-owned component selection and
+  numeric derivations independent. At factor one, length-bearing node fields,
+  accessor payloads, and authored bounds are now excluded from the raw write
+  set under their compiled `PreserveExact` disposition. Parsed JSON numeric
+  values therefore avoid narrowing through `f32`, and accessor bytes remain
+  authored; JSON reserialization can still canonicalize lexical spelling.
+  Otherwise equivalent artifact bytes and their publication digest can
+  therefore change, and artifact proof checks factor-one node JSON and raw
+  complement values exactly. Evidence v1/v2/v3 schema identities and shapes,
+  selectors, tolerance policy, and refusal kinds remain unchanged; factor-one
+  v3 rewrite inventories and `rewritten_accessor_count` now report the empty
+  compiled write set
+  ([#374](https://github.com/mmannerm/animsmith/issues/374))
 - [**breaking**] *(assemble)* advance the character-assembly recipe and
   evidence contracts to immutable v3. Recipes can exact-name base nodes for
   fail-closed subtree removal after animation transforms, and evidence records

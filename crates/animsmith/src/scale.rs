@@ -59,9 +59,8 @@
 //!
 //! # Cost
 //!
-//! One invocation plans twice (once here for the plan proof consumes, once
-//! inside the rewriter, which plans internally so no caller can hand it a
-//! plan built against a different document) and rewrites twice (the second
+//! One invocation compiles one immutable plan used by both the raw writer and
+//! artifact proof, and rewrites twice (the second
 //! inside the artifact proof's determinism claim), then runs the full
 //! sampled proof. On a production-sized rig this is seconds, not
 //! milliseconds. The raw capability manifest is per-accessor and
@@ -83,7 +82,7 @@ use animsmith_gltf::{
     GltfRawJsonDifferenceKind, GltfRawJsonDifferenceSummary, GltfScaleArtifact,
     GltfScaleArtifactProof, GltfScalePreflightError, GltfScaleRewriteError, GltfScaleSource,
     capability_facts, preflight_scale_source_bytes, prove_rewritten_artifact,
-    prove_rewritten_rest_bind, rewrite_linear_units, rewrite_rest_bind,
+    prove_rewritten_rest_bind, rewrite_scale_plan,
 };
 use serde::ser::Error as _;
 use serde::{Serialize, Serializer};
@@ -1027,20 +1026,8 @@ fn produce(request: &Request, source: &GltfScaleSource) -> Result<Produced, Fail
     })
     .map_err(plan_failure)?;
 
-    let artifact = match request.operation {
-        Operation::WholeDocument { factor } => rewrite_linear_units(source, factor),
-        Operation::RestBind {
-            source_skin_index,
-            source_root_node_index,
-            expected_factor,
-        } => rewrite_rest_bind(
-            source,
-            source_skin_index,
-            source_root_node_index,
-            expected_factor,
-        ),
-    }
-    .map_err(|error| rewrite_failure(Stage::Rewrite, error))?;
+    let artifact = rewrite_scale_plan(source, &plan)
+        .map_err(|error| rewrite_failure(Stage::Rewrite, error))?;
 
     let proof = match request.operation {
         Operation::WholeDocument { .. } => prove_rewritten_artifact(source, &artifact, &plan),

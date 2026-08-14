@@ -297,6 +297,15 @@ obligations own no numeric residual; raw byte-exact preservation of other
 fields, including signed zero and quaternion sign, belongs to the artifact
 proof rather than this normalized ledger view.
 
+The glTF frontend applies this same compiled plan through
+`rewrite_scale_plan`, then proves the artifact with that exact plan. Its raw
+adapter first calls `ScalePlan::validate_document_inventory`, then
+independently cross-checks `/nodes/*/children` against canonical source
+topology and retains format-owned capability, alias, range, JSON complement,
+and container checks. Writer and artifact proof share structural identity
+only; their component selection and numeric multiplier derivations remain
+independent.
+
 For glTF/GLB, `animsmith_gltf::rewrite_linear_units` then performs the
 whole-document conversion on the source's own JSON and buffer bytes — never
 through the normalized writer — and `animsmith_gltf::prove_rewritten_artifact`

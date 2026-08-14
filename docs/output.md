@@ -328,6 +328,13 @@ The current CLI emits v3 exclusively; immutable
 [`scale-evidence-v2.schema.json`](schemas/scale-evidence-v2.schema.json)
 remain available for historical records.
 
+A whole-document factor of one has no raw write set. Its v3
+`result.artifact.rewritten_accessors`, `rewritten_json_pointers`, and
+`reencoded_buffers` arrays are empty, and
+`result.proof.artifact.rewritten_accessor_count` is zero. This changes those
+factor-one values from the earlier redundant-rewrite behavior without changing
+the schema identity or field shape.
+
 For rest/bind, `result.domain_rewrites.scale_animation` is `true`: every
 stored scale VEC3 is rebased by its topology multiplier — `1 / s` at the
 selected root, `1` at strict affected descendants and unaffected nodes —

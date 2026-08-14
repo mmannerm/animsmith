@@ -1,10 +1,10 @@
-//! The DESIGN.md Appendix D §D.2 domain table, as data.
+//! Raw glTF recipes for applying the compiled DESIGN.md Appendix D ledger.
 //!
 //! Two independent tables live here:
 //!
-//! 1. The **accessor rewrite set** and the **JSON pointer rewrite set** —
-//!    which raw glTF locations carry a length under a whole-document
-//!    linear-unit conversion, and how each converts.
+//! 1. The **accessor bindings** and **JSON pointer bindings** — which raw glTF
+//!    locations correspond to compiled whole-document length rows, and how
+//!    each converts.
 //! 2. The **length-field handler registry** plus its two companion decision
 //!    tables. Appendix D §D.2 requires that "every supported camera, light,
 //!    collision, or extension length" is converted "through a field-specific
@@ -14,8 +14,10 @@
 //!    length field with no entry is a located rejection rather than a silent
 //!    skip.
 
-use crate::capability::declared;
-use serde_json::{Map, Value};
+use super::GltfScaleRewriteError;
+use super::plan::{GltfScalePlan, RawAccessorTarget, plan_mismatch};
+use animsmith_core::scale::{ScaleFieldDisposition, ScaleRewriteRule, ScaleSourceRestField};
+use serde_json::Value;
 use std::collections::BTreeMap;
 
 // --- Accessor rewrite set -------------------------------------------------
@@ -103,67 +105,65 @@ pub(crate) fn components_per_element(accessor_type: &str) -> Option<usize> {
 ///
 /// Returns the accessor index whose logical uses disagree on a rule.
 pub(crate) fn collect_accessor_rules(
-    root: &Map<String, Value>,
-) -> Result<BTreeMap<usize, AccessorRule>, usize> {
+    plan: &GltfScalePlan,
+    factor_changes: bool,
+) -> Result<BTreeMap<usize, AccessorRule>, GltfScaleRewriteError> {
     let mut rules: BTreeMap<usize, AccessorRule> = BTreeMap::new();
-    let mut insert = |index: Option<usize>, rule: AccessorRule| -> Result<(), usize> {
-        let Some(index) = index else { return Ok(()) };
-        match rules.insert(index, rule) {
-            Some(previous) if previous != rule => Err(index),
-            _ => Ok(()),
-        }
-    };
 
-    if let Some(meshes) = root.get("meshes").and_then(Value::as_array) {
-        for mesh in meshes {
-            let Some(primitives) = mesh.get("primitives").and_then(Value::as_array) else {
-                continue;
-            };
-            for primitive in primitives {
-                let position = primitive
-                    .get("attributes")
-                    .and_then(|attributes| attributes.get("POSITION"));
-                insert(as_index(position), AccessorRule::AllComponents)?;
+    for binding in plan.accessor_bindings() {
+        let rule = match &binding.target {
+            RawAccessorTarget::MeshPositions { disposition } => {
+                validate_whole_document_disposition(*disposition, factor_changes)?
+                    .then_some(AccessorRule::AllComponents)
             }
-        }
-    }
-    if let Some(skins) = root.get("skins").and_then(Value::as_array) {
-        for skin in skins {
-            insert(
-                as_index(skin.get("inverseBindMatrices")),
-                AccessorRule::Mat4TranslationColumn,
-            )?;
-        }
-    }
-    if let Some(animations) = root.get("animations").and_then(Value::as_array) {
-        for animation in animations {
-            let samplers = animation
-                .get("samplers")
-                .and_then(Value::as_array)
-                .map(Vec::as_slice)
-                .unwrap_or_default();
-            let channels = animation
-                .get("channels")
-                .and_then(Value::as_array)
-                .map(Vec::as_slice)
-                .unwrap_or_default();
-            for channel in channels {
-                let path = channel
-                    .get("target")
-                    .and_then(|target| target.get("path"))
-                    .and_then(Value::as_str);
-                if path != Some("translation") {
-                    continue;
+            RawAccessorTarget::InstanceInverseBind { source_skin_index } => {
+                let skin = plan.skin_binding(*source_skin_index)?;
+                let mut rewrite = None;
+                for slot in &skin.slots {
+                    let slot_rewrite = validate_whole_document_disposition(
+                        slot.disposition
+                            .ok_or_else(|| plan_mismatch("inverse_bind_disposition_missing"))?,
+                        factor_changes,
+                    )?;
+                    match rewrite {
+                        Some(previous) if previous != slot_rewrite => {
+                            return Err(plan_mismatch("mixed_whole_document_accessor_disposition"));
+                        }
+                        Some(_) => {}
+                        None => rewrite = Some(slot_rewrite),
+                    }
                 }
-                let Some(sampler) = as_index(channel.get("sampler")).and_then(|i| samplers.get(i))
-                else {
-                    continue;
-                };
-                insert(as_index(sampler.get("output")), AccessorRule::AllComponents)?;
+                rewrite
+                    .unwrap_or(false)
+                    .then_some(AccessorRule::Mat4TranslationColumn)
             }
+            RawAccessorTarget::Animation {
+                property: animsmith_core::Property::Translation,
+                disposition,
+                ..
+            } => validate_whole_document_disposition(*disposition, factor_changes)?
+                .then_some(AccessorRule::AllComponents),
+            RawAccessorTarget::MeshNormals { .. } => None,
+            RawAccessorTarget::PreserveExact | RawAccessorTarget::Animation { .. } => None,
+        };
+        if let Some(rule) = rule {
+            insert_accessor_rule(&mut rules, binding.accessor_index, rule)?;
         }
     }
     Ok(rules)
+}
+
+fn insert_accessor_rule(
+    rules: &mut BTreeMap<usize, AccessorRule>,
+    accessor_index: usize,
+    rule: AccessorRule,
+) -> Result<(), GltfScaleRewriteError> {
+    match rules.insert(accessor_index, rule) {
+        Some(previous) if previous != rule => {
+            Err(GltfScaleRewriteError::ConflictingRewriteRule { accessor_index })
+        }
+        _ => Ok(()),
+    }
 }
 
 /// How one raw JSON numeric array converts under `q`.
@@ -202,26 +202,45 @@ impl JsonArrayRule {
 /// [`crate::capability::declared`] — and selecting one here would hand
 /// [`super::rewrite_json_array`] a `null` to multiply, which it can only
 /// report as a malformed source.
-pub(crate) fn collect_json_rewrites(root: &Map<String, Value>) -> Vec<(String, JsonArrayRule)> {
+pub(crate) fn collect_json_rewrites(
+    plan: &GltfScalePlan,
+    factor_changes: bool,
+) -> Result<Vec<(String, JsonArrayRule)>, GltfScaleRewriteError> {
     let mut out = Vec::new();
-    let Some(nodes) = root.get("nodes").and_then(Value::as_array) else {
-        return out;
-    };
-    for (node_index, node) in nodes.iter().enumerate() {
-        if declared(node, "translation").is_some() {
-            out.push((
-                format!("/nodes/{node_index}/translation"),
-                JsonArrayRule::AllComponents,
-            ));
+    for node in plan.node_bindings() {
+        let node_index = node.source_node_index;
+        if node.translation_declared {
+            let disposition = plan.source_rest(node_index, ScaleSourceRestField::Translation)?;
+            if validate_whole_document_disposition(disposition, factor_changes)? {
+                out.push((
+                    format!("/nodes/{node_index}/translation"),
+                    JsonArrayRule::AllComponents,
+                ));
+            }
         }
-        if declared(node, "matrix").is_some() {
-            out.push((
-                format!("/nodes/{node_index}/matrix"),
-                JsonArrayRule::Mat4TranslationColumn,
-            ));
+        if node.matrix_declared {
+            let disposition =
+                plan.source_rest(node_index, ScaleSourceRestField::MatrixTranslation)?;
+            if validate_whole_document_disposition(disposition, factor_changes)? {
+                out.push((
+                    format!("/nodes/{node_index}/matrix"),
+                    JsonArrayRule::Mat4TranslationColumn,
+                ));
+            }
         }
     }
-    out
+    Ok(out)
+}
+
+fn validate_whole_document_disposition(
+    disposition: ScaleFieldDisposition,
+    factor_changes: bool,
+) -> Result<bool, GltfScaleRewriteError> {
+    match (factor_changes, disposition) {
+        (true, ScaleFieldDisposition::Rewrite(ScaleRewriteRule::WholeDocumentLength)) => Ok(true),
+        (false, ScaleFieldDisposition::PreserveExact) => Ok(false),
+        _ => Err(plan_mismatch("invalid_whole_document_field_disposition")),
+    }
 }
 
 // --- Length-field handler registry ----------------------------------------
@@ -446,102 +465,14 @@ fn escape_token(token: &str) -> String {
     token.replace('~', "~0").replace('/', "~1")
 }
 
-fn as_index(value: Option<&Value>) -> Option<usize> {
-    value?.as_u64()?.try_into().ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
 
-    fn rules(value: &Value) -> BTreeMap<usize, AccessorRule> {
-        collect_accessor_rules(value.as_object().expect("object")).expect("no rule conflict")
-    }
-
-    #[test]
-    fn a_position_shared_by_two_primitives_is_one_rewrite_entry() {
-        let value = json!({
-            "meshes": [
-                { "primitives": [
-                    { "attributes": { "POSITION": 7, "NORMAL": 1 } },
-                    { "attributes": { "POSITION": 7, "NORMAL": 2 } }
-                ] },
-                { "primitives": [{ "attributes": { "POSITION": 7 } }] }
-            ]
-        });
-        assert_eq!(
-            rules(&value).into_iter().collect::<Vec<_>>(),
-            vec![(7, AccessorRule::AllComponents)]
-        );
-    }
-
-    #[test]
-    fn each_domain_contributes_its_own_rule_and_dimensionless_uses_contribute_none() {
-        let value = json!({
-            "meshes": [{ "primitives": [{
-                "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 },
-                "indices": 3
-            }] }],
-            "skins": [{ "joints": [0], "inverseBindMatrices": 4, "skeleton": 0 }],
-            "animations": [{
-                "samplers": [
-                    { "input": 5, "output": 6 },
-                    { "input": 5, "output": 7 },
-                    { "input": 5, "output": 8 }
-                ],
-                "channels": [
-                    { "sampler": 0, "target": { "node": 0, "path": "translation" } },
-                    { "sampler": 1, "target": { "node": 0, "path": "rotation" } },
-                    { "sampler": 2, "target": { "node": 0, "path": "scale" } }
-                ]
-            }]
-        });
-        assert_eq!(
-            rules(&value).into_iter().collect::<Vec<_>>(),
-            vec![
-                (0, AccessorRule::AllComponents),
-                (4, AccessorRule::Mat4TranslationColumn),
-                (6, AccessorRule::AllComponents),
-            ]
-        );
-    }
-
-    #[test]
-    fn disagreeing_rules_on_one_accessor_are_reported_by_index() {
-        let value = json!({
-            "meshes": [{ "primitives": [{ "attributes": { "POSITION": 3 } }] }],
-            "skins": [{ "joints": [0], "inverseBindMatrices": 3 }]
-        });
-        assert_eq!(
-            collect_accessor_rules(value.as_object().expect("object")),
-            Err(3)
-        );
-    }
-
-    #[test]
-    fn json_rewrites_cover_translation_and_matrix_nodes_only() {
-        let value = json!({
-            "nodes": [
-                { "translation": [1, 2, 3], "rotation": [0, 0, 0, 1], "scale": [2, 2, 2] },
-                { "matrix": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 4, 5, 6, 1] },
-                { "name": "bare" }
-            ]
-        });
-        assert_eq!(
-            collect_json_rewrites(value.as_object().expect("object")),
-            vec![
-                (
-                    "/nodes/0/translation".to_owned(),
-                    JsonArrayRule::AllComponents
-                ),
-                (
-                    "/nodes/1/matrix".to_owned(),
-                    JsonArrayRule::Mat4TranslationColumn
-                ),
-            ]
-        );
-    }
+    // Public rewrite tests cover the plan-indexed domain table. The private
+    // table no longer accepts an unvalidated raw JSON fragment without the
+    // compiled ledger whose membership it applies.
 
     #[test]
     fn the_mat4_rule_scales_exactly_the_translation_column() {
@@ -554,6 +485,16 @@ mod tests {
             .collect();
         assert_eq!(scaled, vec![12, 13, 14]);
         assert!((0..16).all(|c| AccessorRule::AllComponents.scales_component(c)));
+    }
+
+    #[test]
+    fn one_accessor_cannot_receive_two_rewrite_rules() {
+        let mut rules = BTreeMap::new();
+        insert_accessor_rule(&mut rules, 7, AccessorRule::AllComponents).expect("first use");
+        assert!(matches!(
+            insert_accessor_rule(&mut rules, 7, AccessorRule::Mat4TranslationColumn),
+            Err(GltfScaleRewriteError::ConflictingRewriteRule { accessor_index: 7 })
+        ));
     }
 
     #[test]
