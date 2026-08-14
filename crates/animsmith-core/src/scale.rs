@@ -1634,6 +1634,7 @@ fn plan_whole_document(document: &Document, factor: f64) -> Result<ScalePlan, Sc
 struct RestBindPlanDomain {
     bone_of_source: BTreeMap<usize, BoneId>,
     connector_tail_by_source: BTreeMap<usize, usize>,
+    connector_sources: BTreeSet<usize>,
     source_topology: Vec<(usize, Option<usize>, Option<BoneId>)>,
     scaled_root_bone: BoneId,
     affected_nodes: Vec<BoneId>,
@@ -1770,6 +1771,7 @@ fn derive_rest_bind_plan_domain(
     Ok(RestBindPlanDomain {
         bone_of_source,
         connector_tail_by_source,
+        connector_sources: used_connectors,
         source_topology,
         scaled_root_bone,
         affected_nodes,
@@ -1806,10 +1808,15 @@ fn plan_rest_bind(
     let by_source_index = source_node_index_map(document);
 
     let tol = ScaleTolerancePolicy::APPENDIX_D_V6;
-    let mut world_cache: BTreeMap<usize, Mat4> = BTreeMap::new();
+    let mut world_cache = BTreeMap::new();
     let mut node_factor: BTreeMap<BoneId, f64> = BTreeMap::new();
     for (&source, &bone) in &domain.bone_of_source {
-        let world = source_world_matrix(source, &by_source_index, &mut world_cache)?;
+        let world = source_world_matrix(
+            source,
+            &by_source_index,
+            &domain.connector_sources,
+            &mut world_cache,
+        )?;
         let linear = Mat3::from_mat4(world);
         let factor = classify_affine(linear, &tol)
             .map_err(|reason| ScaleError::InvalidAffineDomain { node: bone, reason })?;
@@ -2108,13 +2115,20 @@ fn rest_bind_affected_closure(
 /// Iterative and cache/visited-guarded rather than naive recursion: a
 /// malformed cyclic or self-referencing parent chain errors instead of
 /// looping or overflowing the stack.
+#[derive(Clone, Copy)]
+enum SourceWorldAccumulator {
+    Narrow(Mat4),
+    Widened(DMat4),
+}
+
 fn source_world_matrix(
     start: usize,
     by_source_index: &BTreeMap<usize, &SourceNodeAsset>,
-    cache: &mut BTreeMap<usize, Mat4>,
+    connector_sources: &BTreeSet<usize>,
+    cache: &mut BTreeMap<usize, SourceWorldAccumulator>,
 ) -> Result<Mat4, ScaleError> {
     if let Some(&world) = cache.get(&start) {
-        return Ok(world);
+        return narrow_source_world(start, world);
     }
     let mut chain = Vec::new();
     let mut cursor = start;
@@ -2136,7 +2150,7 @@ fn source_world_matrix(
         chain.push((cursor, asset));
         match asset.parent_source_node_index {
             Some(parent) => cursor = parent,
-            None => break Mat4::IDENTITY,
+            None => break SourceWorldAccumulator::Narrow(Mat4::IDENTITY),
         }
     };
     let mut world = base_world;
@@ -2147,13 +2161,44 @@ fn source_world_matrix(
                 source_node_index: node,
             });
         }
-        world *= local;
-        if !mat4_is_finite(world) {
-            return Err(ScaleError::NonFiniteSourceTransform {
-                source_node_index: node,
-            });
-        }
+        world = if connector_sources.contains(&node) {
+            let widened = match world {
+                SourceWorldAccumulator::Narrow(world) => world.as_dmat4(),
+                SourceWorldAccumulator::Widened(world) => world,
+            } * local.as_dmat4();
+            if !widened.is_finite() {
+                return Err(ScaleError::NonFiniteSourceTransform {
+                    source_node_index: node,
+                });
+            }
+            SourceWorldAccumulator::Widened(widened)
+        } else {
+            let narrowed = match world {
+                SourceWorldAccumulator::Narrow(world) => world * local,
+                SourceWorldAccumulator::Widened(world) => (world * local.as_dmat4()).as_mat4(),
+            };
+            if !mat4_is_finite(narrowed) {
+                return Err(ScaleError::NonFiniteSourceTransform {
+                    source_node_index: node,
+                });
+            }
+            SourceWorldAccumulator::Narrow(narrowed)
+        };
         cache.insert(node, world);
+    }
+    narrow_source_world(start, world)
+}
+
+fn narrow_source_world(
+    source_node_index: usize,
+    world: SourceWorldAccumulator,
+) -> Result<Mat4, ScaleError> {
+    let world = match world {
+        SourceWorldAccumulator::Narrow(world) => world,
+        SourceWorldAccumulator::Widened(world) => world.as_mat4(),
+    };
+    if !mat4_is_finite(world) {
+        return Err(ScaleError::NonFiniteSourceTransform { source_node_index });
     }
     Ok(world)
 }
@@ -6672,6 +6717,28 @@ mod tests {
             },
         );
         prove_scale(&doc, &candidate, &plan).unwrap();
+
+        // The candidate retains Complete source projection, so its normalized
+        // factor-one chain must remain a consumable planner input even though
+        // the preserved connector-only product is still above f32 range.
+        let normalized_plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 1.0,
+            },
+            document: candidate.document(),
+            capability: &capability,
+        })
+        .unwrap();
+        let normalized_candidate =
+            build_scale_candidate(candidate.document(), &normalized_plan).unwrap();
+        prove_scale(
+            candidate.document(),
+            &normalized_candidate,
+            &normalized_plan,
+        )
+        .unwrap();
     }
 
     #[test]
@@ -6929,7 +6996,7 @@ mod tests {
             })
             .unwrap_err(),
             ScaleError::NonFiniteSourceTransform {
-                source_node_index: 11
+                source_node_index: 1
             }
         );
     }
@@ -18368,7 +18435,7 @@ mod tests {
     fn source_world_reject_reason(document: &Document, start: usize) -> ScaleError {
         let by_source_index = source_node_index_map(document);
         let mut cache = BTreeMap::new();
-        source_world_matrix(start, &by_source_index, &mut cache)
+        source_world_matrix(start, &by_source_index, &BTreeSet::new(), &mut cache)
             .expect_err("the fixture's projection is malformed")
     }
 

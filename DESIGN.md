@@ -1593,7 +1593,10 @@ that raw local. The connector product, inverse, additive term, complete
 bridged translation sum, and bridged linear ratio application are evaluated
 in `f64`, then each final source-local component is narrowed once to the
 `f32` model boundary. Direct projected edges retain their established `f32`
-arithmetic and association. Translation
+arithmetic and association. Planning likewise keeps each admitted connector
+span widened until its projected endpoint, so a built candidate that retains
+Complete source projection remains a consumable factor-one planner input even
+when the preserved connector-only product exceeds `f32`. Translation
 animation values and both cubic translation
 tangents on normalized nodes receive the existing parent-basis multiplier.
 Scale animation on those normalized nodes is the same local-scale component
