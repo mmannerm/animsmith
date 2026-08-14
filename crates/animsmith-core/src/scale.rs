@@ -6650,13 +6650,14 @@ mod tests {
     fn compensated_connector_translation_is_widened_before_the_f32_candidate_boundary() {
         // The selected root's .01 factor keeps every complete raw source-world
         // intermediate finite, while the connector-only product contains the
-        // translation 1e40. The projected successor cancels it with a finite
-        // authored -1e20 translation. Accumulating only the connector
-        // translation column in f32 would overflow before that compensation.
+        // translations 1e40, -2e40, and 3e40. The projected successor cancels
+        // them with finite authored values on every axis. Accumulating any
+        // connector translation lane in f32 would overflow before that
+        // compensation.
         let connector_scale = Mat4::from_scale(Vec3::splat(1e20));
-        let connector_translation = Mat4::from_translation(Vec3::new(1e20, 0.0, 0.0));
+        let connector_translation = Mat4::from_translation(Vec3::new(1e20, -2e20, 3e20));
         let raw_child = Transform {
-            translation: Vec3::new(-1e20, 0.0, 0.0),
+            translation: Vec3::new(-1e20, 2e20, -3e20),
             rotation: Quat::IDENTITY,
             scale: Vec3::splat(1e-20),
         };
@@ -6680,8 +6681,8 @@ mod tests {
             panic!("fixture successor changed representation");
         };
         assert_eq!(translation.x.to_bits(), (-1e20f32).to_bits());
-        assert_eq!(translation.y.to_bits(), 0.0f32.to_bits());
-        assert_eq!(translation.z.to_bits(), 0.0f32.to_bits());
+        assert_eq!(translation.y.to_bits(), 2e20f32.to_bits());
+        assert_eq!(translation.z.to_bits(), (-3e20f32).to_bits());
         prove_scale(&doc, &candidate, &plan).unwrap();
     }
 
@@ -7054,6 +7055,13 @@ mod tests {
     fn a_shared_connector_chain_plans_builds_and_proves_through_public_apis() {
         const CONNECTORS: usize = 64;
         const PROJECTED_CHILDREN: usize = 64;
+        // The first child fills the connector-product cache and every later
+        // sibling must reuse the same nonidentity T(50) product. Returning an
+        // identity or a partial product on cache hits changes the exact
+        // successor local below.
+        let normalized_child_translation = Vec3::new(150.0, 0.0, 0.0);
+        let raw_child_translation = Vec3::new(100.0, 0.0, 0.0);
+        let expected_child_translation = Vec3::new(-48.5, 0.0, 0.0);
         let mut nodes = vec![RigNode {
             parent: None,
             source_node_index: 0,
@@ -7061,13 +7069,22 @@ mod tests {
             rotation: Quat::IDENTITY,
             scale: Vec3::splat(0.01),
         }];
-        nodes.extend((1..=PROJECTED_CHILDREN).map(|source| rig(Some(0), source, Vec3::ZERO)));
+        nodes.extend(
+            (1..=PROJECTED_CHILDREN)
+                .map(|source| rig(Some(0), source, normalized_child_translation)),
+        );
         let skin_bones: Vec<BoneId> = (1..=PROJECTED_CHILDREN).collect();
-        let mut doc = rig_document(&nodes, &skin_bones, 0, Mat4::IDENTITY);
+        let child_world = Mat4::from_scale(Vec3::splat(0.01))
+            * Mat4::from_translation(normalized_child_translation);
+        let mut doc = rig_document(&nodes, &skin_bones, 0, child_world.inverse());
         for offset in 0..CONNECTORS {
             let source = 100 + offset;
-            let mut connector =
-                SourceNodeAsset::new(source, SourceNodeLocalRest::Matrix(Mat4::IDENTITY));
+            let matrix = if offset == 0 {
+                Mat4::from_translation(Vec3::new(50.0, 0.0, 0.0))
+            } else {
+                Mat4::IDENTITY
+            };
+            let mut connector = SourceNodeAsset::new(source, SourceNodeLocalRest::Matrix(matrix));
             connector.parent_source_node_index = Some(if offset == 0 { 0 } else { source - 1 });
             doc.assets.source_skeleton.nodes.push(connector);
         }
@@ -7080,6 +7097,11 @@ mod tests {
             .filter(|node| node.bone.is_some_and(|bone| bone != 0))
         {
             child.parent_source_node_index = Some(tail);
+            child.local_rest = SourceNodeLocalRest::Trs {
+                translation: raw_child_translation,
+                rotation: Quat::IDENTITY,
+                scale: Vec3::ONE,
+            };
         }
 
         let capability = complete_capability();
@@ -7112,6 +7134,23 @@ mod tests {
                 .find(|node| node.source_node_index == source)
                 .unwrap();
             assert_source_local_rest_exact(&after.local_rest, &before.local_rest);
+        }
+        for child in candidate
+            .document()
+            .assets
+            .source_skeleton
+            .nodes
+            .iter()
+            .filter(|node| node.bone.is_some_and(|bone| bone != 0))
+        {
+            assert_source_local_rest_exact(
+                &child.local_rest,
+                &SourceNodeLocalRest::Trs {
+                    translation: expected_child_translation,
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
+            );
         }
         prove_scale(&doc, &candidate, &plan).unwrap();
     }
