@@ -2637,16 +2637,18 @@ fn build_rest_bind(
     Ok(candidate)
 }
 
-/// Apply the established projected-local rebase, optionally adding the
-/// connector-conjugation translation after that exact direct arithmetic.
+/// Apply the established projected-local rebase, optionally combining its
+/// translation with a widened connector-conjugation offset.
 ///
 /// `None` deliberately avoids adding a zero: direct-edge f32 association and
-/// signed-zero behavior are part of the calibrated Appendix D contract.
+/// signed-zero behavior are part of the calibrated Appendix D contract. A
+/// bridged translation stays widened until the complete sum is narrowed, so
+/// compensating terms above the f32 range can still produce a finite local.
 fn rebase_source_local_rest(
     local_rest: &SourceNodeLocalRest,
     s_parent: f32,
     s_node: f32,
-    bridge_offset: Option<Vec3>,
+    bridge_offset: Option<DVec3>,
 ) -> SourceNodeLocalRest {
     match local_rest {
         SourceNodeLocalRest::Trs {
@@ -2655,7 +2657,7 @@ fn rebase_source_local_rest(
             scale,
         } => {
             let translation = match bridge_offset {
-                Some(offset) => *translation * s_parent + offset,
+                Some(offset) => (translation.as_dvec3() * f64::from(s_parent) + offset).as_vec3(),
                 None => *translation * s_parent,
             };
             SourceNodeLocalRest::Trs {
@@ -2667,7 +2669,9 @@ fn rebase_source_local_rest(
         SourceNodeLocalRest::Matrix(matrix) => {
             let mut rebased = rebase_matrix(*matrix, s_parent, s_node);
             if let Some(offset) = bridge_offset {
-                rebased.w_axis += offset.extend(0.0);
+                let translation =
+                    (matrix.w_axis.truncate().as_dvec3() * f64::from(s_parent) + offset).as_vec3();
+                rebased.w_axis = translation.extend(matrix.w_axis.w);
             }
             SourceNodeLocalRest::Matrix(rebased)
         }
@@ -2711,13 +2715,10 @@ fn rebase_source_local_through_connector_bridge(
         return Err(ScaleError::NonFiniteTransform { node: bone });
     }
     // For affine H=[A,t], H^-1*S_parent*H contributes only the translation
-    // A^-1*((s_parent-1)*t) beyond the established direct-edge rewrite. Use
-    // that direct implementation so equal endpoint factors preserve authored
-    // matrix linear bits and the homogeneous row exactly.
-    let bridge_offset = bridge_offset.as_vec3();
-    if !bridge_offset.is_finite() {
-        return Err(ScaleError::NonFiniteTransform { node: bone });
-    }
+    // A^-1*((s_parent-1)*t) beyond the established direct-edge rewrite. Keep
+    // the full translation sum widened, while reusing the direct linear
+    // implementation so equal endpoint factors preserve authored matrix
+    // linear bits and the homogeneous row exactly.
     let rebased = rebase_source_local_rest(local_rest, s_parent, s_node, Some(bridge_offset));
     if !mat4_is_finite(local_rest_matrix(&rebased)) {
         return Err(ScaleError::NonFiniteTransform { node: bone });
@@ -2856,23 +2857,21 @@ fn proof_expected_bridged_source_local(
     {
         return Err(ScaleError::NonFiniteTransform { node: bone });
     }
-    let offset = offset.as_vec3();
-    if !offset.is_finite() {
-        return Err(ScaleError::NonFiniteTransform { node: bone });
-    }
     let expected = match local_rest {
         SourceNodeLocalRest::Trs {
             translation,
             rotation,
             scale,
         } => SourceNodeLocalRest::Trs {
-            translation: *translation * s_parent + offset,
+            translation: (translation.as_dvec3() * f64::from(s_parent) + offset).as_vec3(),
             rotation: *rotation,
             scale: *scale * (s_parent / s_node),
         },
         SourceNodeLocalRest::Matrix(matrix) => {
             let mut expected = rebase_matrix(*matrix, s_parent, s_node);
-            expected.w_axis += offset.extend(0.0);
+            let translation =
+                (matrix.w_axis.truncate().as_dvec3() * f64::from(s_parent) + offset).as_vec3();
+            expected.w_axis = translation.extend(matrix.w_axis.w);
             SourceNodeLocalRest::Matrix(expected)
         }
     };
@@ -6684,6 +6683,96 @@ mod tests {
         assert_eq!(translation.y.to_bits(), 0.0f32.to_bits());
         assert_eq!(translation.z.to_bits(), 0.0f32.to_bits());
         prove_scale(&doc, &candidate, &plan).unwrap();
+    }
+
+    #[test]
+    fn bridged_translation_terms_are_combined_before_the_f32_candidate_boundary() {
+        // Each term of the bridged successor translation exceeds f32 even
+        // though their analytic sum is the exactly representable authored
+        // x value. Narrowing the direct term or bridge offset separately
+        // produces `inf + -inf`; the complete expression must stay in f64
+        // until its single final narrowing.
+        let factor = 128.0;
+        let connector_scale = f32::from_bits(0x3c00_0000); // 2^-7
+        let connector_translation = f32::from_bits(0xfb00_0000); // -2^119
+        let authored_successor_translation = f32::from_bits(0x7e80_0000); // 2^126
+        let connector = Mat4::from_scale_rotation_translation(
+            Vec3::splat(connector_scale),
+            Quat::IDENTITY,
+            Vec3::new(connector_translation, 0.0, 0.0),
+        );
+        let authored_successor = Transform {
+            translation: Vec3::new(authored_successor_translation, 0.0, 0.0),
+            rotation: Quat::IDENTITY,
+            scale: Vec3::splat(factor),
+        };
+        for matrix_successor in [false, true] {
+            let mut doc = compensated_document_with_connectors(
+                &[connector],
+                authored_successor,
+                Transform::default(),
+            );
+            doc.skeleton.bones[0].rest.scale = Vec3::splat(factor);
+            let SourceNodeLocalRest::Trs { scale, .. } = &mut doc
+                .assets
+                .source_skeleton
+                .nodes
+                .iter_mut()
+                .find(|node| node.bone == Some(0))
+                .unwrap()
+                .local_rest
+            else {
+                panic!("fixture root changed representation");
+            };
+            *scale = Vec3::splat(factor);
+            doc.assets.instances[0].skin_ibms[0] = Mat4::from_scale(Vec3::splat(1.0 / factor));
+
+            let expected_successor = if matrix_successor {
+                SourceNodeLocalRest::Matrix(Mat4::from_scale_rotation_translation(
+                    authored_successor.scale,
+                    authored_successor.rotation,
+                    authored_successor.translation,
+                ))
+            } else {
+                SourceNodeLocalRest::Trs {
+                    translation: authored_successor.translation,
+                    rotation: authored_successor.rotation,
+                    scale: authored_successor.scale,
+                }
+            };
+            if matrix_successor {
+                doc.assets
+                    .source_skeleton
+                    .nodes
+                    .iter_mut()
+                    .find(|node| node.bone == Some(1))
+                    .unwrap()
+                    .local_rest = expected_successor.clone();
+            }
+
+            let capability = complete_capability();
+            let plan = plan_scale(&ScaleRequest {
+                operation: ScaleOperation::RestBindUniformScale {
+                    source_skin_index: 0,
+                    source_root_node_index: 0,
+                    expected_factor: f64::from(factor),
+                },
+                document: &doc,
+                capability: &capability,
+            })
+            .unwrap();
+            let candidate = build_scale_candidate(&doc, &plan).unwrap();
+            let successor = candidate
+                .document()
+                .assets
+                .source_skeleton
+                .nodes
+                .iter()
+                .find(|node| node.bone == Some(1))
+                .unwrap();
+            assert_source_local_rest_exact(&successor.local_rest, &expected_successor);
+            prove_scale(&doc, &candidate, &plan).unwrap();
+        }
     }
 
     #[test]
