@@ -1201,7 +1201,9 @@ mod tests {
                 .to_bits(),
             authored.to_bits()
         );
-        prove_rewritten_artifact(&source, &artifact, &plan).expect("factor-one artifact proof");
+        let proof =
+            prove_rewritten_artifact(&source, &artifact, &plan).expect("factor-one artifact proof");
+        assert_eq!(proof.rewritten_accessor_count, 0);
 
         let mut doctored = artifact_value(&artifact);
         let adjacent = f64::from_bits(authored.to_bits() + 1);
