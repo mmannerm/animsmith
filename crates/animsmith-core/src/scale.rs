@@ -6688,29 +6688,49 @@ mod tests {
     #[test]
     fn bridged_translation_terms_are_combined_before_the_f32_candidate_boundary() {
         // Each term of the bridged successor translation exceeds f32 even
-        // though their analytic sum is the exactly representable authored
-        // x value. Narrowing the direct term or bridge offset separately
-        // produces `inf + -inf`; the complete expression must stay in f64
-        // until its single final narrowing.
+        // though their analytic sum is exactly representable and differs
+        // from the authored value on every axis. Narrowing the direct term or
+        // bridge offset separately produces `inf + -inf`; the complete
+        // expression must stay in f64 until its single final narrowing.
         let factor = 128.0;
         let connector_scale = f32::from_bits(0x3c00_0000); // 2^-7
-        let connector_translation = f32::from_bits(0xfb00_0000); // -2^119
-        let authored_successor_translation = f32::from_bits(0x7e80_0000); // 2^126
+        let magnitude = f32::from_bits(0x7b00_0000); // 2^119
+        let connector_translation = Vec3::new(-magnitude, magnitude, -magnitude);
+        let authored_successor_translation =
+            Vec3::new(magnitude * 129.0, -magnitude * 129.0, magnitude * 130.0);
+        let normalized_successor_translation = Vec3::new(
+            f32::from_bits(0x7780_0000), // 2^112
+            f32::from_bits(0xf780_0000), // -2^112
+            f32::from_bits(0x7800_0000), // 2^113
+        );
+        let expected_successor_translation = Vec3::new(
+            f32::from_bits(0x7f00_0000), // 2^127
+            f32::from_bits(0xff00_0000), // -2^127
+            f32::from_bits(0x7f40_0000), // 3 * 2^126
+        );
         let connector = Mat4::from_scale_rotation_translation(
             Vec3::splat(connector_scale),
             Quat::IDENTITY,
-            Vec3::new(connector_translation, 0.0, 0.0),
+            connector_translation,
         );
         let authored_successor = Transform {
-            translation: Vec3::new(authored_successor_translation, 0.0, 0.0),
+            translation: authored_successor_translation,
             rotation: Quat::IDENTITY,
             scale: Vec3::splat(factor),
+        };
+        let normalized_successor = Transform {
+            translation: normalized_successor_translation,
+            ..Transform::default()
+        };
+        let expected_successor = Transform {
+            translation: expected_successor_translation,
+            ..authored_successor
         };
         for matrix_successor in [false, true] {
             let mut doc = compensated_document_with_connectors(
                 &[connector],
                 authored_successor,
-                Transform::default(),
+                normalized_successor,
             );
             doc.skeleton.bones[0].rest.scale = Vec3::splat(factor);
             let SourceNodeLocalRest::Trs { scale, .. } = &mut doc
@@ -6725,19 +6745,23 @@ mod tests {
                 panic!("fixture root changed representation");
             };
             *scale = Vec3::splat(factor);
-            doc.assets.instances[0].skin_ibms[0] = Mat4::from_scale(Vec3::splat(1.0 / factor));
+            doc.assets.instances[0].skin_ibms[0] = Mat4::from_scale_rotation_translation(
+                Vec3::splat(connector_scale),
+                Quat::IDENTITY,
+                -normalized_successor_translation,
+            );
 
             let expected_successor = if matrix_successor {
                 SourceNodeLocalRest::Matrix(Mat4::from_scale_rotation_translation(
-                    authored_successor.scale,
-                    authored_successor.rotation,
-                    authored_successor.translation,
+                    expected_successor.scale,
+                    expected_successor.rotation,
+                    expected_successor.translation,
                 ))
             } else {
                 SourceNodeLocalRest::Trs {
-                    translation: authored_successor.translation,
-                    rotation: authored_successor.rotation,
-                    scale: authored_successor.scale,
+                    translation: expected_successor.translation,
+                    rotation: expected_successor.rotation,
+                    scale: expected_successor.scale,
                 }
             };
             if matrix_successor {
@@ -6747,7 +6771,7 @@ mod tests {
                     .iter_mut()
                     .find(|node| node.bone == Some(1))
                     .unwrap()
-                    .local_rest = expected_successor.clone();
+                    .local_rest = SourceNodeLocalRest::Matrix(authored_successor.to_mat4());
             }
 
             let capability = complete_capability();
