@@ -1376,26 +1376,66 @@ impl ScaleStructureLedger {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct WholeDocumentPlan {
+struct WholeDocumentLedger {
     factor: f64,
     observed_factor: f64,
-    ledger: ScaleStructureLedger,
+    structure: ScaleStructureLedger,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct RestBindPlan {
+struct RestBindLedger {
     source_skin_index: usize,
     source_root_node_index: usize,
     expected_factor: f64,
     observed_factor: f64,
     scaled_root_node: BoneId,
-    ledger: ScaleStructureLedger,
+    structure: ScaleStructureLedger,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum ScalePlanKind {
-    WholeDocument(WholeDocumentPlan),
-    RestBind(RestBindPlan),
+enum ScalePlanLedger {
+    WholeDocument(WholeDocumentLedger),
+    RestBind(RestBindLedger),
+}
+
+impl WholeDocumentLedger {
+    fn rewrites(&self, domain: ScaleRewriteDomain) -> bool {
+        matches!(
+            domain,
+            ScaleRewriteDomain::RestHierarchy
+                | ScaleRewriteDomain::TranslationAnimation
+                | ScaleRewriteDomain::InverseBinds
+                | ScaleRewriteDomain::BaseMeshPositions
+        )
+    }
+}
+
+impl RestBindLedger {
+    fn rewrites(&self, domain: ScaleRewriteDomain) -> bool {
+        matches!(
+            domain,
+            ScaleRewriteDomain::RestHierarchy
+                | ScaleRewriteDomain::TranslationAnimation
+                | ScaleRewriteDomain::ScaleAnimation
+                | ScaleRewriteDomain::InverseBinds
+        )
+    }
+}
+
+impl ScalePlanLedger {
+    fn structure(&self) -> &ScaleStructureLedger {
+        match self {
+            Self::WholeDocument(ledger) => &ledger.structure,
+            Self::RestBind(ledger) => &ledger.structure,
+        }
+    }
+
+    fn rewrites(&self, domain: ScaleRewriteDomain) -> bool {
+        match self {
+            Self::WholeDocument(ledger) => ledger.rewrites(domain),
+            Self::RestBind(ledger) => ledger.rewrites(domain),
+        }
+    }
 }
 
 /// Pure, typed plan returned by [`plan_scale`].
@@ -1412,20 +1452,20 @@ enum ScalePlanKind {
 #[non_exhaustive]
 pub struct ScalePlan {
     tolerance_policy: ScaleTolerancePolicy,
-    kind: ScalePlanKind,
+    ledger: ScalePlanLedger,
 }
 
 impl ScalePlan {
     /// Echoed operation and its declared parameters.
     pub fn operation(&self) -> ScaleOperation {
-        match &self.kind {
-            ScalePlanKind::WholeDocument(plan) => ScaleOperation::WholeDocumentLinearUnits {
-                factor: plan.factor,
+        match &self.ledger {
+            ScalePlanLedger::WholeDocument(ledger) => ScaleOperation::WholeDocumentLinearUnits {
+                factor: ledger.factor,
             },
-            ScalePlanKind::RestBind(plan) => ScaleOperation::RestBindUniformScale {
-                source_skin_index: plan.source_skin_index,
-                source_root_node_index: plan.source_root_node_index,
-                expected_factor: plan.expected_factor,
+            ScalePlanLedger::RestBind(ledger) => ScaleOperation::RestBindUniformScale {
+                source_skin_index: ledger.source_skin_index,
+                source_root_node_index: ledger.source_root_node_index,
+                expected_factor: ledger.expected_factor,
             },
         }
     }
@@ -1445,7 +1485,7 @@ impl ScalePlan {
     /// source-only connector rows on those paths are not normalized nodes
     /// and therefore do not appear in this list.
     pub fn affected_nodes(&self) -> Vec<BoneId> {
-        self.ledger()
+        self.structure()
             .nodes
             .iter()
             .filter(|row| row.role.is_affected())
@@ -1457,7 +1497,7 @@ impl ScalePlan {
     /// the "transform-only child" case of DESIGN.md Appendix D §D.2/§D.3.
     /// Always empty for [`ScaleOperation::WholeDocumentLinearUnits`].
     pub fn transform_only_attachments(&self) -> Vec<BoneId> {
-        self.ledger()
+        self.structure()
             .nodes
             .iter()
             .filter(|row| row.role == NodeLedgerRole::TransformOnlyAttachment)
@@ -1475,9 +1515,9 @@ impl ScalePlan {
     /// counterpart, and the two are separate numbers on purpose — DESIGN.md
     /// Appendix D §D.6 requires producer evidence to record both.
     pub fn common_factor(&self) -> f64 {
-        match &self.kind {
-            ScalePlanKind::WholeDocument(plan) => plan.factor,
-            ScalePlanKind::RestBind(plan) => plan.expected_factor,
+        match &self.ledger {
+            ScalePlanLedger::WholeDocument(ledger) => ledger.factor,
+            ScalePlanLedger::RestBind(ledger) => ledger.expected_factor,
         }
     }
 
@@ -1508,9 +1548,9 @@ impl ScalePlan {
     /// contract uniform across the two operations rather than leaving a hole
     /// a consumer would have to special-case.
     pub fn observed_factor(&self) -> f64 {
-        match &self.kind {
-            ScalePlanKind::WholeDocument(plan) => plan.observed_factor,
-            ScalePlanKind::RestBind(plan) => plan.observed_factor,
+        match &self.ledger {
+            ScalePlanLedger::WholeDocument(ledger) => ledger.observed_factor,
+            ScalePlanLedger::RestBind(ledger) => ledger.observed_factor,
         }
     }
 
@@ -1519,36 +1559,27 @@ impl ScalePlan {
     /// The answer comes from the operation-typed ledger rather than a stored
     /// collection of independently combinable booleans.
     pub fn rewrites(&self, domain: ScaleRewriteDomain) -> bool {
-        match (&self.kind, domain) {
-            (_, ScaleRewriteDomain::RestHierarchy)
-            | (_, ScaleRewriteDomain::TranslationAnimation)
-            | (_, ScaleRewriteDomain::InverseBinds) => true,
-            (ScalePlanKind::RestBind(_), ScaleRewriteDomain::ScaleAnimation) => true,
-            (ScalePlanKind::WholeDocument(_), ScaleRewriteDomain::BaseMeshPositions) => true,
-            (ScalePlanKind::WholeDocument(_), ScaleRewriteDomain::ScaleAnimation)
-            | (ScalePlanKind::RestBind(_), ScaleRewriteDomain::BaseMeshPositions) => false,
-        }
+        self.ledger.rewrites(domain)
     }
 
     /// Whether this plan's ledger carries evidence for `obligation`.
     pub fn requires_proof(&self, obligation: ScaleProofObligation) -> bool {
-        self.ledger()
-            .requires_proof(matches!(self.kind, ScalePlanKind::RestBind(_)), obligation)
+        self.structure().requires_proof(
+            matches!(self.ledger, ScalePlanLedger::RestBind(_)),
+            obligation,
+        )
     }
 
     fn affected_set(&self) -> BTreeSet<BoneId> {
-        self.ledger().affected_nodes().collect()
+        self.structure().affected_nodes().collect()
     }
 
     fn is_whole_document(&self) -> bool {
-        matches!(self.kind, ScalePlanKind::WholeDocument(_))
+        matches!(self.ledger, ScalePlanLedger::WholeDocument(_))
     }
 
-    fn ledger(&self) -> &ScaleStructureLedger {
-        match &self.kind {
-            ScalePlanKind::WholeDocument(plan) => &plan.ledger,
-            ScalePlanKind::RestBind(plan) => &plan.ledger,
-        }
+    fn structure(&self) -> &ScaleStructureLedger {
+        self.ledger.structure()
     }
 }
 
@@ -2024,11 +2055,11 @@ fn plan_whole_document(document: &Document, factor: f64) -> Result<ScalePlan, Sc
     );
     Ok(ScalePlan {
         tolerance_policy: ScaleTolerancePolicy::APPENDIX_D_V6,
-        kind: ScalePlanKind::WholeDocument(WholeDocumentPlan {
+        ledger: ScalePlanLedger::WholeDocument(WholeDocumentLedger {
             factor,
             // Declared, not measured — see [`ScalePlan::observed_factor`].
             observed_factor: factor,
-            ledger,
+            structure: ledger,
         }),
     })
 }
@@ -2238,7 +2269,7 @@ fn plan_rest_bind(
 
     Ok(ScalePlan {
         tolerance_policy: tol,
-        kind: ScalePlanKind::RestBind(RestBindPlan {
+        ledger: ScalePlanLedger::RestBind(RestBindLedger {
             source_skin_index,
             source_root_node_index,
             expected_factor,
@@ -2246,7 +2277,7 @@ fn plan_rest_bind(
             // build applies rather than discarded once validated against it.
             observed_factor: observed_common,
             scaled_root_node,
-            ledger,
+            structure: ledger,
         }),
     })
 }
@@ -2263,8 +2294,8 @@ fn validate_plan_document_inventory(
     document: &Document,
     plan: &ScalePlan,
 ) -> Result<(), ScaleError> {
-    let (derived, rest_bind) = match &plan.kind {
-        ScalePlanKind::WholeDocument(_) => {
+    let (derived, rest_bind) = match &plan.ledger {
+        ScalePlanLedger::WholeDocument(_) => {
             let affected: BTreeSet<_> = (0..document.skeleton.bones.len()).collect();
             (
                 derive_structure_ledger(
@@ -2277,7 +2308,7 @@ fn validate_plan_document_inventory(
                 false,
             )
         }
-        ScalePlanKind::RestBind(rest_bind) => (
+        ScalePlanLedger::RestBind(rest_bind) => (
             derive_rest_bind_structure_ledger(
                 document,
                 rest_bind.source_skin_index,
@@ -2286,7 +2317,7 @@ fn validate_plan_document_inventory(
             true,
         ),
     };
-    let stored = plan.ledger();
+    let stored = plan.structure();
     if stored != &derived {
         return Err(ScaleError::PlanDocumentMismatch {
             reason: stored.mismatch_reason(&derived, rest_bind),
@@ -2776,9 +2807,9 @@ pub fn build_scale_candidate(
 ) -> Result<ScaleCandidate, ScaleError> {
     validate_scale_input(document)?;
     validate_plan_document_inventory(document, plan)?;
-    let candidate = match &plan.kind {
-        ScalePlanKind::WholeDocument(whole) => build_whole_document(document, whole)?,
-        ScalePlanKind::RestBind(rest_bind) => build_rest_bind(document, rest_bind)?,
+    let candidate = match &plan.ledger {
+        ScalePlanLedger::WholeDocument(whole) => build_whole_document(document, whole)?,
+        ScalePlanLedger::RestBind(rest_bind) => build_rest_bind(document, rest_bind)?,
     };
     // The same fail-closed shape check the input had to pass, re-run on the
     // output: a builder is the one place in this module that writes numbers,
@@ -2794,11 +2825,11 @@ pub fn build_scale_candidate(
 
 fn build_whole_document(
     document: &Document,
-    plan: &WholeDocumentPlan,
+    plan: &WholeDocumentLedger,
 ) -> Result<Document, ScaleError> {
     let q = check_factor_narrows(plan.factor, plan.factor)?;
     let mut candidate = document.clone();
-    for row in &plan.ledger.nodes {
+    for row in &plan.structure.nodes {
         let bone = candidate
             .skeleton
             .bones
@@ -2825,7 +2856,7 @@ fn build_whole_document(
         .enumerate()
         .map(|(position, node)| (node.source_node_index, position))
         .collect();
-    for row in &plan.ledger.source_nodes {
+    for row in &plan.structure.source_nodes {
         let position = source_position[&row.source_node_index];
         let node = &mut candidate.assets.source_skeleton.nodes[position];
         node.local_rest = match &node.local_rest {
@@ -2843,7 +2874,7 @@ fn build_whole_document(
             }
         };
     }
-    for row in &plan.ledger.tracks {
+    for row in &plan.structure.tracks {
         if row.role != TrackLedgerRole::RewriteTranslation {
             continue;
         }
@@ -2854,7 +2885,7 @@ fn build_whole_document(
             }
         }
     }
-    for row in &plan.ledger.primitives {
+    for row in &plan.structure.primitives {
         if row.role != PositionLedgerRole::Rewrite {
             continue;
         }
@@ -2864,7 +2895,7 @@ fn build_whole_document(
             *position *= q;
         }
     }
-    for row in &plan.ledger.instances {
+    for row in &plan.structure.instances {
         let instance = &mut candidate.assets.instances[row.instance_index];
         for inverse_bind in &mut instance.skin_ibms {
             *inverse_bind = scale_translation_only(*inverse_bind, q);
@@ -2873,8 +2904,8 @@ fn build_whole_document(
     Ok(candidate)
 }
 
-fn build_rest_bind(document: &Document, plan: &RestBindPlan) -> Result<Document, ScaleError> {
-    let affected: BTreeSet<_> = plan.ledger.affected_nodes().collect();
+fn build_rest_bind(document: &Document, plan: &RestBindLedger) -> Result<Document, ScaleError> {
+    let affected: BTreeSet<_> = plan.structure.affected_nodes().collect();
     let s = check_factor_narrows(plan.expected_factor, plan.expected_factor)?;
     let by_source_index = source_node_index_map(document);
     let mut connector_product_by_tail = BTreeMap::new();
@@ -2893,7 +2924,7 @@ fn build_rest_bind(document: &Document, plan: &RestBindPlan) -> Result<Document,
 
     let mut candidate = document.clone();
     for row in plan
-        .ledger
+        .structure
         .nodes
         .iter()
         .filter(|row| row.role.is_affected())
@@ -2933,7 +2964,7 @@ fn build_rest_bind(document: &Document, plan: &RestBindPlan) -> Result<Document,
         .map(|(position, node)| (node.source_node_index, position))
         .collect();
     for row in plan
-        .ledger
+        .structure
         .source_nodes
         .iter()
         .filter(|row| matches!(row.role, SourceNodeLedgerRole::RestBindProjected { .. }))
@@ -2966,7 +2997,7 @@ fn build_rest_bind(document: &Document, plan: &RestBindPlan) -> Result<Document,
             rebase_source_local_rest(&node.local_rest, s_parent, s_node, None)
         };
     }
-    for row in &plan.ledger.tracks {
+    for row in &plan.structure.tracks {
         let track = &mut candidate.clips[row.clip_index].tracks[row.track_index];
         match row.role {
             TrackLedgerRole::RewriteTranslation => {
@@ -3019,7 +3050,7 @@ fn build_rest_bind(document: &Document, plan: &RestBindPlan) -> Result<Document,
     // `MissingInverseBind`, at build time rather than as an opaque
     // `SkinMatrix` residual at proof time.
     for row in plan
-        .ledger
+        .structure
         .instances
         .iter()
         .filter(|row| row.role == InstanceLedgerRole::RewriteBinds)
@@ -3319,10 +3350,10 @@ fn proof_expected_bridged_source_local(
 fn check_rest_bind_connector_projection(
     source: &Document,
     candidate: &Document,
-    plan: &RestBindPlan,
+    plan: &RestBindLedger,
 ) -> Result<(), ScaleError> {
     if !plan
-        .ledger
+        .structure
         .source_nodes
         .iter()
         .any(|row| row.role == SourceNodeLedgerRole::RestBindConnector)
@@ -3332,7 +3363,7 @@ fn check_rest_bind_connector_projection(
     let source_nodes = source_node_index_map(source);
     let candidate_nodes = source_node_index_map(candidate);
     for row in plan
-        .ledger
+        .structure
         .source_nodes
         .iter()
         .filter(|row| row.role == SourceNodeLedgerRole::RestBindConnector)
@@ -3356,10 +3387,10 @@ fn check_rest_bind_connector_projection(
         }
     }
 
-    let affected: BTreeSet<_> = plan.ledger.affected_nodes().collect();
+    let affected: BTreeSet<_> = plan.structure.affected_nodes().collect();
     let s = check_factor_narrows(plan.expected_factor, plan.expected_factor)?;
     let mut products = BTreeMap::new();
-    for row in &plan.ledger.source_nodes {
+    for row in &plan.structure.source_nodes {
         let SourceNodeLedgerRole::RestBindProjected {
             connector_tail: Some(connector_tail),
             ..
@@ -3748,7 +3779,7 @@ pub fn prove_scale(
     validate_plan_document_inventory(source, plan)?;
     validate_scale_input(candidate)?;
     validate_candidate_structure(source, candidate)?;
-    if let ScalePlanKind::RestBind(rest_bind) = &plan.kind {
+    if let ScalePlanLedger::RestBind(rest_bind) = &plan.ledger {
         check_rest_bind_connector_projection(source, candidate, rest_bind)?;
     }
     let tol = plan.tolerance_policy;
@@ -3769,7 +3800,7 @@ pub fn prove_scale(
     // empty there; topology parity still applies because that operation does
     // not rewrite parents either.
     for node in plan
-        .ledger()
+        .structure()
         .nodes
         .iter()
         .filter(|row| row.role == NodeLedgerRole::PreserveWorldRest)
@@ -3826,6 +3857,16 @@ pub fn prove_scale(
         #[cfg(test)]
         unaffected_inverse_bind_f32_rounding_demand: 0.0,
     };
+
+    // These four queries walk ledger rows. Derive them once per proof call,
+    // before any sample-time loop, so a document cannot multiply an instance-
+    // or track-sized query by its sample count without that work appearing in
+    // the proof budget. They are transient execution decisions, not parallel
+    // plan state: every value still comes from the replay-validated ledger.
+    let key_translation_required = plan.requires_proof(ScaleProofObligation::KeyTranslation);
+    let cubic_interior_required = plan.requires_proof(ScaleProofObligation::CubicInterior);
+    let trajectory_required = plan.requires_proof(ScaleProofObligation::Trajectory);
+    let skin_and_bounds_required = plan.requires_proof(ScaleProofObligation::SkinAndBounds);
 
     check_candidate_values(source, candidate, &affected, plan, &tol, &mut proof)?;
 
@@ -3984,15 +4025,16 @@ pub fn prove_scale(
         &candidate_worlds,
         &affected,
         plan,
+        skin_and_bounds_required,
         &tol,
         &mut proof,
     )?;
     check_unaffected_instance_binds(source, candidate, &affected, &tol, &mut proof)?;
 
-    let any_sampled_obligation = plan.requires_proof(ScaleProofObligation::KeyTranslation)
-        || plan.requires_proof(ScaleProofObligation::CubicInterior)
-        || plan.requires_proof(ScaleProofObligation::Trajectory)
-        || plan.requires_proof(ScaleProofObligation::SkinAndBounds);
+    let any_sampled_obligation = key_translation_required
+        || cubic_interior_required
+        || trajectory_required
+        || skin_and_bounds_required;
     if any_sampled_obligation {
         // Harvested once, up front, for two reasons: the budget below has to
         // know the total sample count *before* the first sample is evaluated,
@@ -4007,7 +4049,7 @@ pub fn prove_scale(
                 .saturating_add(times.1.len() as u64);
             clip_times.push(times);
         }
-        let per_sample_cost = per_sample_work_units(source, &affected, plan);
+        let per_sample_cost = per_sample_work_units(source, &affected, skin_and_bounds_required);
         check_sampling_budget(&tol, sample_times, per_sample_cost)?;
 
         for (clip_index, clip) in source.clips.iter().enumerate() {
@@ -4022,7 +4064,7 @@ pub fn prove_scale(
             let (key_times, interior_times) = &clip_times[clip_index];
             for &t in key_times {
                 proof.sample_time_count += 1;
-                if plan.requires_proof(ScaleProofObligation::KeyTranslation) {
+                if key_translation_required {
                     check_track_value_residual(
                         ProofResidualKind::KeyTranslation,
                         source,
@@ -4043,13 +4085,15 @@ pub fn prove_scale(
                     t,
                     &affected,
                     plan,
+                    trajectory_required,
+                    skin_and_bounds_required,
                     &tol,
                     &mut proof,
                 )?;
             }
             for &t in interior_times {
                 proof.sample_time_count += 1;
-                if plan.requires_proof(ScaleProofObligation::CubicInterior) {
+                if cubic_interior_required {
                     check_track_value_residual(
                         ProofResidualKind::CubicInterior,
                         source,
@@ -4070,6 +4114,8 @@ pub fn prove_scale(
                     t,
                     &affected,
                     plan,
+                    trajectory_required,
+                    skin_and_bounds_required,
                     &tol,
                     &mut proof,
                 )?;
@@ -4099,17 +4145,17 @@ fn sample_time_obligations(
     t: f32,
     affected: &BTreeSet<BoneId>,
     plan: &ScalePlan,
+    trajectory_required: bool,
+    skin_and_bounds_required: bool,
     tol: &ScaleTolerancePolicy,
     proof: &mut ScaleProof,
 ) -> Result<(), ScaleError> {
-    if !plan.requires_proof(ScaleProofObligation::Trajectory)
-        && !plan.requires_proof(ScaleProofObligation::SkinAndBounds)
-    {
+    if !trajectory_required && !skin_and_bounds_required {
         return Ok(());
     }
     let source_worlds = world_at_time(&source.skeleton, source_clip, t)?;
     let candidate_worlds = world_at_time(&candidate.skeleton, candidate_clip, t)?;
-    if plan.requires_proof(ScaleProofObligation::Trajectory) {
+    if trajectory_required {
         check_trajectory_residual_at(
             &source_worlds,
             &candidate_worlds,
@@ -4126,6 +4172,7 @@ fn sample_time_obligations(
         &candidate_worlds,
         affected,
         plan,
+        skin_and_bounds_required,
         tol,
         proof,
     )
@@ -4210,10 +4257,10 @@ fn check_sampling_budget(
 fn per_sample_work_units(
     document: &Document,
     affected: &BTreeSet<BoneId>,
-    plan: &ScalePlan,
+    skin_and_bounds_required: bool,
 ) -> u64 {
     let mut units = PROOF_SIDES.saturating_mul(document.skeleton.bones.len() as u64);
-    if !plan.requires_proof(ScaleProofObligation::SkinAndBounds) {
+    if !skin_and_bounds_required {
         return units;
     }
     for instance in &document.assets.instances {
@@ -5572,10 +5619,11 @@ fn check_skin_and_bounds(
     candidate_worlds: &WorldPose,
     affected: &BTreeSet<BoneId>,
     plan: &ScalePlan,
+    skin_and_bounds_required: bool,
     tol: &ScaleTolerancePolicy,
     proof: &mut ScaleProof,
 ) -> Result<(), ScaleError> {
-    if !plan.requires_proof(ScaleProofObligation::SkinAndBounds) {
+    if !skin_and_bounds_required {
         return Ok(());
     }
 
@@ -6152,6 +6200,7 @@ mod tests {
             capability: &capability,
         };
         let plan = plan_scale(&request).unwrap();
+        assert_eq!(plan.operation(), request.operation);
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
         assert_eq!(
             candidate.document().skeleton.bones[1].rest.translation,
@@ -6172,6 +6221,7 @@ mod tests {
             capability: &capability,
         };
         let plan = plan_scale(&request).unwrap();
+        assert_eq!(plan.operation(), request.operation);
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
         let child = &candidate.document().skeleton.bones[1];
         assert!((child.rest.translation - Vec3::new(0.0, 0.01, 0.0)).length() < 1e-6);
@@ -6277,6 +6327,7 @@ mod tests {
             capability: &capability,
         };
         let plan = plan_scale(&request).unwrap();
+        assert_eq!(plan.operation(), request.operation);
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
         let TrackValues::Vec3s(values) = &candidate.document().clips[0].tracks[0].values else {
             panic!("expected vec3 track");
@@ -6345,6 +6396,7 @@ mod tests {
             capability: &capability,
         };
         let plan = plan_scale(&request).unwrap();
+        assert_eq!(plan.operation(), request.operation);
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
         assert_eq!(
             candidate.document().skeleton.bones[1].rest.translation,
@@ -6583,6 +6635,9 @@ mod tests {
         assert!(proof.skin_matrix_residual < 1e-4);
         assert!(proof.bounds_residual < 1e-4);
 
+        let connector_mismatch = ScaleError::CandidateStructureMismatch {
+            reason: "connector_source_local_mismatch",
+        };
         let mut changed_connector = candidate.document().clone();
         let connector = changed_connector
             .assets
@@ -6602,9 +6657,7 @@ mod tests {
                 &plan,
             )
             .unwrap_err(),
-            ScaleError::CandidateStructureMismatch {
-                reason: "connector_source_local_mismatch"
-            }
+            connector_mismatch,
         );
 
         let mut changed_matrix_zero = candidate.document().clone();
@@ -6628,9 +6681,7 @@ mod tests {
                 &plan,
             )
             .unwrap_err(),
-            ScaleError::CandidateStructureMismatch {
-                reason: "connector_source_local_mismatch"
-            }
+            connector_mismatch,
         );
 
         let mut unrebased_successor = candidate.document().clone();
@@ -6883,7 +6934,8 @@ mod tests {
             candidate.document().skeleton.bones[2].rest.translation,
             Vec3::new(0.01, 0.0, 0.0)
         );
-        prove_scale(&doc, &candidate, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+        assert!(proof.skin_matrix_comparisons > 0);
     }
 
     #[test]
@@ -6955,7 +7007,8 @@ mod tests {
             candidate.document().skeleton.bones[1].rest.translation,
             Vec3::new(0.0, 0.39999998, 0.0)
         );
-        prove_scale(&doc, &candidate, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+        assert!(proof.skin_matrix_comparisons > 0);
     }
 
     #[test]
@@ -6993,7 +7046,8 @@ mod tests {
                 scale: Vec3::splat(1e-40),
             },
         );
-        prove_scale(&doc, &candidate, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+        assert!(proof.skin_matrix_comparisons > 0);
 
         // The candidate retains Complete source projection, so its normalized
         // factor-one chain must remain a consumable planner input even though
@@ -7055,7 +7109,8 @@ mod tests {
         assert_eq!(translation.x.to_bits(), (-1e20f32).to_bits());
         assert_eq!(translation.y.to_bits(), 2e20f32.to_bits());
         assert_eq!(translation.z.to_bits(), (-3e20f32).to_bits());
-        prove_scale(&doc, &candidate, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+        assert!(proof.skin_matrix_comparisons > 0);
     }
 
     #[test]
@@ -7447,7 +7502,8 @@ mod tests {
             candidate.document().skeleton.bones[1].rest.translation,
             Vec3::new(0.0, 1.0, 0.0)
         );
-        prove_scale(&doc, &candidate, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+        assert!(proof.skin_matrix_comparisons > 0);
     }
 
     #[test]
@@ -7595,7 +7651,8 @@ mod tests {
                 },
             );
         }
-        prove_scale(&doc, &candidate, &plan).unwrap();
+        let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+        assert!(proof.skin_matrix_comparisons > 0);
     }
 
     #[test]
@@ -7605,6 +7662,9 @@ mod tests {
         let doc = compensated_document_with_connectors(&[identity, identity], rest, rest);
         let capability = complete_capability();
         let plan = compensated_rest_bind_plan(&doc, &capability);
+        let expected = ScaleError::PlanDocumentMismatch {
+            reason: "affected_source_topology_mismatch",
+        };
 
         let mut reordered = doc.clone();
         reordered
@@ -7633,9 +7693,7 @@ mod tests {
             .parent_source_node_index = Some(10);
         assert_eq!(
             build_scale_candidate(&reordered, &plan).unwrap_err(),
-            ScaleError::PlanDocumentMismatch {
-                reason: "affected_source_topology_mismatch"
-            }
+            expected,
         );
         assert_eq!(
             prove_scale(
@@ -7644,9 +7702,7 @@ mod tests {
                 &plan,
             )
             .unwrap_err(),
-            ScaleError::PlanDocumentMismatch {
-                reason: "affected_source_topology_mismatch"
-            }
+            expected,
         );
 
         let mut changed = doc.clone();
@@ -12798,7 +12854,7 @@ mod tests {
             expected
         );
 
-        let ScalePlanKind::RestBind(rest_bind) = &plan.kind else {
+        let ScalePlanLedger::RestBind(rest_bind) = &plan.ledger else {
             panic!("expected rest/bind plan")
         };
         let mut corrupted = build_rest_bind(&skinned, rest_bind).unwrap();
@@ -17950,7 +18006,7 @@ mod tests {
         let affected: BTreeSet<BoneId> = [1, 2].into_iter().collect();
         let plan = work_unit_plan(&doc);
         assert!(plan.requires_proof(ScaleProofObligation::SkinAndBounds));
-        assert_eq!(per_sample_work_units(&doc, &affected, &plan), 66);
+        assert_eq!(per_sample_work_units(&doc, &affected, true), 66);
 
         // With the instances removed, the same typed plan shape derives no
         // skin/bounds row, so only the two forward-kinematics passes remain.
@@ -17958,10 +18014,7 @@ mod tests {
         unskinned.assets.instances.clear();
         let unskinned_plan = work_unit_plan(&unskinned);
         assert!(!unskinned_plan.requires_proof(ScaleProofObligation::SkinAndBounds));
-        assert_eq!(
-            per_sample_work_units(&unskinned, &affected, &unskinned_plan),
-            6
-        );
+        assert_eq!(per_sample_work_units(&unskinned, &affected, false), 6);
     }
 
     #[test]
@@ -18193,7 +18246,7 @@ mod tests {
         let capability = complete_capability();
         let plan = whole_document_plan(&doc, &capability);
         let affected = plan.affected_set();
-        assert_eq!(per_sample_work_units(&doc, &affected, &plan), 9);
+        assert_eq!(per_sample_work_units(&doc, &affected, true), 9);
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
 
         let mut padded = candidate.document().clone();
@@ -19418,6 +19471,9 @@ mod tests {
 
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
         prove_scale(&doc, &candidate, &plan).unwrap();
+        let expected = ScaleError::CandidateStructureMismatch {
+            reason: "unaffected_world_rest_mismatch",
+        };
 
         // Exercise all four columns of the derived world affine. Comparing
         // only the origin would miss the rotation and scale mutations; a
@@ -19437,9 +19493,7 @@ mod tests {
             mutate(&mut changed.skeleton.bones[prop].rest);
             assert_eq!(
                 prove_scale(&doc, &ScaleCandidate { document: changed }, &plan).unwrap_err(),
-                ScaleError::CandidateStructureMismatch {
-                    reason: "unaffected_world_rest_mismatch"
-                }
+                expected,
             );
         }
     }
@@ -19474,6 +19528,9 @@ mod tests {
         // chain validation accepts it. It is the exact source/candidate
         // topology comparison that must refuse the operation rewrite.
         validate_scale_input(&reparented).unwrap();
+        let expected = ScaleError::CandidateStructureMismatch {
+            reason: "skeleton_topology_mismatch",
+        };
         assert_eq!(
             prove_scale(
                 &doc,
@@ -19483,9 +19540,7 @@ mod tests {
                 &plan
             )
             .unwrap_err(),
-            ScaleError::CandidateStructureMismatch {
-                reason: "skeleton_topology_mismatch"
-            }
+            expected,
         );
     }
 
@@ -19945,6 +20000,7 @@ mod tests {
         let plan = compensated_rest_bind_plan(&doc, &capability);
         assert_eq!(plan.affected_nodes(), &[0, 1, 2]);
         assert_eq!(plan.transform_only_attachments(), &[2]);
+        assert!(plan.requires_proof(ScaleProofObligation::SkinAndBounds));
         let candidate = build_scale_candidate(&doc, &plan).unwrap();
         let proof = prove_scale(&doc, &candidate, &plan).unwrap();
 
