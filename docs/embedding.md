@@ -207,13 +207,18 @@ policy's budget rather than sampling a subset of it. The policy's three finite
 widened affine axis lengths are sorted ascending before their mean is computed,
 so authored axis order cannot change classification or the observed factor.
 The pre-1.0 cutover removes the former `APPENDIX_D_V5` associated constant;
-there is no legacy runtime alias. Every proof obligation is
-evidence-gated: a plan declares one only when the planned document carries the
-payload that obligation reads. Candidate construction and proof re-derive the
-supplied source's structural planning inventory; a stale domain or evidence
-set is a typed `PlanDocumentMismatch`, while a missing counterpart encountered
-inside an inventory-matched walk is `MissingProofEvidence`. Neither becomes a
-zero residual. `ScaleProof` publishes each residual maximum beside the number
+there is no legacy runtime alias. Each operation compiles one canonical typed
+ledger containing source topology, semantic field dispositions, and the proof
+obligations derived from that exact inventory. A plan contains an obligation
+row only when the planned document carries the payload it reads. Candidate
+construction and proof recompile the supplied source and require exact ledger
+equality; a stale topology, payload, write set, or evidence set is a typed
+`PlanDocumentMismatch`, while a missing counterpart encountered inside an
+inventory-matched walk is `MissingProofEvidence`. This catches added, removed,
+reordered, or retargeted payload even when a coarse list of affected domains
+would be unchanged. Numeric values may still vary under an identical ledger,
+so replay does not freeze source values. Neither refusal becomes a zero
+residual. `ScaleProof` publishes each residual maximum beside the number
 of comparisons it was taken over, both written at the point of comparison, so
 a `0.0` that was measured is distinguishable from one that nothing walked —
 read the count before the residual. `ScaleProof` records both observed-factor
@@ -238,15 +243,59 @@ against `Document::assets::source_skeleton` — never a normalized `BoneId` or
 mesh-instance ordinal. Under complete source coverage, planning may compose a
 static source connector with no independent normalized bone when it lies
 strictly between projected nodes in the selected rest/bind domain. The
-connector's authored local rest is preserved and no proof obligation names it;
-`ScalePlan::affected_nodes` remains the normalized Bone-keyed rewrite/proof
-domain. Proof still checks connector preservation and the projected
-successor's bridged source local as exact structural invariants outside the
-numeric residual ledger. This does not imply support for a raw animation channel targeting an
-unprojected connector. A frontend that wants to raw-preflight a glTF source
+connector's authored local rest is represented by an exact-preservation row
+and bridge obligations, but it owns no numeric residual. Projected source rows
+carry both raw source-node identity and their normalized `BoneId`; connector
+rows have source and parent identities but no `BoneId`, while
+`ScalePlan::affected_nodes` remains the normalized Bone-keyed residual domain.
+Proof independently checks connector
+preservation and the projected successor's bridged source local from that
+canonical topology. Preserved connector components and the connector-bridged
+projected successor are bit-exact; this core-only path does not cross a raw
+frontend narrowing boundary. Direct rewritten raw source-local components
+outside a connector bridge use the published scalar tolerance. This does not
+imply support for a raw animation channel targeting an unprojected connector.
+A frontend that wants to raw-preflight a glTF source
 before calling into this module can use `animsmith_gltf::preflight_scale_source`
 and project its `GltfCapabilityManifest` down to `ScaleCapabilityFacts` with
 `animsmith_gltf::capability_facts`.
+
+Embedders inspect `ScalePlan::ledger()` through its non-exhaustive read-only
+views: under `Complete` source coverage, `source_topology()` globally
+inventories raw parents and normalized projection identity for plan replay,
+classifying rest/bind projected and connector rows and retaining outside-domain
+rows for both operations. Under `Unavailable` coverage raw identity is
+non-authoritative, so the ledger exposes no raw topology or source-field rows.
+Whole-document conversion still converts any such best-effort raw locals for
+backward-compatible output, but they cannot stale a plan or become proof
+identity.
+`field_rows()` exposes exact targets and `PreserveExact` or typed structural
+rewrite kinds, `payload_shapes()` exposes exact container identity and shape,
+and `obligations()` exposes the proof work derived from the validated
+inventory. Rewrite rows carry no resolved multiplier, expected value, or
+connector product; candidate construction and proof independently derive those
+numbers from the operation and topology.
+Public row values are descriptive only: there is no public API for inserting
+them into a plan or constructing a plan from them. Operation-fixed facts,
+field ownership, and evidence gates therefore cannot be assembled into an
+incoherent plan.
+`PreserveExact` is positive builder write-set ownership, not an automatic
+bit-equality rule for normalized derived state. Factor-one dispositions remain
+visible when identity or alias analysis depends on them. `ScalePlan` equality
+includes the complete structural ledger. The former `ScaleDomainRewrites` and
+`ScaleProofObligations` boolean bags and their plan accessors are removed; this
+is a deliberate pre-1.0 Rust API break. The
+scale-evidence v1/v2/v3 JSON contracts retain their five immutable domain
+booleans as a private producer projection from the operation variant, and
+`ScaleProof` serialization plus the `appendix-d-v6` policy remain unchanged.
+Normalized bone-rest, inverse-bind, track, and mesh rows are discharged through
+the existing versioned residual or exact semantic obligations, so admitted
+non-bit-identical values, released maxima, and evaluated counts keep their
+meaning. Core bit equality is limited to authored source-node locals that every
+admitted producer copies. Exact topology, connector, and unchanged-world
+obligations own no numeric residual; raw byte-exact preservation of other
+fields, including signed zero and quaternion sign, belongs to the artifact
+proof rather than this normalized ledger view.
 
 For glTF/GLB, `animsmith_gltf::rewrite_linear_units` then performs the
 whole-document conversion on the source's own JSON and buffer bytes — never

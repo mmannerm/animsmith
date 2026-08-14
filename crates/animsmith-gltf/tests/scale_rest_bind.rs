@@ -39,8 +39,8 @@ use animsmith_core::model::{
     TrackShapeViolation,
 };
 use animsmith_core::scale::{
-    ScaleCandidate, ScaleError, ScaleOperation, ScalePlan, ScaleRequest, ScaleTolerancePolicy,
-    plan_scale, prove_scale,
+    ScaleCandidate, ScaleError, ScaleOperation, ScalePlan, ScaleProofObligation, ScaleRequest,
+    ScaleTolerancePolicy, plan_scale, prove_scale,
 };
 use animsmith_gltf::{
     GltfCapabilityViolationKind, GltfScaleArtifact, GltfScalePreflightError, GltfScaleRewriteError,
@@ -626,8 +626,16 @@ fn the_rebased_artifact_proves_and_reports_its_evidence() {
     // carries node 2, so the residual above is a checked zero rather than the
     // zero an empty attachment list reports.
     assert_eq!(plan.transform_only_attachments().len(), 1);
-    assert!(plan.proof_obligations().prove_transform_only_affine);
-    assert!(plan.proof_obligations().prove_bounds);
+    assert!(
+        plan.ledger()
+            .obligations()
+            .any(|obligation| matches!(obligation, ScaleProofObligation::TransformOnlyAffine))
+    );
+    assert!(
+        plan.ledger()
+            .obligations()
+            .any(|obligation| matches!(obligation, ScaleProofObligation::SkinAndBounds))
+    );
 
     // Mesh-instance *placement* identity, read off the reloaded artifact
     // rather than assumed from the rewriter's shape. The rebase clones the
