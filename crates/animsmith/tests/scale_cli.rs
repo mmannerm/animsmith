@@ -528,6 +528,35 @@ fn whole_document_publishes_the_exact_binary32_narrowing_residuals_the_factor_co
 }
 
 #[test]
+fn factor_one_evidence_reports_the_empty_compiled_write_set() {
+    let fixture = Fixture::new();
+    let output = fixture.whole_document("1", "json");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    let record = read_json(&fixture.path("out.json"));
+    assert_schema_valid(&record);
+    let result = &record["result"];
+    assert_eq!(
+        result["artifact"]["rewritten_accessors"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        result["artifact"]["rewritten_json_pointers"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        result["artifact"]["reencoded_buffers"],
+        serde_json::json!([])
+    );
+    assert_eq!(result["proof"]["artifact"]["rewritten_accessor_count"], 0);
+}
+
+#[test]
 fn the_json_gltf_container_publishes_the_same_rewrite_and_records_its_container() {
     // The same rig payload, in the other container. `.gltf` is the case where
     // the single buffer is a base64 data URI, so the artifact re-encodes it —

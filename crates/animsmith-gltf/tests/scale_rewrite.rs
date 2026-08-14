@@ -12,7 +12,7 @@ use animsmith_core::scale::{
 use animsmith_gltf::{
     GltfCapabilityViolationKind, GltfScaleArtifact, GltfScalePreflightError, GltfScaleRewriteError,
     GltfScaleSource, capability_facts, load_bytes, preflight_scale_source_bytes,
-    prove_rewritten_artifact, rewrite_linear_units,
+    prove_rewritten_artifact, rewrite_linear_units, rewrite_scale_plan,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
@@ -659,6 +659,48 @@ fn mesh_positions_and_their_bounds_scale_and_still_bound_the_payload() {
     assert_eq!(glb_json["accessors"][0]["min"], json!([2.0, -1.0, -12.0]));
 }
 
+#[test]
+fn a_plan_from_a_different_primitive_inventory_is_refused_before_raw_rewrite() {
+    let payload = f32_bytes(&[
+        0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, // positions
+        0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, // normals
+    ]);
+    let with_normals = json!({
+        "asset": { "version": "2.0" },
+        "buffers": [{ "uri": data_uri(&payload), "byteLength": payload.len() }],
+        "bufferViews": [
+            { "buffer": 0, "byteOffset": 0, "byteLength": 36 },
+            { "buffer": 0, "byteOffset": 36, "byteLength": 36 }
+        ],
+        "accessors": [
+            { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+              "min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0] },
+            { "bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3" }
+        ],
+        "meshes": [{ "primitives": [{
+            "attributes": { "POSITION": 0, "NORMAL": 1 }
+        }] }]
+    });
+    let planned_source = accepted("planned-normal.gltf", &with_normals);
+    let plan = plan_for(&planned_source, 2.0);
+
+    let mut without_normals = with_normals;
+    without_normals["meshes"][0]["primitives"][0]["attributes"]
+        .as_object_mut()
+        .expect("attributes")
+        .remove("NORMAL");
+    let replay_source = accepted("replay-without-normal.gltf", &without_normals);
+
+    assert!(matches!(
+        rewrite_scale_plan(&replay_source, &plan),
+        Err(GltfScaleRewriteError::Plan(
+            ScaleError::PlanDocumentMismatch {
+                reason: "payload_shape_inventory_mismatch"
+            }
+        ))
+    ));
+}
+
 /// The `f32` whose shortest round-tripping decimal spelling is
 /// `29460752000`, which is *not* the decimal its `f64` widening prints
 /// (`29460752384`). A real exporter writes the shortest spelling, so the
@@ -842,7 +884,9 @@ fn an_accessor_shared_by_two_primitives_is_scaled_exactly_once() {
 
 #[test]
 fn every_skin_inverse_bind_scales_only_its_translation_column() {
-    // Two skins, two inverse-bind accessors, and one mesh instanced twice.
+    // Two skins and two inverse-bind accessors. Skin 0 is attached to the
+    // mesh instance; skin 1 is deliberately unattached, so its raw slots
+    // must be authorized through the bone inverse-bind ledger rows instead.
     let mut buffer = vec![0u8; 36 + 64 + 64];
     buffer[0..36].copy_from_slice(&f32_bytes(&[0.0; 9]));
     buffer[36..100].copy_from_slice(&f32_bytes(&[
@@ -874,8 +918,12 @@ fn every_skin_inverse_bind_scales_only_its_translation_column() {
         "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 } }] }],
         "nodes": [
             {}, {},
+            // Skin 0 is retained through two modeled instances; skin 1 is
+            // deliberately unattached so its raw IBM accessor exercises the
+            // source-skin fallback rather than an instance-derived binding.
             { "mesh": 0, "skin": 0 },
-            { "mesh": 0, "skin": 1 }
+            {},
+            { "mesh": 0, "skin": 0 }
         ],
         "skins": [
             { "joints": [0], "skeleton": 0, "inverseBindMatrices": 1 },
@@ -892,7 +940,7 @@ fn every_skin_inverse_bind_scales_only_its_translation_column() {
     // and skin is affected — including node 1, which authors no transform at
     // all, and both skins. Reporting only the nodes whose JSON changed would
     // understate what a whole-document conversion claims about the artifact.
-    assert_eq!(artifact.affected_source_nodes(), [0, 1, 2, 3]);
+    assert_eq!(artifact.affected_source_nodes(), [0, 1, 2, 3, 4]);
     assert_eq!(artifact.affected_source_skins(), [0, 1]);
     assert_eq!(
         read_f32(&buffers[0][36..100]),
@@ -1045,14 +1093,53 @@ fn rewriting_the_same_glb_twice_yields_identical_bytes_and_valid_framing() {
 #[test]
 fn a_unit_factor_leaves_every_buffer_byte_and_reloaded_value_unchanged() {
     let buffer = rig_buffer("LINEAR");
-    let value = rig_json("LINEAR", &buffer);
+    let mut value = rig_json("LINEAR", &buffer);
+    let matrix_translation = f64::from_bits(1.0f64.to_bits() + 1);
+    value["nodes"][1]["matrix"] = json!([
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        matrix_translation,
+        0.0,
+        0.0,
+        1.0
+    ]);
+    let position_min = f64::from_bits(0.5f64.to_bits() - 1);
+    value["accessors"][0]["min"][0] = json!(position_min);
 
     let source = accepted("identity.gltf", &value);
     let artifact = rewrite_linear_units(&source, 1.0).expect("rewrite");
     let (json, buffers) = artifact_parts(&artifact);
     assert_eq!(buffers[0], buffer, "q = 1 is a byte identity on payloads");
-    assert_eq!(json["accessors"][0]["min"], json!([0.5, -0.25, -3.0]));
+    assert_eq!(
+        json["accessors"][0]["min"][0]
+            .as_f64()
+            .expect("numeric minimum")
+            .to_bits(),
+        position_min.to_bits(),
+        "q = 1 preserves a non-f32-exact authored bound"
+    );
     assert_eq!(json["accessors"][0]["max"], json!([2.0, 2.0, 4.0]));
+    assert_eq!(
+        json["nodes"][1]["matrix"][12]
+            .as_f64()
+            .expect("numeric matrix translation")
+            .to_bits(),
+        matrix_translation.to_bits(),
+        "q = 1 preserves a non-f32-exact authored matrix translation"
+    );
+    assert!(artifact.rewritten_accessors().is_empty());
+    assert!(artifact.rewritten_json_pointers().is_empty());
+    assert!(artifact.reencoded_buffers().is_empty());
 
     let reloaded = load_bytes(Path::new("identity.gltf"), artifact.bytes()).expect("reload");
     let plan = plan_for(&source, 1.0);
@@ -1062,6 +1149,8 @@ fn a_unit_factor_leaves_every_buffer_byte_and_reloaded_value_unchanged() {
         &plan,
     )
     .expect("a unit conversion proves against its own source");
+    prove_rewritten_artifact(&source, &artifact, &plan)
+        .expect("the raw factor-one artifact preserves exact authored values");
 
     let mut glb_value = value.clone();
     glb_value["buffers"][0] = json!({ "byteLength": rig::LENGTH });
@@ -1383,6 +1472,8 @@ fn the_full_composition_proves_both_layers_for_a_skinned_animated_source() {
     })
     .expect("plan");
     let artifact = rewrite_linear_units(&source, factor).expect("rewrite");
+    let planned_artifact = rewrite_scale_plan(&source, &plan).expect("planned rewrite");
+    assert_eq!(planned_artifact.bytes(), artifact.bytes());
     let reloaded = load_bytes(Path::new("composition.gltf"), artifact.bytes()).expect("reload");
     // Mesh-instance *placement* identity, read off the reloaded artifact
     // rather than assumed from the rewriter's shape. The conversion clones

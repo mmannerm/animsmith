@@ -1643,6 +1643,24 @@ impl ScalePlan {
         self.observed_factor
     }
 
+    /// Validate this plan's complete structural inventory against `document`.
+    ///
+    /// This re-derives and exactly compares the affected domain, canonical
+    /// source topology, transform-only attachments, payload shapes, field
+    /// dispositions, and proof obligations. Numeric source values are not
+    /// compared, so a document with the same structural ledger remains a
+    /// valid replay source, but the replay document must still satisfy the
+    /// finite-value and nonnegative-weight scale-input requirements.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ScaleError::PlanDocumentMismatch`] when the re-derived
+    /// inventory differs, or the corresponding planning/input error when
+    /// `document` cannot produce a valid inventory for this operation.
+    pub fn validate_document_inventory(&self, document: &Document) -> Result<(), ScaleError> {
+        validate_plan_document_inventory(document, self)
+    }
+
     /// Inspect the exact read-only topology, field, and obligation ledger.
     pub fn ledger(&self) -> ScalePlanLedger<'_> {
         ScalePlanLedger { plan: self }
@@ -2914,6 +2932,7 @@ fn validate_plan_document_inventory(
     document: &Document,
     plan: &ScalePlan,
 ) -> Result<(), ScaleError> {
+    validate_scale_input(document)?;
     let validate = |affected_nodes: &[BoneId],
                     source_topology: &[ScaleSourceTopologyRow],
                     transform_only_attachments: &[BoneId],
@@ -3421,7 +3440,6 @@ pub fn build_scale_candidate(
     document: &Document,
     plan: &ScalePlan,
 ) -> Result<ScaleCandidate, ScaleError> {
-    validate_scale_input(document)?;
     validate_plan_document_inventory(document, plan)?;
     let candidate = match plan.operation() {
         ScaleOperation::WholeDocumentLinearUnits { .. } => build_whole_document(document, plan)?,
@@ -4837,7 +4855,6 @@ pub fn prove_scale(
     plan: &ScalePlan,
 ) -> Result<ScaleProof, ScaleError> {
     let candidate = candidate.document();
-    validate_scale_input(source)?;
     validate_plan_document_inventory(source, plan)?;
     validate_scale_input(candidate)?;
     validate_candidate_structure(source, candidate)?;

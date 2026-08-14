@@ -1153,9 +1153,22 @@ fn numeric_only_replay_keeps_the_structural_ledger_valid() {
     values[1] = Vec3::new(0.0, 3.0, 0.0);
     replay.assets.meshes[0].primitives[0].positions[0] = Vec3::new(4.0, 0.0, 0.0);
 
+    plan.validate_document_inventory(&replay)
+        .expect("numeric-only replay keeps the complete inventory");
     let candidate =
         build_scale_candidate(&replay, &plan).expect("numeric-only replay still builds");
     prove_scale(&replay, &candidate, &plan).expect("numeric-only replay still proves");
+
+    replay.assets.meshes[0].primitives[0].positions[0] = Vec3::NAN;
+    assert_eq!(
+        plan.validate_document_inventory(&replay),
+        Err(ScaleError::InvalidMeshPrimitive {
+            mesh_index: 0,
+            primitive_index: 0,
+            reason: "non_finite_position",
+        }),
+        "numeric replay may change finite values but may not bypass scale input validation"
+    );
 }
 
 #[test]
@@ -1246,6 +1259,12 @@ fn primitive_modeled_attribute_shape_is_exact_payload_identity() {
 
     let mut replay = document.clone();
     replay.assets.meshes[0].primitives[1].normals.clear();
+    assert!(matches!(
+        plan.validate_document_inventory(&replay),
+        Err(ScaleError::PlanDocumentMismatch {
+            reason: "payload_shape_inventory_mismatch"
+        })
+    ));
     assert!(matches!(
         build_scale_candidate(&replay, &plan),
         Err(ScaleError::PlanDocumentMismatch {

@@ -1833,13 +1833,20 @@ keeps its own guard as defence in depth, since the guard is what must hold if
 the gate is ever relaxed, but it shares the gate's classifier rather than
 re-deriving one.
 
-The core typed ledger is the PR-A boundary of issue #374. In that slice the raw
-glTF writers and artifact proof retain their established behavior and numeric
-derivations; they do not yet claim to consume the core rows. PR B separately
-cross-checks raw topology and maps the structural semantic kinds onto raw
-fields while keeping writer and artifact-proof arithmetic independent. The
-core ledger never replaces raw claims over scenes, materials, default scene,
-references, unknown payload, or container bytes.
+The core typed ledger is also the semantic authority for both raw glTF scale
+writers. Before binding raw fields, the adapter replays the plan's complete
+structural inventory against the current normalized document; numeric-only
+replay remains valid, while a stale payload, field, topology, or obligation
+inventory refuses. One numeric-free glTF binding then projects canonical
+source topology and field dispositions onto raw node members, animation
+outputs, mesh payloads, and skin slots. The binding independently walks
+`/nodes/*/children` and refuses disagreement with canonical topology before
+writing bytes. Writer and artifact proof share those validated identities and
+component-group names, but independently select components and derive numeric
+multipliers; neither consumes the other's expected values, matrices, factor
+helpers, or domain model. The core ledger never replaces raw claims over
+scenes, materials, default scene, references, unknown payload, aliasing, byte
+ranges, or container bytes.
 
 ### D.5 Separate-clip compatibility
 

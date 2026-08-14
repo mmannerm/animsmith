@@ -390,6 +390,13 @@ that fixed cap, and the full count is `items.length + omitted`. The field is
 `null` for other artifact-proof claims and for capability refusals, whose
 `violations` array retains its existing meaning.
 
+For a whole-document factor of one, the compiled plan owns an empty raw write
+set. The v3 `result.artifact.rewritten_accessors`,
+`rewritten_json_pointers`, and `reencoded_buffers` arrays are therefore empty,
+and `result.proof.artifact.rewritten_accessor_count` is zero. The schema
+identity and shape are unchanged; these values distinguish exact preservation
+from an unnecessary factor-one rewrite.
+
 For `scale rest-bind`, valid scale animation is rebased, not refused:
 `result.domain_rewrites.scale_animation` is `true`, and every stored scale
 VEC3 uses the topology multiplier (`1 / s` at the selected root and `1` at
