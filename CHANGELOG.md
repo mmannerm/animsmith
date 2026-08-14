@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- [**breaking**] *(core)* replace each public `ScaleProof` maximum/count field
+  pair with one read-only `ScaleProofResidual`. Its `max()`, `comparisons()`,
+  and `evaluated()` accessors keep a claim's measurements mechanically paired;
+  scale-evidence v1/v2/v3 JSON and tolerance behavior remain unchanged
+  ([#323](https://github.com/mmannerm/animsmith/issues/323))
 - [**breaking**] *(core)* replace the public scale domain-rewrite and
   proof-obligation boolean bags/accessors with a non-exhaustive read-only typed
   plan ledger covering global canonical topology, numeric-value-free payload

@@ -880,8 +880,8 @@ fn normalized_candidate_values_remain_governed_by_versioned_residuals() {
         &plan,
     )
     .expect("one admitted normalized ulp remains a residual, not a structural mismatch");
-    assert!(proof.rest_translation_residual > 0.0);
-    assert!(proof.rest_translation_comparisons > 0);
+    assert!(proof.rest_translation.max() > 0.0);
+    assert!(proof.rest_translation.comparisons() > 0);
 }
 
 #[test]

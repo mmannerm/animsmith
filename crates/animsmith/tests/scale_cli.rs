@@ -11,8 +11,9 @@
 //! a feature-gated import here would silently drop that coverage.
 
 use animsmith_testkit::{
-    nodes_only_scale_rig_glb, oversized_proof_scale_rig_glb, rest_bind_scale_rig_glb,
-    rest_bind_scale_rig_gltf, unaffected_bind_scale_rig_glb,
+    clipless_mesh_scale_rig_glb, nodes_only_scale_rig_glb, oversized_proof_scale_rig_glb,
+    rest_bind_scale_rig_glb, rest_bind_scale_rig_gltf, rotation_only_meshless_scale_rig_glb,
+    unaffected_bind_scale_rig_glb,
 };
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -440,6 +441,13 @@ fn whole_document_publishes_the_exact_binary32_narrowing_residuals_the_factor_co
         NARROWING_AT_ONE
     );
     assert_eq!(
+        result["proof"]["residuals"]["track_value"]["max"]
+            .as_f64()
+            .expect("a finite residual"),
+        0.0,
+        "this rig's translation values scale to exact binary32 integers and its rotation stays exact"
+    );
+    assert_eq!(
         result["proof"]["residuals"]["mesh_position"]["max"]
             .as_f64()
             .expect("a finite residual"),
@@ -636,6 +644,54 @@ fn an_unevaluated_obligation_publishes_null_rather_than_a_zero_residual() {
     // including when that number is a checked zero.
     assert_eq!(residuals["skin_matrix"]["evaluated"], true);
     assert_eq!(residuals["skin_matrix"]["max"], 0.0);
+    assert_eq!(residuals["key_translation"]["evaluated"], true);
+    assert_eq!(residuals["key_translation"]["max"], 0.0);
+}
+
+#[test]
+fn clipless_mesh_evidence_keeps_each_residual_with_its_own_evaluation() {
+    let fixture = Fixture::with_asset(clipless_mesh_scale_rig_glb());
+    let run = fixture.rest_bind("0.01", "text");
+    assert_eq!(run.status.code(), Some(0), "stderr:\n{}", stderr(&run));
+
+    let record = read_json(&fixture.path("out.json"));
+    assert_schema_valid(&record);
+    let result = &record["result"];
+    let residuals = &result["proof"]["residuals"];
+    for claim in ["mesh_position", "bounds", "unit_scale"] {
+        assert_eq!(residuals[claim]["evaluated"], true, "{claim}");
+        assert_eq!(residuals[claim]["max"], 0.0, "{claim}");
+    }
+    for claim in ["track_value", "trajectory", "transform_only_affine"] {
+        assert_eq!(residuals[claim]["evaluated"], false, "{claim}");
+        assert_eq!(residuals[claim]["max"], Value::Null, "{claim}");
+    }
+    assert_eq!(result["proof"]["sample_time_count"], 0);
+    assert_eq!(result["affected"]["transform_only_attachment_count"], 0);
+}
+
+#[test]
+fn rotation_only_meshless_evidence_keeps_each_residual_with_its_own_evaluation() {
+    let fixture = Fixture::with_asset(rotation_only_meshless_scale_rig_glb());
+    let run = fixture.whole_document("0.01", "text");
+    assert_eq!(run.status.code(), Some(0), "stderr:\n{}", stderr(&run));
+
+    let record = read_json(&fixture.path("out.json"));
+    assert_schema_valid(&record);
+    let result = &record["result"];
+    let residuals = &result["proof"]["residuals"];
+    for claim in ["track_value", "trajectory"] {
+        assert_eq!(residuals[claim]["evaluated"], true, "{claim}");
+        assert!(
+            residuals[claim]["max"].as_f64().is_some(),
+            "{claim} must publish its measured maximum"
+        );
+    }
+    for claim in ["mesh_position", "key_translation", "bounds"] {
+        assert_eq!(residuals[claim]["evaluated"], false, "{claim}");
+        assert_eq!(residuals[claim]["max"], Value::Null, "{claim}");
+    }
+    assert_eq!(result["proof"]["sample_time_count"], 2);
 }
 
 #[test]

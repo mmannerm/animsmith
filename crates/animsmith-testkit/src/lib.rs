@@ -213,6 +213,63 @@ pub fn rest_bind_scale_rig_glb() -> Vec<u8> {
     )
 }
 
+/// The scale rig with no clips and no transform-only attachment.
+///
+/// The mesh and affected skin remain, so proof evidence distinguishes claims
+/// that walk mesh/skin payloads from claims that walk animation samples or
+/// transform-only attachments.
+pub fn clipless_mesh_scale_rig_glb() -> Vec<u8> {
+    let json = rest_bind_scale_rig_json("");
+    let json = json.replace(
+        r#"{ "name": "joint", "translation": [0.0, 100.0, 0.0], "children": [2] }"#,
+        r#"{ "name": "joint", "translation": [0.0, 100.0, 0.0] }"#,
+    );
+    let animation = json
+        .find(",\n  \"animations\": [")
+        .expect("the shared rig carries its animation last");
+    let mut json = json[..animation].to_owned();
+    json.push_str("\n}\n");
+    glb_container(json.as_bytes(), &rest_bind_scale_rig_buffer())
+}
+
+/// The scale rig with a rotation-only clip and no mesh instance.
+///
+/// The animation remains sampled, but no mesh, translation key, bounds, or
+/// skinned instance can contribute proof comparisons.
+pub fn rotation_only_meshless_scale_rig_glb() -> Vec<u8> {
+    let json = rest_bind_scale_rig_json("");
+    let json = json.replace(
+        r#"  "meshes": [{ "primitives": [{
+    "attributes": { "POSITION": 0, "JOINTS_0": 1, "WEIGHTS_0": 2 },
+    "material": 0
+  }] }],
+"#,
+        "",
+    );
+    let json = json.replace(
+        r#"{ "name": "holder", "mesh": 0, "skin": 0 }"#,
+        r#"{ "name": "holder" }"#,
+    );
+    let animation = json
+        .find("  \"animations\": [")
+        .expect("the shared rig carries an animation");
+    let mut json = json[..animation].to_owned();
+    json.push_str(
+        r#"  "animations": [{
+    "name": "clip",
+    "samplers": [
+      { "input": 4, "interpolation": "LINEAR", "output": 6 }
+    ],
+    "channels": [
+      { "sampler": 0, "target": { "node": 1, "path": "rotation" } }
+    ]
+  }]
+}
+"#,
+    );
+    glb_container(json.as_bytes(), &rest_bind_scale_rig_buffer())
+}
+
 /// The same rig as [`rest_bind_scale_rig_glb`], as a self-contained JSON
 /// `.gltf` whose single buffer is a base64 data URI.
 ///

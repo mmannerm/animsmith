@@ -73,8 +73,8 @@ use crate::publish::{
 };
 use crate::{Format, render};
 use animsmith_core::scale::{
-    ScaleError, ScaleOperation, ScalePlan, ScaleProof, ScaleRequest, ScaleTolerancePolicy,
-    plan_scale,
+    ScaleError, ScaleOperation, ScalePlan, ScaleProof, ScaleProofResidual, ScaleRequest,
+    ScaleTolerancePolicy, plan_scale,
 };
 use animsmith_core::{DocumentShapeError, InputIdentity, ToolInfo};
 use animsmith_gltf::{
@@ -257,17 +257,12 @@ struct Residual {
 }
 
 impl Residual {
-    /// Publish `max` iff the proof's own count says it compared something.
-    ///
-    /// Takes the comparison count rather than a `bool` so the only way to
-    /// publish a residual is to hold the number of comparisons that produced
-    /// it: there is no constructor a caller could hand a predicate of its
-    /// own.
-    fn measured(comparisons: usize, max: f64) -> Self {
-        let evaluated = comparisons > 0;
+    /// Publish the paired proof maximum iff its count says it was evaluated.
+    fn measured(residual: ScaleProofResidual) -> Self {
+        let evaluated = residual.evaluated();
         Self {
             evaluated,
-            max: evaluated.then_some(Finite(max)),
+            max: evaluated.then_some(Finite(residual.max())),
         }
     }
 }
@@ -783,39 +778,18 @@ fn rewrite_failure(stage: Stage, error: GltfScaleRewriteError) -> Failure {
 /// nothing checked" out of the record.
 fn residuals(proof: &ScaleProof) -> ResidualsRecord {
     ResidualsRecord {
-        rest_translation: Residual::measured(
-            proof.rest_translation_comparisons,
-            proof.rest_translation_residual,
-        ),
-        rest_rotation: Residual::measured(
-            proof.rest_rotation_comparisons,
-            proof.rest_rotation_residual,
-        ),
-        unit_scale: Residual::measured(proof.unit_scale_comparisons, proof.unit_scale_residual),
-        transform_only_affine: Residual::measured(
-            proof.transform_only_affine_comparisons,
-            proof.transform_only_affine_residual,
-        ),
-        track_value: Residual::measured(proof.track_value_comparisons, proof.track_value_residual),
-        mesh_position: Residual::measured(
-            proof.mesh_position_comparisons,
-            proof.mesh_position_residual,
-        ),
-        key_translation: Residual::measured(
-            proof.key_translation_comparisons,
-            proof.key_translation_residual,
-        ),
-        cubic_interior: Residual::measured(
-            proof.cubic_interior_comparisons,
-            proof.cubic_interior_residual,
-        ),
-        trajectory: Residual::measured(proof.trajectory_comparisons, proof.trajectory_residual),
-        skin_matrix: Residual::measured(proof.skin_matrix_comparisons, proof.skin_matrix_residual),
-        bounds: Residual::measured(proof.bounds_comparisons, proof.bounds_residual),
-        unaffected_inverse_bind: Residual::measured(
-            proof.unaffected_inverse_bind_comparisons,
-            proof.unaffected_inverse_bind_residual,
-        ),
+        rest_translation: Residual::measured(proof.rest_translation),
+        rest_rotation: Residual::measured(proof.rest_rotation),
+        unit_scale: Residual::measured(proof.unit_scale),
+        transform_only_affine: Residual::measured(proof.transform_only_affine),
+        track_value: Residual::measured(proof.track_value),
+        mesh_position: Residual::measured(proof.mesh_position),
+        key_translation: Residual::measured(proof.key_translation),
+        cubic_interior: Residual::measured(proof.cubic_interior),
+        trajectory: Residual::measured(proof.trajectory),
+        skin_matrix: Residual::measured(proof.skin_matrix),
+        bounds: Residual::measured(proof.bounds),
+        unaffected_inverse_bind: Residual::measured(proof.unaffected_inverse_bind),
     }
 }
 
@@ -1391,21 +1365,6 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&Finite(7.103515625e-5)).unwrap(),
             "0.00007103515625"
-        );
-    }
-
-    #[test]
-    fn an_unevaluated_residual_publishes_null_rather_than_zero() {
-        // One comparison that found `0.25`, and a residual nothing compared.
-        let evaluated = Residual::measured(1, 0.25);
-        let unevaluated = Residual::measured(0, 0.0);
-        assert_eq!(
-            serde_json::to_string(&evaluated).unwrap(),
-            r#"{"evaluated":true,"max":0.25}"#
-        );
-        assert_eq!(
-            serde_json::to_string(&unevaluated).unwrap(),
-            r#"{"evaluated":false,"max":null}"#
         );
     }
 

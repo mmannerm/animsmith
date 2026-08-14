@@ -2153,9 +2153,11 @@ expected_factor }` variants, carried by a `ScaleRequest`. Pure planning returns
 either an opaque, non-exhaustive `ScalePlan` (operation variant, affected
 closure, canonical topology, typed field rows, tolerance policy, and derived
 obligations) or a typed `ScaleError`; proof returns a
-`ScaleProof` with the residual maxima that producer evidence serializes, each
-paired with the number of comparisons that produced it so a residual nothing
-walked is distinguishable from a measured zero (issue #319).
+`ScaleProof` with one read-only `ScaleProofResidual` per semantic claim. Each
+value carries the maximum and number of comparisons together, so a residual
+nothing walked is distinguishable from a measured zero (issue #319) and an
+adapter cannot combine one claim's count with another claim's maximum (issue
+#323).
 Planning and proof take format-neutral node, track, bind, and capability facts.
 They do not accept paths, glTF/ufbx types, config parsers, or publication
 policy. The format frontend owns raw inventory and exact source rewriting; the
