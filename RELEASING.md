@@ -1,11 +1,12 @@
 # Releasing
 
 Releases are automated with [release-plz](https://release-plz.dev). You
-never hand-edit versions: release-plz opens a **release PR** that bumps
-the shared workspace version, propagates the internal `animsmith-*`
-dependency versions, and updates `CHANGELOG.md`. Merging that PR tags the
-release, publishes the GitHub Release, and publishes the workspace crates
-intended for crates.io in dependency order.
+never hand-edit versions: when a maintainer manually dispatches the release
+workflow, release-plz opens or updates a **release PR** that bumps the shared
+workspace version, propagates the internal `animsmith-*` dependency versions,
+and updates `CHANGELOG.md`. Merging that PR tags the release, publishes the
+GitHub Release, and publishes the workspace crates intended for crates.io in
+dependency order.
 
 The workflow is `.github/workflows/release-plz.yml`; its behaviour is
 configured by `release-plz.toml`. The changelog uses release-plz's
@@ -15,13 +16,21 @@ history (accepted types live in `.commitlintrc.yml`).
 ## Per-release flow (steady state)
 
 1. Merge feature/fix PRs to `main` as usual (Conventional Commits).
-2. release-plz keeps a `release-plz` PR open and up to date. It computes
-   the next version from the commits since the last release — one shared
-   version across the publishable crates (`version_group`), so the whole
-   workspace moves together — and writes the changelog.
-3. Review that PR. When you merge it, the `release` job tags, creates the
-   GitHub Release, and publishes every crate to crates.io in dependency
-   order (`animsmith-core` → `-gltf`/`-fbx`/`-report` → `animsmith`).
+2. When `main` is ready to release, manually dispatch the release workflow:
+
+   ```console
+   gh workflow run release-plz.yml --ref main
+   ```
+
+   The workflow first runs the shared checks, then release-plz opens or
+   updates the release PR. It computes the next version from the commits
+   since the last release — one shared version across the publishable crates
+   (`version_group`), so the whole workspace moves together — and writes the
+   changelog. Ordinary pushes to `main` never create or update this PR.
+3. Review that PR. When you merge it, the `release` job runs on the resulting
+   push to `main`, tags the release, creates the GitHub Release, and publishes
+   every crate to crates.io in dependency order (`animsmith-core` →
+   `-gltf`/`-fbx`/`-report` → `animsmith`).
    The follow-on `release_binaries` job calls `release-binaries.yml`,
    builds CLI archives from the tag, and uploads the archives plus
    matching `.sha256` files to that GitHub Release.
@@ -155,25 +164,26 @@ So automation begins at `0.2.0`; `0.1.0` is done by hand, once:
    gh workflow run release-binaries.yml --ref main -f tag=v0.1.0
    ```
 
-7. Arm the release automation. Both the `release-pr` and `release` jobs
-   are gated on `vars.RELEASE_PLZ_ARMED`, so the whole flow stays inert
-   until this is set — no release PRs and no publish attempts before the
-   manual `0.1.0` above:
+7. Arm the release automation. Both the manually dispatched `release-pr` job
+   and the push-triggered `release` job are gated on `vars.RELEASE_PLZ_ARMED`,
+   so the whole flow stays inert until this is set — no release PRs and no
+   publish attempts before the manual `0.1.0` above:
 
    ```console
    gh variable set RELEASE_PLZ_ARMED --body true
    ```
 
-After the bootstrap, every subsequent release (`0.2.0`+) goes through the
-release-plz PR flow above — no manual `cargo publish`, no manual version
-edits, one repo-level `vX.Y.Z` tag and Release per version.
+After the bootstrap, every subsequent release (`0.2.0`+) starts with the
+manual workflow dispatch and then goes through the release-plz PR flow above —
+no manual `cargo publish`, no manual version edits, one repo-level `vX.Y.Z`
+tag and Release per version.
 
 ## Known caveat: CI on the release PR
 
 PRs opened with the default `GITHUB_TOKEN` do **not** trigger
 `on: pull_request` workflows, so the release-plz PR will not get its own
-CI run. If branch protection requires a passing CI check before you can
-merge it, give the `release-pr` job a PAT or GitHub App token via the
-release-plz `token` input instead of `secrets.GITHUB_TOKEN`. (The
-post-merge `checks` job in `release-plz.yml` still runs the full test
-matrix on `main` before publishing regardless.)
+CI run. The manual dispatch does run the full shared checks against `main`
+before opening or updating the PR, and the post-merge `checks` job runs them
+again before publishing. If branch protection also requires a check attached
+to the release PR itself, give the `release-pr` job a PAT or GitHub App token
+via the release-plz `token` input instead of `secrets.GITHUB_TOKEN`.

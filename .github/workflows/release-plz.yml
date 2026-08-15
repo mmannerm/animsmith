@@ -4,13 +4,14 @@ name: release-plz
 # version-computation + version-alignment flow removed from main.yml
 # (see #37).
 #
-# Release automation runs these jobs on every push to main:
-#   - release-pr: opens/updates a release PR that bumps the shared
-#     workspace version, propagates the internal animsmith-* dependency
-#     versions, and updates CHANGELOG.md (release-plz's Keep-a-Changelog format).
-#   - release: once a release PR merges (the Cargo.toml version changes),
-#     tags, creates the GitHub Release, and publishes all five crates to
-#     crates.io in dependency order.
+# Release automation has two deliberately separate entry points:
+#   - workflow_dispatch: after the shared checks pass, release-pr opens/updates
+#     a release PR that bumps the shared workspace version, propagates the
+#     internal animsmith-* dependency versions, and updates CHANGELOG.md
+#     (release-plz's Keep-a-Changelog format).
+#   - push to main: release checks whether a merged release PR changed the
+#     Cargo.toml version and, if so, tags, creates the GitHub Release, and
+#     publishes all five crates to crates.io in dependency order.
 #   - release-binaries: when release-plz reports a release for the CLI
 #     package, calls release-binaries.yml to attach CLI archives and checksums
 #     to that GitHub Release.
@@ -33,6 +34,7 @@ name: release-plz
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions: {}
 
@@ -54,7 +56,7 @@ jobs:
     # the first manual publish + Trusted Publishing setup, an armed job would
     # try to publish the not-yet-existing 0.1.0 crates on every main push and
     # fail. Arm with: gh variable set RELEASE_PLZ_ARMED --body true
-    if: ${{ vars.RELEASE_PLZ_ARMED == 'true' }}
+    if: ${{ github.event_name == 'push' && vars.RELEASE_PLZ_ARMED == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write # push tags + create GitHub Releases
@@ -102,11 +104,12 @@ jobs:
 
   release-pr:
     name: release-plz release-pr
+    needs: [checks]
     # Also gated on the bootstrap arming variable: before the first
-    # manual v0.1.0 release there is no baseline tag, so an ungated
-    # release-pr would open a spurious release PR. Arming turns the whole
-    # release flow on at once (see RELEASING.md).
-    if: ${{ vars.RELEASE_PLZ_ARMED == 'true' }}
+    # manual v0.1.0 release there is no baseline tag, so an ungated manual
+    # dispatch would open a spurious release PR. After arming, this job still
+    # runs only when a maintainer explicitly dispatches the workflow.
+    if: ${{ github.event_name == 'workflow_dispatch' && vars.RELEASE_PLZ_ARMED == 'true' }}
     runs-on: ubuntu-latest
     # Never cancel a half-written release PR.
     concurrency:

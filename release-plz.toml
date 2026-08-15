@@ -11,9 +11,9 @@
 # .commitlintrc.yml (enforced by lint-pr.yml).
 
 # Publish only when a release-plz PR is merged — not on every push to
-# main. This matches the documented flow (open a release PR, review it,
-# merge to publish); with the default `true`, the release job would run
-# publish logic on every main-branch commit.
+# main. This matches the documented flow (manually dispatch the release-PR
+# job, review its PR, merge to publish); with the default `true`, the release
+# job would run publish logic on every main-branch commit.
 release_always = false
 
 # One repo-level git tag + GitHub Release for the whole workspace, named
