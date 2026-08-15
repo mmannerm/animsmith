@@ -21,6 +21,13 @@ single call, matching `animsmith-fbx`. Consumers that judge only
 animation ignore `assets`; `measure` reports mesh-level measurements
 from it and `convert` carries it through.
 
+Primitive accessors must be fully readable within their declared dense and
+sparse buffer views. A short `POSITION`, index, or modeled attribute is a
+located `LoadError::PrimitiveAccessorLayout`, never an empty-vector fallback;
+this keeps authored empty geometry distinct from geometry the loader could not
+read. Unreadable inverse binds remain explicit source-skeleton evidence rather
+than a load refusal because that sidecar models their availability directly.
+
 For glTF/GLB measurement, the loader also provides a source-resource sidecar:
 source-order material definitions, semantic texture bindings, texture-to-image
 identity, and bounded image metadata. Its complete core binding domain is

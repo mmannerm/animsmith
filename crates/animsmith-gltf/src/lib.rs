@@ -163,12 +163,13 @@ pub enum LoadError {
     },
     /// A primitive's vertex-attribute or index accessor declares an element
     /// the loader does read, but addresses its bytes in a way the reader
-    /// cannot walk: a buffer view whose own `byteOffset` plus `byteLength`
-    /// overflows, a `byteStride` shorter than the element it strides over,
-    /// a `sparse` block of count 0, or a `count` whose byte extent
-    /// overflows. `gltf`'s `Validate` relates an accessor to none of these,
-    /// so each is an assertion, an underflow, or an overflow inside the
-    /// reader rather than a parse failure.
+    /// cannot walk: a buffer view whose own extent overflows or exceeds its
+    /// buffer, a `byteStride` shorter than the element it strides over, a
+    /// `sparse` block of count 0, or a `count`/`byteOffset` whose required
+    /// extent overflows or exceeds its buffer view. `gltf`'s `Validate`
+    /// relates an accessor to none of these. The first shapes can panic in
+    /// the reader; a merely short extent instead makes the reader return
+    /// `None`, which is equally unsafe to substitute with empty geometry.
     #[error("mesh {mesh} primitive {primitive} {attribute}: accessor {accessor} {problem}")]
     PrimitiveAccessorLayout {
         /// glTF index of the mesh holding the primitive.
@@ -185,7 +186,7 @@ pub enum LoadError {
         problem: String,
     },
     /// An animation sampler's `input` or `output` accessor addresses its
-    /// bytes in a way the reader cannot walk — the same four shapes
+    /// bytes in a way the reader cannot walk — the same layout shapes
     /// [`Self::PrimitiveAccessorLayout`] names, reached through
     /// `read_inputs`/`read_outputs` instead of through a primitive.
     ///
@@ -558,15 +559,13 @@ fn required_attribute_encoding(semantic: &gltf::Semantic) -> Option<&'static Rea
 /// `WEIGHTS_0` from full scale (see [`TEX_COORD_ENCODING`]). Checks
 /// therefore see those slots as floats, not as the integers on disk.
 ///
-/// *A short read is not a refusal.* Nothing here relates an accessor's
-/// `count` to the length of the buffer view it reads, and `Iter::new`
-/// answers `None` when the two disagree. `read_positions()` and
-/// `read_indices()` are `.unwrap_or_default()`, so a `POSITION` declaring
-/// `count` 100 over a 36-byte view yields an **empty** position vector and
-/// the primitive is still pushed — checks see a primitive with no geometry,
-/// not an error and not the file's 3 vertices. That is a value question
-/// rather than a panic, so it stays loadable; only the extent arithmetic
-/// that *overflows* is refused, in [`unreadable_layout`].
+/// *Unreadable authored values are not absence.* [`unreadable_layout`]
+/// relates every dense and sparse walk to the buffer view that must satisfy
+/// it. A short `POSITION` or index read is refused rather than mapped to an
+/// empty vector, so checks can distinguish an authored empty slot from
+/// authored values the loader could not read. Inverse binds deliberately use
+/// the other established treatment: their shortfall remains explicit source
+/// evidence through [`inverse_bind_is_readable`].
 ///
 /// ## Scope
 ///
@@ -645,7 +644,7 @@ fn check_primitive_accessor(
 ///
 /// `read_inputs` and `read_outputs` each build their own `Iter` over their
 /// own accessor, so an `input` and an `output` are judged separately and
-/// both before either reader exists. The four shapes are exactly the ones
+/// both before either reader exists. The layout shapes are exactly the ones
 /// [`unreadable_layout`] names for a primitive slot — the panic is in the
 /// shared accessor iterator, not in anything primitive-specific.
 ///
@@ -683,15 +682,18 @@ fn check_sampler_accessor(
 /// `Iter::new` first slices a buffer view as `view.byteOffset +
 /// view.byteLength`, then steps the accessor inside it as `byteOffset +
 /// byteStride * (count - 1) + size` — over the accessor's own buffer view
-/// and, for a sparse accessor, over its index and value views too. Four
-/// shapes of that are a panic on arbitrary input, and `gltf-json`'s
-/// `Validate` catches none of them:
+/// and, for a sparse accessor, over its index and value views too. Six
+/// layout failures are unsafe here, and `gltf-json`'s `Validate` catches
+/// none of them:
 ///
 /// - **A buffer view whose own extent overflows.** `USize64`'s validator
 ///   only rejects a value past `usize`, and `View`'s derived `Validate`
 ///   relates `byteOffset` neither to `byteLength` nor to the buffer, so
 ///   `buffer_view_slice` adds the two unchecked before any accessor
 ///   arithmetic runs (see [`view_end`]).
+/// - **A buffer view whose extent exceeds its buffer.** The same missing
+///   relationship lets a view point beyond the buffer's declared bytes;
+///   the reader then has no slice to walk and answers `None`.
 /// - **A `byteStride` shorter than the element.** `Stride`'s validator
 ///   accepts any `4..=252`, so a `VEC3` of `FLOAT` `POSITION` on a stride-4
 ///   view validates and then trips `debug_assert!(stride >=
@@ -703,14 +705,19 @@ fn check_sampler_accessor(
 ///   stride assertion at all, in either profile. Deleting this branch and
 ///   running the suite under `--release` panics a dense `POSITION` at
 ///   `util.rs:266`. This is the one shape here that still panics with
-///   `overflow-checks` off; the other three go quiet instead, which is
-///   worse.
+///   `overflow-checks` off; the arithmetic overflow/underflow shapes go
+///   quiet instead, which is worse.
 /// - **`sparse.count` of 0.** `sparse_count - 1` underflows, with or
 ///   without a base `bufferView`. Every count-zero guard in this loader
 ///   reads `Accessor::count()`; none of them sees this one.
 /// - **An extent that overflows `usize`.** Nothing bounds `count` or
 ///   `sparse.count`, so `stride * (count - 1)` overflows on a large enough
 ///   declaration.
+/// - **An extent that exceeds its buffer view.** A merely large `count` or
+///   `byteOffset` does not overflow, but `Iter::new` answers `None` when the
+///   declared view cannot satisfy the walk. Treating that as an empty vector
+///   would silently replace authored geometry with absence. Sparse index and
+///   value views are judged on the same boundary.
 ///
 /// "`gltf-json`'s `Validate` catches none of them" is a claim about this
 /// crate's own JSON validation, which is all that stands between
@@ -719,12 +726,9 @@ fn check_sampler_accessor(
 /// `sparse.count` of 0 against the schema's `minimum: 1`). That separate
 /// tool is what `docs/cli.md` points authors at; this loader never runs it.
 ///
-/// Two near neighbours are deliberately *not* refused. `Accessor::count()`
-/// of 0 stays loadable: every read site already treats a count-zero
-/// accessor as absent, so no reader is built and the arithmetic is never
-/// reached. And a `count` that merely exceeds its buffer view stays
-/// loadable too — `Iter::new` answers `None` and the slot loads empty (see
-/// [`validate_primitive_accessors`]).
+/// One near neighbour is deliberately *not* refused. `Accessor::count()` of
+/// 0 stays loadable: every read site already treats a count-zero accessor as
+/// absent, so no reader is built and the arithmetic is never reached.
 fn unreadable_layout(accessor: &gltf::Accessor<'_>) -> Option<String> {
     let size = accessor.size();
     if let Some(view) = accessor.view()
@@ -788,13 +792,22 @@ fn unwalkable(
 ) -> Option<String> {
     // `Iter::new` slices the view before it strides over anything, so the
     // view's own extent is judged before the accessor's.
-    if view_end(view).is_none() {
+    let Some(view_end) = view_end(view) else {
         return Some(format!(
             "reads its {subject} from buffer view {}, whose byteOffset {} plus byteLength {} \
              is a byte extent that overflows",
             view.index(),
             view.offset(),
             view.length()
+        ));
+    };
+    if view_end > view.buffer().length() {
+        return Some(format!(
+            "reads its {subject} from buffer view {}, whose byte extent ends at {view_end} \
+             beyond buffer {}'s byteLength {}",
+            view.index(),
+            view.buffer().index(),
+            view.buffer().length()
         ));
     }
     let stride = view.stride().unwrap_or(size);
@@ -805,19 +818,29 @@ fn unwalkable(
             view.index()
         ));
     }
-    let overflows = count
+    let required_end = count
         .checked_sub(1)
         .and_then(|last| stride.checked_mul(last))
         .and_then(|span| span.checked_add(offset))
-        .and_then(|end| end.checked_add(size))
-        .is_none();
+        .and_then(|end| end.checked_add(size));
     // `count` 0 never reaches that arithmetic: no read site builds a reader
     // for a count-zero accessor, so its underflow is unreachable rather than
     // refused.
-    (count > 0 && overflows).then(|| {
-        format!(
+    if count == 0 {
+        return None;
+    }
+    let Some(required_end) = required_end else {
+        return Some(format!(
             "walks {count} {subject} of {size} bytes at byteStride {stride} \
              from byteOffset {offset}, a byte extent that overflows"
+        ));
+    };
+    (required_end > view.length()).then(|| {
+        format!(
+            "walks {count} {subject} of {size} bytes at byteStride {stride} from byteOffset \
+             {offset}, requiring byte extent {required_end} beyond buffer view {}'s byteLength {}",
+            view.index(),
+            view.length()
         )
     })
 }

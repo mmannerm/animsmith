@@ -116,10 +116,16 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
 - **Malformation policy**: *structural* malformation — keyframe/value
   count mismatch, zero-key channels, absolute or escaping external
   buffer URIs, non-forest node graphs (cycles or a node with two
-  parents) — is rejected at load (operator error, exit 2; run
-  glTF-Validator for the details). Recovering a non-forest graph would
-  force an arbitrary parent choice or silently drop a cyclic subtree, so
-  the loader rejects rather than repairs (decision recorded for #92).
+  parents), or a primitive accessor whose dense or sparse byte extent its
+  declared buffer view cannot satisfy — is rejected at load (operator error,
+  exit 2; run glTF-Validator for the details). Recovering a non-forest graph
+  would force an arbitrary parent choice or silently drop a cyclic subtree,
+  so the loader rejects rather than repairs (decision recorded for #92).
+  Likewise, substituting an empty position/index vector for a short accessor
+  would make checks report on geometry the file did not author. Primitive
+  shortfalls therefore use a located `PrimitiveAccessorLayout` refusal;
+  inverse-bind shortfalls remain typed source evidence because that domain
+  already models unavailable bind declarations (decision recorded for #329).
   *Semantic* defects — NaN times or values, non-unit quaternions,
   hemisphere flips, seam pops — load fine and are judged by the checks;
   sampling is panic-free under them by construction.

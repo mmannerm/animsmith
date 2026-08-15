@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- *(gltf)* refuse primitive accessors whose dense or sparse byte extent their
+  declared buffer view cannot satisfy, instead of silently retaining a
+  primitive with empty positions or indices
+  ([#329](https://github.com/mmannerm/animsmith/issues/329))
 - *(core)* allow rest/bind scale planning to compose through finite static
   source-node connectors between projected joints while preserving each
   connector local transform, rebasing only its projected successor, and
