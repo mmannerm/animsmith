@@ -18,11 +18,12 @@ animsmith-gltf = "0.1"
 ## Feature Flags
 
 - `fixtures` (off by default) — exposes `animsmith_core::fixtures`, the
-  analytic-clip fixture builders shared with animsmith's own tests and
-  example-asset generator. Adds no dependency (the builders take their
-  sine as a parameter). Internal to the animsmith workspace and **not**
-  part of the crate's stable API; downstream code should not depend on
-  it.
+  analytic walk-cycle and scale-reference builders shared with animsmith's own
+  tests and example-asset generator. Adds no dependency: the walk-cycle builder
+  takes its sine as a parameter, while the scale-reference builder is test
+  support rather than a production rewrite path. Internal to the animsmith
+  workspace and **not** part of the crate's stable API; downstream code should
+  not depend on it.
 
 The workspace MSRV is Rust 1.88.
 

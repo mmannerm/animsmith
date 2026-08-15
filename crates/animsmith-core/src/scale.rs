@@ -3441,6 +3441,17 @@ mod candidate_api_contract {
     ///     document: Document::default(),
     /// };
     /// ```
+    ///
+    /// Field privacy is pinned independently from the non-exhaustive struct
+    /// construction boundary above.
+    ///
+    /// ```compile_fail
+    /// use animsmith_core::ScaleCandidate;
+    ///
+    /// fn read_private_document(candidate: ScaleCandidate) {
+    ///     let _ = candidate.document;
+    /// }
+    /// ```
     struct RemovedPublicBuilder;
 }
 
