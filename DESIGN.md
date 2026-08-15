@@ -2206,7 +2206,9 @@ source's own JSON and buffer bytes, and `rewrite_rest_bind` /
 reparameterization the same way. Because that route produces a candidate
 core did not build, `ScaleCandidate::from_document` exists so the reloaded
 artifact can reach `prove_scale`; the type asserts nothing that `prove_scale`
-does not independently re-derive.
+does not independently re-derive. Core exposes no production candidate
+builder: its analytic reference constructor is available only through the
+non-default `fixtures` feature for tests and calibration.
 
 `rewrite_rest_bind` takes the same required raw selectors the command line
 does — a source-skin index, a source-root-node index and an expected factor —

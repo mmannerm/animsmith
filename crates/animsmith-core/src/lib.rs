@@ -18,10 +18,11 @@
 //! two distinct DESIGN.md Appendix D scale operations —
 //! [`scale::ScaleOperation::WholeDocumentLinearUnits`] and
 //! [`scale::ScaleOperation::RestBindUniformScale`] — through pure, fail-closed
-//! [`scale::plan_scale`], candidate construction with
-//! [`scale::build_scale_candidate`], and independent [`scale::prove_scale`].
-//! It does not decide selectors, publish artifacts, or write files; a format
-//! frontend and a dedicated producer own those steps.
+//! [`scale::plan_scale`] and independent [`scale::prove_scale`]. A format
+//! frontend owns exact source rewriting and hands the reloaded emitted
+//! document back through [`scale::ScaleCandidate::from_document`]; core does
+//! not expose a production candidate builder, decide selectors, publish
+//! artifacts, or write files.
 //! The [`animsmith-gltf`] and [`animsmith-fbx`] loader crates translate file
 //! formats into this model; their docs.rs pages continue the library path for
 //! format-specific loading and, for glTF, writing.
@@ -162,7 +163,7 @@ pub use scale::{
     ScaleOperation, ScalePayloadShapeRow, ScalePlan, ScalePlanLedger, ScaleProjectedRole,
     ScaleProof, ScaleProofObligation, ScaleProofResidual, ScaleRequest, ScaleRewriteRule,
     ScaleSourceNodeKind, ScaleSourceRestField, ScaleSourceTopologyRow, ScaleTolerancePolicy,
-    build_scale_candidate, plan_scale, prove_scale,
+    plan_scale, prove_scale,
 };
 pub use skinned_canonical::{
     SkinnedBindPoseCanonicalization, SkinnedBindPoseCanonicalizationError,

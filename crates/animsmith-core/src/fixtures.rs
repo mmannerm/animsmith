@@ -1,6 +1,6 @@
-//! The analytic walk-cycle fixture, shared by this crate's semantic
-//! tests and [`animsmith-testkit`](../../animsmith_testkit/index.html)'s
-//! committed example assets.
+//! Analytic reference fixtures shared by this crate's integration tests and
+//! [`animsmith-testkit`](../../animsmith_testkit/index.html)'s committed
+//! example assets.
 //!
 //! A `hips` + left/right-foot rig whose feet swing as antiphase
 //! sinusoids, so the loop-seam / gait / root-motion metrics (which
@@ -15,13 +15,38 @@
 //! vs. the platform sine for tolerance-checked tests. Passing the sine in
 //! keeps this crate free of a trig dependency (see [`foot_track`]).
 //!
-//! Behind the `fixtures` feature: testkit enables it, and this crate's
-//! own tests reach it through a self dev-dependency that turns the
-//! feature on for the test build.
+//! The module also exposes [`build_scale_reference_candidate`] for scale-plan
+//! contract tests. It is deliberately separate from the production flow,
+//! where a format frontend rewrites exact source bytes and reloads the emitted
+//! artifact before core proof.
+//!
+//! Behind the `fixtures` feature: testkit enables it, and this crate's own
+//! tests reach it through a self dev-dependency that turns the feature on for
+//! the test build.
 
 use crate::model::*;
+use crate::scale::{ScaleCandidate, ScaleError, ScalePlan, build_scale_candidate};
 use glam::Vec3;
 use std::f64::consts::TAU;
+
+/// Build the format-neutral reference candidate for an accepted scale plan.
+///
+/// This analytic fixture is not the production rewrite route. Format
+/// frontends rewrite their exact source representation, reload the emitted
+/// artifact, and wrap that document with [`ScaleCandidate::from_document`]
+/// before calling [`crate::scale::prove_scale`]. This helper exists only for
+/// reference, calibration, and cross-crate contract tests enabled through the
+/// non-default `fixtures` feature.
+///
+/// The source `document` is never mutated. The same structural replay and
+/// candidate validation errors as the private reference implementation are
+/// returned unchanged.
+pub fn build_scale_reference_candidate(
+    document: &Document,
+    plan: &ScalePlan,
+) -> Result<ScaleCandidate, ScaleError> {
+    build_scale_candidate(document, plan)
+}
 
 /// Keyframe count: 32 intervals over the 1 s clip.
 pub const WALK_KEYS: usize = 33;

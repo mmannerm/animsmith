@@ -1,13 +1,14 @@
+use animsmith_core::fixtures::build_scale_reference_candidate;
 use animsmith_core::glam::{Mat4, Quat, Vec3};
 use animsmith_core::model::{
     MeshAsset, MeshInstance, Primitive, SceneAssets, SourceInverseBindAccessor, SourceSkinAsset,
     SourceSkinAttachment,
 };
 use animsmith_core::scale::{
-    ScaleBoneRestField, ScaleCandidate, ScaleCapabilityCoverage, ScaleCapabilityFacts, ScaleError,
-    ScaleFieldDisposition, ScaleFieldTarget, ScaleOperation, ScalePayloadShapeRow,
-    ScaleProjectedRole, ScaleProofObligation, ScaleRequest, ScaleRewriteRule, ScaleSourceNodeKind,
-    ScaleSourceRestField, build_scale_candidate, plan_scale, prove_scale,
+    ProofResidualKind, ScaleBoneRestField, ScaleCandidate, ScaleCapabilityCoverage,
+    ScaleCapabilityFacts, ScaleError, ScaleFieldDisposition, ScaleFieldTarget, ScaleOperation,
+    ScalePayloadShapeRow, ScaleProjectedRole, ScaleProofObligation, ScaleRequest, ScaleRewriteRule,
+    ScaleSourceNodeKind, ScaleSourceRestField, plan_scale, prove_scale,
 };
 use animsmith_core::{
     Bone, Clip, Document, Interpolation, Property, Skeleton, SourceInverseBindAccessorStatus,
@@ -829,8 +830,60 @@ fn whole_document_ledger_names_each_public_rewrite_and_obligation() {
         ]
     );
 
-    let candidate = build_scale_candidate(&document, &plan).expect("ledger drives the build");
+    let candidate =
+        build_scale_reference_candidate(&document, &plan).expect("ledger drives the build");
     prove_scale(&document, &candidate, &plan).expect("ledger obligations prove");
+}
+
+#[test]
+fn reference_fixture_and_reloaded_handoff_share_the_same_core_proof() {
+    let document = unit_document();
+    let plan = whole_document_plan(&document, 0.01);
+    let reference = build_scale_reference_candidate(&document, &plan)
+        .expect("the analytic reference candidate builds");
+    let reloaded = ScaleCandidate::from_document(reference.document().clone());
+
+    assert_eq!(
+        prove_scale(&document, &reference, &plan).expect("the reference candidate proves"),
+        prove_scale(&document, &reloaded, &plan).expect("the reloaded handoff proves"),
+    );
+}
+
+#[test]
+fn reloaded_handoff_rejects_structural_and_numeric_corruption() {
+    let document = unit_document();
+    let plan = whole_document_plan(&document, 0.01);
+    let reference = build_scale_reference_candidate(&document, &plan)
+        .expect("the analytic reference candidate builds");
+
+    let mut structurally_corrupted = reference.document().clone();
+    structurally_corrupted.skeleton.bones[1].parent = None;
+    structurally_corrupted.assets.source_skeleton.nodes[1].parent_source_node_index = None;
+    assert_eq!(
+        prove_scale(
+            &document,
+            &ScaleCandidate::from_document(structurally_corrupted),
+            &plan,
+        )
+        .unwrap_err(),
+        ScaleError::CandidateStructureMismatch {
+            reason: "skeleton_topology_mismatch",
+        }
+    );
+
+    let mut numerically_corrupted = reference.document().clone();
+    numerically_corrupted.skeleton.bones[1].rest.translation.y = 1.0;
+    assert!(matches!(
+        prove_scale(
+            &document,
+            &ScaleCandidate::from_document(numerically_corrupted),
+            &plan,
+        ),
+        Err(ScaleError::ProofResidualExceeded {
+            kind: ProofResidualKind::RestTranslation,
+            ..
+        })
+    ));
 }
 
 #[test]
@@ -846,7 +899,8 @@ fn factor_one_keeps_explicit_exact_field_claims() {
         "a no-op plan must retain explicit inventory rows without analytic writes"
     );
 
-    let candidate = build_scale_candidate(&document, &plan).expect("factor-one build succeeds");
+    let candidate =
+        build_scale_reference_candidate(&document, &plan).expect("factor-one build succeeds");
     assert_eq!(
         candidate.document().skeleton.bones[1]
             .rest
@@ -866,7 +920,8 @@ fn factor_one_keeps_explicit_exact_field_claims() {
 fn normalized_candidate_values_remain_governed_by_versioned_residuals() {
     let document = unit_document();
     let plan = whole_document_plan(&document, 0.01);
-    let candidate = build_scale_candidate(&document, &plan).expect("baseline candidate builds");
+    let candidate =
+        build_scale_reference_candidate(&document, &plan).expect("baseline candidate builds");
     let mut within_tolerance = candidate.document().clone();
 
     let translation = &mut within_tolerance.skeleton.bones[1].rest.translation.y;
@@ -1002,7 +1057,8 @@ fn rest_bind_topology_distinguishes_direct_edges_and_connectors() {
     );
 
     for (document, plan) in [(&direct, &direct_plan), (&connected, &connected_plan)] {
-        let candidate = build_scale_candidate(document, plan).expect("rest/bind build succeeds");
+        let candidate =
+            build_scale_reference_candidate(document, plan).expect("rest/bind build succeeds");
         prove_scale(document, &candidate, plan).expect("rest/bind obligations prove");
     }
 }
@@ -1080,7 +1136,8 @@ fn unchanged_world_and_topology_are_explicit_and_enforced() {
         ]
     );
 
-    let candidate = build_scale_candidate(&document, &plan).expect("baseline candidate builds");
+    let candidate =
+        build_scale_reference_candidate(&document, &plan).expect("baseline candidate builds");
     prove_scale(&document, &candidate, &plan).expect("baseline candidate proves");
 
     let mutations: [RestMutation; 3] = [
@@ -1156,7 +1213,7 @@ fn numeric_only_replay_keeps_the_structural_ledger_valid() {
     plan.validate_document_inventory(&replay)
         .expect("numeric-only replay keeps the complete inventory");
     let candidate =
-        build_scale_candidate(&replay, &plan).expect("numeric-only replay still builds");
+        build_scale_reference_candidate(&replay, &plan).expect("numeric-only replay still builds");
     prove_scale(&replay, &candidate, &plan).expect("numeric-only replay still proves");
 
     replay.assets.meshes[0].primitives[0].positions[0] = Vec3::NAN;
@@ -1178,7 +1235,7 @@ fn complete_source_node_backing_order_is_not_ledger_identity() {
 
     let mut replay = document.clone();
     replay.assets.source_skeleton.nodes.reverse();
-    let candidate = build_scale_candidate(&replay, &plan)
+    let candidate = build_scale_reference_candidate(&replay, &plan)
         .expect("source-node backing order is not semantic identity");
     prove_scale(&replay, &candidate, &plan)
         .expect("canonical source identities remain valid after reorder");
@@ -1255,7 +1312,7 @@ fn primitive_modeled_attribute_shape_is_exact_payload_identity() {
             ),
         ]
     );
-    let candidate = build_scale_candidate(&document, &plan).unwrap();
+    let candidate = build_scale_reference_candidate(&document, &plan).unwrap();
 
     let mut replay = document.clone();
     replay.assets.meshes[0].primitives[1].normals.clear();
@@ -1266,7 +1323,7 @@ fn primitive_modeled_attribute_shape_is_exact_payload_identity() {
         })
     ));
     assert!(matches!(
-        build_scale_candidate(&replay, &plan),
+        build_scale_reference_candidate(&replay, &plan),
         Err(ScaleError::PlanDocumentMismatch {
             reason: "payload_shape_inventory_mismatch"
         })
@@ -1359,12 +1416,12 @@ fn stable_source_mesh_identity_makes_same_shape_reordering_stale() {
             },
         ]
     );
-    let candidate = build_scale_candidate(&document, &plan).unwrap();
+    let candidate = build_scale_reference_candidate(&document, &plan).unwrap();
 
     let mut replay = document.clone();
     replay.assets.meshes.swap(0, 1);
     assert!(matches!(
-        build_scale_candidate(&replay, &plan),
+        build_scale_reference_candidate(&replay, &plan),
         Err(ScaleError::PlanDocumentMismatch {
             reason: "payload_shape_inventory_mismatch"
         })
@@ -1507,7 +1564,7 @@ fn factor_one_rest_bind_materializes_an_absent_format_defined_bind() {
         ]
     );
 
-    let candidate = build_scale_candidate(&document, &plan)
+    let candidate = build_scale_reference_candidate(&document, &plan)
         .expect("factor-one rest/bind still materializes bind evidence");
     assert!(document.assets.instances[0].skin_ibms.is_empty());
     assert_eq!(
@@ -1619,7 +1676,7 @@ fn unavailable_source_skins_do_not_become_ledger_identity() {
             },
         ));
     replay.assets.source_skeleton.skins.clear();
-    let candidate = build_scale_candidate(&replay, &plan).unwrap();
+    let candidate = build_scale_reference_candidate(&replay, &plan).unwrap();
     prove_scale(&replay, &candidate, &plan).unwrap();
 }
 
@@ -1647,12 +1704,12 @@ fn candidate_source_skins_preserve_stable_source_order() {
             inverse_bind_matrix_count: 0,
         }
     )));
-    let candidate = build_scale_candidate(&document, &plan).unwrap();
+    let candidate = build_scale_reference_candidate(&document, &plan).unwrap();
 
     let mut source_retargeted = document.clone();
     source_retargeted.assets.source_skeleton.skins[1].source_skin_index = 8;
     assert!(matches!(
-        build_scale_candidate(&source_retargeted, &plan),
+        build_scale_reference_candidate(&source_retargeted, &plan),
         Err(ScaleError::PlanDocumentMismatch {
             reason: "payload_shape_inventory_mismatch"
         })
@@ -1667,7 +1724,7 @@ fn candidate_source_skins_preserve_stable_source_order() {
     let mut source_reordered = document.clone();
     source_reordered.assets.source_skeleton.skins.swap(0, 1);
     assert!(matches!(
-        build_scale_candidate(&source_reordered, &plan),
+        build_scale_reference_candidate(&source_reordered, &plan),
         Err(ScaleError::PlanDocumentMismatch {
             reason: "payload_shape_inventory_mismatch"
         })
@@ -1713,7 +1770,8 @@ fn replay_rejects_a_changed_inventory_with_the_same_old_boolean_summary() {
         }],
     });
     let plan = rest_bind_plan(&document);
-    let candidate = build_scale_candidate(&document, &plan).expect("baseline source builds");
+    let candidate =
+        build_scale_reference_candidate(&document, &plan).expect("baseline source builds");
 
     let mut changed = document.clone();
     changed.clips.push(Clip {
@@ -1729,7 +1787,7 @@ fn replay_rejects_a_changed_inventory_with_the_same_old_boolean_summary() {
     });
 
     assert!(matches!(
-        build_scale_candidate(&changed, &plan),
+        build_scale_reference_candidate(&changed, &plan),
         Err(ScaleError::PlanDocumentMismatch { .. })
     ));
     assert!(matches!(
@@ -1746,13 +1804,14 @@ fn replay_rejects_same_cardinality_source_attachment_retargets() {
         source_mesh_index: Some(0),
     }];
     let plan = whole_document_plan(&document, 0.01);
-    let candidate = build_scale_candidate(&document, &plan).expect("baseline source builds");
+    let candidate =
+        build_scale_reference_candidate(&document, &plan).expect("baseline source builds");
 
     let mut retargeted = document.clone();
     retargeted.assets.source_skeleton.skins[0].attachments[0].source_mesh_index = None;
 
     assert!(matches!(
-        build_scale_candidate(&retargeted, &plan),
+        build_scale_reference_candidate(&retargeted, &plan),
         Err(ScaleError::PlanDocumentMismatch {
             reason: "payload_shape_inventory_mismatch"
         })
@@ -1768,7 +1827,7 @@ fn replay_rejects_same_cardinality_source_attachment_retargets() {
     retargeted.assets.source_skeleton.skins[0].attachments[0].source_node_index = 0;
 
     assert!(matches!(
-        build_scale_candidate(&retargeted, &plan),
+        build_scale_reference_candidate(&retargeted, &plan),
         Err(ScaleError::PlanDocumentMismatch {
             reason: "payload_shape_inventory_mismatch"
         })

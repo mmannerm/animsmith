@@ -84,8 +84,8 @@
 //! glTF's format default ("no `inverseBindMatrices`, every joint's bind is
 //! identity") is unreachable here and would be unimplementable if it were
 //! not: #280 refuses such a skin outright with `MissingInverseBinds`, and
-//! materializing the array the way [`animsmith_core::scale::build_scale_candidate`]
-//! does would append an accessor, a `bufferView` and buffer bytes — breaking
+//! materializing the array the way core's analytic reference fixture does
+//! would append an accessor, a `bufferView` and buffer bytes — breaking
 //! array identities, preserved-byte length equality, and
 //! [`super::container`]'s no-length-change invariant at once. This module
 //! therefore documents the case rather than mirroring core's materialization.

@@ -199,8 +199,10 @@ two distinct scale operations from
 whole-document linear-unit conversion and rest/bind hierarchy
 reparameterization. `plan_scale` is pure and fail-closed against a
 `Document` and a format-neutral `ScaleCapabilityFacts` projection;
-`build_scale_candidate` builds a new candidate document without mutating the
-source; `prove_scale` independently re-derives the plan's claims and reports
+core exposes no production candidate builder. Format frontends rewrite their
+exact source representation, reload the emitted artifact, and wrap that
+document with `ScaleCandidate::from_document`; `prove_scale` independently
+re-derives the plan's claims and reports
 residual maxima against the fixed `ScaleTolerancePolicy::APPENDIX_D_V6`
 tolerance identity, refusing a document whose sampled proof work exceeds that
 policy's budget rather than sampling a subset of it. The policy's three finite
@@ -315,6 +317,12 @@ ranges, array identities, container framing, `min`/`max` consistency, and
 deterministic output bytes. Wrap the reloaded artifact in
 `ScaleCandidate::from_document` to run `prove_scale` over it as well; the two
 proof layers are complementary, not alternatives.
+
+Analytic integration tests that explicitly enable `animsmith-core`'s
+non-default `fixtures` feature may use
+`fixtures::build_scale_reference_candidate`. That reference construction is
+not a format writer and does not replace exact-source rewrite, artifact reload,
+or artifact proof in a production embedding.
 
 ## What the libraries do not own
 
