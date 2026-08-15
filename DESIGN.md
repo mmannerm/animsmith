@@ -1960,9 +1960,13 @@ within versioned tolerances:
   The shared input/candidate checks, source-skin structural rows, canonical
   source topology and rest/bind domain derivation, world-pose and inverse-bind
   readers, and one-time affected-skin classification live in
-  `crates/animsmith-core/src/scale/validation.rs`. Operation planners and
-  ledger/replay compilation remain outside that private structural boundary;
-  validation does not own or reconstruct a second plan vocabulary.
+  `crates/animsmith-core/src/scale/validation.rs`. Operation selection, both
+  planners, typed field/payload/obligation ledger compilation, clip-evidence
+  declaration, and complete numeric-value-free replay live in private
+  `crates/animsmith-core/src/scale/planning.rs`. Planning consumes the shared
+  validation/topology boundary and remains the single owner of the compiled
+  plan vocabulary; validation does not depend back on planning or reconstruct
+  a second plan vocabulary.
   For an admitted connector span, typed obligations require every connector
   local to remain bit-exact and independently derive the projected successor's
   expected bridged source local from canonical source topology. The connector

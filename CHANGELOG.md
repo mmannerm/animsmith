@@ -31,8 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `scale/numeric.rs`; shared scale-input and candidate validation, canonical
   source topology/domain derivation, world-pose and inverse-bind readers, and
   one-time affected-skin classification now live in private
-  `scale/validation.rs`, without changing public paths, policy, evidence, or
-  proof behavior
+  `scale/validation.rs`; operation planning, typed field/payload/obligation
+  ledger compilation, sampled-evidence declaration, and complete structural
+  replay now live in private `scale/planning.rs`, without changing public
+  paths, ordering, policy, evidence, or proof behavior
   ([#383](https://github.com/mmannerm/animsmith/issues/383))
 - [**breaking**] *(core)* remove the production-looking public
   `build_scale_candidate` API. Format frontends remain responsible for exact
