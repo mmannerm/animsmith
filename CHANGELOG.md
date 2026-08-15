@@ -28,8 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   public facade to `scale/mod.rs`, its complete lib-target test and calibration
   graph to private `scale/tests.rs`, and the shared policy-neutral matrix
   rewrite, residual, and arithmetic-provenance leaves to private
-  `scale/numeric.rs`, without changing public paths, policy, evidence, or proof
-  behavior
+  `scale/numeric.rs`; shared scale-input and candidate validation, canonical
+  source topology/domain derivation, world-pose and inverse-bind readers, and
+  one-time affected-skin classification now live in private
+  `scale/validation.rs`, without changing public paths, policy, evidence, or
+  proof behavior
   ([#383](https://github.com/mmannerm/animsmith/issues/383))
 - [**breaking**] *(core)* remove the production-looking public
   `build_scale_candidate` API. Format frontends remain responsible for exact

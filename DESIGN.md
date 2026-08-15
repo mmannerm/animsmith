@@ -1957,6 +1957,12 @@ within versioned tolerances:
   by raw source identity, so merely reordering its backing rows is not a
   topology change. Numeric values may still change when that exact inventory
   and ledger remain equal; replay does not freeze the planned source snapshot.
+  The shared input/candidate checks, source-skin structural rows, canonical
+  source topology and rest/bind domain derivation, world-pose and inverse-bind
+  readers, and one-time affected-skin classification live in
+  `crates/animsmith-core/src/scale/validation.rs`. Operation planners and
+  ledger/replay compilation remain outside that private structural boundary;
+  validation does not own or reconstruct a second plan vocabulary.
   For an admitted connector span, typed obligations require every connector
   local to remain bit-exact and independently derive the projected successor's
   expected bridged source local from canonical source topology. The connector
