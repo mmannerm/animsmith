@@ -33,8 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one-time affected-skin classification now live in private
   `scale/validation.rs`; operation planning, typed field/payload/obligation
   ledger compilation, sampled-evidence declaration, and complete structural
-  replay now live in private `scale/planning.rs`, without changing public
-  paths, ordering, policy, evidence, or proof behavior
+  replay now live in private `scale/planning.rs`; the candidate wrapper,
+  analytic fixture builder, and writer-owned direct/connector rebase arithmetic
+  now live in private `scale/reference.rs`, without changing public paths,
+  ordering, policy, evidence, or proof behavior
   ([#383](https://github.com/mmannerm/animsmith/issues/383))
 - [**breaking**] *(core)* remove the production-looking public
   `build_scale_candidate` API. Format frontends remain responsible for exact
