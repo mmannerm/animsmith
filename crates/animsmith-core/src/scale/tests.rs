@@ -3397,7 +3397,7 @@ fn a_projection_that_is_not_complete_coverage_is_not_identity_evidence() {
 /// from the unprojected side rather than the disagreeing one.
 ///
 /// Planned at source node 0 the closure can only be `{0, 1}`: bone 2 has
-/// no source node, so nothing can put it there. [`build_rest_bind`]
+/// no source node, so nothing can put it there. The reference rest/bind writer
 /// divides bone 0's local rest by `s` and leaves bone 2's alone, so bone
 /// 2's world rest is multiplied by `1 / s` — and every obligation looks
 /// away for the same three reasons as
@@ -7033,7 +7033,7 @@ fn proof_rejects_a_corrupt_direct_trs_source_rewrite_with_correct_normalized_bon
 /// with every affected node's authored local rest declared as
 /// [`SourceNodeLocalRest::Matrix`] instead of `Trs` — the variant every
 /// other fixture in this module leaves unexercised, and the only one that
-/// reaches [`rebase_matrix`].
+/// reaches the reference writer's matrix-rebase path.
 ///
 /// ```text
 /// bone 0   parent -   scale(0.01)                   scaled root

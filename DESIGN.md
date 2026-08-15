@@ -1966,7 +1966,13 @@ within versioned tolerances:
   `crates/animsmith-core/src/scale/planning.rs`. Planning consumes the shared
   validation/topology boundary and remains the single owner of the compiled
   plan vocabulary; validation does not depend back on planning or reconstruct
-  a second plan vocabulary.
+  a second plan vocabulary. The opaque candidate wrapper, feature-gated
+  analytic reference builder, and writer-owned direct/connector source-local
+  rebase arithmetic live in private
+  `crates/animsmith-core/src/scale/reference.rs`. That module consumes the
+  compiled plan and shared validation/numeric leaves; proof derives its own
+  connector products, expected source locals, and scale-track boundary rather
+  than importing the reference writer's expectations.
   For an admitted connector span, typed obligations require every connector
   local to remain bit-exact and independently derive the projected successor's
   expected bridged source local from canonical source topology. The connector
