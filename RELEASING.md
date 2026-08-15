@@ -13,6 +13,15 @@ configured by `release-plz.toml`. The changelog uses release-plz's
 default Keep-a-Changelog format, derived from the Conventional Commit
 history (accepted types live in `.commitlintrc.yml`).
 
+## Repository prerequisite
+
+In GitHub, enable **Settings → Actions → General → Workflow
+permissions → Allow GitHub Actions to create and approve pull requests**.
+The `release-pr` job's `pull-requests: write` permission is necessary but does
+not override that repository setting. If the setting is disabled,
+release-plz can push its release branch but PR creation fails with HTTP 403,
+leaving the branch without a pull request.
+
 ## Per-release flow (steady state)
 
 1. Merge feature/fix PRs to `main` as usual (Conventional Commits).

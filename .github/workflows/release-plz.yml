@@ -30,6 +30,9 @@ name: release-plz
 # get a CI run on its own. If branch protection requires CI to merge it,
 # swap `secrets.GITHUB_TOKEN` in the release-pr job for a PAT or GitHub
 # App token (release-plz `token` input). Deferred to bootstrap.
+# Repository prerequisite: Settings → Actions → General → Workflow
+# permissions must allow GitHub Actions to create pull requests. The job-level
+# `pull-requests: write` permission below does not override that setting.
 
 on:
   push:
