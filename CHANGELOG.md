@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- *(core)* begin the behavior-neutral scale module split by moving the public
+  facade to `scale/mod.rs` and its complete lib-target test and calibration
+  graph to the private `scale/tests.rs` module, without changing public paths,
+  policy, evidence, or proof behavior
+  ([#383](https://github.com/mmannerm/animsmith/issues/383))
 - [**breaking**] *(core)* remove the production-looking public
   `build_scale_candidate` API. Format frontends remain responsible for exact
   source rewriting and pass the emitted reload through
