@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   declared buffer view cannot satisfy, instead of silently retaining a
   primitive with empty positions or indices
   ([#329](https://github.com/mmannerm/animsmith/issues/329))
+- *(gltf)* reject animation sampler accessors whose declared type or component
+  type does not match the property-selected reader, preventing malformed
+  inputs from panicking or silently reinterpreting same-sized elements while
+  retaining all five legal quaternion encodings
+  ([#327](https://github.com/mmannerm/animsmith/issues/327))
 - *(core)* allow rest/bind scale planning to compose through finite static
   source-node connectors between projected joints while preserving each
   connector local transform, rebasing only its projected successor, and

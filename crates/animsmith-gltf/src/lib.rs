@@ -209,6 +209,32 @@ pub enum LoadError {
         /// byteLength 12 is a byte extent that overflows`.
         problem: String,
     },
+    /// An animation sampler's `input` or `output` accessor declares an
+    /// element encoding the property-specific reader cannot decode. The
+    /// reader always expects scalar `FLOAT` key times; outputs are `VEC3` of
+    /// `FLOAT` for translation/scale, one of glTF's five `VEC4` quaternion
+    /// encodings for rotation, or scalar `FLOAT` for morph weights.
+    #[error(
+        "animation {animation} sampler {sampler} {slot} for node {node} {property}: accessor {accessor} is {found}, but the loader reads {expected}"
+    )]
+    AnimationEncoding {
+        /// glTF index of the animation holding the sampler.
+        animation: usize,
+        /// Index of the sampler within that animation.
+        sampler: usize,
+        /// Sampler slot the accessor fills: `input` or `output`.
+        slot: &'static str,
+        /// glTF index of the node the channel targets.
+        node: usize,
+        /// Target property selecting the output reader.
+        property: &'static str,
+        /// Index of the offending accessor.
+        accessor: usize,
+        /// Declared encoding, such as `VEC3 of FLOAT`.
+        found: String,
+        /// Encodings the selected reader accepts.
+        expected: String,
+    },
 }
 
 /// `fix` errors are classified by defect, not by phase: [`LoadError`]
@@ -376,11 +402,10 @@ pub(crate) fn validate_glb_framing(bytes: &[u8]) -> Result<(), LoadError> {
 /// - An unknown `target.path` (`Checked::Invalid`) or out-of-range
 ///   `target.node`: `Target::property()` / `Target::node()` both
 ///   `.unwrap()`.
-/// - A sampler `output` accessor typed `UNSIGNED_INT`: no valid animation
-///   output is ever U32, and `read_outputs` has no arm for it — it hits
-///   an `unreachable!()`. (Truly invalid component types are already
-///   rejected by the derived accessor validation `from_slice` runs; only
-///   this spec-valid-but-nonsensical one leaks through.)
+///
+/// Element encodings are judged separately after this raw channel validation
+/// makes the high-level target accessors safe to call; see
+/// [`validate_animation_accessor_encodings`].
 pub(crate) fn validate_animation_channels(root: &gltf::json::Root) -> Result<(), LoadError> {
     use gltf::json::validation::Checked;
     let node_count = root.nodes.len();
@@ -398,20 +423,16 @@ pub(crate) fn validate_animation_channels(root: &gltf::json::Root) -> Result<(),
                 )));
             }
         }
-        for (si, sampler) in anim.samplers.iter().enumerate() {
-            if let Some(accessor) = root.accessors.get(sampler.output.value())
-                && matches!(
-                    accessor.component_type,
-                    Checked::Valid(ct) if ct.0 == ComponentType::U32
-                )
-            {
-                return Err(LoadError::Malformed(format!(
-                    "animation {ai} sampler {si}: output accessor has an unsupported UNSIGNED_INT component type"
-                )));
-            }
-        }
     }
     Ok(())
+}
+
+/// Validate every animation reader boundary after raw channel indices and
+/// target paths are known to be safe to project through `gltf`'s high-level
+/// API.
+pub(crate) fn validate_animations(doc: &gltf::Document) -> Result<(), LoadError> {
+    validate_animation_channels(doc.as_json())?;
+    validate_animation_accessor_encodings(doc)
 }
 
 /// The element encoding one `gltf` reader can decode: the single accessor
@@ -480,6 +501,111 @@ const INVERSE_BIND_ENCODING: ReaderEncoding = ReaderEncoding {
     accessor_type: AccessorType::Mat4,
     component_types: &[ComponentType::F32],
 };
+/// `read_inputs` is an un-dispatched `Iter<f32>`.
+const ANIMATION_INPUT_ENCODING: ReaderEncoding = ReaderEncoding {
+    accessor_type: AccessorType::Scalar,
+    component_types: &[ComponentType::F32],
+};
+/// Translation and scale outputs are un-dispatched `Iter<[f32; 3]>` values.
+const ANIMATION_VEC3_OUTPUT_ENCODING: ReaderEncoding = ReaderEncoding {
+    accessor_type: AccessorType::Vec3,
+    component_types: &[ComponentType::F32],
+};
+/// Rotation outputs dispatch over every quaternion encoding glTF permits and
+/// the `gltf` reader decodes.
+const ANIMATION_ROTATION_OUTPUT_ENCODING: ReaderEncoding = ReaderEncoding {
+    accessor_type: AccessorType::Vec4,
+    component_types: &[
+        ComponentType::I8,
+        ComponentType::U8,
+        ComponentType::I16,
+        ComponentType::U16,
+        ComponentType::F32,
+    ],
+};
+/// Morph-weight outputs are scalar floats in core glTF. The loader does not
+/// retain them, but it still constructs the property-selected reader before
+/// skipping them, so their reader boundary must be safe too.
+const ANIMATION_WEIGHT_OUTPUT_ENCODING: ReaderEncoding = ReaderEncoding {
+    accessor_type: AccessorType::Scalar,
+    component_types: &[ComponentType::F32],
+};
+
+/// Reject sampler accessors whose declared element disagrees with the exact
+/// `gltf` reader selected by their slot and target property.
+fn validate_animation_accessor_encodings(doc: &gltf::Document) -> Result<(), LoadError> {
+    for animation in doc.animations() {
+        for channel in animation.channels() {
+            let sampler = channel.sampler();
+            let target = channel.target();
+            let node = target.node().index();
+            let property = target.property();
+            check_animation_accessor_encoding(
+                animation.index(),
+                sampler.index(),
+                node,
+                animation_property_name(property),
+                "input",
+                &sampler.input(),
+                &ANIMATION_INPUT_ENCODING,
+            )?;
+            let output_encoding = match property {
+                gltf::animation::Property::Translation | gltf::animation::Property::Scale => {
+                    &ANIMATION_VEC3_OUTPUT_ENCODING
+                }
+                gltf::animation::Property::Rotation => &ANIMATION_ROTATION_OUTPUT_ENCODING,
+                gltf::animation::Property::MorphTargetWeights => &ANIMATION_WEIGHT_OUTPUT_ENCODING,
+            };
+            check_animation_accessor_encoding(
+                animation.index(),
+                sampler.index(),
+                node,
+                animation_property_name(property),
+                "output",
+                &sampler.output(),
+                output_encoding,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn check_animation_accessor_encoding(
+    animation: usize,
+    sampler: usize,
+    node: usize,
+    property: &'static str,
+    slot: &'static str,
+    accessor: &gltf::Accessor<'_>,
+    required: &ReaderEncoding,
+) -> Result<(), LoadError> {
+    if encoding_matches(accessor, required) {
+        return Ok(());
+    }
+    Err(LoadError::AnimationEncoding {
+        animation,
+        sampler,
+        slot,
+        node,
+        property,
+        accessor: accessor.index(),
+        found: format!(
+            "{} of {}",
+            accessor_type_name(accessor.dimensions()),
+            component_type_name(accessor.data_type())
+        ),
+        expected: describe_encoding(required),
+    })
+}
+
+fn animation_property_name(property: gltf::animation::Property) -> &'static str {
+    match property {
+        gltf::animation::Property::Translation => "translation",
+        gltf::animation::Property::Rotation => "rotation",
+        gltf::animation::Property::Scale => "scale",
+        gltf::animation::Property::MorphTargetWeights => "weights",
+    }
+}
 
 /// The encoding the loader requires of one attribute semantic, or `None`
 /// when no reader is ever built for it.
@@ -650,14 +776,10 @@ fn check_primitive_accessor(
 ///
 /// **Layout only.** This judges *how* a sampler accessor addresses its
 /// bytes: its view's extent, its `byteStride`, its `sparse` count, and the
-/// extent its own `count` walks. It deliberately does not judge *what*
-/// element the accessor declares. A sampler typed for an element its reader
-/// cannot decode — a `VEC3` rotation output against `read_outputs`'
-/// `[f32; 4]`, or a `componentType` its `match` has no arm for — is the
-/// separate encoding class tracked in issue #327, and reaches its own
-/// panics through a different door ([`encoding_matches`] is what would
-/// close it, as it does for a primitive in [`check_primitive_accessor`]).
-/// Refusing the layout class here neither covers nor blocks that.
+/// extent its own `count` walks. [`validate_animation_accessor_encodings`]
+/// has already judged *what* element the accessor declares against its
+/// property-selected reader; keeping the checks separate preserves their
+/// distinct public error classifications.
 fn check_sampler_accessor(
     clip: &str,
     node: usize,
@@ -956,10 +1078,9 @@ fn validate_track_lengths(
 ///
 /// Returns [`LoadError`] for unreadable files, unsafe or missing external
 /// buffers, malformed GLB framing, parser rejection, structurally invalid
-/// animation channels, geometry accessors typed for an element the reader
-/// cannot decode or laid out so it cannot walk them, animation sampler
-/// accessors laid out so it cannot walk them, or node graphs that cannot be
-/// represented as a skeleton forest.
+/// animation channels, geometry or animation accessors typed for an element
+/// the selected reader cannot decode or laid out so it cannot walk them, or
+/// node graphs that cannot be represented as a skeleton forest.
 pub fn load(path: &Path) -> Result<Document, LoadError> {
     let bytes = std::fs::read(path).map_err(|source| LoadError::Io {
         path: path.display().to_string(),
@@ -978,10 +1099,9 @@ pub fn load(path: &Path) -> Result<Document, LoadError> {
 ///
 /// Returns [`LoadError`] for unsafe or missing external buffers, malformed
 /// GLB framing, parser rejection, structurally invalid animation channels,
-/// geometry accessors typed for an element the reader cannot decode or laid
-/// out so it cannot walk them, animation sampler accessors laid out so it
-/// cannot walk them, or node graphs that cannot be represented as a
-/// skeleton forest.
+/// geometry or animation accessors typed for an element the selected reader
+/// cannot decode or laid out so it cannot walk them, or node graphs that
+/// cannot be represented as a skeleton forest.
 pub fn load_bytes(path: &Path, bytes: &[u8]) -> Result<Document, LoadError> {
     // Parse from the supplied slice rather than via `Gltf::open`: the reader
     // path (`Glb::from_reader`) trusts the GLB header's declared length and
@@ -992,7 +1112,7 @@ pub fn load_bytes(path: &Path, bytes: &[u8]) -> Result<Document, LoadError> {
     // mirrors what `fix` already does.
     validate_glb_framing(bytes)?;
     let gltf = gltf::Gltf::from_slice(bytes)?;
-    validate_animation_channels(gltf.document.as_json())?;
+    validate_animations(&gltf.document)?;
     validate_primitive_accessors(&gltf.document)?;
     let buffers = resolve_buffers(&gltf, path.parent())?;
     // Derive the node topology once and share it: the skeleton build and

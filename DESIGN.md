@@ -117,15 +117,22 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   count mismatch, zero-key channels, absolute or escaping external
   buffer URIs, non-forest node graphs (cycles or a node with two
   parents), or a primitive accessor whose dense or sparse byte extent its
-  declared buffer view cannot satisfy — is rejected at load (operator error,
-  exit 2; run glTF-Validator for the details). Recovering a non-forest graph
-  would force an arbitrary parent choice or silently drop a cyclic subtree,
-  so the loader rejects rather than repairs (decision recorded for #92).
-  Likewise, substituting an empty position/index vector for a short accessor
-  would make checks report on geometry the file did not author. Primitive
-  shortfalls therefore use a located `PrimitiveAccessorLayout` refusal;
-  inverse-bind shortfalls remain typed source evidence because that domain
-  already models unavailable bind declarations (decision recorded for #329).
+  declared buffer view cannot satisfy, or an animation sampler accessor whose
+  declared element does not match its property-selected reader — is rejected
+  at load (operator error, exit 2; run glTF-Validator for the details).
+  Recovering a non-forest graph would force an arbitrary parent choice or
+  silently drop a cyclic subtree, so the loader rejects rather than repairs
+  (decision recorded for #92). Likewise, substituting an empty position/index
+  vector for a short accessor would make checks report on geometry the file did
+  not author. Primitive shortfalls therefore use a located
+  `PrimitiveAccessorLayout` refusal; inverse-bind shortfalls remain typed
+  source evidence because that domain already models unavailable bind
+  declarations (decision recorded for #329).
+  Sampler input is `SCALAR`/`FLOAT`; translation and scale output are
+  `VEC3`/`FLOAT`; rotation output retains all five glTF quaternion encodings
+  (`BYTE`, `UNSIGNED_BYTE`, `SHORT`, `UNSIGNED_SHORT`, `FLOAT`) as `VEC4`.
+  Declared lookalikes are never reinterpreted merely because their byte size
+  happens to match the reader's element (decision recorded for #327).
   *Semantic* defects — NaN times or values, non-unit quaternions,
   hemisphere flips, seam pops — load fine and are judged by the checks;
   sampling is panic-free under them by construction.

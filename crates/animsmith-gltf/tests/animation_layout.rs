@@ -5,8 +5,8 @@
 //! This is the *layout* half of a sampler accessor — view extent, stride,
 //! sparse count — which is the same class `vertex_encodings.rs` pins for a
 //! primitive slot, one call site over. The *encoding* half (a sampler
-//! accessor typed for a different element than its reader decodes) is
-//! tracked separately in issue #327 and is not asserted here.
+//! accessor typed for a different element than its reader decodes) is covered
+//! independently by `animation_encodings.rs` and is not asserted here.
 //!
 //! Both halves of the reader are covered: `read_inputs` and `read_outputs`
 //! each build their own `Iter`, over a dense view or over a sparse block's

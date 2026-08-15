@@ -28,6 +28,12 @@ this keeps authored empty geometry distinct from geometry the loader could not
 read. Unreadable inverse binds remain explicit source-skeleton evidence rather
 than a load refusal because that sidecar models their availability directly.
 
+Animation sampler accessors are checked against the reader selected by their
+slot and target property before decoding. Key times require `SCALAR`/`FLOAT`,
+translation and scale require `VEC3`/`FLOAT`, and rotation retains all five
+decodable glTF `VEC4` quaternion encodings; mismatches return a located
+`LoadError` rather than panicking or reinterpreting same-sized bytes.
+
 For glTF/GLB measurement, the loader also provides a source-resource sidecar:
 source-order material definitions, semantic texture bindings, texture-to-image
 identity, and bounded image metadata. Its complete core binding domain is
