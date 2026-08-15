@@ -1,6 +1,5 @@
 //! The `animsmith scale` producer: two atomic, evidence-emitting scale
-//! operations over raw glTF/GLB bytes (DESIGN.md Appendix D §D.6/§D.7,
-//! implementation slice 5 of §D.8).
+//! operations over raw glTF/GLB bytes (DESIGN.md Appendix D §D.6/§D.7).
 //!
 //! # What one invocation does
 //!
@@ -324,12 +323,14 @@ impl From<ScaleTolerancePolicy> for ToleranceRecord {
 
 /// Both observed-factor witnesses and the divergence between them, per §D.6.
 ///
-/// The two witnesses are measured from deliberately different state — the raw
-/// source projection's parent chain and the normalized skeleton's. Those two
-/// chains are validated to describe the same tree, but nothing reconciles the
-/// two *readings*: each composes its own stored transforms, which is why both
-/// are recorded. The divergence is reported, never enforced;
-/// `divergence_ceiling` is what the design expects of it.
+/// Rest/bind measures the two witnesses from deliberately different state —
+/// the raw source projection's parent chain and the normalized skeleton's.
+/// Those chains are validated to describe the same tree, but nothing
+/// reconciles the two *readings*: each composes its own stored transforms.
+/// Whole-document conversion instead records the declared factor in both
+/// fields because it has no source factor to measure. The divergence is
+/// reported, never enforced; `divergence_ceiling` is what the design expects
+/// of it.
 #[derive(Debug, Clone, Copy, Serialize)]
 struct FactorsRecord {
     declared: Finite,

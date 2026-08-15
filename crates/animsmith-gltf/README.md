@@ -95,10 +95,31 @@ from its write set. Parsed JSON numeric values therefore avoid a needless
 `f32` narrowing, and accessor bytes remain authored, although ordinary JSON
 reserialization can still canonicalize lexical spelling.
 
-Camera, light, and extension length fields have no registered handler in this
-slice, and the preflight rejects those domains outright. Rest/bind
-reparameterization, morph `POSITION` deltas, and CLI/evidence publication
-remain separate dependency-ordered implementation slices.
+Camera, light, and extension length fields have no registered handler in the
+shipped writer, and the preflight rejects those domains outright. Rest/bind
+reparameterization uses the same compiled-plan adapter described below. Morph
+`POSITION` deltas remain refused because the shared model cannot yet represent
+and prove their write domain.
+
+## Rest/Bind Hierarchy Reparameterization
+
+`rewrite_rest_bind` removes one compensating inherited positive uniform scale
+from a caller-selected raw source skin/root hierarchy while preserving its
+world joint translations and orientations, sampled trajectories, and skinned
+geometry. It derives node, animation, and inverse-bind multipliers from the
+compiled plan's canonical raw topology and edits the source JSON and buffers
+directly.
+
+`rewrite_scale_plan` is the common plan-taking writer boundary for both scale
+operations. `prove_rewritten_artifact` and `prove_rewritten_rest_bind` reload
+and prove the emitted container with independently derived component and
+numeric expectations. Writer and proof share numeric-free raw identity and
+shape bindings only. The [scale workflow] describes the supported source
+boundary and coordinated CLI transaction; the [embedding guide] shows how to carry
+one core plan through the adapter.
+
+[scale workflow]: https://github.com/mmannerm/animsmith/blob/main/docs/scale.md
+[embedding guide]: https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md#scale-plan-and-proof-contracts
 
 ## Install
 
@@ -122,6 +143,7 @@ including in `--no-default-features` builds. The workspace MSRV is Rust
 
 - [API reference on docs.rs](https://docs.rs/animsmith-gltf)
 - [Embedding guide](https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md)
+- [Scale workflow](https://github.com/mmannerm/animsmith/blob/main/docs/scale.md)
 - [Raw asset to game-ready pipeline scenarios](https://github.com/mmannerm/animsmith/blob/main/docs/pipeline-scenarios.md)
 - [CLI reference](https://github.com/mmannerm/animsmith/blob/main/docs/cli.md)
 - [Workspace design](https://github.com/mmannerm/animsmith/blob/main/DESIGN.md)

@@ -266,7 +266,7 @@ enum ScaleCmd {
     },
     /// Remove one compensating inherited scale from a skinned hierarchy.
     #[command(
-        long_about = "Reparameterize a restricted skinned rest/bind hierarchy so a compensating inherited scale is removed while world joint transforms, sampled trajectories, and skinned vertex positions are preserved. Both source selectors are required raw source-array indices, and the expected common factor is declared and checked against the source rather than inferred."
+        long_about = "Reparameterize a restricted skinned rest/bind hierarchy so a compensating inherited scale is removed while world joint translations and orientations, sampled trajectories, and skinned vertex positions are preserved. Both source selectors are required raw source-array indices, and the expected common factor is declared and checked against the source rather than inferred."
     )]
     RestBind {
         /// Input .glb or .gltf file.

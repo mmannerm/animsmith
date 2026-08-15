@@ -28,10 +28,11 @@ use std::collections::{BTreeMap, BTreeSet};
 /// loaded candidates, because a mutable [`Document`] cannot carry a durable
 /// validation guarantee.
 ///
+/// The nonnegative sign scan for every stored primary weight happens here.
 /// Per-vertex primitive skinning shape (`joints`/`weights` parallel to
-/// `positions`) is deliberately not checked here: it is validated directly
-/// where it is walked, in [`super::proof::accumulate_skinned_bounds`], since only the affected
-/// instances' geometry needs inspecting there.
+/// `positions`) is a separate check: it is validated directly where those
+/// arrays are walked, in [`super::proof::accumulate_skinned_bounds`], since
+/// only affected instances' geometry needs shape-parity validation.
 pub(in crate::scale) fn validate_scale_input(document: &Document) -> Result<(), ScaleError> {
     validate_model_document_shape(document)?;
     for (mesh_index, mesh) in document.assets.meshes.iter().enumerate() {

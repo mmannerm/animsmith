@@ -7848,7 +7848,7 @@ fn the_same_tangent_error_at_a_harvested_key_time_is_named_by_the_key_obligation
 /// Two compensated joints (`0.01` at every rest-world linear part), four
 /// vertices — two singly weighted, one genuinely blended `0.25 / 0.75`,
 /// and one whose weights sum to `0.8` so the normalisation step in
-/// [`skinned_bounds`] is exercised — plus a `LINEAR` translation track
+/// [`accumulate_skinned_bounds`] is exercised — plus a `LINEAR` translation track
 /// on one joint and a `CUBICSPLINE` translation track (with non-zero
 /// tangents) on the other, so key, cubic-interior, trajectory, skin and
 /// bounds obligations all have something to evaluate.
@@ -8508,9 +8508,10 @@ fn a_joint_far_from_the_geometry_it_carries_still_proves_its_bounds() {
 /// within one unit of themselves, so `W * B` is near-identity while the
 /// composition that produced it ran on `6.4e6`.
 ///
-/// This is the rig DESIGN.md §D.1 and
+/// This is the rig the calibration note and
 /// [`ScaleTolerancePolicy::APPENDIX_D_V6`] quote the cost of the rounding
-/// term on, so the two fixtures that read it share one definition.
+/// term on, so the two fixtures that read it share one definition. See
+/// `docs/scale-calibration.md` for the recorded figure.
 fn far_joint_document() -> Document {
     rotating_rig_document(
         [
@@ -8592,11 +8593,10 @@ fn far_joint_conversion_at(factor: f64) -> (Document, ScalePlan, ScaleCandidate)
 #[test]
 fn the_far_joint_rig_admits_a_four_unit_bind_shift_and_refuses_the_next_one_up() {
     // The documented cost of the rounding term, pinned rather than
-    // recomputed by hand each time it is quoted. DESIGN.md §D.1 and
-    // `APPENDIX_D_V6` both state this floor, and nothing else in the tree
-    // held them to it — an earlier revision stated `4.09`, which is on the
-    // *accepted* side of the real floor and so described a bracket that
-    // does not exist.
+    // recomputed by hand each time it is quoted. `docs/scale-calibration.md`
+    // records this floor, and this test holds it to the implementation — an
+    // earlier revision stated `4.09`, which is on the *accepted* side of the
+    // real floor and so described a bracket that does not exist.
     //
     // The floor is `4.09375`: a shift of exactly that much is admitted and
     // the next binary32 above it, `4.0937505`, is refused by `SkinMatrix`
@@ -11433,7 +11433,8 @@ fn weighted_bounds_provenance_recovers_the_tiny_influence_detection_floor() {
             0x3a7a_1be3,
             0x3a7a_1be4,
         ],
-        "the recorded before/after weight brackets moved; recalibrate and update Appendix D"
+        "the recorded before/after weight brackets moved; recalibrate and update \
+         DESIGN.md Appendix D section D.1"
     );
     assert_eq!(v4_lower_refused.to_bits() + 1, v4_lower_accepted.to_bits());
     assert_eq!(v4_upper_accepted.to_bits() + 1, v4_upper_refused.to_bits());
@@ -14915,8 +14916,8 @@ fn sweep_one(rng: &mut SweepRng, cell: SweepCell) -> Result<SweepSample, ScaleEr
 /// The 144-cell phase is shallow by construction. Its separate deep phase
 /// proves 80 animated cases through depth 512, including a literal
 /// 192-link ring, and measures RestTranslation, Trajectory, SkinMatrix and
-/// Bounds per comparison. See DESIGN.md D.1 for the exact population and
-/// recorded maxima.
+/// Bounds per comparison. See `docs/scale-calibration.md` for the exact
+/// population and recorded maxima.
 ///
 /// The assertions are the calibration: no cell may refuse a correct
 /// candidate, and no residual may ask more of the production comparison
@@ -14953,7 +14954,7 @@ fn sweep_one(rng: &mut SweepRng, cell: SweepCell) -> Result<SweepSample, ScaleEr
 /// floor, not a universal smallest defect. This sweep is a one-directional
 /// instrument and says so.
 #[test]
-#[ignore = "calibration: 360,000 shallow proofs plus 80 deep cases. See the doc comment."]
+#[ignore = "calibration: 360,000 shallow proofs plus 80 deep cases. See docs/scale-calibration.md."]
 fn calibrate_f32_rounding_ulps() {
     const TRIALS: usize = 2_500;
     let conversions = [
@@ -15131,15 +15132,15 @@ fn calibrate_f32_rounding_ulps() {
     // hid in, left it passing. So did `TRIALS = 1`.
     assert_eq!(
         cells, 144,
-        "the sweep no longer runs the 144 cells DESIGN.md Appendix D section D.1 names. If a \
+        "the sweep no longer runs the 144 cells docs/scale-calibration.md names. If a \
              dimension was deliberately added or removed, this literal and the prose that quotes \
              it move together.",
     );
     assert_eq!(
         cells * TRIALS,
         360_000,
-        "the sweep no longer draws the 360_000 candidates DESIGN.md Appendix D section D.1 \
-             names, so the figures below are not the ones that section quotes.",
+        "the sweep no longer draws the 360_000 candidates docs/scale-calibration.md names, so \
+             the figures below are not the ones that note quotes.",
     );
     assert_eq!(
         mismatched_profile_candidates, 180_000,
@@ -15165,7 +15166,8 @@ fn calibrate_f32_rounding_ulps() {
             deep.bounds_comparisons,
         ),
         (12_488, 24_976, 240, 1_440),
-        "the deep phase's production comparison counts no longer match DESIGN.md",
+        "the deep phase's production comparison counts no longer match \
+         docs/scale-calibration.md",
     );
     let deep_counts = deep_by_depth.map(|measured| {
         (
@@ -15187,7 +15189,8 @@ fn calibrate_f32_rounding_ulps() {
             (2_313, 4_626, 27, 162),
             (4_617, 9_234, 27, 162),
         ],
-        "a declared depth no longer owns the comparison population DESIGN.md records",
+        "a declared depth no longer owns the comparison population \
+         docs/scale-calibration.md records",
     );
     let deep_demands_milli = deep_by_depth.map(|measured| {
         (
@@ -15260,7 +15263,8 @@ fn calibrate_f32_rounding_ulps() {
         "a correct candidate asked more of f32_rounding_ulps than the count allows: \
              bounds {:.3}, skin matrix {:.3}, rest translation {:.3} against {allowed}. \
              That is evidence about the comparison base before it is evidence about the count \
-             — read DESIGN.md Appendix D section D.1 before raising anything.",
+             — read docs/scale-calibration.md and the normative DESIGN.md Appendix D section D.1 \
+             before raising anything.",
         overall.bounds,
         overall.skin_matrix,
         overall.rest_translation,

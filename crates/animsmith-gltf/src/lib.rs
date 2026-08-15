@@ -2,7 +2,7 @@
 //! [`animsmith_core::Document`], [`write::write`] emits a document as
 //! glTF/GLB, and the [`fix`] module provides byte-surgical quaternion
 //! repairs. [`preflight_scale_source`] inventories the original raw source and
-//! fails closed on domains that future scale producers cannot yet preserve.
+//! fails closed on domains that current scale producers cannot preserve.
 //! Malformed inputs report [`LoadError`]; output failures
 //! report [`WriteError`].
 //!

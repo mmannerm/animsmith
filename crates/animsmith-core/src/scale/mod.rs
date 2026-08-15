@@ -47,12 +47,13 @@
 //! [`ScaleError::PlanDocumentMismatch`]; a counterpart missing inside an
 //! inventory-matched walk is [`ScaleError::MissingProofEvidence`]. Neither
 //! case becomes a zero residual — a record asserting `0.0` for something
-//! nothing checked would be false, not merely incomplete. And the two
-//! independent observed-factor witnesses
-//! §D.6 asks for are both recorded, together with
+//! nothing checked would be false, not merely incomplete. The two
+//! observed-factor fields §D.6 asks for are both recorded, together with
 //! [`ScaleProof::observed_factor_divergence`] between them, so the record
-//! states the relationship between its own two measurements instead of
-//! leaving a consumer to guess which to trust.
+//! states their relationship instead of leaving a consumer to guess which to
+//! trust. Rest/bind derives them independently from raw and normalized state;
+//! whole-document conversion records its declared factor in both because it
+//! has no source factor to measure.
 
 use crate::model::{
     AffineDomainViolation, BoneId, Document, DocumentShapeError, Interpolation, Property,
@@ -326,161 +327,19 @@ impl ScaleTolerancePolicy {
         // 2^-14, exactly: four `common_factor` bands rounded up onto the
         // binary32 mantissa grid (`= 512 * 2^-23`).
         postcondition_unit_scale_residual: 6.103_515_625e-5,
-        // A 200-bone rig carrying a 100k-vertex skinned mesh costs
-        // `2 * 200 + 3 * 200 + 2 * 100_000 = 201_000` units per sample time
-        // and so admits `1_990` of them; the same rig with a 10k-vertex mesh
-        // costs `21_000` and admits `19_047`. A 100k-key track on the
-        // 100k-vertex rig demands `2.01e10` and is refused.
-        //
-        // The value is a wall-time ceiling expressed in work units. Historical
-        // v3 measurements were linear in the charge across four doublings
-        // (`1e8` to `8e8`) in both named shapes, which establishes that the
-        // charge is a proxy for real work rather than an arbitrary count. The
-        // shapes were 200 instances of a 99-joint skin list with one vertex
-        // each, and one instance of that list with a 10_000-vertex primitive,
-        // each with as many sample times as `4e8` admits.
-        //
-        // On one developer machine under v3 those shapes measured `6.7s` and
-        // `3.3s`. They are neither bounds nor v4 measurements: v4 removes the
-        // per-vertex L2 stage and widens weighted accumulation to binary64, so
-        // it deliberately does not carry the old ordering or attribution
-        // forward. The budget remains a conservative work limit because the
-        // charged passes and their cardinalities did not change. See DESIGN.md
-        // Appendix D §D.1 for the historical measurements and this boundary.
-        //
-        // `1e8` — the first value this policy carried — was too tight, and
-        // the arithmetic that justified it was the pre-both-sides charge. A
-        // 200-bone rig with a 100k-vertex skinned mesh and a 30-second clip
-        // at 30 fps costs `900 * 201_000 = 180_900_000`: a plausible
-        // production asset, refused with no way for a caller to opt into the
-        // work. At `4e8` it is admitted with `2.2x` headroom — about 66
-        // seconds of animation on that rig.
+        // DESIGN.md Appendix D §D.1 owns the exact charge and released
+        // resource boundary. docs/scale-calibration.md records the historical
+        // populations and machine-local timings that selected this value.
         proof_sample_work_budget: 400_000_000,
-        // Measured, not assumed, and the measurement is **checked in**:
-        // `calibrate_f32_rounding_ulps` builds and proves 360_000 correct
-        // candidates over 144 cells and asserts every figure below. Run it with
+        // Empirically calibrated, not an analytic bound. The checked-in
+        // `calibrate_f32_rounding_ulps` sweep can be regenerated with
         //
         //   cargo test -p animsmith-core --release --lib \
         //       calibrate_f32_rounding_ulps -- --ignored --nocapture
         //
-        // The cells are the cross product of nine operations — rest/bind at
-        // root scale `3190`, and whole-document conversion at
-        // `{1e-4, 0.01, 0.1, 1.5, 7.3, 100, 3190, 1e6}`, so both directions of
-        // the factor — four slot compositions — analytic binds, where
-        // `abs(W * B)` is `1`, and composed slots at
-        // `abs(W * B) = {1e-3, 1, 1e3}` — two blends, and two weight profiles:
-        // balanced, and a mismatched profile that gives each vertex's larger
-        // production influence base a log-uniform weight in `[1e-20, 1e-2]`
-        // while the smaller gets `1`. The latter realizes 274_670 mismatched
-        // vertices, in both slot orientations. Joint locals and vertex
-        // positions are drawn log-uniformly over six and eight decades in
-        // random directions, every joint carries a random rotation, and half
-        // of every cell's trials carry a parent chain that cancels.
-        //
-        // The quantity is `residual / (magnitude * 2^-23)`: the raw ulp count,
-        // *not* net of the scalar band that is paid first. It therefore
-        // overstates what this count is asked for, by the whole scalar band, so
-        // a worst case under `4` measured this way is under `4` however the two
-        // terms are split.
-        //
-        // The shallow population uses runtime trigonometry, so its maxima are
-        // asserted inside broad cross-platform bounds rather than as exact
-        // literals; no correct candidate is refused in any cell.
-        //
-        // A separate deep phase proves 80 correct animated candidates through
-        // depth 512, including a literal 192-link closed loop. It forms each
-        // demand from the residual and provenance of the same comparison,
-        // rather than dividing two unrelated global maxima. Worst raw demands
-        // are `0.715` for RestTranslation and Trajectory, `0.143` for
-        // SkinMatrix, and `0.149` for Bounds, with no refusal.
-        //
-        // `UnaffectedInverseBind` demands `0`, and always will: its two sides
-        // are the identical `f32` expression on identical stored inputs.
-        //
-        // What this replaced, and why it is a test now. Earlier revisions of
-        // this comment quoted maxima from sweeps that were never checked in —
-        // 2_390_000 candidates in four populations, then 5760 whole-document
-        // conversions per factor — and one of those claims was false. It said
-        // its population carried "binds that are not the rest pose, and blends
-        // that cancel" with a worst `Bounds` demand of `0.92`. The shape it did
-        // not carry is a composed slot with `abs(W * B) != 1`, and against the
-        // base this policy shipped at the time that shape refuses correct
-        // candidates in fifteen of the pre-v4 sweep's seventy-two cells and
-        // demands `47.7`. A figure a reader cannot re-derive is a figure nobody
-        // can check.
-        //
-        // `4` is the next power of two above every figure above, **measured
-        // over that population**. It is not an analytic bound. An earlier
-        // revision of this comment said it was — "the analytic worst case for
-        // the arithmetic involved, since composing `W * B` accumulates a
-        // four-term inner product per entry" — and that argument covers one
-        // composition, not a chain of them. v5 instead sums every link's
-        // spatial-row translation rounding base into binary64 provenance,
-        // capping the carried-parent term by the new contribution's size.
-        // That recurrence is explicit and monotone; retaining the count of
-        // four remains an empirical decision over the named shallow and deep
-        // populations.
-        //
-        // Under the base this policy carried before the parent chain was
-        // folded into it, a correct candidate demanded up to `41` — see
-        // [`translation_composition_rounding_base`], and
-        // `a_parent_chain_whose_translations_cancel_still_proves_its_skin`
-        // for a rig that demands `524288`. Dropping the chain from the base
-        // today refuses correct candidates in fifty-six of the sweep's cells at
-        // up to `62.6` ulps of what remains, and narrowing the vertex stage to
-        // `abs(p)` alone refuses in fifteen at up to `47.7`: the pattern every
-        // time is a wrong magnitude, not a count that is too small.
-        //
-        // The detection cost is **not** bounded, and stating it as
-        // `4.77e-7` of the compared quantity would be wrong. `4 * 2^-23` is
-        // `4.77e-7` of *the magnitude the arithmetic ran on*, which equals
-        // the compared quantity only when the two coincide. Where
-        // cancellation made the compared quantity small, the term is that
-        // same fraction of the larger operand, and so is
-        // `4.77e-7 * (operand magnitude / compared magnitude)` of the
-        // quantity actually being compared — a ratio with no upper bound.
-        //
-        // On this module's own
-        // `a_joint_far_from_the_geometry_it_carries_still_proves_its_bounds`
-        // fixture the term is `4.44` against a `W * B` of magnitude `1.0`:
-        // `443 %` of the compared quantity's own magnitude. Measured on that
-        // rig, the largest inverse-bind `x` shift still *accepted* is
-        // `4.09375` units; the smallest refused is the next binary32 above
-        // it. A regenerated bind wrong by four units is accepted. The bracket
-        // is pinned by
-        // `the_far_joint_rig_admits_a_four_unit_bind_shift_and_refuses_the_next_one_up`,
-        // because a floor quoted here and nowhere held to drifts — an earlier
-        // revision of this comment said `4.09`, which is on the accepted side
-        // of the real floor.
-        //
-        // Folding the parent chain into that magnitude does not move this
-        // number: on that fixture `abs(W) * abs(B)` already reads `6.38e6`
-        // against the chain's `3.19e6`, so the `max` is unchanged and the
-        // floor is still `4.09375` units. The chain widens the base only where
-        // a chain actually cancelled, in proportion to what it cancelled, and
-        // leaves it untouched everywhere else. Buying the same admissions by
-        // raising the count instead would have cost the whole factor on
-        // *every* slot, including the ones that lost nothing:
-        // `a_parent_chain_whose_translations_cancel_still_proves_its_skin`
-        // needs `524288` ulps of the base without the chain and `0.08` of it
-        // with, and no count between those two is a policy anyone could
-        // defend.
-        //
-        // So for a rig whose joints sit `k` times further from the origin
-        // than the geometry they carry, `SkinMatrix` and `Bounds` lose
-        // discriminating power in proportion to `k`. That is a property of
-        // composing `W * B` from `f32` stored values, not of this policy:
-        // the stored inverse bind's translation column is only accurate to
-        // its own ulp, and composing it against `W` amplifies that
-        // quantization by `W`'s linear part into a product the cancellation
-        // has made near-identity. Composing in `f64` does not remove it —
-        // measured over a 30_000-candidate rest/bind population, an `f64`
-        // composition moves the worst skin residual from `2.50` to `2.06`
-        // ulps and the worst bounds residual from `1.68` to `0.90`, leaving
-        // the worst residual at `86 %` of the compared product's own
-        // magnitude against a `1e-5` relative band. The term is covering
-        // input quantization, which no amount of proof-side precision can
-        // undo.
+        // docs/scale-calibration.md owns the exact populations, measured
+        // demands, historical alternatives, and cost discussion. DESIGN.md
+        // Appendix D §D.1 owns the shipped recurrence and refusal semantics.
         f32_rounding_ulps: 4,
     };
 
@@ -489,13 +348,13 @@ impl ScaleTolerancePolicy {
     /// [`Self::postcondition_unit_scale_residual`], `7.103515625e-5` under
     /// [`Self::APPENDIX_D_V6`].
     ///
-    /// [`ScalePlan::observed_factor`] and [`ScaleProof::observed_factor`] are
-    /// two independent witnesses of the same quantity, measured from
+    /// For rest/bind, [`ScalePlan::observed_factor`] and
+    /// [`ScaleProof::observed_factor`] are independent witnesses measured from
     /// genuinely different state — the raw source projection composed through
     /// `parent_source_node_index`, and the normalized skeleton composed
-    /// through `world_rest_matrices`. Their independence is the point, and it
-    /// is why they are not equal. This is how far apart the design expects
-    /// them to be, and the sum is where it comes from:
+    /// through `world_rest_matrices`. Their independence is the point. For
+    /// whole-document conversion both fields are the declared factor, so their
+    /// divergence is exactly zero. For rest/bind, the sum comes from:
     ///
     /// - planning binds its witness to the caller's declared factor within
     ///   [`Self::common_factor`], or refuses with
@@ -1083,8 +942,9 @@ pub enum ProofResidualKind {
     ///
     /// Distinct from [`Self::KeyTranslation`], which samples the *composed*
     /// track at key times: sampling proves what an evaluator would read, but
-    /// only a direct element comparison proves that the domains this plan
-    /// declares untouched really are untouched.
+    /// only a direct element comparison proves both that rewritten domains
+    /// received their declared multiplier and that domains this plan declares
+    /// untouched really are untouched.
     TrackValue,
     /// Base mesh `POSITION` residual, per vertex, against this operation's
     /// analytic expectation (`before * q` for whole-document conversion,

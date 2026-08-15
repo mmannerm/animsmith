@@ -1,4 +1,4 @@
-//! Read-only raw glTF capability inventory for future scale producers.
+//! Read-only raw glTF capability inventory for scale producers.
 //!
 //! A normalized [`animsmith_core::Document`] cannot prove that a source file
 //! lacked data the loader does not model. This module therefore inventories
@@ -284,8 +284,8 @@ pub struct GltfCapabilityViolation {
 
 /// A captured, immutable source that passed the common scale preflight.
 ///
-/// This type deliberately has no mutation or write method. Later operation
-/// slices consume its manifest and captured bytes without reopening the input.
+/// This type deliberately has no mutation or write method. Scale operations
+/// consume its manifest and captured bytes without reopening the input.
 #[derive(Debug)]
 pub struct GltfScaleSource {
     document: Document,

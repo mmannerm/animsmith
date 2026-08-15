@@ -8,7 +8,7 @@
 //! 2. The **length-field handler registry** plus its two companion decision
 //!    tables. Appendix D §D.2 requires that "every supported camera, light,
 //!    collision, or extension length" is converted "through a field-specific
-//!    handler". This slice registers no handlers, so the reachable set is
+//!    handler". The shipped writer registers no handlers, so the reachable set is
 //!    exactly the domains #280's preflight already rejects. Keeping the set
 //!    as data rather than code means a future handler is an entry, and a
 //!    length field with no entry is a located rejection rather than a silent
@@ -276,7 +276,7 @@ pub(crate) struct UnhandledLengthField {
     pub(crate) member: &'static str,
 }
 
-/// Raw glTF members that carry a length this slice cannot convert.
+/// Raw glTF members that carry a length the current writer cannot convert.
 ///
 /// Presence of any of these is a located rejection, never a silent skip: a
 /// document whose camera near plane stayed at `0.1` while every coordinate

@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- *(docs)* consolidate the shipped scale workflow in a user-facing guide,
+  retain Appendix D as the normative algebra and safety contract, move
+  calibration/history to a separate reproducibility note, and update crate
+  rustdoc, README, embedding, CLI, and output references to the current
+  plan-before-rewrite and emitted-artifact proof pipeline
+  ([#343](https://github.com/mmannerm/animsmith/issues/343))
 - *(core)* continue the behavior-neutral scale module split by moving the
   public facade to `scale/mod.rs`, its complete lib-target test and calibration
   graph to private `scale/tests.rs`, and the shared policy-neutral matrix
