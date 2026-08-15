@@ -2648,6 +2648,43 @@ mod tests {
     }
 
     #[test]
+    fn source_projection_missing_parent_wins_at_the_exact_cycle_bound() {
+        // There are exactly two unprojected rows. The projected child walks
+        // through both of them before reaching source node 99, which is
+        // genuinely absent. The strict `> unprojected_rows` cycle guard must
+        // therefore leave this as the more specific missing-parent error;
+        // changing it to `>=` misclassifies the second legitimate step as a
+        // cycle.
+        let document = Document {
+            skeleton: Skeleton {
+                bones: vec![bone(None), bone(Some(0))],
+            },
+            assets: SceneAssets {
+                source_skeleton: SourceSkeletonAssets {
+                    coverage: SourceSkeletonCoverage::Complete,
+                    nodes: vec![
+                        source_node(10, None, Some(0)),
+                        source_node(11, Some(12), Some(1)),
+                        source_node(12, Some(13), None),
+                        source_node(13, Some(99), None),
+                    ],
+                    ..SourceSkeletonAssets::default()
+                },
+                ..SceneAssets::default()
+            },
+            ..Document::default()
+        };
+
+        assert_eq!(
+            validate_document_shape(&document),
+            Err(DocumentShapeError::SourceProjection {
+                source_node_index: 11,
+                violation: SourceProjectionViolation::ParentSourceNodeMissing,
+            })
+        );
+    }
+
+    #[test]
     fn document_shape_violation_names_remain_machine_stable() {
         let source_projection = [
             (
