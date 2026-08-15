@@ -1025,8 +1025,8 @@ rather than preserved as false mutation evidence.
 ### The calibration sweep
 
 `4` is measured, not assumed, and the measurement is checked in:
-`calibrate_f32_rounding_ulps` in `crates/animsmith-core/src/scale.rs`. Run it
-with
+`calibrate_f32_rounding_ulps` in
+`crates/animsmith-core/src/scale/tests.rs`. Run it with
 
 ```text
 cargo test -p animsmith-core --release --lib \

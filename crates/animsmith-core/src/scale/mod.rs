@@ -1,0 +1,7460 @@
+//! Format-neutral scale plan and proof contracts (DESIGN.md Appendix D).
+//!
+//! This module owns the two distinct scale operations Appendix D defines —
+//! [`ScaleOperation::WholeDocumentLinearUnits`] and
+//! [`ScaleOperation::RestBindUniformScale`] — plus their shared pure
+//! planning, candidate construction, and proof layer. It deliberately
+//! consumes and returns only format-neutral facts: an already-loaded
+//! [`Document`] and a [`ScaleCapabilityFacts`] projection that a format
+//! frontend (for example `animsmith-gltf`'s raw capability preflight)
+//! builds from its own source-specific inventory. This module does not
+//! accept paths, glTF/ufbx types, config parsers, or publication policy,
+//! and it does not itself decide CLI selectors, evidence schemas, or
+//! artifact/evidence publication — those are producer concerns layered on
+//! top.
+//!
+//! [`ScaleOperation::RestBindUniformScale`] selects by raw, format-neutral
+//! source identity — `source_skin_index` and `source_root_node_index` — not
+//! by normalized [`crate::model::BoneId`] or mesh-instance ordinal.
+//! Resolving those selectors, and classifying the affected domain's affine
+//! shape, walks [`crate::model::SceneAssets::source_skeleton`]: the only
+//! place a full (possibly sheared) authored local matrix survives, since
+//! [`crate::model::Bone::rest`] is a lossy TRS decomposition that can never
+//! look sheared even when the source was.
+//!
+//! [`plan_scale`] is pure and fail-closed: it never mutates its input and
+//! returns a typed [`ScaleError`] for every unsupported affine domain,
+//! incomplete closure, incomplete capability, invalid selector, invalid
+//! factor. An internal reference builder constructs analytic candidates for
+//! fixtures and calibration; production format frontends instead rewrite
+//! exact source bytes and wrap the emitted reload with
+//! [`ScaleCandidate::from_document`]. [`prove_scale`] independently re-derives
+//! the plan's claims from the source and candidate documents and reports the observed
+//! residual maxima against the fixed [`ScaleTolerancePolicy::APPENDIX_D_V6`]
+//! tolerance identity.
+//!
+//! Those residuals are the producer evidence record of §D.6, which is why
+//! two properties of this module are contracts rather than implementation
+//! details. Every typed [`ScaleProofObligation`] is declared only when
+//! the planned document carries the evidence for it. Candidate construction
+//! and proof re-derive that structural inventory and report a stale plan as
+//! [`ScaleError::PlanDocumentMismatch`]; a counterpart missing inside an
+//! inventory-matched walk is [`ScaleError::MissingProofEvidence`]. Neither
+//! case becomes a zero residual — a record asserting `0.0` for something
+//! nothing checked would be false, not merely incomplete. And the two
+//! independent observed-factor witnesses
+//! §D.6 asks for are both recorded, together with
+//! [`ScaleProof::observed_factor_divergence`] between them, so the record
+//! states the relationship between its own two measurements instead of
+//! leaving a consumer to guess which to trust.
+
+use crate::model::{
+    AffineDomainViolation, BoneId, Clip, Document, DocumentShapeError, Interpolation, MeshInstance,
+    MeshInstanceShapeViolation, PositiveUniformAffineTolerance, Primitive, Property, Skeleton,
+    SourceInverseBindAccessorStatus, SourceNodeAsset, SourceNodeLocalRest, SourceSkeletonCoverage,
+    SourceSkinAsset, TrackValues, Transform, affine_axis_lengths, average_affine_axis_length,
+    classify_positive_uniform_affine, mat4_is_finite,
+    validate_document_shape as validate_model_document_shape, world_rest_matrices,
+};
+use crate::sample::{TrackSample, sample_track};
+use glam::{DMat3, DMat4, DVec3, Mat3, Mat4, Quat, Vec3, Vec4};
+#[cfg(test)]
+use std::cell::Cell;
+use std::collections::{BTreeMap, BTreeSet};
+
+// --- Tolerance policy ----------------------------------------------------
+
+/// Fixed Appendix D tolerance identity and thresholds. Classification and
+/// proof share this one versioned policy and compute in `f64`, narrowing
+/// only at the writer model boundary. There is exactly one supported
+/// instance, [`ScaleTolerancePolicy::APPENDIX_D_V6`]: a policy change is a
+/// new policy identity, not a runtime knob.
+///
+/// The superseded v5 identity is deliberately not retained as an alias:
+///
+/// ```compile_fail
+/// use animsmith_core::ScaleTolerancePolicy;
+///
+/// let _ = ScaleTolerancePolicy::APPENDIX_D_V5;
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub struct ScaleTolerancePolicy {
+    /// Stable policy identity recorded in producer evidence.
+    pub id: &'static str,
+    /// Relative orthogonality tolerance for rejecting shear.
+    pub relative_orthogonality: f64,
+    /// Relative tolerance for equal-length affine columns (uniform scale).
+    pub equal_axis: f64,
+    /// Relative tolerance for one common factor across an affected domain.
+    ///
+    /// This is the normative input band: it is what an operator's declared
+    /// factor is judged against, and
+    /// [`Self::postcondition_unit_scale_residual`] is derived from it so that
+    /// a plan this band accepts is guaranteed to produce a candidate that
+    /// satisfies the unit-scale postcondition.
+    pub common_factor: f64,
+    /// `abs(det) <= singular_determinant_relative * product(axis_lengths)`
+    /// classifies a linear part as singular.
+    pub singular_determinant_relative: f64,
+    /// Absolute term of the scalar/vector comparison tolerance.
+    pub scalar_absolute: f64,
+    /// Relative term of the scalar/vector comparison tolerance.
+    pub scalar_relative: f64,
+    /// Maximum shortest-path rotation residual, in radians.
+    pub rotation_residual_radians: f64,
+    /// Maximum postcondition unit-scale residual, measured **per axis**
+    /// (L-infinity) as `max(|scale_axis - 1|)` — not as an L2 norm over the
+    /// three axes.
+    ///
+    /// The norm is normative, and it is the same dimensionless per-axis
+    /// relative quantity [`Self::common_factor`] and [`Self::equal_axis`]
+    /// measure, so the input band and this postcondition are directly
+    /// commensurable (DESIGN.md Appendix D §D.1). This value is *derived*
+    /// from [`Self::common_factor`] rather than declared independently: see
+    /// [`Self::APPENDIX_D_V6`] for the composition argument and
+    /// [`Self::UNIT_SCALE_BANDS`] for the multiplier.
+    pub postcondition_unit_scale_residual: f64,
+    /// Maximum sampled proof work [`prove_scale`] will perform, in
+    /// per-sample-time work units.
+    ///
+    /// Total work is `sample_time_count * per_sample_work_units`, where the
+    /// per-sample cost counts every pass the sampled obligations actually
+    /// make — bones, skin slots, and skinned vertices, each once per document
+    /// side. See the private `per_sample_work_units` for the exact formula
+    /// and for why the slot term cannot be folded into either of the other
+    /// two. A
+    /// document above this budget is refused with
+    /// [`ScaleError::ProofSamplingBudgetExceeded`] *before* any sampling
+    /// runs; proof never silently samples a subset.
+    ///
+    /// This is part of the versioned policy identity, not a per-run flag —
+    /// DESIGN.md Appendix D §D.6/§D.7 forbid per-run tolerance knobs, and a
+    /// budget that changed per run would make two evidence records carrying
+    /// the same policy id describe different amounts of checking.
+    pub proof_sample_work_budget: u64,
+    /// How many binary32 ulps of *operand* magnitude an obligation that
+    /// compares `f32`-rounded arithmetic may deviate by, on top of
+    /// [`Self::scalar_absolute`] and [`Self::scalar_relative`].
+    ///
+    /// The term this multiplies is **absolute**, not relative: it is
+    /// `f32_rounding_ulps * magnitude * f32::EPSILON` where `magnitude` is
+    /// the largest quantity the compared arithmetic passed through, not the
+    /// quantity being compared. Where the compared value *is* that largest
+    /// quantity the term adds `4 * 2^-23 = 4.77e-7` of it — twenty times
+    /// less than [`Self::scalar_relative`] already allows — so it cannot
+    /// loosen the obligations it applies to in their own regime.
+    ///
+    /// It exists for the regime where the two diverge. A rotation can make
+    /// the compared quantity orders of magnitude smaller than the operands
+    /// it was computed from while it still carries those operands' absolute
+    /// rounding error: a bound component near zero on a mesh 4000 units
+    /// across, a near-identity `W * B` whose translation column cancelled two
+    /// 3190-magnitude terms, or a world translation whose parent chain
+    /// cancelled two of them one composition earlier. A purely relative band
+    /// is then derived from the small number and the error from the large
+    /// one, and [`prove_scale`] refuses a correct candidate that
+    /// [`plan_scale`] accepted. See [`Self::APPENDIX_D_V6`] for the
+    /// measurement this count comes from and DESIGN.md Appendix D §D.1 for
+    /// which magnitude each obligation takes it from.
+    ///
+    /// The count is only as meaningful as that magnitude. Two revisions of
+    /// this policy have now found the *base* wrong rather than the count too
+    /// small — first the skinned extent alone, which missed the `W * B`
+    /// composition, then `abs(W) * abs(B)` alone, which missed what `W`'s own
+    /// parent chain had already cancelled — and in both the measured excess
+    /// was hundreds of thousands of ulps, not a factor of two. A residual
+    /// above this count is evidence about the base before it is evidence
+    /// about the count.
+    pub f32_rounding_ulps: u32,
+}
+
+impl ScaleTolerancePolicy {
+    /// How many [`Self::common_factor`] bands
+    /// [`Self::postcondition_unit_scale_residual`] is derived from.
+    ///
+    /// Three of them are analytic and one is float headroom; see
+    /// [`Self::APPENDIX_D_V6`].
+    pub const UNIT_SCALE_BANDS: f64 = 4.0;
+
+    /// The only supported tolerance policy: DESIGN.md Appendix D, version 6.
+    ///
+    /// Version 6 supersedes `appendix-d-v5`, which superseded v4, v3, v2 and
+    /// v1. Each identity change is a change of *meaning*, not a retune:
+    ///
+    /// 1. [`Self::postcondition_unit_scale_residual`] is a per-axis
+    ///    (L-infinity) residual derived from [`Self::common_factor`], instead
+    ///    of v1's independently declared `1e-5` L2 norm over three axes. Under
+    ///    v1 the two were incommensurable, and a source whose observed factor
+    ///    had relative error `e` produced a postcondition residual of
+    ///    `sqrt(3) * e`, so every `e` in `(5.77e-6, 1e-5]` was accepted by
+    ///    [`plan_scale`] and then rejected by [`prove_scale`].
+    /// 2. [`Self::proof_sample_work_budget`] bounds the sampled proof work a
+    ///    document may demand.
+    /// 3. [`Self::f32_rounding_ulps`] is new in v3, and adds an absolute
+    ///    `f32`-rounding term to the five obligations that compare
+    ///    `f32`-rounded arithmetic against a base that a rotation can make
+    ///    arbitrarily smaller than the operands the arithmetic ran on —
+    ///    [`ProofResidualKind::Bounds`], [`ProofResidualKind::SkinMatrix`],
+    ///    [`ProofResidualKind::UnaffectedInverseBind`],
+    ///    [`ProofResidualKind::RestTranslation`], and
+    ///    [`ProofResidualKind::Trajectory`]. Without it [`plan_scale`] accepts
+    ///    and [`prove_scale`] refuses a correct candidate whenever
+    ///    `magnitude / component` is large.
+    /// 4. v4 widens finite non-negative weight normalization and accumulation
+    ///    to binary64, makes the Bounds magnitude a weight-proportional
+    ///    combination of each influence's transform and slot-composition
+    ///    provenance, and removes v3's blended-point L2 stage. Bounds residuals
+    ///    are per axis, and the normalized blend is already bounded by those
+    ///    weighted operands.
+    /// 5. v5 makes parent-chain translation provenance additive per composed
+    ///    link, in binary64, instead of taking a depth-independent maximum.
+    ///    Each spatial row carries the new local contribution plus a parent
+    ///    term capped by `contribution / EPSILON`. This provisions the smaller
+    ///    of one parent-scale ulp and losing the entire contribution, so zero
+    ///    and underflowed descendants cannot charge the same translated parent
+    ///    repeatedly. Only the three spatial output rows participate; the
+    ///    affine homogeneous row contributes zero under this cap. The same
+    ///    recurrence constructs rest and sampled poses, and its result reaches
+    ///    RestTranslation, Trajectory, SkinMatrix and Bounds through their
+    ///    existing consumers.
+    /// 6. v6 changes only the association of the shared affine axis-length
+    ///    mean: the three finite widened lengths are sorted ascending before
+    ///    the ordinary sum and division by three. This removes authored-column
+    ///    order from the classifier, planning, and proof witness without
+    ///    changing any numeric threshold, the v5 parent-chain provenance
+    ///    recurrence, or the evidence schema.
+    ///
+    /// `postcondition_unit_scale_residual` is
+    /// `UNIT_SCALE_BANDS * common_factor = 4e-5`, rounded up to the next
+    /// power of two, `2^-14 = 6.103515625e-5`. That value is also
+    /// `512 * 2^-23`, and so lies on the binary32 mantissa grid the
+    /// composed-scale measurement lives on. Landing on that grid is what
+    /// makes §D.1's inclusive "at most" reachable for this obligation: the
+    /// measured residual near unit magnitude is always an integer multiple of
+    /// `2^-23`, so a bound off that grid could never be met with equality and
+    /// would be an exclusive bound wearing an inclusive name.
+    ///
+    /// The four bands are:
+    ///
+    /// - one for [`ScaleError::FactorMismatch`], which binds the domain's
+    ///   observed common factor `s_0` to the caller's declared factor
+    ///   `s_declared`;
+    /// - one for [`ScaleError::MixedFactor`], which binds each affected node's
+    ///   observed factor `s_i` to `s_0`;
+    /// - one for [`AffineDomainViolation::NonUniformScale`], which binds each
+    ///   individual *axis* of node `i` to `s_i`; and
+    /// - one reserved as headroom for the `f32` world-matrix composition and
+    ///   decomposition that produces the measured composed scale.
+    ///
+    /// The first three compose, and the third is easy to miss: `s_i` is the
+    /// *average* of node `i`'s three world axis lengths (the affine
+    /// classifier returns that average), while the postcondition measures an
+    /// individual
+    /// axis, and the equal-axis check permits each axis its own further band
+    /// away from that average. The candidate's composed scale on axis `k` of
+    /// node `i` is `axis_ik / s_declared`, and each of the three bands is
+    /// stated relative to `max` of its operands, so each contributes at most
+    /// `c / (1 - c)` when re-expressed relative to the smaller one. The
+    /// analytic worst case is therefore `(1 - c)^-3 - 1 = 3.00006e-5` for
+    /// `c = 1e-5`.
+    ///
+    /// Three bands rounded up (`2^-15 = 3.0517578125e-5`) would leave that
+    /// worst case only `4` binary32 ulps of room — `2^-15 - 3.00006e-5 =
+    /// 5.17e-7 = 4.34 * 2^-23` — which is not headroom for a float
+    /// measurement, it is a rounding artefact. A fourth band makes the
+    /// reserved-headroom claim above true rather than aspirational, and it
+    /// does not blunt the obligation: every build defect this check exists to
+    /// catch — a dropped rebase, a factor applied twice, a stale no-op — is
+    /// `>= 1e-3`, so `6.1e-5` still leaves better than a `16x` detection
+    /// margin.
+    pub const APPENDIX_D_V6: Self = Self {
+        id: "appendix-d-v6",
+        relative_orthogonality: 1e-5,
+        equal_axis: 1e-5,
+        common_factor: 1e-5,
+        singular_determinant_relative: 1e-6,
+        scalar_absolute: 1e-6,
+        scalar_relative: 1e-5,
+        rotation_residual_radians: 1e-5,
+        // 2^-14, exactly: four `common_factor` bands rounded up onto the
+        // binary32 mantissa grid (`= 512 * 2^-23`).
+        postcondition_unit_scale_residual: 6.103_515_625e-5,
+        // A 200-bone rig carrying a 100k-vertex skinned mesh costs
+        // `2 * 200 + 3 * 200 + 2 * 100_000 = 201_000` units per sample time
+        // and so admits `1_990` of them; the same rig with a 10k-vertex mesh
+        // costs `21_000` and admits `19_047`. A 100k-key track on the
+        // 100k-vertex rig demands `2.01e10` and is refused.
+        //
+        // The value is a wall-time ceiling expressed in work units. Historical
+        // v3 measurements were linear in the charge across four doublings
+        // (`1e8` to `8e8`) in both named shapes, which establishes that the
+        // charge is a proxy for real work rather than an arbitrary count. The
+        // shapes were 200 instances of a 99-joint skin list with one vertex
+        // each, and one instance of that list with a 10_000-vertex primitive,
+        // each with as many sample times as `4e8` admits.
+        //
+        // On one developer machine under v3 those shapes measured `6.7s` and
+        // `3.3s`. They are neither bounds nor v4 measurements: v4 removes the
+        // per-vertex L2 stage and widens weighted accumulation to binary64, so
+        // it deliberately does not carry the old ordering or attribution
+        // forward. The budget remains a conservative work limit because the
+        // charged passes and their cardinalities did not change. See DESIGN.md
+        // Appendix D §D.1 for the historical measurements and this boundary.
+        //
+        // `1e8` — the first value this policy carried — was too tight, and
+        // the arithmetic that justified it was the pre-both-sides charge. A
+        // 200-bone rig with a 100k-vertex skinned mesh and a 30-second clip
+        // at 30 fps costs `900 * 201_000 = 180_900_000`: a plausible
+        // production asset, refused with no way for a caller to opt into the
+        // work. At `4e8` it is admitted with `2.2x` headroom — about 66
+        // seconds of animation on that rig.
+        proof_sample_work_budget: 400_000_000,
+        // Measured, not assumed, and the measurement is **checked in**:
+        // `calibrate_f32_rounding_ulps` builds and proves 360_000 correct
+        // candidates over 144 cells and asserts every figure below. Run it with
+        //
+        //   cargo test -p animsmith-core --release --lib \
+        //       calibrate_f32_rounding_ulps -- --ignored --nocapture
+        //
+        // The cells are the cross product of nine operations — rest/bind at
+        // root scale `3190`, and whole-document conversion at
+        // `{1e-4, 0.01, 0.1, 1.5, 7.3, 100, 3190, 1e6}`, so both directions of
+        // the factor — four slot compositions — analytic binds, where
+        // `abs(W * B)` is `1`, and composed slots at
+        // `abs(W * B) = {1e-3, 1, 1e3}` — two blends, and two weight profiles:
+        // balanced, and a mismatched profile that gives each vertex's larger
+        // production influence base a log-uniform weight in `[1e-20, 1e-2]`
+        // while the smaller gets `1`. The latter realizes 274_670 mismatched
+        // vertices, in both slot orientations. Joint locals and vertex
+        // positions are drawn log-uniformly over six and eight decades in
+        // random directions, every joint carries a random rotation, and half
+        // of every cell's trials carry a parent chain that cancels.
+        //
+        // The quantity is `residual / (magnitude * 2^-23)`: the raw ulp count,
+        // *not* net of the scalar band that is paid first. It therefore
+        // overstates what this count is asked for, by the whole scalar band, so
+        // a worst case under `4` measured this way is under `4` however the two
+        // terms are split.
+        //
+        // The shallow population uses runtime trigonometry, so its maxima are
+        // asserted inside broad cross-platform bounds rather than as exact
+        // literals; no correct candidate is refused in any cell.
+        //
+        // A separate deep phase proves 80 correct animated candidates through
+        // depth 512, including a literal 192-link closed loop. It forms each
+        // demand from the residual and provenance of the same comparison,
+        // rather than dividing two unrelated global maxima. Worst raw demands
+        // are `0.715` for RestTranslation and Trajectory, `0.143` for
+        // SkinMatrix, and `0.149` for Bounds, with no refusal.
+        //
+        // `UnaffectedInverseBind` demands `0`, and always will: its two sides
+        // are the identical `f32` expression on identical stored inputs.
+        //
+        // What this replaced, and why it is a test now. Earlier revisions of
+        // this comment quoted maxima from sweeps that were never checked in —
+        // 2_390_000 candidates in four populations, then 5760 whole-document
+        // conversions per factor — and one of those claims was false. It said
+        // its population carried "binds that are not the rest pose, and blends
+        // that cancel" with a worst `Bounds` demand of `0.92`. The shape it did
+        // not carry is a composed slot with `abs(W * B) != 1`, and against the
+        // base this policy shipped at the time that shape refuses correct
+        // candidates in fifteen of the pre-v4 sweep's seventy-two cells and
+        // demands `47.7`. A figure a reader cannot re-derive is a figure nobody
+        // can check.
+        //
+        // `4` is the next power of two above every figure above, **measured
+        // over that population**. It is not an analytic bound. An earlier
+        // revision of this comment said it was — "the analytic worst case for
+        // the arithmetic involved, since composing `W * B` accumulates a
+        // four-term inner product per entry" — and that argument covers one
+        // composition, not a chain of them. v5 instead sums every link's
+        // spatial-row translation rounding base into binary64 provenance,
+        // capping the carried-parent term by the new contribution's size.
+        // That recurrence is explicit and monotone; retaining the count of
+        // four remains an empirical decision over the named shallow and deep
+        // populations.
+        //
+        // Under the base this policy carried before the parent chain was
+        // folded into it, a correct candidate demanded up to `41` — see
+        // [`translation_composition_rounding_base`], and
+        // `a_parent_chain_whose_translations_cancel_still_proves_its_skin`
+        // for a rig that demands `524288`. Dropping the chain from the base
+        // today refuses correct candidates in fifty-six of the sweep's cells at
+        // up to `62.6` ulps of what remains, and narrowing the vertex stage to
+        // `abs(p)` alone refuses in fifteen at up to `47.7`: the pattern every
+        // time is a wrong magnitude, not a count that is too small.
+        //
+        // The detection cost is **not** bounded, and stating it as
+        // `4.77e-7` of the compared quantity would be wrong. `4 * 2^-23` is
+        // `4.77e-7` of *the magnitude the arithmetic ran on*, which equals
+        // the compared quantity only when the two coincide. Where
+        // cancellation made the compared quantity small, the term is that
+        // same fraction of the larger operand, and so is
+        // `4.77e-7 * (operand magnitude / compared magnitude)` of the
+        // quantity actually being compared — a ratio with no upper bound.
+        //
+        // On this module's own
+        // `a_joint_far_from_the_geometry_it_carries_still_proves_its_bounds`
+        // fixture the term is `4.44` against a `W * B` of magnitude `1.0`:
+        // `443 %` of the compared quantity's own magnitude. Measured on that
+        // rig, the largest inverse-bind `x` shift still *accepted* is
+        // `4.09375` units; the smallest refused is the next binary32 above
+        // it. A regenerated bind wrong by four units is accepted. The bracket
+        // is pinned by
+        // `the_far_joint_rig_admits_a_four_unit_bind_shift_and_refuses_the_next_one_up`,
+        // because a floor quoted here and nowhere held to drifts — an earlier
+        // revision of this comment said `4.09`, which is on the accepted side
+        // of the real floor.
+        //
+        // Folding the parent chain into that magnitude does not move this
+        // number: on that fixture `abs(W) * abs(B)` already reads `6.38e6`
+        // against the chain's `3.19e6`, so the `max` is unchanged and the
+        // floor is still `4.09375` units. The chain widens the base only where
+        // a chain actually cancelled, in proportion to what it cancelled, and
+        // leaves it untouched everywhere else. Buying the same admissions by
+        // raising the count instead would have cost the whole factor on
+        // *every* slot, including the ones that lost nothing:
+        // `a_parent_chain_whose_translations_cancel_still_proves_its_skin`
+        // needs `524288` ulps of the base without the chain and `0.08` of it
+        // with, and no count between those two is a policy anyone could
+        // defend.
+        //
+        // So for a rig whose joints sit `k` times further from the origin
+        // than the geometry they carry, `SkinMatrix` and `Bounds` lose
+        // discriminating power in proportion to `k`. That is a property of
+        // composing `W * B` from `f32` stored values, not of this policy:
+        // the stored inverse bind's translation column is only accurate to
+        // its own ulp, and composing it against `W` amplifies that
+        // quantization by `W`'s linear part into a product the cancellation
+        // has made near-identity. Composing in `f64` does not remove it —
+        // measured over a 30_000-candidate rest/bind population, an `f64`
+        // composition moves the worst skin residual from `2.50` to `2.06`
+        // ulps and the worst bounds residual from `1.68` to `0.90`, leaving
+        // the worst residual at `86 %` of the compared product's own
+        // magnitude against a `1e-5` relative band. The term is covering
+        // input quantization, which no amount of proof-side precision can
+        // undo.
+        f32_rounding_ulps: 4,
+    };
+
+    /// The expected ceiling on [`ScaleProof::observed_factor_divergence`]:
+    /// [`Self::common_factor`] plus
+    /// [`Self::postcondition_unit_scale_residual`], `7.103515625e-5` under
+    /// [`Self::APPENDIX_D_V6`].
+    ///
+    /// [`ScalePlan::observed_factor`] and [`ScaleProof::observed_factor`] are
+    /// two independent witnesses of the same quantity, measured from
+    /// genuinely different state — the raw source projection composed through
+    /// `parent_source_node_index`, and the normalized skeleton composed
+    /// through `world_rest_matrices`. Their independence is the point, and it
+    /// is why they are not equal. This is how far apart the design expects
+    /// them to be, and the sum is where it comes from:
+    ///
+    /// - planning binds its witness to the caller's declared factor within
+    ///   [`Self::common_factor`], or refuses with
+    ///   [`ScaleError::FactorMismatch`]; and
+    /// - for a candidate the internal reference builder produced from the
+    ///   source
+    ///   under proof, that candidate's composed root scale is the proof
+    ///   witness divided by the declared factor, so the unit-scale
+    ///   postcondition binds the proof witness to the declared factor within
+    ///   [`Self::postcondition_unit_scale_residual`].
+    ///
+    /// The two bands are not stated the same way, and the sum is a ceiling
+    /// only up to that difference. Planning's is relative to the `max` of its
+    /// two operands, exactly as this divergence is. The postcondition's is not
+    /// a relative band on the two witnesses at all: it is an absolute
+    /// L-infinity deviation from `1` on the *candidate's* composed scale, and
+    /// that candidate's scale is the proof witness rebased by the declared
+    /// factor — so what it bounds is `|proved - declared|` as a fraction of
+    /// the declared factor, not as a fraction of `max(planned, proved)`.
+    ///
+    /// **Reported, not enforced, and expected rather than proved.** Nothing
+    /// refuses a document for exceeding this. The second step above holds for
+    /// a candidate this module built from the source it is being proved
+    /// against, which [`prove_scale`] deliberately does not require, and it
+    /// costs the binary32 rounding of the rebase on the way — so the sum is
+    /// the ceiling the design guarantees, not a bound proved to the last ulp.
+    /// A divergence beyond it means the two witnesses were composed from state
+    /// that does not agree — most often differing *stored* transforms, since
+    /// [`crate::model::SourceNodeAsset::local_rest`] and
+    /// [`crate::model::Bone::rest`] are separately stored descriptions of the
+    /// same rest pose. It is not evidence of disagreeing parent chains: under
+    /// [`crate::model::SourceSkeletonCoverage::Complete`] coverage the two
+    /// chains are required to describe the same tree, and every entry point in
+    /// this module refuses a document where they do not.
+    ///
+    /// Derived from two bands this policy already declares rather than
+    /// introduced as a third, so it adds no tolerance and no policy identity —
+    /// and a consumer of the evidence record does not have to sum two
+    /// separate policy fields to know what the recorded divergence means.
+    pub fn observed_factor_divergence_ceiling(&self) -> f64 {
+        self.common_factor + self.postcondition_unit_scale_residual
+    }
+
+    /// `abs_error <= scalar_absolute + scalar_relative * max(abs(before), abs(after))`.
+    ///
+    /// Every proof call site must pass the actual before/after magnitudes of
+    /// the specific residual being checked — never a proxy such as the
+    /// plan's declared factor — so a residual near a large coordinate gets a
+    /// correspondingly looser absolute tolerance than one near a small
+    /// coordinate.
+    pub fn scalar_tolerance(&self, before: f64, after: f64) -> f64 {
+        self.scalar_absolute + self.scalar_relative * before.abs().max(after.abs())
+    }
+
+    /// [`Self::scalar_tolerance`] plus [`Self::f32_rounding_ulps`] binary32
+    /// ulps of `magnitude`.
+    ///
+    /// `magnitude` is the largest quantity the compared `f32` arithmetic
+    /// passed through — never the quantity being compared, which is what
+    /// `before`/`after` already carry. The two coincide for a comparison
+    /// whose operands are its own magnitude, and diverge without limit for
+    /// one whose result was made small by cancellation; DESIGN.md Appendix D
+    /// §D.1 names the magnitude each obligation takes.
+    ///
+    /// The added term is absolute in `magnitude` and so cannot widen a
+    /// comparison relative to its own operands: at `magnitude ==
+    /// max(before, after)` it is `f32_rounding_ulps * 2^-23 = 4.77e-7` of
+    /// them, against the `1e-5` [`Self::scalar_relative`] already allows.
+    pub fn f32_rounded_tolerance(&self, before: f64, after: f64, magnitude: f64) -> f64 {
+        self.scalar_tolerance(before, after)
+            + f64::from(self.f32_rounding_ulps) * magnitude.abs() * f64::from(f32::EPSILON)
+    }
+
+    /// `abs(a - b) <= tolerance * max(abs(a), abs(b))`.
+    ///
+    /// Genuinely relative, per DESIGN.md Appendix D §D.1: the orthogonality,
+    /// equal-axis, and common-factor tolerances are declared *relative*
+    /// `1e-5`, so the comparison base is the operands' own magnitude and
+    /// nothing else. Flooring that base at `1.0` — as an earlier revision did
+    /// — silently converts these into absolute tolerances for every operand
+    /// below unit magnitude, which is exactly the regime these operations
+    /// exist for: at a common factor of `0.01` a `1.0` floor accepts `1e-3`
+    /// relative error, `100x` the declared policy, and lets `plan_scale`
+    /// accept a plan whose candidate then fails its own unit-scale
+    /// postcondition.
+    ///
+    /// There is **no** floor on the comparison base — not `1.0`, and not
+    /// [`Self::scalar_absolute`] either. A `scalar_absolute` floor is a
+    /// smaller version of the same defect and breaks the same closure
+    /// property, just further down: below `1e-6` the band stops tracking the
+    /// operands and freezes at the constant `1e-5 * 1e-6 = 1e-11`, which is a
+    /// *relative* band of `1e-11 / abs(s)` and therefore widens without limit
+    /// as `s` shrinks. It crosses
+    /// [`Self::postcondition_unit_scale_residual`] at
+    /// `s = 1e-11 / 2^-14 = 1e-11 * 16384 = 1.6384e-7` (`3.2768e-7` against
+    /// the tighter `2^-15` bound an earlier revision declared — halving the
+    /// postcondition bound doubles the crossing point, because the crossing
+    /// point is inversely proportional to it), so every declared factor
+    /// below that had a band of accepted plans whose candidates then failed
+    /// the unit-scale postcondition — at `s = 1e-9` the band admits `1e-2`
+    /// relative error, `1000x` the declared policy.
+    ///
+    /// Nothing needs the floor for the degenerate `a == b == 0` case either:
+    /// that compares `0.0 <= 0.0`, which holds. (Both call sites have already
+    /// proved their operands strictly positive in any case — a declared
+    /// factor by [`plan_rest_bind`]'s range check, an observed one by
+    /// [`classify_affine`].)
+    fn relative(&self, tolerance: f64, a: f64, b: f64) -> bool {
+        (a - b).abs() <= tolerance * a.abs().max(b.abs())
+    }
+}
+
+// --- Capability projection ------------------------------------------------
+
+/// Whether a format-neutral capability projection covers the whole source.
+///
+/// A projection built from an incomplete or partially-inspected source must
+/// report [`ScaleCapabilityCoverage::Unavailable`]: an absent flag is not
+/// evidence the underlying domain is absent from the source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScaleCapabilityCoverage {
+    /// The projection cannot vouch for the complete source domain.
+    #[default]
+    Unavailable,
+    /// Every documented domain in the source was inspected.
+    Complete,
+}
+
+/// Format-neutral capability facts a frontend projects from its raw source
+/// inventory before any scale plan or candidate exists.
+///
+/// This is deliberately coarser than a format's own raw capability
+/// manifest (for example `animsmith_gltf::GltfCapabilityManifest`): it only
+/// carries the flags this module's planning needs to fail closed on an
+/// unsupported domain, per DESIGN.md Appendix D §D.4. A frontend projects
+/// its richer, format-specific manifest down to these flags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct ScaleCapabilityFacts {
+    /// Whether the projection covers the complete source domain.
+    pub coverage: ScaleCapabilityCoverage,
+    /// A morph target is present.
+    pub morphs_present: bool,
+    /// Static or animated morph weights are present.
+    pub morph_weights_present: bool,
+    /// A camera is present.
+    pub cameras_present: bool,
+    /// A punctual light is present.
+    pub lights_present: bool,
+    /// GPU-instancing data is present.
+    pub instancing_present: bool,
+    /// An extension is not covered by a registered length-field handler.
+    pub unregistered_extensions_present: bool,
+    /// Non-null application-specific extras are present.
+    pub extras_present: bool,
+    /// A JSON/source member outside the modeled schema was ignored.
+    pub unknown_source_members_present: bool,
+    /// A non-triangle-list primitive is present.
+    pub non_triangle_primitives_present: bool,
+    /// A vertex attribute outside the normalized writer subset is present.
+    pub unsupported_vertex_attributes_present: bool,
+    /// A secondary skin-influence set is present.
+    pub secondary_skin_influences_present: bool,
+    /// An inverse-bind accessor is missing, empty, mismatched, or unreadable.
+    pub inverse_bind_issues_present: bool,
+    /// A scale-bearing source layout cannot be safely bounded or rewritten.
+    pub unsafe_accessor_layout_present: bool,
+    /// An external (non-embedded) resource is referenced.
+    pub external_resources_present: bool,
+}
+
+impl ScaleCapabilityFacts {
+    /// A capability projection declaring complete coverage and no
+    /// unsupported domain — the only facts planning accepts.
+    pub fn is_supported(&self) -> bool {
+        self.coverage == ScaleCapabilityCoverage::Complete
+            && !self.morphs_present
+            && !self.morph_weights_present
+            && !self.cameras_present
+            && !self.lights_present
+            && !self.instancing_present
+            && !self.unregistered_extensions_present
+            && !self.extras_present
+            && !self.unknown_source_members_present
+            && !self.non_triangle_primitives_present
+            && !self.unsupported_vertex_attributes_present
+            && !self.secondary_skin_influences_present
+            && !self.inverse_bind_issues_present
+            && !self.unsafe_accessor_layout_present
+            && !self.external_resources_present
+    }
+}
+
+// --- Operation and request -------------------------------------------------
+
+/// The two distinct scale operations DESIGN.md Appendix D §D.1 defines.
+///
+/// Neither variant infers its factor or applicability from mesh bounds,
+/// character height, joint lengths, inverse-bind magnitude, filename, or an
+/// asset category. The caller names the operation and declares or accepts
+/// the exact factor [`plan_scale`] validates.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub enum ScaleOperation {
+    /// Whole-document linear-unit conversion: every represented length is
+    /// converted by the declared finite positive `factor`.
+    WholeDocumentLinearUnits {
+        /// Declared finite positive conversion factor `q`.
+        factor: f64,
+    },
+    /// Rest/bind hierarchy reparameterization: removes one compensating
+    /// inherited scale from a restricted skinned hierarchy.
+    ///
+    /// Both selectors are raw, format-neutral source identity — a source
+    /// node/skin array index, per DESIGN.md Appendix D §D.7 — not a
+    /// normalized [`BoneId`] or mesh-instance ordinal. [`plan_scale`]
+    /// resolves them through [`crate::model::SceneAssets::source_skeleton`].
+    RestBindUniformScale {
+        /// Stable source-skin-array index selecting the skin whose joints
+        /// anchor the affected domain.
+        source_skin_index: usize,
+        /// Stable source-node-array index of the scaled ancestor root.
+        source_root_node_index: usize,
+        /// Caller-declared expected common factor `s`. Planning measures
+        /// the source's observed rest-world factor and rejects a mismatch
+        /// rather than inferring `s` from geometry.
+        expected_factor: f64,
+    },
+}
+
+/// Pure planning input: the operation, the document to plan against, and a
+/// format-neutral capability projection of the raw source.
+#[derive(Debug, Clone, Copy)]
+pub struct ScaleRequest<'a> {
+    /// Selected operation and its declared parameters.
+    pub operation: ScaleOperation,
+    /// Document to plan against.
+    pub document: &'a Document,
+    /// Format-neutral capability projection of the raw source.
+    pub capability: &'a ScaleCapabilityFacts,
+}
+
+// --- Errors ----------------------------------------------------------------
+
+/// Typed, fail-closed rejection from [`plan_scale`], reference candidate
+/// construction, or [`prove_scale`].
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
+#[non_exhaustive]
+pub enum ScaleError {
+    /// The whole-document conversion factor is not finite and positive.
+    #[error("scale factor must be finite and positive, got {factor}")]
+    InvalidFactor {
+        /// The rejected factor.
+        factor: f64,
+    },
+    /// The declared rest/bind expected factor is not finite and positive.
+    #[error("rest/bind expected factor must be finite and positive, got {factor}")]
+    InvalidExpectedFactor {
+        /// The rejected factor.
+        factor: f64,
+    },
+    /// A declared factor (or a factor derived from it, such as the rest/bind
+    /// reciprocal `1 / expected_factor`) is finite and positive in `f64` but
+    /// has no usable `f32` image at the writer model boundary: it either
+    /// overflows to infinity or flushes a nonzero factor to zero.
+    ///
+    /// This is deliberately a distinct variant from
+    /// [`ScaleError::InvalidFactor`] / [`ScaleError::InvalidExpectedFactor`],
+    /// whose message would be an outright lie here — `1e-50` *is* finite and
+    /// positive; what it is not is representable once the model narrows to
+    /// `f32`. Rejecting it at plan time is what stops a build from silently
+    /// multiplying every translation, mesh `POSITION`, and inverse-bind
+    /// translation by `0.0f32` and handing the annihilated document to a
+    /// proof that then signs off on it, because `0 == 0 * 0` within any
+    /// tolerance.
+    #[error(
+        "factor {factor} (derived from declared factor {declared}) is not representable at the f32 writer model boundary: it narrows to {narrowed}"
+    )]
+    FactorNotRepresentable {
+        /// The declared factor the caller supplied.
+        declared: f64,
+        /// The declared factor, or the reciprocal derived from it, that
+        /// failed to narrow. Equal to `declared` when the declared factor
+        /// itself failed.
+        factor: f64,
+        /// The unusable `f32` image of `factor`.
+        narrowed: f32,
+    },
+    /// `source_root_node_index` is not a source node in the document's
+    /// source skeleton.
+    #[error(
+        "source root node index {source_root_node_index} is not a source node in the document's source skeleton"
+    )]
+    InvalidRootSelector {
+        /// The rejected source-node index.
+        source_root_node_index: usize,
+    },
+    /// `source_skin_index` is not a skin in the document's source skeleton,
+    /// or the skin declares no joints.
+    #[error(
+        "source skin index {source_skin_index} is not a skin in the document's source skeleton, or has no joints"
+    )]
+    InvalidSkinSelector {
+        /// The rejected source-skin index.
+        source_skin_index: usize,
+    },
+    /// The capability projection is unavailable or declares an unsupported
+    /// domain.
+    #[error("capability projection is incomplete or declares unsupported domain(s)")]
+    IncompleteCapability,
+    /// `document.assets.source_skeleton` does not declare complete coverage.
+    #[error(
+        "document.assets.source_skeleton coverage is not complete: rest/bind planning requires a format-neutral source-node/source-skin projection"
+    )]
+    IncompleteSourceSkeleton,
+    /// A selected root, selected skin joint, or terminal affected source row
+    /// did not normalize to a document skeleton bone. Unprojected rows are
+    /// otherwise accepted only when they are strict connectors between
+    /// projected rows.
+    #[error("source node {source_node_index} did not normalize to a document skeleton bone")]
+    SourceNodeNotNormalized {
+        /// The unnormalized source-node index.
+        source_node_index: usize,
+    },
+    /// A raw source-node rest transform is non-finite.
+    #[error("source node {source_node_index} has a non-finite raw rest transform")]
+    NonFiniteSourceTransform {
+        /// The source node with the non-finite transform.
+        source_node_index: usize,
+    },
+    /// A transform composed during scale planning, candidate construction,
+    /// or proof is non-finite. Entry-time skeleton rest failures are reported
+    /// through [`ScaleError::InvalidDocumentShape`].
+    #[error("node {node} has a non-finite rest transform")]
+    NonFiniteTransform {
+        /// The node with the non-finite transform.
+        node: BoneId,
+    },
+    /// A runtime scale walk encountered a parent that cannot be resolved.
+    /// Entry-time skeleton topology failures are reported through
+    /// [`ScaleError::InvalidDocumentShape`].
+    #[error("node {node} has invalid parent {parent}")]
+    InvalidParent {
+        /// The node with an invalid parent.
+        node: BoneId,
+        /// The invalid parent index.
+        parent: BoneId,
+    },
+    /// A plan or document reference a bone index outside
+    /// `document.skeleton.bones` for the document actually supplied.
+    ///
+    /// This guards every boundary where a [`ScalePlan`] built from one
+    /// document could be replayed against a different one: [`ScalePlan`]
+    /// has no public constructor other than [`plan_scale`], but
+    /// reference candidate construction and [`prove_scale`] each take the
+    /// document to operate on as a separate argument and must not trust that
+    /// it still matches the plan's shape.
+    #[error("bone index {index} is out of range for this document")]
+    BoneIndexOutOfRange {
+        /// The out-of-range index.
+        index: usize,
+    },
+    /// A plan replayed against a document derives a different write or proof
+    /// inventory than it did when planned.
+    ///
+    /// Plans may be reused across numerically different documents, but only
+    /// while re-deriving the supplied source's structural planning inventory
+    /// selects the same complete domain. Otherwise a stale affected-node list
+    /// or evidence flag could leave newly introduced payload outside every
+    /// proof walk.
+    #[error("plan does not describe the supplied document: {reason}")]
+    PlanDocumentMismatch {
+        /// Stable machine-readable mismatch kind.
+        reason: &'static str,
+    },
+    /// The affected closure could not be completed.
+    #[error("affected domain closure is not complete: {reason}")]
+    IncompleteClosure {
+        /// Stable machine-readable reason.
+        reason: &'static str,
+    },
+    /// Unskinned geometry is attached inside the affected closure.
+    #[error("node {node} carries unskinned geometry inside the affected closure")]
+    UnsupportedUnskinnedGeometry {
+        /// The node carrying unskinned geometry.
+        node: BoneId,
+    },
+    /// A node's rest-world linear part is outside the supported affine class.
+    #[error(
+        "node {node} rest-world linear part is not orientation-preserving positive uniform scale ({reason:?})"
+    )]
+    InvalidAffineDomain {
+        /// The rejected node.
+        node: BoneId,
+        /// Stable machine-readable violation kind.
+        reason: AffineDomainViolation,
+    },
+    /// The declared `expected_factor` does not match the source's observed
+    /// common factor.
+    #[error("declared expected factor {expected} does not match observed source factor {observed}")]
+    FactorMismatch {
+        /// Declared expected factor.
+        expected: f64,
+        /// Observed source factor.
+        observed: f64,
+    },
+    /// One node's effective factor differs from the domain's common factor.
+    #[error("node {node} effective factor {observed} differs from common factor {expected}")]
+    MixedFactor {
+        /// The domain's common factor.
+        expected: f64,
+        /// The node's observed factor.
+        observed: f64,
+        /// The node with the mismatched factor.
+        node: BoneId,
+    },
+    /// A proof residual exceeded the fixed tolerance policy.
+    #[error("proof residual {observed} for {kind:?} exceeds tolerance {tolerance}")]
+    ProofResidualExceeded {
+        /// Which proof obligation failed.
+        kind: ProofResidualKind,
+        /// Observed residual.
+        observed: f64,
+        /// Tolerance the residual exceeded.
+        tolerance: f64,
+    },
+    /// The document's sampled proof work exceeds
+    /// [`ScaleTolerancePolicy::proof_sample_work_budget`].
+    ///
+    /// Raised by [`prove_scale`] *before* any sample time is evaluated, so a
+    /// document whose key count and vertex count multiply out beyond the
+    /// versioned policy's budget is refused outright rather than proved
+    /// against a silently truncated subset of its sample times. The budget is
+    /// a property of the policy identity recorded in evidence, not a per-run
+    /// flag.
+    #[error(
+        "proof sampling work {work} ({sample_times} sample times x {per_sample_cost} work units) exceeds the {policy_id} budget {budget}"
+    )]
+    ProofSamplingBudgetExceeded {
+        /// The tolerance-policy identity whose budget was exceeded.
+        policy_id: &'static str,
+        /// Distinct sample times the plan's obligations would evaluate,
+        /// summed over every clip.
+        sample_times: u64,
+        /// Work units one sample time costs: `bone_count` plus the vertex
+        /// count of every skinned instance inside the affected closure.
+        per_sample_cost: u64,
+        /// `sample_times * per_sample_cost`, saturating.
+        work: u64,
+        /// The policy's [`ScaleTolerancePolicy::proof_sample_work_budget`].
+        budget: u64,
+    },
+    /// The plan's typed obligation ledger declared a claim provable, but
+    /// [`prove_scale`] could not find the evidence to check it (for example
+    /// a clip or track present in `source` with no counterpart in
+    /// `candidate`). This is a distinct failure from
+    /// [`ScaleError::ProofResidualExceeded`]: the claim was never checked at
+    /// all, so proof must fail rather than silently report a zero residual.
+    #[error("proof obligation {kind:?} could not find expected evidence ({detail})")]
+    MissingProofEvidence {
+        /// Which proof obligation was left unchecked.
+        kind: ProofResidualKind,
+        /// Stable machine-readable reason.
+        detail: &'static str,
+    },
+    /// The shared model shape required by strict mutating operations is
+    /// malformed. [`Document`] is publicly mutable, so planning, building,
+    /// and proof validate each supplied snapshot independently.
+    #[error(transparent)]
+    InvalidDocumentShape(#[from] DocumentShapeError),
+    /// No inverse-bind evidence exists for a skin joint: the owning mesh
+    /// instance declares an empty `skin_ibms` (falling back to the bone's
+    /// own [`crate::model::Bone::inverse_bind`]) and that bone also has no
+    /// inverse-bind matrix. Identity is never substituted for genuinely
+    /// missing evidence — only for a source skin whose complete-coverage
+    /// [`crate::model::SourceSkinAsset::inverse_bind_accessor`] proves the
+    /// format-defined identity default with
+    /// [`crate::model::SourceInverseBindAccessorStatus::Absent`] (checked
+    /// internally by this module's private inverse-bind resolution).
+    #[error("no inverse-bind evidence for skin joint {node}")]
+    MissingInverseBind {
+        /// The joint with no inverse-bind evidence.
+        node: BoneId,
+    },
+    /// A mesh primitive is malformed independently of any skin: a non-finite
+    /// base `POSITION`.
+    ///
+    /// Checked at every public entry point, on the candidate as well as the
+    /// input, because base `POSITION` is a rewritten domain: without it a
+    /// whole-document build with an overflowing factor returns a document
+    /// full of non-finite vertices as `Ok`.
+    #[error("mesh {mesh_index} primitive {primitive_index} is invalid ({reason})")]
+    InvalidMeshPrimitive {
+        /// Index into `document.assets.meshes` of the offending mesh.
+        mesh_index: usize,
+        /// Index into that mesh's `primitives` of the offending primitive.
+        primitive_index: usize,
+        /// Stable machine-readable reason.
+        reason: &'static str,
+    },
+    /// A primary skin-weight attribute contains a finite negative value.
+    ///
+    /// Skin weights are coefficients of a convex blend, never signed affine
+    /// coefficients. Refusing this at the shared scale-input boundary keeps
+    /// planning, candidate construction, and proof on that one semantic
+    /// domain and gives evidence consumers a stable kind without requiring
+    /// them to parse a [`ScaleError::InvalidMeshPrimitive`] reason string.
+    #[error(
+        "mesh {mesh_index} primitive {primitive_index} vertex {vertex_index} primary skin influence {influence_index} has a negative weight"
+    )]
+    NegativeSkinWeight {
+        /// Index into `document.assets.meshes`.
+        mesh_index: usize,
+        /// Index into that mesh's `primitives`.
+        primitive_index: usize,
+        /// Vertex carrying the rejected weight tuple.
+        vertex_index: usize,
+        /// Component within the primary four-influence tuple.
+        influence_index: usize,
+    },
+    /// A skinned primitive is malformed: `joints`/`weights` shorter than
+    /// `positions`, a non-finite position or weight, a joint-influence slot
+    /// outside the owning instance's `skin_joints`, or a skinned result that
+    /// is not finite.
+    ///
+    /// The last case reports two distinct `reason`s. A skinned position that
+    /// left the `f32` range is `"skinned_magnitude_overflow"`: the document's
+    /// geometry does not fit the arithmetic this proof runs in. A `NaN` is
+    /// `"non_finite_result"`: an input that survived every finiteness check
+    /// above is degenerate in some other way. Both fail closed; neither is
+    /// bounded by a magnitude domain, because skinning accumulates a dot
+    /// product per axis and where that overflows depends on the rotation
+    /// rather than on the magnitude of the result.
+    #[error("instance {instance_index} primitive {primitive_index} is invalid ({reason})")]
+    InvalidSkinnedPrimitive {
+        /// Index into `document.assets.instances` of the owning instance.
+        instance_index: usize,
+        /// Index into the owning mesh's `primitives` of the offending
+        /// primitive.
+        primitive_index: usize,
+        /// Stable machine-readable reason.
+        reason: &'static str,
+    },
+    /// `candidate`'s skeleton/source-projection, clip/track/instance/mesh/
+    /// primitive structure does not match `source`'s, or an exact unchanged
+    /// semantic value differs. This includes a changed parent or source-node
+    /// projection, a changed world-rest affine outside a rest/bind closure, a
+    /// missing or extra clip, track, instance, mesh, or primitive, a track
+    /// whose identity, interpolation, times, or value shape disagrees with
+    /// its source counterpart, or a mesh instance whose identity — the node
+    /// it hangs off, the source node it came from, the mesh it draws, or the
+    /// joints it binds — disagrees with its source counterpart. Proof pairs
+    /// source and candidate structure by identity or index, which requires
+    /// this parity to hold. For rest/bind this also covers an admitted static
+    /// connector local that changed bits or a projected successor whose raw
+    /// local is not the independently derived bridged rebase. An extra,
+    /// missing, re-parented, relocated, or otherwise rewritten unchanged
+    /// value is never silently ignored.
+    #[error("candidate document structure does not match source ({reason})")]
+    CandidateStructureMismatch {
+        /// Stable machine-readable reason.
+        reason: &'static str,
+    },
+}
+
+/// Which proof obligation produced a [`ScaleError::ProofResidualExceeded`]
+/// or [`ScaleError::MissingProofEvidence`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ProofResidualKind {
+    /// Rest-world translation residual.
+    RestTranslation,
+    /// Rest-world rotation residual.
+    RestRotation,
+    /// Postcondition unit-scale residual.
+    UnitScale,
+    /// Transform-only attachment full-affine residual (an off-origin point
+    /// transformed through the expected and actual world matrix), per
+    /// DESIGN.md Appendix D §D.2/§D.6.
+    TransformOnlyAffine,
+    /// Per-element animation-track value residual, checked directly against
+    /// each domain's analytic expectation: a rewritten translation element
+    /// (value *or* cubic tangent) against `before * multiplier`, and every
+    /// retained rotation/scale element against `before` itself.
+    ///
+    /// Distinct from [`Self::KeyTranslation`], which samples the *composed*
+    /// track at key times: sampling proves what an evaluator would read, but
+    /// only a direct element comparison proves that the domains this plan
+    /// declares untouched really are untouched.
+    TrackValue,
+    /// Base mesh `POSITION` residual, per vertex, against this operation's
+    /// analytic expectation (`before * q` for whole-document conversion,
+    /// `before` for rest/bind reparameterization).
+    MeshPosition,
+    /// Keyframe-time translation residual.
+    KeyTranslation,
+    /// Cubic-segment interior-time translation residual.
+    CubicInterior,
+    /// Sampled world-space trajectory residual.
+    Trajectory,
+    /// Skin-matrix (`W * B`) residual.
+    SkinMatrix,
+    /// Skinned mesh bounds residual.
+    Bounds,
+    /// Stored inverse-bind residual for a skin slot *outside* the affected
+    /// closure — a skin neither operation touches, whose binds must therefore
+    /// come through unchanged.
+    ///
+    /// Slots inside the closure are covered, more strongly, by
+    /// [`Self::SkinMatrix`]: that obligation compares the composed `W * B`,
+    /// which is what actually deforms a vertex. Outside the closure there is
+    /// no rebase to compose against, so the stored arrays are compared
+    /// directly.
+    UnaffectedInverseBind,
+    /// The factor [`prove_scale`] re-derived from the documents it was given.
+    /// Only ever reported as [`ScaleError::MissingProofEvidence`]: it names a
+    /// source whose scaled root the proof could not resolve, never a residual.
+    ObservedFactor,
+}
+
+// --- Plan --------------------------------------------------------------
+
+/// The structural semantic operation a rewritten field receives.
+///
+/// No variant stores a resolved factor or expected value. Candidate
+/// construction and proof independently resolve the selected operation's
+/// numeric arithmetic from the field identity and topology.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ScaleRewriteRule {
+    /// A whole-document linear-unit length field.
+    WholeDocumentLength,
+    /// A rest/bind field governed by the target node's parent-basis factor.
+    RestBindParentBasis,
+    /// A rest/bind field governed by the local `s_parent / s_node` rebase.
+    RestBindLocalScale,
+    /// A rest/bind inverse bind governed by its joint's node-basis factor.
+    RestBindNodeBasis,
+    /// A projected source-local rest, optionally bridged through connectors.
+    RestBindSourceLocal {
+        /// The immediate connector tail below the projected parent, if any.
+        connector_tail: Option<usize>,
+    },
+}
+
+/// Whether a modeled field is preserved exactly or analytically rewritten.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ScaleFieldDisposition {
+    /// The field is outside the core builder's write set.
+    ///
+    /// This is ownership, not a universal normalized-artifact equality
+    /// promise: format frontends may independently re-derive normalized
+    /// bones, binds, tracks, or meshes within the established residual
+    /// policy. Authored raw source-local fields copied by the core builder are
+    /// additionally checked bit-exact by [`prove_scale`].
+    PreserveExact,
+    /// The field is in the write set and receives the stated semantic rule.
+    Rewrite(ScaleRewriteRule),
+}
+
+/// One normalized bone-rest field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ScaleBoneRestField {
+    /// Local translation.
+    Translation,
+    /// Local rotation.
+    Rotation,
+    /// Local scale.
+    Scale,
+}
+
+/// One authored source-node rest field or component group.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ScaleSourceRestField {
+    /// TRS translation.
+    Translation,
+    /// TRS rotation.
+    Rotation,
+    /// TRS scale.
+    Scale,
+    /// Matrix linear columns.
+    MatrixLinear,
+    /// Matrix translation column.
+    MatrixTranslation,
+    /// Matrix homogeneous row.
+    MatrixHomogeneous,
+}
+
+/// The exact container-level target of one field disposition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ScaleFieldTarget {
+    /// One normalized bone-rest field.
+    BoneRest {
+        /// Normalized bone identity.
+        bone: BoneId,
+        /// Rest field.
+        field: ScaleBoneRestField,
+    },
+    /// One authored source-node rest field.
+    SourceNodeRest {
+        /// Raw source-node identity.
+        source_node_index: usize,
+        /// Rest field or component group.
+        field: ScaleSourceRestField,
+    },
+    /// One animation track's stored values.
+    AnimationValues {
+        /// Clip position in the normalized document.
+        clip_index: usize,
+        /// Track position inside the clip.
+        track_index: usize,
+        /// Target normalized bone.
+        bone: BoneId,
+        /// Animated property.
+        property: Property,
+    },
+    /// One bone convenience inverse bind.
+    BoneInverseBind {
+        /// Normalized bone identity.
+        bone: BoneId,
+    },
+    /// One logical instance inverse-bind slot.
+    InstanceInverseBind {
+        /// Instance position in the normalized document.
+        instance_index: usize,
+        /// Slot position inside the instance skin.
+        slot: usize,
+        /// Joint named by the slot.
+        joint: BoneId,
+    },
+    /// One primitive's complete base-position array.
+    MeshPositions {
+        /// Mesh position in the normalized document.
+        mesh_index: usize,
+        /// Primitive position inside the mesh.
+        primitive_index: usize,
+    },
+    /// One primitive's preserved normal array.
+    MeshNormals {
+        /// Mesh position in the normalized document.
+        mesh_index: usize,
+        /// Primitive position inside the mesh.
+        primitive_index: usize,
+    },
+}
+
+/// One exact semantic field row in a compiled scale plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ScaleFieldPlan {
+    target: ScaleFieldTarget,
+    disposition: ScaleFieldDisposition,
+    element_count: usize,
+}
+
+impl ScaleFieldPlan {
+    /// The exact container-level field target.
+    pub fn target(&self) -> ScaleFieldTarget {
+        self.target
+    }
+
+    /// Whether and how the target is rewritten.
+    pub fn disposition(&self) -> ScaleFieldDisposition {
+        self.disposition
+    }
+
+    /// Number of stored elements covered by the container row.
+    pub fn element_count(&self) -> usize {
+        self.element_count
+    }
+}
+
+/// One numeric-value-free payload-shape row used by stale-plan replay.
+///
+/// Rows include empty containers and structural identities/counts, but never
+/// key times or stored floating-point values, so intentional numeric replay
+/// against an identically shaped document remains supported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ScalePayloadShapeRow {
+    /// Top-level normalized collection counts.
+    Document {
+        /// Skeleton bone count.
+        bone_count: usize,
+        /// Authoritative source-skeleton node count; zero under unavailable
+        /// coverage.
+        source_node_count: usize,
+        /// Whether the source projection claims complete coverage.
+        source_coverage: SourceSkeletonCoverage,
+        /// Clip count.
+        clip_count: usize,
+        /// Mesh-instance count.
+        instance_count: usize,
+        /// Mesh count.
+        mesh_count: usize,
+    },
+    /// One normalized topology row.
+    Bone {
+        /// Normalized bone identity.
+        bone: BoneId,
+        /// Normalized parent identity.
+        parent: Option<BoneId>,
+    },
+    /// One source skin's complete structural inventory.
+    SourceSkin {
+        /// Raw source-skin identity.
+        source_skin_index: usize,
+        /// Explicit source skeleton root.
+        skeleton_root_source_node_index: Option<usize>,
+        /// Declared joint count.
+        joint_count: usize,
+        /// Attachment count.
+        attachment_count: usize,
+        /// Inverse-bind accessor status.
+        inverse_bind_status: SourceInverseBindAccessorStatus,
+        /// Declared inverse-bind accessor count.
+        inverse_bind_declared_count: Option<usize>,
+        /// Number of readable matrices retained.
+        inverse_bind_matrix_count: usize,
+    },
+    /// One ordered source-skin joint identity.
+    SourceSkinJoint {
+        /// Raw source-skin identity.
+        source_skin_index: usize,
+        /// Joint slot.
+        slot: usize,
+        /// Raw source-node identity.
+        source_node_index: usize,
+    },
+    /// One ordered source-skin attachment identity.
+    SourceSkinAttachment {
+        /// Raw source-skin identity.
+        source_skin_index: usize,
+        /// Attachment position.
+        attachment_index: usize,
+        /// Raw attachment node identity.
+        source_node_index: usize,
+        /// Raw mesh identity, when declared.
+        source_mesh_index: Option<usize>,
+    },
+    /// One clip, including an empty clip.
+    Clip {
+        /// Clip position.
+        clip_index: usize,
+        /// Track count.
+        track_count: usize,
+    },
+    /// One track's structural identity and arities.
+    Track {
+        /// Clip position.
+        clip_index: usize,
+        /// Track position.
+        track_index: usize,
+        /// Target bone.
+        bone: BoneId,
+        /// Animated property.
+        property: Property,
+        /// Interpolation mode.
+        interpolation: Interpolation,
+        /// Number of key times, without storing their numeric values.
+        key_count: usize,
+        /// Number of stored value elements.
+        value_count: usize,
+    },
+    /// One mesh instance, including an unskinned instance.
+    Instance {
+        /// Instance position.
+        instance_index: usize,
+        /// Normalized attachment node.
+        node: BoneId,
+        /// Raw source-node attachment identity.
+        source_node_index: usize,
+        /// Mesh identity.
+        mesh: usize,
+        /// Logical joint-slot count.
+        joint_count: usize,
+        /// Stored instance inverse-bind count.
+        inverse_bind_count: usize,
+    },
+    /// One logical joint slot, preserving slot order and identity.
+    InstanceJoint {
+        /// Instance position.
+        instance_index: usize,
+        /// Slot position.
+        slot: usize,
+        /// Joint identity.
+        joint: BoneId,
+    },
+    /// One mesh, including an empty mesh.
+    Mesh {
+        /// Mesh position.
+        mesh_index: usize,
+        /// Stable source mesh identity.
+        source_mesh_index: usize,
+        /// Primitive count.
+        primitive_count: usize,
+    },
+    /// One primitive's modeled shape.
+    Primitive {
+        /// Mesh position.
+        mesh_index: usize,
+        /// Primitive position.
+        primitive_index: usize,
+        /// Base-position count.
+        position_count: usize,
+        /// Preserved normal count.
+        normal_count: usize,
+        /// Primary joint-tuple count read by skin/bounds proof.
+        joint_count: usize,
+        /// Primary weight-tuple count read by skin/bounds proof.
+        weight_count: usize,
+    },
+}
+
+/// One typed proof claim kind derived from the plan's validated inventory.
+///
+/// Exact members are not duplicated here: inspect [`ScalePlan::affected_nodes`],
+/// [`ScalePlan::transform_only_attachments`], and the field, payload, and
+/// topology rows exposed by [`ScalePlan::ledger`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ScaleProofObligation {
+    /// Preserve normalized parents and complete source projection topology.
+    ExactTopology,
+    /// Preserve clip, track, instance, skin, mesh, and primitive identities.
+    ExactPayloadIdentity,
+    /// Preserve exact world rest for the nodes outside a rest/bind closure.
+    ExactUnchangedWorldRest,
+    /// Prove affected rest-world translation and orientation.
+    RestWorld,
+    /// Prove affected rest-world facts and the nested unit-scale postcondition.
+    RestWorldAndUnitScale,
+    /// Probe complete expected affines of transform-only attachments.
+    TransformOnlyAffine,
+    /// Compare all rewritten and preserved animation values.
+    TrackValues,
+    /// Compare all rewritten and preserved base positions.
+    MeshPositions,
+    /// Compare affected translation tracks at their key times.
+    KeyTranslations,
+    /// Compare affected translation tracks at bounded cubic interior times.
+    CubicInteriors,
+    /// Compare sampled world-space trajectories.
+    Trajectories,
+    /// Run the one shared affected-skin walk producing skin and bounds results.
+    SkinAndBounds,
+    /// Check rewritten inverse-bind slots.
+    AffectedInverseBinds,
+    /// Check preserved inverse-bind slots outside the closure.
+    UnaffectedInverseBinds,
+    /// Preserve connector locals and check bridged projected successors.
+    ExactConnectorProjection,
+}
+
+/// A projected source row's role in a rest/bind topology.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ScaleProjectedRole {
+    /// Selected scaled root.
+    Root,
+    /// Selected skin joint other than the root.
+    Joint,
+    /// Affected non-joint attachment or path node.
+    TransformOnly,
+}
+
+/// The typed kind of one canonical rest/bind source-topology row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ScaleSourceNodeKind {
+    /// A source node projected into the normalized skeleton.
+    Projected {
+        /// Normalized bone identity.
+        bone: BoneId,
+        /// Root, joint, or transform-only role.
+        role: ScaleProjectedRole,
+        /// Nearest projected parent in source identity space.
+        projected_parent: Option<usize>,
+        /// Immediate connector tail below that projected parent, if any.
+        incoming_connector_tail: Option<usize>,
+    },
+    /// A static unprojected connector preserved exactly.
+    Connector,
+    /// A source row outside a rest/bind domain, or any row in a
+    /// whole-document plan where connector roles are not applicable.
+    OutsideDomain {
+        /// Normalized projection identity, if one exists.
+        bone: Option<BoneId>,
+    },
+}
+
+/// One row in the canonical source-keyed rest/bind topology.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ScaleSourceTopologyRow {
+    source_node_index: usize,
+    parent_source_node_index: Option<usize>,
+    kind: ScaleSourceNodeKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScaleLedger {
+    field_rows: Vec<ScaleFieldPlan>,
+    payload_shapes: Vec<ScalePayloadShapeRow>,
+    obligations: Vec<ScaleProofObligation>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct WholeDocumentParams {
+    factor: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct RestBindParams {
+    source_skin_index: usize,
+    source_root_node_index: usize,
+    expected_factor: f64,
+    transform_only_attachments: Vec<BoneId>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum ScaleCompiledPlan {
+    WholeDocument(WholeDocumentParams),
+    RestBind(RestBindParams),
+}
+
+/// Read-only view of one compiled plan's exact domain, field, topology, and
+/// proof-obligation ledger.
+///
+/// The view has no constructor and cannot be converted back into a
+/// [`ScalePlan`]; only [`plan_scale`] can compile an authoritative ledger.
+#[derive(Debug, Clone, Copy)]
+pub struct ScalePlanLedger<'a> {
+    plan: &'a ScalePlan,
+}
+
+impl<'a> ScalePlanLedger<'a> {
+    fn ledger(self) -> &'a ScaleLedger {
+        &self.plan.ledger
+    }
+
+    /// Exact container-level modeled field rows in deterministic source order.
+    pub fn field_rows(self) -> std::slice::Iter<'a, ScaleFieldPlan> {
+        self.ledger().field_rows.iter()
+    }
+
+    /// Numeric-value-free payload-shape rows, including empty containers.
+    pub fn payload_shapes(self) -> std::slice::Iter<'a, ScalePayloadShapeRow> {
+        self.ledger().payload_shapes.iter()
+    }
+
+    /// Typed proof obligations derived from the same field and payload inventory.
+    pub fn obligations(self) -> std::slice::Iter<'a, ScaleProofObligation> {
+        self.ledger().obligations.iter()
+    }
+
+    /// Canonical source-keyed topology for the complete modeled projection.
+    pub fn source_topology(self) -> std::slice::Iter<'a, ScaleSourceTopologyRow> {
+        self.plan.source_topology.iter()
+    }
+}
+
+impl ScaleSourceTopologyRow {
+    /// Raw source-node identity.
+    pub fn source_node_index(&self) -> usize {
+        self.source_node_index
+    }
+
+    /// Authoritative raw parent identity.
+    pub fn parent_source_node_index(&self) -> Option<usize> {
+        self.parent_source_node_index
+    }
+
+    /// Whether this row is projected or is a preserved connector.
+    pub fn kind(&self) -> ScaleSourceNodeKind {
+        self.kind
+    }
+}
+
+/// Pure, typed plan returned by [`plan_scale`].
+///
+/// Planning never mutates its input document; it only inspects it. Reference
+/// candidate construction from an accepted plan is a distinct, separately
+/// fallible fixture step.
+///
+/// Every field is private: a [`ScalePlan`] can only be produced by
+/// [`plan_scale`], so an external caller cannot hand-construct or mutate one
+/// into a state whose `affected_nodes` disagree with `operation`'s
+/// selectors. Read plan contents through the accessor methods.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct ScalePlan {
+    tolerance_policy: ScaleTolerancePolicy,
+    observed_factor: f64,
+    affected_nodes: Vec<BoneId>,
+    source_topology: Vec<ScaleSourceTopologyRow>,
+    ledger: ScaleLedger,
+    compiled: ScaleCompiledPlan,
+}
+
+impl ScalePlan {
+    /// Echoed operation and its declared parameters.
+    pub fn operation(&self) -> ScaleOperation {
+        match &self.compiled {
+            ScaleCompiledPlan::WholeDocument(plan) => ScaleOperation::WholeDocumentLinearUnits {
+                factor: plan.factor,
+            },
+            ScaleCompiledPlan::RestBind(plan) => ScaleOperation::RestBindUniformScale {
+                source_skin_index: plan.source_skin_index,
+                source_root_node_index: plan.source_root_node_index,
+                expected_factor: plan.expected_factor,
+            },
+        }
+    }
+
+    /// The fixed tolerance policy this plan and its proof share.
+    pub fn tolerance_policy(&self) -> ScaleTolerancePolicy {
+        self.tolerance_policy
+    }
+
+    /// Affected normalized-node closure, in ascending bone-id order.
+    ///
+    /// For [`ScaleOperation::WholeDocumentLinearUnits`] this is every node
+    /// in the document. For [`ScaleOperation::RestBindUniformScale`] this is
+    /// the closed connected hierarchy of DESIGN.md Appendix D §D.2: the
+    /// scaled ancestor, every selected skin joint and the normalized paths
+    /// between them, and every descendant transform-only attachment. Raw
+    /// source-only connector rows on those paths are not normalized nodes
+    /// and therefore do not appear in this list.
+    pub fn affected_nodes(&self) -> &[BoneId] {
+        &self.affected_nodes
+    }
+
+    /// Descendant nodes in [`Self::affected_nodes`] that carry no skin —
+    /// the "transform-only child" case of DESIGN.md Appendix D §D.2/§D.3.
+    /// Always empty for [`ScaleOperation::WholeDocumentLinearUnits`].
+    pub fn transform_only_attachments(&self) -> &[BoneId] {
+        match &self.compiled {
+            ScaleCompiledPlan::WholeDocument(_) => &[],
+            ScaleCompiledPlan::RestBind(plan) => &plan.transform_only_attachments,
+        }
+    }
+
+    /// The one common factor `s` (or `q` for whole-document conversion)
+    /// applied across [`Self::affected_nodes`].
+    ///
+    /// This is always the factor the *caller declared*, never the one
+    /// measured from the source: reference construction applies exactly this
+    /// value, and [`prove_scale`] states every analytic expectation in terms
+    /// of it. [`Self::observed_factor`] reports the measured
+    /// counterpart, and the two are separate numbers on purpose — DESIGN.md
+    /// Appendix D §D.6 requires producer evidence to record both.
+    pub fn common_factor(&self) -> f64 {
+        match &self.compiled {
+            ScaleCompiledPlan::WholeDocument(plan) => plan.factor,
+            ScaleCompiledPlan::RestBind(plan) => plan.expected_factor,
+        }
+    }
+
+    /// The factor this plan *observed* in the source, as distinct from the
+    /// caller-declared [`Self::common_factor`] the build applies.
+    ///
+    /// For [`ScaleOperation::RestBindUniformScale`] this is the rest-world
+    /// uniform factor measured at the scaled root of DESIGN.md Appendix D
+    /// §D.2 — the average of its rest-world linear part's three column
+    /// lengths, the same quantity the domain classification returns. It is
+    /// within [`ScaleTolerancePolicy::common_factor`] of
+    /// [`Self::common_factor`] (planning rejects it otherwise with
+    /// [`ScaleError::FactorMismatch`]) but is generally not equal to it: a
+    /// source authored at `0.010_000_02` is accepted against a declared
+    /// `0.01`, and both numbers belong in evidence.
+    ///
+    /// For [`ScaleOperation::WholeDocumentLinearUnits`] this equals
+    /// [`Self::common_factor`] exactly, because there is nothing to measure.
+    /// That operation's factor is *declared*, not observed: §D.1 states that
+    /// a whole-document conversion "changes physical size", is "appropriate
+    /// only when the source was authored in a different linear unit", and
+    /// that neither operation "may infer its factor or applicability from
+    /// mesh bounds, character height, joint lengths, inverse-bind magnitude,
+    /// filename, or an asset category". A source authored in centimetres and
+    /// one authored in metres are numerically identical documents, so no
+    /// measurement of either could distinguish them; the declared factor is
+    /// the only fact there is, and reporting it here keeps the evidence
+    /// contract uniform across the two operations rather than leaving a hole
+    /// a consumer would have to special-case.
+    pub fn observed_factor(&self) -> f64 {
+        self.observed_factor
+    }
+
+    /// Validate this plan's complete structural inventory against `document`.
+    ///
+    /// This re-derives and exactly compares the affected domain, canonical
+    /// source topology, transform-only attachments, payload shapes, field
+    /// dispositions, and proof obligations. Numeric source values are not
+    /// compared, so a document with the same structural ledger remains a
+    /// valid replay source, but the replay document must still satisfy the
+    /// finite-value and nonnegative-weight scale-input requirements.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ScaleError::PlanDocumentMismatch`] when the re-derived
+    /// inventory differs, or the corresponding planning/input error when
+    /// `document` cannot produce a valid inventory for this operation.
+    pub fn validate_document_inventory(&self, document: &Document) -> Result<(), ScaleError> {
+        validate_plan_document_inventory(document, self)
+    }
+
+    /// Inspect the exact read-only topology, field, and obligation ledger.
+    pub fn ledger(&self) -> ScalePlanLedger<'_> {
+        ScalePlanLedger { plan: self }
+    }
+
+    fn affected_set(&self) -> BTreeSet<BoneId> {
+        self.affected_nodes().iter().copied().collect()
+    }
+
+    fn is_whole_document(&self) -> bool {
+        matches!(self.compiled, ScaleCompiledPlan::WholeDocument(_))
+    }
+
+    fn field_rows(&self) -> &[ScaleFieldPlan] {
+        &self.ledger.field_rows
+    }
+
+    fn obligations(&self) -> &[ScaleProofObligation] {
+        &self.ledger.obligations
+    }
+
+    fn has_obligation(&self, expected: ScaleProofObligation) -> bool {
+        self.obligations().contains(&expected)
+    }
+
+    fn rest_obligation(&self) -> Option<(&[BoneId], bool)> {
+        if self.has_obligation(ScaleProofObligation::RestWorldAndUnitScale) {
+            Some((self.affected_nodes(), true))
+        } else if self.has_obligation(ScaleProofObligation::RestWorld) {
+            Some((self.affected_nodes(), false))
+        } else {
+            None
+        }
+    }
+
+    fn transform_only_nodes(&self) -> Option<&[BoneId]> {
+        self.has_obligation(ScaleProofObligation::TransformOnlyAffine)
+            .then(|| self.transform_only_attachments())
+    }
+
+    fn has_key_translations(&self) -> bool {
+        self.has_obligation(ScaleProofObligation::KeyTranslations)
+    }
+
+    fn has_cubic_interiors(&self) -> bool {
+        self.has_obligation(ScaleProofObligation::CubicInteriors)
+    }
+
+    fn trajectory_nodes(&self) -> Option<&[BoneId]> {
+        self.has_obligation(ScaleProofObligation::Trajectories)
+            .then(|| self.affected_nodes())
+    }
+
+    fn has_skin_and_bounds(&self) -> bool {
+        self.has_obligation(ScaleProofObligation::SkinAndBounds)
+    }
+
+    fn has_unaffected_binds(&self) -> bool {
+        self.has_obligation(ScaleProofObligation::UnaffectedInverseBinds)
+    }
+}
+
+/// Plan the caller-selected [`ScaleOperation`] against `request.document`.
+///
+/// Pure and fail-closed: this function only reads `request.document` and
+/// `request.capability`. It never returns a plan for a factor that was not
+/// declared or an affine domain outside the initial supported class.
+///
+/// # Errors
+///
+/// Returns a typed [`ScaleError`] for every unsupported factor, selector,
+/// capability gap, affine domain, closure incompleteness, factor mismatch,
+/// or invalid document shape.
+pub fn plan_scale(request: &ScaleRequest<'_>) -> Result<ScalePlan, ScaleError> {
+    if !request.capability.is_supported() {
+        return Err(ScaleError::IncompleteCapability);
+    }
+    validate_scale_input(request.document)?;
+    match request.operation {
+        ScaleOperation::WholeDocumentLinearUnits { factor } => {
+            plan_whole_document(request.document, factor)
+        }
+        ScaleOperation::RestBindUniformScale {
+            source_skin_index,
+            source_root_node_index,
+            expected_factor,
+        } => plan_rest_bind(
+            request.document,
+            source_skin_index,
+            source_root_node_index,
+            expected_factor,
+        ),
+    }
+}
+
+/// Validate every public scale-input snapshot before reading or rewriting it.
+/// Shared structure is delegated to [`crate::model::validate_document_shape`];
+/// this adapter owns only scale's finite base-position and nonnegative primary
+/// skin-weight requirements. [`plan_scale`], reference candidate construction,
+/// and [`prove_scale`] all call it, including for generated and externally
+/// loaded candidates, because a mutable [`Document`] cannot carry a durable
+/// validation guarantee.
+///
+/// Per-vertex primitive skinning shape (`joints`/`weights` parallel to
+/// `positions`) is deliberately not checked here: it is validated directly
+/// where it is walked, in [`accumulate_skinned_bounds`], since only the affected
+/// instances' geometry needs inspecting there.
+fn validate_scale_input(document: &Document) -> Result<(), ScaleError> {
+    validate_model_document_shape(document)?;
+    for (mesh_index, mesh) in document.assets.meshes.iter().enumerate() {
+        for (primitive_index, primitive) in mesh.primitives.iter().enumerate() {
+            if primitive
+                .positions
+                .iter()
+                .any(|position| !position.is_finite())
+            {
+                return Err(ScaleError::InvalidMeshPrimitive {
+                    mesh_index,
+                    primitive_index,
+                    reason: "non_finite_position",
+                });
+            }
+            for (vertex_index, weights) in primitive.weights.iter().enumerate() {
+                for (influence_index, &weight) in weights.iter().enumerate() {
+                    if weight.is_finite() && weight < 0.0 {
+                        return Err(ScaleError::NegativeSkinWeight {
+                            mesh_index,
+                            primitive_index,
+                            vertex_index,
+                            influence_index,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_candidate_structure(source: &Document, candidate: &Document) -> Result<(), ScaleError> {
+    // Bone-count parity is checked first, and it is the clause the sampling
+    // budget rests on. [`sample_time_obligations`] poses *both* skeletons at
+    // every sample time, but [`per_sample_work_units`] can only measure the
+    // source — it is called before any candidate is walked, and
+    // [`ScaleCandidate::from_document`] is public, so the candidate's bone
+    // count is caller-supplied. Charging `PROOF_SIDES * bones(source)` is
+    // therefore only an honest charge once the two counts are known equal:
+    // without this clause a two-bone source paired with a candidate padded to
+    // 60_000 identity bones was charged 36_000 units — 0.009% of the budget —
+    // and proved in 3.71s release, more than twice the wall time of the
+    // vertex-dominated document the budget scores at 100%. Parity is the fix
+    // rather than charging both
+    // sides because it is the same class of claim as the mesh and skin-joint
+    // clauses below ("unchanged skeleton/mesh/skin identity", DESIGN.md
+    // Appendix D §D.6), and it makes the single-side charge correct by
+    // construction rather than merely conservative.
+    if source.skeleton.bones.len() != candidate.skeleton.bones.len() {
+        return Err(ScaleError::CandidateStructureMismatch {
+            reason: "bone_count_mismatch",
+        });
+    }
+    // Topology is outside both operations' write sets. Compare it globally,
+    // not only outside a rest/bind closure: whole-document conversion affects
+    // every bone but still never re-parents one, and an affected leaf can be
+    // coherently moved between parents whose worlds happen to agree.
+    //
+    // The raw source-node rows are keyed by source identity rather than
+    // zipped or indexed as BoneIds. A loader is free to normalize a wide
+    // source hierarchy into parent-before-child DFS order, so raw node-array
+    // order and normalized bone order are not interchangeable. Requiring the
+    // coverage and, when coverage is Complete, the `(raw parent, projected
+    // bone)` map to agree also prevents a candidate from making a coherent
+    // skeleton re-parent look valid by rewriting its own projection to match.
+    // Rows under Unavailable coverage are deliberately ignored: the model
+    // does not claim that they are identity evidence.
+    let complete_projection_differs = source.assets.source_skeleton.coverage
+        == SourceSkeletonCoverage::Complete
+        && candidate.assets.source_skeleton.coverage == SourceSkeletonCoverage::Complete
+        && source_node_projection(source) != source_node_projection(candidate);
+    if source
+        .skeleton
+        .bones
+        .iter()
+        .map(|bone| bone.parent)
+        .ne(candidate.skeleton.bones.iter().map(|bone| bone.parent))
+        || source.assets.source_skeleton.coverage != candidate.assets.source_skeleton.coverage
+        || complete_projection_differs
+    {
+        return Err(ScaleError::CandidateStructureMismatch {
+            reason: "skeleton_topology_mismatch",
+        });
+    }
+    // Source skins are raw identity/evidence sidecars that neither operation
+    // rewrites. Compare their numeric-free semantic rows in the documented
+    // stable source-skin order: a frontend may not add, remove, reorder,
+    // retarget, or reshape one and still satisfy the exact-payload claim.
+    if source_skin_payload_shapes(source) != source_skin_payload_shapes(candidate) {
+        return Err(ScaleError::CandidateStructureMismatch {
+            reason: "source_skin_payload_mismatch",
+        });
+    }
+    if source.clips.len() != candidate.clips.len() {
+        return Err(ScaleError::CandidateStructureMismatch {
+            reason: "clip_count_mismatch",
+        });
+    }
+    for (source_clip, candidate_clip) in source.clips.iter().zip(candidate.clips.iter()) {
+        if source_clip.tracks.len() != candidate_clip.tracks.len() {
+            return Err(ScaleError::CandidateStructureMismatch {
+                reason: "track_count_mismatch",
+            });
+        }
+        for (source_track, candidate_track) in
+            source_clip.tracks.iter().zip(candidate_clip.tracks.iter())
+        {
+            if source_track.bone != candidate_track.bone
+                || source_track.property != candidate_track.property
+                || source_track.interpolation != candidate_track.interpolation
+                || source_track.times != candidate_track.times
+                || source_track.values.len() != candidate_track.values.len()
+            {
+                return Err(ScaleError::CandidateStructureMismatch {
+                    reason: "track_shape_mismatch",
+                });
+            }
+        }
+    }
+    if source.assets.instances.len() != candidate.assets.instances.len() {
+        return Err(ScaleError::CandidateStructureMismatch {
+            reason: "instance_count_mismatch",
+        });
+    }
+    // Mesh assignment and skin-joint identity are what DESIGN.md Appendix D
+    // §D.6 calls "unchanged mesh/material/skin identity": neither operation
+    // rewrites which mesh an instance draws or which joints it is bound to.
+    // Checking it here rather than inferring it from a residual is also what
+    // lets the skin and bounds obligations share one instance/vertex walk —
+    // the two sides are then known to have the same slots, the same mesh, and
+    // therefore the same per-primitive vertex counts.
+    //
+    // `node` and `source_node_index` are the *placement* half of that same
+    // identity, and neither is reachable from any residual. `node` is what
+    // attaches the instance to a bone — holding the skeleton fixed, it is what
+    // positions an unskinned prop, so moving one from a bone outside the
+    // affected closure onto a rebased one relocates it in world space while
+    // every residual this module measures stays exactly zero.
+    // `source_node_index` is what [`instance_source_skin`] matches attachments
+    // against, so re-pointing it changes whether a missing bind resolves to
+    // glTF's format-defined identity default or is refused as missing
+    // evidence.
+    //
+    // The topology comparison above now supplies that fixed skeleton, and
+    // `prove_scale` compares the complete derived world rest of every bone
+    // outside a rest/bind closure exactly. Together they prove placement as
+    // well as instance identity: neither a coherent re-parent nor a direct
+    // rest mutation of an independent sibling/leaf can relocate the prop.
+    // Comparing instances positionally also fixes instance *order*: two
+    // instances identical in every payload but attached to different nodes
+    // cannot be swapped without one of these two clauses firing.
+    for (instance, candidate_instance) in source
+        .assets
+        .instances
+        .iter()
+        .zip(candidate.assets.instances.iter())
+    {
+        if instance.node != candidate_instance.node {
+            return Err(ScaleError::CandidateStructureMismatch {
+                reason: "instance_node_mismatch",
+            });
+        }
+        if instance.source_node_index != candidate_instance.source_node_index {
+            return Err(ScaleError::CandidateStructureMismatch {
+                reason: "instance_source_node_index_mismatch",
+            });
+        }
+        if instance.mesh != candidate_instance.mesh {
+            return Err(ScaleError::CandidateStructureMismatch {
+                reason: "instance_mesh_mismatch",
+            });
+        }
+        if instance.skin_joints != candidate_instance.skin_joints {
+            return Err(ScaleError::CandidateStructureMismatch {
+                reason: "instance_skin_joints_mismatch",
+            });
+        }
+    }
+    if source.assets.meshes.len() != candidate.assets.meshes.len() {
+        return Err(ScaleError::CandidateStructureMismatch {
+            reason: "mesh_count_mismatch",
+        });
+    }
+    for (source_mesh, candidate_mesh) in source
+        .assets
+        .meshes
+        .iter()
+        .zip(candidate.assets.meshes.iter())
+    {
+        if source_mesh.source_mesh_index != candidate_mesh.source_mesh_index {
+            return Err(ScaleError::CandidateStructureMismatch {
+                reason: "mesh_source_identity_mismatch",
+            });
+        }
+        if source_mesh.primitives.len() != candidate_mesh.primitives.len() {
+            return Err(ScaleError::CandidateStructureMismatch {
+                reason: "primitive_count_mismatch",
+            });
+        }
+        for (source_primitive, candidate_primitive) in source_mesh
+            .primitives
+            .iter()
+            .zip(candidate_mesh.primitives.iter())
+        {
+            if source_primitive.positions.len() != candidate_primitive.positions.len() {
+                return Err(ScaleError::CandidateStructureMismatch {
+                    reason: "primitive_vertex_count_mismatch",
+                });
+            }
+            if source_primitive.normals.len() != candidate_primitive.normals.len() {
+                return Err(ScaleError::CandidateStructureMismatch {
+                    reason: "primitive_normal_count_mismatch",
+                });
+            }
+            if source_primitive.joints.len() != candidate_primitive.joints.len() {
+                return Err(ScaleError::CandidateStructureMismatch {
+                    reason: "primitive_joint_count_mismatch",
+                });
+            }
+            if source_primitive.weights.len() != candidate_primitive.weights.len() {
+                return Err(ScaleError::CandidateStructureMismatch {
+                    reason: "primitive_weight_count_mismatch",
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn source_node_projection(document: &Document) -> BTreeMap<usize, (Option<usize>, Option<BoneId>)> {
+    document
+        .assets
+        .source_skeleton
+        .nodes
+        .iter()
+        .map(|node| {
+            (
+                node.source_node_index,
+                (node.parent_source_node_index, node.bone),
+            )
+        })
+        .collect()
+}
+
+/// Reject an `f64` factor whose `f32` image cannot carry it.
+///
+/// Every rewrite in this module narrows to `f32` at the model boundary
+/// (`Vec3`/`Mat4` are `f32`), so a factor that only exists in `f64` is not a
+/// conversion this operation can perform. Both failure modes are silent
+/// without this check: overflow to `±inf` produces a document full of
+/// `NaN`/`inf` that only proof catches, and underflow of a nonzero factor to
+/// `0.0f32` annihilates every length in the document while every proof
+/// residual stays exactly zero.
+///
+/// Checked at *plan* time, for both the declared factor and the reciprocal
+/// `1 / factor` the rest/bind basis correction derives from it, so no
+/// unrepresentable factor ever reaches a builder.
+fn check_factor_narrows(declared: f64, factor: f64) -> Result<f32, ScaleError> {
+    let narrowed = factor as f32;
+    if !narrowed.is_finite() || (narrowed == 0.0 && factor != 0.0) {
+        return Err(ScaleError::FactorNotRepresentable {
+            declared,
+            factor,
+            narrowed,
+        });
+    }
+    Ok(narrowed)
+}
+
+fn field_disposition(active: bool, rule: ScaleRewriteRule) -> ScaleFieldDisposition {
+    if active {
+        ScaleFieldDisposition::Rewrite(rule)
+    } else {
+        ScaleFieldDisposition::PreserveExact
+    }
+}
+
+fn compile_payload_shapes(document: &Document) -> Vec<ScalePayloadShapeRow> {
+    let source_authoritative =
+        document.assets.source_skeleton.coverage == SourceSkeletonCoverage::Complete;
+    let mut rows = vec![ScalePayloadShapeRow::Document {
+        bone_count: document.skeleton.bones.len(),
+        source_node_count: if source_authoritative {
+            document.assets.source_skeleton.nodes.len()
+        } else {
+            0
+        },
+        source_coverage: document.assets.source_skeleton.coverage,
+        clip_count: document.clips.len(),
+        instance_count: document.assets.instances.len(),
+        mesh_count: document.assets.meshes.len(),
+    }];
+    rows.extend(
+        document
+            .skeleton
+            .bones
+            .iter()
+            .enumerate()
+            .map(|(bone, value)| ScalePayloadShapeRow::Bone {
+                bone,
+                parent: value.parent,
+            }),
+    );
+    rows.extend(source_skin_payload_shapes(document));
+    for (clip_index, clip) in document.clips.iter().enumerate() {
+        rows.push(ScalePayloadShapeRow::Clip {
+            clip_index,
+            track_count: clip.tracks.len(),
+        });
+        rows.extend(clip.tracks.iter().enumerate().map(|(track_index, track)| {
+            ScalePayloadShapeRow::Track {
+                clip_index,
+                track_index,
+                bone: track.bone,
+                property: track.property,
+                interpolation: track.interpolation,
+                key_count: track.times.len(),
+                value_count: track.values.len(),
+            }
+        }));
+    }
+    for (instance_index, instance) in document.assets.instances.iter().enumerate() {
+        rows.push(ScalePayloadShapeRow::Instance {
+            instance_index,
+            node: instance.node,
+            source_node_index: instance.source_node_index,
+            mesh: instance.mesh,
+            joint_count: instance.skin_joints.len(),
+            inverse_bind_count: instance.skin_ibms.len(),
+        });
+        rows.extend(
+            instance
+                .skin_joints
+                .iter()
+                .enumerate()
+                .map(|(slot, &joint)| ScalePayloadShapeRow::InstanceJoint {
+                    instance_index,
+                    slot,
+                    joint,
+                }),
+        );
+    }
+    for (mesh_index, mesh) in document.assets.meshes.iter().enumerate() {
+        rows.push(ScalePayloadShapeRow::Mesh {
+            mesh_index,
+            source_mesh_index: mesh.source_mesh_index,
+            primitive_count: mesh.primitives.len(),
+        });
+        rows.extend(
+            mesh.primitives
+                .iter()
+                .enumerate()
+                .map(
+                    |(primitive_index, primitive)| ScalePayloadShapeRow::Primitive {
+                        mesh_index,
+                        primitive_index,
+                        position_count: primitive.positions.len(),
+                        normal_count: primitive.normals.len(),
+                        joint_count: primitive.joints.len(),
+                        weight_count: primitive.weights.len(),
+                    },
+                ),
+        );
+    }
+    rows
+}
+
+fn source_skin_payload_shapes(document: &Document) -> Vec<ScalePayloadShapeRow> {
+    if document.assets.source_skeleton.coverage != SourceSkeletonCoverage::Complete {
+        return Vec::new();
+    }
+    let mut rows = Vec::new();
+    for skin in &document.assets.source_skeleton.skins {
+        rows.push(ScalePayloadShapeRow::SourceSkin {
+            source_skin_index: skin.source_skin_index,
+            skeleton_root_source_node_index: skin.skeleton_root_source_node_index,
+            joint_count: skin.joint_source_node_indices.len(),
+            attachment_count: skin.attachments.len(),
+            inverse_bind_status: skin.inverse_bind_accessor.status,
+            inverse_bind_declared_count: skin.inverse_bind_accessor.declared_count,
+            inverse_bind_matrix_count: skin.inverse_bind_accessor.matrices.len(),
+        });
+        rows.extend(skin.joint_source_node_indices.iter().enumerate().map(
+            |(slot, &source_node_index)| ScalePayloadShapeRow::SourceSkinJoint {
+                source_skin_index: skin.source_skin_index,
+                slot,
+                source_node_index,
+            },
+        ));
+        rows.extend(
+            skin.attachments
+                .iter()
+                .enumerate()
+                .map(
+                    |(attachment_index, attachment)| ScalePayloadShapeRow::SourceSkinAttachment {
+                        source_skin_index: skin.source_skin_index,
+                        attachment_index,
+                        source_node_index: attachment.source_node_index,
+                        source_mesh_index: attachment.source_mesh_index,
+                    },
+                ),
+        );
+    }
+    rows
+}
+
+fn whole_document_source_topology(document: &Document) -> Vec<ScaleSourceTopologyRow> {
+    if document.assets.source_skeleton.coverage != SourceSkeletonCoverage::Complete {
+        return Vec::new();
+    }
+    let mut rows: Vec<_> = document
+        .assets
+        .source_skeleton
+        .nodes
+        .iter()
+        .map(|node| ScaleSourceTopologyRow {
+            source_node_index: node.source_node_index,
+            parent_source_node_index: node.parent_source_node_index,
+            kind: ScaleSourceNodeKind::OutsideDomain { bone: node.bone },
+        })
+        .collect();
+    rows.sort_unstable_by_key(|row| row.source_node_index);
+    rows
+}
+
+fn compile_scale_ledger(
+    document: &Document,
+    operation: ScaleOperation,
+    affected_nodes: &[BoneId],
+    transform_only_attachments: &[BoneId],
+    topology: &[ScaleSourceTopologyRow],
+) -> ScaleLedger {
+    let affected: BTreeSet<_> = affected_nodes.iter().copied().collect();
+    let factor = match operation {
+        ScaleOperation::WholeDocumentLinearUnits { factor } => factor,
+        ScaleOperation::RestBindUniformScale {
+            expected_factor, ..
+        } => expected_factor,
+    };
+    let factor_changes = factor != 1.0;
+    let whole_document = matches!(operation, ScaleOperation::WholeDocumentLinearUnits { .. });
+    let mut fields = Vec::new();
+
+    for (bone, value) in document.skeleton.bones.iter().enumerate() {
+        let in_domain = affected.contains(&bone);
+        let parent_in_domain = value
+            .parent
+            .is_some_and(|parent| affected.contains(&parent));
+        let translation = if whole_document {
+            field_disposition(factor_changes, ScaleRewriteRule::WholeDocumentLength)
+        } else {
+            field_disposition(
+                factor_changes && in_domain && parent_in_domain,
+                ScaleRewriteRule::RestBindParentBasis,
+            )
+        };
+        let scale = if whole_document {
+            ScaleFieldDisposition::PreserveExact
+        } else {
+            field_disposition(
+                factor_changes && in_domain && !parent_in_domain,
+                ScaleRewriteRule::RestBindLocalScale,
+            )
+        };
+        for (field, disposition) in [
+            (ScaleBoneRestField::Translation, translation),
+            (
+                ScaleBoneRestField::Rotation,
+                ScaleFieldDisposition::PreserveExact,
+            ),
+            (ScaleBoneRestField::Scale, scale),
+        ] {
+            fields.push(ScaleFieldPlan {
+                target: ScaleFieldTarget::BoneRest { bone, field },
+                disposition,
+                element_count: 1,
+            });
+        }
+        if value.inverse_bind.is_some() {
+            fields.push(ScaleFieldPlan {
+                target: ScaleFieldTarget::BoneInverseBind { bone },
+                disposition: if whole_document {
+                    field_disposition(factor_changes, ScaleRewriteRule::WholeDocumentLength)
+                } else {
+                    field_disposition(
+                        factor_changes && in_domain,
+                        ScaleRewriteRule::RestBindNodeBasis,
+                    )
+                },
+                element_count: 1,
+            });
+        }
+    }
+
+    let source_nodes = source_node_index_map(document);
+    for topology_row in topology {
+        let node = source_nodes
+            .get(&topology_row.source_node_index)
+            .expect("validated topology row has a source node");
+        let (role, connector_tail) = match topology_row.kind {
+            ScaleSourceNodeKind::Projected {
+                role,
+                incoming_connector_tail,
+                ..
+            } => (Some(role), incoming_connector_tail),
+            ScaleSourceNodeKind::Connector | ScaleSourceNodeKind::OutsideDomain { .. } => {
+                (None, None)
+            }
+        };
+        let parent_rewrite = factor_changes
+            && (whole_document || role.is_some_and(|role| role != ScaleProjectedRole::Root));
+        let local_rewrite = factor_changes && role == Some(ScaleProjectedRole::Root);
+        let source_rule = if whole_document {
+            ScaleRewriteRule::WholeDocumentLength
+        } else {
+            ScaleRewriteRule::RestBindSourceLocal { connector_tail }
+        };
+        let push = |fields: &mut Vec<ScaleFieldPlan>, field: ScaleSourceRestField, active: bool| {
+            fields.push(ScaleFieldPlan {
+                target: ScaleFieldTarget::SourceNodeRest {
+                    source_node_index: node.source_node_index,
+                    field,
+                },
+                disposition: field_disposition(active, source_rule),
+                element_count: 1,
+            });
+        };
+        match node.local_rest {
+            SourceNodeLocalRest::Trs { .. } => {
+                push(
+                    &mut fields,
+                    ScaleSourceRestField::Translation,
+                    parent_rewrite,
+                );
+                push(&mut fields, ScaleSourceRestField::Rotation, false);
+                push(&mut fields, ScaleSourceRestField::Scale, local_rewrite);
+            }
+            SourceNodeLocalRest::Matrix(_) => {
+                push(
+                    &mut fields,
+                    ScaleSourceRestField::MatrixLinear,
+                    local_rewrite,
+                );
+                push(
+                    &mut fields,
+                    ScaleSourceRestField::MatrixTranslation,
+                    parent_rewrite,
+                );
+                push(&mut fields, ScaleSourceRestField::MatrixHomogeneous, false);
+            }
+        }
+    }
+
+    let mut has_tracks = false;
+    for (clip_index, clip) in document.clips.iter().enumerate() {
+        for (track_index, track) in clip.tracks.iter().enumerate() {
+            has_tracks = true;
+            let parent_in_domain = document
+                .skeleton
+                .bones
+                .get(track.bone)
+                .and_then(|bone| bone.parent)
+                .is_some_and(|parent| affected.contains(&parent));
+            let disposition = match track.property {
+                Property::Translation if whole_document => {
+                    field_disposition(factor_changes, ScaleRewriteRule::WholeDocumentLength)
+                }
+                Property::Translation if affected.contains(&track.bone) => field_disposition(
+                    factor_changes && parent_in_domain,
+                    ScaleRewriteRule::RestBindParentBasis,
+                ),
+                Property::Scale if !whole_document && affected.contains(&track.bone) => {
+                    field_disposition(
+                        factor_changes && !parent_in_domain,
+                        ScaleRewriteRule::RestBindLocalScale,
+                    )
+                }
+                _ => ScaleFieldDisposition::PreserveExact,
+            };
+            fields.push(ScaleFieldPlan {
+                target: ScaleFieldTarget::AnimationValues {
+                    clip_index,
+                    track_index,
+                    bone: track.bone,
+                    property: track.property,
+                },
+                disposition,
+                element_count: track.values.len(),
+            });
+        }
+    }
+
+    let mut has_affected_slots = false;
+    let mut has_unaffected_slots = false;
+    let mut has_skinned_instances = false;
+    for (instance_index, instance) in document.assets.instances.iter().enumerate() {
+        let instance_affected = instance
+            .skin_joints
+            .iter()
+            .any(|joint| affected.contains(joint));
+        if instance_affected {
+            has_skinned_instances = true;
+        }
+        let slots: Vec<_> = if whole_document {
+            instance
+                .skin_ibms
+                .iter()
+                .enumerate()
+                .filter_map(|(slot, _)| {
+                    instance
+                        .skin_joints
+                        .get(slot)
+                        .copied()
+                        .map(|joint| (slot, joint))
+                })
+                .collect()
+        } else {
+            instance.skin_joints.iter().copied().enumerate().collect()
+        };
+        for (slot, joint) in slots {
+            if whole_document || instance_affected {
+                has_affected_slots = true;
+            } else {
+                has_unaffected_slots = true;
+            }
+            fields.push(ScaleFieldPlan {
+                target: ScaleFieldTarget::InstanceInverseBind {
+                    instance_index,
+                    slot,
+                    joint,
+                },
+                disposition: if whole_document {
+                    field_disposition(factor_changes, ScaleRewriteRule::WholeDocumentLength)
+                } else if instance_affected {
+                    ScaleFieldDisposition::Rewrite(ScaleRewriteRule::RestBindNodeBasis)
+                } else {
+                    ScaleFieldDisposition::PreserveExact
+                },
+                element_count: 1,
+            });
+        }
+    }
+
+    let mut has_primitives = false;
+    for (mesh_index, mesh) in document.assets.meshes.iter().enumerate() {
+        for (primitive_index, primitive) in mesh.primitives.iter().enumerate() {
+            has_primitives = true;
+            fields.push(ScaleFieldPlan {
+                target: ScaleFieldTarget::MeshPositions {
+                    mesh_index,
+                    primitive_index,
+                },
+                disposition: if whole_document {
+                    field_disposition(factor_changes, ScaleRewriteRule::WholeDocumentLength)
+                } else {
+                    ScaleFieldDisposition::PreserveExact
+                },
+                element_count: primitive.positions.len(),
+            });
+            fields.push(ScaleFieldPlan {
+                target: ScaleFieldTarget::MeshNormals {
+                    mesh_index,
+                    primitive_index,
+                },
+                disposition: ScaleFieldDisposition::PreserveExact,
+                element_count: primitive.normals.len(),
+            });
+        }
+    }
+
+    let has_unaffected_nodes = affected.len() != document.skeleton.bones.len();
+    let sampled = sampled_evidence(document, &affected);
+    let has_connectors = topology
+        .iter()
+        .any(|row| matches!(row.kind, ScaleSourceNodeKind::Connector));
+    let mut obligations = vec![
+        ScaleProofObligation::ExactTopology,
+        ScaleProofObligation::ExactPayloadIdentity,
+    ];
+    if has_unaffected_nodes {
+        obligations.push(ScaleProofObligation::ExactUnchangedWorldRest);
+    }
+    if !affected_nodes.is_empty() {
+        obligations.push(if whole_document {
+            ScaleProofObligation::RestWorld
+        } else {
+            ScaleProofObligation::RestWorldAndUnitScale
+        });
+    }
+    if !transform_only_attachments.is_empty() {
+        obligations.push(ScaleProofObligation::TransformOnlyAffine);
+    }
+    if has_tracks {
+        obligations.push(ScaleProofObligation::TrackValues);
+    }
+    if has_primitives {
+        obligations.push(ScaleProofObligation::MeshPositions);
+    }
+    if sampled.key_translations {
+        obligations.push(ScaleProofObligation::KeyTranslations);
+    }
+    if sampled.cubic_interiors {
+        obligations.push(ScaleProofObligation::CubicInteriors);
+    }
+    if sampled.sample_times {
+        obligations.push(ScaleProofObligation::Trajectories);
+    }
+    if has_skinned_instances {
+        obligations.push(ScaleProofObligation::SkinAndBounds);
+    }
+    if has_affected_slots {
+        obligations.push(ScaleProofObligation::AffectedInverseBinds);
+    }
+    if has_unaffected_slots {
+        obligations.push(ScaleProofObligation::UnaffectedInverseBinds);
+    }
+    if has_connectors {
+        obligations.push(ScaleProofObligation::ExactConnectorProjection);
+    }
+    ScaleLedger {
+        field_rows: fields,
+        payload_shapes: compile_payload_shapes(document),
+        obligations,
+    }
+}
+
+fn plan_whole_document(document: &Document, factor: f64) -> Result<ScalePlan, ScaleError> {
+    if !factor.is_finite() || factor <= 0.0 {
+        return Err(ScaleError::InvalidFactor { factor });
+    }
+    check_factor_narrows(factor, factor)?;
+    let affected_nodes: Vec<BoneId> = (0..document.skeleton.bones.len()).collect();
+    let source_topology = whole_document_source_topology(document);
+    let ledger = compile_scale_ledger(
+        document,
+        ScaleOperation::WholeDocumentLinearUnits { factor },
+        &affected_nodes,
+        &[],
+        &source_topology,
+    );
+    Ok(ScalePlan {
+        tolerance_policy: ScaleTolerancePolicy::APPENDIX_D_V6,
+        // Declared, not measured — see [`ScalePlan::observed_factor`].
+        observed_factor: factor,
+        affected_nodes,
+        source_topology,
+        ledger,
+        compiled: ScaleCompiledPlan::WholeDocument(WholeDocumentParams { factor }),
+    })
+}
+
+struct RestBindTopology {
+    source_rows: Vec<ScaleSourceTopologyRow>,
+    scaled_root_bone: BoneId,
+    #[cfg(test)]
+    ancestry_steps: usize,
+}
+
+impl RestBindTopology {
+    fn projected_rows(
+        &self,
+    ) -> impl Iterator<
+        Item = (
+            &ScaleSourceTopologyRow,
+            BoneId,
+            ScaleProjectedRole,
+            Option<usize>,
+        ),
+    > {
+        self.source_rows.iter().filter_map(|row| match row.kind {
+            ScaleSourceNodeKind::Projected {
+                bone,
+                role,
+                incoming_connector_tail,
+                ..
+            } => Some((row, bone, role, incoming_connector_tail)),
+            ScaleSourceNodeKind::Connector | ScaleSourceNodeKind::OutsideDomain { .. } => None,
+        })
+    }
+
+    fn bone_of_source(&self) -> BTreeMap<usize, BoneId> {
+        self.projected_rows()
+            .map(|(row, bone, _, _)| (row.source_node_index, bone))
+            .collect()
+    }
+
+    fn affected_nodes(&self) -> Vec<BoneId> {
+        let mut nodes: Vec<_> = self.projected_rows().map(|(_, bone, _, _)| bone).collect();
+        nodes.sort_unstable();
+        nodes.dedup();
+        nodes
+    }
+
+    fn transform_only_attachments(&self) -> Vec<BoneId> {
+        let mut nodes: Vec<_> = self
+            .projected_rows()
+            .filter_map(|(_, bone, role, _)| {
+                (role == ScaleProjectedRole::TransformOnly).then_some(bone)
+            })
+            .collect();
+        nodes.sort_unstable();
+        nodes
+    }
+
+    fn connector_sources(&self) -> BTreeSet<usize> {
+        self.source_rows
+            .iter()
+            .filter_map(|row| {
+                matches!(row.kind, ScaleSourceNodeKind::Connector).then_some(row.source_node_index)
+            })
+            .collect()
+    }
+}
+
+/// Memoized raw-source ancestry needed by the rest/bind topology table.
+///
+/// `projected_parent_by_source` names the nearest projected ancestor of each
+/// projected domain row. `connector_tail_by_source` names an immediate
+/// unprojected parent when that edge enters a connector span, and
+/// `used_connectors` is the union of those spans. All ancestor walks share a
+/// path-compressed cache, so a long connector chain shared by many projected
+/// successors is traversed once rather than once per successor.
+struct RestBindSourceAncestry {
+    projected_parent_by_source: BTreeMap<usize, Option<usize>>,
+    connector_tail_by_source: BTreeMap<usize, usize>,
+    used_connectors: BTreeSet<usize>,
+    #[cfg(test)]
+    ancestry_steps: usize,
+}
+
+fn derive_rest_bind_source_ancestry(
+    by_source_index: &BTreeMap<usize, &SourceNodeAsset>,
+    source_nodes: &BTreeSet<usize>,
+    projected_sources: impl Iterator<Item = usize>,
+    source_root_node_index: usize,
+) -> Result<RestBindSourceAncestry, ScaleError> {
+    let projected_sources: Vec<_> = projected_sources.collect();
+    let mut nearest_cache: BTreeMap<usize, Option<usize>> = BTreeMap::new();
+    let mut projected_parent_by_source = BTreeMap::new();
+    let mut connector_tail_by_source = BTreeMap::new();
+    #[cfg(test)]
+    let mut ancestry_steps = 0;
+
+    for source in projected_sources {
+        let asset = by_source_index
+            .get(&source)
+            .ok_or(ScaleError::IncompleteClosure {
+                reason: "dangling_source_parent_node_index",
+            })?;
+        if source != source_root_node_index
+            && let Some(parent) = asset.parent_source_node_index.filter(|parent| {
+                source_nodes.contains(parent)
+                    && by_source_index
+                        .get(parent)
+                        .is_some_and(|parent| parent.bone.is_none())
+            })
+        {
+            connector_tail_by_source.insert(source, parent);
+        }
+
+        let mut cursor = asset.parent_source_node_index;
+        let mut path = Vec::new();
+        let mut visiting = BTreeSet::new();
+        let projected_parent = loop {
+            let Some(parent) = cursor else {
+                break None;
+            };
+            if let Some(&cached) = nearest_cache.get(&parent) {
+                break cached;
+            }
+            if !visiting.insert(parent) || visiting.len() > by_source_index.len() {
+                return Err(ScaleError::IncompleteClosure {
+                    reason: "cyclic_or_unbounded_source_parent_chain",
+                });
+            }
+            let parent_asset =
+                by_source_index
+                    .get(&parent)
+                    .ok_or(ScaleError::IncompleteClosure {
+                        reason: "dangling_source_parent_node_index",
+                    })?;
+            #[cfg(test)]
+            {
+                ancestry_steps += 1;
+            }
+            if parent_asset.bone.is_some() {
+                break Some(parent);
+            }
+            path.push(parent);
+            cursor = parent_asset.parent_source_node_index;
+        };
+        for connector in path {
+            nearest_cache.insert(connector, projected_parent);
+        }
+        projected_parent_by_source.insert(source, projected_parent);
+    }
+
+    let mut used_connectors = BTreeSet::new();
+    let mut pending: Vec<usize> = connector_tail_by_source.values().copied().collect();
+    while let Some(source) = pending.pop() {
+        if !used_connectors.insert(source) {
+            continue;
+        }
+        let asset = by_source_index
+            .get(&source)
+            .ok_or(ScaleError::IncompleteClosure {
+                reason: "dangling_source_parent_node_index",
+            })?;
+        if let Some(parent) = asset.parent_source_node_index.filter(|parent| {
+            source_nodes.contains(parent)
+                && by_source_index
+                    .get(parent)
+                    .is_some_and(|parent| parent.bone.is_none())
+        }) {
+            pending.push(parent);
+        }
+    }
+
+    Ok(RestBindSourceAncestry {
+        projected_parent_by_source,
+        connector_tail_by_source,
+        used_connectors,
+        #[cfg(test)]
+        ancestry_steps,
+    })
+}
+
+/// Resolve the selector-derived rest/bind domain without classifying its
+/// numeric affine factors.
+///
+/// Planning uses both halves. Candidate construction and proof reuse only
+/// this half to bind a replayed plan to the supplied source's current write
+/// and evidence inventory while keeping proof's observed-factor witness
+/// independent of planning's numeric acceptance band.
+fn derive_rest_bind_plan_domain(
+    document: &Document,
+    source_skin_index: usize,
+    source_root_node_index: usize,
+) -> Result<RestBindTopology, ScaleError> {
+    if document.assets.source_skeleton.coverage != SourceSkeletonCoverage::Complete {
+        return Err(ScaleError::IncompleteSourceSkeleton);
+    }
+    let skin = resolve_rest_bind_skin(document, source_skin_index)?;
+    let by_source_index = source_node_index_map(document);
+    if !by_source_index.contains_key(&source_root_node_index) {
+        return Err(ScaleError::InvalidRootSelector {
+            source_root_node_index,
+        });
+    }
+
+    let source_nodes =
+        rest_bind_affected_closure(document, &by_source_index, skin, source_root_node_index)?;
+
+    let scaled_root_bone = by_source_index[&source_root_node_index].bone.ok_or(
+        ScaleError::SourceNodeNotNormalized {
+            source_node_index: source_root_node_index,
+        },
+    )?;
+    for &joint in &skin.joint_source_node_indices {
+        if by_source_index[&joint].bone.is_none() {
+            return Err(ScaleError::SourceNodeNotNormalized {
+                source_node_index: joint,
+            });
+        }
+    }
+
+    let bone_of_source: BTreeMap<usize, BoneId> = source_nodes
+        .iter()
+        .filter_map(|source| by_source_index[source].bone.map(|bone| (*source, bone)))
+        .collect();
+
+    // A source row without a normalized bone is admitted only as a strict
+    // connector between two projected rows. Record only each projected
+    // successor's immediate connector tail. Candidate construction memoizes
+    // the ordered ancestor product per connector row, keeping both storage and
+    // work linear when many projected successors share a long connector chain.
+    let ancestry = derive_rest_bind_source_ancestry(
+        &by_source_index,
+        &source_nodes,
+        bone_of_source.keys().copied(),
+        source_root_node_index,
+    )?;
+    if ancestry.used_connectors.iter().any(|source| {
+        let SourceNodeLocalRest::Matrix(matrix) = &by_source_index[source].local_rest else {
+            return false;
+        };
+        matrix.x_axis.w != 0.0
+            || matrix.y_axis.w != 0.0
+            || matrix.z_axis.w != 0.0
+            || matrix.w_axis.w != 1.0
+    }) {
+        return Err(ScaleError::IncompleteClosure {
+            reason: "non_affine_connector_source_transform",
+        });
+    }
+    if let Some(&terminal) = source_nodes.iter().find(|source| {
+        by_source_index[source].bone.is_none() && !ancestry.used_connectors.contains(source)
+    }) {
+        return Err(ScaleError::SourceNodeNotNormalized {
+            source_node_index: terminal,
+        });
+    }
+
+    let joint_sources: BTreeSet<usize> = skin.joint_source_node_indices.iter().copied().collect();
+    let mut source_rows = Vec::with_capacity(document.assets.source_skeleton.nodes.len());
+    for asset in &document.assets.source_skeleton.nodes {
+        let source_node_index = asset.source_node_index;
+        let kind = if !source_nodes.contains(&source_node_index) {
+            ScaleSourceNodeKind::OutsideDomain { bone: asset.bone }
+        } else {
+            match asset.bone {
+                Some(bone) => {
+                    let role = if source_node_index == source_root_node_index {
+                        ScaleProjectedRole::Root
+                    } else if joint_sources.contains(&source_node_index) {
+                        ScaleProjectedRole::Joint
+                    } else {
+                        ScaleProjectedRole::TransformOnly
+                    };
+                    let projected_parent = *ancestry
+                        .projected_parent_by_source
+                        .get(&source_node_index)
+                        .ok_or(ScaleError::IncompleteClosure {
+                            reason: "projected_source_ancestry_missing",
+                        })?;
+                    ScaleSourceNodeKind::Projected {
+                        bone,
+                        role,
+                        projected_parent,
+                        incoming_connector_tail: ancestry
+                            .connector_tail_by_source
+                            .get(&source_node_index)
+                            .copied(),
+                    }
+                }
+                None => ScaleSourceNodeKind::Connector,
+            }
+        };
+        source_rows.push(ScaleSourceTopologyRow {
+            source_node_index,
+            parent_source_node_index: asset.parent_source_node_index,
+            kind,
+        });
+    }
+    source_rows.sort_unstable_by_key(|row| row.source_node_index);
+
+    Ok(RestBindTopology {
+        source_rows,
+        scaled_root_bone,
+        #[cfg(test)]
+        ancestry_steps: ancestry.ancestry_steps,
+    })
+}
+
+fn plan_rest_bind(
+    document: &Document,
+    source_skin_index: usize,
+    source_root_node_index: usize,
+    expected_factor: f64,
+) -> Result<ScalePlan, ScaleError> {
+    if !expected_factor.is_finite() || expected_factor <= 0.0 {
+        return Err(ScaleError::InvalidExpectedFactor {
+            factor: expected_factor,
+        });
+    }
+    // Both directions: the builder narrows `expected_factor` itself, and the
+    // proof's basis correction `C = scale(1 / s)` narrows its reciprocal.
+    check_factor_narrows(expected_factor, expected_factor)?;
+    check_factor_narrows(expected_factor, 1.0 / expected_factor)?;
+    let domain = derive_rest_bind_plan_domain(document, source_skin_index, source_root_node_index)?;
+    let by_source_index = source_node_index_map(document);
+    let bone_of_source = domain.bone_of_source();
+    let connector_sources = domain.connector_sources();
+
+    let tol = ScaleTolerancePolicy::APPENDIX_D_V6;
+    let mut world_cache = BTreeMap::new();
+    let mut node_factor: BTreeMap<BoneId, f64> = BTreeMap::new();
+    for (&source, &bone) in &bone_of_source {
+        let world = source_world_matrix(
+            source,
+            &by_source_index,
+            &connector_sources,
+            &mut world_cache,
+        )?;
+        let linear = Mat3::from_mat4(world);
+        let factor = classify_affine(linear, &tol)
+            .map_err(|reason| ScaleError::InvalidAffineDomain { node: bone, reason })?;
+        node_factor.insert(bone, factor);
+    }
+    // Read at the scaled root, which DESIGN.md Appendix D §D.6 names, rather
+    // than at whichever affected node happens to sort first. The two readings
+    // were separable before this module related its two parent chains; under
+    // the source-projection agreement [`crate::model::validate_document_shape`]
+    // establishes they are provably the same node, and the proof is written out on
+    // `observed_factor_from_source` (§ "The scaled root is the minimum
+    // BoneId in the closure"). Naming the root explicitly keeps this reading
+    // and that second witness pinned to the same definition rather than to a
+    // coincidence of ordering.
+    let observed_common = node_factor[&domain.scaled_root_bone];
+    if !tol.relative(tol.common_factor, observed_common, expected_factor) {
+        return Err(ScaleError::FactorMismatch {
+            expected: expected_factor,
+            observed: observed_common,
+        });
+    }
+    for (&bone, &factor) in &node_factor {
+        if bone == domain.scaled_root_bone {
+            continue;
+        }
+        if !tol.relative(tol.common_factor, factor, observed_common) {
+            return Err(ScaleError::MixedFactor {
+                expected: observed_common,
+                observed: factor,
+                node: bone,
+            });
+        }
+    }
+
+    let affected_nodes = domain.affected_nodes();
+    let transform_only_attachments = domain.transform_only_attachments();
+    let operation = ScaleOperation::RestBindUniformScale {
+        source_skin_index,
+        source_root_node_index,
+        expected_factor,
+    };
+    let ledger = compile_scale_ledger(
+        document,
+        operation,
+        &affected_nodes,
+        &transform_only_attachments,
+        &domain.source_rows,
+    );
+    Ok(ScalePlan {
+        tolerance_policy: tol,
+        // The measured source fact, kept alongside the declared factor the
+        // build applies rather than discarded once it has been validated
+        // against it (DESIGN.md Appendix D §D.6, "declared and observed
+        // factors").
+        observed_factor: observed_common,
+        affected_nodes,
+        source_topology: domain.source_rows,
+        ledger,
+        compiled: ScaleCompiledPlan::RestBind(RestBindParams {
+            source_skin_index,
+            source_root_node_index,
+            expected_factor,
+            transform_only_attachments,
+        }),
+    })
+}
+
+/// Re-derive the document-dependent part of `plan` against the source a
+/// builder or proof was actually handed.
+///
+/// Numerical replay remains intentional: proof may independently observe
+/// different transform values from those planning read. Structural replay is
+/// different. Every proof loop is selected by the affected domain and the
+/// evidence inventory, so accepting a source that derives a wider domain or
+/// different obligations would let a stale plan omit payload altogether.
+fn validate_plan_document_inventory(
+    document: &Document,
+    plan: &ScalePlan,
+) -> Result<(), ScaleError> {
+    validate_scale_input(document)?;
+    let validate = |affected_nodes: &[BoneId],
+                    source_topology: &[ScaleSourceTopologyRow],
+                    transform_only_attachments: &[BoneId],
+                    ledger: &ScaleLedger| {
+        let reason = if affected_nodes != plan.affected_nodes() {
+            Some("affected_nodes_mismatch")
+        } else if source_topology != plan.source_topology {
+            Some("affected_source_topology_mismatch")
+        } else if transform_only_attachments != plan.transform_only_attachments() {
+            Some("transform_only_attachments_mismatch")
+        } else if ledger.obligations != plan.obligations() {
+            Some("proof_obligations_mismatch")
+        } else if ledger.payload_shapes != plan.ledger.payload_shapes {
+            Some("payload_shape_inventory_mismatch")
+        } else if ledger.field_rows != plan.field_rows() {
+            Some("field_write_set_mismatch")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            return Err(ScaleError::PlanDocumentMismatch { reason });
+        }
+        Ok(())
+    };
+
+    match plan.operation() {
+        ScaleOperation::WholeDocumentLinearUnits { factor } => {
+            let derived = plan_whole_document(document, factor)?;
+            validate(
+                derived.affected_nodes(),
+                &derived.source_topology,
+                derived.transform_only_attachments(),
+                &derived.ledger,
+            )?;
+            Ok(())
+        }
+        ScaleOperation::RestBindUniformScale {
+            source_skin_index,
+            source_root_node_index,
+            ..
+        } => {
+            let domain =
+                derive_rest_bind_plan_domain(document, source_skin_index, source_root_node_index)?;
+            let affected_nodes = domain.affected_nodes();
+            let transform_only_attachments = domain.transform_only_attachments();
+            let ledger = compile_scale_ledger(
+                document,
+                plan.operation(),
+                &affected_nodes,
+                &transform_only_attachments,
+                &domain.source_rows,
+            );
+            validate(
+                &affected_nodes,
+                &domain.source_rows,
+                &transform_only_attachments,
+                &ledger,
+            )?;
+            Ok(())
+        }
+    }
+}
+
+/// Resolve `source_skin_index` against
+/// `document.assets.source_skeleton.skins` by
+/// [`SourceSkinAsset::source_skin_index`] — never by raw array position,
+/// since a loader's source-skin indices need not be dense or contiguous.
+fn resolve_rest_bind_skin(
+    document: &Document,
+    source_skin_index: usize,
+) -> Result<&SourceSkinAsset, ScaleError> {
+    let skin = document
+        .assets
+        .source_skeleton
+        .skins
+        .iter()
+        .find(|skin| skin.source_skin_index == source_skin_index)
+        .ok_or(ScaleError::InvalidSkinSelector { source_skin_index })?;
+    if skin.joint_source_node_indices.is_empty() {
+        return Err(ScaleError::InvalidSkinSelector { source_skin_index });
+    }
+    Ok(skin)
+}
+
+fn source_node_index_map(document: &Document) -> BTreeMap<usize, &SourceNodeAsset> {
+    document
+        .assets
+        .source_skeleton
+        .nodes
+        .iter()
+        .map(|node| (node.source_node_index, node))
+        .collect()
+}
+
+/// Compute the closed connected hierarchy of DESIGN.md Appendix D §D.2 in
+/// raw source-node identity space: the scaled ancestor, every selected skin
+/// joint and the paths between them, and every descendant whose attachment
+/// transform would otherwise inherit the common factor.
+fn rest_bind_affected_closure(
+    document: &Document,
+    by_source_index: &BTreeMap<usize, &SourceNodeAsset>,
+    skin: &SourceSkinAsset,
+    source_root_node_index: usize,
+) -> Result<BTreeSet<usize>, ScaleError> {
+    // Built up front so every insertion below — root, joint, ancestor-path
+    // helper, or later descendant — is checked against the same evidence,
+    // rather than only the descendants a later BFS happens to visit.
+    let unskinned_attachment: BTreeSet<usize> = document
+        .assets
+        .instances
+        .iter()
+        .filter(|instance| instance.skin_joints.is_empty())
+        .map(|instance| instance.source_node_index)
+        .collect();
+    let reject_if_unskinned = |source_node_index: usize| -> Result<(), ScaleError> {
+        if !unskinned_attachment.contains(&source_node_index) {
+            return Ok(());
+        }
+        let bone = by_source_index
+            .get(&source_node_index)
+            .and_then(|asset| asset.bone)
+            .ok_or(ScaleError::SourceNodeNotNormalized { source_node_index })?;
+        Err(ScaleError::UnsupportedUnskinnedGeometry { node: bone })
+    };
+
+    let mut domain = BTreeSet::new();
+    let mut reaches_root = BTreeSet::from([source_root_node_index]);
+    reject_if_unskinned(source_root_node_index)?;
+    domain.insert(source_root_node_index);
+    for &joint in &skin.joint_source_node_indices {
+        if !by_source_index.contains_key(&joint) {
+            return Err(ScaleError::IncompleteClosure {
+                reason: "skin_joint_source_node_missing",
+            });
+        }
+        reject_if_unskinned(joint)?;
+        let mut cursor = joint;
+        let mut pending = Vec::new();
+        let mut visiting = BTreeSet::new();
+        loop {
+            if reaches_root.contains(&cursor) {
+                break;
+            }
+            if !visiting.insert(cursor) || visiting.len() > by_source_index.len() {
+                return Err(ScaleError::IncompleteClosure {
+                    reason: "cyclic_or_unbounded_source_parent_chain",
+                });
+            }
+            // `cursor` was itself reached via a parent link from a node
+            // already confirmed present, but the parent it names need not
+            // be: a dangling `parent_source_node_index` must fail closed
+            // with a typed error rather than panic on this index.
+            let asset = *by_source_index
+                .get(&cursor)
+                .ok_or(ScaleError::IncompleteClosure {
+                    reason: "dangling_source_parent_node_index",
+                })?;
+            pending.push(cursor);
+            match asset.parent_source_node_index {
+                Some(parent) => {
+                    reject_if_unskinned(parent)?;
+                    cursor = parent;
+                }
+                None => {
+                    return Err(ScaleError::IncompleteClosure {
+                        reason: "joint_not_descendant_of_scaled_root",
+                    });
+                }
+            }
+        }
+        for source in pending {
+            domain.insert(source);
+            reaches_root.insert(source);
+        }
+    }
+
+    let mut children: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for node in &document.assets.source_skeleton.nodes {
+        if let Some(parent) = node.parent_source_node_index {
+            children
+                .entry(parent)
+                .or_default()
+                .push(node.source_node_index);
+        }
+    }
+    // Joint ownership spans every declared skin, not just the selected
+    // instance: a descendant claimed as a joint by a different skin closes
+    // the domain rather than being silently absorbed.
+    let joint_owner: BTreeMap<usize, usize> = document
+        .assets
+        .source_skeleton
+        .skins
+        .iter()
+        .flat_map(|skin| {
+            skin.joint_source_node_indices
+                .iter()
+                .map(move |&joint| (joint, skin.source_skin_index))
+        })
+        .collect();
+
+    let mut queue: Vec<usize> = domain.iter().copied().collect();
+    while let Some(node) = queue.pop() {
+        for &child in children.get(&node).into_iter().flatten() {
+            if domain.contains(&child) {
+                continue;
+            }
+            if let Some(&owner) = joint_owner.get(&child)
+                && owner != skin.source_skin_index
+            {
+                return Err(ScaleError::IncompleteClosure {
+                    reason: "descendant_joint_of_another_skin",
+                });
+            }
+            reject_if_unskinned(child)?;
+            domain.insert(child);
+            queue.push(child);
+        }
+    }
+    Ok(domain)
+}
+
+/// Compose `start`'s raw rest-world matrix from
+/// `document.assets.source_skeleton.nodes`, walking the full
+/// `parent_source_node_index` ancestor chain (not stopping at any affected
+/// closure boundary) so classification sees the node's true rest-world
+/// linear part.
+///
+/// Iterative and cache/visited-guarded rather than naive recursion: a
+/// malformed cyclic or self-referencing parent chain errors instead of
+/// looping or overflowing the stack.
+#[derive(Clone, Copy)]
+enum SourceWorldAccumulator {
+    Narrow(Mat4),
+    Widened(DMat4),
+}
+
+fn source_world_matrix(
+    start: usize,
+    by_source_index: &BTreeMap<usize, &SourceNodeAsset>,
+    connector_sources: &BTreeSet<usize>,
+    cache: &mut BTreeMap<usize, SourceWorldAccumulator>,
+) -> Result<Mat4, ScaleError> {
+    if let Some(&world) = cache.get(&start) {
+        return narrow_source_world(start, world);
+    }
+    let mut chain = Vec::new();
+    let mut cursor = start;
+    let mut visited = BTreeSet::new();
+    let base_world = loop {
+        if let Some(&world) = cache.get(&cursor) {
+            break world;
+        }
+        if !visited.insert(cursor) {
+            return Err(ScaleError::IncompleteClosure {
+                reason: "cyclic_source_parent_chain",
+            });
+        }
+        let asset = *by_source_index
+            .get(&cursor)
+            .ok_or(ScaleError::IncompleteClosure {
+                reason: "missing_source_node",
+            })?;
+        chain.push((cursor, asset));
+        match asset.parent_source_node_index {
+            Some(parent) => cursor = parent,
+            None => break SourceWorldAccumulator::Narrow(Mat4::IDENTITY),
+        }
+    };
+    let mut world = base_world;
+    for (node, asset) in chain.into_iter().rev() {
+        let local = local_rest_matrix(&asset.local_rest);
+        if !mat4_is_finite(local) {
+            return Err(ScaleError::NonFiniteSourceTransform {
+                source_node_index: node,
+            });
+        }
+        world = if connector_sources.contains(&node) {
+            let widened = match world {
+                SourceWorldAccumulator::Narrow(world) => world.as_dmat4(),
+                SourceWorldAccumulator::Widened(world) => world,
+            } * local.as_dmat4();
+            if !widened.is_finite() {
+                return Err(ScaleError::NonFiniteSourceTransform {
+                    source_node_index: node,
+                });
+            }
+            SourceWorldAccumulator::Widened(widened)
+        } else {
+            let narrowed = match world {
+                SourceWorldAccumulator::Narrow(world) => world * local,
+                SourceWorldAccumulator::Widened(world) => (world * local.as_dmat4()).as_mat4(),
+            };
+            if !mat4_is_finite(narrowed) {
+                return Err(ScaleError::NonFiniteSourceTransform {
+                    source_node_index: node,
+                });
+            }
+            SourceWorldAccumulator::Narrow(narrowed)
+        };
+        cache.insert(node, world);
+    }
+    narrow_source_world(start, world)
+}
+
+fn narrow_source_world(
+    source_node_index: usize,
+    world: SourceWorldAccumulator,
+) -> Result<Mat4, ScaleError> {
+    let world = match world {
+        SourceWorldAccumulator::Narrow(world) => world,
+        SourceWorldAccumulator::Widened(world) => world.as_mat4(),
+    };
+    if !mat4_is_finite(world) {
+        return Err(ScaleError::NonFiniteSourceTransform { source_node_index });
+    }
+    Ok(world)
+}
+
+/// Compose a raw authored local-rest matrix, preserving shear: the `Trs`
+/// variant round-trips through `Mat4::from_scale_rotation_translation`
+/// (necessarily orthogonal/uniform-representable), while `Matrix` is used
+/// as-is — the only representation that can carry a literal shear term.
+fn local_rest_matrix(rest: &SourceNodeLocalRest) -> Mat4 {
+    match rest {
+        SourceNodeLocalRest::Trs {
+            translation,
+            rotation,
+            scale,
+        } => Mat4::from_scale_rotation_translation(*scale, *rotation, *translation),
+        SourceNodeLocalRest::Matrix(matrix) => *matrix,
+    }
+}
+
+fn classify_affine(linear: Mat3, tol: &ScaleTolerancePolicy) -> Result<f64, AffineDomainViolation> {
+    classify_positive_uniform_affine(
+        linear,
+        PositiveUniformAffineTolerance {
+            equal_axis: tol.equal_axis,
+            relative_orthogonality: tol.relative_orthogonality,
+            singular_determinant_relative: tol.singular_determinant_relative,
+        },
+    )
+}
+
+/// Compose every [`Bone::rest`](crate::model::Bone::rest) local transform in
+/// `skeleton` into a parent-before-child world matrix, delegating to the
+/// shared helper [`crate::model::world_rest_matrices`] and mapping its
+/// structural error into this module's [`ScaleError`].
+fn world_rests(skeleton: &Skeleton) -> Result<Vec<Mat4>, ScaleError> {
+    world_rest_matrices(skeleton).map_err(|error| match error {
+        crate::model::WorldMatrixError::NonFiniteTransform { node } => {
+            ScaleError::NonFiniteTransform { node }
+        }
+        crate::model::WorldMatrixError::InvalidParent { node, parent } => {
+            ScaleError::InvalidParent { node, parent }
+        }
+    })
+}
+
+/// One document side's composed world matrices, paired with the magnitude
+/// each bone's world *translation column* was actually summed from.
+///
+/// The two travel together for [`SkinSlot`]'s reason, one composition
+/// earlier: a parent chain whose translations cancel leaves a world
+/// translation orders of magnitude smaller than the terms it was accumulated
+/// from, and a tolerance for anything derived from that world has to be
+/// stated against the terms. See [`translation_composition_rounding_base`].
+#[derive(Debug, Clone, Copy)]
+struct WorldBonePose {
+    matrix: Mat4,
+    /// Sum of the translation-column rounding bases on the path from the root
+    /// to this bone.
+    ///
+    /// `0.0` for a root: its world matrix *is* its local matrix, copied, so
+    /// no arithmetic ran and there is no rounding base to carry.
+    translation_rounding_magnitude: f64,
+}
+
+struct WorldPose {
+    /// Matrix and provenance are one record so a consumer cannot pair one
+    /// bone's world with another bone's rounding magnitude by indexing two
+    /// parallel vectors independently.
+    bones: Vec<WorldBonePose>,
+}
+
+impl WorldPose {
+    /// One bone's world matrix and the magnitude its translation column was
+    /// accumulated from.
+    ///
+    /// The two are always read together, and reading them through one
+    /// bounds-checked accessor is what keeps the chain lookup from being a
+    /// raw index that is safe only because a `get` on the parallel matrix
+    /// vector ran above it.
+    fn bone(&self, node: BoneId) -> Result<WorldBonePose, ScaleError> {
+        self.bones
+            .get(node)
+            .copied()
+            .ok_or(ScaleError::BoneIndexOutOfRange { index: node })
+    }
+}
+
+/// Add one child composition's translation-column rounding base to the
+/// provenance its parent already carries.
+///
+/// The policy models coherent translation-column rounding as additive across
+/// links instead of depth-flat `max` or RSS/depth heuristics. This is the
+/// empirically calibrated Appendix D v5 recurrence, retained unchanged by
+/// v6, not a universal componentwise forward-error proof for the inherited
+/// linear block.
+fn child_translation_rounding_magnitude(parent: WorldBonePose, local: Mat4) -> f64 {
+    parent.translation_rounding_magnitude
+        + translation_composition_rounding_base(parent.matrix, local)
+}
+
+/// [`world_rests`] plus the translation chain magnitudes those worlds were
+/// composed through.
+fn rest_world_pose(skeleton: &Skeleton) -> Result<WorldPose, ScaleError> {
+    let matrices = world_rests(skeleton)?;
+    let mut bones: Vec<WorldBonePose> = Vec::with_capacity(matrices.len());
+    for (node, bone) in skeleton.bones.iter().enumerate() {
+        // `world_rests` has already refused every non-root whose parent is
+        // not strictly below it, so the `None` arm is reached only by a
+        // genuine root.
+        let matrix = matrices[node];
+        let translation_rounding_magnitude = match bone.parent {
+            Some(parent) if parent < node => {
+                child_translation_rounding_magnitude(bones[parent], bone.rest.to_mat4())
+            }
+            _ => 0.0,
+        };
+        bones.push(WorldBonePose {
+            matrix,
+            translation_rounding_magnitude,
+        });
+    }
+    Ok(WorldPose { bones })
+}
+
+// --- Candidate construction -------------------------------------------------
+
+/// A candidate document supplied to [`prove_scale`].
+///
+/// This type deliberately has no mutation method. Its only public constructor,
+/// [`ScaleCandidate::from_document`], wraps the document a format frontend
+/// reloaded from its exact emitted artifact bytes. Reference and calibration
+/// tests use the non-default `fixtures` feature instead of a production
+/// candidate-building API.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct ScaleCandidate {
+    document: Document,
+}
+
+impl ScaleCandidate {
+    /// Wrap a candidate `document` that a format frontend reloaded from the
+    /// exact artifact bytes it emitted, so it can be handed to [`prove_scale`].
+    ///
+    /// DESIGN.md Appendix D §D.8 assigns "exact source rewriting" to the
+    /// format frontend, which necessarily produces candidates this module did
+    /// not build: `animsmith_gltf`'s whole-document linear-unit rewrite
+    /// operates on raw glTF JSON and buffer bytes and then reloads the
+    /// artifact. Without this constructor that reloaded [`Document`] could
+    /// never reach [`prove_scale`], and the artifact-level proof D.6 requires
+    /// would have no in-memory layer to sit on top of.
+    ///
+    /// This constructor asserts nothing about `document`. It does not need
+    /// to: [`prove_scale`] already re-validates both documents it is given
+    /// and re-derives every claim from them, so this type carries no safety
+    /// obligation that [`prove_scale`] does not independently redo.
+    pub fn from_document(document: Document) -> Self {
+        Self { document }
+    }
+
+    /// The candidate document.
+    pub fn document(&self) -> &Document {
+        &self.document
+    }
+
+    /// Consume this candidate, taking ownership of the document.
+    pub fn into_document(self) -> Document {
+        self.document
+    }
+}
+
+#[cfg(doctest)]
+mod candidate_api_contract {
+    /// Compile-fail coverage for the removed production-looking reference
+    /// builder. Each former path stays in its own compilation unit so restoring
+    /// one cannot be masked by the other remaining unavailable.
+    ///
+    /// ```compile_fail
+    /// use animsmith_core::build_scale_candidate;
+    /// ```
+    ///
+    /// ```compile_fail
+    /// use animsmith_core::scale::build_scale_candidate;
+    /// ```
+    ///
+    /// The reloaded-artifact wrapper remains opaque; external callers use its
+    /// explicit constructor rather than a struct literal.
+    ///
+    /// ```compile_fail
+    /// use animsmith_core::{Document, ScaleCandidate};
+    ///
+    /// let _ = ScaleCandidate {
+    ///     document: Document::default(),
+    /// };
+    /// ```
+    ///
+    /// Field privacy is pinned independently from the non-exhaustive struct
+    /// construction boundary above.
+    ///
+    /// ```compile_fail
+    /// use animsmith_core::ScaleCandidate;
+    ///
+    /// fn read_private_document(candidate: ScaleCandidate) {
+    ///     let _ = candidate.document;
+    /// }
+    /// ```
+    struct RemovedPublicBuilder;
+}
+
+/// Build the analytic reference candidate from an accepted [`ScalePlan`],
+/// without mutating `document`.
+///
+/// This is private implementation support. Cross-crate analytic tests opt in
+/// to `animsmith_core::fixtures::build_scale_reference_candidate`; production
+/// format frontends rewrite exact source bytes and use
+/// [`ScaleCandidate::from_document`] on the emitted reload.
+///
+/// `document` need not be numerically identical to the document `plan` was
+/// computed against. Re-deriving its structural planning inventory must,
+/// however, produce the same affected domain and proof inventory. This permits intentional numerical replay
+/// while rejecting a structurally stale plan before one of its proof walks
+/// can omit newly introduced payload.
+///
+/// # Errors
+///
+/// Returns [`ScaleError::PlanDocumentMismatch`] if `document` derives a
+/// different plan inventory, [`ScaleError::BoneIndexOutOfRange`] if an
+/// affected node in `plan` is out of range for `document`,
+/// [`ScaleError::MissingInverseBind`]
+/// if an affected skin slot has no inverse-bind evidence to conjugate, or
+/// any document-shape error — checked on the *candidate* as
+/// well as the input, so a build can never hand back a structurally invalid
+/// or non-finite document as `Ok`.
+#[cfg_attr(not(any(test, feature = "fixtures")), allow(dead_code))]
+pub(crate) fn build_scale_candidate(
+    document: &Document,
+    plan: &ScalePlan,
+) -> Result<ScaleCandidate, ScaleError> {
+    validate_plan_document_inventory(document, plan)?;
+    let candidate = match plan.operation() {
+        ScaleOperation::WholeDocumentLinearUnits { .. } => build_whole_document(document, plan)?,
+        ScaleOperation::RestBindUniformScale { .. } => build_rest_bind(document, plan)?,
+    };
+    // The same fail-closed shape check the input had to pass, re-run on the
+    // output: a builder is the one place in this module that writes numbers,
+    // so it must not be the one place that returns unvalidated ones. Without
+    // this, an overflowing or annihilating factor produces a candidate whose
+    // only remaining defence is `prove_scale`, which a caller is free not to
+    // run.
+    validate_scale_input(&candidate)?;
+    Ok(ScaleCandidate {
+        document: candidate,
+    })
+}
+
+fn build_whole_document(document: &Document, plan: &ScalePlan) -> Result<Document, ScaleError> {
+    let q = check_factor_narrows(plan.common_factor(), plan.common_factor())?;
+    let mut candidate = document.clone();
+    let source_positions: BTreeMap<_, _> = candidate
+        .assets
+        .source_skeleton
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(position, node)| (node.source_node_index, position))
+        .collect();
+    for row in plan.field_rows() {
+        let ScaleFieldDisposition::Rewrite(rule) = row.disposition else {
+            continue;
+        };
+        if rule != ScaleRewriteRule::WholeDocumentLength {
+            return Err(ScaleError::PlanDocumentMismatch {
+                reason: "invalid_whole_document_rewrite_rule",
+            });
+        }
+        match row.target {
+            ScaleFieldTarget::BoneRest {
+                bone,
+                field: ScaleBoneRestField::Translation,
+            } => candidate.skeleton.bones[bone].rest.translation *= q,
+            ScaleFieldTarget::BoneInverseBind { bone } => {
+                let inverse_bind = candidate.skeleton.bones[bone].inverse_bind.as_mut().ok_or(
+                    ScaleError::PlanDocumentMismatch {
+                        reason: "compiled_bone_inverse_bind_missing",
+                    },
+                )?;
+                *inverse_bind = scale_translation_only(*inverse_bind, q);
+            }
+            ScaleFieldTarget::SourceNodeRest {
+                source_node_index,
+                field: ScaleSourceRestField::Translation | ScaleSourceRestField::MatrixTranslation,
+            } => {
+                let position = *source_positions.get(&source_node_index).ok_or(
+                    ScaleError::PlanDocumentMismatch {
+                        reason: "compiled_source_node_missing",
+                    },
+                )?;
+                let node = &mut candidate.assets.source_skeleton.nodes[position];
+                node.local_rest = match &node.local_rest {
+                    SourceNodeLocalRest::Trs {
+                        translation,
+                        rotation,
+                        scale,
+                    } => SourceNodeLocalRest::Trs {
+                        translation: *translation * q,
+                        rotation: *rotation,
+                        scale: *scale,
+                    },
+                    SourceNodeLocalRest::Matrix(matrix) => {
+                        SourceNodeLocalRest::Matrix(scale_translation_only(*matrix, q))
+                    }
+                };
+            }
+            ScaleFieldTarget::AnimationValues {
+                clip_index,
+                track_index,
+                property: Property::Translation,
+                ..
+            } => {
+                if let TrackValues::Vec3s(values) =
+                    &mut candidate.clips[clip_index].tracks[track_index].values
+                {
+                    for value in values {
+                        *value *= q;
+                    }
+                }
+            }
+            ScaleFieldTarget::MeshPositions {
+                mesh_index,
+                primitive_index,
+            } => {
+                for position in
+                    &mut candidate.assets.meshes[mesh_index].primitives[primitive_index].positions
+                {
+                    *position *= q;
+                }
+            }
+            ScaleFieldTarget::InstanceInverseBind {
+                instance_index,
+                slot,
+                ..
+            } => {
+                let inverse_bind = &mut candidate.assets.instances[instance_index].skin_ibms[slot];
+                *inverse_bind = scale_translation_only(*inverse_bind, q);
+            }
+            _ => {
+                return Err(ScaleError::PlanDocumentMismatch {
+                    reason: "invalid_whole_document_write_target",
+                });
+            }
+        }
+    }
+    // Unavailable source coverage is not identity evidence and therefore has
+    // no public/replay ledger rows. Preserve the released whole-document
+    // behavior for any best-effort raw locals a frontend nevertheless kept:
+    // they still receive the unit conversion, but their identities cannot
+    // make an otherwise compatible plan stale or become proof authority.
+    if candidate.assets.source_skeleton.coverage != SourceSkeletonCoverage::Complete {
+        for node in &mut candidate.assets.source_skeleton.nodes {
+            node.local_rest = match &node.local_rest {
+                SourceNodeLocalRest::Trs {
+                    translation,
+                    rotation,
+                    scale,
+                } => SourceNodeLocalRest::Trs {
+                    translation: *translation * q,
+                    rotation: *rotation,
+                    scale: *scale,
+                },
+                SourceNodeLocalRest::Matrix(matrix) => {
+                    SourceNodeLocalRest::Matrix(scale_translation_only(*matrix, q))
+                }
+            };
+        }
+    }
+    Ok(candidate)
+}
+
+fn build_rest_bind(document: &Document, plan: &ScalePlan) -> Result<Document, ScaleError> {
+    let affected = plan.affected_set();
+    let s = check_factor_narrows(plan.common_factor(), plan.common_factor())?;
+    let by_source_index = source_node_index_map(document);
+    let mut connector_product_by_tail = BTreeMap::new();
+    let parent_factor = |node: BoneId| -> Result<f32, ScaleError> {
+        let bone = document
+            .skeleton
+            .bones
+            .get(node)
+            .ok_or(ScaleError::BoneIndexOutOfRange { index: node })?;
+        Ok(match bone.parent {
+            Some(parent) if affected.contains(&parent) => s,
+            _ => 1.0,
+        })
+    };
+    let node_factor = |node: BoneId| -> f32 { if affected.contains(&node) { s } else { 1.0 } };
+
+    let mut candidate = document.clone();
+    let source_positions: BTreeMap<_, _> = candidate
+        .assets
+        .source_skeleton
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(position, node)| (node.source_node_index, position))
+        .collect();
+    let mut materialized_binds: BTreeMap<usize, Vec<Mat4>> = BTreeMap::new();
+    for row in plan.field_rows() {
+        let ScaleFieldDisposition::Rewrite(rule) = row.disposition else {
+            continue;
+        };
+        match (row.target, rule) {
+            (
+                ScaleFieldTarget::BoneRest {
+                    bone,
+                    field: ScaleBoneRestField::Translation,
+                },
+                ScaleRewriteRule::RestBindParentBasis,
+            ) => candidate.skeleton.bones[bone].rest.translation *= parent_factor(bone)?,
+            (
+                ScaleFieldTarget::BoneRest {
+                    bone,
+                    field: ScaleBoneRestField::Scale,
+                },
+                ScaleRewriteRule::RestBindLocalScale,
+            ) => {
+                candidate.skeleton.bones[bone].rest.scale *=
+                    parent_factor(bone)? / node_factor(bone);
+            }
+            (ScaleFieldTarget::BoneInverseBind { bone }, ScaleRewriteRule::RestBindNodeBasis) => {
+                let inverse_bind = candidate.skeleton.bones[bone].inverse_bind.as_mut().ok_or(
+                    ScaleError::PlanDocumentMismatch {
+                        reason: "compiled_bone_inverse_bind_missing",
+                    },
+                )?;
+                *inverse_bind = scale_rows(*inverse_bind, node_factor(bone));
+            }
+            (
+                ScaleFieldTarget::SourceNodeRest {
+                    source_node_index,
+                    field,
+                },
+                ScaleRewriteRule::RestBindSourceLocal { connector_tail },
+            ) => {
+                let position = *source_positions.get(&source_node_index).ok_or(
+                    ScaleError::PlanDocumentMismatch {
+                        reason: "compiled_source_node_missing",
+                    },
+                )?;
+                let bone = candidate.assets.source_skeleton.nodes[position]
+                    .bone
+                    .ok_or(ScaleError::SourceNodeNotNormalized { source_node_index })?;
+                let local_rest = &candidate.assets.source_skeleton.nodes[position].local_rest;
+                let s_parent = parent_factor(bone)?;
+                let s_node = node_factor(bone);
+                let rebased = if let Some(connector_tail) = connector_tail {
+                    rebase_source_local_through_connector_bridge(
+                        local_rest,
+                        connector_tail,
+                        &by_source_index,
+                        &mut connector_product_by_tail,
+                        s_parent,
+                        s_node,
+                        bone,
+                    )?
+                } else {
+                    rebase_source_local_rest(local_rest, s_parent, s_node, None)
+                };
+                candidate.assets.source_skeleton.nodes[position].local_rest =
+                    source_rest_with_rewritten_field(local_rest, &rebased, field)?;
+            }
+            (
+                ScaleFieldTarget::AnimationValues {
+                    clip_index,
+                    track_index,
+                    bone,
+                    ..
+                },
+                rule @ (ScaleRewriteRule::RestBindParentBasis
+                | ScaleRewriteRule::RestBindLocalScale),
+            ) => match rule {
+                ScaleRewriteRule::RestBindParentBasis => {
+                    let s_parent = parent_factor(bone)?;
+                    if let TrackValues::Vec3s(values) =
+                        &mut candidate.clips[clip_index].tracks[track_index].values
+                    {
+                        for value in values.iter_mut() {
+                            *value *= s_parent;
+                        }
+                    }
+                }
+                ScaleRewriteRule::RestBindLocalScale => {
+                    let multiplier =
+                        scale_animation_multiplier(document, bone, &affected, plan.common_factor());
+                    if let TrackValues::Vec3s(values) =
+                        &mut candidate.clips[clip_index].tracks[track_index].values
+                    {
+                        for value in values {
+                            // `Vec3` is the storage boundary. Form the
+                            // product in f64 and narrow each component once.
+                            *value = (value.as_dvec3() * multiplier).as_vec3();
+                        }
+                    }
+                }
+                ScaleRewriteRule::WholeDocumentLength
+                | ScaleRewriteRule::RestBindNodeBasis
+                | ScaleRewriteRule::RestBindSourceLocal { .. } => {
+                    unreachable!("outer pattern limits animation rules")
+                }
+            },
+            (
+                ScaleFieldTarget::InstanceInverseBind {
+                    instance_index,
+                    slot,
+                    joint,
+                },
+                ScaleRewriteRule::RestBindNodeBasis,
+            ) => {
+                let source_instance = &document.assets.instances[instance_index];
+                let binds = materialized_binds
+                    .entry(instance_index)
+                    .or_insert_with(|| Vec::with_capacity(source_instance.skin_joints.len()));
+                if slot != binds.len() {
+                    return Err(ScaleError::PlanDocumentMismatch {
+                        reason: "compiled_inverse_bind_slot_order_mismatch",
+                    });
+                }
+                let before = instance_bind(document, source_instance, slot, joint)?;
+                binds.push(scale_rows(before, node_factor(joint)));
+            }
+            _ => {
+                return Err(ScaleError::PlanDocumentMismatch {
+                    reason: "invalid_rest_bind_write_target",
+                });
+            }
+        }
+    }
+    for (instance_index, binds) in materialized_binds {
+        candidate.assets.instances[instance_index].skin_ibms = binds;
+    }
+    Ok(candidate)
+}
+
+/// Apply the established projected-local rebase, optionally combining its
+/// translation with a widened connector-conjugation offset.
+///
+/// `None` deliberately avoids adding a zero: direct-edge f32 association and
+/// signed-zero behavior are part of the calibrated Appendix D contract. A
+/// bridged translation stays widened until the complete sum is narrowed, so
+/// compensating terms above the f32 range can still produce a finite local.
+fn rebase_source_local_rest(
+    local_rest: &SourceNodeLocalRest,
+    s_parent: f32,
+    s_node: f32,
+    bridge_offset: Option<DVec3>,
+) -> SourceNodeLocalRest {
+    match local_rest {
+        SourceNodeLocalRest::Trs {
+            translation,
+            rotation,
+            scale,
+        } => {
+            let translation = match bridge_offset {
+                Some(offset) => (translation.as_dvec3() * f64::from(s_parent) + offset).as_vec3(),
+                None => *translation * s_parent,
+            };
+            let scale = match bridge_offset {
+                Some(_) => {
+                    let ratio = f64::from(s_parent) / f64::from(s_node);
+                    (scale.as_dvec3() * ratio).as_vec3()
+                }
+                None => *scale * (s_parent / s_node),
+            };
+            SourceNodeLocalRest::Trs {
+                translation,
+                rotation: *rotation,
+                scale,
+            }
+        }
+        SourceNodeLocalRest::Matrix(matrix) => {
+            let rebased = if let Some(offset) = bridge_offset {
+                let ratio = f64::from(s_parent) / f64::from(s_node);
+                let rebase_linear_column = |column: Vec4| {
+                    (column.truncate().as_dvec3() * ratio)
+                        .as_vec3()
+                        .extend(column.w)
+                };
+                let translation =
+                    (matrix.w_axis.truncate().as_dvec3() * f64::from(s_parent) + offset).as_vec3();
+                Mat4::from_cols(
+                    rebase_linear_column(matrix.x_axis),
+                    rebase_linear_column(matrix.y_axis),
+                    rebase_linear_column(matrix.z_axis),
+                    translation.extend(matrix.w_axis.w),
+                )
+            } else {
+                rebase_matrix(*matrix, s_parent, s_node)
+            };
+            SourceNodeLocalRest::Matrix(rebased)
+        }
+    }
+}
+
+/// Merge one compiled raw-source write into its local container.
+///
+/// A [`ScaleFieldPlan`] is the builder's write authority. Even when deriving
+/// one field naturally produces a complete local transform, sibling fields
+/// must retain their original bits unless their own row also says Rewrite.
+fn source_rest_with_rewritten_field(
+    original: &SourceNodeLocalRest,
+    rewritten: &SourceNodeLocalRest,
+    field: ScaleSourceRestField,
+) -> Result<SourceNodeLocalRest, ScaleError> {
+    match (original, rewritten, field) {
+        (
+            SourceNodeLocalRest::Trs {
+                translation: _,
+                rotation,
+                scale,
+            },
+            SourceNodeLocalRest::Trs {
+                translation: rewritten,
+                ..
+            },
+            ScaleSourceRestField::Translation,
+        ) => Ok(SourceNodeLocalRest::Trs {
+            translation: *rewritten,
+            rotation: *rotation,
+            scale: *scale,
+        }),
+        (
+            SourceNodeLocalRest::Trs {
+                translation,
+                rotation,
+                scale: _,
+            },
+            SourceNodeLocalRest::Trs {
+                scale: rewritten, ..
+            },
+            ScaleSourceRestField::Scale,
+        ) => Ok(SourceNodeLocalRest::Trs {
+            translation: *translation,
+            rotation: *rotation,
+            scale: *rewritten,
+        }),
+        (
+            SourceNodeLocalRest::Matrix(original),
+            SourceNodeLocalRest::Matrix(rewritten),
+            ScaleSourceRestField::MatrixLinear,
+        ) => Ok(SourceNodeLocalRest::Matrix(Mat4::from_cols(
+            rewritten.x_axis.truncate().extend(original.x_axis.w),
+            rewritten.y_axis.truncate().extend(original.y_axis.w),
+            rewritten.z_axis.truncate().extend(original.z_axis.w),
+            original.w_axis,
+        ))),
+        (
+            SourceNodeLocalRest::Matrix(original),
+            SourceNodeLocalRest::Matrix(rewritten),
+            ScaleSourceRestField::MatrixTranslation,
+        ) => Ok(SourceNodeLocalRest::Matrix(Mat4::from_cols(
+            original.x_axis,
+            original.y_axis,
+            original.z_axis,
+            rewritten.w_axis.truncate().extend(original.w_axis.w),
+        ))),
+        _ => Err(ScaleError::PlanDocumentMismatch {
+            reason: "source_local_field_variant_mismatch",
+        }),
+    }
+}
+
+/// Move a projected successor's rest/bind correction through an ordered
+/// chain of unchanged, unprojected source transforms.
+///
+/// If `H` is the parent-to-child product of the connector locals and `L` is
+/// the projected successor's authored local, preserving every connector
+/// exactly requires `L' = H^-1 S_parent H L S_node^-1`. A multiplier-only
+/// rewrite of `L` is wrong whenever `H` has a nonzero translation.
+fn rebase_source_local_through_connector_bridge(
+    local_rest: &SourceNodeLocalRest,
+    connector_tail: usize,
+    by_source_index: &BTreeMap<usize, &SourceNodeAsset>,
+    connector_product_by_tail: &mut BTreeMap<usize, DMat4>,
+    s_parent: f32,
+    s_node: f32,
+    bone: BoneId,
+) -> Result<SourceNodeLocalRest, ScaleError> {
+    if s_parent == 1.0 && s_node == 1.0 {
+        return Ok(local_rest.clone());
+    }
+    let connector =
+        memoized_connector_product(connector_tail, by_source_index, connector_product_by_tail)?;
+    let connector_linear_inverse = DMat3::from_cols(
+        connector.x_axis.truncate(),
+        connector.y_axis.truncate(),
+        connector.z_axis.truncate(),
+    )
+    .inverse();
+    let bridge_offset =
+        connector_linear_inverse * (connector.w_axis.truncate() * (f64::from(s_parent) - 1.0));
+    if !connector_linear_inverse.x_axis.is_finite()
+        || !connector_linear_inverse.y_axis.is_finite()
+        || !connector_linear_inverse.z_axis.is_finite()
+        || !bridge_offset.is_finite()
+    {
+        return Err(ScaleError::NonFiniteTransform { node: bone });
+    }
+    // For affine H=[A,t], H^-1*S_parent*H contributes only the translation
+    // A^-1*((s_parent-1)*t) beyond the established direct-edge rewrite. Keep
+    // every complete bridged expression widened through its single model
+    // boundary, while direct projected edges retain their established f32
+    // association and signed-zero behavior.
+    let rebased = rebase_source_local_rest(local_rest, s_parent, s_node, Some(bridge_offset));
+    if !mat4_is_finite(local_rest_matrix(&rebased)) {
+        return Err(ScaleError::NonFiniteTransform { node: bone });
+    }
+    Ok(rebased)
+}
+
+/// Return the ordered connector product from its nearest projected ancestor
+/// through `connector_tail`, caching every traversed prefix once.
+fn memoized_connector_product(
+    connector_tail: usize,
+    by_source_index: &BTreeMap<usize, &SourceNodeAsset>,
+    connector_product_by_tail: &mut BTreeMap<usize, DMat4>,
+) -> Result<DMat4, ScaleError> {
+    let mut pending = Vec::new();
+    let mut visited = BTreeSet::new();
+    let mut cursor = connector_tail;
+    let mut product = loop {
+        if let Some(&cached) = connector_product_by_tail.get(&cursor) {
+            break cached;
+        }
+        if !visited.insert(cursor) {
+            return Err(ScaleError::IncompleteClosure {
+                reason: "cyclic_connector_source_parent_chain",
+            });
+        }
+        let asset = by_source_index
+            .get(&cursor)
+            .ok_or(ScaleError::IncompleteClosure {
+                reason: "dangling_connector_source_node_index",
+            })?;
+        if asset.bone.is_some() {
+            break DMat4::IDENTITY;
+        }
+        pending.push(cursor);
+        cursor = asset
+            .parent_source_node_index
+            .ok_or(ScaleError::IncompleteClosure {
+                reason: "connector_without_projected_ancestor",
+            })?;
+    };
+    while let Some(source) = pending.pop() {
+        let asset = by_source_index
+            .get(&source)
+            .ok_or(ScaleError::IncompleteClosure {
+                reason: "dangling_connector_source_node_index",
+            })?;
+        product *= local_rest_matrix(&asset.local_rest).as_dmat4();
+        connector_product_by_tail.insert(source, product);
+    }
+    connector_product_by_tail
+        .get(&connector_tail)
+        .copied()
+        .ok_or(ScaleError::IncompleteClosure {
+            reason: "empty_connector_bridge",
+        })
+}
+
+/// Independently compose one proof-side connector product.
+///
+/// This intentionally does not call [`memoized_connector_product`]: the raw
+/// source-projection check must not certify a writer bug by deriving its
+/// expectation through the writer's own product cache.
+fn proof_connector_product(
+    connector_tail: usize,
+    by_source_index: &BTreeMap<usize, &SourceNodeAsset>,
+    connector_product_by_tail: &mut BTreeMap<usize, DMat4>,
+) -> Result<DMat4, ScaleError> {
+    let mut suffix = Vec::new();
+    let mut visited = BTreeSet::new();
+    let mut cursor = connector_tail;
+    let mut product = loop {
+        if let Some(&cached) = connector_product_by_tail.get(&cursor) {
+            break cached;
+        }
+        if !visited.insert(cursor) {
+            return Err(ScaleError::IncompleteClosure {
+                reason: "cyclic_connector_source_parent_chain",
+            });
+        }
+        let node = by_source_index
+            .get(&cursor)
+            .ok_or(ScaleError::IncompleteClosure {
+                reason: "dangling_connector_source_node_index",
+            })?;
+        if node.bone.is_some() {
+            break DMat4::IDENTITY;
+        }
+        suffix.push(cursor);
+        cursor = node
+            .parent_source_node_index
+            .ok_or(ScaleError::IncompleteClosure {
+                reason: "connector_without_projected_ancestor",
+            })?;
+    };
+    while let Some(source) = suffix.pop() {
+        let node = by_source_index
+            .get(&source)
+            .ok_or(ScaleError::IncompleteClosure {
+                reason: "dangling_connector_source_node_index",
+            })?;
+        product *= local_rest_matrix(&node.local_rest).as_dmat4();
+        connector_product_by_tail.insert(source, product);
+    }
+    connector_product_by_tail
+        .get(&connector_tail)
+        .copied()
+        .ok_or(ScaleError::IncompleteClosure {
+            reason: "empty_connector_bridge",
+        })
+}
+
+/// Independently derive the exact f32 local that a bridged projected source
+/// row must carry in the candidate.
+fn proof_expected_bridged_source_local(
+    local_rest: &SourceNodeLocalRest,
+    connector: DMat4,
+    s_parent: f32,
+    s_node: f32,
+    bone: BoneId,
+) -> Result<SourceNodeLocalRest, ScaleError> {
+    if s_parent == 1.0 && s_node == 1.0 {
+        return Ok(local_rest.clone());
+    }
+    let inverse = DMat3::from_cols(
+        connector.x_axis.truncate(),
+        connector.y_axis.truncate(),
+        connector.z_axis.truncate(),
+    )
+    .inverse();
+    let offset = inverse * (connector.w_axis.truncate() * (f64::from(s_parent) - 1.0));
+    if !inverse.x_axis.is_finite()
+        || !inverse.y_axis.is_finite()
+        || !inverse.z_axis.is_finite()
+        || !offset.is_finite()
+    {
+        return Err(ScaleError::NonFiniteTransform { node: bone });
+    }
+    let expected = match local_rest {
+        SourceNodeLocalRest::Trs {
+            translation,
+            rotation,
+            scale,
+        } => SourceNodeLocalRest::Trs {
+            translation: (translation.as_dvec3() * f64::from(s_parent) + offset).as_vec3(),
+            rotation: *rotation,
+            scale: (scale.as_dvec3() * (f64::from(s_parent) / f64::from(s_node))).as_vec3(),
+        },
+        SourceNodeLocalRest::Matrix(matrix) => {
+            let ratio = f64::from(s_parent) / f64::from(s_node);
+            let rebase_linear_column = |column: Vec4| {
+                (column.truncate().as_dvec3() * ratio)
+                    .as_vec3()
+                    .extend(column.w)
+            };
+            let translation =
+                (matrix.w_axis.truncate().as_dvec3() * f64::from(s_parent) + offset).as_vec3();
+            SourceNodeLocalRest::Matrix(Mat4::from_cols(
+                rebase_linear_column(matrix.x_axis),
+                rebase_linear_column(matrix.y_axis),
+                rebase_linear_column(matrix.z_axis),
+                translation.extend(matrix.w_axis.w),
+            ))
+        }
+    };
+    if !mat4_is_finite(local_rest_matrix(&expected)) {
+        return Err(ScaleError::NonFiniteTransform { node: bone });
+    }
+    Ok(expected)
+}
+
+/// `B' = U B U^-1` for a uniform `U = scale(q)`: the translation column
+/// scales by `q`; the linear part is unchanged.
+fn scale_translation_only(matrix: Mat4, q: f32) -> Mat4 {
+    let mut matrix = matrix;
+    matrix.w_axis.x *= q;
+    matrix.w_axis.y *= q;
+    matrix.w_axis.z *= q;
+    matrix
+}
+
+/// `scale(k) * M`: every output row (x/y/z, not the homogeneous row) scales
+/// by `k`, which is what left-multiplying by a uniform scale does to both
+/// the linear part and the translation column.
+fn scale_rows(matrix: Mat4, k: f32) -> Mat4 {
+    let scale_column = |c: Vec4| Vec4::new(c.x * k, c.y * k, c.z * k, c.w);
+    Mat4::from_cols(
+        scale_column(matrix.x_axis),
+        scale_column(matrix.y_axis),
+        scale_column(matrix.z_axis),
+        scale_column(matrix.w_axis),
+    )
+}
+
+fn vec3_bits_equal(left: Vec3, right: Vec3) -> bool {
+    left.to_array().map(f32::to_bits) == right.to_array().map(f32::to_bits)
+}
+
+fn quat_bits_equal(left: Quat, right: Quat) -> bool {
+    left.to_array().map(f32::to_bits) == right.to_array().map(f32::to_bits)
+}
+
+fn source_rest_field_bits_equal(
+    left: &SourceNodeLocalRest,
+    right: &SourceNodeLocalRest,
+    field: ScaleSourceRestField,
+) -> bool {
+    match (left, right, field) {
+        (
+            SourceNodeLocalRest::Trs {
+                translation: left, ..
+            },
+            SourceNodeLocalRest::Trs {
+                translation: right, ..
+            },
+            ScaleSourceRestField::Translation,
+        )
+        | (
+            SourceNodeLocalRest::Trs { scale: left, .. },
+            SourceNodeLocalRest::Trs { scale: right, .. },
+            ScaleSourceRestField::Scale,
+        ) => vec3_bits_equal(*left, *right),
+        (
+            SourceNodeLocalRest::Trs { rotation: left, .. },
+            SourceNodeLocalRest::Trs {
+                rotation: right, ..
+            },
+            ScaleSourceRestField::Rotation,
+        ) => quat_bits_equal(*left, *right),
+        (
+            SourceNodeLocalRest::Matrix(left),
+            SourceNodeLocalRest::Matrix(right),
+            ScaleSourceRestField::MatrixLinear,
+        ) => {
+            vec3_bits_equal(left.x_axis.truncate(), right.x_axis.truncate())
+                && vec3_bits_equal(left.y_axis.truncate(), right.y_axis.truncate())
+                && vec3_bits_equal(left.z_axis.truncate(), right.z_axis.truncate())
+        }
+        (
+            SourceNodeLocalRest::Matrix(left),
+            SourceNodeLocalRest::Matrix(right),
+            ScaleSourceRestField::MatrixTranslation,
+        ) => vec3_bits_equal(left.w_axis.truncate(), right.w_axis.truncate()),
+        (
+            SourceNodeLocalRest::Matrix(left),
+            SourceNodeLocalRest::Matrix(right),
+            ScaleSourceRestField::MatrixHomogeneous,
+        ) => {
+            [left.x_axis.w, left.y_axis.w, left.z_axis.w, left.w_axis.w].map(f32::to_bits)
+                == [
+                    right.x_axis.w,
+                    right.y_axis.w,
+                    right.z_axis.w,
+                    right.w_axis.w,
+                ]
+                .map(f32::to_bits)
+        }
+        _ => false,
+    }
+}
+
+fn f32_values_within_scale_tolerance<const N: usize>(
+    left: [f32; N],
+    right: [f32; N],
+    tolerance: &ScaleTolerancePolicy,
+) -> bool {
+    left.into_iter().zip(right).all(|(left, right)| {
+        let left = f64::from(left);
+        let right = f64::from(right);
+        let residual = (left - right).abs();
+        let limit = tolerance.scalar_tolerance(left, right);
+        residual.is_finite() && limit.is_finite() && residual <= limit
+    })
+}
+
+fn rewritten_source_rest_field_within_tolerance(
+    expected: &SourceNodeLocalRest,
+    actual: &SourceNodeLocalRest,
+    field: ScaleSourceRestField,
+    tolerance: &ScaleTolerancePolicy,
+) -> bool {
+    match (expected, actual, field) {
+        (
+            SourceNodeLocalRest::Trs {
+                translation: expected,
+                ..
+            },
+            SourceNodeLocalRest::Trs {
+                translation: actual,
+                ..
+            },
+            ScaleSourceRestField::Translation,
+        )
+        | (
+            SourceNodeLocalRest::Trs {
+                scale: expected, ..
+            },
+            SourceNodeLocalRest::Trs { scale: actual, .. },
+            ScaleSourceRestField::Scale,
+        ) => f32_values_within_scale_tolerance(expected.to_array(), actual.to_array(), tolerance),
+        (
+            SourceNodeLocalRest::Matrix(expected),
+            SourceNodeLocalRest::Matrix(actual),
+            ScaleSourceRestField::MatrixLinear,
+        ) => f32_values_within_scale_tolerance(
+            [
+                expected.x_axis.x,
+                expected.x_axis.y,
+                expected.x_axis.z,
+                expected.y_axis.x,
+                expected.y_axis.y,
+                expected.y_axis.z,
+                expected.z_axis.x,
+                expected.z_axis.y,
+                expected.z_axis.z,
+            ],
+            [
+                actual.x_axis.x,
+                actual.x_axis.y,
+                actual.x_axis.z,
+                actual.y_axis.x,
+                actual.y_axis.y,
+                actual.y_axis.z,
+                actual.z_axis.x,
+                actual.z_axis.y,
+                actual.z_axis.z,
+            ],
+            tolerance,
+        ),
+        (
+            SourceNodeLocalRest::Matrix(expected),
+            SourceNodeLocalRest::Matrix(actual),
+            ScaleSourceRestField::MatrixTranslation,
+        ) => f32_values_within_scale_tolerance(
+            expected.w_axis.truncate().to_array(),
+            actual.w_axis.truncate().to_array(),
+            tolerance,
+        ),
+        // Rewrites never own rotation or the matrix homogeneous row. Keep
+        // these impossible combinations fail-closed instead of silently
+        // assigning them a numeric policy.
+        _ => false,
+    }
+}
+
+/// Independently derive the raw authored local expected by one rewrite row.
+///
+/// This is deliberately proof-owned arithmetic. In particular, direct rows
+/// spell out their `f32` association here instead of calling the builder's
+/// rebase helpers, while connector rows use the separately implemented
+/// proof-side connector product and widened affine derivation.
+fn proof_expected_rewritten_source_local(
+    source: &Document,
+    plan: &ScalePlan,
+    affected: &BTreeSet<BoneId>,
+    source_node: &SourceNodeAsset,
+    rule: ScaleRewriteRule,
+    connector_products: &mut BTreeMap<usize, DMat4>,
+    source_nodes: &BTreeMap<usize, &SourceNodeAsset>,
+) -> Result<SourceNodeLocalRest, ScaleError> {
+    match rule {
+        ScaleRewriteRule::WholeDocumentLength => {
+            let q = check_factor_narrows(plan.common_factor(), plan.common_factor())?;
+            Ok(match &source_node.local_rest {
+                SourceNodeLocalRest::Trs {
+                    translation,
+                    rotation,
+                    scale,
+                } => SourceNodeLocalRest::Trs {
+                    translation: Vec3::new(translation.x * q, translation.y * q, translation.z * q),
+                    rotation: *rotation,
+                    scale: *scale,
+                },
+                SourceNodeLocalRest::Matrix(matrix) => {
+                    SourceNodeLocalRest::Matrix(Mat4::from_cols(
+                        matrix.x_axis,
+                        matrix.y_axis,
+                        matrix.z_axis,
+                        Vec4::new(
+                            matrix.w_axis.x * q,
+                            matrix.w_axis.y * q,
+                            matrix.w_axis.z * q,
+                            matrix.w_axis.w,
+                        ),
+                    ))
+                }
+            })
+        }
+        ScaleRewriteRule::RestBindSourceLocal { connector_tail } => {
+            let bone = source_node
+                .bone
+                .ok_or(ScaleError::SourceNodeNotNormalized {
+                    source_node_index: source_node.source_node_index,
+                })?;
+            let parent = source
+                .skeleton
+                .bones
+                .get(bone)
+                .ok_or(ScaleError::BoneIndexOutOfRange { index: bone })?
+                .parent;
+            let s = check_factor_narrows(plan.common_factor(), plan.common_factor())?;
+            let s_parent = if parent.is_some_and(|parent| affected.contains(&parent)) {
+                s
+            } else {
+                1.0
+            };
+            let s_node = if affected.contains(&bone) { s } else { 1.0 };
+            if let Some(connector_tail) = connector_tail {
+                let connector =
+                    proof_connector_product(connector_tail, source_nodes, connector_products)?;
+                return proof_expected_bridged_source_local(
+                    &source_node.local_rest,
+                    connector,
+                    s_parent,
+                    s_node,
+                    bone,
+                );
+            }
+            Ok(match &source_node.local_rest {
+                SourceNodeLocalRest::Trs {
+                    translation,
+                    rotation,
+                    scale,
+                } => SourceNodeLocalRest::Trs {
+                    translation: Vec3::new(
+                        translation.x * s_parent,
+                        translation.y * s_parent,
+                        translation.z * s_parent,
+                    ),
+                    rotation: *rotation,
+                    scale: Vec3::new(
+                        scale.x * (s_parent / s_node),
+                        scale.y * (s_parent / s_node),
+                        scale.z * (s_parent / s_node),
+                    ),
+                },
+                SourceNodeLocalRest::Matrix(matrix) => {
+                    let inverse_node = 1.0 / s_node;
+                    let linear = |column: Vec4| {
+                        Vec4::new(
+                            column.x * s_parent * inverse_node,
+                            column.y * s_parent * inverse_node,
+                            column.z * s_parent * inverse_node,
+                            column.w * inverse_node,
+                        )
+                    };
+                    SourceNodeLocalRest::Matrix(Mat4::from_cols(
+                        linear(matrix.x_axis),
+                        linear(matrix.y_axis),
+                        linear(matrix.z_axis),
+                        Vec4::new(
+                            matrix.w_axis.x * s_parent,
+                            matrix.w_axis.y * s_parent,
+                            matrix.w_axis.z * s_parent,
+                            matrix.w_axis.w,
+                        ),
+                    ))
+                }
+            })
+        }
+        ScaleRewriteRule::RestBindParentBasis
+        | ScaleRewriteRule::RestBindLocalScale
+        | ScaleRewriteRule::RestBindNodeBasis => Err(ScaleError::PlanDocumentMismatch {
+            reason: "invalid_source_local_rewrite_rule",
+        }),
+    }
+}
+
+/// Discharge rewritten authored source-local rows against a proof-owned
+/// analytic expectation. Direct raw format adapters may narrow an authored
+/// value before or after applying the same factor, so those rows use the
+/// published scale tolerance. Connector-bridged successors remain bit-exact:
+/// that core-only path has no second frontend narrowing boundary.
+fn check_rewritten_source_field_dispositions(
+    source: &Document,
+    candidate: &Document,
+    plan: &ScalePlan,
+    affected: &BTreeSet<BoneId>,
+    tolerance: &ScaleTolerancePolicy,
+    discharged: &mut BTreeSet<usize>,
+) -> Result<(), ScaleError> {
+    let source_nodes = source_node_index_map(source);
+    let candidate_nodes = source_node_index_map(candidate);
+    let mut connector_products = BTreeMap::new();
+    for (row_index, row) in plan.field_rows().iter().enumerate() {
+        let (
+            ScaleFieldTarget::SourceNodeRest {
+                source_node_index,
+                field,
+            },
+            ScaleFieldDisposition::Rewrite(rule),
+        ) = (row.target, row.disposition)
+        else {
+            continue;
+        };
+        let before =
+            source_nodes
+                .get(&source_node_index)
+                .ok_or(ScaleError::CandidateStructureMismatch {
+                    reason: "rewritten_source_node_missing",
+                })?;
+        let after = candidate_nodes.get(&source_node_index).ok_or(
+            ScaleError::CandidateStructureMismatch {
+                reason: "rewritten_source_node_missing",
+            },
+        )?;
+        let expected = proof_expected_rewritten_source_local(
+            source,
+            plan,
+            affected,
+            before,
+            rule,
+            &mut connector_products,
+            &source_nodes,
+        )?;
+        let bridged = matches!(
+            rule,
+            ScaleRewriteRule::RestBindSourceLocal {
+                connector_tail: Some(_)
+            }
+        );
+        let matches = if bridged {
+            source_rest_field_bits_equal(&expected, &after.local_rest, field)
+        } else {
+            rewritten_source_rest_field_within_tolerance(
+                &expected,
+                &after.local_rest,
+                field,
+                tolerance,
+            )
+        };
+        if !matches {
+            return Err(ScaleError::CandidateStructureMismatch {
+                reason: if bridged {
+                    "bridged_source_local_mismatch"
+                } else {
+                    "field_disposition_mismatch"
+                },
+            });
+        }
+        mark_field_row_discharged(discharged, row_index)?;
+    }
+    Ok(())
+}
+
+/// Discharge preserve-exact authored source-local rows after semantic
+/// residuals succeed. These are raw fields both core builders copy directly;
+/// normalized fields may be independently re-derived by a format frontend
+/// and remain governed by the existing versioned residual policy.
+fn check_preserved_field_dispositions(
+    source: &Document,
+    candidate: &Document,
+    plan: &ScalePlan,
+    discharged: &mut BTreeSet<usize>,
+) -> Result<(), ScaleError> {
+    let source_nodes = source_node_index_map(source);
+    let candidate_nodes = source_node_index_map(candidate);
+    let mut connector_sources = BTreeSet::new();
+    let mut bridged_successors = BTreeSet::new();
+    for row in plan.ledger().source_topology() {
+        match row.kind() {
+            ScaleSourceNodeKind::Connector => {
+                connector_sources.insert(row.source_node_index());
+            }
+            ScaleSourceNodeKind::Projected {
+                incoming_connector_tail: Some(_),
+                ..
+            } => {
+                bridged_successors.insert(row.source_node_index());
+            }
+            ScaleSourceNodeKind::Projected { .. } | ScaleSourceNodeKind::OutsideDomain { .. } => {}
+        }
+    }
+    for (row_index, row) in plan.field_rows().iter().enumerate() {
+        let (
+            ScaleFieldTarget::SourceNodeRest {
+                source_node_index,
+                field,
+            },
+            ScaleFieldDisposition::PreserveExact,
+        ) = (row.target, row.disposition)
+        else {
+            continue;
+        };
+        let exact = match (
+            source_nodes.get(&source_node_index),
+            candidate_nodes.get(&source_node_index),
+        ) {
+            (Some(before), Some(after)) => {
+                source_rest_field_bits_equal(&before.local_rest, &after.local_rest, field)
+            }
+            // Unavailable coverage carries no authoritative raw-row identity;
+            // the compiler emits no source field rows for it.
+            (None, None) => true,
+            _ => false,
+        };
+        if !exact {
+            return Err(ScaleError::CandidateStructureMismatch {
+                reason: if connector_sources.contains(&source_node_index) {
+                    "connector_source_local_mismatch"
+                } else if bridged_successors.contains(&source_node_index) {
+                    "bridged_source_local_mismatch"
+                } else {
+                    "field_disposition_mismatch"
+                },
+            });
+        }
+        mark_field_row_discharged(discharged, row_index)?;
+    }
+    Ok(())
+}
+
+fn mark_field_row_discharged(
+    discharged: &mut BTreeSet<usize>,
+    row_index: usize,
+) -> Result<(), ScaleError> {
+    if !discharged.insert(row_index) {
+        return Err(ScaleError::PlanDocumentMismatch {
+            reason: "field_row_discharged_twice",
+        });
+    }
+    Ok(())
+}
+
+fn finish_field_row_discharge(
+    plan: &ScalePlan,
+    discharged: &BTreeSet<usize>,
+) -> Result<(), ScaleError> {
+    let expected: BTreeSet<_> = (0..plan.field_rows().len()).collect();
+    if *discharged != expected {
+        return Err(ScaleError::PlanDocumentMismatch {
+            reason: "field_row_not_discharged",
+        });
+    }
+    Ok(())
+}
+
+/// `L' = scale(s_parent) * L * scale(1 / s_node)`: the rest/bind local
+/// rebase of DESIGN.md Appendix D §D.2, applied to a raw authored matrix
+/// that may carry terms a TRS decomposition cannot represent.
+///
+/// Left-multiplying by a uniform scale scales the output rows (that is
+/// [`scale_rows`]); right-multiplying by `scale(1 / s_node)` scales the three
+/// linear columns in full, translation column untouched.
+fn rebase_matrix(matrix: Mat4, s_parent: f32, s_node: f32) -> Mat4 {
+    let scaled = scale_rows(matrix, s_parent);
+    let inverse_node = 1.0 / s_node;
+    Mat4::from_cols(
+        scaled.x_axis * inverse_node,
+        scaled.y_axis * inverse_node,
+        scaled.z_axis * inverse_node,
+        scaled.w_axis,
+    )
+}
+
+// --- Proof -------------------------------------------------------------
+
+mod proof_residual {
+    /// One proof claim's maximum residual and the comparisons behind it.
+    ///
+    /// A maximum of `0.0` can mean either an exact measurement or that no
+    /// comparison was made. [`Self::evaluated`] distinguishes those cases.
+    /// The two measurements are intentionally one read-only value so a
+    /// consumer cannot pair one claim's maximum with another claim's count.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    #[non_exhaustive]
+    pub struct ScaleProofResidual {
+        max: f64,
+        comparisons: usize,
+    }
+
+    impl ScaleProofResidual {
+        /// The maximum residual observed across this claim's comparisons.
+        #[must_use]
+        pub fn max(self) -> f64 {
+            self.max
+        }
+
+        /// The number of comparisons behind [`Self::max`].
+        #[must_use]
+        pub fn comparisons(self) -> usize {
+            self.comparisons
+        }
+
+        /// Whether the proof evaluated this claim at least once.
+        #[must_use]
+        pub fn evaluated(self) -> bool {
+            self.comparisons != 0
+        }
+
+        pub(super) const EMPTY: Self = Self {
+            max: 0.0,
+            comparisons: 0,
+        };
+
+        pub(super) fn record(&mut self, observed: f64) {
+            self.max = self.max.max(observed);
+            self.comparisons += 1;
+        }
+    }
+
+    #[cfg(doctest)]
+    mod api_contract {
+        /// Compile-fail coverage for the removed split API. Each field stays in
+        /// its own compilation unit so restoring one cannot be masked by a
+        /// different missing field.
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.rest_translation_residual;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.rest_translation_comparisons;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.rest_rotation_residual;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.rest_rotation_comparisons;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.unit_scale_residual;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.unit_scale_comparisons;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.transform_only_affine_residual;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.transform_only_affine_comparisons;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.track_value_residual;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.track_value_comparisons;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.mesh_position_residual;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.mesh_position_comparisons;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.key_translation_residual;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.key_translation_comparisons;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.cubic_interior_residual;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.cubic_interior_comparisons;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.trajectory_residual;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.trajectory_comparisons;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.skin_matrix_residual;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.skin_matrix_comparisons;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.bounds_residual;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.bounds_comparisons;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.unaffected_inverse_bind_residual;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProof;
+        ///
+        /// fn removed(proof: ScaleProof) {
+        ///     let _ = proof.unaffected_inverse_bind_comparisons;
+        /// }
+        /// ```
+        ///
+        /// Direct construction and member-by-member mutation are also unavailable:
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProofResidual;
+        ///
+        /// let _ = ScaleProofResidual {
+        ///     max: 0.0,
+        ///     comparisons: 1,
+        /// };
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProofResidual;
+        ///
+        /// fn replace_max(mut residual: ScaleProofResidual) {
+        ///     residual.max = 1.0;
+        /// }
+        /// ```
+        ///
+        /// ```compile_fail
+        /// use animsmith_core::ScaleProofResidual;
+        ///
+        /// fn replace_count(mut residual: ScaleProofResidual) {
+        ///     residual.comparisons = 1;
+        /// }
+        /// ```
+
+        struct RemovedSplitFields;
+    }
+}
+
+pub use proof_residual::ScaleProofResidual;
+
+/// Observed residual maxima from [`prove_scale`], reported against
+/// [`ScalePlan::tolerance_policy`], each paired with the number of
+/// comparisons that produced it.
+///
+/// **Read the paired value, not just its maximum.** A maximum alone cannot
+/// distinguish "compared, no deviation" from "nothing to compare": both read
+/// `0.0`, because every maximum starts there and is raised only by a loop
+/// that may have zero iterations. So a field for an obligation the plan does
+/// not require (see [`ScaleProofObligation`]) reports a
+/// [`ScaleProofResidual`] whose maximum and count are both zero. A `0.0`
+/// maximum with a count above zero is a measurement; a zero count is an
+/// absence, which DESIGN.md Appendix D §D.6 requires an evidence record to
+/// publish as an absence rather than as a checked zero.
+///
+/// The counts are measurements, not proxies derived from obligation presence:
+/// each is stored with its maximum by the single private recording method
+/// every comparison in [`prove_scale`] funnels through. The pair's fields are
+/// private, so no producer can combine one claim's count with another claim's
+/// maximum.
+/// No comparison can raise a residual without being counted, and
+/// no count can rise without a comparison having been checked against the
+/// tolerance policy. A [`ScaleProofObligation`] may declare a proof walk, or
+/// name a row-driven claim discharged through the canonical field inventory;
+/// neither role substitutes for the comparison count recorded here.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub struct ScaleProof {
+    /// The tolerance policy every residual below was checked against.
+    pub tolerance_policy: ScaleTolerancePolicy,
+    /// Maximum rest-world translation residual, with one comparison per
+    /// affected node.
+    pub rest_translation: ScaleProofResidual,
+    /// Maximum rest-world rotation residual, in radians, directly comparable
+    /// to [`ScaleTolerancePolicy::rotation_residual_radians`].
+    ///
+    /// Measured as a double-cover-aware quaternion chord length
+    /// `|q1 - q2| = 2 * sin(theta / 4)` and reported as the angle
+    /// `theta = 4 * asin(chord / 2)` that chord represents, so this value and
+    /// the tolerance it is checked against carry the same unit.
+    /// Its count is one per affected node.
+    pub rest_rotation: ScaleProofResidual,
+    /// Maximum postcondition unit-scale residual, with one comparison per
+    /// affected node when the rest/bind plan declares the postcondition.
+    pub unit_scale: ScaleProofResidual,
+    /// Maximum transform-only attachment full-affine residual (rest/bind
+    /// only), with one probe-point comparison per attachment.
+    pub transform_only_affine: ScaleProofResidual,
+    /// Maximum per-element animation-track value residual, across rewritten
+    /// translation elements and every retained rotation/scale element. Its
+    /// count is one per track element across every clip.
+    pub track_value: ScaleProofResidual,
+    /// Maximum per-vertex base mesh `POSITION` residual, with one comparison
+    /// per vertex.
+    pub mesh_position: ScaleProofResidual,
+    /// Maximum residual at any affected-track keyframe time, with one
+    /// comparison per affected translation track per key time.
+    pub key_translation: ScaleProofResidual,
+    /// Maximum residual at any bounded cubic-segment interior time, with one
+    /// comparison per affected translation track per interior time.
+    pub cubic_interior: ScaleProofResidual,
+    /// Maximum sampled world-space trajectory residual, with one comparison
+    /// per affected node per sample time.
+    pub trajectory: ScaleProofResidual,
+    /// Maximum skin-matrix (`W * B`) component residual, across rest and
+    /// every sampled key/cubic-interior time. Its count is one per skin slot
+    /// of every affected skinned instance at each evaluated pose.
+    pub skin_matrix: ScaleProofResidual,
+    /// Maximum skinned mesh bounds residual, across rest and every sampled
+    /// key/cubic-interior time. Its count is six per evaluated pose.
+    pub bounds: ScaleProofResidual,
+    /// Maximum stored inverse-bind residual over every skin slot outside the
+    /// affected closure (see [`ProofResidualKind::UnaffectedInverseBind`]).
+    /// Its count is one per stored slot compared outside the closure and zero
+    /// unless the plan declares
+    /// [`ScaleProofObligation::UnaffectedInverseBinds`].
+    pub unaffected_inverse_bind: ScaleProofResidual,
+    /// The operation's observed factor, re-derived by this proof from the
+    /// documents it was handed rather than copied from
+    /// [`ScalePlan::observed_factor`], so evidence does not depend on
+    /// planning having recorded it.
+    ///
+    /// **Reported, not checked.** This is a measurement, not an obligation:
+    /// nothing here compares it against [`ScalePlan::common_factor`]. The
+    /// declared/observed agreement is the *input* contract §D.1 states, and
+    /// planning already enforces it ([`ScaleError::FactorMismatch`]); what
+    /// binds the candidate is the postcondition
+    /// ([`ProofResidualKind::UnitScale`]) that §D.1 derives from that band.
+    ///
+    /// Measured from `source`, not from `candidate`. That is a choice, not an
+    /// impossibility: a rest/bind candidate does record what its source
+    /// measured. `build_rest_bind` rebases an affected node's local scale by
+    /// `s_parent / s_node` with `s_node` the *declared* factor, and the
+    /// affected closure never contains the scaled root's parent, so `s_parent`
+    /// is one there and the candidate's composed root scale is exactly
+    /// `s_observed / s_declared` — unit only when the two agree, which the
+    /// input band admits without requiring. The candidate route is real and it
+    /// is accurate: `plan.common_factor() * average_affine_axis_length(
+    /// affine_axis_lengths(candidate root world linear))` recovers the
+    /// measurement to a relative error below `2^-24`, the half-ulp of the one
+    /// binary32 rounding that round trip costs at unit magnitude. Swept over
+    /// all 215 binary32 values
+    /// the `1e-5` band admits around a declared `0.01`, the worst is
+    /// `5.9604613e-8`; over this module's own `0.01`-factor fixtures it is
+    /// `4.84e-8`, at a source root of `0.010_000_099`.
+    ///
+    /// It is not the route taken, for four reasons:
+    ///
+    /// - **Independence.** [`prove_scale`] does not require `candidate` to
+    ///   have come from reference construction; checking one that did not
+    ///   is the reason it exists. Reading the reported measurement off the
+    ///   artifact under test would let that artifact pick its own evidence
+    ///   value. The observed factor is a fact about the *input*, so the input
+    ///   is where it is measured.
+    /// - **Precision.** The candidate route divides by the declared factor in
+    ///   `f32` and multiplies back in `f64`, so it reports a rounded
+    ///   neighbour of the source measurement rather than the measurement.
+    /// - **Sign.** The nearest already-published proxy,
+    ///   [`Self::unit_scale`]'s `max()`, is an absolute value, so
+    ///   `common_factor * (1 + unit_scale.max())` reconstructs
+    ///   `s_observed` only when the observed factor is the *larger* of the
+    ///   two and reflects it about the declared factor when it is not.
+    /// - **Attribution.** That residual is also a maximum over every affected
+    ///   node rather than a value read at the scaled root, so it does not
+    ///   name the node §D.6 defines the observed factor at.
+    ///
+    /// See [`ScalePlan::observed_factor`] for how each operation defines it;
+    /// for a whole-document conversion this is the declared factor, there
+    /// being nothing to measure — and there the candidate route genuinely
+    /// does not exist, because `build_whole_document` rewrites translations
+    /// only and leaves every composed scale exactly as it found it.
+    pub observed_factor: f64,
+    /// The observed factor [`plan_scale`] measured, copied from
+    /// [`ScalePlan::observed_factor`].
+    ///
+    /// The record carries both witnesses because they are measured from
+    /// genuinely different state and neither is derivable from the other:
+    /// this one from the raw source projection (`SourceNodeAsset::local_rest`
+    /// composed through `parent_source_node_index`),
+    /// [`Self::observed_factor`] from the normalized skeleton (`Bone::rest`
+    /// composed through `world_rest_matrices`). That independence is the
+    /// property DESIGN.md Appendix D §D.6 wants of a second witness, and it
+    /// is why the two are generally not equal. Carrying only one of them
+    /// would leave a reader unable to tell which was reported; carrying both
+    /// with no stated relationship would leave them unable to tell which to
+    /// trust, which is what [`Self::observed_factor_divergence`] answers.
+    ///
+    /// For [`ScaleOperation::WholeDocumentLinearUnits`] both are the declared
+    /// factor, there being nothing to measure, and the divergence is exactly
+    /// zero.
+    pub planned_observed_factor: f64,
+    /// How far apart the two observed factors are:
+    /// `abs(planned - proved) / max(abs(planned), abs(proved))`.
+    ///
+    /// Recorded explicitly rather than left for a consumer to compute, so the
+    /// evidence record states the relationship between its own two witnesses
+    /// instead of presenting two numbers that both answer to "the observed
+    /// factor". Compare it against
+    /// [`ScaleTolerancePolicy::observed_factor_divergence_ceiling`], which is
+    /// how far apart the design expects them to be and why — a consumer does
+    /// not have to re-derive that ceiling by summing two separate policy
+    /// fields.
+    ///
+    /// **Reported, not checked.** Nothing refuses a document for exceeding
+    /// the ceiling; see that method for what the ceiling does and does not
+    /// guarantee. The two *chains* the witnesses compose through are already
+    /// required to agree: under
+    /// [`crate::model::SourceSkeletonCoverage::Complete`] coverage a document
+    /// whose projection and skeleton describe different trees is refused
+    /// before either witness is taken. What nothing reconciles is the two
+    /// *readings* — [`crate::model::SourceNodeAsset::local_rest`] and
+    /// [`crate::model::Bone::rest`] stay separately stored and separately
+    /// composed, which is why both witnesses exist at all. A divergence
+    /// beyond the ceiling is therefore a fact about how far apart the input's
+    /// two stored descriptions of one rest pose are, worth surfacing, not a
+    /// residual this proof owns.
+    pub observed_factor_divergence: f64,
+    /// Number of distinct times sampled across all clips.
+    pub sample_time_count: usize,
+    // Calibration-only raw f32-rounding demand maxima. These are intentionally
+    // private and test-only: evidence publishes residuals and comparison
+    // counts, while the ignored calibration needs the per-comparison
+    // `observed / (base * ulp)` maximum that the proof actually checked.
+    // Keeping it on the test build's proof makes calibration consume the
+    // production comparison instead of recomputing poses, slots, bounds, or
+    // bases, without changing the release proof layout or runtime work.
+    #[cfg(test)]
+    rest_translation_f32_rounding_demand: f64,
+    #[cfg(test)]
+    trajectory_f32_rounding_demand: f64,
+    #[cfg(test)]
+    skin_matrix_f32_rounding_demand: f64,
+    #[cfg(test)]
+    bounds_f32_rounding_demand: f64,
+    #[cfg(test)]
+    unaffected_inverse_bind_f32_rounding_demand: f64,
+}
+
+/// Independently re-derive and check every claim [`ScalePlan`] makes.
+///
+/// Proof runs on the in-memory candidate, re-deriving world matrices,
+/// sampled trajectories, skin matrices, and bounds from `source` and
+/// `candidate` rather than trusting how they were built. Numerical residuals
+/// use [`ScaleTolerancePolicy::scalar_tolerance`] computed from that
+/// comparison's own actual before/after magnitudes, never a proxy such as the
+/// plan's declared factor. Discrete topology and the complete rest-world
+/// affine outside a rest/bind closure are exact unchanged-domain invariants.
+/// The world comparison is a semantic placement claim; exact local write-set
+/// parity is a separate artifact/ledger obligation. Neither `source` nor
+/// `candidate` need be numerically identical to the document `plan` was
+/// computed against, but re-deriving `source`'s structural planning inventory
+/// must produce the same affected domain and proof obligations.
+///
+/// # Errors
+///
+/// Returns [`ScaleError::PlanDocumentMismatch`] when the supplied source
+/// derives a different proof inventory, any planning/selector error surfaced
+/// while re-deriving that inventory, [`ScaleError::CandidateStructureMismatch`]
+/// when an exact source/candidate invariant differs,
+/// [`ScaleError::ProofResidualExceeded`] for the first residual that exceeds
+/// [`ScalePlan::tolerance_policy`], or [`ScaleError::MissingProofEvidence`] if
+/// an obligation the plan declares provable has no counterpart evidence in
+/// `candidate`.
+///
+/// Two of the claims checked here are not gated by
+/// [`ScaleProofObligation`]: the per-element animation-track values
+/// ([`ProofResidualKind::TrackValue`]), base mesh `POSITION`
+/// ([`ProofResidualKind::MeshPosition`]). They compare every element of
+/// every track and every base mesh against that element's own domain's
+/// analytic expectation — the declared multiplier where the plan rewrites
+/// that domain, the retained value where it does not — and so are owed by
+/// every plan. Base `POSITION` belongs with the track-value comparison, not
+/// with the unaffected binds, which is worth naming because it is easy to get
+/// backwards: a whole-document plan *does* rewrite it
+/// ([`ScaleRewriteRule::WholeDocumentLength`]), so its comparison is a
+/// rewritten-value check, and it is unconditional because skinned bounds
+/// would otherwise be its only witness — and they report a zero residual for
+/// a document carrying no skinned instance at all. Neither admits
+/// an obligation flag as a proxy for having run — see [`ScaleProof`], whose
+/// comparison counts report what each of them actually walked.
+///
+/// [`ScaleProof::observed_factor`] is re-derived here from `source` rather
+/// than copied from [`ScalePlan::observed_factor`]; it is reported as
+/// evidence and is not itself an obligation. Both witnesses and the
+/// divergence between them are recorded
+/// ([`ScaleProof::planned_observed_factor`],
+/// [`ScaleProof::observed_factor_divergence`]); none of the three is checked
+/// against a band here.
+pub fn prove_scale(
+    source: &Document,
+    candidate: &ScaleCandidate,
+    plan: &ScalePlan,
+) -> Result<ScaleProof, ScaleError> {
+    let candidate = candidate.document();
+    validate_plan_document_inventory(source, plan)?;
+    validate_scale_input(candidate)?;
+    validate_candidate_structure(source, candidate)?;
+    let mut discharged_field_rows = BTreeSet::new();
+    let tol = plan.tolerance_policy;
+    let affected = plan.affected_set();
+    let affected_skin_instances = if plan.has_skin_and_bounds() {
+        affected_skin_instance_indices(source, &affected)
+    } else {
+        Vec::new()
+    };
+    let source_worlds = rest_world_pose(&source.skeleton)?;
+    let candidate_worlds = rest_world_pose(&candidate.skeleton)?;
+
+    // Rest/bind rewrites a strict hierarchy domain while promising that every
+    // bone outside it keeps the same world rest. This is exact, not a new
+    // tolerance: unchanged placement is the operation's semantic invariant,
+    // and a relative tolerance would only admit larger and larger displacement
+    // as authored coordinates grow. Compare the complete affine so an
+    // in-place rotation or scale mutation cannot hide behind an unchanged
+    // origin. Exact local-field/write-set parity is intentionally not inferred
+    // from equal matrices; that belongs to the explicit artifact/ledger layer.
+    //
+    // Whole-document conversion has no complement, so the loop is naturally
+    // empty there; topology parity still applies because that operation does
+    // not rewrite parents either.
+    if plan.has_obligation(ScaleProofObligation::ExactUnchangedWorldRest) {
+        for node in (0..source.skeleton.bones.len()).filter(|node| !affected.contains(node)) {
+            let before = source_worlds.bone(node)?.matrix;
+            let after = candidate_worlds.bone(node)?.matrix;
+            if before != after {
+                return Err(ScaleError::CandidateStructureMismatch {
+                    reason: "unaffected_world_rest_mismatch",
+                });
+            }
+        }
+    }
+    let observed_factor = observed_factor_from_source(source, &source_worlds, plan)?;
+    let mut proof = ScaleProof {
+        tolerance_policy: tol,
+        rest_translation: ScaleProofResidual::EMPTY,
+        rest_rotation: ScaleProofResidual::EMPTY,
+        unit_scale: ScaleProofResidual::EMPTY,
+        transform_only_affine: ScaleProofResidual::EMPTY,
+        track_value: ScaleProofResidual::EMPTY,
+        mesh_position: ScaleProofResidual::EMPTY,
+        key_translation: ScaleProofResidual::EMPTY,
+        cubic_interior: ScaleProofResidual::EMPTY,
+        trajectory: ScaleProofResidual::EMPTY,
+        skin_matrix: ScaleProofResidual::EMPTY,
+        bounds: ScaleProofResidual::EMPTY,
+        unaffected_inverse_bind: ScaleProofResidual::EMPTY,
+        observed_factor,
+        planned_observed_factor: plan.observed_factor,
+        observed_factor_divergence: relative_divergence(plan.observed_factor, observed_factor),
+        sample_time_count: 0,
+        #[cfg(test)]
+        rest_translation_f32_rounding_demand: 0.0,
+        #[cfg(test)]
+        trajectory_f32_rounding_demand: 0.0,
+        #[cfg(test)]
+        skin_matrix_f32_rounding_demand: 0.0,
+        #[cfg(test)]
+        bounds_f32_rounding_demand: 0.0,
+        #[cfg(test)]
+        unaffected_inverse_bind_f32_rounding_demand: 0.0,
+    };
+
+    check_candidate_values(
+        source,
+        candidate,
+        &affected,
+        plan,
+        &tol,
+        &mut proof,
+        &mut discharged_field_rows,
+    )?;
+
+    if let Some((rest_nodes, prove_unit_scale)) = plan.rest_obligation() {
+        for &node in rest_nodes {
+            let before = source_worlds.bone(node)?.matrix;
+            let after_pose = candidate_worlds.bone(node)?;
+            let after = after_pose.matrix;
+            let after_chain = after_pose.translation_rounding_magnitude;
+            let (translation_residual, before_mag, after_mag) = rest_node_residual(
+                before,
+                after,
+                plan.is_whole_document(),
+                plan.common_factor(),
+            );
+            // The magnitude is the parent chain's, not the surviving
+            // translation's: a joint whose local offset points back along its
+            // parent's world translation leaves a world translation the
+            // difference of two much larger terms, carrying their rounding
+            // error into a comparison whose own operands are small.
+            //
+            // The *candidate's* chain, not the source's and not the `max` of
+            // the two. The residual is measured against the candidate's
+            // arithmetic: whole-document conversion scales every translation
+            // by the factor and leaves every linear part alone, so the two
+            // chains are that factor apart — subject to the candidate's `f32`
+            // narrowing of the factor, since the build scales by
+            // `factor as f32` while this proof rebases by the `f64` factor, a
+            // relative difference of at most `2^-24` (`1.49e-8` at `q = 0.1`,
+            // whose `f32` is `0.10000000149011612`) that the rounding term
+            // covers many times over — and the source's rounding is rebased by
+            // the same factor before it is compared. The
+            // residual therefore scales with `after_chain` at either end of
+            // the factor range, and under rest/bind the two chains are equal
+            // outright. `before_chain` can only ever over-provide — and under
+            // a *shrinking* conversion it over-provides by `1/factor`, freezing
+            // the band at the source rig's size while the candidate the band
+            // is spent on gets smaller without limit.
+            //
+            // `a_cancelling_chain_under_conversion_holds_rest_translation_to_the_candidate_side`
+            // pins that reading the *source* side alone refuses a correct
+            // candidate under a growing conversion;
+            // `a_shrinking_conversion_holds_rest_translation_to_the_candidate_s_own_chain`
+            // pins the opposite direction, where the source side is the larger
+            // one and reading it admits a `100x` larger build error; and
+            // `the_rest_translation_v6_floor_is_an_adjacent_f32_transition`
+            // pins the size of the term from above.
+            check_and_track_f32_rounded(
+                ProofResidualKind::RestTranslation,
+                translation_residual,
+                before_mag,
+                after_mag,
+                after_chain,
+                &tol,
+                &mut proof,
+            )?;
+            // Both operations leave every node's *local* rotation field
+            // byte-identical (translation and scale are the only rewritten
+            // channels), so proving world orientation preservation by
+            // comparing local rotations directly avoids a lossy matrix
+            // decomposition and, by composition, implies preserved world
+            // orientation for every node in the chain.
+            //
+            // This is therefore an *equality* test on a field no build path
+            // writes, not an angle measurement — and it must not be spelled
+            // as one. `Quat::angle_between` does not normalize its operands,
+            // so an authored quaternion with `|q| = 1 - eps` (routine in
+            // glTF, and which `invariant-9` forbids the loader from
+            // renormalizing) reports roughly `2 * sqrt(4 * eps)` against
+            // itself: the perfectly ordinary key `[0, 0.7071067, 0,
+            // 0.7071067]` measures `1.2e-3` against an identical copy, `120x`
+            // the `1e-5` tolerance, and a correct candidate for a real rig is
+            // rejected as `RestRotation`.
+            let source_rotation = source
+                .skeleton
+                .bones
+                .get(node)
+                .ok_or(ScaleError::BoneIndexOutOfRange { index: node })?
+                .rest
+                .rotation;
+            let candidate_rotation = candidate
+                .skeleton
+                .bones
+                .get(node)
+                .ok_or(ScaleError::BoneIndexOutOfRange { index: node })?
+                .rest
+                .rotation;
+            // [`quat_equality_residual`] answers in *chord* space, and this
+            // obligation's declared bound is an angle, so the chord is
+            // converted to the angle it represents before it is either
+            // reported or compared (see [`quat_residual_radians`]).
+            let rotation_residual =
+                quat_residual_radians(quat_equality_residual(source_rotation, candidate_rotation));
+            record_and_check(
+                ProofResidualKind::RestRotation,
+                rotation_residual,
+                tol.rotation_residual_radians,
+                &mut proof,
+            )?;
+            if prove_unit_scale {
+                let (after_scale, ..) = after.to_scale_rotation_translation();
+                // Per-axis (L-infinity), per
+                // [`ScaleTolerancePolicy::postcondition_unit_scale_residual`]:
+                // "unit composed scale for every affected node" (DESIGN.md
+                // Appendix D §D.6) is a per-axis claim, and measuring it
+                // per-axis is what makes it commensurable with the scalar
+                // relative common-factor band that gates the input. An L2
+                // norm over the three axes reports `sqrt(3)` times the same
+                // defect and therefore rejected candidates the very same
+                // policy's input band had just accepted.
+                let residual = (after_scale.x as f64 - 1.0)
+                    .abs()
+                    .max((after_scale.y as f64 - 1.0).abs())
+                    .max((after_scale.z as f64 - 1.0).abs());
+                record_and_check(
+                    ProofResidualKind::UnitScale,
+                    residual,
+                    tol.postcondition_unit_scale_residual,
+                    &mut proof,
+                )?;
+            }
+        }
+    }
+    // The rest-world handler above is the semantic owner of all normalized
+    // rest containers. Translation/rotation have direct residuals; scale is
+    // intentionally owned at composed-world level (and, for rest/bind, by
+    // the unit-scale postcondition) rather than by a new local-value band.
+    for (row_index, row) in plan.field_rows().iter().enumerate() {
+        if matches!(row.target, ScaleFieldTarget::BoneRest { .. }) {
+            mark_field_row_discharged(&mut discharged_field_rows, row_index)?;
+        }
+    }
+
+    if let Some(transform_only_nodes) = plan.transform_only_nodes() {
+        // scale(1/s): the analytically expected basis correction `C_i` for
+        // every node inside the affected domain (DESIGN.md Appendix D §D.2).
+        let correction = Mat4::from_scale(Vec3::splat((1.0 / plan.common_factor()) as f32));
+        // A fixed off-origin local probe point: transforming it through the
+        // complete expected/actual world affine — rather than decomposing
+        // to translation/rotation and checking only those — is what makes a
+        // no-op (or any build that drops the linear-scale channel) provably
+        // fail this check.
+        let probe = Vec3::ONE;
+        for &node in transform_only_nodes {
+            let before = source_worlds.bone(node)?.matrix;
+            let after = candidate_worlds.bone(node)?.matrix;
+            let expected_point = (before * correction).transform_point3(probe).as_dvec3();
+            let actual_point = after.transform_point3(probe).as_dvec3();
+            let residual = (actual_point - expected_point).length();
+            check_and_track(
+                ProofResidualKind::TransformOnlyAffine,
+                residual,
+                expected_point.length(),
+                actual_point.length(),
+                &tol,
+                &mut proof,
+            )?;
+        }
+    }
+
+    check_skin_and_bounds(
+        source,
+        candidate,
+        &source_worlds,
+        &candidate_worlds,
+        &affected_skin_instances,
+        plan,
+        &tol,
+        &mut proof,
+    )?;
+    if plan.has_unaffected_binds() {
+        check_unaffected_instance_binds(source, candidate, &affected, &tol, &mut proof)?;
+    }
+    // The shared skin walk and unaffected-bind walk are the existing numeric
+    // owners for stored slot binds. Bone convenience binds that are
+    // unreferenced or shadowed, plus normals that neither scale operation
+    // writes, remain ownership-only rows: changing their numeric policy here
+    // would alter the accepted set.
+    for (row_index, row) in plan.field_rows().iter().enumerate() {
+        if matches!(
+            row.target,
+            ScaleFieldTarget::BoneInverseBind { .. }
+                | ScaleFieldTarget::InstanceInverseBind { .. }
+                | ScaleFieldTarget::MeshNormals { .. }
+        ) {
+            mark_field_row_discharged(&mut discharged_field_rows, row_index)?;
+        }
+    }
+
+    let any_sampled_obligation = plan.has_key_translations()
+        || plan.has_cubic_interiors()
+        || plan.trajectory_nodes().is_some()
+        || plan.has_skin_and_bounds();
+    if any_sampled_obligation {
+        // Harvested once, up front, for two reasons: the budget below has to
+        // know the total sample count *before* the first sample is evaluated,
+        // and re-harvesting per clip inside the loop would sort and dedup the
+        // same key times twice.
+        let mut clip_times = Vec::with_capacity(source.clips.len());
+        let mut sample_times: u64 = 0;
+        for clip in &source.clips {
+            let times = clip_sample_times(clip, &affected);
+            sample_times = sample_times
+                .saturating_add(times.0.len() as u64)
+                .saturating_add(times.1.len() as u64);
+            clip_times.push(times);
+        }
+        let per_sample_cost = per_sample_work_units(source, &affected_skin_instances);
+        check_sampling_budget(&tol, sample_times, per_sample_cost)?;
+
+        for (clip_index, clip) in source.clips.iter().enumerate() {
+            let candidate_clip =
+                candidate
+                    .clips
+                    .get(clip_index)
+                    .ok_or(ScaleError::MissingProofEvidence {
+                        kind: ProofResidualKind::KeyTranslation,
+                        detail: "candidate_clip_missing",
+                    })?;
+            let (key_times, interior_times) = &clip_times[clip_index];
+            for &t in key_times {
+                proof.sample_time_count += 1;
+                if plan.has_key_translations() {
+                    check_track_value_residual(
+                        ProofResidualKind::KeyTranslation,
+                        source,
+                        clip,
+                        candidate_clip,
+                        &affected,
+                        t,
+                        plan,
+                        &tol,
+                        &mut proof,
+                    )?;
+                }
+                sample_time_obligations(
+                    source,
+                    candidate,
+                    clip,
+                    candidate_clip,
+                    t,
+                    &affected_skin_instances,
+                    plan,
+                    &tol,
+                    &mut proof,
+                )?;
+            }
+            for &t in interior_times {
+                proof.sample_time_count += 1;
+                if plan.has_cubic_interiors() {
+                    check_track_value_residual(
+                        ProofResidualKind::CubicInterior,
+                        source,
+                        clip,
+                        candidate_clip,
+                        &affected,
+                        t,
+                        plan,
+                        &tol,
+                        &mut proof,
+                    )?;
+                }
+                sample_time_obligations(
+                    source,
+                    candidate,
+                    clip,
+                    candidate_clip,
+                    t,
+                    &affected_skin_instances,
+                    plan,
+                    &tol,
+                    &mut proof,
+                )?;
+            }
+        }
+    }
+
+    check_rewritten_source_field_dispositions(
+        source,
+        candidate,
+        plan,
+        &affected,
+        &tol,
+        &mut discharged_field_rows,
+    )?;
+    check_preserved_field_dispositions(source, candidate, plan, &mut discharged_field_rows)?;
+    finish_field_row_discharge(plan, &discharged_field_rows)?;
+    Ok(proof)
+}
+
+/// Every obligation one sample time owes, evaluated against **one** pair of
+/// world-matrix arrays.
+///
+/// The trajectory, skin, and bounds obligations all need the same source and
+/// candidate poses at `t`. Deriving them once here — rather than letting each
+/// obligation call [`world_at_time`] for itself, which recomputed forward
+/// kinematics up to three times per sample per document — is what keeps the
+/// proof's cost linear in the sample count rather than a fixed multiple of
+/// it, and is a precondition for the sampling budget in [`prove_scale`] being
+/// a meaningful bound on real work.
+#[allow(clippy::too_many_arguments)]
+fn sample_time_obligations(
+    source: &Document,
+    candidate: &Document,
+    source_clip: &Clip,
+    candidate_clip: &Clip,
+    t: f32,
+    affected_skin_instances: &[usize],
+    plan: &ScalePlan,
+    tol: &ScaleTolerancePolicy,
+    proof: &mut ScaleProof,
+) -> Result<(), ScaleError> {
+    if plan.trajectory_nodes().is_none() && !plan.has_skin_and_bounds() {
+        return Ok(());
+    }
+    let source_worlds = world_at_time(&source.skeleton, source_clip, t)?;
+    let candidate_worlds = world_at_time(&candidate.skeleton, candidate_clip, t)?;
+    if let Some(nodes) = plan.trajectory_nodes() {
+        check_trajectory_residual_at(&source_worlds, &candidate_worlds, nodes, plan, tol, proof)?;
+    }
+    check_skin_and_bounds(
+        source,
+        candidate,
+        &source_worlds,
+        &candidate_worlds,
+        affected_skin_instances,
+        plan,
+        tol,
+        proof,
+    )
+}
+
+/// The two document sides — source and candidate — every sampled obligation
+/// walks. [`sample_time_obligations`] poses both skeletons, and
+/// [`check_skin_and_bounds`] resolves both slot palettes and skins both
+/// vertex arrays, so every term of [`per_sample_work_units`] is charged twice.
+const PROOF_SIDES: u64 = 2;
+
+/// Refuse a document whose total sampled work exceeds
+/// [`ScaleTolerancePolicy::proof_sample_work_budget`], before the first
+/// sample time is evaluated.
+///
+/// A free function rather than an inline comparison in [`prove_scale`] so
+/// that the boundary itself is directly testable on synthetic numbers. The
+/// budget is a ceiling the document may *reach*: the comparison is `>`, not
+/// `>=`, exactly as [`check_residual`]'s is, and for the same reason —
+/// DESIGN.md Appendix D §D.1 states every policy quantity as an inclusive
+/// "at most". Pinning that end to end would mean a document that then costs
+/// `1e8` work units to prove; pinning it here costs nothing and asserts the
+/// same thing.
+///
+/// # Errors
+///
+/// Returns [`ScaleError::ProofSamplingBudgetExceeded`] carrying both factors
+/// and the product, so the caller can see which of the two is oversized.
+fn check_sampling_budget(
+    tol: &ScaleTolerancePolicy,
+    sample_times: u64,
+    per_sample_cost: u64,
+) -> Result<(), ScaleError> {
+    let work = sample_times.saturating_mul(per_sample_cost);
+    if work > tol.proof_sample_work_budget {
+        return Err(ScaleError::ProofSamplingBudgetExceeded {
+            policy_id: tol.id,
+            sample_times,
+            per_sample_cost,
+            work,
+            budget: tol.proof_sample_work_budget,
+        });
+    }
+    Ok(())
+}
+
+/// Work units one sample time costs, for
+/// [`ScaleTolerancePolicy::proof_sample_work_budget`].
+///
+/// The charge is what [`sample_time_obligations`] and
+/// [`check_skin_and_bounds`] actually perform at one sample time, term by
+/// term. Everything they walk, they walk for **both** document sides, so
+/// every term below carries the [`PROOF_SIDES`] factor:
+///
+/// - one forward-kinematics pass over the skeleton per side, owed by every
+///   sampled obligation — hence `2 * bone_count`, always charged. Only the
+///   *source* skeleton is measured here, which is sound only because
+///   [`validate_candidate_structure`] has already rejected a candidate whose
+///   bone count differs; see the note on its `bone_count_mismatch` clause for
+///   what an unchecked candidate skeleton cost;
+/// - per affected skinned instance, one `world * inverse_bind` product per
+///   [`MeshInstance::skin_joints`] slot per side, plus one residual
+///   comparison per slot when the skin obligation is declared; and
+/// - per affected skinned instance, every vertex of **every** primitive of
+///   its mesh per side, when the bounds obligation is declared.
+///
+/// The slot term is charged explicitly because nothing bounds it and nothing
+/// else stands in for it. An earlier revision charged only `bone_count +
+/// vertices` on the claim that slot work "cannot exceed the bone count",
+/// which is false twice over: [`validate_scale_input`] only range-checks
+/// joint ids, so `skin_joints` may repeat a joint and be arbitrarily long,
+/// and the instance count is unbounded, so the total is
+/// `sum over instances of len(skin_joints)` with no relation to
+/// `bone_count` at all. A legal 400-instance document with 300 slots each and
+/// one vertex per instance was charged `120_600` while performing `36_000_000`
+/// slot matrix products — a `299x` undercount, and unbounded in general.
+///
+/// This bounds the *sampled* work, which is what grows with the document's
+/// key count. [`prove_scale`] additionally evaluates the rest pose once,
+/// outside the sampled loop and outside this budget; that is one extra pose
+/// of the same shape, not a term that scales with anything.
+fn per_sample_work_units(document: &Document, affected_skin_instances: &[usize]) -> u64 {
+    let mut units = PROOF_SIDES.saturating_mul(document.skeleton.bones.len() as u64);
+    for &instance_index in affected_skin_instances {
+        let instance = &document.assets.instances[instance_index];
+        let slots = instance.skin_joints.len() as u64;
+        units = units.saturating_add(PROOF_SIDES.saturating_mul(slots));
+        units = units.saturating_add(slots);
+        let Some(mesh) = document.assets.meshes.get(instance.mesh) else {
+            continue;
+        };
+        for primitive in &mesh.primitives {
+            units =
+                units.saturating_add(PROOF_SIDES.saturating_mul(primitive.positions.len() as u64));
+        }
+    }
+    units
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static AFFECTED_SKIN_CLASSIFICATION_STEPS: Cell<usize> = const { Cell::new(0) };
+}
+
+fn skin_palette_intersects_affected(instance: &MeshInstance, affected: &BTreeSet<BoneId>) -> bool {
+    instance.skin_joints.iter().any(|joint| {
+        #[cfg(test)]
+        AFFECTED_SKIN_CLASSIFICATION_STEPS
+            .set(AFFECTED_SKIN_CLASSIFICATION_STEPS.get().saturating_add(1));
+        affected.contains(joint)
+    })
+}
+
+/// Resolve the affected skin working set once for the rest and sampled proof
+/// walks. Classification scans every source skin palette, so repeating it at
+/// every sample time would perform file-controlled work that the sampling
+/// budget does not charge.
+fn affected_skin_instance_indices(document: &Document, affected: &BTreeSet<BoneId>) -> Vec<usize> {
+    document
+        .assets
+        .instances
+        .iter()
+        .enumerate()
+        .filter_map(|(instance_index, instance)| {
+            skin_palette_intersects_affected(instance, affected).then_some(instance_index)
+        })
+        .collect()
+}
+
+#[cfg(test)]
+fn reset_affected_skin_classification_steps() {
+    AFFECTED_SKIN_CLASSIFICATION_STEPS.set(0);
+}
+
+#[cfg(test)]
+fn affected_skin_classification_steps() -> usize {
+    AFFECTED_SKIN_CLASSIFICATION_STEPS.get()
+}
+
+/// The inverse bind `document` *stores* for one skin slot, in this module's
+/// precedence order — the instance's own per-slot array first, then the
+/// bone convenience value — or `None` when it stores neither.
+///
+/// Deliberately stops short of [`instance_bind`]'s last step, the
+/// format-defined identity default a complete-coverage source skin with an
+/// [`SourceInverseBindAccessorStatus::Absent`] accessor licenses. That step
+/// answers "what bind does this slot *have*", which is the right question
+/// when composing `W * B`; this one answers "what bind does this document
+/// *record*", which is the question [`check_unaffected_instance_binds`] is
+/// asking.
+///
+/// The two questions genuinely disagree on one input — an evidence-free slot
+/// under an `Absent` accessor, where the *effective* bind is identity and the
+/// *recorded* one is nothing — and asking the recorded question there refuses
+/// a candidate that only changed representation. That is a known and
+/// deliberate narrowness, not an oversight; see the trap note on
+/// [`check_unaffected_instance_binds`] for why it is left standing and what
+/// replacing it would take.
+///
+/// The out-of-range branch is unreachable for a document that passed
+/// [`validate_scale_input`], which requires a non-empty `skin_ibms` to be
+/// exactly as long as `skin_joints`; it is kept because this function is
+/// total over its arguments rather than over its current call sites.
+fn stored_instance_bind(
+    document: &Document,
+    instance: &MeshInstance,
+    slot: usize,
+    joint: BoneId,
+) -> Result<Option<Mat4>, ScaleError> {
+    if !instance.skin_ibms.is_empty() {
+        return instance
+            .skin_ibms
+            .get(slot)
+            .copied()
+            .map(Some)
+            .ok_or(ScaleError::BoneIndexOutOfRange { index: joint });
+    }
+    let bone = document
+        .skeleton
+        .bones
+        .get(joint)
+        .ok_or(ScaleError::BoneIndexOutOfRange { index: joint })?;
+    Ok(bone.inverse_bind)
+}
+
+/// Resolve one skin joint's inverse-bind matrix per the documented
+/// [`MeshInstance::skin_ibms`] contract: use the instance's own matrix when
+/// present, else fall back to the bone's [`crate::model::Bone::inverse_bind`]
+/// — the only fallback this model contract genuinely represents
+/// ([`stored_instance_bind`]).
+///
+/// A bone with neither is missing evidence in general, and rejects with
+/// [`ScaleError::MissingInverseBind`] rather than substituting
+/// [`Mat4::IDENTITY`] to mask a partial or malformed bind array — *unless*
+/// the source's own complete-coverage evidence proves this is the
+/// format-defined identity default rather than an unavailable or malformed
+/// accessor (for example, glTF permits a skin to omit
+/// `inverseBindMatrices` entirely, in which case every joint's inverse-bind
+/// matrix is defined to be identity). [`instance_source_skin`] only returns
+/// that skin evidence when `document.assets.source_skeleton.coverage` is
+/// complete, so an incomplete or absent source-skeleton projection still
+/// rejects here rather than silently defaulting to identity.
+fn instance_bind(
+    document: &Document,
+    instance: &MeshInstance,
+    slot: usize,
+    joint: BoneId,
+) -> Result<Mat4, ScaleError> {
+    if let Some(stored) = stored_instance_bind(document, instance, slot, joint)? {
+        return Ok(stored);
+    }
+    if instance_source_skin(document, instance).is_some_and(|skin| {
+        skin.inverse_bind_accessor.status == SourceInverseBindAccessorStatus::Absent
+    }) {
+        return Ok(Mat4::IDENTITY);
+    }
+    Err(ScaleError::MissingInverseBind { node: joint })
+}
+
+/// Resolve the source skin that attaches at `instance`'s source node,
+/// per [`crate::model::SourceSkinAttachment::source_node_index`].
+///
+/// Returns `None` when `document.assets.source_skeleton.coverage` is not
+/// [`SourceSkeletonCoverage::Complete`]: an incomplete or unprojected source
+/// table cannot vouch for the accessor evidence it does not carry, so an
+/// absent flag there must not be read as proof of a format-defined default.
+fn instance_source_skin<'a>(
+    document: &'a Document,
+    instance: &MeshInstance,
+) -> Option<&'a SourceSkinAsset> {
+    if document.assets.source_skeleton.coverage != SourceSkeletonCoverage::Complete {
+        return None;
+    }
+    document.assets.source_skeleton.skins.iter().find(|skin| {
+        skin.attachments
+            .iter()
+            .any(|attachment| attachment.source_node_index == instance.source_node_index)
+    })
+}
+
+/// Fail closed on any residual that is not provably within `tolerance`.
+///
+/// The non-finite guard is load-bearing, not defensive noise: `NaN > x` is
+/// `false` for every `x`, so a bare `observed > tolerance` reports a `NaN`
+/// residual — the exact signature of a candidate built with an overflowing
+/// factor, or of a comparison against a non-finite source value — as a pass.
+/// A `NaN` tolerance (from a non-finite before/after magnitude) fails the
+/// same way and is rejected for the same reason.
+///
+/// The guard is `!observed.is_finite()` rather than `observed.is_nan()`, and
+/// the difference is narrower than it looks: `+inf > tolerance` is true, so
+/// the comparison alone already rejects a positive infinity. Only a
+/// *negative* non-finite residual needs the wider guard, and no caller in
+/// this module can produce one — every `observed` here is an `abs()`, a
+/// `length()`, or a `max` fold over those. The wider spelling is kept because
+/// this function's contract is the fail-closed one stated above rather than
+/// "whatever today's callers happen to pass", and it is pinned by
+/// `a_non_finite_residual_fails_closed_instead_of_comparing_false`.
+fn check_residual(
+    kind: ProofResidualKind,
+    observed: f64,
+    tolerance: f64,
+) -> Result<(), ScaleError> {
+    if !observed.is_finite() || !tolerance.is_finite() || observed > tolerance {
+        return Err(ScaleError::ProofResidualExceeded {
+            kind,
+            observed,
+            tolerance,
+        });
+    }
+    Ok(())
+}
+
+impl ScaleProof {
+    /// Record the raw ulp demand of one f32-rounded comparison at the exact
+    /// point its residual and rounding base meet.
+    ///
+    /// This is calibration instrumentation, not published evidence. A zero
+    /// base and zero residual make no demand on the rounding count; a nonzero
+    /// residual with no provenance records infinity so calibration fails
+    /// closed instead of silently reporting zero.
+    #[cfg(test)]
+    fn record_f32_rounding_demand(
+        &mut self,
+        kind: ProofResidualKind,
+        observed: f64,
+        magnitude: f64,
+    ) {
+        let demand = if magnitude > 0.0 {
+            observed / (magnitude * f64::from(f32::EPSILON))
+        } else if observed == 0.0 {
+            0.0
+        } else {
+            f64::INFINITY
+        };
+        let slot = match kind {
+            ProofResidualKind::RestTranslation => &mut self.rest_translation_f32_rounding_demand,
+            ProofResidualKind::Trajectory => &mut self.trajectory_f32_rounding_demand,
+            ProofResidualKind::SkinMatrix => &mut self.skin_matrix_f32_rounding_demand,
+            ProofResidualKind::Bounds => &mut self.bounds_f32_rounding_demand,
+            ProofResidualKind::UnaffectedInverseBind => {
+                &mut self.unaffected_inverse_bind_f32_rounding_demand
+            }
+            _ => unreachable!("only f32-rounded residual kinds record a raw rounding demand"),
+        };
+        *slot = slot.max(demand);
+    }
+
+    /// The maximum/count pair this residual kind reports into.
+    ///
+    /// The single mapping from a [`ProofResidualKind`] to the fields it
+    /// writes. Every comparison site names its kind and nothing else, so a
+    /// site cannot report one kind's residual into another kind's field —
+    /// which was previously possible wherever a `&mut f64` and a `kind` were
+    /// passed as independent arguments.
+    ///
+    /// [`ProofResidualKind::ObservedFactor`] is not a residual — it names a
+    /// source whose scaled root could not be resolved, and is only ever
+    /// reported as [`ScaleError::MissingProofEvidence`] — so it has no pair
+    /// and no comparison site reaches here with it.
+    fn tally(&mut self, kind: ProofResidualKind) -> Option<&mut ScaleProofResidual> {
+        let tally = match kind {
+            ProofResidualKind::RestTranslation => &mut self.rest_translation,
+            ProofResidualKind::RestRotation => &mut self.rest_rotation,
+            ProofResidualKind::UnitScale => &mut self.unit_scale,
+            ProofResidualKind::TransformOnlyAffine => &mut self.transform_only_affine,
+            ProofResidualKind::TrackValue => &mut self.track_value,
+            ProofResidualKind::MeshPosition => &mut self.mesh_position,
+            ProofResidualKind::KeyTranslation => &mut self.key_translation,
+            ProofResidualKind::CubicInterior => &mut self.cubic_interior,
+            ProofResidualKind::Trajectory => &mut self.trajectory,
+            ProofResidualKind::SkinMatrix => &mut self.skin_matrix,
+            ProofResidualKind::Bounds => &mut self.bounds,
+            ProofResidualKind::UnaffectedInverseBind => &mut self.unaffected_inverse_bind,
+            ProofResidualKind::ObservedFactor => return None,
+        };
+        Some(tally)
+    }
+}
+
+/// Record one comparison of `observed` for `kind` and check it against
+/// `tolerance`.
+///
+/// The single point at which a residual maximum moves. Recording and
+/// checking here — rather than at each of the twelve obligations' loops —
+/// is what makes [`ScaleProof`]'s counts describe exactly the comparisons
+/// its maxima were taken over.
+fn record_and_check(
+    kind: ProofResidualKind,
+    observed: f64,
+    tolerance: f64,
+    proof: &mut ScaleProof,
+) -> Result<(), ScaleError> {
+    if let Some(tally) = proof.tally(kind) {
+        tally.record(observed);
+    }
+    check_residual(kind, observed, tolerance)
+}
+
+/// Record `observed` for `kind` and check it against the
+/// before/after-derived tolerance for this specific comparison — never a
+/// proxy such as the plan's declared factor.
+fn check_and_track(
+    kind: ProofResidualKind,
+    observed: f64,
+    before: f64,
+    after: f64,
+    tol: &ScaleTolerancePolicy,
+    proof: &mut ScaleProof,
+) -> Result<(), ScaleError> {
+    record_and_check(kind, observed, tol.scalar_tolerance(before, after), proof)
+}
+
+/// [`check_and_track`] for a residual between two `f32`-rounded quantities,
+/// carrying the `magnitude` their arithmetic actually ran on.
+///
+/// Only the five obligations whose compared quantity can be made arbitrarily
+/// smaller than that magnitude by a rotation use this — see
+/// [`ScaleTolerancePolicy::f32_rounding_ulps`]. Every other obligation
+/// compares a vector length or a matrix entry against its own magnitude,
+/// where the two are the same number and the extra term would be noise.
+fn check_and_track_f32_rounded(
+    kind: ProofResidualKind,
+    observed: f64,
+    before: f64,
+    after: f64,
+    magnitude: f64,
+    tol: &ScaleTolerancePolicy,
+    proof: &mut ScaleProof,
+) -> Result<(), ScaleError> {
+    #[cfg(test)]
+    proof.record_f32_rounding_demand(kind, observed, magnitude);
+    record_and_check(
+        kind,
+        observed,
+        tol.f32_rounded_tolerance(before, after, magnitude),
+        proof,
+    )
+}
+
+/// Rest-world translation residual for one node, plus the expected/actual
+/// translation magnitudes the caller uses to derive this comparison's own
+/// tolerance.
+///
+/// This deliberately does not also report a rotation residual: extracting a
+/// rotation via [`Mat4::to_scale_rotation_translation`] out of a world
+/// matrix whose linear part mixes a small uniform scale with an actual
+/// rotation is numerically fragile in `f32`, and unnecessary here — both
+/// operations leave every node's *local* rotation field untouched, so
+/// callers that need a rotation residual should compare
+/// [`crate::model::Bone::rest`]`.rotation` directly (see [`prove_scale`]),
+/// which is both exact and, by composition, implies preserved world
+/// orientation.
+fn rest_node_residual(
+    before: Mat4,
+    after: Mat4,
+    whole_document: bool,
+    factor: f64,
+) -> (f64, f64, f64) {
+    let (_, _, before_translation) = before.to_scale_rotation_translation();
+    let (_, _, after_translation) = after.to_scale_rotation_translation();
+    let expected_translation = if whole_document {
+        before_translation.as_dvec3() * factor
+    } else {
+        before_translation.as_dvec3()
+    };
+    let actual_translation = after_translation.as_dvec3();
+    let translation_residual = (actual_translation - expected_translation).length();
+    (
+        translation_residual,
+        expected_translation.length(),
+        actual_translation.length(),
+    )
+}
+
+/// The multiplier this plan analytically expects a given node's translation
+/// values to have been rewritten by.
+///
+/// Whole-document conversion multiplies every translation by the declared
+/// factor. Rest/bind reparameterization multiplies by the target node's
+/// *parent-basis* factor: the domain's common factor when the node's parent
+/// is itself affected, the unaffected boundary factor of one otherwise.
+fn translation_multiplier(
+    document: &Document,
+    node: BoneId,
+    affected: &BTreeSet<BoneId>,
+    plan: &ScalePlan,
+) -> f64 {
+    if plan.is_whole_document() {
+        return plan.common_factor();
+    }
+    if !affected.contains(&node) {
+        return 1.0;
+    }
+    match document
+        .skeleton
+        .bones
+        .get(node)
+        .and_then(|bone| bone.parent)
+    {
+        Some(parent) if affected.contains(&parent) => plan.common_factor(),
+        _ => 1.0,
+    }
+}
+
+/// The local-scale multiplier which preserves animated pose scale across a
+/// rest/bind basis reparameterization.
+///
+/// The builder changes local rest scale by `s_parent / s_node`. Because an
+/// animation scale *replaces* rather than multiplies the rest scale, an
+/// animated value needs that same multiplier relative to the original value:
+/// the selected closure root is `1 / s`, every affected strict descendant is
+/// `s / s = 1`, and nodes outside the closure remain one. Whole-document
+/// conversion does not change local scale at all.
+fn scale_animation_multiplier(
+    document: &Document,
+    node: BoneId,
+    affected: &BTreeSet<BoneId>,
+    common_factor: f64,
+) -> f64 {
+    if !affected.contains(&node) {
+        return 1.0;
+    }
+    match document
+        .skeleton
+        .bones
+        .get(node)
+        .and_then(|bone| bone.parent)
+    {
+        Some(parent) if affected.contains(&parent) => 1.0,
+        _ => 1.0 / common_factor,
+    }
+}
+
+/// Independently derive the scale-track boundary root the proof expects.
+///
+/// This deliberately does not call [`scale_animation_multiplier`]: the
+/// builder and proof must derive the selected-root boundary separately, or a
+/// wrong builder helper could leave a root scale track unchanged and teach the
+/// proof to accept it.
+fn proof_scale_animation_root(
+    source: &Document,
+    plan: &ScalePlan,
+) -> Result<Option<BoneId>, ScaleError> {
+    let ScaleOperation::RestBindUniformScale {
+        source_root_node_index,
+        ..
+    } = plan.operation()
+    else {
+        return Ok(None);
+    };
+    // Unlike the builder's parent/affected-boundary derivation, proof starts
+    // from the operation's authored root selector and the source projection.
+    // Agreement therefore requires two independent descriptions of which
+    // bone owns the only non-unit local scale multiplier.
+    let selected_root = source
+        .assets
+        .source_skeleton
+        .nodes
+        .iter()
+        .find(|asset| asset.source_node_index == source_root_node_index)
+        .and_then(|asset| asset.bone)
+        .ok_or(ScaleError::PlanDocumentMismatch {
+            reason: "selected_root_projection_mismatch",
+        })?;
+    Ok(Some(selected_root))
+}
+
+/// Prove every retained per-element payload directly, not merely its shape.
+///
+/// [`validate_candidate_structure`] establishes that source and candidate
+/// agree on clip/track/instance/mesh/primitive *counts* and on each track's
+/// `(bone, property, interpolation, times)` identity — but it never looks
+/// inside `values` or `positions`. Both are reachable through this module's
+/// public API without any structural mismatch:
+/// [`ScaleCandidate::from_document`] accepts an external document
+/// independently of the source supplied to [`prove_scale`], so a doctored
+/// candidate can be proved against the real source. Without a direct
+/// comparison a rotation key rewritten from `0.1` to `2.5` radians, or an
+/// interior mesh vertex moved anywhere at all, passes proof: the sampled
+/// obligations only look at translation, world *joint* transforms, and the
+/// bounding box's extreme vertices.
+///
+/// So every element of every domain is checked here against its analytic
+/// expectation: rewritten domains against `before * multiplier` and
+/// non-rewritten domains against `before` itself. Comparison is by
+/// [`ScaleTolerancePolicy::scalar_tolerance`], never exact float equality,
+/// which DESIGN.md Appendix D §D.1 forbids.
+fn check_candidate_values(
+    source: &Document,
+    candidate: &Document,
+    affected: &BTreeSet<BoneId>,
+    plan: &ScalePlan,
+    tol: &ScaleTolerancePolicy,
+    proof: &mut ScaleProof,
+    discharged: &mut BTreeSet<usize>,
+) -> Result<(), ScaleError> {
+    let proof_scale_root = proof_scale_animation_root(source, plan)?;
+    for (row_index, row) in plan.field_rows().iter().enumerate() {
+        match row.target {
+            ScaleFieldTarget::AnimationValues {
+                clip_index,
+                track_index,
+                bone,
+                property,
+            } => {
+                let track = &source.clips[clip_index].tracks[track_index];
+                let candidate_track = &candidate.clips[clip_index].tracks[track_index];
+                if track.bone != bone || track.property != property {
+                    return Err(ScaleError::PlanDocumentMismatch {
+                        reason: "compiled_animation_target_mismatch",
+                    });
+                }
+                match (&track.values, &candidate_track.values) {
+                    (TrackValues::Vec3s(before), TrackValues::Vec3s(after)) => {
+                        let multiplier = match row.disposition {
+                            ScaleFieldDisposition::PreserveExact => 1.0,
+                            ScaleFieldDisposition::Rewrite(
+                                ScaleRewriteRule::WholeDocumentLength,
+                            ) => plan.common_factor(),
+                            ScaleFieldDisposition::Rewrite(
+                                ScaleRewriteRule::RestBindParentBasis,
+                            ) => translation_multiplier(source, bone, affected, plan),
+                            ScaleFieldDisposition::Rewrite(
+                                ScaleRewriteRule::RestBindLocalScale,
+                            ) => {
+                                if proof_scale_root == Some(bone) {
+                                    1.0 / plan.common_factor()
+                                } else {
+                                    1.0
+                                }
+                            }
+                            ScaleFieldDisposition::Rewrite(
+                                ScaleRewriteRule::RestBindNodeBasis
+                                | ScaleRewriteRule::RestBindSourceLocal { .. },
+                            ) => {
+                                return Err(ScaleError::PlanDocumentMismatch {
+                                    reason: "invalid_animation_rewrite_rule",
+                                });
+                            }
+                        };
+                        for (before, after) in before.iter().zip(after.iter()) {
+                            let expected = before.as_dvec3() * multiplier;
+                            let actual = after.as_dvec3();
+                            let residual = (actual - expected).length();
+                            check_and_track(
+                                ProofResidualKind::TrackValue,
+                                residual,
+                                expected.length(),
+                                actual.length(),
+                                tol,
+                                proof,
+                            )?;
+                        }
+                    }
+                    (TrackValues::Quats(before), TrackValues::Quats(after)) => {
+                        for (before, after) in before.iter().zip(after.iter()) {
+                            let residual = quat_equality_residual(*before, *after);
+                            check_and_track(
+                                ProofResidualKind::TrackValue,
+                                residual,
+                                before.length() as f64,
+                                after.length() as f64,
+                                tol,
+                                proof,
+                            )?;
+                        }
+                    }
+                    _ => {
+                        return Err(ScaleError::CandidateStructureMismatch {
+                            reason: "track_value_variant_mismatch",
+                        });
+                    }
+                }
+                mark_field_row_discharged(discharged, row_index)?;
+            }
+            ScaleFieldTarget::MeshPositions {
+                mesh_index,
+                primitive_index,
+            } => {
+                // Base `POSITION` is proved per primitive, directly. Proving
+                // it only through skinned bounds would miss interior vertices
+                // and every unskinned instance.
+                let source_primitive =
+                    &source.assets.meshes[mesh_index].primitives[primitive_index];
+                let candidate_primitive =
+                    &candidate.assets.meshes[mesh_index].primitives[primitive_index];
+                let position_multiplier = match row.disposition {
+                    ScaleFieldDisposition::PreserveExact => 1.0,
+                    ScaleFieldDisposition::Rewrite(ScaleRewriteRule::WholeDocumentLength) => {
+                        plan.common_factor()
+                    }
+                    ScaleFieldDisposition::Rewrite(_) => {
+                        return Err(ScaleError::PlanDocumentMismatch {
+                            reason: "invalid_mesh_position_rewrite_rule",
+                        });
+                    }
+                };
+                for (before, after) in source_primitive
+                    .positions
+                    .iter()
+                    .zip(candidate_primitive.positions.iter())
+                {
+                    let expected = before.as_dvec3() * position_multiplier;
+                    let actual = after.as_dvec3();
+                    let residual = (actual - expected).length();
+                    check_and_track(
+                        ProofResidualKind::MeshPosition,
+                        residual,
+                        expected.length(),
+                        actual.length(),
+                        tol,
+                        proof,
+                    )?;
+                }
+                mark_field_row_discharged(discharged, row_index)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Double-cover-aware component distance between two quaternion *values*,
+/// computed in `f64`.
+///
+/// `q` and `-q` denote the same rotation, so the residual is the smaller of
+/// the two component distances. Deliberately not an angle: nothing here
+/// normalizes, divides, or takes an inverse cosine, so an authored
+/// quaternion whose magnitude is not exactly one — which `invariant-9`
+/// requires loaders to preserve — compares equal to an untouched copy of
+/// itself at exactly `0.0` rather than at a magnitude-dependent artefact.
+fn quat_equality_residual(before: Quat, after: Quat) -> f64 {
+    let before = before.as_dquat();
+    let after = after.as_dquat();
+    (before - after).length().min((before + after).length())
+}
+
+/// Convert the chord length [`quat_equality_residual`] reports into the
+/// shortest-path rotation angle it represents, in radians.
+///
+/// For unit quaternions `q1 . q2 = cos(theta / 2)`, so
+/// `|q1 - q2|^2 = 2 - 2 * cos(theta / 2) = 4 * sin(theta / 4)^2` and the
+/// chord is `2 * sin(theta / 4)`, which is `theta / 2` to first order.
+/// Comparing that chord directly against
+/// [`ScaleTolerancePolicy::rotation_residual_radians`] therefore accepted
+/// *twice* the declared angle: a genuine `2e-5 rad` error measured
+/// `9.99e-6` against a `1e-5` policy and passed. Inverting the relation
+/// gives `theta = 4 * asin(chord / 2)`.
+///
+/// Converting here — rather than comparing in chord space, or renaming the
+/// reported field to say "chord" — is the choice that keeps the public
+/// evidence contract honest. DESIGN.md Appendix D §D.1 declares the bound as
+/// "shortest-path rotation residual is at most `1e-5` radians", §D.6 requires
+/// evidence to publish the tolerance policy *and* the observed residuals
+/// together, and [`ScaleProof::rest_rotation`] is headed for the
+/// immutable evidence format. A chord-valued residual sitting next to a
+/// radian-valued policy in that record would hand every reader the same
+/// factor-of-two misreading this conversion removes. Converting once, up
+/// front, also keeps the comparison, the tracked maximum, and
+/// [`ScaleError::ProofResidualExceeded`]'s `observed`/`tolerance` pair all in
+/// one unit.
+///
+/// The conversion is monotone over the whole reachable chord range, so it
+/// changes which residuals are accepted only by the intended factor of two,
+/// never by re-ordering them. The clamp covers a chord above `2`, which no
+/// pair of unit quaternions can produce (the double-cover minimum is at most
+/// `sqrt(2)`) but an authored non-unit value can: saturating at `2 * pi`
+/// fails closed on such a pair instead of reporting a `NaN` that only the
+/// non-finite guard in [`check_residual`] would catch.
+fn quat_residual_radians(chord: f64) -> f64 {
+    4.0 * (chord / 2.0).min(1.0).asin()
+}
+
+fn matrix_residual(before: Mat4, after: Mat4) -> f64 {
+    before
+        .to_cols_array()
+        .into_iter()
+        .zip(after.to_cols_array())
+        .map(|(b, a)| (b as f64 - a as f64).abs())
+        .fold(0.0, f64::max)
+}
+
+/// The largest magnitude any entry of `a * b` is summed from:
+/// `max over (i, j) of sum over k of abs(a_ik) * abs(b_kj)`.
+///
+/// This is the magnitude an `f32` `a * b` rounds against, and it is what
+/// [`ScaleTolerancePolicy::f32_rounding_ulps`] is counted in for the
+/// obligations that compare such a product. [`matrix_magnitude`] of the
+/// product itself is not: a rotation makes `W * B` near-identity — max entry
+/// `1.0` — while its translation column was the difference of two entries of
+/// magnitude `abs(W)`, and the error that cancellation leaves behind is
+/// `abs(W)`'s ulp, not `1.0`'s.
+///
+/// Nor is `matrix_magnitude(a) * matrix_magnitude(b)`, which is the same
+/// quantity with the sum over `k` replaced by a product of two independent
+/// maxima. On a `W * B` whose largest entries are both in the translation
+/// column that overstates by the ratio between them: on a rotating rig at
+/// factor `3190` it reads `7.6e6` where the arithmetic ran on `6.4e3`, and a
+/// tolerance derived from it would accept a matrix that is entirely wrong.
+fn product_operand_magnitude(a: Mat4, b: Mat4) -> f64 {
+    // `abs(a) * abs(b)` *is* the matrix of those sums, so one matrix
+    // multiply computes all sixteen of them. This runs once per skin slot
+    // per document side per sample time — the same order as the `W * B`
+    // composition it describes — so the fast path stays in `f32` lane
+    // operations rather than becoming a scalar `f64` fold over sixteen
+    // entries.
+    //
+    // Every term of every sum is non-negative, so no entry can cancel and a
+    // finite maximum means no entry overflowed: the `f32` result is exact
+    // enough to use whenever it is finite.
+    let lanes = largest_entry(mat4_abs(a) * mat4_abs(b));
+    if lanes.is_finite() {
+        return lanes;
+    }
+    product_operand_magnitude_f64(a, b)
+}
+
+/// [`product_operand_magnitude`] recomputed as a scalar `f64` fold, for the
+/// operands whose `f32` sums overflow.
+///
+/// These sums are the *operands'* magnitudes, not the product's, so they run
+/// past `f32::MAX` while `a * b` is still finite — the cancellation that
+/// makes `W * B` near-identity is exactly what removes the magnitude from the
+/// result. Sweeping 2_000_000 random rig-shaped `W` / `B` pairs found 87 such
+/// pairs, the smallest with an operand entry of `7.04e37`. Without this
+/// fallback each one made [`SkinSlot::rounding_magnitude`] infinite, which
+/// makes the tolerance derived from it infinite, which
+/// [`check_residual`] refuses — a *correct* candidate rejected with
+/// `tolerance: inf`. `SkinMatrix` reaches it from the joint transforms
+/// alone, with no unusual geometry involved.
+///
+/// The fold cannot overflow in turn, for any `a` and `b` this proof can
+/// reach. Each term is a product of two `f32` magnitudes, at most
+/// `f32::MAX^2 = 1.16e77`, and each sum has four of them: `4.63e77`, a
+/// hundred and fifty decades below `f64::MAX`. So the case is removed rather
+/// than moved, and it needs no domain caveat of its own.
+#[cold]
+#[inline(never)]
+fn product_operand_magnitude_f64(a: Mat4, b: Mat4) -> f64 {
+    let mut largest = 0.0f64;
+    for column in 0..4 {
+        for row in 0..4 {
+            let mut sum = 0.0f64;
+            for inner in 0..4 {
+                sum += f64::from(a.col(inner)[row].abs()) * f64::from(b.col(column)[inner].abs());
+            }
+            largest = largest.max(sum);
+        }
+    }
+    largest
+}
+
+/// The rounding base of the translation column in `parent_world * local`.
+///
+/// For each spatial row, `s` is the binary64 absolute sum of the three new
+/// linear/local-translation products and `p` is the absolute carried parent
+/// translation. The row contributes
+/// `s + min(max(p, MIN_POSITIVE), s / EPSILON)`: `EPSILON * s` provisions the
+/// local dot product, while the capped second term provisions the smaller of
+/// one parent-scale ulp and losing the whole new contribution. The minimum
+/// normal floor also covers subnormal product rounding. Zero links still
+/// contribute zero, and underflowed links carry only their vanishing `s`
+/// rather than charging the translated parent again.
+///
+/// [`product_operand_magnitude`] for one column, and it exists for the same
+/// reason one column further up the chain. That function reads the *already
+/// composed* `W`, whose translation column has already lost whatever its own
+/// parent chain cancelled: a joint whose local offset points back along its
+/// parent's world translation leaves `W` with a small translation that was
+/// summed from two large terms, and `abs(W) * abs(B)` cannot see terms that
+/// are no longer in `W`. Composing `W * B` then carries that lost magnitude's
+/// rounding error into a near-identity product, and a tolerance derived from
+/// `abs(W) * abs(B)` alone refuses the correct candidate — measured at up to
+/// `41` binary32 ulps of that base over a million correct candidates, against
+/// `2.4` once this term is included.
+///
+/// The homogeneous output row is deliberately excluded because it is not a
+/// spatial translation component. For validated affine operands its linear
+/// entries are zero, so the shipped `contribution / EPSILON` cap would already
+/// make its contribution zero. Keeping the spatial range explicit preserves
+/// the quantity's unit semantics and prevents a non-affine bottom row from
+/// entering provenance if upstream validation regresses.
+///
+/// Only the translation column needs it. A world linear part is a product of
+/// rotations and uniform scales, and while an individual entry of that
+/// product can cancel to near zero, `product_operand_magnitude` already sums
+/// over the inner index — so the terms that cancelled are still in its sum.
+/// The translation column is the one place a *previous* composition's
+/// cancellation is carried forward as an operand.
+fn translation_composition_rounding_base(parent_world: Mat4, local: Mat4) -> f64 {
+    let epsilon = f64::from(f32::EPSILON);
+    let minimum_normal = f64::from(f32::MIN_POSITIVE);
+    let mut largest = 0.0f64;
+    for row in 0..3 {
+        let mut contribution = 0.0f64;
+        for inner in 0..3 {
+            contribution += f64::from(parent_world.col(inner)[row].abs())
+                * f64::from(local.w_axis[inner].abs());
+        }
+        let parent = f64::from(parent_world.w_axis[row].abs());
+        let addition = parent.max(minimum_normal).min(contribution / epsilon);
+        largest = largest.max(contribution + addition);
+    }
+    largest
+}
+
+/// The magnitude `matrix * column` is summed from:
+/// `max over i of sum over k of abs(matrix_ik) * abs(column_k)`.
+///
+/// [`product_operand_magnitude`] for one column, and the quantity the bounds
+/// path needs when a composed `W * B` transforms a vertex position.
+///
+/// `absolute` is [`mat4_abs`] of the matrix, taken by the caller rather than
+/// here. The skinned-bounds caller runs this once per weighted vertex per slot
+/// — the hottest loop in this proof — against a matrix that is constant across
+/// the whole primitive, so recomputing sixteen `abs` per vertex would be work
+/// the slot already did once.
+fn column_operand_magnitude(absolute: Mat4, column: Vec4) -> f64 {
+    // Every term is non-negative, so a finite maximum means no term
+    // overflowed and the `f32` lane result is exact enough to use — the same
+    // argument [`product_operand_magnitude`] makes, and it needs the same
+    // fallback for the operands whose sums leave the `f32` range while the
+    // transformed result stays inside it.
+    let lanes = f64::from((absolute * column.abs()).max_element());
+    if lanes.is_finite() {
+        return lanes;
+    }
+    column_operand_magnitude_f64(absolute, column)
+}
+
+/// [`column_operand_magnitude`] recomputed as a scalar `f64` fold, for the
+/// operands whose `f32` sums overflow.
+///
+/// Cannot overflow in turn, for [`product_operand_magnitude_f64`]'s reason:
+/// four terms, each a product of two `f32` magnitudes, is at most `4.63e77`.
+#[cold]
+#[inline(never)]
+fn column_operand_magnitude_f64(absolute: Mat4, column: Vec4) -> f64 {
+    let column = column.abs();
+    let mut largest = 0.0f64;
+    for row in 0..4 {
+        let mut sum = 0.0f64;
+        for inner in 0..4 {
+            sum += f64::from(absolute.col(inner)[row]) * f64::from(column[inner]);
+        }
+        largest = largest.max(sum);
+    }
+    largest
+}
+
+/// `abs` applied to every component.
+fn mat4_abs(matrix: Mat4) -> Mat4 {
+    Mat4::from_cols(
+        matrix.x_axis.abs(),
+        matrix.y_axis.abs(),
+        matrix.z_axis.abs(),
+        matrix.w_axis.abs(),
+    )
+}
+
+/// The largest entry of an already non-negative matrix.
+fn largest_entry(nonnegative: Mat4) -> f64 {
+    f64::from(
+        nonnegative
+            .x_axis
+            .max(nonnegative.y_axis)
+            .max(nonnegative.z_axis.max(nonnegative.w_axis))
+            .max_element(),
+    )
+}
+
+fn matrix_magnitude(matrix: Mat4) -> f64 {
+    largest_entry(mat4_abs(matrix))
+}
+
+/// Harvest the times every sampled obligation is evaluated at: every key
+/// time of every animated track on an affected bone, plus the analytic
+/// mid-segment interior of each cubic segment.
+///
+/// Deliberately *not* restricted to translation tracks. The sampled
+/// obligations these times feed — trajectories, the skin equation, and
+/// bounds — depend on a node's complete animated pose, so a clip that
+/// animates an affected joint's rotation but not its translation would
+/// otherwise yield zero sample times and make every sampled obligation
+/// vacuously true while still reporting success.
+fn clip_sample_times(clip: &Clip, affected: &BTreeSet<BoneId>) -> (Vec<f32>, Vec<f32>) {
+    let mut keys = Vec::new();
+    let mut interiors = Vec::new();
+    for track in &clip.tracks {
+        if !affected.contains(&track.bone) {
+            continue;
+        }
+        keys.extend_from_slice(&track.times);
+        if track.interpolation == Interpolation::CubicSpline {
+            for window in track.times.windows(2) {
+                interiors.push((window[0] + window[1]) * 0.5);
+            }
+        }
+    }
+    keys.sort_by(f32::total_cmp);
+    keys.dedup();
+    interiors.sort_by(f32::total_cmp);
+    interiors.dedup();
+    (keys, interiors)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn check_track_value_residual(
+    kind: ProofResidualKind,
+    source: &Document,
+    source_clip: &Clip,
+    candidate_clip: &Clip,
+    affected: &BTreeSet<BoneId>,
+    t: f32,
+    plan: &ScalePlan,
+    tol: &ScaleTolerancePolicy,
+    proof: &mut ScaleProof,
+) -> Result<(), ScaleError> {
+    // Paired positionally, not by a `(bone, property)` lookup:
+    // `validate_candidate_structure` already established that `source_clip`
+    // and `candidate_clip` have the same track count and each pair agrees on
+    // `(bone, property)`, so a positional pairing cannot silently match the
+    // wrong duplicate the way a `find` could.
+    for (track, candidate_track) in source_clip.tracks.iter().zip(candidate_clip.tracks.iter()) {
+        if track.property != Property::Translation || !affected.contains(&track.bone) {
+            continue;
+        }
+        let multiplier = translation_multiplier(source, track.bone, affected, plan);
+        let TrackSample::Vec3(before) = sample_track(track, t) else {
+            return Err(ScaleError::MissingProofEvidence {
+                kind,
+                detail: "source_sample_not_vec3",
+            });
+        };
+        let TrackSample::Vec3(after) = sample_track(candidate_track, t) else {
+            return Err(ScaleError::MissingProofEvidence {
+                kind,
+                detail: "candidate_sample_not_vec3",
+            });
+        };
+        let expected = before.as_dvec3() * multiplier;
+        let actual = after.as_dvec3();
+        let residual = (actual - expected).length();
+        check_and_track(
+            kind,
+            residual,
+            expected.length(),
+            actual.length(),
+            tol,
+            proof,
+        )?;
+    }
+    Ok(())
+}
+
+/// Sampled world-space trajectory residual for one already-derived pose pair
+/// (see [`sample_time_obligations`], which owns the single [`world_at_time`]
+/// evaluation these matrices come from).
+fn check_trajectory_residual_at(
+    source_worlds: &WorldPose,
+    candidate_worlds: &WorldPose,
+    affected_nodes: &[BoneId],
+    plan: &ScalePlan,
+    tol: &ScaleTolerancePolicy,
+    proof: &mut ScaleProof,
+) -> Result<(), ScaleError> {
+    for &node in affected_nodes {
+        let before = source_worlds.bone(node)?.matrix;
+        let after_pose = candidate_worlds.bone(node)?;
+        let after = after_pose.matrix;
+        let after_chain = after_pose.translation_rounding_magnitude;
+        let (translation_residual, before_mag, after_mag) = rest_node_residual(
+            before,
+            after,
+            plan.is_whole_document(),
+            plan.common_factor(),
+        );
+        // The same magnitude the unanimated `RestTranslation` comparison
+        // takes — the *candidate's* sampled parent chain, read off the sampled
+        // pose this residual was composed from rather than the rest pose: the
+        // two obligations differ only in which locals the chain ran on, and
+        // the argument for reading the candidate side alone is the one stated
+        // there.
+        //
+        // Reaching this term at all needs a rig whose *sampled* parent chain
+        // cancels, which a clip over a rest pose that already cancels is the
+        // simplest way to build:
+        // `a_sampled_pose_whose_parent_chain_cancels_still_proves_its_trajectory`
+        // and `the_trajectory_v6_floor_is_an_adjacent_f32_transition`
+        // are those fixtures, and
+        // `a_shrinking_conversion_holds_trajectory_to_the_candidate_s_own_chain`
+        // is the one that separates the candidate's chain from the source's.
+        // Without such a rig the only comparison this obligation makes has
+        // `chain = 0` on both sides, and every mutation of the term is a no-op
+        // on a quantity that is arithmetically absent.
+        check_and_track_f32_rounded(
+            ProofResidualKind::Trajectory,
+            translation_residual,
+            before_mag,
+            after_mag,
+            after_chain,
+            tol,
+            proof,
+        )?;
+    }
+    Ok(())
+}
+
+/// Sample `clip` at `t` and compose parent-before-child world matrices,
+/// validating every input before it is indexed or accumulated: an
+/// out-of-range track bone rejects rather than being skipped, a non-finite
+/// sampled value or accumulated matrix rejects, and a parent index that is
+/// not strictly earlier than its child rejects — the same structural
+/// invariant [`world_rest_matrices`]
+/// enforces for the unanimated rest pose.
+fn world_at_time(skeleton: &Skeleton, clip: &Clip, t: f32) -> Result<WorldPose, ScaleError> {
+    let bone_count = skeleton.bones.len();
+    let mut locals = vec![Transform::IDENTITY; bone_count];
+    for (index, bone) in skeleton.bones.iter().enumerate() {
+        locals[index] = bone.rest;
+    }
+    for track in &clip.tracks {
+        if track.bone >= bone_count {
+            return Err(ScaleError::BoneIndexOutOfRange { index: track.bone });
+        }
+        match sample_track(track, t) {
+            TrackSample::Vec3(value) => {
+                if !value.is_finite() {
+                    return Err(ScaleError::NonFiniteTransform { node: track.bone });
+                }
+                match track.property {
+                    Property::Translation => locals[track.bone].translation = value,
+                    Property::Scale => locals[track.bone].scale = value,
+                    Property::Rotation => {}
+                }
+            }
+            TrackSample::Quat(value) => {
+                if !value.is_finite() {
+                    return Err(ScaleError::NonFiniteTransform { node: track.bone });
+                }
+                locals[track.bone].rotation = value;
+            }
+        }
+    }
+    let mut bones: Vec<WorldBonePose> = Vec::with_capacity(bone_count);
+    for (index, bone) in skeleton.bones.iter().enumerate() {
+        let local = locals[index].to_mat4();
+        if !mat4_is_finite(local) {
+            return Err(ScaleError::NonFiniteTransform { node: index });
+        }
+        let pose = match bone.parent {
+            Some(parent) if parent < index => {
+                // Accumulated in the same walk the composition runs in, so
+                // the chain costs one `Mat4 * Vec4` per bone rather than a
+                // second pass that would have to recompose every local.
+                let parent_pose = bones[parent];
+                let matrix = parent_pose.matrix * local;
+                WorldBonePose {
+                    matrix,
+                    translation_rounding_magnitude: child_translation_rounding_magnitude(
+                        parent_pose,
+                        local,
+                    ),
+                }
+            }
+            Some(parent) => {
+                return Err(ScaleError::InvalidParent {
+                    node: index,
+                    parent,
+                });
+            }
+            None => WorldBonePose {
+                matrix: local,
+                translation_rounding_magnitude: 0.0,
+            },
+        };
+        if !mat4_is_finite(pose.matrix) {
+            return Err(ScaleError::NonFiniteTransform { node: index });
+        }
+        bones.push(pose);
+    }
+    Ok(WorldPose { bones })
+}
+
+/// `abs(planned - proved) / max(abs(planned), abs(proved))` — the divergence
+/// between the two observed-factor witnesses, on the same comparison base
+/// [`ScaleTolerancePolicy::relative`] uses.
+///
+/// Sharing that base is what makes the reported number commensurable with
+/// [`ScaleTolerancePolicy::observed_factor_divergence_ceiling`], which is a
+/// sum of two bands stated on it. The one division this spelling costs is
+/// what a predicate would not pay, so the two are not bit-identical near the
+/// ceiling; nothing here compares against it, so nothing depends on that.
+///
+/// No floor on the base, for [`ScaleTolerancePolicy::relative`]'s reasons,
+/// and none is needed: `planned` is strictly positive under both operations —
+/// a declared factor [`plan_scale`] range-checked, or an observed one
+/// [`classify_affine`] proved non-singular — so the base is at least
+/// `planned` and never zero. `proved` carries no such guarantee: it is read
+/// from whichever `source` [`prove_scale`] was handed, and a degenerate one
+/// measuring exactly zero there reports a divergence of one rather than a
+/// division by zero.
+fn relative_divergence(planned: f64, proved: f64) -> f64 {
+    (planned - proved).abs() / planned.abs().max(proved.abs())
+}
+
+/// Re-derive this operation's observed factor from `source`, without reading
+/// [`ScalePlan::observed_factor`].
+///
+/// For [`ScaleOperation::RestBindUniformScale`] the scaled root is resolved
+/// the same way [`plan_rest_bind`] resolves it — by `source_root_node_index`
+/// through `source`'s own source-node projection — and its factor is then
+/// measured from the *normalized* skeleton's rest-world matrix rather than
+/// from the raw projection planning classified. That makes this a genuinely
+/// second witness: it reads different stored data, through a different
+/// composition path, and it is computed from whichever `source` this call was
+/// handed, which [`prove_scale`] does not require to be the document the plan
+/// came from.
+///
+/// # The scaled root is the minimum [`BoneId`] in the closure
+///
+/// §D.6 defines the observed factor *at the scaled root*, and "the lowest
+/// affected bone id" is the reading a source-node-space walk and a
+/// `BoneId`-space walk could otherwise land on separately. Once
+/// [`crate::model::validate_document_shape`] holds they are the same node, and no
+/// document can distinguish them:
+///
+/// - every insertion [`rest_bind_affected_closure`] makes is the root itself,
+///   a node on the ancestor path from a joint *up to* the root, or a BFS
+///   descendant of something already in the set — so the closure lies inside
+///   `subtree(root)` in source-node space;
+/// - chain agreement is a parent-preserving injection, so it carries
+///   `subtree(root)` onto `subtree(bone(root))` in `BoneId` space;
+/// - [`world_rest_matrices`] refuses a skeleton in which a parent's id is not
+///   strictly less than its child's, so every member of `subtree(b)` has an
+///   id at least `b`.
+///
+/// The scaled root is therefore the strict minimum id in the closure, and
+/// reading either one reports the same number. That is a consequence of the
+/// agreement precondition rather than of this function: without it the two
+/// readings genuinely differ, and the difference is a false proof rather than
+/// a naming quibble.
+///
+/// It is deliberately *not* a re-run of [`classify_affine`]. Re-classifying
+/// here would add a fresh rejection path — a proof source outside the
+/// supported affine class would fail with a domain error rather than the
+/// residual that actually matters — for no gain: whether the source is in the
+/// class is a planning question, already answered, and the quantity wanted
+/// here is only the factor.
+///
+/// # Errors
+///
+/// [`ScaleError::MissingProofEvidence`] when the plan's scaled root has no
+/// projection in `source` to measure, and [`ScaleError::BoneIndexOutOfRange`]
+/// when it projects to a bone `source` does not have. Neither is silently
+/// reported as a zero factor.
+fn observed_factor_from_source(
+    source: &Document,
+    source_worlds: &WorldPose,
+    plan: &ScalePlan,
+) -> Result<f64, ScaleError> {
+    let ScaleOperation::RestBindUniformScale {
+        source_root_node_index,
+        ..
+    } = plan.operation()
+    else {
+        // Whole-document conversion declares its factor rather than observing
+        // it; see [`ScalePlan::observed_factor`].
+        return Ok(plan.common_factor());
+    };
+    let bone = source_node_index_map(source)
+        .get(&source_root_node_index)
+        .and_then(|asset| asset.bone)
+        .ok_or(ScaleError::MissingProofEvidence {
+            kind: ProofResidualKind::ObservedFactor,
+            detail: "scaled_root_not_projected",
+        })?;
+    let world = source_worlds.bone(bone)?.matrix;
+    Ok(average_affine_axis_length(affine_axis_lengths(
+        Mat3::from_mat4(world),
+    )))
+}
+
+/// Prove that inverse-bind evidence *outside* the affected closure came
+/// through unchanged.
+///
+/// [`check_skin_and_bounds`] skips an instance with no joint in the affected
+/// closure entirely, and nothing else looked at one either — so a candidate
+/// that rewrote an unrelated skin's `skin_ibms` proved `Ok`. Reachable
+/// through the public API, since [`ScaleCandidate::from_document`] and
+/// [`prove_scale`] do not require their two documents to be the same one.
+///
+/// Three cases, kept distinct on purpose (issue #296):
+///
+/// - both sides store a bind for the slot — compared directly, as the
+///   arrays they are;
+/// - exactly one side stores one — [`ScaleError::MissingProofEvidence`]. A
+///   candidate that dropped an array (falling back to a different bind) or
+///   materialized one where the source had none has changed the skin, and
+///   there is nothing to compare it against;
+/// - neither side stores one — nothing to compare, and nothing is claimed.
+///
+/// That third case is what makes this fail-*closed* rather than
+/// fail-*everything*. Resolving both sides through [`instance_bind`] instead
+/// would have been the obvious implementation and would newly reject a
+/// document carrying an unrelated skin with no bind evidence at all
+/// (`MissingInverseBind`) — a document the operation genuinely does not
+/// touch. So the resolution here stops at what each document *stores*
+/// ([`stored_instance_bind`]) and reports the evidence-free slot as out of
+/// scope rather than as proven.
+///
+/// Scope, stated exactly: this compares the bind each side resolves *for a
+/// slot*, in the module's own precedence order — the instance array first,
+/// then the bone convenience value. A [`crate::model::Bone::inverse_bind`]
+/// that is shadowed by a non-empty `skin_ibms` is not authority for any slot
+/// and is not compared here, and neither is
+/// [`crate::model::SourceSkinAsset::inverse_bind_accessor`], which is
+/// read-side evidence about the input accessor rather than a bind either
+/// planning or proof consumes.
+///
+/// The skip is `any`, not `all`, and that is load-bearing rather than
+/// idiomatic. An instance with *some* joint in the affected closure belongs to
+/// [`check_skin_and_bounds`], which checks `W * B` on both sides and expects
+/// exactly the rewrite [`build_rest_bind`] performs on those slots. Holding
+/// such an instance to "binds unchanged" as well rejects this module's own
+/// output — pinned by
+/// `a_partially_affected_skin_stays_with_the_skin_obligation_that_owns_it`.
+///
+/// # Known trap: a semantics-preserving representation change is refused
+///
+/// The one-stored-side rule is stated over *stored* evidence, and there is a
+/// case where the two sides store different things and mean the same thing.
+/// A complete-coverage source skin whose
+/// [`crate::model::SourceSkinAsset::inverse_bind_accessor`] is
+/// [`SourceInverseBindAccessorStatus::Absent`] licenses the format-defined
+/// identity default, so [`instance_bind`] resolves a slot with no stored
+/// evidence to [`Mat4::IDENTITY`]. A candidate that materializes that default
+/// as an explicit `[IDENTITY]` array has changed nothing about the effective
+/// bind — and is exactly what [`build_rest_bind`] does for an *affected*
+/// instance, deliberately — yet is refused here as
+/// `MissingProofEvidence { source_slot_bind_missing }`, and the converse as
+/// `candidate_slot_bind_missing`.
+///
+/// This is not reachable through the shipped pipeline: the only producer,
+/// [`build_rest_bind`], materializes an array only for an instance with an
+/// affected joint, and this obligation skips those. It is a trap for a future
+/// rest/bind frontend that normalizes bind representation on the way out.
+///
+/// It is left refusing rather than relaxed, for two reasons. First, the
+/// refusal is the behaviour DESIGN.md §D.6 now states outright ("a slot
+/// exactly one side records is a rewritten skin and is refused"), so
+/// admitting the representation change is a contract amendment rather than a
+/// bug fix. Second, the narrow patch — resolving through [`instance_bind`]
+/// only in the one-sided rows — leaves the three rows incoherent, because the
+/// neither-stored row would then be the only one that does *not* consult the
+/// format default it is entirely about. The coherent alternative is a
+/// differently-shaped rule: resolve both sides through [`instance_bind`] and
+/// treat [`ScaleError::MissingInverseBind`] on *both* sides as the
+/// out-of-scope case, which preserves the fail-closed property the third row
+/// exists for while comparing effective binds throughout. That is a design
+/// change and belongs in its own issue.
+///
+/// Unconditional, like the per-element comparisons in
+/// [`check_candidate_values`], though for its own reason: it is a structural
+/// claim about payloads the plan declares *unaffected*, so there is no
+/// obligation flag that could switch it off without also making the plan's
+/// "unaffected" claim unfalsifiable. Base `POSITION` is unconditional on the
+/// other ground — a whole-document plan *does* rewrite it, and its only other
+/// witness reports zero for a document with no skinned instance.
+fn check_unaffected_instance_binds(
+    source: &Document,
+    candidate: &Document,
+    affected: &BTreeSet<BoneId>,
+    tol: &ScaleTolerancePolicy,
+    proof: &mut ScaleProof,
+) -> Result<(), ScaleError> {
+    // Zipped rather than indexed: `validate_candidate_structure` has already
+    // proved the two instance lists have equal length and pairwise equal
+    // `skin_joints`, so pairing them positionally needs no fallible lookup
+    // and cannot silently drop a trailing instance.
+    for (instance, candidate_instance) in source
+        .assets
+        .instances
+        .iter()
+        .zip(candidate.assets.instances.iter())
+    {
+        if instance
+            .skin_joints
+            .iter()
+            .any(|joint| affected.contains(joint))
+        {
+            continue;
+        }
+        for (slot, &joint) in instance.skin_joints.iter().enumerate() {
+            let before = stored_instance_bind(source, instance, slot, joint)?;
+            let after = stored_instance_bind(candidate, candidate_instance, slot, joint)?;
+            let (before, after) = match (before, after) {
+                (None, None) => continue,
+                (Some(_), None) => {
+                    return Err(ScaleError::MissingProofEvidence {
+                        kind: ProofResidualKind::UnaffectedInverseBind,
+                        detail: "candidate_slot_bind_missing",
+                    });
+                }
+                (None, Some(_)) => {
+                    return Err(ScaleError::MissingProofEvidence {
+                        kind: ProofResidualKind::UnaffectedInverseBind,
+                        detail: "source_slot_bind_missing",
+                    });
+                }
+                (Some(before), Some(after)) => (before, after),
+            };
+            // Any slot reaching this function is outside a rest/bind closure
+            // and therefore unchanged. A valid whole-document plan covers
+            // every current bone; `validate_plan_document_inventory` rejects
+            // stale replay before an added bone could reach this walk.
+            let expected = before;
+            let residual = matrix_residual(expected, after);
+            // Both sides are stored matrices, so the magnitude the
+            // comparison rounded against *is* the magnitude being compared:
+            // `scale_translation_only` scales a column, it does not cancel
+            // two terms the way composing `W * B` does, and a rotation
+            // cannot make one of these entries small while its error stays
+            // large. The rounding term is passed for the same base the
+            // relative band already uses, which is what makes it inert here
+            // — measured at `0` ulps across the whole rotation sweep,
+            // because a candidate this obligation reads was produced by the
+            // identical `f32` expression on the identical stored inputs. It
+            // is stated rather than omitted so the policy quantity means one
+            // thing across every obligation that compares `f32` matrices.
+            let magnitude = matrix_magnitude(expected).max(matrix_magnitude(after));
+            check_and_track_f32_rounded(
+                ProofResidualKind::UnaffectedInverseBind,
+                residual,
+                matrix_magnitude(expected),
+                matrix_magnitude(after),
+                magnitude,
+                tol,
+                proof,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// The skin-equation and skinned-bounds obligations, evaluated in **one**
+/// walk over the affected skinned instances.
+///
+/// Both obligations need the same three things per instance: the instance's
+/// joint world matrices, its resolved inverse binds, and — for bounds — its
+/// vertices. Splitting them across two entry points meant resolving the binds
+/// twice and, worse, walking every vertex twice for bounds alone (once for
+/// the source document, once for the candidate). This walks each vertex once
+/// and skins it through both sides.
+///
+/// [`validate_candidate_structure`] has already established that paired
+/// instances agree on `mesh` and `skin_joints` and that paired meshes agree
+/// on primitive and vertex counts, so the two sides are known to have the
+/// same slots and the same vertices to walk.
+#[allow(clippy::too_many_arguments)]
+fn check_skin_and_bounds(
+    source: &Document,
+    candidate: &Document,
+    source_worlds: &WorldPose,
+    candidate_worlds: &WorldPose,
+    affected_skin_instances: &[usize],
+    plan: &ScalePlan,
+    tol: &ScaleTolerancePolicy,
+    proof: &mut ScaleProof,
+) -> Result<(), ScaleError> {
+    if !plan.has_skin_and_bounds() {
+        return Ok(());
+    }
+
+    let mut source_bounds = BoundsAccumulator::default();
+    let mut candidate_bounds = BoundsAccumulator::default();
+
+    // The factor the source side is rebased by before it is compared, and so
+    // the factor its *rounding* is rebased by too. Both obligations below take
+    // their comparison base as `candidate.max(q * source)` for this reason —
+    // see the note at the skin-matrix call. `1.0` for rest/bind, where the two
+    // documents state the same world in the same units and the rebasing is a
+    // no-op.
+    let q = if plan.is_whole_document() {
+        plan.common_factor()
+    } else {
+        1.0
+    };
+
+    for &instance_index in affected_skin_instances {
+        let instance = &source.assets.instances[instance_index];
+        let candidate_instance = candidate.assets.instances.get(instance_index).ok_or(
+            ScaleError::MissingProofEvidence {
+                kind: ProofResidualKind::SkinMatrix,
+                detail: "candidate_instance_missing",
+            },
+        )?;
+
+        // Resolved once and reused by both obligations.
+        let mut source_slots = Vec::with_capacity(instance.skin_joints.len());
+        let mut candidate_slots = Vec::with_capacity(instance.skin_joints.len());
+        for (slot, &joint) in instance.skin_joints.iter().enumerate() {
+            let before_pose = source_worlds.bone(joint)?;
+            let after_pose = candidate_worlds.bone(joint)?;
+            let before_world = before_pose.matrix;
+            let before_chain = before_pose.translation_rounding_magnitude;
+            let after_world = after_pose.matrix;
+            let after_chain = after_pose.translation_rounding_magnitude;
+            let before_ibm = instance_bind(source, instance, slot, joint)?;
+            let after_ibm = instance_bind(candidate, candidate_instance, slot, joint)?;
+            source_slots.push(SkinSlot::compose(before_world, before_ibm, before_chain));
+            candidate_slots.push(SkinSlot::compose(after_world, after_ibm, after_chain));
+        }
+
+        for (before, after) in source_slots.iter().zip(candidate_slots.iter()) {
+            // Whole-document conversion scales every affine's translation
+            // by the declared factor while leaving its linear part
+            // unchanged (the same `U M U^-1` conjugation as any other
+            // retained matrix); rest/bind reparameterization analytically
+            // preserves the skin equation exactly.
+            let expected = if plan.is_whole_document() {
+                scale_translation_only(before.matrix, plan.common_factor() as f32)
+            } else {
+                before.matrix
+            };
+            let residual = matrix_residual(expected, after.matrix);
+            // The candidate's own composition magnitude, and the source's
+            // *rebased by the factor*. The residual is `|after - q *
+            // before|`, so the source operand enters the comparison
+            // multiplied by `q` and its rounding is multiplied by `q` with
+            // it: a source slot accurate to `k` ulps of its own magnitude
+            // contributes `q * k` ulps of that magnitude here. A base that
+            // reads the source side unrebased — which `max(before, after)`
+            // did — therefore states the source's error in the wrong units
+            // by a factor of `q`.
+            //
+            // Under a *shrinking* conversion that is the whole defect: the
+            // unrebased source magnitude is `1/q` times too large, so the
+            // band freezes at the source rig's size while the candidate it
+            // is spent on keeps shrinking. Measured over the sweep
+            // populations below the recovered discriminating power is the
+            // factor exactly — `100x` at `0.01`, `10_000x` at `1e-4`.
+            //
+            // Unlike the parent-chain case this does **not** reduce to the
+            // candidate's magnitude alone, because `q * before` is not
+            // bounded by `after`: the two magnitudes are a factor apart
+            // only in the terms that carry a translation, and both retain
+            // an unscaled `O(1)` floor from the composition's linear block
+            // and the homogeneous row. Where that floor dominates the
+            // source — small joints carrying small geometry — `q * before`
+            // exceeds `after` by up to the full factor under a growing
+            // conversion.
+            //
+            // `q * before` is written anyway because it is the bound that
+            // can be argued from the operands rather than measured from a
+            // population: a source slot accurate to the count's own budget
+            // contributes `q` times that budget here, whatever cancels.
+            // `a_growing_conversion_provisions_a_rebased_source_magnitude`
+            // pins the regime where this rebased source term exceeds the
+            // candidate term by orders of magnitude.
+            let magnitude = after.rounding_magnitude.max(q * before.rounding_magnitude);
+            check_and_track_f32_rounded(
+                ProofResidualKind::SkinMatrix,
+                residual,
+                matrix_magnitude(expected),
+                matrix_magnitude(after.matrix),
+                magnitude,
+                tol,
+                proof,
+            )?;
+        }
+
+        let mesh = source.assets.meshes.get(instance.mesh).ok_or(
+            DocumentShapeError::MeshInstanceShape {
+                instance_index,
+                violation: MeshInstanceShapeViolation::MeshIndexOutOfRange,
+            },
+        )?;
+        let candidate_mesh = candidate.assets.meshes.get(candidate_instance.mesh).ok_or(
+            DocumentShapeError::MeshInstanceShape {
+                instance_index,
+                violation: MeshInstanceShapeViolation::MeshIndexOutOfRange,
+            },
+        )?;
+        for (primitive_index, (primitive, candidate_primitive)) in mesh
+            .primitives
+            .iter()
+            .zip(candidate_mesh.primitives.iter())
+            .enumerate()
+        {
+            accumulate_skinned_bounds(
+                instance_index,
+                primitive_index,
+                primitive,
+                &source_slots,
+                &mut source_bounds,
+            )?;
+            accumulate_skinned_bounds(
+                instance_index,
+                primitive_index,
+                candidate_primitive,
+                &candidate_slots,
+                &mut candidate_bounds,
+            )?;
+        }
+    }
+
+    let source_bounds_magnitude = source_bounds.rounding_magnitude();
+    let candidate_bounds_magnitude = candidate_bounds.rounding_magnitude();
+    let (before_min, before_max) =
+        source_bounds
+            .finish()
+            .ok_or(ScaleError::MissingProofEvidence {
+                kind: ProofResidualKind::Bounds,
+                detail: "source_bounds_missing",
+            })?;
+    let (after_min, after_max) =
+        candidate_bounds
+            .finish()
+            .ok_or(ScaleError::MissingProofEvidence {
+                kind: ProofResidualKind::Bounds,
+                detail: "candidate_bounds_missing",
+            })?;
+    // One magnitude for all six comparisons, never the corner a residual lands
+    // on: that corner is not evidence about the arithmetic that produced it. A
+    // per-axis extreme is contributed by whichever vertex happened to be
+    // furthest along that axis, and three vertices at `(3000, .001, .002)`,
+    // `(.001, 3000, .003)` and `(.002, .003, 3000)` build a corner of magnitude
+    // `2.4e-3` out of vertices of magnitude `3000` — so a base read off the
+    // corner would be a million times smaller than the rounding error the
+    // corner carries.
+    //
+    // The candidate's magnitude against the source's *rebased by the factor*,
+    // for the reason the skin-matrix call states in full: the comparison below
+    // is `|a - q * b|`, so the source bound's rounding enters it multiplied by
+    // `q`. `max(source, candidate)` stated that rounding in the source rig's
+    // units and was loose by `1/q` under a shrinking conversion — `100x` at
+    // `0.01` and `10_000x` at `1e-4`, both recovered here.
+    let magnitude = candidate_bounds_magnitude.max(q * source_bounds_magnitude);
+    for (before, after) in [(before_min, after_min), (before_max, after_max)] {
+        let before = before.to_array();
+        let after = after.to_array();
+        for axis in 0..3 {
+            let b = before[axis] as f64;
+            let a = after[axis] as f64;
+            let expected = b * q;
+            let residual = (a - expected).abs();
+            check_and_track_f32_rounded(
+                ProofResidualKind::Bounds,
+                residual,
+                expected,
+                a,
+                magnitude,
+                tol,
+                proof,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Which of the clip-driven obligations `document` carries evidence for
+/// inside `affected`.
+///
+/// Each field is exactly the condition under which that obligation's residual
+/// loop reads at least one payload, so a plan that declares the obligation is
+/// declaring something [`prove_scale`] will actually check, and the residual
+/// it reports is a measurement rather than the zero an empty loop leaves
+/// behind. Computed the same way on both sides of the plan/proof boundary:
+/// [`plan_scale`] uses it to decide what to declare, and [`prove_scale`] uses
+/// it to fail closed when a declared obligation's evidence is not in the
+/// document it was handed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct SampledEvidence {
+    /// Some clip declares a translation track on an affected bone. That
+    /// track is both what puts key times into [`clip_sample_times`] and the
+    /// only payload [`check_track_value_residual`] compares, so it is the
+    /// whole evidence base for [`ScaleProofObligation::KeyTranslations`].
+    key_translations: bool,
+    /// Some clip declares *both* an affected cubic-spline track with at least
+    /// two key times — which is what produces an interior time at all — and
+    /// an affected translation track, which is what the comparison at that
+    /// interior time reads. The two need not be the same track, but they must
+    /// be in the same clip: interior times are harvested per clip and
+    /// compared against that clip's tracks.
+    cubic_interiors: bool,
+    /// Some clip yields at least one sample time for an affected bone, of
+    /// either kind. The trajectory obligation compares composed world
+    /// matrices rather than track payloads, so any affected track's key times
+    /// are evidence for it.
+    sample_times: bool,
+}
+
+/// Measure [`SampledEvidence`] over `document`'s clips.
+fn sampled_evidence(document: &Document, affected: &BTreeSet<BoneId>) -> SampledEvidence {
+    let mut evidence = SampledEvidence::default();
+    for clip in &document.clips {
+        let mut translations = false;
+        let mut cubic_segments = false;
+        for track in &clip.tracks {
+            if !affected.contains(&track.bone) || track.times.is_empty() {
+                continue;
+            }
+            evidence.sample_times = true;
+            translations |= track.property == Property::Translation;
+            cubic_segments |=
+                track.interpolation == Interpolation::CubicSpline && track.times.len() >= 2;
+        }
+        evidence.key_translations |= translations;
+        evidence.cubic_interiors |= translations && cubic_segments;
+    }
+    evidence
+}
+
+/// One skin slot's composed `W * B`, together with the magnitude that
+/// composition rounded against.
+///
+/// The two travel together because a caller that has one without the other
+/// cannot state a tolerance for anything derived from it: `matrix` is
+/// near-identity for a bind-pose slot no matter how far from the origin the
+/// joint sits, while `rounding_magnitude` is where the arithmetic actually
+/// happened (see [`product_operand_magnitude`]).
+#[derive(Debug, Clone, Copy)]
+struct SkinSlot {
+    matrix: Mat4,
+    /// [`mat4_abs`] of [`Self::matrix`], for
+    /// [`column_operand_magnitude`]'s per-vertex use.
+    ///
+    /// Held here rather than taken per vertex because it is constant across
+    /// every vertex the slot influences and the loop that reads it is the
+    /// hottest in this proof.
+    absolute: Mat4,
+    rounding_magnitude: f64,
+}
+
+impl SkinSlot {
+    /// Compose `world * inverse_bind`, carrying the larger of the two
+    /// magnitudes the result's error can come from.
+    ///
+    /// `world_translation_rounding_magnitude` is the accumulated provenance
+    /// for this slot's joint. The fixed chain and `W * B` stages retain the
+    /// measured policy's maximum here: #337 changes the unbounded number of
+    /// links *inside* the incoming chain, not this fixed two-stage envelope.
+    /// Both terms remain load-bearing in the calibrated corpus; replacing the
+    /// envelope with an analytic componentwise error propagation is a broader
+    /// model, not a larger scalar sum hidden in this constructor.
+    fn compose(world: Mat4, inverse_bind: Mat4, world_translation_rounding_magnitude: f64) -> Self {
+        let matrix = world * inverse_bind;
+        Self {
+            matrix,
+            absolute: mat4_abs(matrix),
+            rounding_magnitude: product_operand_magnitude(world, inverse_bind)
+                .max(world_translation_rounding_magnitude),
+        }
+    }
+}
+
+/// Running skinned-bounds extremes for one document side, and the largest
+/// magnitude the `f32` arithmetic behind them ran on.
+///
+/// `touched` distinguishes "every relevant vertex was unweighted" from "the
+/// bounds happen to be at the origin": the former has no bounds evidence at
+/// all and must be reported as missing, not as a zero residual.
+///
+/// `rounding_magnitude` is what
+/// [`ScaleTolerancePolicy::f32_rounding_ulps`] is counted in for
+/// [`ProofResidualKind::Bounds`]. For each contributing influence, it is the
+/// larger of the magnitude the `W * B * p` transform ran on and the slot's
+/// [`SkinSlot::rounding_magnitude`]. The former is
+/// [`column_operand_magnitude`] of the composed slot against `p` extended by
+/// the homogeneous `1` — the *product* `abs(W * B) * abs(p)` and not either
+/// factor alone. The latter carries the two earlier stages: the composition
+/// that produced `W * B`, whose translation column may cancel large `W` and
+/// `B` terms, and the parent chain that produced `W`, whose translation may
+/// already contain cancellation.
+///
+/// The per-influence magnitudes are combined with the same binary64 weighted
+/// average of the stored, non-negative binary32 weights as the skinned point.
+/// A tiny influence therefore carries only its proportional arithmetic
+/// provenance; taking a plain max would let an arbitrarily small weight on a
+/// distant joint widen the whole bound tolerance. The blended point's own
+/// per-axis magnitude is consequently already bounded by the weighted
+/// transform operands and needs no separate L2 stage. See DESIGN.md Appendix
+/// D §D.1.
+struct BoundsAccumulator {
+    min: Vec3,
+    max: Vec3,
+    touched: bool,
+    rounding_magnitude: f64,
+}
+
+impl Default for BoundsAccumulator {
+    fn default() -> Self {
+        Self {
+            min: Vec3::splat(f32::INFINITY),
+            max: Vec3::splat(f32::NEG_INFINITY),
+            touched: false,
+            rounding_magnitude: 0.0,
+        }
+    }
+}
+
+impl BoundsAccumulator {
+    fn finish(self) -> Option<(Vec3, Vec3)> {
+        self.touched.then_some((self.min, self.max))
+    }
+
+    fn rounding_magnitude(&self) -> f64 {
+        self.rounding_magnitude
+    }
+}
+
+/// Skin one primitive's vertices through `slots` (already-composed
+/// `W_i * B_i` per skin slot) and fold them into `bounds`, rejecting rather
+/// than skipping every malformed input along the way: a primitive whose
+/// per-vertex `joints`/`weights` are not exactly parallel to `positions`, a
+/// non-finite position or weight, a joint-influence slot outside the
+/// instance's `skin_joints`, or a non-finite skinned result. A vertex whose
+/// four weights are all zero is legitimately unweighted (not malformed) and
+/// is excluded from bounds.
+fn accumulate_skinned_bounds(
+    instance_index: usize,
+    primitive_index: usize,
+    primitive: &Primitive,
+    slots: &[SkinSlot],
+    bounds: &mut BoundsAccumulator,
+) -> Result<(), ScaleError> {
+    if primitive.joints.len() != primitive.positions.len()
+        || primitive.weights.len() != primitive.positions.len()
+    {
+        return Err(ScaleError::InvalidSkinnedPrimitive {
+            instance_index,
+            primitive_index,
+            reason: "joints_or_weights_length_mismatch",
+        });
+    }
+    for (vertex, &position) in primitive.positions.iter().enumerate() {
+        if !position.is_finite() {
+            return Err(ScaleError::InvalidSkinnedPrimitive {
+                instance_index,
+                primitive_index,
+                reason: "non_finite_position",
+            });
+        }
+        let joints = primitive.joints[vertex];
+        let weights = primitive.weights[vertex];
+        // Accumulate both the weighted numerator and denominator in binary64,
+        // then narrow the normalized point once. Binary32 multiply-then-divide
+        // can lose a lone subnormal contribution or overflow a large finite
+        // denominator. Precomputing binary32 coefficients is not sufficient:
+        // their rounded sum can exceed one and overflow an otherwise finite
+        // convex blend at `f32::MAX`.
+        let mut weight_sum = 0.0f64;
+        for weight in weights {
+            if weight == 0.0 {
+                continue;
+            }
+            if !weight.is_finite() {
+                return Err(ScaleError::InvalidSkinnedPrimitive {
+                    instance_index,
+                    primitive_index,
+                    reason: "non_finite_weight",
+                });
+            }
+            weight_sum += f64::from(weight);
+        }
+        if weight_sum == 0.0 {
+            continue;
+        }
+
+        let mut skinned_numerator = DVec3::ZERO;
+        let mut weighted_magnitude = 0.0f64;
+        for slot_index in 0..4 {
+            let stored_weight = weights[slot_index];
+            if stored_weight == 0.0 {
+                continue;
+            }
+            let Some(slot) = slots.get(joints[slot_index] as usize) else {
+                return Err(ScaleError::InvalidSkinnedPrimitive {
+                    instance_index,
+                    primitive_index,
+                    reason: "joint_influence_slot_out_of_range",
+                });
+            };
+            let weight = f64::from(stored_weight);
+            skinned_numerator += weight * slot.matrix.transform_point3(position).as_dvec3();
+            // The magnitude `slot.matrix.transform_point3(position)` runs on,
+            // which is `abs(W * B) * abs(p)` and not either factor alone.
+            //
+            // `abs(p)` alone — which is what this stage read before — names one
+            // of the two. It is the right number only while `abs(W * B)` is
+            // `1`, which is every rig whose slots are a pure rotation of the
+            // bind pose, and that is the whole of what the fixtures below build:
+            // `cancelling_blend_document` composes with `HALF_TURN_Z`, so its
+            // stage was accidentally exact and no test could see the gap. Give
+            // the composed slot a scale of `k` and the transform runs on
+            // `k * abs(p)` while the base reads `abs(p)`, short by `k`; the
+            // weighted sum over slots can then cancel the result to nothing
+            // while every term still carries `k * abs(p)`'s ulp.
+            // `two_slots_with_a_scaled_composition_cancel_a_vertex_and_still_prove_its_bounds`
+            // is that rig, and it is refused outright — `observed: 1.53e-5`
+            // against `tolerance: 8.63e-6` at `k = 16` — without this term.
+            //
+            // The homogeneous `1` is included because `transform_point3` sums
+            // the translation column in with the rest, so that column's entries
+            // are terms of the same dot product.
+            let influence_magnitude = skin_influence_magnitude(slot, position);
+            weighted_magnitude += weight * influence_magnitude;
+        }
+        let skinned = (skinned_numerator / weight_sum).as_vec3();
+        if !skinned.is_finite() {
+            // Overflow and `NaN` are different failures and are
+            // reported as such: an overflowing skinned position is a
+            // document whose geometry leaves the `f32` range this proof
+            // computes in, while a `NaN` is a malformed or degenerate
+            // input that survived every finiteness check above. No
+            // magnitude domain is documented for the former, because the
+            // boundary is not a property of any magnitude a document
+            // could be checked against ahead of time:
+            // `transform_point3` accumulates a dot product whose
+            // intermediate terms depend on the rotation, so two rigs
+            // whose skinned extents agree can disagree on whether they
+            // compose finitely.
+            return Err(ScaleError::InvalidSkinnedPrimitive {
+                instance_index,
+                primitive_index,
+                reason: if skinned.is_nan() {
+                    "non_finite_result"
+                } else {
+                    "skinned_magnitude_overflow"
+                },
+            });
+        }
+        bounds.min = bounds.min.min(skinned);
+        bounds.max = bounds.max.max(skinned);
+        let vertex_magnitude = weighted_magnitude / weight_sum;
+        bounds.rounding_magnitude = bounds.rounding_magnitude.max(vertex_magnitude);
+        bounds.touched = true;
+    }
+    Ok(())
+}
+
+/// The per-axis arithmetic provenance one weighted skin influence carries
+/// into a bound. The transform application and the already-composed slot can
+/// each dominate by an unbounded ratio, so the influence retains the larger;
+/// [`accumulate_skinned_bounds`] then combines influences with the same
+/// binary64 weighted average as the skinned point.
+fn skin_influence_magnitude(slot: &SkinSlot, position: Vec3) -> f64 {
+    column_operand_magnitude(slot.absolute, position.extend(1.0)).max(slot.rounding_magnitude)
+}
+
+#[cfg(test)]
+mod tests;
