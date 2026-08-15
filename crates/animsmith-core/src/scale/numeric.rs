@@ -82,9 +82,9 @@ pub(in crate::scale) fn product_operand_magnitude(a: Mat4, b: Mat4) -> f64 {
 /// makes `W * B` near-identity is exactly what removes the magnitude from the
 /// result. Sweeping 2_000_000 random rig-shaped `W` / `B` pairs found 87 such
 /// pairs, the smallest with an operand entry of `7.04e37`. Without this
-/// fallback each one made [`super::SkinSlot::rounding_magnitude`] infinite,
+/// fallback each one made [`super::proof::SkinSlot::rounding_magnitude`] infinite,
 /// which makes the tolerance derived from it infinite, which
-/// [`super::check_residual`] refuses — a *correct* candidate rejected with
+/// [`super::proof::check_residual`] refuses — a *correct* candidate rejected with
 /// `tolerance: inf`. `SkinMatrix` reaches it from the joint transforms
 /// alone, with no unusual geometry involved.
 ///

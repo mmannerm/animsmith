@@ -1972,7 +1972,13 @@ within versioned tolerances:
   `crates/animsmith-core/src/scale/reference.rs`. That module consumes the
   compiled plan and shared validation/numeric leaves; proof derives its own
   connector products, expected source locals, and scale-track boundary rather
-  than importing the reference writer's expectations.
+  than importing the reference writer's expectations. Those proof-owned
+  derivations, exact field discharge, sampled work and budget accounting,
+  semantic residuals, and skin/bounds checks live in private
+  `crates/animsmith-core/src/scale/proof.rs`. Its paired residual recorder is
+  nested under `proof::residual`, so only proof can mutate a residual maximum
+  and its comparison count; the public read-only values continue to resolve
+  through the `animsmith_core::scale` facade.
   For an admitted connector span, typed obligations require every connector
   local to remain bit-exact and independently derive the projected successor's
   expected bridged source local from canonical source topology. The connector

@@ -30,7 +30,7 @@ use std::collections::{BTreeMap, BTreeSet};
 ///
 /// Per-vertex primitive skinning shape (`joints`/`weights` parallel to
 /// `positions`) is deliberately not checked here: it is validated directly
-/// where it is walked, in [`super::accumulate_skinned_bounds`], since only the affected
+/// where it is walked, in [`super::proof::accumulate_skinned_bounds`], since only the affected
 /// instances' geometry needs inspecting there.
 pub(in crate::scale) fn validate_scale_input(document: &Document) -> Result<(), ScaleError> {
     validate_model_document_shape(document)?;
@@ -935,7 +935,7 @@ pub(in crate::scale) fn world_rests(skeleton: &Skeleton) -> Result<Vec<Mat4>, Sc
 /// One document side's composed world matrices, paired with the magnitude
 /// each bone's world *translation column* was actually summed from.
 ///
-/// The two travel together for [`super::SkinSlot`]'s reason, one composition
+/// The two travel together for [`super::proof::SkinSlot`]'s reason, one composition
 /// earlier: a parent chain whose translations cancel leaves a world
 /// translation orders of magnitude smaller than the terms it was accumulated
 /// from, and a tolerance for anything derived from that world has to be
@@ -1066,7 +1066,7 @@ pub(in crate::scale) fn affected_skin_classification_steps() -> usize {
 /// [`SourceInverseBindAccessorStatus::Absent`] accessor licenses. That step
 /// answers "what bind does this slot *have*", which is the right question
 /// when composing `W * B`; this one answers "what bind does this document
-/// *record*", which is the question [`super::check_unaffected_instance_binds`] is
+/// *record*", which is the question proof's `check_unaffected_instance_binds` is
 /// asking.
 ///
 /// The two questions genuinely disagree on one input — an evidence-free slot
@@ -1074,7 +1074,7 @@ pub(in crate::scale) fn affected_skin_classification_steps() -> usize {
 /// *recorded* one is nothing — and asking the recorded question there refuses
 /// a candidate that only changed representation. That is a known and
 /// deliberate narrowness, not an oversight; see the trap note on
-/// [`super::check_unaffected_instance_binds`] for why it is left standing and what
+/// proof's `check_unaffected_instance_binds` for why it is left standing and what
 /// replacing it would take.
 ///
 /// The out-of-range branch is unreachable for a document that passed

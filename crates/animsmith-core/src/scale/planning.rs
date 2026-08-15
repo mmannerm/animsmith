@@ -707,8 +707,8 @@ pub(in crate::scale) fn classify_affine(
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 struct SampledEvidence {
     /// Some clip declares a translation track on an affected bone. That
-    /// track is both what puts key times into [`super::clip_sample_times`] and the
-    /// only payload [`super::check_track_value_residual`] compares, so it is the
+    /// track is both what puts key times into proof's `clip_sample_times` walk and the
+    /// only payload its `check_track_value_residual` walk compares, so it is the
     /// whole evidence base for [`ScaleProofObligation::KeyTranslations`].
     key_translations: bool,
     /// Some clip declares *both* an affected cubic-spline track with at least

@@ -232,6 +232,11 @@ between them and the ceiling that divergence is expected to stay under
 not select CLI arguments, publish
 artifacts/evidence, or write files — see the crate rustdoc for the exact
 selector, error, and proof-obligation contracts.
+The proof-owned source/connector and animation expectations, exact field
+discharge, sampled work budgeting, semantic residuals, and skin/bounds checks
+live in private `crates/animsmith-core/src/scale/proof.rs`; its paired recorder is
+nested under `proof::residual`. These physical ownership details do not change
+the public `animsmith_core::scale` paths used by embedders.
 Each scale boundary validates every `Document` snapshot it consumes with the
 model-owned `validate_document_shape` check and reports a failure through
 `ScaleError::InvalidDocumentShape`.
