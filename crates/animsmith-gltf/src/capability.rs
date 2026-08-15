@@ -6,8 +6,7 @@
 //! candidate document exists.
 
 use crate::{
-    LoadError, load_bytes, resolve_buffers, topology, validate_animation_channels,
-    validate_glb_framing,
+    LoadError, load_bytes, resolve_buffers, topology, validate_animations, validate_glb_framing,
 };
 use animsmith_core::Document;
 use serde::Serialize;
@@ -417,7 +416,7 @@ fn capture_scale_source(
         Ok(()) => {}
         Err(error) => return Err(LoadError::Gltf(error).into()),
     }
-    validate_animation_channels(gltf.document.as_json())?;
+    validate_animations(&gltf.document)?;
     topology(&gltf.document)?;
 
     let can_resolve_buffers = !manifest

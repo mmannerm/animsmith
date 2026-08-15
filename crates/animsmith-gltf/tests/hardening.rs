@@ -205,8 +205,8 @@ fn loader_rejects_unknown_animation_target_path() {
 }
 
 /// A rotation channel whose sampler output accessor is UNSIGNED_INT
-/// (componentType 5125) — a spec-valid component type that is nonsensical
-/// for animation and hits `unreachable!()` in gltf's `read_outputs`.
+/// (componentType 5125) — a spec-valid component type that the
+/// property-selected rotation reader cannot decode.
 const U32_ROTATION_OUTPUT_GLTF: &str = r#"{
   "asset": { "version": "2.0" },
   "buffers": [{ "uri": "data:application/octet-stream;base64,AAAAAAAAgD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "byteLength": 60 }],
@@ -236,8 +236,26 @@ fn loader_rejects_unsigned_int_animation_output() {
 
     // Would otherwise hit gltf's `read_outputs` `unreachable!()`.
     let err = animsmith_gltf::load(&path).expect_err("U32 animation output must be rejected");
-    assert!(matches!(err, LoadError::Malformed(_)), "{err}");
-    assert!(err.to_string().contains("UNSIGNED_INT"), "{err}");
+    assert!(
+        matches!(
+            err,
+            LoadError::AnimationEncoding {
+                animation: 0,
+                sampler: 0,
+                slot: "output",
+                node: 0,
+                property: "rotation",
+                accessor: 1,
+                ..
+            }
+        ),
+        "{err}"
+    );
+    assert_eq!(
+        err.to_string(),
+        "animation 0 sampler 0 output for node 0 rotation: accessor 1 is VEC4 of UNSIGNED_INT, \
+         but the loader reads VEC4 of BYTE, UNSIGNED_BYTE, SHORT, UNSIGNED_SHORT, or FLOAT"
+    );
 }
 
 #[test]
