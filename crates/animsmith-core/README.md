@@ -112,6 +112,24 @@ normals, remapped joints, and regenerated inverse bind matrices. Optional
 ground-and-centre placement uses the complete converted bind-pose bounds in a
 deterministic source-node order.
 
+## Scale Planning and Proof
+
+`animsmith_core::scale` is the format-neutral boundary for two explicitly
+selected operations: whole-document linear-unit conversion and rest/bind
+hierarchy reparameterization. `plan_scale` compiles one immutable typed ledger
+from a validated `Document` and format capability facts. A format frontend
+rewrites its exact source representation, reloads those bytes, wraps the result
+with `ScaleCandidate::from_document`, and calls `prove_scale`, which derives
+its expectations independently from the writer.
+
+Core deliberately exposes no production candidate builder and performs no file
+I/O or publication. The analytic builder under the non-default `fixtures`
+feature is test/calibration support only. See the
+[scale workflow](https://github.com/mmannerm/animsmith/blob/main/docs/scale.md),
+[embedding guide](https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md#scale-plan-and-proof-contracts),
+and Appendix D of the
+[workspace design](https://github.com/mmannerm/animsmith/blob/main/DESIGN.md#appendix-d--decision-record-skinned-restbind-scale-canonicalization).
+
 ## More Details
 
 - [API reference on docs.rs](https://docs.rs/animsmith-core)

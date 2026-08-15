@@ -193,141 +193,57 @@ For the library cutover itself:
 
 ## Scale plan and proof contracts
 
-`animsmith_core::scale` owns the format-neutral plan/proof contracts for the
-two distinct scale operations from
-[DESIGN.md Appendix D](../DESIGN.md#appendix-d--decision-record-skinned-restbind-scale-canonicalization):
-whole-document linear-unit conversion and rest/bind hierarchy
-reparameterization. `plan_scale` is pure and fail-closed against a
-`Document` and a format-neutral `ScaleCapabilityFacts` projection;
-core exposes no production candidate builder. Format frontends rewrite their
-exact source representation, reload the emitted artifact, and wrap that
-document with `ScaleCandidate::from_document`; `prove_scale` independently
-re-derives the plan's claims and reports
-residual maxima against the fixed `ScaleTolerancePolicy::APPENDIX_D_V6`
-tolerance identity, refusing a document whose sampled proof work exceeds that
-policy's budget rather than sampling a subset of it. The policy's three finite
-widened affine axis lengths are sorted ascending before their mean is computed,
-so authored axis order cannot change classification or the observed factor.
-The pre-1.0 cutover removes the former `APPENDIX_D_V5` associated constant;
-there is no legacy runtime alias. Each operation compiles one canonical typed
-ledger containing source topology, semantic field dispositions, and the proof
-obligations derived from that exact inventory. A plan contains an obligation
-row only when the planned document carries the payload it reads. Candidate
-construction and proof recompile the supplied source and require exact ledger
-equality; a stale topology, payload, write set, or evidence set is a typed
-`PlanDocumentMismatch`, while a missing counterpart encountered inside an
-inventory-matched walk is `MissingProofEvidence`. This catches added, removed,
-reordered, or retargeted payload even when a coarse list of affected domains
-would be unchanged. Numeric values may still vary under an identical ledger,
-so replay does not freeze source values. Neither refusal becomes a zero
-residual. Each named `ScaleProof` claim is one read-only `ScaleProofResidual`
-that carries its maximum and comparison count together, both written at the
-point of comparison. Its `evaluated()` method therefore distinguishes a
-measured `0.0` from one that nothing walked without letting an adapter combine
-one claim's count with another claim's maximum. `ScaleProof` records both observed-factor
-witnesses — the plan's, measured from the raw source projection, and the
-proof's, measured from the normalized skeleton — plus the relative divergence
-between them and the ceiling that divergence is expected to stay under
-(`ScaleTolerancePolicy::observed_factor_divergence_ceiling`). This module does
-not select CLI arguments, publish
-artifacts/evidence, or write files — see the crate rustdoc for the exact
-selector, error, and proof-obligation contracts.
-The proof-owned source/connector and animation expectations, exact field
-discharge, sampled work budgeting, semantic residuals, and skin/bounds checks
-live in private `crates/animsmith-core/src/scale/proof.rs`; its paired recorder is
-nested under `proof::residual`. These physical ownership details do not change
-the public `animsmith_core::scale` paths used by embedders.
-Each scale boundary validates every `Document` snapshot it consumes with the
-model-owned `validate_document_shape` check and reports a failure through
-`ScaleError::InvalidDocumentShape`.
-Because `Document` is publicly mutable, embedders must not treat one successful
-validation as a durable guarantee after mutation. The checker enumerates the
-strict structural invariants scale consumes; measurement and sampling retain
-their documented partial/tolerant behavior and do not use it as a universal
-validity gate.
-`ScaleOperation::RestBindUniformScale`'s selectors are raw, format-neutral
-source identity (`source_skin_index`, `source_root_node_index`), resolved
-against `Document::assets::source_skeleton` — never a normalized `BoneId` or
-mesh-instance ordinal. Under complete source coverage, planning may compose a
-static source connector with no independent normalized bone when it lies
-strictly between projected nodes in the selected rest/bind domain. The
-connector's authored local rest is represented by an exact-preservation row
-and bridge obligations, but it owns no numeric residual. Projected source rows
-carry both raw source-node identity and their normalized `BoneId`; connector
-rows have source and parent identities but no `BoneId`, while
-`ScalePlan::affected_nodes` remains the normalized Bone-keyed residual domain.
-Proof independently checks connector
-preservation and the projected successor's bridged source local from that
-canonical topology. Preserved connector components and the connector-bridged
-projected successor are bit-exact; this core-only path does not cross a raw
-frontend narrowing boundary. Direct rewritten raw source-local components
-outside a connector bridge use the published scalar tolerance. This does not
-imply support for a raw animation channel targeting an unprojected connector.
-A frontend that wants to raw-preflight a glTF source
-before calling into this module can use `animsmith_gltf::preflight_scale_source`
-and project its `GltfCapabilityManifest` down to `ScaleCapabilityFacts` with
-`animsmith_gltf::capability_facts`.
+The [scale workflow](scale.md) is the operator-facing guide. Normative algebra,
+tolerances, refusal boundaries, and ownership live in
+[DESIGN.md Appendix D](../DESIGN.md#appendix-d--decision-record-skinned-restbind-scale-canonicalization);
+the [output reference](output.md) owns the evidence wire contract.
 
-Embedders inspect `ScalePlan::ledger()` through its non-exhaustive read-only
-views: under `Complete` source coverage, `source_topology()` globally
-inventories raw parents and normalized projection identity for plan replay,
-classifying rest/bind projected and connector rows and retaining outside-domain
-rows for both operations. Under `Unavailable` coverage raw identity is
-non-authoritative, so the ledger exposes no raw topology or source-field rows.
-Whole-document conversion still converts any such best-effort raw locals for
-backward-compatible output, but they cannot stale a plan or become proof
-identity.
-`field_rows()` exposes exact targets and `PreserveExact` or typed structural
-rewrite kinds, `payload_shapes()` exposes exact container identity and shape,
-and `obligations()` exposes the proof work derived from the validated
-inventory. Rewrite rows carry no resolved multiplier, expected value, or
-connector product; candidate construction and proof independently derive those
-numbers from the operation and topology.
-Public row values are descriptive only: there is no public API for inserting
-them into a plan or constructing a plan from them. Operation-fixed facts,
-field ownership, and evidence gates therefore cannot be assembled into an
-incoherent plan.
-`PreserveExact` is positive builder write-set ownership, not an automatic
-bit-equality rule for normalized derived state. Factor-one dispositions remain
-visible when identity or alias analysis depends on them. `ScalePlan` equality
-includes the complete structural ledger. The former `ScaleDomainRewrites` and
-`ScaleProofObligations` boolean bags and their plan accessors are removed; this
-is a deliberate pre-1.0 Rust API break. The
-scale-evidence v1/v2/v3 JSON contracts retain their five immutable domain
-booleans as a private producer projection from the operation variant, and
-`ScaleProof` serialization plus the `appendix-d-v6` policy remain unchanged.
-Normalized bone-rest, inverse-bind, track, and mesh rows are discharged through
-the existing versioned residual or exact semantic obligations, so admitted
-non-bit-identical values, released maxima, and evaluated counts keep their
-meaning. Core bit equality is limited to authored source-node locals that every
-admitted producer copies. Exact topology, connector, and unchanged-world
-obligations own no numeric residual; raw byte-exact preservation of other
-fields, including signed zero and quaternion sign, belongs to the artifact
-proof rather than this normalized ledger view.
+For an embedded producer:
 
-The glTF frontend applies this same compiled plan through
-`rewrite_scale_plan`, then proves the artifact with that exact plan. Its raw
-adapter first calls `ScalePlan::validate_document_inventory`, then
-independently cross-checks `/nodes/*/children` against canonical source
-topology and retains format-owned capability, alias, range, JSON complement,
-and container checks. Writer and artifact proof share structural identity
-only; their component selection and numeric multiplier derivations remain
-independent.
+1. Preflight the exact source format with
+   `animsmith_gltf::preflight_scale_source`, then project it with
+   `animsmith_gltf::capability_facts` into `ScaleCapabilityFacts`.
+2. Call `plan_scale` once with an explicit `ScaleOperation`. The opaque plan
+   owns the operation parameters and a numeric-free structural ledger.
+3. Apply that same plan to the exact source representation. For glTF/GLB,
+   `rewrite_scale_plan` cross-checks raw hierarchy and container identities
+   against the plan before changing JSON or accessor bytes.
+4. Reload the emitted artifact, wrap the document with
+   `ScaleCandidate::from_document`, and call `prove_scale` with the original
+   source and same plan.
+5. Run the format artifact proof as well. Core proof covers normalized semantic
+   claims; artifact proof covers exact raw preservation, container structure,
+   declared bounds, aliasing, deterministic bytes, and the actual write set.
+6. Publish only the proved artifact and matching evidence as one coordinated
+   pair, preserving the CLI's rollback and documented process-crash semantics.
 
-For glTF/GLB, `animsmith_gltf::rewrite_linear_units` then performs the
-whole-document conversion on the source's own JSON and buffer bytes — never
-through the normalized writer — and `animsmith_gltf::prove_rewritten_artifact`
-proves the emitted container: byte preservation outside the converted accessor
-ranges, array identities, container framing, `min`/`max` consistency, and
-deterministic output bytes. Wrap the reloaded artifact in
-`ScaleCandidate::from_document` to run `prove_scale` over it as well; the two
-proof layers are complementary, not alternatives.
+`ScaleCandidate` grants no authority: proof independently validates the
+source, plan inventory, candidate structure, and numeric claims. A frontend
+must not substitute a normalized writer for exact-source rewrite when the
+operation promises preservation of unknown or format-only payload.
 
-Analytic integration tests that explicitly enable `animsmith-core`'s
-non-default `fixtures` feature may use
-`fixtures::build_scale_reference_candidate`. That reference construction is
-not a format writer and does not replace exact-source rewrite, artifact reload,
-or artifact proof in a production embedding.
+`ScalePlan::ledger()` exposes read-only field, payload-shape, source-topology,
+and proof-claim views for adapters. These rows name structural ownership and
+identity, not resolved multipliers or expected numeric values. Writer and proof
+may share this numeric-free binding vocabulary, but each must derive its own
+numeric expectations. Under unavailable source coverage, best-effort raw locals
+remain compatibility output rather than replay identity.
+
+Each `ScaleProof` claim is a read-only `ScaleProofResidual` carrying its
+maximum and comparison count together. `evaluated()` distinguishes a measured
+zero from an obligation that walked nothing. The fixed
+`ScaleTolerancePolicy::APPENDIX_D_V6` identity also owns the sampled-work
+budget; proof refuses over-budget input rather than proving a subset.
+
+The glTF convenience functions `rewrite_linear_units` and
+`rewrite_rest_bind` compile and delegate to the same plan-taking adapter.
+Use the plan-taking boundary when the host already owns the plan. The format
+frontend retains raw capability, hierarchy, component, type/count/range,
+alias/overlap, and complement checks that core cannot express.
+
+See the public rustdoc for exact selectors, row variants, errors, and proof
+fields. Calibration populations and historical timing notes are intentionally
+separate in [scale-calibration.md](scale-calibration.md).
 
 ## What the libraries do not own
 

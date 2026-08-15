@@ -1131,22 +1131,19 @@ pub struct ScaleProof {
 /// an obligation the plan declares provable has no counterpart evidence in
 /// `candidate`.
 ///
-/// Two of the claims checked here are not gated by
-/// [`ScaleProofObligation`]: the per-element animation-track values
-/// ([`ProofResidualKind::TrackValue`]), base mesh `POSITION`
-/// ([`ProofResidualKind::MeshPosition`]). They compare every element of
-/// every track and every base mesh against that element's own domain's
-/// analytic expectation — the declared multiplier where the plan rewrites
-/// that domain, the retained value where it does not — and so are owed by
-/// every plan. Base `POSITION` belongs with the track-value comparison, not
-/// with the unaffected binds, which is worth naming because it is easy to get
-/// backwards: a whole-document plan *does* rewrite it
-/// ([`ScaleRewriteRule::WholeDocumentLength`]), so its comparison is a
-/// rewritten-value check, and it is unconditional because skinned bounds
-/// would otherwise be its only witness — and they report a zero residual for
-/// a document carrying no skinned instance at all. Neither admits
-/// an obligation flag as a proxy for having run — see [`ScaleProof`], whose
-/// comparison counts report what each of them actually walked.
+/// Two claims checked here are not gated by [`ScaleProofObligation`].
+/// [`ProofResidualKind::TrackValue`] compares every stored animation element
+/// with that track domain's analytic expectation: the declared multiplier
+/// where the plan rewrites the domain, and the retained value where it does
+/// not. Both branches are owed by every plan.
+/// [`ProofResidualKind::MeshPosition`] does the same for every base mesh
+/// `POSITION`. In particular, whole-document conversion rewrites those values
+/// with [`ScaleRewriteRule::WholeDocumentLength`]; this is not a preservation
+/// claim. The comparison remains unconditional because skinned bounds would
+/// otherwise be its only witness, and bounds reports zero comparisons for a
+/// document with no skinned instance. Neither claim admits an obligation flag
+/// as a proxy for having run — see [`ScaleProof`], whose comparison counts
+/// report what each actually walked.
 ///
 /// [`ScaleProof::observed_factor`] is re-derived here from `source` rather
 /// than copied from [`ScalePlan::observed_factor`]; it is reported as

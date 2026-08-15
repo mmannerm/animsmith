@@ -97,6 +97,8 @@ $ animsmith convert export.fbx -o clip.glb
 $ animsmith convert prop.fbx -o prop.glb --bake-static-mesh-transforms
 $ animsmith convert prop.fbx -o prop.glb --material-texture-recipe materials.toml
 $ animsmith assemble character-assembly.toml -o character.glb --evidence character.assembly.json
+$ animsmith scale whole-document centimetres.glb -o metres.glb --factor 0.01 --evidence metres.scale.json
+$ animsmith scale rest-bind character.glb -o canonical.glb --source-skin-index 0 --source-root-node-index 3 --expected-factor 0.01 --evidence canonical.scale.json
 $ animsmith diff old.glb new.glb
 $ animsmith fix clip.glb -o fixed.glb
 $ animsmith fix clip.glb --dry-run
@@ -277,13 +279,16 @@ for a contract-style example.
 ## More Documentation
 
 The [documentation index](https://github.com/mmannerm/animsmith/tree/main/docs)
-lists every guide and reference by task. Three useful next stops:
+lists every guide and reference by task. Four useful next stops:
 
 - [Game-ready clips guide](https://github.com/mmannerm/animsmith/blob/main/docs/game-ready-clips.md)
   — why each check exists, failure mode by failure mode.
 - [Static asset workflow guide](https://github.com/mmannerm/animsmith/blob/main/docs/static-asset-workflows.md)
   — bounds and transform domains, normal maps, static baking, texture recipes,
   and what still needs target-engine validation.
+- [Scaling glTF safely](https://github.com/mmannerm/animsmith/blob/main/docs/scale.md)
+  — choose the right scale operation and follow its exact-source rewrite,
+  reload, proof, and paired evidence workflow.
 - [Examples cookbook](https://github.com/mmannerm/animsmith/tree/main/examples)
   — runnable, copy-into-your-project workflows.
 

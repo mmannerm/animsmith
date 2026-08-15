@@ -74,7 +74,11 @@ represented length by a declared factor (physical size changes; use it only
 when the source was authored in a different linear unit), and `rest-bind`
 removes one compensating inherited scale from the skinned hierarchy anchored
 at a declared source skin and source root node, preserving world joint
-transforms, sampled trajectories, and skinned vertex positions.
+translations and orientations, sampled trajectories, and skinned vertex
+positions while removing the composed scale. The
+[scale workflow](scale.md) owns the operation-choice, exact-source rewrite,
+proof, publication, and support-boundary walkthrough; this page remains the
+installed command/flag/exit reference.
 
 Every numeric and source-identity argument is required. Nothing is inferred
 from mesh bounds, character height, joint lengths, inverse-bind magnitude,
@@ -85,31 +89,11 @@ evidence. Input, output, and evidence paths must all be distinct, and the
 output must keep the input's container extension because the rewrite operates
 on the source's own bytes.
 
-Support is **self-contained** glTF/GLB only. The preflight refuses external
-resources, so a `.gltf` with a sidecar `.bin` or an external image is refused
-rather than partially converted. It also refuses morph targets, cameras,
-lights, GPU instancing, unregistered extensions, `extras`, non-triangle
-primitives, secondary skin influence sets, and accessor layouts outside the
-dense `f32` subset — the complete list of what a run refused is in the
-evidence record's `rejection.violations`.
-
-The shared scale-input validation also refuses any finite negative primary
-skin weight. Such a value cannot describe the convex skin blend required by
-the model: it exits 1 at the plan stage with rejection kind
-`negative-skin-weight` and publishes no artifact or evidence file.
-Structural failures retain their specific evidence kinds even though the core
-API now reports them through `ScaleError::InvalidDocumentShape`: for example,
-an invalid parent projection is `parent-chain-disagreement`, a malformed track
-is `invalid-track-shape`, and an invalid mesh instance is
-`invalid-mesh-instance`.
-
-One invocation plans, rewrites, reloads and proves the candidate, re-runs the
-whole rewrite to check the bytes are deterministic, and re-reads the staged
-artifact to check its digest against the bytes that were proved. On a
-production-sized rig that is seconds of work, not milliseconds. Identical
-inputs and arguments produce byte-identical artifact and evidence: the record
-carries no timestamp, and the declared paths are recorded verbatim rather than
-canonicalized.
+Accepted inputs are self-contained glTF/GLB. See the
+[scale workflow](scale.md#supported-source-boundary) for the complete support
+boundary and rewrite/reload/proof sequence, and the
+[output reference](output.md#scale) for typed refusal
+records and deterministic publication details.
 
 `scale` splits its two failure codes by what the failure is a property of, not
 by how far the run got. A refusal that is a property of the **input asset**
@@ -389,25 +373,6 @@ raw JSON locations the walk found different; `omitted` counts locations beyond
 that fixed cap, and the full count is `items.length + omitted`. The field is
 `null` for other artifact-proof claims and for capability refusals, whose
 `violations` array retains its existing meaning.
-
-For a whole-document factor of one, the compiled plan owns an empty raw write
-set. The v3 `result.artifact.rewritten_accessors`,
-`rewritten_json_pointers`, and `reencoded_buffers` arrays are therefore empty,
-and `result.proof.artifact.rewritten_accessor_count` is zero. The schema
-identity and shape are unchanged; these values distinguish exact preservation
-from an unnecessary factor-one rewrite.
-
-For `scale rest-bind`, valid scale animation is rebased, not refused:
-`result.domain_rewrites.scale_animation` is `true`, and every stored scale
-VEC3 uses the topology multiplier (`1 / s` at the selected root and `1` at
-strict descendants or outside the closure). This includes every in/value/out
-element of a cubic-spline sampler; it is not limited to constant tracks.
-Whole-document conversion leaves dimensionless scale animation unchanged and
-records `scale_animation: false`. Raw glTF preflight rejects an animation
-channel targeting a node authored with `matrix` as
-`animated_matrix_node`, with no output or evidence file.
-The v1 and v2 scale-evidence schemas remain immutable historical contracts;
-the current CLI emits v3 only.
 
 Machine-readable lint rejects `--allow` so it cannot erase evidence. The flag
 remains a presentation and exit-policy convenience for text and Markdown.

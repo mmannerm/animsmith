@@ -10,6 +10,7 @@ Find what you need by task — each page below owns one job.
 | [Examples cookbook](../examples/README.md) | Do the work, copy-paste style — gate exports in CI, repair a broken export, trim or re-anchor a clip, encode a project contract config, migrate FBX/Mixamo exports, embed the checks in Rust. |
 | [Mixamo tutorial](mixamo-tutorial.md) | Take a real Mixamo download end-to-end — download, convert, inspect, lint, fix, and grow a contract config with the built-in `mixamo` rig profile. |
 | [Static asset workflow guide](static-asset-workflows.md) | Diagnose bounds and transform domains, preserve normal maps, bake supported static placement, attach explicit textures, and understand what still needs engine validation. |
+| [Scaling glTF safely](scale.md) | Choose whole-document unit conversion or rest/bind reparameterization, understand the exact-source rewrite/proof transaction, and interpret its support boundary. |
 | [cli.md](cli.md) | Look up a command, flag, or exit code. |
 | [Material texture recipes](material-texture-recipes.md) | Attach explicit BaseColor, normal, metallic-roughness, and occlusion images during conversion with deterministic resizing and provenance evidence. |
 | [Multi-source character assembly](character-assembly.md) | Combine an authoritative skinned base with exact takes and timeline windows from separate inputs, producing one deterministic GLB plus evidence. |
@@ -18,6 +19,7 @@ Find what you need by task — each page below owns one job.
 | [output.md](output.md) | Parse versioned `--format json` reports and conversion evidence in a pipeline, validated by the JSON Schema under [`schemas/`](schemas/). |
 | [README](../README.md) | Install and quickstart, plus the check and configuration reference. |
 | [DESIGN.md](../DESIGN.md) | Follow the architecture, check-catalog rationale, and roadmap. |
+| [Scale proof calibration](scale-calibration.md) | Review the implementation-owned calibration sweep, provenance magnitudes, historical policy measurements, and reproducible command behind `appendix-d-v6`. |
 | [CONTRIBUTING.md](../CONTRIBUTING.md) / [DEVELOPMENT.md](../DEVELOPMENT.md) | Work on animsmith itself — contribution flow and development setup. |
 | [RELEASING.md](../RELEASING.md) | Cut a release — the release-plz flow, the manual 0.1.0 bootstrap, and the published-doc-link policy. |
 | [SUPPORT.md](../SUPPORT.md) / [SECURITY.md](../SECURITY.md) | Get help, file a bug, or report a vulnerability privately. |

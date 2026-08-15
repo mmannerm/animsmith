@@ -1,5 +1,5 @@
 //! Restricted animated rest/bind hierarchy reparameterization of raw
-//! glTF/GLB bytes (DESIGN.md Appendix D §D.2, implementation slice 4 of
+//! glTF/GLB bytes (DESIGN.md Appendix D §D.2 and ownership boundaries in
 //! §D.8).
 //!
 //! [`rewrite_rest_bind`] removes one compensating inherited uniform scale

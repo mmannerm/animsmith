@@ -1,5 +1,5 @@
 //! Preservation-safe whole-document linear-unit rewriting of raw glTF/GLB
-//! bytes (DESIGN.md Appendix D §D.2, implementation slice 3 of §D.8).
+//! bytes (DESIGN.md Appendix D §D.2 and ownership boundaries in §D.8).
 //!
 //! [`rewrite_linear_units`] converts every length in a captured
 //! [`GltfScaleSource`] by a caller-declared finite `factor > 0`. It operates

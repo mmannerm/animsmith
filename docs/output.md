@@ -266,6 +266,10 @@ current shared snapshot validation.
 
 ## `scale`
 
+The [scale workflow](scale.md) explains when to choose each operation and how
+the rewrite/reload/proof/publication transaction produces this record. This
+section is the wire-format authority.
+
 `scale` writes scale evidence v3 beside its artifact. One record serves both
 outcomes, discriminated by `outcome`:
 
