@@ -964,7 +964,11 @@ below the `1e-5` the relative band already allows. The `2^-23` is
   child adds the magnitude of the spatial translation-column operands of its
   own `parent_world * local` composition to the provenance inherited from its
   parent, in binary64. The exact recurrence is given under **The calibration
-  sweep** below and is shared by rest and sampled pose construction.
+  sweep** below and is shared by rest and sampled pose construction. These
+  policy-neutral matrix rewrite, residual, and provenance kernels live in
+  `crates/animsmith-core/src/scale/numeric.rs`; operation selection, tolerance
+  decisions, reference expectations, connector products, and proof-owned
+  expected values remain outside that leaf.
 
   The chain is the **candidate's**, not the source's and not the max of the
   two. Whole-document conversion scales every translation by the factor and
