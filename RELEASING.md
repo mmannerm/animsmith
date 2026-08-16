@@ -36,6 +36,8 @@ leaving the branch without a pull request.
    since the last release — one shared version across the publishable crates
    (`version_group`), so the whole workspace moves together — and writes the
    changelog. Ordinary pushes to `main` never create or update this PR.
+   If another change merges to `main` while the release PR is open, dispatch
+   the workflow again before merging so the version and changelog include it.
 3. Review that PR. When you merge it, the `release` job runs on the resulting
    push to `main`, tags the release, creates the GitHub Release, and publishes
    every crate to crates.io in dependency order (`animsmith-core` →
@@ -57,7 +59,9 @@ OIDC): the `release` job holds `id-token: write` and release-plz mints a
 short-lived token itself — there is no long-lived `CARGO_REGISTRY_TOKEN`.
 
 The publish step is idempotent: a re-run skips versions already on the
-registry.
+registry. If publishing fails partway through, use **Re-run failed jobs** on
+that original push-triggered workflow run. A new manual dispatch creates or
+updates the next release PR; it does not retry publishing.
 
 ### Version-bump policy
 
@@ -193,6 +197,9 @@ PRs opened with the default `GITHUB_TOKEN` do **not** trigger
 `on: pull_request` workflows, so the release-plz PR will not get its own
 CI run. The manual dispatch does run the full shared checks against `main`
 before opening or updating the PR, and the post-merge `checks` job runs them
-again before publishing. If branch protection also requires a check attached
-to the release PR itself, give the `release-pr` job a PAT or GitHub App token
-via the release-plz `token` input instead of `secrets.GITHUB_TOKEN`.
+again before publishing. The dispatch-time run checks the pre-bump `main`
+tree, not release-plz's generated version, lockfile, or changelog changes, so
+review those files in the release PR. If branch protection also requires a
+check attached to the release PR itself, give the `release-pr` job a PAT or
+GitHub App token via the release-plz `token` input instead of
+`secrets.GITHUB_TOKEN`.
