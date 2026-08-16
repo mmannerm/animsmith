@@ -163,10 +163,11 @@ pub enum LoadError {
     },
     /// A primitive's vertex-attribute or index accessor declares an element
     /// the loader does read, but addresses its bytes in a way the reader
-    /// cannot walk: a buffer view whose own extent overflows or exceeds its
-    /// buffer, a `byteStride` shorter than the element it strides over, a
-    /// `sparse` block of count 0, or a `count`/`byteOffset` whose required
-    /// extent overflows or exceeds its buffer view. `gltf`'s `Validate`
+    /// cannot walk: a buffer view whose own extent overflows, exceeds its
+    /// buffer declaration, or exceeds the bytes that actually resolved; a
+    /// `byteStride` shorter than the element it strides over; a `sparse`
+    /// block of count 0; or a `count`/`byteOffset` whose required extent
+    /// overflows or exceeds its buffer view. `gltf`'s `Validate`
     /// relates an accessor to none of these. The first shapes can panic in
     /// the reader; a merely short extent instead makes the reader return
     /// `None`, which is equally unsafe to substitute with empty geometry.
@@ -672,8 +673,9 @@ fn required_attribute_encoding(semantic: &gltf::Semantic) -> Option<&'static Rea
 /// is decoded as the encoding it declares, or the file is refused — never
 /// reinterpreted as a different element.
 ///
-/// [`unreadable_layout`] covers the rest: an accessor whose element the
-/// loader does read, addressed in a way the reader cannot walk.
+/// [`unreadable_primitive_layout`] covers the rest: an accessor whose element
+/// the loader does read, addressed in a way the reader cannot walk against
+/// either its declarations or its resolved bytes.
 ///
 /// ## What this does not promise
 ///
@@ -685,13 +687,14 @@ fn required_attribute_encoding(semantic: &gltf::Semantic) -> Option<&'static Rea
 /// `WEIGHTS_0` from full scale (see [`TEX_COORD_ENCODING`]). Checks
 /// therefore see those slots as floats, not as the integers on disk.
 ///
-/// *Unreadable authored values are not absence.* [`unreadable_layout`]
-/// relates every dense and sparse walk to the buffer view that must satisfy
-/// it. A short `POSITION` or index read is refused rather than mapped to an
-/// empty vector, so checks can distinguish an authored empty slot from
-/// authored values the loader could not read. Inverse binds deliberately use
-/// the other established treatment: their shortfall remains explicit source
-/// evidence through [`inverse_bind_is_readable`].
+/// *Unreadable authored values are not absence.*
+/// [`unreadable_primitive_layout`] relates every dense and sparse walk to the
+/// buffer view and resolved buffer bytes that must satisfy it. A short
+/// `POSITION` or index read is refused rather than mapped to an empty vector,
+/// so checks can distinguish an authored empty slot from authored values the
+/// loader could not read. Inverse binds deliberately use the other established
+/// treatment: their shortfall remains explicit source evidence through
+/// [`inverse_bind_is_readable`].
 ///
 /// ## Scope
 ///
@@ -704,7 +707,10 @@ fn required_attribute_encoding(semantic: &gltf::Semantic) -> Option<&'static Rea
 ///
 /// A skin's `inverseBindMatrices` accessor has the same panics, but not the
 /// same answer — see [`inverse_bind_is_readable`].
-fn validate_primitive_accessors(doc: &gltf::Document) -> Result<(), LoadError> {
+fn validate_primitive_accessors(
+    doc: &gltf::Document,
+    buffers: &[Vec<u8>],
+) -> Result<(), LoadError> {
     for mesh in doc.meshes() {
         for primitive in mesh.primitives() {
             if primitive.mode() != gltf::mesh::Mode::Triangles {
@@ -720,10 +726,18 @@ fn validate_primitive_accessors(doc: &gltf::Document) -> Result<(), LoadError> {
                     &semantic.to_string(),
                     &accessor,
                     required,
+                    buffers,
                 )?;
             }
             if let Some(accessor) = primitive.indices() {
-                check_primitive_accessor(&mesh, &primitive, "indices", &accessor, &INDEX_ENCODING)?;
+                check_primitive_accessor(
+                    &mesh,
+                    &primitive,
+                    "indices",
+                    &accessor,
+                    &INDEX_ENCODING,
+                    buffers,
+                )?;
             }
         }
     }
@@ -738,6 +752,7 @@ fn check_primitive_accessor(
     attribute: &str,
     accessor: &gltf::Accessor<'_>,
     required: &ReaderEncoding,
+    buffers: &[Vec<u8>],
 ) -> Result<(), LoadError> {
     if !encoding_matches(accessor, required) {
         return Err(LoadError::PrimitiveEncoding {
@@ -753,7 +768,7 @@ fn check_primitive_accessor(
             expected: describe_encoding(required),
         });
     }
-    if let Some(problem) = unreadable_layout(accessor) {
+    if let Some(problem) = unreadable_primitive_layout(accessor, buffers) {
         return Err(LoadError::PrimitiveAccessorLayout {
             mesh: mesh.index(),
             primitive: primitive.index(),
@@ -763,6 +778,45 @@ fn check_primitive_accessor(
         });
     }
     Ok(())
+}
+
+/// Why a modeled primitive accessor cannot be walked against both the JSON
+/// declarations and the bytes that buffer resolution actually returned.
+fn unreadable_primitive_layout(
+    accessor: &gltf::Accessor<'_>,
+    buffers: &[Vec<u8>],
+) -> Option<String> {
+    unreadable_layout(accessor).or_else(|| {
+        if let Some(view) = accessor.view()
+            && let Some(problem) = loaded_buffer_shortfall("elements", &view, buffers)
+        {
+            return Some(problem);
+        }
+        let sparse = accessor.sparse()?;
+        loaded_buffer_shortfall("sparse indices", &sparse.indices().view(), buffers)
+            .or_else(|| loaded_buffer_shortfall("sparse values", &sparse.values().view(), buffers))
+    })
+}
+
+/// A resolved external file, data URI, or GLB BIN chunk can be shorter than
+/// the buffer's declared `byteLength`. `gltf` slices the complete view before
+/// walking an accessor, so even a smaller accessor extent cannot be decoded
+/// when that declared view extends beyond the bytes that actually loaded.
+fn loaded_buffer_shortfall(
+    subject: &str,
+    view: &gltf::buffer::View<'_>,
+    buffers: &[Vec<u8>],
+) -> Option<String> {
+    let view_end = view_end(view)?;
+    let buffer_index = view.buffer().index();
+    let loaded_length = buffers.get(buffer_index).map_or(0, Vec::len);
+    (view_end > loaded_length).then(|| {
+        format!(
+            "reads its {subject} from buffer view {}, whose byte extent ends at {view_end} \
+             beyond loaded buffer {buffer_index}'s {loaded_length} bytes",
+            view.index()
+        )
+    })
 }
 
 /// One sampler accessor of one animation channel the loader reads: its
@@ -892,13 +946,15 @@ fn unreadable_layout(accessor: &gltf::Accessor<'_>) -> Option<String> {
 /// overflows on arbitrary input — a panic in a debug build, and a wrong
 /// extent in a release one.
 ///
-/// No read of a view's bytes in this loader escapes that answer. The image
-/// path slices through this function directly. Every reader-driven read is
-/// gated instead: the reader would perform the same unchecked add itself,
-/// so [`unwalkable`] asks this before the reader is ever built — for a
+/// No read of a view's declared extent in this loader escapes that answer.
+/// The image path slices through this function directly. Every reader-driven
+/// read is gated instead: the reader would perform the same unchecked add
+/// itself, so [`unwalkable`] asks this before the reader is ever built — for a
 /// primitive slot in [`check_primitive_accessor`], for a skin's
-/// `inverseBindMatrices` in [`inverse_bind_is_readable`], and for an
-/// animation sampler's `input` and `output` in [`check_sampler_accessor`].
+/// `inverseBindMatrices` in [`inverse_bind_is_readable`], and for an animation
+/// sampler's `input` and `output` in [`check_sampler_accessor`]. Primitive
+/// slots additionally compare the result with the resolved buffer length in
+/// [`loaded_buffer_shortfall`].
 fn view_end(view: &gltf::buffer::View<'_>) -> Option<usize> {
     view.offset().checked_add(view.length())
 }
@@ -1113,8 +1169,8 @@ pub fn load_bytes(path: &Path, bytes: &[u8]) -> Result<Document, LoadError> {
     validate_glb_framing(bytes)?;
     let gltf = gltf::Gltf::from_slice(bytes)?;
     validate_animations(&gltf.document)?;
-    validate_primitive_accessors(&gltf.document)?;
     let buffers = resolve_buffers(&gltf, path.parent())?;
+    validate_primitive_accessors(&gltf.document, &buffers)?;
     // Derive the node topology once and share it: the skeleton build and
     // asset extraction must agree on which bone each node became, and it is
     // also where malformed graphs are rejected (so that runs once too).

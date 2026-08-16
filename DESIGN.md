@@ -117,8 +117,9 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   count mismatch, zero-key channels, absolute or escaping external
   buffer URIs, non-forest node graphs (cycles or a node with two
   parents), or a primitive accessor whose dense or sparse byte extent its
-  declared buffer view cannot satisfy, or an animation sampler accessor whose
-  declared element does not match its property-selected reader — is rejected
+  declared buffer view or resolved buffer bytes cannot satisfy, or an
+  animation sampler accessor whose declared element does not match its
+  property-selected reader — is rejected
   at load (operator error, exit 2; run glTF-Validator for the details).
   Recovering a non-forest graph would force an arbitrary parent choice or
   silently drop a cyclic subtree, so the loader rejects rather than repairs

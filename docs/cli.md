@@ -214,8 +214,9 @@ Two other shapes are refused with the same `mesh N primitive M` message: an
 accessor typed for a different element than the slot that references it (a
 `VEC3` `TEXCOORD_0`), and one whose buffer layout the reader cannot walk (a
 `byteStride` shorter than its own element, a `sparse` block of count 0, or a
-dense/sparse byte extent beyond its declared buffer view). Short extents are
-refused rather than silently loaded as empty positions or indices, so a clean
+dense/sparse byte extent beyond its declared buffer view or the external,
+data-URI, or GLB bytes that actually resolved). Short extents are refused
+rather than silently loaded as empty positions or indices, so a clean
 measurement never substitutes absent geometry for unreadable authored values.
 Those are invalid glTF rather than an unsupported feature, and the fix
 belongs at the source. The [Khronos

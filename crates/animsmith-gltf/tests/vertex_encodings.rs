@@ -166,6 +166,9 @@ struct Primitive {
     preceding_meshes: usize,
     /// Filler primitives emitted ahead of this one inside its own mesh.
     preceding_primitives: usize,
+    /// Override the JSON buffer's declared length without changing the bytes
+    /// carried by its data URI.
+    declared_buffer_length: Option<usize>,
 }
 
 impl Primitive {
@@ -179,6 +182,7 @@ impl Primitive {
             inverse_bind: None,
             preceding_meshes: 0,
             preceding_primitives: 0,
+            declared_buffer_length: None,
         };
         let positions = primitive.push(Accessor {
             accessor_type: "VEC3",
@@ -338,6 +342,11 @@ impl Primitive {
         self.layout(|layout| layout.view_extent = extent)
     }
 
+    fn declared_buffer_length(mut self, length: usize) -> Self {
+        self.declared_buffer_length = Some(length);
+        self
+    }
+
     fn sparse(self, sparse: Sparse) -> Self {
         self.layout(|layout| layout.sparse = Some(sparse))
     }
@@ -446,7 +455,7 @@ impl Primitive {
                     "data:application/octet-stream;base64,{}",
                     base64::engine::general_purpose::STANDARD.encode(&blob)
                 ),
-                "byteLength": blob.len().max(1)
+                "byteLength": self.declared_buffer_length.unwrap_or_else(|| blob.len().max(1))
             }],
             "bufferViews": views,
             "accessors": accessors,
@@ -1129,6 +1138,21 @@ fn loader_refuses_a_position_count_beyond_its_buffer_view() {
             "mesh 0 primitive 0 POSITION: accessor 1 walks 100 elements of 12 bytes at \
              byteStride 12 from byteOffset 0, requiring byte extent 1200 beyond buffer view \
              1's byteLength 36",
+        );
+}
+
+#[test]
+fn loader_refuses_a_view_that_exceeds_the_resolved_buffer_bytes() {
+    positions_with_own_view()
+        .declared_count(100)
+        .view_extent(ViewExtent {
+            byte_offset: None,
+            byte_length: Some(1200),
+        })
+        .declared_buffer_length(1236)
+        .expect_layout_refusal(
+            "mesh 0 primitive 0 POSITION: accessor 1 reads its elements from buffer view 1, \
+             whose byte extent ends at 1236 beyond loaded buffer 0's 72 bytes",
         );
 }
 
