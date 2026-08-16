@@ -83,6 +83,19 @@ fn example_assets_match_generator_output() {
     }
 }
 
+#[test]
+fn canonical_character_assembly_example_keeps_all_property_pruning_disabled() {
+    let recipe: toml::Value =
+        toml::from_str(include_str!("../../../examples/character-assembly.toml"))
+            .expect("canonical character-assembly example parses as TOML");
+
+    assert_eq!(
+        recipe["prune_constant_tracks"].as_bool(),
+        Some(false),
+        "all-property pruning can remove completion-generated transition coverage"
+    );
+}
+
 // --- 2. Documented commands still behave as the cookbook shows -------
 //
 // Covers every command in examples/README.md that runs against the
