@@ -35,6 +35,18 @@ fail() {
   exit 1
 }
 
+grep -Fq \
+  "if: \${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && vars.RELEASE_PLZ_ARMED == 'true' }}" \
+  .github/workflows/release-plz.yml \
+  || fail "release-pr dispatch must be restricted to refs/heads/main"
+echo "ok: release-pr dispatch is restricted to main"
+
+grep -Fq \
+  "if: \${{ github.event_name == 'push' && vars.RELEASE_PLZ_ARMED == 'true' }}" \
+  .github/workflows/release-plz.yml \
+  || fail "release publishing must remain restricted to push events"
+echo "ok: release publishing is restricted to push events"
+
 # Verify a `<digest>  <name>` sidecar with the standard checksum tool the
 # way a downstream user would (cwd must hold both sidecar and archive).
 sha256_verify() {
