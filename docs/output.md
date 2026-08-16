@@ -85,7 +85,7 @@ asset with `animsmith measure --format json` before passing it to `diff`.
   "schema": "urn:animsmith:schema:output:6",
   "tool": {
     "name": "animsmith",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "source": {
       "revision": "0123456789abcdef0123456789abcdef01234567",
       "dirty": false
@@ -132,7 +132,7 @@ field names and schema identity rather than parsing the text write summary.
   "schema": "urn:animsmith:schema:conversion-evidence:2",
   "tool": {
     "name": "animsmith",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "source": { "revision": null, "dirty": null }
   },
   "command": "convert",
@@ -742,7 +742,7 @@ delta count, and structured metric deltas:
   "schema": "urn:animsmith:schema:output:6",
   "tool": {
     "name": "animsmith",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "source": { "revision": null, "dirty": null }
   },
   "command": "diff",
