@@ -21,6 +21,14 @@ single call, matching `animsmith-fbx`. Consumers that judge only
 animation ignore `assets`; `measure` reports mesh-level measurements
 from it and `convert` carries it through.
 
+Primitive accessors must be fully readable within their declared dense and
+sparse buffer views and the external, data-URI, or GLB bytes that actually
+resolve. A short `POSITION`, index, or modeled attribute is a located
+`LoadError::PrimitiveAccessorLayout`, never an empty-vector fallback; this
+keeps authored empty geometry distinct from geometry the loader could not
+read. Unreadable inverse binds remain explicit source-skeleton evidence rather
+than a load refusal because that sidecar models their availability directly.
+
 Animation sampler accessors are checked against the reader selected by their
 slot and target property before decoding. Key times require `SCALAR`/`FLOAT`,
 translation and scale require `VEC3`/`FLOAT`, and rotation retains all five

@@ -166,6 +166,9 @@ struct Primitive {
     preceding_meshes: usize,
     /// Filler primitives emitted ahead of this one inside its own mesh.
     preceding_primitives: usize,
+    /// Override the JSON buffer's declared length without changing the bytes
+    /// carried by its data URI.
+    declared_buffer_length: Option<usize>,
 }
 
 impl Primitive {
@@ -179,6 +182,7 @@ impl Primitive {
             inverse_bind: None,
             preceding_meshes: 0,
             preceding_primitives: 0,
+            declared_buffer_length: None,
         };
         let positions = primitive.push(Accessor {
             accessor_type: "VEC3",
@@ -338,6 +342,11 @@ impl Primitive {
         self.layout(|layout| layout.view_extent = extent)
     }
 
+    fn declared_buffer_length(mut self, length: usize) -> Self {
+        self.declared_buffer_length = Some(length);
+        self
+    }
+
     fn sparse(self, sparse: Sparse) -> Self {
         self.layout(|layout| layout.sparse = Some(sparse))
     }
@@ -446,7 +455,7 @@ impl Primitive {
                     "data:application/octet-stream;base64,{}",
                     base64::engine::general_purpose::STANDARD.encode(&blob)
                 ),
-                "byteLength": blob.len().max(1)
+                "byteLength": self.declared_buffer_length.unwrap_or_else(|| blob.len().max(1))
             }],
             "bufferViews": views,
             "accessors": accessors,
@@ -1122,6 +1131,120 @@ fn loader_refuses_a_count_whose_byte_extent_overflows() {
 }
 
 #[test]
+fn loader_refuses_a_position_count_beyond_its_buffer_view() {
+    positions_with_own_view()
+        .declared_count(100)
+        .expect_layout_refusal(
+            "mesh 0 primitive 0 POSITION: accessor 1 walks 100 elements of 12 bytes at \
+             byteStride 12 from byteOffset 0, requiring byte extent 1200 beyond buffer view \
+             1's byteLength 36",
+        );
+}
+
+#[test]
+fn loader_refuses_a_view_that_exceeds_the_resolved_buffer_bytes() {
+    positions_with_own_view()
+        .declared_count(100)
+        .view_extent(ViewExtent {
+            byte_offset: None,
+            byte_length: Some(1200),
+        })
+        .declared_buffer_length(1236)
+        .expect_layout_refusal(
+            "mesh 0 primitive 0 POSITION: accessor 1 reads its elements from buffer view 1, \
+             whose byte extent ends at 1236 beyond loaded buffer 0's 72 bytes",
+        );
+}
+
+#[test]
+fn loader_refuses_sparse_views_that_exceed_the_resolved_buffer_bytes() {
+    positions_with_own_view()
+        .sparse(
+            Sparse::replacing_first(f32s(&[9.0, 9.0, 9.0])).indices_view_extent(ViewExtent {
+                byte_offset: None,
+                byte_length: Some(100),
+            }),
+        )
+        .declared_buffer_length(200)
+        .expect_layout_refusal(
+            "mesh 0 primitive 0 POSITION: accessor 1 reads its sparse indices from buffer view 2, \
+             whose byte extent ends at 172 beyond loaded buffer 0's 88 bytes",
+        );
+
+    positions_with_own_view()
+        .sparse(
+            Sparse::replacing_first(f32s(&[9.0, 9.0, 9.0])).values_view_extent(ViewExtent {
+                byte_offset: None,
+                byte_length: Some(100),
+            }),
+        )
+        .declared_buffer_length(200)
+        .expect_layout_refusal(
+            "mesh 0 primitive 0 POSITION: accessor 1 reads its sparse values from buffer view 3, \
+             whose byte extent ends at 176 beyond loaded buffer 0's 88 bytes",
+        );
+}
+
+#[test]
+fn loader_refuses_an_accessor_byte_offset_beyond_its_buffer_view() {
+    positions_with_own_view()
+        .byte_offset(1000)
+        .expect_layout_refusal(
+            "mesh 0 primitive 0 POSITION: accessor 1 walks 3 elements of 12 bytes at \
+             byteStride 12 from byteOffset 1000, requiring byte extent 1036 beyond buffer \
+             view 1's byteLength 36",
+        );
+}
+
+#[test]
+fn loader_refuses_short_indices_without_hiding_the_intact_positions() {
+    Primitive::new()
+        .indices("SCALAR", UNSIGNED_BYTE, 3, u8s(&[0, 1, 2]))
+        .declared_count(50)
+        .expect_layout_refusal(
+            "mesh 0 primitive 0 indices: accessor 1 walks 50 elements of 1 bytes at \
+             byteStride 1 from byteOffset 0, requiring byte extent 50 beyond buffer view \
+             1's byteLength 3",
+        );
+}
+
+#[test]
+fn loader_refuses_a_short_extent_on_every_modeled_attribute() {
+    for (primitive, expected) in [
+        (
+            Primitive::new()
+                .attribute("NORMAL", "VEC3", FLOAT, 3, f32s(&[0.0; 9]))
+                .declared_count(4),
+            "mesh 0 primitive 0 NORMAL: accessor 1 walks 4 elements of 12 bytes at byteStride \
+             12 from byteOffset 0, requiring byte extent 48 beyond buffer view 1's byteLength 36",
+        ),
+        (
+            Primitive::new()
+                .attribute("TEXCOORD_0", "VEC2", FLOAT, 3, f32s(&[0.0; 6]))
+                .declared_count(4),
+            "mesh 0 primitive 0 TEXCOORD_0: accessor 1 walks 4 elements of 8 bytes at byteStride \
+             8 from byteOffset 0, requiring byte extent 32 beyond buffer view 1's byteLength 24",
+        ),
+        (
+            Primitive::new()
+                .attribute("JOINTS_0", "VEC4", UNSIGNED_SHORT, 3, u16s(&JOINT_VALUES))
+                .declared_count(4),
+            "mesh 0 primitive 0 JOINTS_0: accessor 1 walks 4 elements of 8 bytes at byteStride \
+             8 from byteOffset 0, requiring byte extent 32 beyond buffer view 1's byteLength 24",
+        ),
+        (
+            Primitive::new()
+                .attribute("WEIGHTS_0", "VEC4", FLOAT, 3, f32s(&WEIGHT_FLOATS))
+                .declared_count(4),
+            "mesh 0 primitive 0 WEIGHTS_0: accessor 1 walks 4 elements of 16 bytes at byteStride \
+             16 from byteOffset 0, requiring byte extent 64 beyond buffer view 1's byteLength 48",
+        ),
+    ] {
+        primitive.expect_layout_refusal(expected);
+    }
+}
+
+#[test]
 fn loader_refuses_a_sparse_count_whose_byte_extent_overflows() {
     // `sparse.count` is unbounded in exactly the same way, and is walked
     // over the index view before the accessor's own is touched.
@@ -1130,6 +1253,27 @@ fn loader_refuses_a_sparse_count_whose_byte_extent_overflows() {
         .expect_layout_refusal(
             "mesh 0 primitive 0 POSITION: accessor 1 walks 18446744073709551615 sparse indices \
              of 2 bytes at byteStride 2 from byteOffset 0, a byte extent that overflows",
+        );
+}
+
+#[test]
+fn loader_refuses_sparse_index_and_value_extents_beyond_their_views() {
+    positions_with_own_view()
+        .sparse(Sparse::replacing_first(f32s(&[9.0, 9.0, 9.0])).declaring_count(2))
+        .expect_layout_refusal(
+            "mesh 0 primitive 0 POSITION: accessor 1 walks 2 sparse indices of 2 bytes at \
+             byteStride 2 from byteOffset 0, requiring byte extent 4 beyond buffer view 2's \
+             byteLength 2",
+        );
+
+    let mut sparse = Sparse::replacing_first(f32s(&[9.0, 9.0, 9.0])).declaring_count(2);
+    sparse.indices = vec![0, 1];
+    positions_with_own_view()
+        .sparse(sparse)
+        .expect_layout_refusal(
+            "mesh 0 primitive 0 POSITION: accessor 1 walks 2 sparse values of 12 bytes at \
+             byteStride 12 from byteOffset 0, requiring byte extent 24 beyond buffer view \
+             3's byteLength 12",
         );
 }
 
@@ -1256,48 +1400,33 @@ fn a_sparse_accessor_with_a_nonzero_count_still_loads() {
 }
 
 #[test]
-fn a_view_extent_that_lands_exactly_on_usize_max_still_loads() {
-    // The over-rejection boundary of `view_end`. `byteOffset + byteLength`
-    // here is `usize::MAX` *exactly*: the last sum that still has an answer,
-    // so `checked_add` says `Some` and the file is not refused. The read
-    // then finds no bytes there and the slot loads empty, which is the
-    // documented short-read behaviour, not a refusal. Tightening `view_end`
-    // to `<` would turn this document into an error.
-    let primitive = positions_with_own_view()
+fn a_nonoverflowing_view_extent_beyond_its_buffer_is_still_refused() {
+    // The view's own sum is representable, so this pins the distinct
+    // view-versus-buffer boundary instead of passing through the overflow
+    // branch above.
+    positions_with_own_view()
         .view_extent(ViewExtent {
             byte_offset: Some(1 << 63),
             byte_length: Some((1 << 63) - 1),
         })
-        .expect_primitive();
-    assert!(primitive.positions.is_empty());
+        .expect_layout_refusal(
+            "mesh 0 primitive 0 POSITION: accessor 1 reads its elements from buffer view 1, \
+             whose byte extent ends at 18446744073709551615 beyond buffer 0's byteLength 72",
+        );
 }
 
 #[test]
-fn a_byte_offset_whose_trailing_element_lands_exactly_on_usize_max_still_loads() {
-    // The over-rejection boundary of the extent chain, one unit below
-    // `loader_refuses_a_byte_offset_whose_trailing_element_overflows`.
-    // `count` 1 contributes no stride multiply, so the whole extent is
-    // `byteOffset + 12` — `usize::MAX` exactly. Shifting the chain by one
-    // (`checked_sub(1)` to `checked_add(0)`, say) refuses this document.
-    let primitive = positions_with_own_view()
+fn a_nonoverflowing_accessor_extent_beyond_its_view_is_still_refused() {
+    // The accessor's own sum is representable, so this pins the short-view
+    // branch rather than the overflow branch immediately above it.
+    positions_with_own_view()
         .attribute("POSITION", "VEC3", FLOAT, 1, f32s(&[0.0, 0.0, 0.0]))
         .byte_offset(u64::MAX - 12)
-        .expect_primitive();
-    assert!(primitive.positions.is_empty());
-}
-
-#[test]
-fn a_count_that_overruns_its_buffer_view_still_loads_empty() {
-    // Pins the documented non-guarantee: only extent arithmetic that
-    // *overflows* is refused. A `count` that merely exceeds its 36-byte
-    // view makes `Iter::new` answer `None`, and `read_positions` is
-    // `unwrap_or_default()`, so the primitive is pushed with no geometry
-    // rather than refused. Changing that is a behaviour change, not a
-    // tightening of this check.
-    let primitive = positions_with_own_view()
-        .declared_count(100)
-        .expect_primitive();
-    assert!(primitive.positions.is_empty());
+        .expect_layout_refusal(
+            "mesh 0 primitive 0 POSITION: accessor 2 walks 1 elements of 12 bytes at \
+             byteStride 12 from byteOffset 18446744073709551603, requiring byte extent \
+             18446744073709551615 beyond buffer view 2's byteLength 12",
+        );
 }
 
 // --- The refusal names the slot it found ------------------------------

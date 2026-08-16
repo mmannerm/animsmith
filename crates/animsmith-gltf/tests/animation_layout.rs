@@ -516,7 +516,31 @@ fn sampler_output_whose_extent_overflows_is_refused() {
         );
 }
 
-// --- Shape 4: a `sparse` block of count 0 -----------------------------
+// --- Shape 4: an extent beyond its buffer view ------------------------
+
+#[test]
+fn sampler_input_whose_extent_exceeds_its_view_is_refused() {
+    Clip::new()
+        .input(|layout| layout.declared_count = Some(4))
+        .expect_layout_refusal(
+            "clip 'poisoned' node 0 sampler input: accessor 0 walks 4 elements of 4 bytes at \
+             byteStride 4 from byteOffset 0, requiring byte extent 16 beyond buffer view 0's \
+             byteLength 12",
+        );
+}
+
+#[test]
+fn sampler_output_whose_extent_exceeds_its_view_is_refused() {
+    Clip::new()
+        .output(|layout| layout.declared_count = Some(4))
+        .expect_layout_refusal(
+            "clip 'poisoned' node 0 sampler output: accessor 1 walks 4 elements of 16 bytes at \
+             byteStride 16 from byteOffset 0, requiring byte extent 64 beyond buffer view 1's \
+             byteLength 48",
+        );
+}
+
+// --- Shape 5: a `sparse` block of count 0 -----------------------------
 
 /// `sparse.count` of 0 underflows in `SparseIter`. Every count-zero guard in
 /// the loader reads `Accessor::count()`; none of them sees this one.

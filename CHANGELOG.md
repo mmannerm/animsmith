@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- *(gltf)* refuse primitive accessors whose dense or sparse byte extent their
+  declared buffer view or resolved buffer bytes cannot satisfy, instead of
+  silently retaining a primitive with empty positions or indices
+  ([#329](https://github.com/mmannerm/animsmith/issues/329))
 - *(gltf)* reject animation sampler accessors whose declared type or component
   type does not match the property-selected reader, preventing malformed
   inputs from panicking or silently reinterpreting same-sized elements while
