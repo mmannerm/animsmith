@@ -1157,6 +1157,35 @@ fn loader_refuses_a_view_that_exceeds_the_resolved_buffer_bytes() {
 }
 
 #[test]
+fn loader_refuses_sparse_views_that_exceed_the_resolved_buffer_bytes() {
+    positions_with_own_view()
+        .sparse(
+            Sparse::replacing_first(f32s(&[9.0, 9.0, 9.0])).indices_view_extent(ViewExtent {
+                byte_offset: None,
+                byte_length: Some(100),
+            }),
+        )
+        .declared_buffer_length(200)
+        .expect_layout_refusal(
+            "mesh 0 primitive 0 POSITION: accessor 1 reads its sparse indices from buffer view 2, \
+             whose byte extent ends at 172 beyond loaded buffer 0's 88 bytes",
+        );
+
+    positions_with_own_view()
+        .sparse(
+            Sparse::replacing_first(f32s(&[9.0, 9.0, 9.0])).values_view_extent(ViewExtent {
+                byte_offset: None,
+                byte_length: Some(100),
+            }),
+        )
+        .declared_buffer_length(200)
+        .expect_layout_refusal(
+            "mesh 0 primitive 0 POSITION: accessor 1 reads its sparse values from buffer view 3, \
+             whose byte extent ends at 176 beyond loaded buffer 0's 88 bytes",
+        );
+}
+
+#[test]
 fn loader_refuses_an_accessor_byte_offset_beyond_its_buffer_view() {
     positions_with_own_view()
         .byte_offset(1000)
