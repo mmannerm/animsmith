@@ -12199,41 +12199,42 @@ fn per_sample_work_units_charges_every_slot_primitive_and_document_side() {
     let affected: BTreeSet<BoneId> = [1, 2].into_iter().collect();
     let affected_skin_instances = affected_skin_instance_indices(&doc, &affected);
     assert_eq!(affected_skin_instances, vec![0, 1]);
+    assert_eq!(per_sample_work_units(&doc, &affected_skin_instances), 66);
+    // Without the obligation the caller passes an empty working set, so
+    // only the two forward-kinematics passes remain.
+    assert_eq!(per_sample_work_units(&doc, &[]), 6);
+}
 
-    // Pin each term independently so the full total below cannot hide a missing
-    // both-sides multiplier in one domain. Start with only the two skeleton
-    // walks, then add three skin slots with no vertices, then add one
-    // five-vertex primitive while keeping the skeleton and slots fixed.
-    let mut isolated = work_unit_document();
-    isolated.assets.instances.truncate(1);
-    isolated.assets.instances[0].skin_joints = vec![1, 1, 2];
-    isolated.assets.instances[0].skin_ibms = vec![Mat4::IDENTITY; 3];
-    isolated.assets.meshes[0].primitives.clear();
+#[test]
+fn per_sample_work_units_isolates_bone_slot_and_vertex_terms() {
+    // Start with only the two skeleton walks, then add three skin slots with
+    // no vertices, then add one five-vertex primitive while keeping the
+    // skeleton and slots fixed. These named boundaries keep the aggregate
+    // fixture above from hiding a missing both-sides multiplier in one term.
+    let mut doc = work_unit_document();
+    doc.assets.instances.truncate(1);
+    doc.assets.meshes[0].primitives.clear();
     assert_eq!(
-        per_sample_work_units(&isolated, &[]),
+        per_sample_work_units(&doc, &[]),
         6,
         "two sides times three bones"
     );
     assert_eq!(
-        per_sample_work_units(&isolated, &[0]),
+        per_sample_work_units(&doc, &[0]),
         15,
         "bone term 6 + slot products on two sides 6 + slot residuals 3"
     );
-    isolated.assets.meshes[0].primitives.push(Primitive {
+    doc.assets.meshes[0].primitives.push(Primitive {
         positions: vec![Vec3::ZERO; 5],
         joints: vec![[0; 4]; 5],
         weights: vec![[1.0, 0.0, 0.0, 0.0]; 5],
         ..Primitive::default()
     });
     assert_eq!(
-        per_sample_work_units(&isolated, &[0]),
+        per_sample_work_units(&doc, &[0]),
         25,
         "the five-vertex term adds exactly two sides times five"
     );
-    assert_eq!(per_sample_work_units(&doc, &affected_skin_instances), 66);
-    // Without the obligation the caller passes an empty working set, so
-    // only the two forward-kinematics passes remain.
-    assert_eq!(per_sample_work_units(&doc, &[]), 6);
 }
 
 #[test]

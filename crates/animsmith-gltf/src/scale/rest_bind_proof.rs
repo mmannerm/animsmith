@@ -902,14 +902,17 @@ mod tests {
     //! stale-candidate case — can only be falsified by making the artifact's
     //! own report or its own bytes disagree with what the rewriter produced.
     //!
-    //! Two are not corruption tests, and say so where they stand. The
+    //! Three are not corruption tests, and say so where they stand. The
     //! node-member residuals are exercised by calling
     //! [`check_node_transforms`] directly, because every node member this
     //! fixture rebases is also modelled by `prove_scale`, which runs first
     //! and would report its own residual instead. The inverse-bind
     //! joint-count claim is a classification test over a doctored raw tree,
     //! because `rewrite_rest_bind` refuses such a source before an artifact
-    //! exists — the same position its mirror in `rest_bind` is in.
+    //! exists — the same position its mirror in `rest_bind` is in. The
+    //! independent-factor test likewise constructs its analytic artifact by
+    //! hand because the writer's own alias guard correctly refuses the source
+    //! before the public artifact proof can reconcile proof-owned factors.
     //!
     //! The fixture is the DESIGN.md Appendix D §D.3 case 2 rig of
     //! `tests/scale_rest_bind.rs`, restated here as the smallest thing that
