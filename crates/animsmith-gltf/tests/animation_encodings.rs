@@ -228,7 +228,6 @@ fn every_property_selected_float_output_shape_still_loads() {
             Some(Property::Translation),
         ),
         ("scale", Encoding::new("VEC3", FLOAT), Some(Property::Scale)),
-        ("weights", Encoding::new("SCALAR", FLOAT), None),
     ] {
         let document = Clip::with_encodings(Encoding::new("SCALAR", FLOAT), output, property)
             .load()
@@ -240,6 +239,31 @@ fn every_property_selected_float_output_shape_still_loads() {
                 "morph weights remain intentionally unmodeled"
             ),
         }
+    }
+}
+
+#[test]
+fn every_decodable_weight_output_encoding_still_loads() {
+    for (name, output) in [
+        ("BYTE", Encoding::new("SCALAR", BYTE).normalized()),
+        (
+            "UNSIGNED_BYTE",
+            Encoding::new("SCALAR", UNSIGNED_BYTE).normalized(),
+        ),
+        ("SHORT", Encoding::new("SCALAR", SHORT).normalized()),
+        (
+            "UNSIGNED_SHORT",
+            Encoding::new("SCALAR", UNSIGNED_SHORT).normalized(),
+        ),
+        ("FLOAT", Encoding::new("SCALAR", FLOAT)),
+    ] {
+        let document = Clip::with_encodings(Encoding::new("SCALAR", FLOAT), output, "weights")
+            .load()
+            .unwrap_or_else(|error| panic!("{name} weight output must load: {error}"));
+        assert!(
+            document.clips[0].tracks.is_empty(),
+            "morph weights remain intentionally unmodeled ({name})"
+        );
     }
 }
 
@@ -318,16 +342,12 @@ fn every_sampler_slot_refuses_wrong_type_and_component_type() {
         ),
         (
             "weights wrong component",
-            Clip::with_encodings(
-                scalar_f32,
-                Encoding::new("SCALAR", UNSIGNED_SHORT).normalized(),
-                "weights",
-            ),
+            Clip::with_encodings(scalar_f32, Encoding::new("SCALAR", UNSIGNED_INT), "weights"),
             "weights",
             "output",
             1,
-            "SCALAR of UNSIGNED_SHORT",
-            "SCALAR of FLOAT",
+            "SCALAR of UNSIGNED_INT",
+            "SCALAR of BYTE, UNSIGNED_BYTE, SHORT, UNSIGNED_SHORT, or FLOAT",
         ),
     ];
 
@@ -368,6 +388,65 @@ fn every_sampler_slot_refuses_wrong_type_and_component_type() {
             other => panic!("{name}: expected AnimationEncoding, got {other:?}"),
         }
     }
+}
+
+#[test]
+fn a_refusal_names_nonzero_animation_sampler_and_node_indices() {
+    let clip = Clip::with_encodings(
+        Encoding::new("SCALAR", FLOAT),
+        Encoding::new("VEC4", UNSIGNED_INT),
+        "rotation",
+    );
+    let mut document: Value =
+        serde_json::from_slice(&clip.to_json()).expect("parses synthetic glTF");
+
+    document["nodes"] = json!([{ "name": "decoy" }, { "name": "target" }]);
+    document["scenes"][0]["nodes"] = json!([0, 1]);
+
+    let mut valid_output = document["accessors"][1].clone();
+    valid_output["componentType"] = json!(FLOAT);
+    document["accessors"]
+        .as_array_mut()
+        .expect("accessors are an array")
+        .push(valid_output);
+
+    document["animations"] = json!([
+        {
+            "name": "decoy",
+            "samplers": [{ "input": 0, "output": 2, "interpolation": "LINEAR" }],
+            "channels": [{
+                "sampler": 0,
+                "target": { "node": 0, "path": "rotation" }
+            }]
+        },
+        {
+            "name": "poisoned",
+            "samplers": [
+                { "input": 0, "output": 2, "interpolation": "LINEAR" },
+                { "input": 0, "output": 1, "interpolation": "LINEAR" }
+            ],
+            "channels": [{
+                "sampler": 1,
+                "target": { "node": 1, "path": "rotation" }
+            }]
+        }
+    ]);
+
+    let bytes = serde_json::to_vec(&document).expect("serializes synthetic glTF");
+    let error = animsmith_gltf::load_bytes(std::path::Path::new("encoding.gltf"), &bytes)
+        .expect_err("the nonzero-index sampler must be refused");
+    assert!(matches!(
+        error,
+        LoadError::AnimationEncoding {
+            animation: 1,
+            sampler: 1,
+            slot: "output",
+            node: 1,
+            property: "rotation",
+            accessor: 1,
+            ..
+        }
+    ));
 }
 
 #[test]

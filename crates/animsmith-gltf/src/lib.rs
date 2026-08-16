@@ -214,7 +214,7 @@ pub enum LoadError {
     /// element encoding the property-specific reader cannot decode. The
     /// reader always expects scalar `FLOAT` key times; outputs are `VEC3` of
     /// `FLOAT` for translation/scale, one of glTF's five `VEC4` quaternion
-    /// encodings for rotation, or scalar `FLOAT` for morph weights.
+    /// encodings for rotation and morph weights.
     #[error(
         "animation {animation} sampler {sampler} {slot} for node {node} {property}: accessor {accessor} is {found}, but the loader reads {expected}"
     )]
@@ -524,12 +524,20 @@ const ANIMATION_ROTATION_OUTPUT_ENCODING: ReaderEncoding = ReaderEncoding {
         ComponentType::F32,
     ],
 };
-/// Morph-weight outputs are scalar floats in core glTF. The loader does not
-/// retain them, but it still constructs the property-selected reader before
-/// skipping them, so their reader boundary must be safe too.
+/// Morph-weight outputs dispatch over the same five component encodings as
+/// rotations, but use scalar elements because one key contains one scalar per
+/// morph target. The loader does not retain them, but it still constructs the
+/// property-selected reader before skipping them, so their reader boundary
+/// must remain both safe and spec-complete.
 const ANIMATION_WEIGHT_OUTPUT_ENCODING: ReaderEncoding = ReaderEncoding {
     accessor_type: AccessorType::Scalar,
-    component_types: &[ComponentType::F32],
+    component_types: &[
+        ComponentType::I8,
+        ComponentType::U8,
+        ComponentType::I16,
+        ComponentType::U16,
+        ComponentType::F32,
+    ],
 };
 
 /// Reject sampler accessors whose declared element disagrees with the exact
