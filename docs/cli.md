@@ -233,6 +233,20 @@ $ animsmith lint poisoned-track.gltf
 animsmith: clip 'walk' node 3 sampler input: accessor 0 reads its elements from buffer view 0, whose byteOffset 18446744073709551615 plus byteLength 12 is a byte extent that overflows
 ```
 
+Sampler **element encodings** are checked independently before the selected
+reader is constructed. Inputs must be `SCALAR` of `FLOAT`; translation and
+scale outputs must be `VEC3` of `FLOAT`; rotation outputs must be `VEC4` and
+may use any of glTF's five decodable quaternion component types (`BYTE`,
+`UNSIGNED_BYTE`, `SHORT`, `UNSIGNED_SHORT`, or `FLOAT`); morph-weight output
+uses those same five component types as `SCALAR`. A mismatched type or
+component type is an operator error rather than a panic or a size-coincident
+reinterpretation:
+
+```console
+$ animsmith lint mistyped-track.gltf
+animsmith: animation 0 sampler 0 input for node 0 translation: accessor 0 is VEC3 of FLOAT, but the loader reads SCALAR of FLOAT
+```
+
 ## Feature Flags
 
 The default binary enables `fbx` and `report`.
