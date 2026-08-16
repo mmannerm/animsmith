@@ -24,8 +24,16 @@ leaving the branch without a pull request.
 
 ## Per-release flow (steady state)
 
+During release freeze, default new work to the next milestone. Promote
+only reproducible correctness, safety, public-contract, or documentation
+blockers, plus genuinely small mutation-strengthening tests; record why
+shipping is riskier than changing.
+
 1. Merge feature/fix PRs to `main` as usual (Conventional Commits).
-2. When `main` is ready to release, manually dispatch the release workflow:
+2. Perform one release-wide documentation-freshness sweep over the root
+   and crate READMEs, `docs/`, `examples/`, and current version/status
+   claims. Preserve clearly historical references.
+3. When `main` is ready to release, manually dispatch the release workflow:
 
    ```console
    gh workflow run release-plz.yml --ref main
@@ -38,7 +46,7 @@ leaving the branch without a pull request.
    changelog. Ordinary pushes to `main` never create or update this PR.
    If another change merges to `main` while the release PR is open, dispatch
    the workflow again before merging so the version and changelog include it.
-3. Review that PR. When you merge it, the `release` job runs on the resulting
+4. Review that PR. When you merge it, the `release` job runs on the resulting
    push to `main`, tags the release, creates the GitHub Release, and publishes
    every crate to crates.io in dependency order (`animsmith-core` →
    `-gltf`/`-fbx`/`-report` → `animsmith`).

@@ -1,10 +1,12 @@
 ## Summary
 
 <!-- What changed, and why? -->
+<!-- State the user outcome, invariants, non-goals, and simplest maintainable end state. -->
 
 ## Documentation Impact
 
 - [ ] Documentation impact checked against `CONTRIBUTING.md`.
+- [ ] Stakeholder guides, examples, and current version/status claims searched.
 - [ ] Relevant docs updated in this PR.
 - [ ] No user-visible documentation change is required.
 - [ ] Follow-up `type:docs` issue linked: <!-- #issue -->
@@ -20,6 +22,7 @@
 
 ## Audit
 
+- [ ] Exact HEAD SHA and gate evidence recorded before external audits.
 - [ ] Audit checklist run for substantial changes.
 - [ ] Not substantial; audit not required.
 

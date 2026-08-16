@@ -10,6 +10,12 @@ All changes land through pull requests. Keep each PR focused on one
 behavioral or documentation goal, and prefer follow-up issues over
 expanding a PR after review has started.
 
+Before coding, state the user outcome, invariants, non-goals, and
+simplest maintainable end state if the change were designed today.
+Inspect related issues and existing authorities before adding a new
+concept. Focus means one coherent outcome, not the smallest diff;
+prefer a larger coherent refactor over preserving duplicate authority.
+
 Use this lifecycle for non-trivial changes:
 
 1. Start from current `main`.
@@ -57,9 +63,17 @@ Documentation impact includes:
 - Machine-readable JSON output or schema ids.
 - Public Rust symbols, crate features, loader boundaries, or README
   claims.
+- Task guides, tutorials, example projects, and current version or
+  project-status claims.
 - Check ids, severities, thresholds, config keys, or measurement
   semantics.
 - Release, support, security, or contributor workflows.
+
+Review the complete affected stakeholder journey, not only files named
+by the issue or touched by the implementation. Search the root and crate
+READMEs, `docs/`, `examples/`, rustdoc, and release/process docs for
+superseded commands, identifiers, schemas, versions, examples, and
+status claims. Preserve clearly historical references.
 
 Mechanical freshness checks cover the parts that are cheap and reliable:
 schema URL consistency, GitHub community files and PR-template coverage,
