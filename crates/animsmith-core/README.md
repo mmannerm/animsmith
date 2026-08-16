@@ -11,8 +11,8 @@ panic/error contracts.
 
 ```toml
 [dependencies]
-animsmith-core = "0.1"
-animsmith-gltf = "0.1"
+animsmith-core = "0.2"
+animsmith-gltf = "0.2"
 ```
 
 ## Feature Flags

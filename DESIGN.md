@@ -1,6 +1,6 @@
 # animsmith — design & requirements
 
-Status: v0.1 publishing design. Intended to keep the public crate and
+Status: pre-1.0 publishing design. Intended to keep the public crate and
 CLI surface aligned while the project is still willing to make breaking
 changes.
 Origin: extracted from a private game project's animation pipeline

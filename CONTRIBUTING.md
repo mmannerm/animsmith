@@ -111,7 +111,7 @@ Use `type:*` labels to describe the work area:
 - `type:chore` for maintenance work.
 
 Use `priority:high`, `priority:medium`, or `priority:low` when priority
-is known. Put pre-publish work in the active `0.1.0` milestone unless a
+is known. Put pre-release work in the active release milestone unless a
 maintainer chooses another milestone.
 
 ## Merge Policy
