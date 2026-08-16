@@ -213,8 +213,8 @@ pub enum LoadError {
     /// An animation sampler's `input` or `output` accessor declares an
     /// element encoding the property-specific reader cannot decode. The
     /// reader always expects scalar `FLOAT` key times; outputs are `VEC3` of
-    /// `FLOAT` for translation/scale, one of glTF's five `VEC4` quaternion
-    /// encodings for rotation and morph weights.
+    /// `FLOAT` for translation/scale, or one of glTF's five component
+    /// encodings as `VEC4` rotation and scalar morph weights.
     #[error(
         "animation {animation} sampler {sampler} {slot} for node {node} {property}: accessor {accessor} is {found}, but the loader reads {expected}"
     )]
