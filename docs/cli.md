@@ -237,7 +237,8 @@ Sampler **element encodings** are checked independently before the selected
 reader is constructed. Inputs must be `SCALAR` of `FLOAT`; translation and
 scale outputs must be `VEC3` of `FLOAT`; rotation outputs must be `VEC4` and
 may use any of glTF's five decodable quaternion component types (`BYTE`,
-`UNSIGNED_BYTE`, `SHORT`, `UNSIGNED_SHORT`, or `FLOAT`). A mismatched type or
+`UNSIGNED_BYTE`, `SHORT`, `UNSIGNED_SHORT`, or `FLOAT`); morph-weight output
+uses those same five component types as `SCALAR`. A mismatched type or
 component type is an operator error rather than a panic or a size-coincident
 reinterpretation:
 

@@ -124,7 +124,8 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   the loader rejects rather than repairs (decision recorded for #92).
   Sampler input is `SCALAR`/`FLOAT`; translation and scale output are
   `VEC3`/`FLOAT`; rotation output retains all five glTF quaternion encodings
-  (`BYTE`, `UNSIGNED_BYTE`, `SHORT`, `UNSIGNED_SHORT`, `FLOAT`) as `VEC4`.
+  (`BYTE`, `UNSIGNED_BYTE`, `SHORT`, `UNSIGNED_SHORT`, `FLOAT`) as `VEC4`,
+  and morph-weight output retains those same component encodings as `SCALAR`.
   Declared lookalikes are never reinterpreted merely because their byte size
   happens to match the reader's element (decision recorded for #327).
   *Semantic* defects — NaN times or values, non-unit quaternions,

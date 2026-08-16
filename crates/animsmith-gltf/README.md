@@ -24,8 +24,9 @@ from it and `convert` carries it through.
 Animation sampler accessors are checked against the reader selected by their
 slot and target property before decoding. Key times require `SCALAR`/`FLOAT`,
 translation and scale require `VEC3`/`FLOAT`, and rotation retains all five
-decodable glTF `VEC4` quaternion encodings; mismatches return a located
-`LoadError` rather than panicking or reinterpreting same-sized bytes.
+decodable glTF component encodings as `VEC4`, while morph-weight output retains
+the same five as `SCALAR`; mismatches return a located `LoadError` rather than
+panicking or reinterpreting same-sized bytes.
 
 For glTF/GLB measurement, the loader also provides a source-resource sidecar:
 source-order material definitions, semantic texture bindings, texture-to-image
