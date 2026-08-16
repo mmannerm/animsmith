@@ -16,6 +16,14 @@ invariants).
 This workflow is written to be followable by any agent (Claude, Codex,
 …) as a checklist; nothing in it requires a specific skill runner.
 
+## Freeze gate
+
+Before launching cold or external review passes, finish the author
+self-review, PR body, documentation-freshness sweep, and local gates;
+record the exact HEAD SHA. If HEAD changes, stop in-flight audits,
+revalidate the amendment locally, and resume the same reviewer sessions
+against the delta. Do not keep an audit running against a stale head.
+
 ## Inputs you must locate
 
 1. **The draft PR and its description.** `gh pr view <N> --json
@@ -28,13 +36,17 @@ This workflow is written to be followable by any agent (Claude, Codex,
    title,body`. Their acceptance criteria are part of the intent
    contract and feed the claims ledger (step 2).
 3. **Diff under review.** `git diff origin/main...HEAD` (or `gh pr diff <N>`).
-4. **Build + test status.** Run them yourself; do not trust prior claims.
+4. **Build + test status.** Build evidence is keyed by commit SHA, not by
+   reviewer. Reuse a complete captured result for the exact HEAD when its
+   command, output, and exit status are available; otherwise run it. Do
+   not repeat identical gates solely to make each reviewer compile the
+   same commit independently.
 
 ## Required workflow
 
 ### 1. Build, test, lint
 
-Run and capture the output:
+Obtain and capture an exact-head result for:
 
 ```
 just gates
@@ -48,6 +60,10 @@ CLI build.) If the diff touches measurement code (`metrics.rs`,
 either way. Any non-zero exit code is a hard fail. Report the exact
 error and BLOCK.
 
+Record the tested HEAD SHA with the result. Rerun after any HEAD change;
+reviewer independence comes from reading the raw artifacts and reaching
+an independent verdict, not from duplicating the same build.
+
 ### 2. PR-description intent adherence — the audit-specific check
 
 **Clarity gate.** Read the PR body. If it's too vague to audit against
@@ -57,6 +73,11 @@ usable description names:
 - What behaviour changes (or is added) from the user's perspective.
 - For new features, the design choice picked during discovery.
 - Any deliberately out-of-scope items.
+
+Scan the issue and PR body for universal or exactness claims such as
+"all", "every", "exact", "unchanged", "byte-for-byte", or an
+algorithmic bound. Require exhaustive evidence or a mechanical bound;
+otherwise narrow the claim before review continues.
 
 **Delivery check — the claims ledger, delegated cold.** This is the
 one pass most prone to author bias: on your own PR you read the tests
@@ -80,15 +101,17 @@ If your environment cannot spawn subagents, run `intent-criteria.md`
 against the three artifacts yourself in a separate, clean pass — discard
 your mental model first and work only from the diff.
 
-**Docs-freshness check.** If the diff makes or changes an architectural
-decision (new crate, new check tier, changed measurement semantics, new
-public contract), verify `DESIGN.md` was updated in the same PR. If the
-diff changes a claim made by a crate-local README (public symbols or
-signatures, feature flags, loader/report boundaries, or linked doc
-paths/anchors), verify that README was updated in the same PR or a
-`type:docs` issue/comment tracks the update. An untracked
-decision-level or README-claim mismatch is a *delivery gap*. Diffs that
-touch neither: state "docs freshness: not applicable".
+**Docs-freshness check.** Apply `CONTRIBUTING.md`'s documentation-impact
+list to the complete affected stakeholder journey, not only files named
+by the issue. Search the root and crate READMEs, task guides, CLI/output
+docs, `examples/`, tutorials, rustdoc, and release/process docs for
+superseded commands, identifiers, schemas, versions, examples, links,
+and status claims. Execute changed stakeholder-facing examples or add a
+drift check when practical. Architectural decisions still require
+`DESIGN.md`. Update mismatches in the PR or track them with a focused
+`type:docs` issue/comment; an untracked mismatch is a *delivery gap*.
+If no stakeholder-facing claim or workflow is affected, state "docs
+freshness: not applicable".
 
 ### 3. Run a bug-focused code review
 
@@ -210,7 +233,7 @@ agent attribution line at the bottom of the comment.
 rows as `claim → proving line → buggy impl that still passes`, with
 file:line refs.
 
-**Docs freshness:** DESIGN.md updated (§) / crate READMEs updated / issue filed #NNN / not applicable / delivery gap.
+**Docs freshness:** affected stakeholder docs/examples checked and updated / issue filed #NNN / not applicable / delivery gap.
 
 **Code review:** summary or link to the code-review pass.
 

@@ -57,3 +57,14 @@ next to it:
 For the code-review pass, use the strongest review surface available in
 your environment. Address all blockers before reporting a PR as ready
 for a maintainer merge decision.
+
+## Review Economy
+
+- Follow the audit skill's freeze gate before starting external review.
+- Keep one persistent session per reviewer and PR. Resume it for amended
+  heads instead of reloading the full context in a new session.
+- Use the lowest model and reasoning effort adequate to the risk: low
+  for documentation, tests, and narrow deltas; medium for ordinary code;
+  high for numerical proof, security, untrusted input, or public-contract
+  changes.
+- Poll an active process for status; do not relaunch the same work.
