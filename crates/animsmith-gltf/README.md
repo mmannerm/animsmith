@@ -140,8 +140,8 @@ one core plan through the adapter.
 
 ```toml
 [dependencies]
-animsmith-core = "0.1"
-animsmith-gltf = "0.1"
+animsmith-core = "0.2"
+animsmith-gltf = "0.2"
 ```
 
 The compiling load/check and repair examples live in the crate-level API

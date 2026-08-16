@@ -31,7 +31,7 @@ Evaluating animsmith for your team? Start with
 [why animsmith](https://github.com/mmannerm/animsmith/blob/main/docs/why-animsmith.md)
 — what it is, why it exists, and what it is worth by role.
 
-**Status: pre-1.0, publishing candidate.** The CLI and crates are tested
+**Status: pre-1.0.** The CLI and crates are tested
 on Linux, macOS, and Windows. The Rust API is still experimental, while
 the most stable automation contracts are check ids, exit codes, and the
 versioned JSON envelope.
@@ -65,11 +65,11 @@ For Rust pipelines, depend on the crates you need:
 
 ```toml
 [dependencies]
-animsmith-core = "0.1"
-animsmith-gltf = "0.1"
+animsmith-core = "0.2"
+animsmith-gltf = "0.2"
 # Optional:
-animsmith-fbx = "0.1"
-animsmith-report = "0.1"
+animsmith-fbx = "0.2"
+animsmith-report = "0.2"
 ```
 
 Published API documentation uses these stable docs.rs URLs:

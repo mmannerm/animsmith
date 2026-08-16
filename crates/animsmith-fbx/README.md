@@ -20,8 +20,8 @@ format-independent model.
 
 ```toml
 [dependencies]
-animsmith-core = "0.1"
-animsmith-fbx = "0.1"
+animsmith-core = "0.2"
+animsmith-fbx = "0.2"
 ```
 
 The compiling load/check example lives in the crate-level API documentation.

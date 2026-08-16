@@ -22,11 +22,11 @@ The `animsmith` crate is the CLI binary, not a library facade.
 
 ```toml
 [dependencies]
-animsmith-core = "0.1"
-animsmith-gltf = "0.1"
+animsmith-core = "0.2"
+animsmith-gltf = "0.2"
 # Optional:
-animsmith-fbx = "0.1"
-animsmith-report = "0.1"
+animsmith-fbx = "0.2"
+animsmith-report = "0.2"
 ```
 
 docs.rs is the canonical reference for published APIs. The stable package
@@ -157,9 +157,10 @@ vocabulary by using namespaced custom codes such as `acme:input_unavailable`.
 The public built-in-code slices are available to consumers that need to
 enumerate or allow-list animsmith-owned codes.
 
-For v0.1, prefer the crate-root flow: loader → role resolution → `Config` →
-`MetricGrids` → measurements/checks → findings. The durable automation
-contracts are deliberately narrower than the pre-1.0 Rust API:
+For the current pre-1.0 API, prefer the crate-root flow: loader → role
+resolution → `Config` → `MetricGrids` → measurements/checks → findings. The
+durable automation contracts are deliberately narrower than the pre-1.0 Rust
+API:
 
 - built-in check ids used by config and findings;
 - CLI exit codes and the versioned
