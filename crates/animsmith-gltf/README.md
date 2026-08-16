@@ -126,7 +126,8 @@ from a caller-selected raw source skin/root hierarchy while preserving its
 world joint translations and orientations, sampled trajectories, and skinned
 geometry. It derives node, animation, and inverse-bind multipliers from the
 compiled plan's canonical raw topology and edits the source JSON and buffers
-directly.
+directly. Authored node rotations are outside this scale/length write set, so
+artifact proof requires their parsed JSON values to remain exact.
 
 `rewrite_scale_plan` is the common plan-taking writer boundary for both scale
 operations. `prove_rewritten_artifact` and `prove_rewritten_rest_bind` reload

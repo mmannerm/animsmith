@@ -23,7 +23,9 @@ base64 = { workspace = true }
 glam = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
+# Raw artifact proof compares parsed JSON values across a serialize/reload
+# boundary, so every finite input number must round-trip to the same `f64`.
+serde_json = { workspace = true, features = ["float_roundtrip"] }
 image = { workspace = true }
 
 [dev-dependencies]

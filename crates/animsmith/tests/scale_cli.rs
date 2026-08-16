@@ -218,6 +218,18 @@ fn rest_bind_scale_rig_with_non_finite_inverse_bind_glb() -> Vec<u8> {
     asset
 }
 
+fn rest_bind_scale_rig_gltf_with_near_zero_joint_rotation() -> Vec<u8> {
+    const AUTHORED_ROTATION: &str =
+        "[1.7028635168614414e-9,7.312918715030037e-9,-0.10423537343740463,0.9945526719093323]";
+    let mut value: Value = serde_json::from_slice(&rest_bind_scale_rig_gltf())
+        .expect("the synthetic glTF has a JSON document");
+    value["nodes"][1]["rotation"] = Value::String("__AUTHORED_ROTATION__".into());
+    String::from_utf8(serde_json::to_vec(&value).expect("fixture JSON serializes"))
+        .expect("fixture JSON is UTF-8")
+        .replace("\"__AUTHORED_ROTATION__\"", AUTHORED_ROTATION)
+        .into_bytes()
+}
+
 fn read_json(path: &Path) -> Value {
     serde_json::from_slice(&std::fs::read(path).expect("reads JSON")).expect("valid JSON")
 }
@@ -621,6 +633,64 @@ fn the_json_gltf_container_publishes_the_same_rewrite_and_records_its_container(
         "the container is preserved"
     );
     serde_json::from_slice::<Value>(&published).expect("the artifact is JSON glTF");
+}
+
+#[test]
+fn rest_bind_cli_preserves_near_zero_joint_rotation_components_exactly() {
+    const AUTHORED_X: f64 = 1.7028635168614414e-9;
+    let fixture = Fixture::new();
+    std::fs::write(
+        fixture.path("near-zero.gltf"),
+        rest_bind_scale_rig_gltf_with_near_zero_joint_rotation(),
+    )
+    .expect("writes the synthetic raw JSON fixture");
+
+    let output = rest_bind_paths(
+        &fixture,
+        "near-zero.gltf",
+        "near-zero-out.gltf",
+        "near-zero-evidence.json",
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    let artifact = read_json(&fixture.path("near-zero-out.gltf"));
+    assert_eq!(
+        artifact["nodes"][0]["scale"],
+        serde_json::json!([1.0, 1.0, 1.0]),
+        "the published artifact contains the rest/bind root-scale rewrite"
+    );
+    assert_eq!(
+        artifact["nodes"][1]["translation"],
+        serde_json::json!([0.0, 1.0, 0.0]),
+        "the published artifact contains the rest/bind joint-translation rewrite"
+    );
+    assert_eq!(
+        artifact["nodes"][1]["rotation"][0]
+            .as_f64()
+            .expect("rotation component is numeric")
+            .to_bits(),
+        AUTHORED_X.to_bits()
+    );
+    let evidence = read_json(&fixture.path("near-zero-evidence.json"));
+    assert_eq!(
+        evidence["result"]["artifact"]["rewritten_json_pointers"],
+        serde_json::json!([
+            "/nodes/0/scale",
+            "/nodes/1/translation",
+            "/nodes/2/translation"
+        ]),
+        "the rest/bind conversion runs while rotation remains outside its write set"
+    );
+    assert_eq!(
+        evidence["result"]["artifact"]["reencoded_buffers"],
+        serde_json::json!([0]),
+        "the scale-bearing data-URI buffer is re-encoded"
+    );
 }
 
 #[test]

@@ -61,17 +61,13 @@
 //! `indexmap` into the dependency graph and reorder [`crate::write`]'s output,
 //! moving existing golden tests for an unrelated reason.
 //!
-//! Converted numbers are narrowed to `f32` exactly once and written back as
-//! the shortest decimal that round-trips that `f32`, so the JSON and the
-//! buffer payloads live in the same numeric regime the glTF schema declares
-//! and the artifact reloads without a second rounding.
-//!
-//! Writing the `f32`'s full `f64` widening instead would be both longer and
-//! *less* stable: `serde_json`'s number parser is not correctly rounded, so
-//! `-0.029999999329447746` (the exact widening of `-0.03f32`) reads back as
-//! `-0.029999999329447743`. Both narrow to the same `f32`, which is why this
-//! is a formatting choice rather than a correctness one — but the short form
-//! keeps the emitted diff readable and survives its own round trip.
+//! Correctly rounded JSON parsing is part of this preservation boundary:
+//! `serde_json`'s `float_roundtrip` feature guarantees that `ryu`'s shortest
+//! finite `f64` spelling reparses to the same value. Converted numbers are
+//! narrowed to `f32` exactly once and written back as the shortest decimal
+//! that round-trips that `f32`, so the JSON and buffer payloads live in the
+//! same numeric regime the glTF schema declares. Writing the `f32`'s full
+//! `f64` widening would be longer without carrying more model information.
 
 mod bytes;
 mod container;

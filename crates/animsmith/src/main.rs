@@ -975,7 +975,14 @@ fn load_measurements(
     if ext == "json" {
         let text = std::fs::read_to_string(path)
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        let report: MeasurementReportInput = serde_json::from_str(&text)
+        // Correctly rounded parsing is required by glTF raw-value proof. Keep
+        // the released measurement diagnostic by first retaining any finite
+        // JSON number in the generic representation, then decoding typed
+        // fields; a value outside `f32` reaches contract validation as
+        // non-finite evidence instead of becoming a parser error.
+        let value = serde_json::from_str(&text)
+            .map_err(|e| format!("bad JSON in {}: {e}", path.display()))?;
+        let report: MeasurementReportInput = serde_json::from_value(value)
             .map_err(|e| format!("bad JSON in {}: {e}", path.display()))?;
         // Only the current output-v6 envelope with measurement contract v12 is
         // accepted. Older report shapes are intentionally not retained while
@@ -1149,10 +1156,8 @@ mod tests {
 
     #[test]
     fn diff_owns_remediation_for_invalid_measurements() {
-        // Workspace test builds enable serde_json's `float_roundtrip` through
-        // a dev dependency and reject f32 overflow while parsing. Shipped
-        // binaries can instead reach this branch, so construct the public
-        // typed error to pin CLI policy independently of feature unification.
+        // Construct the public typed error directly so this test pins CLI
+        // policy independently of which malformed input first exposes it.
         let error = MeasurementReportError::File {
             file_index: 0,
             source: MeasurementFileError::InvalidMeasurements {

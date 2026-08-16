@@ -118,6 +118,9 @@ gates: require-cargo-deny require-typos
     cargo fmt --all --check
     cargo clippy --workspace --all-targets -- -D warnings
     cargo check --workspace --examples
+    # Dev-only schema validation also enables this serde_json feature during
+    # tests. Pin it independently in the shipped glTF dependency graph.
+    cargo tree -p animsmith-gltf --edges features,no-dev | grep -F 'serde_json feature "float_roundtrip"'
     cargo test --workspace
     bash scripts/check-golden-skip-marker.sh
     cargo deny check
