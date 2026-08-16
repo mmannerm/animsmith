@@ -1809,6 +1809,43 @@ mod tests {
     }
 
     #[test]
+    fn a_changed_joint_rotation_is_still_an_exact_raw_json_failure() {
+        let mut fixture_json = fixture_json(&fixture_buffer(), true);
+        fixture_json["nodes"][1]["rotation"] = json!([1.0e-9, 0.0, 0.0, 1.0]);
+        let (source, mut artifact, plan) = fixture_from_value(&fixture_json);
+        let mut value = artifact_value(&artifact);
+        let before = value["nodes"][1]["rotation"][0]
+            .as_f64()
+            .expect("rotation component is numeric");
+        value["nodes"][1]["rotation"][0] = json!(f64::from_bits(before.to_bits() + 1));
+        put_artifact_value(&mut artifact, &value);
+        match prove_rewritten_rest_bind(&source, &artifact, &plan) {
+            Err(GltfScaleRewriteError::ArtifactProofFailed {
+                claim,
+                observed,
+                tolerance,
+                raw_json_differences: Some(summary),
+            }) => {
+                assert_eq!(
+                    claim,
+                    "every raw JSON location outside the rewritten set is preserved exactly"
+                );
+                assert_eq!(observed, 1.0);
+                assert_eq!(tolerance, 0.0);
+                assert_eq!(
+                    summary.differences,
+                    [super::super::GltfRawJsonDifference {
+                        pointer: "/nodes/1/rotation/0".into(),
+                        kind: super::super::GltfRawJsonDifferenceKind::ValueChanged,
+                    }]
+                );
+                assert_eq!(summary.omitted, 0);
+            }
+            other => panic!("expected an exact raw rotation failure, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn bytes_that_are_not_the_rewriters_own_output_fail_the_determinism_claim() {
         // Same JSON value, different bytes. Every claim that reads the
         // artifact through `serde_json` still passes, so nothing but the

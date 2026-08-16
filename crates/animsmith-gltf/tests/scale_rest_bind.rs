@@ -711,6 +711,37 @@ fn the_rebased_artifact_proves_and_reports_its_evidence() {
 }
 
 #[test]
+fn rest_bind_preserves_near_zero_joint_rotation_components_exactly() {
+    // These are authored f32 values from the downstream rig that exposed
+    // issue #399. Without serde_json's correctly rounded parser, serializing
+    // and reparsing the first component moves it by one f64 ULP even though
+    // the rest/bind writer never selected rotation for rewriting.
+    const AUTHORED_ROTATION: &str =
+        "[1.7028635168614414e-9,7.312918715030037e-9,-0.10423537343740463,0.9945526719093323]";
+    let (mut value, _) = rig("LINEAR");
+    value["nodes"][1]["rotation"] = json!("__AUTHORED_ROTATION__");
+    let source_bytes = String::from_utf8(bytes(&value))
+        .expect("fixture JSON is UTF-8")
+        .replace("\"__AUTHORED_ROTATION__\"", AUTHORED_ROTATION)
+        .into_bytes();
+    let source =
+        preflight_scale_source_bytes(Path::new("near-zero-joint-rotation.gltf"), &source_bytes)
+            .expect("near-zero joint rotation should preflight");
+    let plan = plan_for(&source, 0.01);
+    let artifact =
+        rewrite_rest_bind(&source, 0, 0, 0.01).expect("near-zero joint rotation should rebase");
+    let authored_rotation: Value =
+        serde_json::from_str(AUTHORED_ROTATION).expect("authored rotation is valid JSON");
+
+    let (artifact_json, _) = artifact_parts(&artifact);
+
+    assert_eq!(source.raw_json()["nodes"][1]["rotation"], authored_rotation);
+    assert_eq!(artifact_json["nodes"][1]["rotation"], authored_rotation);
+    prove_rewritten_rest_bind(&source, &artifact, &plan)
+        .expect("an unselected authored rotation remains exactly preserved");
+}
+
+#[test]
 fn a_wide_raw_hierarchy_proves_unaffected_world_rest_by_bone_identity() {
     let mut buffer = rig_buffer("LINEAR");
     let mut value = rig_json("LINEAR", &buffer);

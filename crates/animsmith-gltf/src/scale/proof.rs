@@ -586,11 +586,11 @@ fn check_accessor_bounds(
                         },
                     );
                 // Compared in `f32`, the model glTF actually declares for
-                // `min`/`max`: a JSON number is `f64` in transit but a float
-                // in the schema, and `serde_json`'s parser is not correctly
-                // rounded, so an `f64` comparison here would fail on a
-                // last-place artefact of re-reading a value that is exact in
-                // the model that matters.
+                // `min`/`max`: a JSON number is `f64` in transit, but its
+                // shortest decimal spelling need not equal the full `f64`
+                // widening of the represented `f32`. Comparing in `f64`
+                // would therefore test lexical transit precision rather than
+                // the model value that matters.
                 let declared = after as f32;
                 let bounds_data = if is_min {
                     declared <= observed

@@ -2653,6 +2653,48 @@ fn diff_accepts_single_file_measure_report_round_trip() {
 }
 
 #[test]
+fn diff_keeps_regeneration_guidance_for_finite_json_outside_f32() {
+    let dir = unique_temp_dir("diff-f32-overflow-guidance");
+    let asset = fixture("rig.gltf");
+    let report_path = dir.path().join("measure.json");
+
+    let measured = animsmith()
+        .args([
+            "measure",
+            asset.to_str().expect("utf-8 fixture path"),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("runs animsmith");
+    assert!(measured.status.success(), "stderr:\n{}", stderr(&measured));
+    let mut report: Value =
+        serde_json::from_slice(&measured.stdout).expect("measurement output is JSON");
+    report["files"][0]["measurements"]["skeleton_nodes"][0]["local_rest"]["translation_parent_space_m"]
+        [0] = json!(1e39_f64);
+    write_json(&report_path, &report);
+
+    let output = animsmith()
+        .args([
+            "diff",
+            report_path.to_str().expect("utf-8 report path"),
+            asset.to_str().expect("utf-8 fixture path"),
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stdout(&output).is_empty());
+    let error = stderr(&output);
+    assert!(
+        error.contains("must be finite; regenerate it from the original asset"),
+        "stderr:\n{error}"
+    );
+    assert!(!error.contains("bad JSON"), "stderr:\n{error}");
+    assert!(!error.contains("number out of range"), "stderr:\n{error}");
+}
+
+#[test]
 fn diff_accepts_single_file_lint_report_round_trip() {
     let dir = unique_temp_dir("diff-lint-round-trip");
     let asset = fixture("rig.gltf");
