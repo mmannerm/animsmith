@@ -46,9 +46,19 @@ shipping is riskier than changing.
    changelog. Ordinary pushes to `main` never create or update this PR.
    If another change merges to `main` while the release PR is open, dispatch
    the workflow again before merging so the version and changelog include it.
-4. Review that PR. When you merge it, the `release` job runs on the resulting
-   push to `main`, tags the release, creates the GitHub Release, and publishes
-   every crate to crates.io in dependency order (`animsmith-core` →
+4. Review that PR. The glTF writer records the package version in
+   `asset.generator`, so regenerate and commit the version-stamped example
+   assets from the release PR branch before merging:
+
+   ```console
+   cargo run -p animsmith --example gen_example_assets
+   cargo test -p animsmith --test examples_cookbook
+   ```
+
+   The cookbook drift guard fails if the committed bytes do not match the
+   release version. When you merge the PR, the `release` job runs on the
+   resulting push to `main`, tags the release, creates the GitHub Release, and
+   publishes every crate to crates.io in dependency order (`animsmith-core` →
    `-gltf`/`-fbx`/`-report` → `animsmith`).
    The follow-on `release_binaries` job calls `release-binaries.yml`,
    builds CLI archives from the tag, and uploads the archives plus

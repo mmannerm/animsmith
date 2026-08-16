@@ -1,5 +1,8 @@
 # animsmith-report
 
+> **Pre-1.0:** Breaking changes are expected between minor releases. Pin
+> dependency versions and review the release notes before upgrading.
+
 ## Overview
 
 `animsmith-report` renders animsmith findings into a single offline HTML

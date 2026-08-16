@@ -1,5 +1,8 @@
 # animsmith-core
 
+> **Pre-1.0:** Breaking changes are expected between minor releases. Pin
+> dependency versions and review the release notes before upgrading.
+
 ## Overview
 
 `animsmith-core` is animsmith's engine-agnostic library crate. This
