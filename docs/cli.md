@@ -288,12 +288,18 @@ takes from other FBX or glTF inputs. It writes a GLB and assembly-evidence JSON
 as a rollback-safe publication pair. The command owns generic asset transforms;
 source extraction, project policy, and publication remain consumer concerns.
 The current recipe/evidence pair is v3. Set `prune_constant_tracks = true` to
-remove only tracks proven constant after all other transforms; effective output
-clip `animates_bones` exact names are retained, while `required_bones` is never
-used as the carve-out. Evidence records every removed track and is empty when
-pruning is disabled or removes nothing. Root-level `remove_nodes` exact-names
-base nodes and removes their descendant closure after animation transforms;
-any surviving track, mesh-instance, or skin reference refuses the operation.
+remove only tracks proven constant after all other transforms, including track
+completion. Because this is all-property pruning, it can remove
+completion-generated `(bone, property)` coverage whose completed value is
+constant. Effective output clip `animates_bones` exact names are retained,
+while `required_bones` is never used as the carve-out. Evidence records every
+removed track and is empty when pruning is disabled or removes nothing. Leave
+pruning disabled where consumers need dense transition coverage and do not
+explicitly reset omitted properties; property-scoped selection is tracked in
+[#401](https://github.com/mmannerm/animsmith/issues/401).
+Root-level `remove_nodes` exact-names base nodes and removes their descendant
+closure after animation transforms; any surviving track, mesh-instance, or
+skin reference refuses the operation.
 It performs no material, texture, or mesh garbage collection. Recipe/evidence
 v1 and v2 remain immutable historical contracts.
 The recipe identity is

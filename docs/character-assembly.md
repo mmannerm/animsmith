@@ -41,7 +41,7 @@ remove_nodes = ["sword-placeholder"]
 complete_tracks = true
 canonicalize_skin = true
 ground_and_center = true
-prune_constant_tracks = true
+prune_constant_tracks = false
 fps = 30.0
 
 [[clips]]
@@ -118,9 +118,17 @@ are rejected.
 
 `prune_constant_tracks = true` removes tracks that the existing core constant-
 track predicate proves constant, after completion, quaternion cleanup, and all
-other assembly transforms. The carve-out uses the effective output clip's
-`animates_bones` exact names; it never uses `required_bones`, so declared motion
-evidence is preserved without retaining unrelated tracks. Set it to `false` or
+other assembly transforms. This is all-property pruning: it can remove
+completion-generated `(bone, property)` coverage when the completed value is
+constant, so it may undo part of `complete_tracks = true`. The carve-out uses
+the effective output clip's `animates_bones` exact names; it never uses
+`required_bones`, so declared motion evidence is preserved without retaining
+unrelated tracks. The canonical example leaves pruning disabled; opt in only
+after reviewing the completed clip and the consumer's transition behavior. A
+consumer that does not explicitly reset an omitted property during a transition
+can retain the outgoing clip's value, so leave pruning disabled where dense
+transition coverage matters until property-scoped selection is available (see
+[#401](https://github.com/mmannerm/animsmith/issues/401)). Set it to `false` or
 omit it to retain every otherwise eligible track.
 
 `remove_nodes = [...]` selects exact, case-sensitive names from the

@@ -503,8 +503,10 @@ they accumulate:
   never move comes from unbaked rig channels, baked controls, or "key
   everything" exports. It is harmless motion-wise but costs disk space and
   work in every blend the runtime evaluates — the `constant-track` check
-  reports it as a note, and the opt-in transform can remove strictly safe
-  candidates.
+  reports it as a note, and the opt-in transform can remove candidates that
+  are constant within the clip. Removal preserves that clip's standalone pose
+  but makes its `(bone, property)` coverage sparse; leave tracks intact when a
+  runtime transition does not explicitly reset omitted properties.
 
 ### Attachment nodes and inherited rest-world scale
 
@@ -618,13 +620,16 @@ The desired end state depends on intent:
 - a constant non-unit pin remains only when the rig/import contract requires it.
 
 After the `constant-track` note identifies redundant multi-key data,
-`transform --prune-constant-tracks` can remove the narrow safe subset: flat
+`transform --prune-constant-tracks` can remove flat
 translation, rotation, or scale tracks (vector tolerance `1e-4`,
 sign-invariant rotation tolerance `1e-3` radians). This is useful when a DCC
 keys every property or bakes controls into dense holds: the resulting clip has
-the same modeled motion with fewer evaluated channels and less animation data.
+the same standalone modeled motion with fewer evaluated channels and less
+animation data. As above, the sparser `(bone, property)` coverage can change
+runtime transition behavior when omitted properties are not explicitly reset.
 It prints each exact original track index so you can compare the source and
-result, then you should re-lint and preview the result in the target engine.
+result; review transition coverage, then re-lint and preview in the target
+engine.
 
 The transform refuses candidate tracks on `animates_bones` targets, when
 removal changes sampled local TRS or model-space position/rotation, or when
@@ -655,11 +660,12 @@ order; they are not general animation cleanup.
 | Missing runtime socket or IK target | `required-bones` | repair source rig / re-export | `[rig] required_bones` | [Structural rig contract](../examples/README.md#keeping-the-exported-rig-shape-stable) |
 | Attachment, socket, or helper imports at the wrong size | `rest-world-scale` | apply or rebake the unintended source hierarchy scale, then re-export | `[checks.rest-world-scale] node_selectors`, `expected_uniform_scale`, `uniform_scale_tolerance` | [Attachment nodes and inherited rest-world scale](#attachment-nodes-and-inherited-rest-world-scale) |
 | T-posed limb, static bone, wrong bind | `missing-bones`, `frozen-bone`, `bind-pose` | re-export | `[clips.<name>] animates_bones`, `[rig]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
-| Bloat, retargeter breakage | `constant-track`, `scale-keys`, `non-uniform-scale`, opt-in `constant-nonunit-scale` | inspect `constant-track`, then `transform --prune-constant-tracks` for safe candidates; otherwise clean/re-export in DCC | `[checks.<id>]` severity; `[clips.<name>] animates_bones` protects declared motion tracks | [Editing a clip](../examples/README.md#3-editing-a-clip) |
+| Bloat, retargeter breakage | `constant-track`, `scale-keys`, `non-uniform-scale`, opt-in `constant-nonunit-scale` | inspect `constant-track`, then use `transform --prune-constant-tracks` only after reviewing transition coverage; otherwise clean/re-export in DCC | `[checks.<id>]` severity; `[clips.<name>] animates_bones` protects declared motion tracks | [Editing a clip](../examples/README.md#3-editing-a-clip) |
 
 Where the repair column says *re-export*, that is deliberate: animsmith
-rewrites a clip only in ways whose correctness its own checks can
-verify. Lossless quaternion repairs and mechanical edits (slice,
+rewrites a clip only in ways whose within-clip correctness its own checks can
+verify. Runtime integration caveats, including sparse transition coverage,
+still apply. Lossless quaternion repairs and mechanical edits (slice,
 hold-extend, gait-anchor, duplicate-loop-endpoint removal, constant-track pruning, FBX→glTF conversion) qualify; artistic
 transformation — retargeting, motion editing — is DCC work and stays
 out of scope.
