@@ -400,15 +400,21 @@ fn a_refusal_names_nonzero_animation_sampler_and_node_indices() {
     let mut document: Value =
         serde_json::from_slice(&clip.to_json()).expect("parses synthetic glTF");
 
-    document["nodes"] = json!([{ "name": "decoy" }, { "name": "target" }]);
-    document["scenes"][0]["nodes"] = json!([0, 1]);
+    document["nodes"] = json!([
+        { "name": "decoy-0" },
+        { "name": "decoy-1" },
+        { "name": "decoy-2" },
+        { "name": "target" }
+    ]);
+    document["scenes"][0]["nodes"] = json!([0, 1, 2, 3]);
 
-    let mut valid_output = document["accessors"][1].clone();
+    let invalid_output = document["accessors"][1].clone();
+    let mut valid_output = invalid_output.clone();
     valid_output["componentType"] = json!(FLOAT);
     document["accessors"]
         .as_array_mut()
         .expect("accessors are an array")
-        .push(valid_output);
+        .extend([valid_output.clone(), valid_output, invalid_output]);
 
     document["animations"] = json!([
         {
@@ -423,11 +429,12 @@ fn a_refusal_names_nonzero_animation_sampler_and_node_indices() {
             "name": "poisoned",
             "samplers": [
                 { "input": 0, "output": 2, "interpolation": "LINEAR" },
-                { "input": 0, "output": 1, "interpolation": "LINEAR" }
+                { "input": 0, "output": 3, "interpolation": "LINEAR" },
+                { "input": 0, "output": 4, "interpolation": "LINEAR" }
             ],
             "channels": [{
-                "sampler": 1,
-                "target": { "node": 1, "path": "rotation" }
+                "sampler": 2,
+                "target": { "node": 3, "path": "rotation" }
             }]
         }
     ]);
@@ -439,11 +446,11 @@ fn a_refusal_names_nonzero_animation_sampler_and_node_indices() {
         error,
         LoadError::AnimationEncoding {
             animation: 1,
-            sampler: 1,
+            sampler: 2,
             slot: "output",
-            node: 1,
+            node: 3,
             property: "rotation",
-            accessor: 1,
+            accessor: 4,
             ..
         }
     ));
