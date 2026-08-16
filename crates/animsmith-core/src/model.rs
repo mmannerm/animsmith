@@ -1878,6 +1878,21 @@ mod tests {
             assets: complete_projection(vec![source_node(11, Some(99), Some(1))]),
             ..Document::default()
         };
+        // Exactly one unprojected row lies between projected child 11 and the
+        // genuinely missing parent 99. The strict `> unprojected_rows` guard
+        // must preserve the missing-parent classification; `>=` reports a
+        // cycle at this exact boundary instead.
+        let missing_projection_parent_at_cycle_bound = Document {
+            skeleton: Skeleton {
+                bones: vec![bone(None), bone(Some(0))],
+            },
+            assets: complete_projection(vec![
+                source_node(10, None, Some(0)),
+                source_node(11, Some(12), Some(1)),
+                source_node(12, Some(99), None),
+            ]),
+            ..Document::default()
+        };
         let cyclic_unprojected_parent = Document {
             skeleton: Skeleton {
                 bones: vec![bone(None), bone(Some(0))],
@@ -2085,6 +2100,11 @@ mod tests {
             (
                 "missing projection parent",
                 missing_projection_parent,
+                projection_error(11, SourceProjectionViolation::ParentSourceNodeMissing),
+            ),
+            (
+                "missing projection parent at cycle bound",
+                missing_projection_parent_at_cycle_bound,
                 projection_error(11, SourceProjectionViolation::ParentSourceNodeMissing),
             ),
             (

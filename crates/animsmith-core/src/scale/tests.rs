@@ -12206,6 +12206,38 @@ fn per_sample_work_units_charges_every_slot_primitive_and_document_side() {
 }
 
 #[test]
+fn per_sample_work_units_isolates_bone_slot_and_vertex_terms() {
+    // Start with only the two skeleton walks, then add three skin slots with
+    // no vertices, then add one five-vertex primitive while keeping the
+    // skeleton and slots fixed. These named boundaries keep the aggregate
+    // fixture above from hiding a missing both-sides multiplier in one term.
+    let mut doc = work_unit_document();
+    doc.assets.instances.truncate(1);
+    doc.assets.meshes[0].primitives.clear();
+    assert_eq!(
+        per_sample_work_units(&doc, &[]),
+        6,
+        "two sides times three bones"
+    );
+    assert_eq!(
+        per_sample_work_units(&doc, &[0]),
+        15,
+        "bone term 6 + slot products on two sides 6 + slot residuals 3"
+    );
+    doc.assets.meshes[0].primitives.push(Primitive {
+        positions: vec![Vec3::ZERO; 5],
+        joints: vec![[0; 4]; 5],
+        weights: vec![[1.0, 0.0, 0.0, 0.0]; 5],
+        ..Primitive::default()
+    });
+    assert_eq!(
+        per_sample_work_units(&doc, &[0]),
+        25,
+        "the five-vertex term adds exactly two sides times five"
+    );
+}
+
+#[test]
 fn sampled_proof_classifies_unrelated_skin_palettes_once() {
     let mut doc = compensated_document_with_unrelated_skin(Some(Mat4::IDENTITY));
     doc.assets.instances[1].skin_joints = vec![3; 10_000];

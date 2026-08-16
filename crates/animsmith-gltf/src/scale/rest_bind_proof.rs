@@ -902,14 +902,17 @@ mod tests {
     //! stale-candidate case — can only be falsified by making the artifact's
     //! own report or its own bytes disagree with what the rewriter produced.
     //!
-    //! Two are not corruption tests, and say so where they stand. The
+    //! Three are not corruption tests, and say so where they stand. The
     //! node-member residuals are exercised by calling
     //! [`check_node_transforms`] directly, because every node member this
     //! fixture rebases is also modelled by `prove_scale`, which runs first
     //! and would report its own residual instead. The inverse-bind
     //! joint-count claim is a classification test over a doctored raw tree,
     //! because `rewrite_rest_bind` refuses such a source before an artifact
-    //! exists — the same position its mirror in `rest_bind` is in.
+    //! exists — the same position its mirror in `rest_bind` is in. The
+    //! independent-factor test likewise constructs its analytic artifact by
+    //! hand because the writer's own alias guard correctly refuses the source
+    //! before the public artifact proof can reconcile proof-owned factors.
     //!
     //! The fixture is the DESIGN.md Appendix D §D.3 case 2 rig of
     //! `tests/scale_rest_bind.rs`, restated here as the smallest thing that
@@ -1165,6 +1168,96 @@ mod tests {
         empty_identity.count = 0;
         assert!(empty_scaled.is_identity());
         assert_eq!(empty_scaled.first_disagreement(&empty_identity), None);
+    }
+
+    #[test]
+    fn public_proof_rejects_one_accessor_with_disagreeing_independent_factors() {
+        // Both channels read accessor 5, but the child translation takes `s`
+        // while the closure-root translation takes one. All six authored
+        // values are zero, so either multiplier produces the same normalized
+        // animation and the core proof succeeds. That isolates the raw proof's
+        // independent factor reconciliation rather than relying on a numeric
+        // side effect to reject the fixture.
+        let mut source_buffer = fixture_buffer();
+        source_buffer[at::TRANSLATION..at::TRANSLATION + 24].copy_from_slice(&f32_bytes(&[0.0; 6]));
+        let mut source_value = fixture_json(&source_buffer, true);
+        source_value["animations"][0]["channels"]
+            .as_array_mut()
+            .expect("channels")
+            .push(json!({
+                "sampler": 0,
+                "target": { "node": 0, "path": "translation" }
+            }));
+
+        let source_bytes = serde_json::to_vec(&source_value).expect("source serializes");
+        let source = preflight_scale_source_bytes(
+            Path::new("proof-factor-disagreement.gltf"),
+            &source_bytes,
+        )
+        .expect("the aliased source preflights");
+        let operation = ScaleOperation::RestBindUniformScale {
+            source_skin_index: 0,
+            source_root_node_index: 0,
+            expected_factor: FACTOR,
+        };
+        let plan = plan_scale(&ScaleRequest {
+            operation,
+            document: source.document(),
+            capability: &super::super::capability_facts(source.manifest()),
+        })
+        .expect("the normalized document plans because zero values satisfy both uses");
+
+        // Construct the analytically rebased artifact directly. In
+        // particular, do not call the writer: its own alias guard rejects
+        // this source, and using it as an oracle would never reach the public
+        // artifact proof whose independent claim this regression protects.
+        let mut artifact_value = source_value;
+        artifact_value["nodes"][0]["scale"] = json!([1.0, 1.0, 1.0]);
+        artifact_value["nodes"][1]["translation"] = json!([0.0, 1.0, 0.0]);
+        artifact_value["nodes"][2]["translation"] = json!([0.01, 0.0, 0.0]);
+        let mut artifact_buffer = source_buffer;
+        let rebased_inverse_bind = [
+            1.0, 0.0, 0.0, 0.0, //
+            0.0, 1.0, 0.0, 0.0, //
+            0.0, 0.0, 1.0, 0.0, //
+            0.0, -1.0, 0.0, 1.0,
+        ];
+        artifact_buffer[at::INVERSE_BIND..at::INVERSE_BIND + 64]
+            .copy_from_slice(&f32_bytes(&rebased_inverse_bind));
+        artifact_value["buffers"][0]["uri"] = json!(data_uri(&artifact_buffer));
+        let artifact = GltfScaleArtifact {
+            container: crate::GltfContainerKind::Gltf,
+            bytes: serde_json::to_vec(&artifact_value).expect("artifact serializes"),
+            rewritten_accessors: vec![3, 5],
+            rewritten_json_pointers: vec![
+                "/nodes/0/scale".into(),
+                "/nodes/1/translation".into(),
+                "/nodes/2/translation".into(),
+            ],
+            reencoded_buffers: vec![0],
+            affected_source_nodes: vec![0, 1, 2],
+            affected_source_skins: vec![0],
+            declared_factor: FACTOR,
+            operation,
+        };
+
+        match prove_rewritten_rest_bind(&source, &artifact, &plan) {
+            Err(GltfScaleRewriteError::ArtifactProofFailed {
+                claim,
+                observed,
+                tolerance,
+                raw_json_differences,
+            }) => {
+                assert_eq!(
+                    claim,
+                    "one accessor has one independently derived rest/bind factor"
+                );
+                assert_eq!(observed, 5.0, "raw accessor 5 owns both claims");
+                assert_eq!(tolerance, 0.0);
+                assert_eq!(raw_json_differences, None);
+            }
+            other => panic!("expected proof-owned accessor-factor disagreement, got {other:?}"),
+        }
     }
 
     #[test]
