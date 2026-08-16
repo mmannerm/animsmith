@@ -112,7 +112,7 @@ jobs:
     # manual v0.1.0 release there is no baseline tag, so an ungated manual
     # dispatch would open a spurious release PR. After arming, this job still
     # runs only when a maintainer explicitly dispatches the workflow.
-    if: ${{ github.event_name == 'workflow_dispatch' && vars.RELEASE_PLZ_ARMED == 'true' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && vars.RELEASE_PLZ_ARMED == 'true' }}
     runs-on: ubuntu-latest
     # Never cancel a half-written release PR.
     concurrency:
