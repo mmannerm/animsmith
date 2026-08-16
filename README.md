@@ -31,10 +31,12 @@ Evaluating animsmith for your team? Start with
 [why animsmith](https://github.com/mmannerm/animsmith/blob/main/docs/why-animsmith.md)
 — what it is, why it exists, and what it is worth by role.
 
-**Status: pre-1.0.** The CLI and crates are tested
-on Linux, macOS, and Windows. The Rust API is still experimental, while
-the most stable automation contracts are check ids, exit codes, and the
-versioned JSON envelope.
+> **Pre-1.0:** Breaking changes are expected between minor releases. Pin
+> dependency and CLI versions, and review the release notes before upgrading.
+
+The CLI and crates are tested on Linux, macOS, and Windows. The Rust API is
+still experimental, while the most stable automation contracts are check ids,
+exit codes, and the versioned JSON envelope.
 
 ## Install
 
