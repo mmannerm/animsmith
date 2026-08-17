@@ -772,6 +772,18 @@ fn cli_measure_publishes_a_canonical_multi_joint_uniform_summary() {
             })
             .collect::<Vec<_>>();
         assert_ne!(factors[0], factors[1], "joint factors must be distinct");
+        let raw_matrices = skin["inverse_bind_accessor"]["matrices"]
+            .as_array()
+            .expect("raw inverse-bind matrices");
+        assert_eq!(raw_matrices.len(), joints.len());
+        for (slot, joint) in joints.iter().enumerate() {
+            for field in ["joint_bind_to_mesh", "mesh_bind_world"] {
+                assert_eq!(
+                    joint[field]["source_inverse_bind_matrix"], raw_matrices[slot],
+                    "joint slot {slot} {field} retains its exact raw accessor matrix"
+                );
+            }
+        }
         factors.sort_by(f64::total_cmp);
         assert_eq!(
             factors
@@ -864,6 +876,13 @@ fn cli_measure_marks_absent_and_singular_inverse_binds_without_substitution() {
         singular_skin["joints"][0]["joint_bind_to_mesh"]["unavailable_reason"],
         "inverse_bind_matrix_non_invertible"
     );
+    let singular_raw = singular_skin["inverse_bind_accessor"]["matrices"][0].clone();
+    for field in ["joint_bind_to_mesh", "mesh_bind_world"] {
+        assert_eq!(
+            singular_skin["joints"][0][field]["source_inverse_bind_matrix"], singular_raw,
+            "singular derivation still retains raw evidence in {field}"
+        );
+    }
     assert!(
         singular_skin["joints"][0]["joint_bind_to_mesh"]
             .get("matrix")

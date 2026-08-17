@@ -770,7 +770,7 @@ delta count, and structured metric deltas:
 ```
 
 `diff` accepts asset files or one-file v7 `measure`/`lint` reports carrying
-measurement contract v12. v11 reports are historical and are rejected with
+measurement contract v13. v12 and earlier reports are historical and are rejected with
 guidance to regenerate them from the original asset. Multi-file reports and
 other unsupported contract versions are also rejected as operator errors.
 Before extracting the clip metrics it uses,

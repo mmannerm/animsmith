@@ -1203,6 +1203,28 @@ fn measurement_contract_rejects_inconsistent_skeleton_source_evidence() {
     );
     invalid(
         &|assets| {
+            assets.skins[0].joints[0]
+                .joint_bind_to_mesh
+                .matrix
+                .as_mut()
+                .expect("derived inverse")[12] = 1.0;
+        },
+        "skins[0].joints[0].joint_bind_to_mesh",
+        "a trustworthy source inverse-bind matrix requires its exact inverse",
+    );
+    invalid(
+        &|assets| {
+            assets.skins[0].joints[0]
+                .mesh_bind_world
+                .matrix
+                .as_mut()
+                .expect("derived mesh bind")[12] = 1.0;
+        },
+        "skins[0].joints[0].mesh_bind_world",
+        "mesh_bind_world must equal joint_rest_world times the source inverse bind",
+    );
+    invalid(
+        &|assets| {
             assets.skins[0].joints[0].mesh_bind_world.unavailable_reason =
                 Some(SkinDerivedMatrixUnavailableReason::JointRestWorldUnavailable);
         },

@@ -3734,18 +3734,72 @@ mod tests {
                 "{actual} != {expected}"
             );
         }
+
+        let shear = Mat4::from_cols_array(&[
+            1.0, 0.0, 0.0, 0.0, // first column
+            1.0, 1.0, 0.0, 0.0, // second column
+            0.0, 0.0, 1.0, 0.0, // third column
+            0.0, 0.0, 0.0, 1.0,
+        ]);
+        let quality = assess_inverse_bind(shear)
+            .quality
+            .expect("finite affine shear has quality");
+        assert_eq!(
+            quality.reciprocal_condition_number_inf, 0.25,
+            "infinity-norm conditioning includes off-diagonal row sums"
+        );
     }
 
     #[test]
     fn inverse_bind_assessment_distinguishes_non_affine_singular_and_ill_conditioned() {
-        let mut non_affine = Mat4::IDENTITY.to_cols_array();
-        non_affine[3] = 0.1;
-        let non_affine = assess_inverse_bind(Mat4::from_cols_array(&non_affine));
-        assert_eq!(
-            non_affine.inverse,
-            Err(SkinDerivedMatrixUnavailableReason::InverseBindMatrixNonAffine)
-        );
-        assert_eq!(non_affine.quality, None);
+        let inside_zero = INVERSE_BIND_AFFINE_TOLERANCE as f32;
+        let outside_zero = f32::from_bits(inside_zero.to_bits() + 1);
+        assert!(f64::from(inside_zero) <= INVERSE_BIND_AFFINE_TOLERANCE);
+        assert!(f64::from(outside_zero) > INVERSE_BIND_AFFINE_TOLERANCE);
+        for slot in [3, 7, 11] {
+            for value in [inside_zero, -inside_zero] {
+                let mut affine = Mat4::IDENTITY.to_cols_array();
+                affine[slot] = value;
+                assert!(
+                    assess_inverse_bind(Mat4::from_cols_array(&affine))
+                        .inverse
+                        .is_ok(),
+                    "bottom-row slot {slot} accepts signed values inside the tolerance"
+                );
+            }
+            for value in [outside_zero, -outside_zero] {
+                let mut non_affine = Mat4::IDENTITY.to_cols_array();
+                non_affine[slot] = value;
+                let assessment = assess_inverse_bind(Mat4::from_cols_array(&non_affine));
+                assert_eq!(
+                    assessment.inverse,
+                    Err(SkinDerivedMatrixUnavailableReason::InverseBindMatrixNonAffine),
+                    "bottom-row slot {slot} rejects signed values outside the tolerance"
+                );
+                assert_eq!(assessment.quality, None);
+            }
+        }
+        let inside_one = 1.0 + INVERSE_BIND_AFFINE_TOLERANCE as f32;
+        let outside_one = f32::from_bits(inside_one.to_bits() + 1);
+        assert!((f64::from(inside_one) - 1.0).abs() <= INVERSE_BIND_AFFINE_TOLERANCE);
+        assert!((f64::from(outside_one) - 1.0).abs() > INVERSE_BIND_AFFINE_TOLERANCE);
+        for value in [inside_one, 2.0 - inside_one] {
+            let mut affine = Mat4::IDENTITY.to_cols_array();
+            affine[15] = value;
+            assert!(
+                assess_inverse_bind(Mat4::from_cols_array(&affine))
+                    .inverse
+                    .is_ok()
+            );
+        }
+        for value in [outside_one, 2.0 - outside_one] {
+            let mut non_affine = Mat4::IDENTITY.to_cols_array();
+            non_affine[15] = value;
+            assert_eq!(
+                assess_inverse_bind(Mat4::from_cols_array(&non_affine)).inverse,
+                Err(SkinDerivedMatrixUnavailableReason::InverseBindMatrixNonAffine)
+            );
+        }
 
         let singular = assess_inverse_bind(Mat4::from_scale(Vec3::new(1.0, 1.0, 0.0)));
         assert_eq!(
@@ -3772,5 +3826,30 @@ mod tests {
                 .reciprocal_condition_number_inf,
             1.0e-7_f32 as f64
         );
+
+        for (shear, expected_reason) in [
+            (
+                999.0,
+                Some(SkinDerivedMatrixUnavailableReason::InverseBindMatrixIllConditioned),
+            ),
+            (998.0, None),
+        ] {
+            let matrix = Mat4::from_cols_array(&[
+                1.0, 0.0, 0.0, 0.0, shear, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+            ]);
+            let assessment = assess_inverse_bind(matrix);
+            let expected_quality = 1.0 / (1.0 + f64::from(shear)).powi(2);
+            assert_eq!(
+                assessment
+                    .quality
+                    .expect("affine shear has quality")
+                    .reciprocal_condition_number_inf,
+                expected_quality
+            );
+            match expected_reason {
+                Some(reason) => assert_eq!(assessment.inverse, Err(reason)),
+                None => assert!(assessment.inverse.is_ok()),
+            }
+        }
     }
 }
