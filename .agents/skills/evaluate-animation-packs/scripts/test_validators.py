@@ -530,6 +530,57 @@ class ManifestValidatorTests(unittest.TestCase):
             "motions[0].primary_role has unknown value: 'unknown-role'", errors
         )
 
+    def test_rejects_unknown_values_for_every_manifest_enum(self) -> None:
+        cases = (
+            (
+                "variant",
+                lambda manifest: manifest["motions"][0]["files"][0].__setitem__(  # type: ignore[index]
+                    "variant", "unknown-enum"
+                ),
+                "motions[0].files[0].variant has unknown value: 'unknown-enum'",
+            ),
+            (
+                "motion-classification-basis",
+                lambda manifest: manifest["motions"][0].__setitem__(  # type: ignore[index]
+                    "classification_basis", ["unknown-enum"]
+                ),
+                "motions[0].classification_basis contains unknown values: 'unknown-enum'",
+            ),
+            (
+                "runtime-set-classification-basis",
+                lambda manifest: manifest["runtime_sets"][0].__setitem__(  # type: ignore[index]
+                    "classification_basis", ["unknown-enum"]
+                ),
+                "runtime_sets[0].classification_basis contains unknown values: 'unknown-enum'",
+            ),
+            (
+                "profile-status",
+                lambda manifest: manifest["profiles"][1].__setitem__(  # type: ignore[index]
+                    "status", "unknown-enum"
+                ),
+                "profiles[blended-locomotion].status has unknown value: 'unknown-enum'",
+            ),
+            (
+                "activation-basis",
+                lambda manifest: manifest["profiles"][0].__setitem__(  # type: ignore[index]
+                    "activation_basis", "unknown-enum"
+                ),
+                "profiles[marketplace-intake].activation_basis is required for selected profiles",
+            ),
+            (
+                "pipeline-state",
+                lambda manifest: manifest["pipeline_stages"][0].__setitem__(  # type: ignore[index]
+                    "status", "unknown-enum"
+                ),
+                "pipeline_stages[acquire].status has unknown value: 'unknown-enum'",
+            ),
+        )
+        for name, mutate, expected in cases:
+            with self.subTest(enum=name):
+                manifest = valid_manifest_with_runtime_set()
+                mutate(manifest)
+                self.assertIn(expected, manifest_validator.validate_manifest(manifest))
+
     def test_rejects_unknown_runtime_set_confidence(self) -> None:
         manifest = valid_manifest_with_runtime_set()
         manifest["runtime_sets"][0]["confidence"] = "certain"  # type: ignore[index]
@@ -607,30 +658,33 @@ class ManifestValidatorTests(unittest.TestCase):
             "runtime_sets": 0,
         }
         for field in declared:
-            with self.subTest(field=field):
-                manifest = valid_manifest()
-                manifest["totals"][field] = declared[field] + 1  # type: ignore[index]
-
-                errors = manifest_validator.validate_manifest(manifest)
-
-                self.assertIn(
-                    "totals does not match motions, physical files, and runtime sets",
-                    errors,
-                )
-
-    def test_rejects_each_role_total_that_does_not_reconcile(self) -> None:
-        for role in V1_PRIMARY_ROLES:
-            for field in ("logical_motions", "delivered_files"):
-                with self.subTest(role=role, field=field):
+            for delta in (-1, 1):
+                with self.subTest(field=field, delta=delta):
                     manifest = valid_manifest()
-                    current = manifest["role_totals"][role][field]  # type: ignore[index]
-                    manifest["role_totals"][role][field] = current + 1  # type: ignore[index,operator]
+                    manifest["totals"][field] = declared[field] + delta  # type: ignore[index]
 
                     errors = manifest_validator.validate_manifest(manifest)
 
                     self.assertIn(
-                        "role_totals does not match totals derived from motions", errors
+                        "totals does not match motions, physical files, and runtime sets",
+                        errors,
                     )
+
+    def test_rejects_each_role_total_that_does_not_reconcile(self) -> None:
+        for role in V1_PRIMARY_ROLES:
+            for field in ("logical_motions", "delivered_files"):
+                for delta in (-1, 1):
+                    with self.subTest(role=role, field=field, delta=delta):
+                        manifest = valid_manifest()
+                        current = manifest["role_totals"][role][field]  # type: ignore[index]
+                        manifest["role_totals"][role][field] = current + delta  # type: ignore[index,operator]
+
+                        errors = manifest_validator.validate_manifest(manifest)
+
+                        self.assertIn(
+                            "role_totals does not match totals derived from motions",
+                            errors,
+                        )
 
     def test_validation_error_order_is_deterministic(self) -> None:
         manifest = valid_manifest()
@@ -648,6 +702,21 @@ class ManifestValidatorTests(unittest.TestCase):
                 "taxonomy_version must be '1'",
                 "role_totals does not match totals derived from motions",
                 "totals does not match motions, physical files, and runtime sets",
+            ],
+        )
+
+    def test_multiple_missing_identifier_errors_are_deterministic(self) -> None:
+        manifest = valid_manifest()
+        manifest["profiles"] = manifest["profiles"][2:]  # type: ignore[index]
+        manifest["pipeline_stages"] = manifest["pipeline_stages"][2:]  # type: ignore[index]
+
+        errors = manifest_validator.validate_manifest(manifest)
+
+        self.assertEqual(
+            errors,
+            [
+                "profiles is missing: blended-locomotion, marketplace-intake",
+                "pipeline_stages is missing: acquire, preserve-raw",
             ],
         )
 
@@ -688,6 +757,46 @@ class ManifestValidatorTests(unittest.TestCase):
                 errors = manifest_validator.validate_manifest(manifest)
 
                 self.assertIn(f"{field} must be an array", errors)
+
+    def test_rejects_non_array_nested_collections(self) -> None:
+        cases = (
+            (
+                "motion-tags",
+                lambda manifest: manifest["motions"][0].__setitem__("tags", {}),  # type: ignore[index]
+                "motions[0].tags must be an array",
+            ),
+            (
+                "motion-classification-basis",
+                lambda manifest: manifest["motions"][0].__setitem__(  # type: ignore[index]
+                    "classification_basis", {}
+                ),
+                "motions[0].classification_basis must be a non-empty array",
+            ),
+            (
+                "motion-files",
+                lambda manifest: manifest["motions"][0].__setitem__("files", {}),  # type: ignore[index]
+                "motions[0].files must be a non-empty array",
+            ),
+            (
+                "runtime-set-classification-basis",
+                lambda manifest: manifest["runtime_sets"][0].__setitem__(  # type: ignore[index]
+                    "classification_basis", {}
+                ),
+                "runtime_sets[0].classification_basis must be a non-empty array",
+            ),
+            (
+                "runtime-set-members",
+                lambda manifest: manifest["runtime_sets"][0].__setitem__(  # type: ignore[index]
+                    "members", {}
+                ),
+                "runtime_sets[0].members must contain at least two members",
+            ),
+        )
+        for name, mutate, expected in cases:
+            with self.subTest(collection=name):
+                manifest = valid_manifest_with_runtime_set()
+                mutate(manifest)
+                self.assertIn(expected, manifest_validator.validate_manifest(manifest))
 
     def test_requires_selected_profile_activation_basis(self) -> None:
         manifest = valid_manifest()
@@ -856,6 +965,22 @@ class ReportValidatorTests(unittest.TestCase):
             ],
         )
 
+    def test_multiple_missing_heading_errors_are_deterministic(self) -> None:
+        report = valid_report().replace(
+            "## Pack inventory and content coverage\n",
+            "## Pack inventory and content coverage omitted\n",
+        ).replace("## Compatibility\n", "## Compatibility omitted\n")
+
+        errors = report_validator.validate(report)
+
+        self.assertEqual(
+            errors,
+            [
+                "missing required heading: ## Pack inventory and content coverage",
+                "missing required heading: ## Compatibility",
+            ],
+        )
+
     def test_rejects_unresolved_template_placeholder(self) -> None:
         errors = report_validator.validate(valid_report() + "\n{{UNRESOLVED}}\n")
 
@@ -916,6 +1041,22 @@ class ReportValidatorTests(unittest.TestCase):
             "issue FIX-001 row must contain exactly seven cells", errors
         )
 
+    def test_valid_markdown_issue_row_syntax_still_checks_owner(self) -> None:
+        for prefix in ("FIX-001 |", "   | FIX-001 |"):
+            with self.subTest(prefix=prefix):
+                report = valid_report().replace("| FIX-001 |", prefix, 1).replace(
+                    "| engine-config | Fixture workaround. |",
+                    "| vendor-license / artist-author | Fixture workaround. |",
+                )
+
+                errors = report_validator.validate(report)
+
+                self.assertIn(
+                    "issue FIX-001 has unknown or composite primary owner: "
+                    "'vendor-license / artist-author'",
+                    errors,
+                )
+
     def test_all_published_pack_reports_conform(self) -> None:
         repository = Path(__file__).resolve().parents[4]
         reports = sorted(
@@ -974,10 +1115,21 @@ class ExecutableContractTests(unittest.TestCase):
             directory = Path(temporary_directory)
             valid_path = directory / "valid.json"
             valid_path.write_text(json.dumps(valid_manifest()), encoding="utf-8")
+            invalid_manifest = valid_manifest()
+            invalid_manifest["profiles"] = invalid_manifest["profiles"][2:]  # type: ignore[index]
+            invalid_manifest["pipeline_stages"] = invalid_manifest["pipeline_stages"][2:]  # type: ignore[index]
+            invalid_path = directory / "invalid.json"
+            invalid_path.write_text(json.dumps(invalid_manifest), encoding="utf-8")
             malformed_path = directory / "malformed.json"
             malformed_path.write_text("{", encoding="utf-8")
             success = self.run_script(
                 "validate_evaluation_manifest.py", str(valid_path)
+            )
+            invalid_first = self.run_script(
+                "validate_evaluation_manifest.py", str(invalid_path), hash_seed="1"
+            )
+            invalid_second = self.run_script(
+                "validate_evaluation_manifest.py", str(invalid_path), hash_seed="2"
             )
             malformed = self.run_script(
                 "validate_evaluation_manifest.py", str(malformed_path)
@@ -986,6 +1138,9 @@ class ExecutableContractTests(unittest.TestCase):
         self.assertEqual(success.returncode, 0, success.stderr)
         self.assertIn("validated animation-pack evaluation manifest", success.stdout)
         self.assertEqual(success.stderr, "")
+        self.assertEqual(invalid_first.returncode, 1)
+        self.assertEqual(invalid_second.returncode, 1)
+        self.assertEqual(invalid_first.stderr, invalid_second.stderr)
         self.assertEqual(malformed.returncode, 2)
         self.assertIn("validate_evaluation_manifest.py:", malformed.stderr)
 

@@ -127,9 +127,10 @@ def validate(text: str) -> list[str]:
     if 0 <= issue_start < issue_end:
         issue_section = text[issue_start:issue_end]
         for line in issue_section.splitlines():
-            if not line.startswith("|"):
+            stripped = line.strip()
+            if "|" not in stripped:
                 continue
-            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            cells = [cell.strip() for cell in stripped.strip("|").split("|")]
             if cells[0] in {"ID", "---"}:
                 continue
             if len(cells) != 7:
