@@ -24,6 +24,63 @@ record the exact HEAD SHA. If HEAD changes, stop in-flight audits,
 revalidate the amendment locally, and resume the same reviewer sessions
 against the delta. Do not keep an audit running against a stale head.
 
+## Required reciprocal cross-model audit
+
+Every substantial task must receive one audit from the other model provider's
+CLI after the freeze gate and before the PR is reported ready for merge:
+
+- a Codex author invokes `claude` and asks Claude to run this audit checklist;
+- a Claude author invokes `codex review` and asks Codex to run this audit
+  checklist.
+
+An author's own review surface, a same-provider subagent, or a manual cold pass
+does not replace this reciprocal audit. If the required CLI is unavailable or
+unauthenticated, report the audit as blocked rather than silently substituting
+the authoring model.
+
+Choose both the reviewer model and reasoning effort deliberately, and record
+them with the reviewed HEAD in the audit result. Use the lowest capable tier:
+
+- low for documentation-only, test-only, or narrow mechanical changes;
+- medium for ordinary implementation work;
+- high for numerical proof, security, untrusted-input handling, or
+  public-contract changes.
+
+Select a fast capable model for low-risk work, a current general-purpose
+frontier model for medium-risk work, and the strongest available review model
+for high-risk work. Provider aliases and model names change, so record the
+resolved or requested model instead of hard-coding one into this workflow.
+
+Keep one persistent CLI session for each `(PR, reviewer)` pair. On a new HEAD,
+resume that session with the raw delta and fresh exact-head gate result; do not
+start an unanchored replacement session. The cross-model reviewer must use its
+own audit marker and attribution and must not overwrite the author's audit
+comment.
+
+## Token-efficient reviewer orchestration
+
+Conserve reviewer tokens without weakening independence:
+
+- use fresh subagents for the bounded intent, simplicity, and test-quality
+  passes required below whenever the environment supports them;
+- delegate other independent, bounded lenses when that avoids loading one
+  reviewer with unrelated context, but keep synthesis and the final verdict
+  with the primary agent;
+- give each subagent only its verbatim criteria plus the smallest raw artifact
+  set needed for that lens; do not fork the full implementation conversation or
+  preload the author's conclusions;
+- apply the same low/medium/high risk tiers above to subagent model choice and
+  reasoning effort, using the lowest capable combination for each lens;
+- run independent passes in parallel when practical, reuse exact-head build
+  evidence, and resume existing reviewer sessions instead of replaying the full
+  PR context;
+- ask reviewers for concise, evidence-linked findings rather than long
+  restatements of the diff.
+
+Subagents and the reciprocal cross-model CLI audit serve different purposes and
+are both required for substantial work. Same-model subagents provide focused
+cold lenses; the other provider supplies model-diversity review.
+
 ## Inputs you must locate
 
 1. **The draft PR and its description.** `gh pr view <N> --json
@@ -118,7 +175,9 @@ freshness: not applicable".
 Run the strongest code-review pass available in the current agent
 environment against the open PR or branch diff (Claude: the
 `/code-review` plugin; Codex: its review surface; otherwise a manual
-bug-focused pass). Report only findings with at least 80% confidence.
+bug-focused pass). This is the author-side bug review and does not replace the
+required reciprocal cross-model audit. Report only findings with at least 80%
+confidence.
 
 Treat its findings as required reading. Don't dismiss them without
 specific counter-arguments. Don't duplicate what it already covered.

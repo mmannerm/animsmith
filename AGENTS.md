@@ -11,6 +11,7 @@ Read and follow [CONTRIBUTING.md](CONTRIBUTING.md),
 - The audit workflow at `.claude/skills/audit-task/SKILL.md` is written
   to be followable by any agent: run it as a checklist even without
   Claude's skill runner.
-- For the audit code-review pass, run Codex review when available;
-  otherwise make a manual pass over `gh pr diff`.
+- For the author-side audit code-review pass, run Codex review when available;
+  otherwise make a manual pass over `gh pr diff`. This does not replace the
+  required Claude CLI cross-model audit.
 - End commits with `Co-authored-by: Codex <codex@openai.com>`.
