@@ -49,9 +49,12 @@ paired interactions, additive/aim use, and first-person content.
 
 Name every member of each important runtime set. Record its semantic variant,
 measured timing or motion, and implementable runtime contract. For moving
-root-motion clips, include cycle duration and horizontal speed. State how
-in-place counterparts relate and distinguish authored speed variation from a
-defect.
+root-motion clips, include cycle duration and horizontal speed. Calculate the
+within-set minimum/maximum speed ratio and compare forward, cardinal, and
+diagonal members when those roles exist. Explain the controller consequence;
+speed variation is not automatically a defect without a declared movement
+policy. State how in-place counterparts relate and which owner must preserve,
+normalize, or re-author the variation.
 
 | Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
 |---|---|---|---|---|---|
@@ -59,8 +62,11 @@ defect.
 
 Use this comparison table for locomotion, sync, transition, mask-composition,
 paired-interaction, motion-database, or other important sets. `Exact members`
-must name every file-scoped member; `Runtime contract` captures the applicable
-loop, sync, state transition, mask, additive, contact, or interaction policy.
+must name every file-scoped member with the delivered case and spelling; never
+silently normalize them from a vendor list or display label. State separately
+when another bundled manifest or animation list disagrees. `Runtime contract`
+captures the applicable loop, sync, state transition, mask, additive, contact,
+or interaction policy.
 Use semicolon-separated `key=value` timing terms (`duration`, `rm_speed`,
 `sample_rate`, `frames`, or `threshold`) with finite non-negative values and
 units. Use semicolon-separated runtime terms keyed by `loop`, `sync`,

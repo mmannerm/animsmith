@@ -16,6 +16,8 @@
 
 This is a strong **third-person locomotion source pack**, not a drop-in controller. It provides in-place and root-motion 8-way walk, run, and crouch rings, idles, and varied turns. Unity imports all 177 individual humanoid clips. Twelve files have negative-time keys, the raw rings are not phase-aligned, and 22/24 clearly cyclic in-place ring members retain strict closure or seam-derivative failures after anchoring, risking wrap pops or foot pulses.
 
+Directional root-motion speeds also span 1.35–1.49× within each gait, with a diagonal faster than forward in every ring. A controller must preserve or deliberately normalize those authored per-direction velocities; one gait-wide speed can create direction-dependent travel or foot slide.
+
 It still requires deliberate controller setup and target-character visual acceptance testing.
 
 AnimSmith 0.2.1 can slice the 12 files and phase-align the three **in-place** rings, but cannot repair loop endpoints/tangents. Its gait-anchor transform resamples accumulating root translation, so use runtime phase offsets or artist-aligned exports for root-motion rings.
@@ -74,32 +76,35 @@ Each gait shares one cycle duration. Speeds are measured root-motion magnitudes;
 | Crouch | R `(1,0)` | IP `CrouchRightUnarmed`; RM `CrouchRightUnarmed_RM` | variant=paired-ip-rm | duration=1.500 s; rm_speed=0.839 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
 | Crouch | FR `(0.707,0.707)` | IP `CrouchForwardRightUnarmed`; RM `CrouchForwardRightUnarmed_RM` | variant=paired-ip-rm | duration=1.500 s; rm_speed=0.922 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
 
-Shared durations and nearby directional speeds support these sets. Use measured magnitudes or deliberate project normalization for controller thresholds.
+Equal durations make the speed differences stride-length, not timing, differences: walk spans 0.655–0.975 m/s (1.49×), run 2.100–3.048 m/s (1.45×), and crouch 0.683–0.922 m/s (1.35×). Each gait has a diagonal faster than forward. This does not prove a source defect, but one gait-wide speed or normalized diagonal input can cause direction-dependent foot slide or travel. Preserve per-direction velocities/thresholds, tune playback/controller motion, or request artist re-timing when uniform travel is required.
 
 ## Integration recipe
 
-1. **Members/topology:** `topology=separate-2d-blends`; build separate in-place and root-motion graphs at the table coordinates.
+1. **Members/topology:** `topology=separate-2d-blends`; build separate in-place and root-motion graphs at the table coordinates. Treat each RM speed as authored velocity evidence rather than assigning one speed to the whole gait.
 2. **Timing/synchronization:** `loop=per-member-table`; `sync=gait-phase`. Slice the 12 affected files and anchor only the in-place rings. Enable loops after wrap review; Run L/R remain unknown.
-3. **State ownership:** `owner=split-by-movement-variant`; the controller owns in-place translation/yaw; animation owns root-motion translation/yaw. Use runtime phase offsets or artist exports for root-motion rings.
+3. **State ownership:** `owner=split-by-movement-variant`; the controller owns in-place translation/yaw at deliberate per-direction velocities; animation owns root-motion translation/yaw. Use runtime phase offsets or artist exports for root-motion rings.
 4. **Composition constraints:** `composition=separate-gaits-and-full-body-actions`; never mix movement variants. Treat grenade/cover as full-body until masks, additive bases, sockets, IK, and interruptions are tested.
-5. **Acceptance gate:** `gate=target-character-visual-review`; test contacts and wrap. Phase alignment does not repair [foot skating](../game-ready-clips.md#feet-skate-when-clips-blend) or [loop seams](../game-ready-clips.md#the-loop-pops).
+5. **Acceptance gate:** `gate=target-character-visual-review`; test contacts, wrap, and actual travel in all eight directions. Phase alignment does not repair [foot skating](../game-ready-clips.md#feet-skate-when-clips-blend) or [loop seams](../game-ready-clips.md#the-loop-pops).
 
 ## Technical issue register
 
 Owners identify current/future AnimSmith, engine, or artist work.
+
+Retired IDs preserve review traceability: AP-007 was provenance, AP-008 was resolved by the Unity rerun, and AP-010's metadata facts remain in the appendix.
 
 | ID | Severity | Problem and impact | Primary owner | Current action | Future AnimSmith potential | Evidence/status |
 |---|---|---|---|---|---|---|
 | AP-001 | major | [Negative-time keys](../game-ready-clips.md#the-clip-is-the-wrong-length-or-freezes-at-the-end) in 12 files can fail strict pipelines or clamp a pose. | animsmith-current-declared | Slice to the Unity range at 30 fps. | Batch the declared transform. | Verified: 36/36 errors removed. |
 | AP-002 | major | [Loop seams](../game-ready-clips.md#the-loop-pops) fail on 22/24 anchored cyclic IP clips, risking pops/pulses. | artist-author | Correct endpoints/tangents or review an engine loop blend. | Generic invention is unsafe. | Exhaustive mechanical result; visual impact untested. |
 | AP-003 | major | [Gait-phase disagreement](../game-ready-clips.md#feet-skate-when-clips-blend) can make the three IP rings skate when blended. | animsmith-current-declared | Anchor each declared IP ring. | Existing transform can be batched; contact cleanup remains artistic. | Spreads verified ≤0.094. |
-| AP-004 | moderate | [Three skeleton signatures](../game-ready-clips.md#a-limb-is-t-posed-or-a-bone-never-moves) block exact interchange and may change retargeted transitions. | engine-config | Use the supplied Avatar; test 56/73-bone boundaries. | Diagnostics are plausible; deformation-aware retargeting is not. | Avatar references valid; deformation untested. |
+| AP-004 | moderate | [Three skeleton signatures](../game-ready-clips.md#files-disagree-about-skeleton-or-clip-identity) block exact interchange and may change retargeted transitions. | engine-config | Use the supplied Avatar; test 56/73-bone boundaries. | Diagnostics are plausible; deformation-aware retargeting is not. | Avatar references valid; deformation untested. |
 | AP-005 | moderate | [Constant tracks](../game-ready-clips.md#the-file-is-bloated-or-the-retargeter-chokes) in every file may affect sparse-track resets/transitions if pruned. | animsmith-current-declared | Retain until runtime and equivalence tests justify pruning. | Property evidence: [#401](https://github.com/mmannerm/animsmith/issues/401), [#402](https://github.com/mmannerm/animsmith/issues/402). | Runtime cost unknown. |
-| AP-006 | moderate | Every FBX uses `Take 001`; [cross-file set identity](../game-ready-clips.md#the-readiness-ladder) therefore needs filenames plus a manifest. | animsmith-future-candidate | Keep file-scoped IDs and the manifest. | Deterministic `(file, clip)` grouping is non-destructive and plausible. | 179/179 FBXs observed; no public issue found. |
-| AP-009 | moderate | The combined FBX has a [copied-avatar hierarchy mismatch](../game-ready-clips.md#a-limb-is-t-posed-or-a-bone-never-moves) and no authoritative segmentation. | artist-author | Use the 177 individual FBXs. | Tools cannot invent boundaries or hierarchy intent. | Unity 6000.5.8f1. |
+| AP-006 | moderate | Every FBX uses `Take 001`; [cross-file set identity](../game-ready-clips.md#files-disagree-about-skeleton-or-clip-identity) therefore needs filenames plus a manifest. | animsmith-future-candidate | Keep file-scoped IDs and the manifest. | Collection identity/grouping is tracked by [#409](https://github.com/mmannerm/animsmith/issues/409). | 179/179 FBXs observed. |
+| AP-009 | moderate | The combined FBX has a [copied-avatar hierarchy mismatch](../game-ready-clips.md#files-disagree-about-skeleton-or-clip-identity) and no authoritative segmentation. | artist-author | Use the 177 individual FBXs. | Tools cannot invent boundaries or hierarchy intent. | Unity 6000.5.8f1. |
 | AP-011 | moderate | [Attachment scale](../game-ready-clips.md#attachment-nodes-and-inherited-rest-world-scale) is unavailable, so weapon size/grip/IK is uncertified. | engine-config | Create sockets; test props on the target rig. | Source-node exposure could improve diagnostics. | Animated scale clean; attachments unknown. |
-| AP-012 | moderate | [`_RM` speed](../game-ready-clips.md#the-character-glides-or-runs-in-place) does not characterize root yaw; turns may be ignored or doubled. | engine-config | Inspect yaw, extraction, and movement ownership. | Translation/yaw diagnostics are safe; conversion needs a contract. | Yaw/controller untested. |
-| AP-013 | major | [RM gait-phase disagreement](../game-ready-clips.md#feet-skate-when-clips-blend) may skate, but 0.2.1 anchoring reorders accumulating translation. | engine-config | Keep trajectories; use runtime offsets or artist exports. | A proved root-preserving cyclic rebase is plausible. | Measured; deliberately untreated. |
+| AP-012 | moderate | [`_RM` speed](../game-ready-clips.md#the-character-glides-or-runs-in-place) does not characterize root yaw; turns may be ignored or doubled. | engine-config | Inspect yaw, extraction, and movement ownership. | Root displacement/yaw evidence is tracked by [#408](https://github.com/mmannerm/animsmith/issues/408). | Yaw/controller untested. |
+| AP-013 | major | [RM gait-phase disagreement](../game-ready-clips.md#feet-skate-when-clips-blend) may skate, but 0.2.1 anchoring reorders accumulating translation. | engine-config | Keep trajectories; use runtime offsets or artist exports. | Fail-closed safety is tracked by [#407](https://github.com/mmannerm/animsmith/issues/407); a proved rebase is separate. | Measured; deliberately untreated. |
+| AP-014 | major | [Directional speed/stride variation](../game-ready-clips.md#directional-blend-members-travel-at-different-speeds) spans 1.35–1.49×; one gait-wide speed can cause direction-dependent travel or foot slide. | engine-config | Preserve per-direction speeds/thresholds or tune playback; request artist re-timing if uniform authored travel is required. | Declared-set evidence/lint is tracked by [#411](https://github.com/mmannerm/animsmith/issues/411); automatic re-timing is unsafe. | Exact measurements; visual impact untested. |
 
 ## Engine status
 

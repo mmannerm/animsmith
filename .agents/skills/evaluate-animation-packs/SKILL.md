@@ -350,8 +350,10 @@ Write the primary report in this reader order:
 
 1. technical verdict and largest evidence boundary;
 2. complete, partial, and absent gameplay capabilities;
-3. named important runtime-set members with explicit movement variants, loop
-   policy, measured cycle durations, and root-motion speeds where applicable;
+3. named important runtime-set members with exact delivered identifiers,
+   explicit movement variants, loop policy, measured cycle durations,
+   root-motion speeds, and an interpretation of within-set speed/stride ranges
+   where applicable;
 4. an implementable blend/integration recipe with coordinates or thresholds,
    loop/phase policy, and movement ownership;
 5. one issue/remediation register, with player/developer impact, one primary

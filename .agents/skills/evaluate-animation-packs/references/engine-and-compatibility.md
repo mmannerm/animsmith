@@ -123,6 +123,13 @@ For locomotion blend spaces or directional sets, check:
 - time-reflected pairs or backwards playback assumptions;
 - starts, stops, pivots, accelerations, and gaps the pack does not supply.
 
+For every measured ring, report the minimum/maximum root-speed ratio and compare
+forward, cardinal, and diagonal members. Equal duration plus unequal speed
+means unequal travel per cycle. Do not label that automatically defective:
+state whether the runtime preserves authored per-direction velocity, normalizes
+input, scales playback/controller motion, or requires artist re-timing, and
+name the likely foot-slide or diagonal-speed consequence of a mismatch.
+
 For state transitions and crossfades, check pose and velocity discontinuity,
 foot plant loss, hand/weapon discontinuity, body-height changes, and whether a
 special authored transition is required. Record blend duration and sync mode.

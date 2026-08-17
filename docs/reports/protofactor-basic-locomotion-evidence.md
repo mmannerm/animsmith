@@ -86,7 +86,7 @@ Runtime relationships remain separate from roles because a clip may participate 
 | Inspect | `evaluated-finding` | All 179 FBXs inspect/measure/lint; 12 negative-time files and three skeleton signatures. |
 | Segment | `partially-evaluated` | 177 atomic per-motion files; combined take has no complete authoritative ranges. |
 | Root motion | `partially-evaluated` | 70 counterpart pairs measured; yaw/extraction/controller behavior incomplete. |
-| Conform | `partially-evaluated` | Slicing and in-place gait anchoring trialed; root-motion anchoring refused as unsafe. |
+| Conform | `partially-evaluated` | Slicing and in-place gait anchoring trialed; the evaluator deliberately did not run root-motion anchoring because 0.2.1 would reorder accumulating translation/yaw. |
 | Validate | `partially-evaluated` | Exhaustive mechanical and provisional semantic checks; one engine, no visual acceptance. |
 | Optimize | `partially-evaluated` | Constant-track pruning trialed but not approved. |
 | Export | `partially-evaluated` | Unity imported native package; no generated production export or player build. |
@@ -136,7 +136,9 @@ Organization is usable but not clean enough to be its own production contract:
 - Fifteen per-motion files lack explicit `clipAnimations` metadata even though their FBX take is readable.
 - Unity metadata is mixed across serialized versions 19301, 20300, and 23.
 - The combined FBX is 9,591 frames / 319.667 seconds by measurement. The bundled animation list ends at frame 6,785, and the combined-file `.meta` declares only frames 0–2,211. The remaining ranges have no complete authoritative segmentation manifest.
-- Typos such as `Standingt` and `Spint`, a walk filename with `Forward` misspelled, and inconsistent casing in `runForward2` and `Runbackwards` increase the cost of filename-driven automation.
+- One per-motion filename contains `Standingt`. Separately, the bundled combined-take animation list—not the exact per-motion FBX identifiers in the primary report—contains `SpintTurnRight`, `WalkForwadRight`, `runForward2`, and `Runbackwards`. These source disagreements increase automation cost.
+
+The 48 runtime-ring identifiers in the primary report were reconciled exactly, with case preserved, against the retained logical manifest; none was silently corrected from the animation-list spelling.
 
 ### Animation/gameplay coverage
 

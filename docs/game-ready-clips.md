@@ -474,6 +474,30 @@ explicit phase-remap strategy in the runtime. animsmith does not reverse or
 retime the clips, choose the runtime strategy, or claim that full-body motion
 is identical under time reflection.
 
+## Directional blend members travel at different speeds
+
+Equal cycle duration does not imply equal travel. If two root-motion members
+have the same duration but different measured horizontal speeds, they cover
+different distances per cycle: their authored stride lengths differ. A
+diagonal faster than forward may be intentional, but a controller that assigns
+one gait-wide speed or normalizes diagonal input can then produce visibly
+faster diagonal travel or direction-dependent foot sliding.
+
+Compare `animsmith measure` speed results across every declared directional
+member and record the project's movement policy. Valid policies include
+preserving per-direction authored velocities, scaling controller motion or
+playback per member, or deliberately accepting the variation. If the project
+requires uniform authored travel, re-time or re-author in the DCC and recheck
+contacts, phase, and loop seams. Gait anchoring changes phase; it does not make
+stride lengths coherent and must not be used to rewrite accumulating root
+trajectories.
+
+Speed variation alone is not a defect because the intended controller policy
+does not live in the file. AnimSmith currently checks a clip against a declared
+`speed_mps` but does not compare a runtime set against a declared cross-member
+speed/stride policy; [#411](https://github.com/mmannerm/animsmith/issues/411)
+tracks that evidence gap.
+
 ## Feet slide within one clip
 
 During stance — the part of the stride where a foot is planted — the
@@ -520,6 +544,32 @@ Four related rig-integrity failures, in increasing subtlety:
   this one. Small deviations are normal (few clips start exactly at
   rest); the `bind-pose` check fires only on a large mean deviation
   across the animated bones.
+
+## Files disagree about skeleton or clip identity
+
+Two collection-level contracts are easy to confuse with single-clip rig
+health:
+
+- **Skeleton/retarget identity.** Different bone hierarchies or rest/bind
+  signatures are not exact-skeleton interchangeable. An engine humanoid or
+  retarget profile may still make them compatible, but only after every
+  required chain maps and target-character deformation, transitions, masks,
+  sockets, and root ownership pass in the intended runtime. A copied-avatar or
+  skeleton-reference hierarchy mismatch means the referenced mapping is not
+  evidence for that file; use a compatible individual asset or obtain an
+  authoritative re-export instead of forcing the reference.
+- **File-scoped clip identity.** Marketplace packs commonly put one clip in
+  each file while reusing an embedded name such as `Take 001`. A runtime-set
+  member must then preserve the exact source file/path plus embedded clip name;
+  normalized display names are not reproducible identifiers. Reconcile report
+  members against the retained manifest and state separately when a bundled
+  animation list uses different spelling, casing, or ranges.
+
+AnimSmith's current gait and sync groups resolve clips inside one loaded
+document. [#409](https://github.com/mmannerm/animsmith/issues/409) tracks a
+file-scoped collection identity and cross-file set contract. Until that lands,
+keep per-file evidence and a deterministic external manifest; do not merge,
+rename, or infer set membership merely to make a check run.
 
 ## The file is bloated, or the retargeter chokes
 
@@ -681,12 +731,14 @@ order; they are not general animation cleanup.
 | The loop pops or pulses at the wrap | `duplicate-loop-endpoint`, `loop-closure`, `loop-seam-vel`, `loop-seam-rot`, `loop-seam` | drop a strict duplicated endpoint with `transform --drop-duplicate-loop-endpoint`; otherwise re-author endpoint pose/tangents; `transform --gait-anchor` only for locomotion phase | `[clips.<name>] loop = true`, `[checks.loop-closure]`, `[checks.loop-seam-vel]`, `[checks.loop-seam-rot]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Glides or runs in place | `in-place`, `root-motion-speed` | re-export; `measure` for ground truth | `[clips.<name>] in_place`, `speed_mps` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Feet skate across blends | `gait-group` | `transform --gait-anchor` for explicitly in-place cycles; runtime phase offsets for root motion | `[gait_groups.<name>]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
+| Directional travel speed or foot slide changes by direction | per-member AnimSmith measurement and `root-motion-speed`; no cross-member check yet ([#411](https://github.com/mmannerm/animsmith/issues/411)) | preserve per-direction velocities, tune runtime/playback, or re-time in DCC | per-clip `speed_mps`; declared-set policy is future work | [Directional blend speeds](#directional-blend-members-travel-at-different-speeds) |
 | Same-time blend members drift or pop | `sync-group` | re-slice or re-time at source | `[sync_groups.<name>]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Same-time pair looks mirrored or swaps footfall timing | `time-complement` | align contacts in DCC, add markers, or phase-remap in the runtime | `[sync_groups.<name>.time_complement]` | [A blend pair is time-complementary](#a-blend-pair-is-time-complementary) |
 | Feet slide within a clip | `foot-slide` | re-author in DCC | `[clips.<name>] speed_mps` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Missing runtime socket or IK target | `required-bones` | repair source rig / re-export | `[rig] required_bones` | [Structural rig contract](../examples/README.md#keeping-the-exported-rig-shape-stable) |
 | Attachment, socket, or helper imports at the wrong size | `rest-world-scale` | apply or rebake the unintended source hierarchy scale, then re-export | `[checks.rest-world-scale] node_selectors`, `expected_uniform_scale`, `uniform_scale_tolerance` | [Attachment nodes and inherited rest-world scale](#attachment-nodes-and-inherited-rest-world-scale) |
 | T-posed limb, static bone, wrong bind | `missing-bones`, `frozen-bone`, `bind-pose` | re-export | `[clips.<name>] animates_bones`, `[rig]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
+| Skeleton signatures or cross-file clip identities disagree | per-file structural inspection and measurement; no cross-file contract yet ([#409](https://github.com/mmannerm/animsmith/issues/409)) | configure and test the retarget path; retain exact `(file, clip)` manifest identities | `[rig]`; collection contract is future work | [Skeleton and clip identity](#files-disagree-about-skeleton-or-clip-identity) |
 | Bloat, retargeter breakage | `constant-track`, `scale-keys`, `non-uniform-scale`, opt-in `constant-nonunit-scale` | inspect `constant-track`, then use `transform --prune-constant-tracks` only after reviewing transition coverage; otherwise clean/re-export in DCC | `[checks.<id>]` severity; `[clips.<name>] animates_bones` protects declared motion tracks | [Editing a clip](../examples/README.md#3-editing-a-clip) |
 
 Where the repair column says *re-export*, that is deliberate: animsmith

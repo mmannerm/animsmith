@@ -107,6 +107,10 @@ Use runtime sets only for a real relationship among motions or variants:
 A runtime set member identifies a logical motion and may select one physical
 file. Omitting a file selects every delivered variant of the motion. Clips may
 belong to multiple sets. Do not manufacture a set merely to populate a report.
+Preserve the exact delivered file/path and embedded clip identity, including
+case and spelling. A normalized display label or a separate vendor animation
+list is not a substitute; record any disagreement as evidence instead of
+silently correcting the member identifier.
 
 ## Evaluation manifest
 
