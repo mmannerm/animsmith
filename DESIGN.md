@@ -63,8 +63,11 @@ output, and a self-contained HTML report with a 3D preview.
   key at each declared whole-frame sample over `[0, duration]`, at the exact
   representable f32 `key / fps` time and exact period endpoint. Sparse,
   differently framed, duplicate, or off-grid evidence refuses: a phase shift must bijectively
-  permute authored values rather than synthesize values at omitted frames.
-  Constant channels need no grid because cyclic reordering cannot change them.
+  permute authored values rather than synthesize values at omitted frames. The
+  verifier samples those exact admitted f32 key times, and mutation is an
+  integer-index permutation rather than a second floating-point resample.
+  Constant channels need no grid because cyclic reordering cannot change them;
+  their key times cannot influence the declared period or shift.
   Before allocating a pose grid, the public core boundary validates all track
   cardinalities, targets, finite values, all resolved metric-role indices, and
   the complete acyclic parents-before-children skeleton. Both declared-frame
@@ -72,8 +75,12 @@ output, and a self-contained HTML report with a 3D preview.
   `frame samples × skeleton bones <= 1,000,000`; every verifier and metric
   sample uses the one bounded declared grid. The 1 cm endpoint-displacement and
   1° accumulated-yaw caps are applied directly, without any sampled-step
-  allowance an interior outlier could inflate. This admits tightly closed
-  cyclic pelvis/root sway while refusing authored travel and turns. Root-motion phase offsets,
+  allowance an interior outlier could inflate. Because FK, quaternion
+  normalization, and trigonometry are binary32-derived and can vary in their
+  final bit across platforms, only four f32 successors at each inclusive cap
+  are comparison room; this gait-local rule does not widen other checks. This
+  admits tightly closed cyclic pelvis/root sway while refusing authored travel
+  and turns. Root-motion phase offsets,
   root-motion extraction, and trajectory-preserving cyclic rebasing remain
   runtime or separately designed operations; gait anchoring must not improvise
   them.

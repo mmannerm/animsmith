@@ -75,12 +75,18 @@ exceeds 1°. Every nonconstant channel the operation would rotate must contain
 exactly one key at each `--fps` whole-frame sample over the clip duration, at
 the exact representable f32 `key / fps` time and period endpoint. Sparse,
 differently framed, duplicate, or off-grid trajectory evidence refuses so the
-phase shift remains a bijective authored-value permutation. Constant channels
-are exempt. Before sampling, the command validates the complete skeleton,
+phase shift remains a bijective authored-value permutation. Verification
+samples the exact admitted f32 key times, and mutation permutes output values
+by integer key index rather than resampling. Constant channels are exempt and
+cannot influence the declared period or shift. Before sampling, the command
+validates the complete skeleton,
 resolved metric roles, track targets/cardinalities, and finite evidence. Both
 declared-frame and maximum-authored-key work must fit the inclusive 1,000,000
 frame-by-bone budget. The translation and yaw caps apply directly; no interior
-step is an allowance. A refusal names the clip and selected bone and does not
+step is an allowance. Derived binary32 FK/quaternion/trigonometric measurements
+admit only four f32 successors at each inclusive cap to keep exact authored
+1 cm/1° boundaries platform-stable; other checks are unchanged. A refusal
+names the clip and selected bone and does not
 publish the requested output. Keep authored root motion unchanged, apply a
 runtime phase offset, or use separately designed trajectory-preserving tooling.
 The option does not convert root motion to in-place motion.

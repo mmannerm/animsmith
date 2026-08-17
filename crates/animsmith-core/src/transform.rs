@@ -7,7 +7,9 @@ use crate::checks::constant_track::{is_constant_track, quaternion_angular_delta}
 use crate::metrics::foot_cycle_metrics;
 use crate::model::{BoneId, Clip, Interpolation, Property, Skeleton, Track, TrackValues};
 use crate::profile::{ResolvedRoles, Role};
-use crate::sample::{PoseGrid, TrackSample, default_frame_count, sample_clip, sample_track};
+use crate::sample::{PoseGrid, default_frame_count, sample_clip, sample_clip_at_times};
+#[cfg(test)]
+use crate::sample::{TrackSample, sample_track};
 use glam::{Quat, Vec3};
 use std::collections::BTreeSet;
 use std::fmt;
@@ -1147,6 +1149,14 @@ pub const GAIT_ANCHOR_MAX_YAW_ACCUMULATION_DEG: f64 = 1.0;
 /// trajectory verifier will allocate and evaluate.
 pub const GAIT_ANCHOR_MAX_TRAJECTORY_POSE_SAMPLES: usize = 1_000_000;
 
+/// Binary32 comparison room for gait-trajectory quantities derived through
+/// FK, quaternion normalization, and trigonometry.
+///
+/// This is deliberately local to gait anchoring: the fixed public 1 cm and 1°
+/// caps remain the policy, while four representable `f32` steps at the cap
+/// prevent an exactly authored boundary value from becoming platform-dependent.
+const GAIT_ANCHOR_DERIVED_F32_COMPARISON_ULPS: u32 = 4;
+
 const GAIT_TRAJECTORY_ALTERNATIVES: &str = "retain source root motion, use runtime phase offsets, or use a separately designed \
      trajectory-preserving operation";
 
@@ -1155,12 +1165,11 @@ const GAIT_TRAJECTORY_ALTERNATIVES: &str = "retain source root motion, use runti
 ///
 /// Semantics ported from the reference bake: the cycle period is
 /// `duration + 1/fps` (an open loop's wrap step is a real frame of the
-/// stride); the shift is quantized to whole frames so every resample
-/// lands on an existing key; each animated channel keeps its times and
-/// gets its output values replaced by the channel sampled at
-/// `(t + shift) mod period`. Constant channels are rotation-invariant
+/// stride); the shift is quantized to whole frames and applied as an
+/// integer-index permutation of each channel's authored output values.
+/// Constant channels are rotation-invariant
 /// and left alone; a non-constant CUBICSPLINE channel cannot be
-/// resampled losslessly, so alignment refuses (naming it) rather than
+/// permuted losslessly, so alignment refuses (naming it) rather than
 /// rotate the rest of the rig around it. Because a ±1-frame shift stays
 /// inside phase tolerance but moves *where the wrap lands*, all three
 /// candidates are tried and the one with the cleanest wrap (lowest seam
@@ -1176,8 +1185,10 @@ const GAIT_TRAJECTORY_ALTERNATIVES: &str = "retain source root motion, use runti
 /// evidence, any nonconstant channel without a complete declared whole-frame
 /// key grid, malformed track cardinality or skeleton/role topology, pose-sample work above
 /// [`GAIT_ANCHOR_MAX_TRAJECTORY_POSE_SAMPLES`], and material horizontal
-/// translation or yaw accumulation are also errors. All errors are returned
-/// before `clip` is changed.
+/// translation or yaw accumulation are also errors. Trajectory measurements
+/// use the already-verified authored f32 key times, and their inclusive caps
+/// admit only four binary32 successors for platform-dependent derived math.
+/// All errors are returned before `clip` is changed.
 ///
 pub fn align_gait_anchor(
     skeleton: &Skeleton,
@@ -1186,14 +1197,14 @@ pub fn align_gait_anchor(
     fps: f64,
     trajectory_policy: GaitTrajectoryPolicy,
 ) -> Result<GaitAlignOutcome, String> {
-    let sampling_frames = match trajectory_policy {
+    let sampling_times = match trajectory_policy {
         GaitTrajectoryPolicy::InPlace => {
             verify_in_place_gait_trajectory(skeleton, clip, roles, fps)?
         }
     };
 
     let measure = |c: &Clip| -> Option<(f64, Option<f64>, f64)> {
-        let grid = sample_clip(skeleton, c, sampling_frames);
+        let grid = sample_clip_at_times(skeleton, c, sampling_times.clone());
         let m = foot_cycle_metrics(&grid, roles, crate::metrics::MIN_STRIDE_STEP_M)?;
         Some((m.gait_phase?, m.loop_seam_ratio, m.lr_amplitude_m))
     };
@@ -1233,7 +1244,12 @@ pub fn align_gait_anchor(
     let mut best: Option<(f64, GaitAlignOutcome, Clip)> = None;
     for frame_offset in [0i32, -1, 1] {
         let mut candidate = original.clone();
-        rotate_values(&mut candidate, phase_before, fps, frame_offset);
+        rotate_values(
+            &mut candidate,
+            phase_before,
+            sampling_times.len(),
+            frame_offset,
+        );
         let Some((phase_after, seam_after, _)) = measure(&candidate) else {
             continue;
         };
@@ -1271,7 +1287,7 @@ fn verify_in_place_gait_trajectory(
     clip: &Clip,
     roles: &ResolvedRoles,
     fps: f64,
-) -> Result<usize, String> {
+) -> Result<Vec<f32>, String> {
     validate_gait_sampling_domain(skeleton, clip, roles)?;
     let (role, bone) = roles
         .get(Role::Root)
@@ -1322,9 +1338,9 @@ fn verify_in_place_gait_trajectory(
         ancestor_count += 1;
         cursor = entry.parent;
     }
-    let frames =
+    let sampling_times =
         verify_trajectory_frame_grid(clip, role, bone, bone_name, skeleton.bones.len(), fps)?;
-    let grid = sample_clip(skeleton, clip, frames);
+    let grid = sample_clip_at_times(skeleton, clip, sampling_times.clone());
     if grid.frame_count() < 3 {
         return Err(format!(
             "cannot gait-anchor clip {:?} under the in-place policy: selected {role} bone \
@@ -1391,14 +1407,11 @@ fn verify_in_place_gait_trajectory(
 
     if !horizontal_accumulation_m.is_finite()
         || !yaw_accumulation_deg.is_finite()
-        || crate::checks::exceeds_f32_cap(
+        || gait_derived_f32_exceeds_cap(
             horizontal_accumulation_m,
             GAIT_ANCHOR_MAX_HORIZONTAL_ACCUMULATION_M,
         )
-        || crate::checks::exceeds_f32_cap(
-            yaw_accumulation_deg,
-            GAIT_ANCHOR_MAX_YAW_ACCUMULATION_DEG,
-        )
+        || gait_derived_f32_exceeds_cap(yaw_accumulation_deg, GAIT_ANCHOR_MAX_YAW_ACCUMULATION_DEG)
     {
         return Err(format!(
             "cannot gait-anchor clip {:?} under the in-place policy: selected {role} bone \
@@ -1411,7 +1424,18 @@ fn verify_in_place_gait_trajectory(
             clip.name, bone_name
         ));
     }
-    Ok(frames)
+    Ok(sampling_times)
+}
+
+/// Compare a gait-local derived binary32 quantity with an inclusive policy
+/// cap. The measured path includes FK and quaternion/trigonometric operations
+/// whose final bit can vary by platform, so admit four binary32 successors of
+/// the cap. Values materially above the fixed cap remain refusals.
+fn gait_derived_f32_exceeds_cap(measured: f64, cap: f64) -> bool {
+    let cap = cap as f32;
+    debug_assert!(cap.is_finite() && cap > 0.0);
+    let tolerated = f32::from_bits(cap.to_bits() + GAIT_ANCHOR_DERIVED_F32_COMPARISON_ULPS);
+    measured > f64::from(tolerated)
 }
 
 /// Validate every hand-built input fact on which whole-skeleton sampling and
@@ -1517,7 +1541,7 @@ fn verify_trajectory_frame_grid(
     bone_name: &str,
     skeleton_bones: usize,
     fps: f64,
-) -> Result<usize, String> {
+) -> Result<Vec<f32>, String> {
     let intervals = clip.duration_s * fps;
     let interval_tolerance = f64::from(f32::EPSILON) * intervals.abs().max(1.0) * 4.0;
     let rounded_intervals = intervals.round();
@@ -1591,6 +1615,9 @@ fn verify_trajectory_frame_grid(
         ));
     }
 
+    let sampling_times: Vec<f32> = (0..expected_keys)
+        .map(|key| (key as f64 / fps) as f32)
+        .collect();
     for (track_index, track) in clip.tracks.iter().enumerate() {
         if is_rotation_invariant_track(track) {
             continue;
@@ -1607,13 +1634,12 @@ fn verify_trajectory_frame_grid(
             ));
         }
         for (key, &time) in track.times.iter().enumerate() {
-            let expected = if key + 1 == expected_keys {
-                clip.duration_s as f32
-            } else {
-                (key as f64 / fps) as f32
-            };
+            let expected = sampling_times[key];
             let grid_endpoint = ((expected_keys - 1) as f64 / fps) as f32;
-            if time != expected || (key + 1 == expected_keys && time != grid_endpoint) {
+            if time != expected
+                || (key + 1 == expected_keys
+                    && (time != grid_endpoint || time != clip.duration_s as f32))
+            {
                 return Err(format!(
                     "cannot gait-anchor clip {:?} under the in-place policy: selected {role} \
                      bone {:?} (index {bone}) has duplicate/non-frame-aligned whole-frame \
@@ -1625,7 +1651,7 @@ fn verify_trajectory_frame_grid(
             }
         }
     }
-    Ok(expected_keys)
+    Ok(sampling_times)
 }
 
 /// Exact representation-level predicate used by gait-anchor rotation. It is
@@ -1657,28 +1683,21 @@ fn is_rotation_invariant_track(track: &Track) -> bool {
     }
 }
 
-/// Replace each animated channel's output values with the channel
-/// sampled at `(t + shift) mod period`; times untouched. Constant
+/// Replace each animated channel's output values with the authored value a
+/// whole-frame shift later; times untouched. Constant
 /// tracks (rotation-invariant) are skipped; non-constant CUBICSPLINE
 /// tracks are refused upstream in [`align_gait_anchor`].
 ///
 /// The in-place preflight proves this uniform-framing condition before this
-/// function runs: every nonconstant track has one key at each exact f32
-/// `key / fps` time and the exact period endpoint. The sampled values therefore
-/// select an authored key bijectively; irregular, sparse, or differently
-/// framed channels never reach this mutation boundary.
-fn rotate_values(clip: &mut Clip, phase: f64, fps: f64, frame_offset: i32) {
-    let duration = clip
-        .tracks
-        .iter()
-        .map(Track::end_time)
-        .fold(0.0f32, f32::max) as f64;
-    if duration <= 0.0 {
+/// function runs: every nonconstant track has exactly `frame_count` keys. The
+/// integer permutation cannot interpolate, and exempt constant tracks cannot
+/// influence the declared period or shift.
+fn rotate_values(clip: &mut Clip, phase: f64, frame_count: usize, frame_offset: i32) {
+    if frame_count == 0 {
         return;
     }
-    let period = duration + 1.0 / fps;
-    let mut shift = ((phase * period * fps).round() + frame_offset as f64) / fps;
-    shift = shift.rem_euclid(period);
+    let shift = ((phase * frame_count as f64).round() as i64 + i64::from(frame_offset))
+        .rem_euclid(frame_count as i64) as usize;
 
     for track in &mut clip.tracks {
         // Constant tracks (any key count) are invariant; cubic tracks
@@ -1688,26 +1707,9 @@ fn rotate_values(clip: &mut Clip, phase: f64, fps: f64, frame_offset: i32) {
         if is_rotation_invariant_track(track) {
             continue;
         }
-        let sampled: Vec<TrackSample> = track
-            .times
-            .iter()
-            .map(|&t| sample_track(track, ((t as f64 + shift) % period) as f32))
-            .collect();
         match &mut track.values {
-            TrackValues::Vec3s(v) => {
-                for (slot, s) in v.iter_mut().zip(&sampled) {
-                    if let TrackSample::Vec3(x) = s {
-                        *slot = *x;
-                    }
-                }
-            }
-            TrackValues::Quats(v) => {
-                for (slot, s) in v.iter_mut().zip(&sampled) {
-                    if let TrackSample::Quat(q) = s {
-                        *slot = *q;
-                    }
-                }
-            }
+            TrackValues::Vec3s(values) => values.rotate_left(shift),
+            TrackValues::Quats(values) => values.rotate_left(shift),
         }
     }
 }

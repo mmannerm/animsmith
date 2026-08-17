@@ -69,8 +69,8 @@ fn roles(skel: &Skeleton) -> ResolvedRoles {
     )
 }
 
-fn open_loop_foot_track(bone: BoneId, rest: Vec3, sign: f32) -> Track {
-    let times: Vec<f32> = (0..KEYS).map(|k| k as f32 / FPS as f32).collect();
+fn open_loop_foot_track_at_fps(bone: BoneId, rest: Vec3, sign: f32, fps: f64) -> Track {
+    let times: Vec<f32> = (0..KEYS).map(|k| (k as f64 / fps) as f32).collect();
     let values: Vec<Vec3> = (0..KEYS)
         .map(|k| {
             let theta = (TAU * k as f64 / KEYS as f64) as f32;
@@ -87,13 +87,17 @@ fn open_loop_foot_track(bone: BoneId, rest: Vec3, sign: f32) -> Track {
 }
 
 fn open_walk() -> (Skeleton, Clip) {
+    open_walk_at_fps(FPS)
+}
+
+fn open_walk_at_fps(fps: f64) -> (Skeleton, Clip) {
     let skel = skeleton();
     let clip = Clip {
         name: "walk".into(),
-        duration_s: (KEYS - 1) as f64 / FPS,
+        duration_s: (KEYS - 1) as f64 / fps,
         tracks: vec![
-            open_loop_foot_track(1, skel.bones[1].rest.translation, 1.0),
-            open_loop_foot_track(2, skel.bones[2].rest.translation, -1.0),
+            open_loop_foot_track_at_fps(1, skel.bones[1].rest.translation, 1.0, fps),
+            open_loop_foot_track_at_fps(2, skel.bones[2].rest.translation, -1.0, fps),
         ],
     };
     (skel, clip)
@@ -223,6 +227,63 @@ fn gait_anchor_rotation_moves_phase_to_zero_losslessly() {
             (k + shift) % KEYS
         );
     }
+}
+
+#[test]
+fn gait_anchor_permutes_authored_values_and_samples_authored_times_at_30_fps() {
+    const NON_BINARY_FPS: f64 = 30.0;
+    let (skel, mut clip) = open_walk_at_fps(NON_BINARY_FPS);
+    let roles = roles(&skel);
+    let original = clip.clone();
+
+    let outcome = align_gait_anchor(
+        &skel,
+        &mut clip,
+        &roles,
+        NON_BINARY_FPS,
+        GaitTrajectoryPolicy::InPlace,
+    )
+    .expect("30 fps authored grid remains lossless");
+    let shift = ((outcome.phase_before * KEYS as f64).round() as i64
+        + i64::from(outcome.frame_offset))
+    .rem_euclid(KEYS as i64) as usize;
+    for (track_index, (before, after)) in original.tracks.iter().zip(&clip.tracks).enumerate() {
+        for key in 0..KEYS {
+            assert_eq!(
+                after.key_vec3(key),
+                before.key_vec3((key + shift) % KEYS),
+                "track {track_index} key {key} must be an exact authored-value permutation"
+            );
+        }
+    }
+
+    // A selected trajectory rotation with no horizontal forward direction at
+    // one exact authored key must be observed at that key. Reconstructing the
+    // nominal uniform time through duration*i/N can miss the exact f32 time.
+    let (_, mut undefined_forward) = open_walk_at_fps(NON_BINARY_FPS);
+    let mut rotations = vec![Quat::IDENTITY; KEYS];
+    rotations[5] = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    undefined_forward.tracks.push(Track {
+        bone: 0,
+        property: Property::Rotation,
+        interpolation: Interpolation::Linear,
+        times: (0..KEYS)
+            .map(|key| (key as f64 / NON_BINARY_FPS) as f32)
+            .collect(),
+        values: TrackValues::Quats(rotations),
+    });
+    let error = align_gait_anchor(
+        &skel,
+        &mut undefined_forward,
+        &roles,
+        NON_BINARY_FPS,
+        GaitTrajectoryPolicy::InPlace,
+    )
+    .unwrap_err();
+    assert!(
+        error.contains("no finite horizontal forward axis at sample 5"),
+        "got: {error}"
+    );
 }
 
 #[test]
@@ -507,7 +568,7 @@ fn gait_anchor_policy_pins_translation_and_yaw_caps() {
 
     let mut yaw_outside = base;
     yaw_outside.tracks.push(linear_root_yaw_with_accumulation(
-        GAIT_ANCHOR_MAX_YAW_ACCUMULATION_DEG * 1.01,
+        GAIT_ANCHOR_MAX_YAW_ACCUMULATION_DEG * 1.000_01,
     ));
     let yaw_error = align_gait_anchor(
         &skel,
@@ -517,7 +578,7 @@ fn gait_anchor_policy_pins_translation_and_yaw_caps() {
         GaitTrajectoryPolicy::InPlace,
     )
     .unwrap_err();
-    assert!(yaw_error.contains("yaw 1.010 deg"), "got: {yaw_error}");
+    assert!(yaw_error.contains("and yaw "), "got: {yaw_error}");
     assert!(yaw_error.contains("cap 0.0100 m"), "got: {yaw_error}");
     assert!(yaw_error.contains("cap 1.000 deg"), "got: {yaw_error}");
 }
@@ -1413,6 +1474,57 @@ fn gait_anchor_skips_constant_cubic_tracks() {
         vec3_values(&constant_before),
         vec3_values(constant_after),
         "a constant cubic track must be left untouched"
+    );
+}
+
+#[test]
+fn gait_anchor_constant_track_past_duration_cannot_change_the_rotation_period() {
+    let (skel, mut control) = open_walk();
+    let roles = roles(&skel);
+    let mut with_constant = control.clone();
+    let held = Vec3::new(0.0, 2.0, 0.0);
+    with_constant.tracks.push(Track {
+        bone: 0,
+        property: Property::Translation,
+        interpolation: Interpolation::CubicSpline,
+        times: vec![0.0, 1.0, 2.0],
+        values: TrackValues::Vec3s(
+            (0..3)
+                .flat_map(|_| [Vec3::ZERO, held, Vec3::ZERO])
+                .collect(),
+        ),
+    });
+    let constant_before = with_constant.tracks[2].clone();
+
+    let control_outcome = align_gait_anchor(
+        &skel,
+        &mut control,
+        &roles,
+        FPS,
+        GaitTrajectoryPolicy::InPlace,
+    )
+    .expect("control aligns");
+    let constant_outcome = align_gait_anchor(
+        &skel,
+        &mut with_constant,
+        &roles,
+        FPS,
+        GaitTrajectoryPolicy::InPlace,
+    )
+    .expect("an exempt constant track cannot alter the declared period");
+
+    assert_eq!(constant_outcome.frame_offset, control_outcome.frame_offset);
+    for track in 0..2 {
+        assert_eq!(
+            vec3_values(&with_constant.tracks[track]),
+            vec3_values(&control.tracks[track]),
+            "constant track endpoint must not affect nonconstant track {track}"
+        );
+    }
+    assert_eq!(
+        vec3_values(&with_constant.tracks[2]),
+        vec3_values(&constant_before),
+        "the exempt constant track itself remains untouched"
     );
 }
 

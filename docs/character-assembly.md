@@ -107,9 +107,13 @@ apply:
   operation would rotate must contain exactly one key at each declared `fps`
   whole-frame sample over the clip duration, at the exact representable f32
   `key / fps` time and period endpoint. Sparse, differently framed, duplicate,
-  or off-grid evidence refuses. The complete skeleton, resolved roles, and
-  track shapes are validated first; declared-frame and maximum-authored-key
-  work share an inclusive 1,000,000 frame-by-bone sampling budget;
+  or off-grid evidence refuses. Exact admitted f32 key times drive verification,
+  and an integer-index permutation performs the rewrite; exempt constant tracks
+  cannot influence its period or shift. The complete skeleton, resolved roles,
+  and track shapes are validated first; declared-frame and maximum-authored-key
+  work share an inclusive 1,000,000 frame-by-bone sampling budget. Derived
+  binary32 trajectory math admits only four f32 successors at the inclusive
+  1 cm/1° caps for platform stability;
 - `strip_bones = [...]`: remove every TRS track for named base bones.
 
 `complete_tracks = true` fills absent TRS channels from the base rest pose for
