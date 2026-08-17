@@ -258,6 +258,16 @@ struct PreparedScaleInput {
     evidence: AssemblyRestBindScaleInputEvidence,
 }
 
+struct PreparedAssemblyClip {
+    clip: Clip,
+    source_tracks: usize,
+    remapped_tracks: usize,
+    bone_remaps: Vec<AssemblyBoneRemapEvidence>,
+    stripped_tracks: usize,
+    stripped_bone_motion: Vec<StrippedBoneMotionEvidence>,
+    gait_anchor_frame_offset: Option<i32>,
+}
+
 /// What one published assembly leaves for the caller to report: the counts
 /// the text summary names, and the **exact** evidence bytes the pair's
 /// evidence member received.
@@ -858,95 +868,49 @@ fn assemble(
             }
         }
         let source = &loaded[&resolved];
-        ensure_unique_bones(
-            &source.skeleton,
-            &format!("clip input {}", clip_recipe.input.display()),
-        )?;
-        let source_clip = exact_take(source, &clip_recipe.take, &clip_recipe.input)?;
-        if let (Some(scale_source), Some(scale_base)) = (
+        let staged =
+            process_clip_before_copy(source, &base, clip_recipe, recipe.fps, config, false)?;
+        let rebased = if let (Some(scale_source), Some(scale_base)) = (
             prepared_scale_inputs
                 .get(&resolved)
                 .map(|prepared| &prepared.rebased_document),
             rebased_base,
         ) {
-            expected_rebased_clips.push(process_rebased_clip_before_copy(
+            Some(process_clip_before_copy(
                 scale_source,
                 scale_base,
                 clip_recipe,
                 recipe.fps,
                 config,
-            )?);
-        }
-        let source_tracks = source_clip.tracks.len();
-        let mut clip = source_clip.clone();
-        clip.name.clone_from(&clip_recipe.name);
-        apply_window(&mut clip, clip_recipe, recipe.fps)?;
-        if clip_recipe.drop_closing_endpoint {
-            let removed = animsmith_core::assembly::remove_final_keys(&mut clip);
-            if removed == 0 || clip.tracks.is_empty() {
-                return Err(format!(
-                    "clip {:?} has no retained animation after closing-endpoint removal",
-                    clip.name
-                ));
-            }
-        }
-        if clip_recipe.hold_frames > 0 {
-            animsmith_core::transform::hold_extend(
-                &mut clip,
-                f64::from(clip_recipe.hold_frames) / recipe.fps,
-            );
-        }
-        let bone_remaps = bone_remap_evidence(&clip, &source.skeleton, &base.skeleton)?;
-        let remapped_tracks = clip.tracks.len();
-        clip =
-            animsmith_core::assembly::remap_clip_to_base(&clip, &source.skeleton, &base.skeleton)
-                .map_err(|error| format!("clip {:?}: {error}", clip.name))?;
-        validate_unique_channels(&clip, &base.skeleton)?;
-        require_named_bones(&base.skeleton, &clip_recipe.strip_bones, "strip_bones")?;
-        let stripped_bone_motion =
-            stripped_bone_motion(&clip, &base.skeleton, &clip_recipe.strip_bones)?;
-        let stripped_tracks = animsmith_core::assembly::strip_named_bone_tracks(
-            &mut clip,
-            &base.skeleton,
-            &clip_recipe.strip_bones,
-        )
-        .map_err(|error| format!("clip {:?}: {error}", clip.name))?;
-        let gait_anchor_frame_offset = if clip_recipe.gait_anchor {
-            let roles = resolve_configured_roles(&base.skeleton, &config.rig);
-            Some(
-                animsmith_core::transform::align_gait_anchor(
-                    &base.skeleton,
-                    &mut clip,
-                    &roles,
-                    recipe.fps,
-                    animsmith_core::transform::GaitTrajectoryPolicy::InPlace,
-                )
-                .map_err(|reason| format!("clip {:?}: {reason}", clip.name))?
-                .frame_offset,
-            )
+                true,
+            )?)
         } else {
             None
         };
+        let authoritative = rebased.as_ref().unwrap_or(&staged);
         clip_evidence.push(AssemblyClipEvidence {
-            name: clip.name.clone(),
+            name: staged.clip.name.clone(),
             declared_input: clip_recipe.input.display().to_string(),
             source_take: clip_recipe.take.clone(),
-            source_tracks,
+            source_tracks: staged.source_tracks,
             emitted_tracks: 0,
-            remapped_tracks,
-            bone_remaps,
+            remapped_tracks: staged.remapped_tracks,
+            bone_remaps: staged.bone_remaps.clone(),
             completed_tracks: 0,
-            stripped_tracks,
-            stripped_bone_motion,
+            stripped_tracks: authoritative.stripped_tracks,
+            stripped_bone_motion: authoritative.stripped_bone_motion.clone(),
             pruned_constant_tracks: Vec::new(),
-            duration_s: clip.duration_s,
+            duration_s: authoritative.clip.duration_s,
             frame_window: clip_recipe.frame_window,
             time_window: clip_recipe.time_window,
             dropped_closing_endpoint: clip_recipe.drop_closing_endpoint,
             hold_frames: clip_recipe.hold_frames,
-            gait_anchor_frame_offset,
+            gait_anchor_frame_offset: authoritative.gait_anchor_frame_offset,
         });
-        output_clips.push(clip);
+        output_clips.push(staged.clip);
+        if let Some(rebased) = rebased {
+            expected_rebased_clips.push(rebased.clip);
+        }
     }
     let mut completion_targets = base
         .assets
@@ -960,144 +924,56 @@ fn assemble(
             .flat_map(|clip| clip.tracks.iter().map(|track| track.bone)),
     );
     completion_targets.retain(|bone| !node_removal.removes(*bone));
-    let base_bones_by_name = base
-        .skeleton
-        .bones
-        .iter()
-        .enumerate()
-        .map(|(index, bone)| (bone.name.as_str(), index))
-        .collect::<BTreeMap<_, _>>();
-    for ((clip, evidence), clip_recipe) in output_clips
-        .iter_mut()
-        .zip(&mut clip_evidence)
-        .zip(&recipe.clips)
-    {
-        if recipe.complete_tracks {
-            let excluded = clip_recipe
-                .strip_bones
-                .iter()
-                .map(|name| base_bones_by_name[name.as_str()])
-                .collect::<BTreeSet<_>>();
-            evidence.completed_tracks =
-                animsmith_core::assembly::complete_rest_pose_tracks_for_bones(
-                    clip,
-                    &base.skeleton,
-                    completion_targets
-                        .iter()
-                        .copied()
-                        .filter(|bone| !excluded.contains(bone)),
-                    animsmith_core::assembly::RestPoseTrackOptions::ALL,
-                )
-                .map_err(|error| format!("clip {:?}: {error}", clip.name))?;
-        }
-        validate_unique_channels(clip, &base.skeleton)?;
-        normalize_quaternion_magnitudes(clip)?;
-        animsmith_core::assembly::normalize_quaternion_hemispheres(clip);
-        if recipe.prune_constant_tracks {
-            // `animates_bones` is a per-clip motion contract. Keep its exact-name
-            // tracks even when they are mechanically constant, so a later lint
-            // can still observe that authored channel. `required_bones` is only
-            // a skeleton-presence contract and deliberately does not protect a
-            // track here.
-            let protected_bones = config
-                .expectations_for(&clip.name)
-                .animates_bones
-                .as_deref()
-                .map(|names| {
-                    base.skeleton
-                        .bones
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(index, bone)| {
-                            names.iter().any(|name| name == &bone.name).then_some(index)
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            let outcome = animsmith_core::transform::prune_constant_tracks(
-                &base.skeleton,
-                clip,
-                &protected_bones,
-            );
-            evidence.pruned_constant_tracks = outcome
-                .removed
-                .into_iter()
-                .map(|record| {
-                    let bone = base.skeleton.bones.get(record.bone).ok_or_else(|| {
-                        format!(
-                            "constant-track pruning reported missing bone {} for clip {:?}",
-                            record.bone, clip.name
-                        )
-                    })?;
-                    Ok(PrunedConstantTrackEvidence {
-                        original_track_index: record.original_track_index,
-                        bone: bone.name.clone(),
-                        bone_index: record.bone,
-                        property: record.property.as_str(),
-                        interpolation: interpolation_name(record.interpolation),
-                        key_count: record.key_count,
-                    })
-                })
-                .collect::<Result<Vec<_>, String>>()?;
-        }
-        evidence.emitted_tracks = clip.tracks.len();
-    }
-    if let Some(scale_base) = rebased_base {
-        for ((clip, clip_recipe), evidence) in expected_rebased_clips
-            .iter_mut()
-            .zip(&recipe.clips)
-            .zip(&clip_evidence)
-        {
-            if recipe.complete_tracks {
-                let excluded = clip_recipe
-                    .strip_bones
-                    .iter()
-                    .map(|name| base_bones_by_name[name.as_str()])
-                    .collect::<BTreeSet<_>>();
-                animsmith_core::assembly::complete_rest_pose_tracks_for_bones(
-                    clip,
-                    &scale_base.skeleton,
-                    completion_targets
-                        .iter()
-                        .copied()
-                        .filter(|bone| !excluded.contains(bone)),
-                    animsmith_core::assembly::RestPoseTrackOptions::ALL,
-                )
-                .map_err(|error| format!("rebased clip {:?}: {error}", clip.name))?;
-            }
-            validate_unique_channels(clip, &scale_base.skeleton)?;
-            normalize_quaternion_magnitudes(clip)?;
-            animsmith_core::assembly::normalize_quaternion_hemispheres(clip);
+    for (index, clip_recipe) in recipe.clips.iter().enumerate() {
+        let staged_clip = &mut output_clips[index];
+        let staged_completed = complete_and_normalize_clip(
+            staged_clip,
+            &base.skeleton,
+            &completion_targets,
+            clip_recipe,
+            recipe.complete_tracks,
+            false,
+        )?;
+        let evidence = &mut clip_evidence[index];
+        evidence.completed_tracks = staged_completed;
+
+        if let Some(scale_base) = rebased_base {
+            let rebased_clip = &mut expected_rebased_clips[index];
+            let rebased_completed = complete_and_normalize_clip(
+                rebased_clip,
+                &scale_base.skeleton,
+                &completion_targets,
+                clip_recipe,
+                recipe.complete_tracks,
+                true,
+            )?;
+            evidence.completed_tracks = rebased_completed;
             if recipe.prune_constant_tracks {
-                let protected_bones = config
-                    .expectations_for(&clip.name)
-                    .animates_bones
-                    .as_deref()
-                    .map(|names| {
-                        scale_base
-                            .skeleton
-                            .bones
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(index, bone)| {
-                                names.iter().any(|name| name == &bone.name).then_some(index)
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
+                let protected_bones =
+                    protected_clip_bones(&scale_base.skeleton, config, &rebased_clip.name);
                 let outcome = animsmith_core::transform::prune_constant_tracks(
                     &scale_base.skeleton,
-                    clip,
+                    rebased_clip,
                     &protected_bones,
                 );
-                if outcome.removed.len() != evidence.pruned_constant_tracks.len() {
-                    return Err(format!(
-                        "rebased clip {:?} changed constant-track pruning membership",
-                        clip.name
-                    ));
-                }
+                apply_authoritative_pruning(staged_clip, &outcome.removed)?;
+                evidence.pruned_constant_tracks = pruned_track_evidence(
+                    &scale_base.skeleton,
+                    &rebased_clip.name,
+                    outcome.removed,
+                )?;
             }
+        } else if recipe.prune_constant_tracks {
+            let protected_bones = protected_clip_bones(&base.skeleton, config, &staged_clip.name);
+            let outcome = animsmith_core::transform::prune_constant_tracks(
+                &base.skeleton,
+                staged_clip,
+                &protected_bones,
+            );
+            evidence.pruned_constant_tracks =
+                pruned_track_evidence(&base.skeleton, &staged_clip.name, outcome.removed)?;
         }
+        evidence.emitted_tracks = staged_clip.tracks.len();
     }
     base.clips = output_clips;
     let removed_nodes = node_removal
@@ -1274,31 +1150,35 @@ fn exact_take<'a>(doc: &'a Document, take: &str, input: &Path) -> Result<&'a Cli
     }
 }
 
-/// Apply clip-local assembly transforms to an already raw-rebased input.
+/// Apply every pre-copy clip transform in one declared source basis.
 ///
-/// This path is deliberately entered before name remapping/copy. Its result
-/// is retained as an independent expected clip and compared with the final
-/// exact-artifact reload after the staged assembled source is rewritten and
-/// proved once.
-fn process_rebased_clip_before_copy(
+/// The v4 scale path invokes this same pipeline for the staged source and its
+/// raw-rebased counterpart. The staged clip remains the source for the final
+/// shared raw rewrite, while scale-sensitive evidence and later membership
+/// decisions come from the rebased result.
+fn process_clip_before_copy(
     source: &Document,
     base: &Document,
     recipe: &AssemblyClipRecipe,
     fps: f64,
     config: &Config,
-) -> Result<Clip, String> {
+    rebased: bool,
+) -> Result<PreparedAssemblyClip, String> {
+    let context = if rebased { "rebased clip" } else { "clip" };
     ensure_unique_bones(
         &source.skeleton,
-        &format!("rebased clip input {}", recipe.input.display()),
+        &format!("{context} input {}", recipe.input.display()),
     )?;
-    let mut clip = exact_take(source, &recipe.take, &recipe.input)?.clone();
+    let source_clip = exact_take(source, &recipe.take, &recipe.input)?;
+    let source_tracks = source_clip.tracks.len();
+    let mut clip = source_clip.clone();
     clip.name.clone_from(&recipe.name);
     apply_window(&mut clip, recipe, fps)?;
     if recipe.drop_closing_endpoint {
         let removed = animsmith_core::assembly::remove_final_keys(&mut clip);
         if removed == 0 || clip.tracks.is_empty() {
             return Err(format!(
-                "rebased clip {:?} has no retained animation after closing-endpoint removal",
+                "{context} {:?} has no retained animation after closing-endpoint removal",
                 clip.name
             ));
         }
@@ -1306,28 +1186,170 @@ fn process_rebased_clip_before_copy(
     if recipe.hold_frames > 0 {
         animsmith_core::transform::hold_extend(&mut clip, f64::from(recipe.hold_frames) / fps);
     }
+    let bone_remaps = bone_remap_evidence(&clip, &source.skeleton, &base.skeleton)?;
+    let remapped_tracks = clip.tracks.len();
     clip = animsmith_core::assembly::remap_clip_to_base(&clip, &source.skeleton, &base.skeleton)
-        .map_err(|error| format!("rebased clip {:?}: {error}", clip.name))?;
+        .map_err(|error| format!("{context} {:?}: {error}", clip.name))?;
     validate_unique_channels(&clip, &base.skeleton)?;
     require_named_bones(&base.skeleton, &recipe.strip_bones, "strip_bones")?;
-    animsmith_core::assembly::strip_named_bone_tracks(
+    let stripped_bone_motion = stripped_bone_motion(&clip, &base.skeleton, &recipe.strip_bones)?;
+    let stripped_tracks = animsmith_core::assembly::strip_named_bone_tracks(
         &mut clip,
         &base.skeleton,
         &recipe.strip_bones,
     )
-    .map_err(|error| format!("rebased clip {:?}: {error}", clip.name))?;
-    if recipe.gait_anchor {
+    .map_err(|error| format!("{context} {:?}: {error}", clip.name))?;
+    let gait_anchor_frame_offset = if recipe.gait_anchor {
         let roles = resolve_configured_roles(&base.skeleton, &config.rig);
-        animsmith_core::transform::align_gait_anchor(
-            &base.skeleton,
-            &mut clip,
-            &roles,
-            fps,
-            animsmith_core::transform::GaitTrajectoryPolicy::InPlace,
+        Some(
+            animsmith_core::transform::align_gait_anchor(
+                &base.skeleton,
+                &mut clip,
+                &roles,
+                fps,
+                animsmith_core::transform::GaitTrajectoryPolicy::InPlace,
+            )
+            .map_err(|reason| format!("{context} {:?}: {reason}", clip.name))?
+            .frame_offset,
         )
-        .map_err(|reason| format!("rebased clip {:?}: {reason}", clip.name))?;
-    }
-    Ok(clip)
+    } else {
+        None
+    };
+    Ok(PreparedAssemblyClip {
+        clip,
+        source_tracks,
+        remapped_tracks,
+        bone_remaps,
+        stripped_tracks,
+        stripped_bone_motion,
+        gait_anchor_frame_offset,
+    })
+}
+
+fn complete_and_normalize_clip(
+    clip: &mut Clip,
+    skeleton: &Skeleton,
+    completion_targets: &BTreeSet<usize>,
+    recipe: &AssemblyClipRecipe,
+    complete_tracks: bool,
+    rebased: bool,
+) -> Result<usize, String> {
+    let context = if rebased { "rebased clip" } else { "clip" };
+    let completed = if complete_tracks {
+        let excluded = recipe
+            .strip_bones
+            .iter()
+            .map(|name| {
+                skeleton
+                    .bones
+                    .iter()
+                    .position(|bone| bone.name == *name)
+                    .ok_or_else(|| format!("strip_bones names missing bone {name:?}"))
+            })
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        animsmith_core::assembly::complete_rest_pose_tracks_for_bones(
+            clip,
+            skeleton,
+            completion_targets
+                .iter()
+                .copied()
+                .filter(|bone| !excluded.contains(bone)),
+            animsmith_core::assembly::RestPoseTrackOptions::ALL,
+        )
+        .map_err(|error| format!("{context} {:?}: {error}", clip.name))?
+    } else {
+        0
+    };
+    validate_unique_channels(clip, skeleton)?;
+    normalize_quaternion_magnitudes(clip)?;
+    animsmith_core::assembly::normalize_quaternion_hemispheres(clip);
+    Ok(completed)
+}
+
+fn protected_clip_bones(skeleton: &Skeleton, config: &Config, clip_name: &str) -> Vec<usize> {
+    // `animates_bones` is a per-clip motion contract. Keep its exact-name
+    // tracks even when they are mechanically constant, so a later lint can
+    // still observe that authored channel. `required_bones` is only a
+    // skeleton-presence contract and deliberately does not protect a track.
+    config
+        .expectations_for(clip_name)
+        .animates_bones
+        .as_deref()
+        .map(|names| {
+            skeleton
+                .bones
+                .iter()
+                .enumerate()
+                .filter_map(|(index, bone)| {
+                    names.iter().any(|name| name == &bone.name).then_some(index)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn apply_authoritative_pruning(
+    staged: &mut Clip,
+    removed: &[animsmith_core::transform::ConstantTrackPruneRecord],
+) -> Result<(), String> {
+    let removed_indices = removed
+        .iter()
+        .map(|record| {
+            let track = staged
+                .tracks
+                .get(record.original_track_index)
+                .ok_or_else(|| {
+                    format!(
+                        "rebased pruning selected missing staged track {} for clip {:?}",
+                        record.original_track_index, staged.name
+                    )
+                })?;
+            if track.bone != record.bone
+                || track.property != record.property
+                || track.interpolation != record.interpolation
+                || track.key_count() != record.key_count
+            {
+                return Err(format!(
+                    "rebased pruning track {} does not match staged clip {:?}",
+                    record.original_track_index, staged.name
+                ));
+            }
+            Ok(record.original_track_index)
+        })
+        .collect::<Result<BTreeSet<_>, String>>()?;
+    let tracks = std::mem::take(&mut staged.tracks);
+    staged.tracks = tracks
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, track)| (!removed_indices.contains(&index)).then_some(track))
+        .collect();
+    Ok(())
+}
+
+fn pruned_track_evidence(
+    skeleton: &Skeleton,
+    clip_name: &str,
+    removed: Vec<animsmith_core::transform::ConstantTrackPruneRecord>,
+) -> Result<Vec<PrunedConstantTrackEvidence>, String> {
+    removed
+        .into_iter()
+        .map(|record| {
+            let bone = skeleton.bones.get(record.bone).ok_or_else(|| {
+                format!(
+                    "constant-track pruning reported missing bone {} for clip {:?}",
+                    record.bone, clip_name
+                )
+            })?;
+            Ok(PrunedConstantTrackEvidence {
+                original_track_index: record.original_track_index,
+                bone: bone.name.clone(),
+                bone_index: record.bone,
+                property: record.property.as_str(),
+                interpolation: interpolation_name(record.interpolation),
+                key_count: record.key_count,
+            })
+        })
+        .collect()
 }
 
 fn map_staged_rest_bind_operation(

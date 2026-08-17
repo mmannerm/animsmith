@@ -2,7 +2,7 @@
 
 #![cfg(feature = "fbx")]
 
-use animsmith_core::glam::Vec3;
+use animsmith_core::glam::{Quat, Vec3};
 use animsmith_core::model::{Interpolation, Property, TrackValues};
 use animsmith_core::scale::{
     AssemblyScaleBasis, ScaleOperation, ScaleRequest, assembly_scale_basis, plan_scale,
@@ -63,6 +63,28 @@ fn write_cubic_asset_from(path: &Path, bytes: &[u8], offset: f32) {
 
 fn write_cubic_asset(path: &Path, offset: f32) {
     write_cubic_asset_from(path, &rest_bind_scale_rig_glb(), offset);
+}
+
+fn write_scale_sensitive_clip_asset(path: &Path, translation_end_y: f32) {
+    let mut document =
+        animsmith_gltf::load_bytes(Path::new("source.glb"), &rest_bind_scale_rig_glb()).unwrap();
+    let translation = document.clips[0]
+        .tracks
+        .iter_mut()
+        .find(|track| track.property == Property::Translation)
+        .expect("fixture translation track");
+    translation.values = TrackValues::Vec3s(vec![
+        Vec3::new(0.0, 100.0, 0.0),
+        Vec3::new(0.0, translation_end_y, 0.0),
+    ]);
+    let rotation = document.clips[0]
+        .tracks
+        .iter_mut()
+        .find(|track| track.property == Property::Rotation)
+        .expect("fixture rotation track");
+    rotation.bone = 0;
+    rotation.values = TrackValues::Quats(vec![Quat::IDENTITY, Quat::from_rotation_z(0.2)]);
+    animsmith_gltf::write::write(&document, path).expect("writes scale-sensitive fixture");
 }
 
 fn factor_two_rig_glb() -> Vec<u8> {
@@ -393,6 +415,79 @@ fn v4_rebases_every_cubic_slot_for_a_factor_greater_than_one() {
     for (slot, expected) in values.iter().zip(expected) {
         assert!(slot.abs_diff_eq(expected * 2.0, 1.0e-5));
     }
+}
+
+#[test]
+fn v4_strip_bone_motion_evidence_uses_the_rebased_clip_basis() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    write_scale_sensitive_clip_asset(&dir.path().join("inputs/base.glb"), 300.0);
+    write_scale_sensitive_clip_asset(&dir.path().join("inputs/clip.glb"), 300.0);
+    let recipe = recipe("clip.glb").replace(
+        "take = \"clip\"\n",
+        "take = \"clip\"\nstrip_bones = [\"joint\"]\n",
+    );
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+
+    let output = run(dir.path());
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let evidence: Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("character.json")).unwrap()).unwrap();
+    assert_eq!(evidence["clips"][0]["stripped_tracks"], 1);
+    assert_eq!(
+        evidence["clips"][0]["stripped_bone_motion"],
+        serde_json::json!([{
+            "bone": "joint",
+            "translation_start": [0.0, 1.0, 0.0],
+            "translation_end": [0.0, 3.0, 0.0],
+            "translation_delta": [0.0, 2.0, 0.0],
+            "duration_s": 1.0
+        }])
+    );
+    let document = animsmith_gltf::load(&dir.path().join("character.glb")).unwrap();
+    assert_eq!(document.clips.len(), 1);
+    assert_eq!(document.clips[0].tracks.len(), 1);
+    assert_eq!(document.clips[0].tracks[0].bone, 0);
+    assert_eq!(document.clips[0].tracks[0].property, Property::Rotation);
+}
+
+#[test]
+fn v4_prunes_constant_tracks_after_rebasing_the_clip() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    write_scale_sensitive_clip_asset(&dir.path().join("inputs/base.glb"), 100.005);
+    write_scale_sensitive_clip_asset(&dir.path().join("inputs/clip.glb"), 100.005);
+    let recipe =
+        recipe("clip.glb").replacen("fps = 30.0", "fps = 30.0\nprune_constant_tracks = true", 1);
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+
+    let output = run(dir.path());
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let evidence: Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("character.json")).unwrap()).unwrap();
+    assert_eq!(
+        evidence["clips"][0]["pruned_constant_tracks"],
+        serde_json::json!([{
+            "original_track_index": 0,
+            "bone": "joint",
+            "bone_index": 1,
+            "property": "translation",
+            "interpolation": "linear",
+            "key_count": 2
+        }])
+    );
+    let document = animsmith_gltf::load(&dir.path().join("character.glb")).unwrap();
+    assert_eq!(document.clips.len(), 1);
+    assert_eq!(document.clips[0].tracks.len(), 1);
+    assert_eq!(document.clips[0].tracks[0].property, Property::Rotation);
 }
 
 #[test]
