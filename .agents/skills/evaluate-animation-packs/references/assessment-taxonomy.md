@@ -55,18 +55,24 @@ format, or missing engine as `pass`.
 
 ## Decision vocabulary
 
-Use one overall recommendation:
+Use one technical verdict:
 
-- `Adopt`: suitable for the stated production use with no material unresolved
-  conditions.
-- `Adopt with conditions`: useful when listed remediation and validation gates
-  are completed.
-- `Prototype only`: useful for exploration, placeholders, or a restricted game
-  mode, but not supported for the stated shipping use.
-- `Do not adopt`: material technical, artistic, licensing, or coverage gaps
-  outweigh the value for the stated use.
-- `Insufficient evidence`: preview/partial access or missing runtime tests make
-  a purchase decision premature.
+- `Usable`: suitable for the stated game-engine use with no material unresolved
+  technical conditions.
+- `Usable with conditions`: technically useful when the listed remediation and
+  validation gates are completed.
+- `Restricted use`: suitable only for a named subset, prototype, placeholder,
+  or constrained gameplay mode.
+- `Poor fit`: material technical, artistic, or content gaps conflict with the
+  stated use.
+- `Insufficient technical evidence`: preview/partial access or missing runtime
+  tests prevent a defensible technical conclusion.
+
+Record evaluation completeness separately as `complete`, `partial`, or
+`preview-only`. Evaluator setup failures, price, receipt/license provenance,
+or marketplace availability may reduce completeness or add a provenance gate;
+they do not change a pack's technical verdict unless they withhold the bytes or
+rights needed for the stated technical evaluation.
 
 Do not use a numeric total score. It hides veto conditions and creates false
 precision across different genres. Use per-lane verdicts with evidence.
@@ -76,20 +82,22 @@ precision across different genres. Use per-lane verdicts with evidence.
 Assign `ready`, `conditional`, `poor fit`, `not applicable`, or `unknown` to
 each lane:
 
-1. Acquisition and rights
-2. Delivery completeness and organization
-3. AnimSmith-readable format coverage
-4. Untouched mechanical clip health
-5. Declared clip semantics
-6. Set, sync, and locomotion-blend behavior
-7. Rig, rest/bind, and retargeting behavior
-8. Root-motion and in-place behavior
-9. Target-engine import and playback
-10. Masks, additive layers, IK, and attachments
-11. Performance and runtime footprint
-12. Game/content coverage and artistic fit
-13. Cross-pack compatibility
-14. Maintainability, provenance, and reproducibility
+1. Delivery completeness and organization
+2. AnimSmith-readable format coverage
+3. Untouched mechanical clip health
+4. Declared clip semantics
+5. Set, sync, and locomotion-blend behavior
+6. Rig, rest/bind, and retargeting behavior
+7. Root-motion and in-place behavior
+8. Target-engine import and playback
+9. Masks, additive layers, IK, and attachments
+10. Performance and runtime footprint
+11. Game/content coverage and artistic fit
+12. Cross-pack compatibility
+13. Maintainability and reproducibility
+
+Track acquisition, rights, and artifact provenance beside these technical lanes
+instead of mixing them into a technical readiness verdict.
 
 State the adoption consequence for every `conditional`, `poor fit`, or
 `unknown` lane.

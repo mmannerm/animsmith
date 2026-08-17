@@ -693,7 +693,7 @@ Where the repair column says *re-export*, that is deliberate: animsmith
 rewrites a clip only in ways whose within-clip correctness its own checks can
 verify. Runtime integration caveats, including sparse transition coverage,
 still apply. Lossless quaternion repairs and mechanical edits (slice,
-hold-extend, gait-anchor, duplicate-loop-endpoint removal, constant-track pruning, FBX→glTF conversion) qualify; artistic
+hold-extend, in-place gait-anchor, duplicate-loop-endpoint removal, constant-track pruning, FBX→glTF conversion) qualify; artistic
 transformation — retargeting, motion editing — is DCC work and stays
 out of scope.
 

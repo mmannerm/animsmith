@@ -7,6 +7,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -56,6 +57,15 @@ V1_CLASSIFICATION_BASES = {
     "inferred",
 }
 V1_CONFIDENCE = {"high", "medium", "low"}
+V1_TECHNICAL_VERDICTS = {
+    "Usable",
+    "Usable with conditions",
+    "Restricted use",
+    "Poor fit",
+    "Insufficient technical evidence",
+}
+V1_EVALUATION_COMPLETENESS = {"complete", "partial", "preview-only"}
+V1_ISSUE_SEVERITIES = {"blocker", "major", "moderate", "minor", "note"}
 V1_PROFILE_ROWS = (
     ("marketplace-intake", "Marketplace intake"),
     ("blended-locomotion", "Blended locomotion"),
@@ -114,34 +124,39 @@ V1_PRIMARY_OWNERS = {
     "unknown",
 }
 V1_REQUIRED_HEADINGS = (
-    "## Executive decision",
-    "## Evaluation scope and evidence",
-    "## Pack inventory and content coverage",
-    "## Out-of-the-box results",
-    "## AnimSmith results",
-    "## Engine integration",
-    "## Blending, masking, and gameplay caveats",
-    "## Compatibility",
-    "## Issue and remediation register",
-    "## Acquisition and adoption guidance",
-    "## Limitations and unknowns",
-    "## Reproduction appendix",
+    "## Technical decision",
+    "## Capability coverage",
+    "## Runtime sets and authored motion",
+    "## Integration recipe",
+    "## Technical issue register",
+    "## Engine status",
+    "## Fit and limitations",
+    "## Evidence status",
     "## Sources",
 )
-V1_REQUIRED_EXECUTIVE_HEADINGS = (
-    "### Decision",
+V1_REQUIRED_CAPABILITY_HEADINGS = (
+    "### Complete core",
+    "### Partial supporting gameplay",
+    "### Absent",
+)
+V1_REQUIRED_APPENDIX_HEADINGS = (
+    "## Evaluation scope and provenance",
+    "## Evaluation manifest and taxonomy",
+    "## Pack inventory and content evidence",
+    "## Mechanical baseline",
+    "## AnimSmith remediation evidence",
+    "## Engine procedures and evidence",
+    "## Rig, masking, and compatibility evidence",
+    "## Limitations and unknowns",
+    "## Reproduction",
+    "## Sources",
+)
+V1_REQUIRED_APPENDIX_MANIFEST_HEADINGS = (
     "### Canonical clip-role inventory",
     "### Runtime-set inventory",
     "### Pipeline-stage coverage",
-    "### Readiness ladder by clip set",
-    "#### File-ready and clip-ready",
-    "#### Set-ready and rig/use",
-    "### Tooling frontier",
+    "### Readiness evidence by clip set",
     "### Validation-profile status",
-    "### Common-engine status",
-    "### Best fit",
-    "### Poor fit or material caveats",
-    "### Adoption conditions",
 )
 
 
@@ -281,92 +296,144 @@ def assign_path(
 
 
 def valid_report() -> str:
-    role_rows = "\n".join(f"| `{role}` | 0 |" for role in V1_PRIMARY_ROLES)
-    stage_rows = "\n".join(
-        f"| {label} | evaluated-clean |" for _identifier, label in V1_PIPELINE_STAGE_ROWS
-    )
-    profile_rows = "\n".join(
-        f"| {label} | not-selected |" for _identifier, label in V1_PROFILE_ROWS
-    )
     return f"""# Animation pack evaluation: Validator fixture
 
-## Executive decision
+> Technical verdict: **Usable with conditions**
+>
+> Evaluation completeness: **partial** — fixture boundary.
+>
+> Confidence: **medium**
+>
+> Evaluation date: **2026-08-16**
+>
+> Report format: **1**
+>
+> Detailed evidence: [fixture evidence appendix](fixture-evidence.md)
 
-### Decision
+## Technical decision
 Fixture decision.
 
+## Capability coverage
+
+### Complete core
+Fixture capability.
+
+### Partial supporting gameplay
+Fixture capability.
+
+### Absent
+Fixture capability.
+
+## Runtime sets and authored motion
+| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
+|---|---|---|---|---|---|
+| Walk | F `(0,1)` | IP `Walk.fbx`; RM `Walk_RM.fbx` | variant=paired-ip-rm | duration=1.0 s; rm_speed=1.0 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
+
+## Integration recipe
+1. **Members/topology:** `topology=2d-blend`; fixture coordinates `(0,1)`.
+2. **Timing/synchronization:** `sync=gait-phase`; fixture loop policy.
+3. **State ownership:** `owner=gameplay-controller`; fixture movement policy.
+4. **Composition constraints:** `composition=separate-variants`; fixture limits.
+5. **Acceptance gate:** `gate=target-character-review`; fixture visual gate.
+
+## Technical issue register
+| ID | Severity | Problem and impact | Primary owner | Current action | Future AnimSmith potential | Evidence/status |
+|---|---|---|---|---|---|---|
+| FIX-001 | moderate | [Fixture problem.](../game-ready-clips.md#the-loop-pops) | engine-config | Fixture workaround. | Not applicable. | High. |
+
+## Engine status
+| Runtime | Evidence level | Technical result | Remaining gate |
+|---|---|---|---|
+| Unity | not evaluated | Fixture. | Fixture. |
+| Unreal Engine | not evaluated | Fixture. | Fixture. |
+| Godot | not evaluated | Fixture. | Fixture. |
+| Bevy | not evaluated | Fixture. | Fixture. |
+
+## Fit and limitations
+Fixture result.
+
+## Evidence status
+Schema: `{V1_SCHEMA}`. See the
+[canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder).
+
+## Sources
+Fixture result.
+"""
+
+
+def valid_appendix() -> str:
+    role_rows = "\n".join(
+        f"| `{role}` | 0 | 0 | Fixture. |" for role in V1_PRIMARY_ROLES
+    )
+    stage_rows = "\n".join(
+        f"| {label} | `evaluated-clean` | Fixture. |"
+        for _identifier, label in V1_PIPELINE_STAGE_ROWS
+    )
+    profile_rows = "\n".join(
+        f"| {label} | `not-selected` | Fixture. |"
+        for _identifier, label in V1_PROFILE_ROWS
+    )
+    return f"""# Animation pack evidence appendix: Validator fixture
+
+> Companion report: [technical evaluation](fixture.md)
+>
+> Evidence status: **partial** — fixture boundary.
+>
+> Evaluation date: **2026-08-16**
+>
+> Report format: **1**
+
+The [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder)
+is authoritative.
+
+## Evaluation scope and provenance
+Schema: `{V1_SCHEMA}`.
+
+## Evaluation manifest and taxonomy
+
 ### Canonical clip-role inventory
+| Canonical primary role | Logical motions | Delivered files | Evidence boundary |
+|---|---:|---:|---|
 {role_rows}
+| **Total** | **0** | **0** | Fixture. |
 
 ### Runtime-set inventory
-No runtime sets.
+| Runtime set | Type | Members/variants | Grouping evidence | Validation status |
+|---|---|---|---|---|
+| Walk | directional-blend | IP/RM pair | Fixture. | Fixture. |
 
 ### Pipeline-stage coverage
-| Stage | Status |
-|---|---|
+| Stage | Coverage state | Evidence / remaining gate |
+|---|---|---|
 {stage_rows}
 
-### Readiness ladder by clip set
-
-#### File-ready and clip-ready
-Fixture result.
-
-#### Set-ready and rig/use
-Fixture result.
-
-### Tooling frontier
+### Readiness evidence by clip set
 Fixture result.
 
 ### Validation-profile status
-| Profile | Status |
-|---|---|
+| Validation profile | Selection | Result / next evidence |
+|---|---|---|
 {profile_rows}
 
-### Common-engine status
+## Pack inventory and content evidence
 Fixture result.
 
-### Best fit
+## Mechanical baseline
 Fixture result.
 
-### Poor fit or material caveats
+## AnimSmith remediation evidence
 Fixture result.
 
-### Adoption conditions
+## Engine procedures and evidence
 Fixture result.
 
-## Evaluation scope and evidence
-Schema: `{V1_SCHEMA}`
-
-## Pack inventory and content coverage
-Fixture result.
-
-## Out-of-the-box results
-Fixture result.
-
-## AnimSmith results
-Fixture result.
-
-## Engine integration
-Fixture result.
-
-## Blending, masking, and gameplay caveats
-Fixture result.
-
-## Compatibility
-Fixture result.
-
-## Issue and remediation register
-| ID | Severity | Problem and impact | Primary owner | Current workaround | Future AnimSmith potential | Confidence/status |
-|---|---|---|---|---|---|---|
-| FIX-001 | Moderate | Fixture problem. | engine-config | Fixture workaround. | Not applicable. | High. |
-
-## Acquisition and adoption guidance
+## Rig, masking, and compatibility evidence
 Fixture result.
 
 ## Limitations and unknowns
 Fixture result.
 
-## Reproduction appendix
+## Reproduction
 Fixture result.
 
 ## Sources
@@ -1085,8 +1152,108 @@ class ManifestValidatorTests(unittest.TestCase):
 
 
 class ReportValidatorTests(unittest.TestCase):
-    def test_accepts_complete_report(self) -> None:
+    def test_accepts_complete_pair(self) -> None:
         self.assertEqual(report_validator.validate(valid_report()), [])
+        self.assertEqual(report_validator.validate_appendix(valid_appendix()), [])
+        self.assertEqual(
+            report_validator.validate_pair(
+                valid_report(),
+                valid_appendix(),
+                "fixture.md",
+                "fixture-evidence.md",
+            ),
+            [],
+        )
+
+    def test_structural_contract_ignores_fenced_and_commented_markdown(self) -> None:
+        def hidden(document: str, opener: str, closer: str) -> str:
+            first, remainder = document.split("\n", 1)
+            return f"{first}\n{opener}\n{remainder}\n{closer}\n"
+
+        for opener, closer in (("```markdown", "```"), ("<!--", "-->")):
+            with self.subTest(opener=opener):
+                report = hidden(valid_report(), opener, closer)
+                appendix = hidden(valid_appendix(), opener, closer)
+                self.assertNotEqual(report_validator.validate(report), [])
+                self.assertNotEqual(report_validator.validate_appendix(appendix), [])
+                self.assertNotEqual(
+                    report_validator.validate_pair(
+                        report,
+                        appendix,
+                        "fixture.md",
+                        "fixture-evidence.md",
+                    ),
+                    [],
+                )
+
+        for opener, false_closer, closer in (
+            ("````markdown", "```", "````"),
+            ("```markdown", "``` trailing-text", "```"),
+            ("```markdown", "    ```", "```"),
+        ):
+            with self.subTest(opener=opener, false_closer=false_closer):
+                first, report_body = valid_report().split("\n", 1)
+                _, appendix_body = valid_appendix().split("\n", 1)
+                report = (
+                    f"{first}\n{opener}\n{false_closer}\n{report_body}\n{closer}\n"
+                )
+                appendix = (
+                    "# Animation pack evidence appendix: Validator fixture\n"
+                    f"{opener}\n{false_closer}\n{appendix_body}\n{closer}\n"
+                )
+                self.assertNotEqual(report_validator.validate(report), [])
+                self.assertNotEqual(report_validator.validate_appendix(appendix), [])
+                self.assertNotEqual(
+                    report_validator.validate_pair(
+                        report,
+                        appendix,
+                        "fixture.md",
+                        "fixture-evidence.md",
+                    ),
+                    [],
+                )
+
+        for document, validator in (
+            (valid_report(), report_validator.validate),
+            (valid_appendix(), report_validator.validate_appendix),
+        ):
+            with self.subTest(unclosed_comment=validator.__name__):
+                first, body = document.split("\n", 1)
+                self.assertNotEqual(validator(f"{first}\n<!--\n{body}"), [])
+
+        report_first, report_body = valid_report().split("\n", 1)
+        appendix_first, appendix_body = valid_appendix().split("\n", 1)
+        self.assertNotEqual(
+            report_validator.validate_pair(
+                f"{report_first}\n<!--\n{report_body}",
+                f"{appendix_first}\n<!--\n{appendix_body}",
+                "fixture.md",
+                "fixture-evidence.md",
+            ),
+            [],
+        )
+
+    def test_report_and_appendix_h1_must_be_the_first_rendered_block(self) -> None:
+        self.assertIn(
+            "report must start with '# Animation pack evaluation:'",
+            report_validator.validate("Visible preface.\n\n" + valid_report()),
+        )
+        self.assertIn(
+            "appendix must start with '# Animation pack evidence appendix:'",
+            report_validator.validate_appendix(
+                "Visible preface.\n\n" + valid_appendix()
+            ),
+        )
+        self.assertIn(
+            "report must not contain raw HTML",
+            report_validator.validate("<!-- invisible -->\n" + valid_report()),
+        )
+        self.assertIn(
+            "appendix must not contain raw HTML",
+            report_validator.validate_appendix(
+                "<!-- invisible -->\n" + valid_appendix()
+            ),
+        )
 
     def test_accepts_every_primary_issue_owner(self) -> None:
         for owner in V1_PRIMARY_OWNERS:
@@ -1097,97 +1264,1088 @@ class ReportValidatorTests(unittest.TestCase):
                 )
                 self.assertEqual(report_validator.validate(report), [])
 
-    def test_requires_every_top_level_heading(self) -> None:
+    def test_requires_every_primary_heading(self) -> None:
         for heading in V1_REQUIRED_HEADINGS:
             with self.subTest(heading=heading):
                 report = valid_report().replace(
                     f"{heading}\n", f"{heading} omitted\n", 1
                 )
+                self.assertIn(
+                    f"missing required heading: {heading}",
+                    report_validator.validate(report),
+                )
 
-                errors = report_validator.validate(report)
-
-                self.assertIn(f"missing required heading: {heading}", errors)
-
-    def test_requires_every_executive_heading(self) -> None:
-        for heading in V1_REQUIRED_EXECUTIVE_HEADINGS:
+    def test_requires_every_capability_heading(self) -> None:
+        for heading in V1_REQUIRED_CAPABILITY_HEADINGS:
             with self.subTest(heading=heading):
                 report = valid_report().replace(
                     f"{heading}\n", f"{heading} omitted\n", 1
                 )
-
-                errors = report_validator.validate(report)
-
                 self.assertIn(
-                    f"missing required executive heading: {heading}", errors
+                    f"missing required heading: {heading}",
+                    report_validator.validate(report),
                 )
 
-    def test_requires_every_pipeline_stage_row(self) -> None:
-        for _identifier, label in V1_PIPELINE_STAGE_ROWS:
-            with self.subTest(label=label):
-                report = valid_report().replace(
-                    f"| {label} | evaluated-clean |\n", ""
-                )
+    def test_required_report_sections_and_subsections_have_rendered_bodies(self) -> None:
+        def empty_body(document: str, marker: str, next_markers: tuple[str, ...]) -> str:
+            start = document.index(marker) + len(marker)
+            candidates = [
+                position
+                for next_marker in next_markers
+                if (position := document.find(next_marker, start)) >= 0
+            ]
+            end = min(candidates, default=len(document))
+            return document[:start] + document[end:]
 
-                errors = report_validator.validate(report)
-
-                self.assertIn(f"pipeline-stage coverage is missing: {label}", errors)
-
-    def test_requires_every_validation_profile_row(self) -> None:
-        for _identifier, label in V1_PROFILE_ROWS:
-            with self.subTest(label=label):
-                report = valid_report().replace(f"| {label} | not-selected |\n", "")
-
-                errors = report_validator.validate(report)
-
+        for section in report_validator.PRIMARY_HEADINGS:
+            with self.subTest(section=section):
+                report = empty_body(valid_report(), f"## {section}\n", ("\n## ",))
                 self.assertIn(
-                    f"validation-profile status is missing: {label}", errors
+                    f"required section is empty: ## {section}",
+                    report_validator.validate(report),
+                )
+        for subsection in report_validator.CAPABILITY_HEADINGS:
+            with self.subTest(subsection=subsection):
+                report = empty_body(
+                    valid_report(), f"### {subsection}\n", ("\n### ", "\n## ")
+                )
+                self.assertIn(
+                    f"required subsection is empty: ### {subsection}",
+                    report_validator.validate(report),
                 )
 
-    def test_requires_manifest_schema(self) -> None:
-        report = valid_report().replace(V1_SCHEMA, "urn:wrong:schema")
+    def test_required_appendix_sections_and_subsections_have_rendered_bodies(self) -> None:
+        def empty_body(document: str, marker: str, next_markers: tuple[str, ...]) -> str:
+            start = document.index(marker) + len(marker)
+            candidates = [
+                position
+                for next_marker in next_markers
+                if (position := document.find(next_marker, start)) >= 0
+            ]
+            end = min(candidates, default=len(document))
+            return document[:start] + document[end:]
 
-        errors = report_validator.validate(report)
+        for section in report_validator.APPENDIX_HEADINGS:
+            with self.subTest(section=section):
+                appendix = empty_body(
+                    valid_appendix(), f"## {section}\n", ("\n## ",)
+                )
+                self.assertIn(
+                    f"required section is empty: ## {section}",
+                    report_validator.validate_appendix(appendix),
+                )
+        for subsection in report_validator.APPENDIX_MANIFEST_HEADINGS:
+            with self.subTest(subsection=subsection):
+                appendix = empty_body(
+                    valid_appendix(), f"### {subsection}\n", ("\n### ", "\n## ")
+                )
+                self.assertIn(
+                    f"required subsection is empty: ### {subsection}",
+                    report_validator.validate_appendix(appendix),
+                )
 
+    def test_noncontent_blocks_do_not_satisfy_required_section_bodies(self) -> None:
+        cases = (
+            (
+                valid_report(),
+                "## Technical decision\n",
+                "\n## Capability coverage",
+                "required section is empty: ## Technical decision",
+                report_validator.validate,
+            ),
+            (
+                valid_appendix(),
+                "## Mechanical baseline\n",
+                "\n## AnimSmith remediation evidence",
+                "required section is empty: ## Mechanical baseline",
+                report_validator.validate_appendix,
+            ),
+        )
+        for document, start_marker, end_marker, expected, validator in cases:
+            start = document.index(start_marker) + len(start_marker)
+            end = document.index(end_marker, start)
+            for replacement in ("---\n", "```text\n```\n", "#### Placeholder\n"):
+                with self.subTest(start_marker=start_marker, replacement=replacement):
+                    mutated = document[:start] + replacement + document[end:]
+                    self.assertIn(expected, validator(mutated))
+
+    def test_rejects_out_of_order_required_headings(self) -> None:
+        heading_groups = (
+            V1_REQUIRED_HEADINGS,
+            V1_REQUIRED_CAPABILITY_HEADINGS,
+        )
+        for headings in heading_groups:
+            for first, second in zip(headings, headings[1:]):
+                with self.subTest(first=first, second=second):
+                    report = valid_report()
+                    first_position = report.index(first)
+                    second_position = report.index(second)
+                    report = (
+                        report[:first_position]
+                        + second
+                        + report[first_position + len(first) : second_position]
+                        + first
+                        + report[second_position + len(second) :]
+                    )
+                    errors = report_validator.validate(report)
+                    self.assertTrue(
+                        any("out of order" in error for error in errors), errors
+                    )
+
+    def test_required_headings_are_unique(self) -> None:
+        report = valid_report() + "\n## Technical decision\nOpposite decision.\n"
         self.assertIn(
-            f"report must identify evaluation manifest schema: {V1_SCHEMA}", errors
+            "required heading appears multiple times: ## Technical decision",
+            report_validator.validate(report),
+        )
+        appendix = (
+            valid_appendix()
+            + "\n## Evaluation scope and provenance\nContradictory provenance.\n"
+        )
+        self.assertIn(
+            "required heading appears multiple times: ## Evaluation scope and provenance",
+            report_validator.validate_appendix(appendix),
         )
 
-    def test_report_error_order_is_deterministic(self) -> None:
-        report = valid_report().replace("## Sources\n", "## Sources omitted\n")
-        report = report.replace(V1_SCHEMA, "urn:wrong:schema") + "\n{{UNRESOLVED}}\n"
-
-        errors = report_validator.validate(report)
-
-        self.assertEqual(
-            errors,
-            [
-                "missing required heading: ## Sources",
-                f"report must identify evaluation manifest schema: {V1_SCHEMA}",
-                "unresolved template placeholders: {{UNRESOLVED}}",
-            ],
+    def test_capability_subsections_must_stay_in_capability_section(self) -> None:
+        report = valid_report()
+        start = report.index("### Complete core")
+        end = report.index("## Runtime sets and authored motion")
+        relocated = report[start:end]
+        report = report[:start] + report[end:] + "\n" + relocated
+        self.assertIn(
+            "missing required heading: ### Complete core",
+            report_validator.validate(report),
         )
 
-    def test_multiple_missing_heading_errors_are_deterministic(self) -> None:
+    def test_requires_verdict_and_completeness(self) -> None:
         report = valid_report().replace(
-            "## Pack inventory and content coverage\n",
-            "## Pack inventory and content coverage omitted\n",
-        ).replace("## Compatibility\n", "## Compatibility omitted\n")
-
+            "> Technical verdict:", "> Verdict:"
+        ).replace(
+            "> Evaluation completeness:", "> Completeness:"
+        )
         errors = report_validator.validate(report)
+        self.assertIn("report must declare a bold Technical verdict", errors)
+        self.assertIn("report must declare bold Evaluation completeness", errors)
 
-        self.assertEqual(
-            errors,
-            [
-                "missing required heading: ## Pack inventory and content coverage",
-                "missing required heading: ## Compatibility",
-            ],
+        suffixed = valid_report().replace(
+            "**partial** — fixture boundary.", "**partial** contradictory", 1
+        )
+        self.assertIn(
+            "report must declare bold Evaluation completeness",
+            report_validator.validate(suffixed),
         )
 
-    def test_multiple_placeholder_errors_are_deterministic(self) -> None:
+    def test_report_metadata_declarations_are_unique(self) -> None:
+        report = valid_report().replace(
+            "> Technical verdict: **Usable with conditions**",
+            "> Technical verdict: **Usable with conditions**\n>\n"
+            "> Technical verdict: **Poor fit**",
+            1,
+        )
+        self.assertIn(
+            "report must declare a bold Technical verdict",
+            report_validator.validate(report),
+        )
+
+    def test_required_metadata_must_stay_in_the_document_preamble(self) -> None:
+        report = valid_report()
+        start = report.index("> Technical verdict:")
+        end = report.index("\n\n## Technical decision", start)
+        metadata = report[start:end]
+        relocated = report[:start] + report[end:] + "\n\n" + metadata + "\n"
+        errors = report_validator.validate(relocated)
+        self.assertIn("report must declare a bold Technical verdict", errors)
+        self.assertIn("report must declare bold Evaluation completeness", errors)
+        self.assertIn("report must declare one canonical bold Confidence", errors)
+
+        appendix = valid_appendix()
+        start = appendix.index("> Companion report:")
+        end = appendix.index("\n\nThe [canonical readiness ladder]", start)
+        metadata = appendix[start:end]
+        relocated = appendix[:start] + appendix[end:] + "\n\n" + metadata + "\n"
+        errors = report_validator.validate_appendix(relocated)
+        self.assertIn("appendix must declare one canonical bold Evidence status", errors)
+        self.assertIn("appendix must declare Report format 1", errors)
+
+    def test_requires_confidence_evidence_status_and_evaluation_dates(self) -> None:
+        report = valid_report().replace("> Confidence: **medium**\n>\n", "", 1)
+        self.assertIn(
+            "report must declare one canonical bold Confidence",
+            report_validator.validate(report),
+        )
+        report = valid_report().replace("**2026-08-16**", "**2026-8-16**", 1)
+        self.assertIn(
+            "report must declare a bold YYYY-MM-DD Evaluation date",
+            report_validator.validate(report),
+        )
+        appendix = valid_appendix().replace(
+            "> Evidence status: **partial** — fixture boundary.\n>\n", "", 1
+        )
+        self.assertIn(
+            "appendix must declare one canonical bold Evidence status",
+            report_validator.validate_appendix(appendix),
+        )
+        appendix = valid_appendix().replace("**2026-08-16**", "**not-a-date**", 1)
+        self.assertIn(
+            "appendix must declare a bold YYYY-MM-DD Evaluation date",
+            report_validator.validate_appendix(appendix),
+        )
+
+    def test_enforces_report_decision_vocabularies(self) -> None:
+        self.assertEqual(report_validator.TECHNICAL_VERDICTS, V1_TECHNICAL_VERDICTS)
+        self.assertEqual(
+            report_validator.EVALUATION_COMPLETENESS,
+            V1_EVALUATION_COMPLETENESS,
+        )
+        self.assertEqual(report_validator.ISSUE_SEVERITIES, V1_ISSUE_SEVERITIES)
+        for verdict in V1_TECHNICAL_VERDICTS:
+            with self.subTest(verdict=verdict):
+                report = valid_report().replace(
+                    "**Usable with conditions**", f"**{verdict}**", 1
+                )
+                self.assertEqual(report_validator.validate(report), [])
+        for completeness in V1_EVALUATION_COMPLETENESS:
+            with self.subTest(completeness=completeness):
+                report = valid_report().replace(
+                    "**partial** — fixture boundary.",
+                    f"**{completeness}** — fixture boundary.",
+                    1,
+                )
+                self.assertEqual(report_validator.validate(report), [])
+        for severity in V1_ISSUE_SEVERITIES:
+            with self.subTest(severity=severity):
+                report = valid_report().replace(
+                    "| FIX-001 | moderate |", f"| FIX-001 | {severity} |", 1
+                )
+                self.assertEqual(report_validator.validate(report), [])
+
+        unknown = valid_report().replace(
+            "**Usable with conditions**", "**Buy immediately**", 1
+        ).replace(
+            "**partial** — fixture boundary.", "**Banana** — fixture boundary.", 1
+        ).replace(
+            "| FIX-001 | moderate |", "| FIX-001 | Potato |", 1
+        )
+        errors = report_validator.validate(unknown)
+        self.assertIn("report has unknown Technical verdict: Buy immediately", errors)
+        self.assertIn("report has unknown Evaluation completeness: Banana", errors)
+        self.assertIn("issue FIX-001 has unknown severity: 'Potato'", errors)
+
+    def test_requires_report_format_in_both_documents(self) -> None:
+        report_errors = report_validator.validate(
+            valid_report().replace("> Report format: **1**\n", "")
+        )
+        appendix_errors = report_validator.validate_appendix(
+            valid_appendix().replace("> Report format: **1**\n", "")
+        )
+        self.assertIn("report must declare Report format 1", report_errors)
+        self.assertIn("appendix must declare Report format 1", appendix_errors)
+
+    def test_primary_report_word_limit_boundary(self) -> None:
+        base = valid_report().replace("Fixture decision.", "", 1)
+        base_words = report_validator.rendered_word_count(base)
+
+        def with_words(total: int) -> str:
+            return base.replace(
+                "## Technical decision\n",
+                "## Technical decision\n" + " ".join(["word"] * (total - base_words)) + "\n",
+                1,
+            )
+
+        accepted = report_validator.validate(with_words(2000))
+        rejected = report_validator.validate(with_words(2001))
+        self.assertFalse(
+            any(error.startswith("primary report has ") for error in accepted),
+            accepted,
+        )
+        self.assertIn(
+            "primary report has 2001 words; maximum is 2000",
+            rejected,
+        )
+
+        fenced = valid_report() + "\n```text\n" + "visibleword " * 2500 + "\n```\n"
+        errors = report_validator.validate(fenced)
+        self.assertTrue(
+            any(error.startswith("primary report has ") for error in errors), errors
+        )
+
+    def test_rejects_raw_html_documents(self) -> None:
+        for suffix in (
+            "\n<div>Rendered report prose.</div>\n",
+            "\n<!-- invisible --><div>Rendered report prose.</div>\n",
+            "\n<!-- invisible --> <script>alert(1)</script>\n",
+            "\n<!-- invisible -->" + "visibleword " * 2500 + "\n",
+            "\n<!-->" + "visibleword " * 2500 + "-->\n",
+            "\n<!-- --!><div>visible</div><!-- -->\n",
+        ):
+            with self.subTest(suffix=suffix):
+                self.assertIn(
+                    "report must not contain raw HTML",
+                    report_validator.validate(valid_report() + suffix),
+                )
+        appendix = valid_appendix() + "\n<div>Rendered appendix prose.</div>\n"
+        self.assertIn(
+            "appendix must not contain raw HTML",
+            report_validator.validate_appendix(appendix),
+        )
+
+    def test_requires_runtime_set_member_and_contract_columns(self) -> None:
+        replacements = (
+            ("Exact members", "Members omitted"),
+            ("Variant/type", "Variant omitted"),
+            ("Timing or motion", "Timing omitted"),
+            ("Runtime contract", "Contract omitted"),
+        )
+        for old, new in replacements:
+            with self.subTest(field=old):
+                errors = report_validator.validate(
+                    valid_report().replace(old, new, 1)
+                )
+                self.assertIn(
+                    "runtime-set inventory must use the required member/contract table",
+                    errors,
+                )
+
+    def test_requires_named_runtime_set_members(self) -> None:
+        report = valid_report().replace(
+            "| IP `Walk.fbx`; RM `Walk_RM.fbx` |",
+            "| unnamed members |",
+        )
+        self.assertIn(
+            "runtime-set member row 1 must name every exact member in code",
+            report_validator.validate(report),
+        )
+
+        partial = valid_report().replace(
+            "IP `Walk.fbx`; RM `Walk_RM.fbx`",
+            "IP `Walk.fbx`; RM Walk_RM.fbx",
+        )
+        self.assertIn(
+            "runtime-set member row 1 must name every exact member in code",
+            report_validator.validate(partial),
+        )
+
+        for members in ("IP ` `; RM `  `", "` `"):
+            with self.subTest(members=members):
+                whitespace = valid_report().replace(
+                    "IP `Walk.fbx`; RM `Walk_RM.fbx`", members
+                )
+                self.assertIn(
+                    "runtime-set member row 1 must name every exact member in code",
+                    report_validator.validate(whitespace),
+                )
+
+        misdistributed = valid_report().replace(
+            "IP `Walk.fbx`; RM `Walk_RM.fbx`",
+            "IP `Walk.fbx` `Walk_RM.fbx`; RM Walk.fbx Walk_RM.fbx",
+        )
+        self.assertIn(
+            "runtime-set member row 1 must name every exact member in code",
+            report_validator.validate(misdistributed),
+        )
+
+    def test_runtime_member_code_spans_support_utf8_and_distinct_pairs(self) -> None:
+        utf8 = valid_report().replace(
+            "IP `Walk.fbx`; RM `Walk_RM.fbx`",
+            "IP `Wälk.fbx`; RM `Wälk_RM.fbx`",
+        )
+        self.assertEqual(report_validator.validate(utf8), [])
+
+        duplicate = valid_report().replace(
+            "IP `Walk.fbx`; RM `Walk_RM.fbx`",
+            "IP `Walk.fbx`; RM `Walk.fbx`",
+        )
+        self.assertIn(
+            "runtime-set member row 1 must name distinct exact members",
+            report_validator.validate(duplicate),
+        )
+
+        generic_duplicate = valid_report().replace(
+            "IP `Walk.fbx`; RM `Walk_RM.fbx` | variant=paired-ip-rm | "
+            "duration=1.0 s; rm_speed=1.0 m/s | "
+            "loop_ip=true; loop_rm=true; sync=gait-phase",
+            "`Aim.fbx`; `Aim.fbx` | set_type=directional-blend | N/A | state=aim",
+        )
+        self.assertIn(
+            "runtime-set member row 1 must name distinct exact members",
+            report_validator.validate(generic_duplicate),
+        )
+
+    def test_rejects_malformed_runtime_timing_and_contract_values(self) -> None:
+        mutations = (
+            (
+                "duration=1.0 s; rm_speed=1.0 m/s",
+                "duration=yesterday; rm_speed=very-fast",
+                "runtime-set member row 1 has malformed timing or motion evidence",
+            ),
+            (
+                "loop_ip=true; loop_rm=true; sync=gait-phase",
+                "loop_ip=banana; loop_rm=perhaps; sync=gait-phase",
+                "runtime-set member row 1 has malformed runtime contract",
+            ),
+            (
+                "duration=1.0 s; rm_speed=1.0 m/s",
+                "duration=1.0 Hz; rm_speed=1.0 s",
+                "runtime-set member row 1 has malformed timing or motion evidence",
+            ),
+            (
+                "duration=1.0 s; rm_speed=1.0 m/s",
+                "duration=0 s; rm_speed=1.0 m/s",
+                "runtime-set member row 1 has malformed timing or motion evidence",
+            ),
+            (
+                "duration=1.0 s; rm_speed=1.0 m/s",
+                "N/A",
+                "runtime-set member row 1 has malformed timing or motion evidence",
+            ),
+            (
+                "loop_ip=true; loop_rm=true; sync=gait-phase",
+                "N/A",
+                "runtime-set member row 1 has malformed runtime contract",
+            ),
+            (
+                "duration=1.0 s; rm_speed=1.0 m/s",
+                "duration=1.0 s",
+                "runtime-set member row 1 has malformed timing or motion evidence",
+            ),
+            (
+                "duration=1.0 s; rm_speed=1.0 m/s",
+                "rm_speed=1.0 m/s",
+                "runtime-set member row 1 has malformed timing or motion evidence",
+            ),
+            (
+                "duration=1.0 s; rm_speed=1.0 m/s",
+                "threshold=0",
+                "runtime-set member row 1 has malformed timing or motion evidence",
+            ),
+            (
+                "duration=1.0 s; rm_speed=1.0 m/s",
+                "duration=1.0 s; duration=2.0 s; rm_speed=1.0 m/s",
+                "runtime-set member row 1 has malformed timing or motion evidence",
+            ),
+            (
+                "loop_ip=true; loop_rm=true; sync=gait-phase",
+                "loop_ip=true; loop_ip=false; loop_rm=true; sync=gait-phase",
+                "runtime-set member row 1 has malformed runtime contract",
+            ),
+            (
+                "loop_ip=true; loop_rm=true; sync=gait-phase",
+                "loop_ip=true; sync=gait-phase",
+                "runtime-set member row 1 has malformed runtime contract",
+            ),
+        )
+        for old, new, expected in mutations:
+            with self.subTest(new=new):
+                self.assertIn(
+                    expected,
+                    report_validator.validate(valid_report().replace(old, new, 1)),
+                )
+
+        oversized = "9" * 309
+        overflow_values = (
+            f"duration={oversized} s; rm_speed=1.0 m/s",
+            f"duration=1.0 s; rm_speed={oversized} m/s",
+            f"duration=1.0 s; rm_speed=1.0 m/s; sample_rate={oversized} Hz",
+            f"duration=1.0 s; rm_speed=1.0 m/s; frames={oversized} frames",
+            f"duration=1.0 s; rm_speed=1.0 m/s; threshold={oversized}",
+            "duration=0." + "0" * 400 + "1 s; rm_speed=1.0 m/s",
+        )
+        for timing in overflow_values:
+            with self.subTest(timing=timing):
+                report = valid_report().replace(
+                    "duration=1.0 s; rm_speed=1.0 m/s", timing, 1
+                )
+                self.assertIn(
+                    "runtime-set member row 1 has malformed timing or motion evidence",
+                    report_validator.validate(report),
+                )
+
+        root_motion = valid_report().replace(
+            "IP `Walk.fbx`; RM `Walk_RM.fbx` | variant=paired-ip-rm | "
+            "duration=1.0 s; rm_speed=1.0 m/s | "
+            "loop_ip=true; loop_rm=true; sync=gait-phase",
+            "`Walk_RM.fbx` | variant=root-motion | N/A | movement=animation",
+        )
+        self.assertIn(
+            "runtime-set member row 1 has malformed timing or motion evidence",
+            report_validator.validate(root_motion),
+        )
+
+    def test_requires_runtime_variant_or_set_type_token(self) -> None:
+        report = valid_report().replace(
+            "variant=paired-ip-rm", "paired IP/RM", 1
+        )
+        self.assertIn(
+            "runtime-set member row 1 has malformed variant or set type",
+            report_validator.validate(report),
+        )
+
+        dual_discriminator = valid_report().replace(
+            "variant=paired-ip-rm",
+            "variant=paired-ip-rm; set_type=directional-blend",
+            1,
+        )
+        self.assertIn(
+            "runtime-set member row 1 has malformed variant or set type",
+            report_validator.validate(dual_discriminator),
+        )
+
+        disguised_root_motion = valid_report().replace(
+            "IP `Walk.fbx`; RM `Walk_RM.fbx` | variant=paired-ip-rm | "
+            "duration=1.0 s; rm_speed=1.0 m/s | "
+            "loop_ip=true; loop_rm=true; sync=gait-phase",
+            "RM `Walk_RM.fbx` | variant=directional-blend | "
+            "rm_speed=1.0 m/s | movement=controller",
+        )
+        errors = report_validator.validate(disguised_root_motion)
+        self.assertIn(
+            "runtime-set member row 1 has malformed variant or set type", errors
+        )
+        self.assertIn(
+            "runtime-set member row 1 has RM members without a root-motion variant",
+            errors,
+        )
+        self.assertIn(
+            "runtime-set member row 1 has malformed timing or motion evidence",
+            errors,
+        )
+
+    def test_paired_variant_requires_exactly_one_ip_and_rm_member(self) -> None:
+        for members in (
+            "IP `Walk.fbx`",
+            "IP `Walk.fbx`; IP `Walk_RM.fbx`",
+            "RM `Walk.fbx`; RM `Walk_RM.fbx`",
+        ):
+            with self.subTest(members=members):
+                report = valid_report().replace(
+                    "IP `Walk.fbx`; RM `Walk_RM.fbx`", members
+                )
+                self.assertIn(
+                    "runtime-set member row 1 must name exactly one IP and one RM member",
+                    report_validator.validate(report),
+                )
+
+    def test_accepts_explicit_absence_of_runtime_sets(self) -> None:
+        report = valid_report()
+        start = report.index("| Set/profile |")
+        end = report.index("\n\n## Integration recipe")
+        report = (
+            report[:start]
+            + "No important runtime sets were identified."
+            + report[end:]
+        )
+        self.assertEqual(report_validator.validate(report), [])
+
+    def test_rejects_hidden_runtime_set_absence_statement(self) -> None:
+        report = valid_report()
+        start = report.index("| Set/profile |")
+        end = report.index("\n\n## Integration recipe")
+        report = (
+            report[:start]
+            + "<!-- No important runtime sets were identified. -->"
+            + report[end:]
+        )
+        self.assertIn(
+            "runtime-set inventory must use the required member/contract table",
+            report_validator.validate(report),
+        )
+        fenced = report.replace(
+            "<!-- No important runtime sets were identified. -->",
+            "```\nNo important runtime sets were identified.\n```",
+        )
+        self.assertIn(
+            "runtime-set inventory must use the required member/contract table",
+            report_validator.validate(fenced),
+        )
+        quoted = report.replace(
+            "<!-- No important runtime sets were identified. -->",
+            "> No important runtime sets were identified.",
+        )
+        self.assertIn(
+            "runtime-set inventory must use the required member/contract table",
+            report_validator.validate(quoted),
+        )
+
+    def test_rejects_absence_statement_beside_runtime_table(self) -> None:
+        report = valid_report().replace(
+            "## Runtime sets and authored motion\n",
+            "## Runtime sets and authored motion\n"
+            "No important runtime sets were identified.\n",
+            1,
+        )
+        self.assertIn(
+            "runtime-set inventory contradicts the explicit no-set result",
+            report_validator.validate(report),
+        )
+
+    def test_runtime_set_absence_must_be_the_sole_section_body(self) -> None:
+        report = valid_report()
+        start = report.index("| Set/profile |")
+        end = report.index("\n\n## Integration recipe", start)
+        base = report[:start] + "No important runtime sets were identified." + report[end:]
+        for addition in (
+            "\n\n- Important runtime set Walk exists.",
+            "\n\n> Important runtime set Walk exists.",
+            "\n\n```text\nImportant runtime set Walk exists.\n```",
+            "\n\n---",
+        ):
+            with self.subTest(addition=addition):
+                mutated = base.replace(
+                    "\n\n## Integration recipe", addition + "\n\n## Integration recipe", 1
+                )
+                self.assertIn(
+                    "runtime-set inventory must use the required member/contract table",
+                    report_validator.validate(mutated),
+                )
+
+    def test_requires_every_recipe_decision(self) -> None:
+        for label in report_validator.RECIPE_LABELS:
+            with self.subTest(label=label):
+                report = valid_report().replace(f"**{label}:**", "**Omitted:**", 1)
+                errors = report_validator.validate(report)
+                self.assertTrue(
+                    any(label in error for error in errors), errors
+                )
+
+    def test_rejects_empty_recipe_decisions(self) -> None:
+        for label in report_validator.RECIPE_LABELS:
+            with self.subTest(label=label):
+                marker = f"**{label}:**"
+                report = valid_report()
+                report = re.sub(
+                    rf"({re.escape(marker)})[^\n]+",
+                    rf"\1 x",
+                    report,
+                    count=1,
+                )
+                errors = report_validator.validate(report)
+                self.assertTrue(
+                    any("lacks an implementable" in error and label in error for error in errors),
+                    errors,
+                )
+
+        state = valid_report().replace(
+            "`owner=gameplay-controller`; fixture movement policy.",
+            "State ownership was not evaluated.",
+        )
+        self.assertIn(
+            "integration recipe step 3 lacks an implementable State ownership decision",
+            report_validator.validate(state),
+        )
+
+    def test_recipe_steps_must_be_direct_list_items(self) -> None:
+        nested = valid_report().replace(
+            "1. **Members/topology:**",
+            "1. **Members/topology:**",
+            1,
+        )
+        nested = nested.replace("\n2. **Timing", "\n\n   2. **Timing", 1)
+        for number, label in (
+            (3, "State"),
+            (4, "Composition"),
+            (5, "Acceptance"),
+        ):
+            nested = nested.replace(
+                f"\n{number}. **{label}", f"\n   {number}. **{label}", 1
+            )
+        errors = report_validator.validate(nested)
+        for number, label in enumerate(report_validator.RECIPE_LABELS[1:], start=2):
+            self.assertIn(
+                f"integration recipe is missing step {number}: {label}", errors
+            )
+
+        report = valid_report()
+        start = report.index("1. **Members/topology:**")
+        end = report.index("\n\n## Technical issue register", start)
+        quoted = "\n".join("> " + line for line in report[start:end].splitlines())
+        report = report[:start] + quoted + report[end:]
+        errors = report_validator.validate(report)
+        for number, label in enumerate(report_validator.RECIPE_LABELS, start=1):
+            self.assertIn(
+                f"integration recipe is missing step {number}: {label}", errors
+            )
+
+        report = valid_report()
+        start = report.index("1. **Members/topology:**")
+        end = report.index("\n\n## Technical issue register", start)
+        steps = report[start:end].splitlines()
+        reordered = "\n\n---\n\n".join([steps[4], *steps[:4]])
+        report = report[:start] + reordered + report[end:]
+        self.assertIn(
+            "integration recipe steps must appear in order 1 through 5",
+            report_validator.validate(report),
+        )
+
+    def test_requires_all_common_engines(self) -> None:
+        for engine in ("Unity", "Unreal Engine", "Godot", "Bevy"):
+            with self.subTest(engine=engine):
+                report = valid_report().replace(f"| {engine} |", "| Omitted |", 1)
+                self.assertIn(
+                    f"engine status is missing: {engine}",
+                    report_validator.validate(report),
+                )
+
+    def test_engine_rows_must_stay_in_engine_section(self) -> None:
+        row = "| Unity | not evaluated | Fixture. | Fixture. |\n"
+        report = valid_report().replace(row, "", 1) + "\n" + row
+        self.assertIn(
+            "engine status is missing: Unity",
+            report_validator.validate(report),
+        )
+
+    def test_engine_rows_require_full_table_shape(self) -> None:
+        report = valid_report().replace(
+            "| Unity | not evaluated | Fixture. | Fixture. |",
+            "| Unity |",
+        )
+        self.assertIn(
+            "engine status row is malformed: Unity",
+            report_validator.validate(report),
+        )
+
+    def test_engine_table_requires_header_and_separator(self) -> None:
+        header = "| Runtime | Evidence level | Technical result | Remaining gate |\n"
+        separator = "|---|---|---|---|\n"
+        no_header = valid_report().replace(header, "", 1)
+        no_separator = valid_report().replace(header + separator, header, 1)
+        self.assertTrue(
+            any("missing required table header" in error for error in report_validator.validate(no_header))
+        )
+        self.assertTrue(
+            any("missing required table header" in error for error in report_validator.validate(no_separator))
+        )
+
+    def test_report_tables_reject_wrong_width_separators(self) -> None:
+        tables = (
+            (
+                "| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |\n",
+                "|---|---|---|---|---|---|\n",
+            ),
+            (
+                "| ID | Severity | Problem and impact | Primary owner | Current action | Future AnimSmith potential | Evidence/status |\n",
+                "|---|---|---|---|---|---|---|\n",
+            ),
+            (
+                "| Runtime | Evidence level | Technical result | Remaining gate |\n",
+                "|---|---|---|---|\n",
+            ),
+        )
+        for header, separator in tables:
+            with self.subTest(header=header):
+                report = valid_report().replace(
+                    header + separator, header + "|---|\n", 1
+                )
+                self.assertNotEqual(report_validator.validate(report), [])
+
+    def test_requires_issue_guidance_link(self) -> None:
+        report = valid_report().replace(
+            "[Fixture problem.](../game-ready-clips.md#the-loop-pops)",
+            "Fixture problem.",
+        )
+        self.assertIn(
+            "issue FIX-001 must link applicable docs/game-ready-clips.md guidance or mark it not applicable",
+            report_validator.validate(report),
+        )
+
+    def test_issue_guidance_must_be_a_rendered_markdown_link(self) -> None:
+        link = "[Fixture problem.](../game-ready-clips.md#the-loop-pops)"
+        for replacement in (
+            "Fixture problem: ../game-ready-clips.md#the-loop-pops",
+            f"`{link}`",
+            "\\[Fixture problem.](../game-ready-clips.md#the-loop-pops)",
+        ):
+            with self.subTest(replacement=replacement):
+                report = valid_report().replace(link, replacement)
+                self.assertIn(
+                    "issue FIX-001 must link applicable docs/game-ready-clips.md guidance or mark it not applicable",
+                    report_validator.validate(report),
+                )
+
+    def test_accepts_explicitly_inapplicable_issue_guidance(self) -> None:
+        report = valid_report().replace(
+            "[Fixture problem.](../game-ready-clips.md#the-loop-pops)",
+            "Fixture problem. Guidance: not applicable.",
+        )
+        self.assertEqual(report_validator.validate(report), [])
+
+    def test_rejects_hidden_or_inline_issue_guidance_opt_out(self) -> None:
+        for replacement in (
+            "Fixture problem. <!-- Guidance: not applicable. -->",
+            "Fixture problem. `Guidance: not applicable.`",
+        ):
+            with self.subTest(replacement=replacement):
+                report = valid_report().replace(
+                    "[Fixture problem.](../game-ready-clips.md#the-loop-pops)",
+                    replacement,
+                )
+                self.assertIn(
+                    "issue FIX-001 must link applicable docs/game-ready-clips.md guidance or mark it not applicable",
+                    report_validator.validate(report),
+                )
+
+    def test_rejects_absolute_local_docs_link(self) -> None:
+        report = valid_report().replace(
+            "../game-ready-clips.md#the-loop-pops",
+            "https://github.com/example/repo/blob/revision/docs/game-ready-clips.md#the-loop-pops",
+        )
+        self.assertIn(
+            "report must use repository-relative links for local AnimSmith docs",
+            report_validator.validate(report),
+        )
+
+    def test_rejects_unknown_or_composite_issue_owner(self) -> None:
+        for owner in ("unknown-owner", "vendor-license / artist-author"):
+            with self.subTest(owner=owner):
+                report = valid_report().replace(
+                    "| engine-config | Fixture workaround. |",
+                    f"| {owner} | Fixture workaround. |",
+                )
+                self.assertIn(
+                    f"issue FIX-001 has unknown or composite primary owner: {owner!r}",
+                    report_validator.validate(report),
+                )
+
+    def test_issue_rows_accept_optional_outer_pipes(self) -> None:
+        full_row = (
+            "| FIX-001 | moderate | [Fixture problem.]"
+            "(../game-ready-clips.md#the-loop-pops) | engine-config | "
+            "Fixture workaround. | Not applicable. | High. |"
+        )
+        for row in (full_row.lstrip("| "), full_row.rstrip(" |")):
+            with self.subTest(row=row):
+                report = valid_report().replace(full_row, row)
+                self.assertEqual(report_validator.validate(report), [])
+
+    def test_rejects_malformed_or_empty_issue_rows(self) -> None:
+        malformed = valid_report().replace(
+            "| Fixture workaround. | Not applicable. | High. |",
+            "| Fixture workaround. | High. |",
+        )
+        self.assertIn(
+            "issue FIX-001 has empty required cells: Evidence/status",
+            report_validator.validate(malformed),
+        )
+        empty = valid_report().replace(
+            "| FIX-001 | moderate |",
+            "| FIX-001 |  |",
+        )
+        self.assertIn(
+            "issue FIX-001 has empty required cells: Severity",
+            report_validator.validate(empty),
+        )
+
+    def test_rejects_duplicate_issue_ids_in_deterministic_order(self) -> None:
+        report = valid_report()
+        row = next(line for line in report.splitlines() if line.startswith("| FIX-001 |"))
+        zzz_row = row.replace("FIX-001", "ZZZ-001", 1)
+        duplicate_rows = zzz_row + "\n" + zzz_row + "\n" + row
+        report = report.replace(row, row + "\n" + duplicate_rows, 1)
+        self.assertIn(
+            "technical issue register contains duplicate IDs: FIX-001, ZZZ-001",
+            report_validator.validate(report),
+        )
+
+    def test_rejects_duplicate_issue_tables(self) -> None:
+        report = valid_report()
+        start = report.index("| ID | Severity |")
+        end = report.index("\n\n## Engine status", start)
+        table = report[start:end]
+        duplicated = report[:end] + "\n\n" + table + report[end:]
+        self.assertIn(
+            "technical issue register must contain an issue table or the explicit clean result",
+            report_validator.validate(duplicated),
+        )
+
+    def test_requires_issue_table_header_and_separator(self) -> None:
+        header = "| ID | Severity | Problem and impact | Primary owner | Current action | Future AnimSmith potential | Evidence/status |\n"
+        separator = "|---|---|---|---|---|---|---|\n"
+        without_header = valid_report().replace(header, "", 1)
+        without_separator = valid_report().replace(separator, "", 1)
+        self.assertIn(
+            "technical issue register must contain an issue table or the explicit clean result",
+            report_validator.validate(without_header),
+        )
+        self.assertIn(
+            "technical issue register must contain an issue table or the explicit clean result",
+            report_validator.validate(without_separator),
+        )
+
+    def test_rejects_runtime_and_issue_tables_rendered_as_indented_code(self) -> None:
+        cases = (
+            (
+                "| Set/profile |",
+                "\n\n## Integration recipe",
+                "runtime-set inventory must use the required member/contract table",
+            ),
+            (
+                "| ID | Severity |",
+                "\n\n## Engine status",
+                "technical issue register must contain an issue table or the explicit clean result",
+            ),
+        )
+        for start_marker, end_marker, expected in cases:
+            with self.subTest(start_marker=start_marker):
+                report = valid_report()
+                start = report.index(start_marker)
+                end = report.index(end_marker, start)
+                table = report[start:end]
+                indented = "\n".join(f"    {line}" for line in table.splitlines())
+                report = report[:start] + indented + report[end:]
+                self.assertIn(expected, report_validator.validate(report))
+
+    def test_rejects_runtime_and_issue_tables_inside_raw_html_blocks(self) -> None:
+        cases = (
+            (
+                "| Set/profile |",
+                "\n\n## Integration recipe",
+                "runtime-set inventory must use the required member/contract table",
+            ),
+            (
+                "| ID | Severity |",
+                "\n\n## Engine status",
+                "technical issue register must contain an issue table or the explicit clean result",
+            ),
+        )
+        for start_marker, end_marker, expected in cases:
+            for tag in ("pre", "div"):
+                with self.subTest(start_marker=start_marker, tag=tag):
+                    report = valid_report()
+                    start = report.index(start_marker)
+                    end = report.index(end_marker, start)
+                    table = report[start:end]
+                    report = (
+                        report[:start]
+                        + f"<{tag}>\n{table}\n</{tag}>"
+                        + report[end:]
+                    )
+                    self.assertIn(expected, report_validator.validate(report))
+
+    def test_blockquoted_headings_and_tables_do_not_satisfy_report_structure(self) -> None:
+        report = valid_report().replace(
+            "## Runtime sets and authored motion\n",
+            "> ## Runtime sets and authored motion\n>\n",
+            1,
+        )
+        start = report.index("| Set/profile |")
+        end = report.index("\n\n## Integration recipe", start)
+        quoted_table = "\n".join(
+            "> " + line for line in report[start:end].splitlines()
+        )
+        report = report[:start] + quoted_table + report[end:]
+        errors = report_validator.validate(report)
+        self.assertIn(
+            "missing required heading: ## Runtime sets and authored motion", errors
+        )
+        self.assertIn(
+            "runtime-set inventory must use the required member/contract table", errors
+        )
+
+    def test_list_nested_headings_and_tables_do_not_satisfy_report_structure(self) -> None:
+        heading = valid_report().replace(
+            "## Technical decision", "- ## Technical decision", 1
+        )
+        self.assertIn(
+            "missing required heading: ## Technical decision",
+            report_validator.validate(heading),
+        )
+
+        report = valid_report()
+        start = report.index("| Runtime | Evidence level |")
+        end = report.index("\n\n## Fit and limitations", start)
+        table = report[start:end]
+        nested = "- Nested table:\n\n" + "\n".join(
+            "  " + line for line in table.splitlines()
+        )
+        report = report[:start] + nested + report[end:]
+        errors = report_validator.validate(report)
+        self.assertTrue(
+            any("missing required table header" in error for error in errors), errors
+        )
+        for engine in ("Unity", "Unreal Engine", "Godot", "Bevy"):
+            self.assertIn(f"engine status is missing: {engine}", errors)
+
+    def test_accepts_explicit_clean_issue_register(self) -> None:
+        report = valid_report()
+        start = report.index("| ID | Severity |")
+        end = report.index("\n\n## Engine status")
+        report = (
+            report[:start]
+            + "No material technical issues were found at the stated scope."
+            + report[end:]
+        )
+        self.assertEqual(report_validator.validate(report), [])
+
+    def test_rejects_hidden_clean_issue_register(self) -> None:
+        report = valid_report()
+        start = report.index("| ID | Severity |")
+        end = report.index("\n\n## Engine status")
+        report = (
+            report[:start]
+            + "<!-- No material technical issues were found at the stated scope. -->"
+            + report[end:]
+        )
+        self.assertIn(
+            "technical issue register must contain an issue table or the explicit clean result",
+            report_validator.validate(report),
+        )
+        fenced = report.replace(
+            "<!-- No material technical issues were found at the stated scope. -->",
+            "```\nNo material technical issues were found at the stated scope.\n```",
+        )
+        self.assertIn(
+            "technical issue register must contain an issue table or the explicit clean result",
+            report_validator.validate(fenced),
+        )
+        quoted = report.replace(
+            "<!-- No material technical issues were found at the stated scope. -->",
+            "> No material technical issues were found at the stated scope.",
+        )
+        self.assertIn(
+            "technical issue register must contain an issue table or the explicit clean result",
+            report_validator.validate(quoted),
+        )
+
+    def test_rejects_clean_result_beside_issue_table(self) -> None:
+        report = valid_report().replace(
+            "## Technical issue register\n",
+            "## Technical issue register\n"
+            "No material technical issues were found at the stated scope.\n",
+            1,
+        )
+        self.assertIn(
+            "technical issue register contradicts the explicit clean result",
+            report_validator.validate(report),
+        )
+
+    def test_clean_result_must_be_the_sole_issue_section_body(self) -> None:
+        report = valid_report()
+        start = report.index("| ID | Severity |")
+        end = report.index("\n\n## Engine status", start)
+        base = (
+            report[:start]
+            + "No material technical issues were found at the stated scope."
+            + report[end:]
+        )
+        for addition in (
+            "\n\n- Material issue exists.",
+            "\n\n> Material issue exists.",
+            "\n\n```text\nMaterial issue exists.\n```",
+            "\n\n---",
+        ):
+            with self.subTest(addition=addition):
+                mutated = base.replace(
+                    "\n\n## Engine status", addition + "\n\n## Engine status", 1
+                )
+                self.assertIn(
+                    "technical issue register must contain an issue table or the explicit clean result",
+                    report_validator.validate(mutated),
+                )
+
+    def test_placeholder_errors_are_deterministic(self) -> None:
         errors = report_validator.validate(
             valid_report() + "\n{{ZETA_PLACEHOLDER}} {{ALPHA_PLACEHOLDER}}\n"
         )
-
         self.assertEqual(
             errors,
             [
@@ -1196,153 +2354,611 @@ class ReportValidatorTests(unittest.TestCase):
             ],
         )
 
-    def test_rejects_unresolved_template_placeholder(self) -> None:
-        errors = report_validator.validate(valid_report() + "\n{{UNRESOLVED}}\n")
+    def test_requires_every_appendix_heading(self) -> None:
+        for heading in V1_REQUIRED_APPENDIX_HEADINGS:
+            with self.subTest(heading=heading):
+                appendix = valid_appendix().replace(
+                    f"{heading}\n", f"{heading} omitted\n", 1
+                )
+                self.assertIn(
+                    f"missing required heading: {heading}",
+                    report_validator.validate_appendix(appendix),
+                )
 
-        self.assertIn("unresolved template placeholders: {{UNRESOLVED}}", errors)
+    def test_requires_appendix_manifest_headings(self) -> None:
+        for heading in V1_REQUIRED_APPENDIX_MANIFEST_HEADINGS:
+            with self.subTest(heading=heading):
+                appendix = valid_appendix().replace(
+                    f"{heading}\n", f"{heading} omitted\n", 1
+                )
+                self.assertIn(
+                    f"missing required heading: {heading}",
+                    report_validator.validate_appendix(appendix),
+                )
+
+    def test_rejects_out_of_order_appendix_headings(self) -> None:
+        heading_groups = (
+            V1_REQUIRED_APPENDIX_HEADINGS,
+            V1_REQUIRED_APPENDIX_MANIFEST_HEADINGS,
+        )
+        for headings in heading_groups:
+            for first, second in zip(headings, headings[1:]):
+                with self.subTest(first=first, second=second):
+                    appendix = valid_appendix()
+                    first_position = appendix.index(first)
+                    second_position = appendix.index(second)
+                    appendix = (
+                        appendix[:first_position]
+                        + second
+                        + appendix[first_position + len(first) : second_position]
+                        + first
+                        + appendix[second_position + len(second) :]
+                    )
+                    errors = report_validator.validate_appendix(appendix)
+                    self.assertTrue(
+                        any("out of order" in error for error in errors), errors
+                    )
+
+    def test_manifest_subsections_must_stay_in_manifest_section(self) -> None:
+        appendix = valid_appendix()
+        start = appendix.index("### Canonical clip-role inventory")
+        end = appendix.index("## Pack inventory and content evidence")
+        relocated = appendix[start:end]
+        appendix = appendix[:start] + appendix[end:] + "\n" + relocated
+        self.assertIn(
+            "missing required heading: ### Canonical clip-role inventory",
+            report_validator.validate_appendix(appendix),
+        )
 
     def test_requires_every_canonical_role(self) -> None:
         for role in V1_PRIMARY_ROLES:
             with self.subTest(role=role):
-                report = valid_report().replace(f"| `{role}` | 0 |\n", "")
+                appendix = valid_appendix().replace(
+                    f"| `{role}` | 0 | 0 | Fixture. |\n", ""
+                )
+                self.assertIn(
+                    f"canonical role inventory is missing: {role}",
+                    report_validator.validate_appendix(appendix),
+                )
 
-                errors = report_validator.validate(report)
+    def test_requires_every_pipeline_stage(self) -> None:
+        for _identifier, label in V1_PIPELINE_STAGE_ROWS:
+            with self.subTest(label=label):
+                appendix = valid_appendix().replace(
+                    f"| {label} | `evaluated-clean` | Fixture. |\n", ""
+                )
+                self.assertIn(
+                    f"pipeline-stage coverage is missing: {label}",
+                    report_validator.validate_appendix(appendix),
+                )
 
-                self.assertIn(f"canonical role inventory is missing: {role}", errors)
+    def test_requires_every_validation_profile(self) -> None:
+        for _identifier, label in V1_PROFILE_ROWS:
+            with self.subTest(label=label):
+                appendix = valid_appendix().replace(
+                    f"| {label} | `not-selected` | Fixture. |\n", ""
+                )
+                self.assertIn(
+                    f"validation-profile status is missing: {label}",
+                    report_validator.validate_appendix(appendix),
+                )
 
-    def test_requires_top_level_section_order(self) -> None:
-        report = valid_report().replace(
-            "## Reproduction appendix\nFixture result.\n\n## Sources",
-            "## Sources\nFixture result.\n\n## Reproduction appendix",
+    def test_appendix_inventory_rows_require_full_typed_shapes(self) -> None:
+        role = valid_appendix().replace(
+            "| `idle-pose` | 0 | 0 | Fixture. |",
+            "| `idle-pose` | banana | 0 | Fixture. |",
         )
-
-        errors = report_validator.validate(report)
-
-        self.assertIn("required heading is out of order: ## Sources", errors)
-
-    def test_prose_mention_does_not_satisfy_required_heading(self) -> None:
-        report = valid_report().replace(
-            "## Sources\nFixture result.",
-            "This prose mentions ## Sources but is not a heading.",
+        stage = valid_appendix().replace(
+            "| Acquire | `evaluated-clean` | Fixture. |",
+            "| Acquire |",
         )
-
-        errors = report_validator.validate(report)
-
-        self.assertIn("missing required heading: ## Sources", errors)
-
-    def test_rejects_composite_primary_issue_owner(self) -> None:
-        report = valid_report().replace(
-            "| engine-config | Fixture workaround. |",
-            "| vendor-license / artist-author | Fixture workaround. |",
+        profile = valid_appendix().replace(
+            "| Marketplace intake | `not-selected` | Fixture. |",
+            "| Marketplace intake | unknown | Fixture. |",
         )
-
-        errors = report_validator.validate(report)
-
         self.assertIn(
-            "issue FIX-001 has unknown or composite primary owner: "
-            "'vendor-license / artist-author'",
-            errors,
+            "canonical role inventory row is malformed: idle-pose",
+            report_validator.validate_appendix(role),
         )
-
-    def test_rejects_unknown_single_primary_issue_owner(self) -> None:
-        report = valid_report().replace(
-            "| engine-config | Fixture workaround. |",
-            "| unknown-owner | Fixture workaround. |",
-        )
-
-        errors = report_validator.validate(report)
-
         self.assertIn(
-            "issue FIX-001 has unknown or composite primary owner: 'unknown-owner'",
-            errors,
+            "pipeline-stage coverage row is malformed: Acquire",
+            report_validator.validate_appendix(stage),
+        )
+        self.assertIn(
+            "validation-profile status row is malformed: Marketplace intake",
+            report_validator.validate_appendix(profile),
         )
 
-    def test_rejects_malformed_issue_table_row(self) -> None:
-        variants = (
-            (
-                "| engine-config | Fixture workaround. |",
-                "| engine-config | unexpected | Fixture workaround. |",
-            ),
-            (
-                "| Fixture workaround. | Not applicable. | High. |",
-                "| Fixture workaround. | High. |",
-            ),
+        suffixed_stage = valid_appendix().replace(
+            "| Acquire | `evaluated-clean` | Fixture. |",
+            "| Acquire | `evaluated-clean` contradictory | Fixture. |",
         )
-        for original, replacement in variants:
+        self.assertIn(
+            "pipeline-stage coverage row is malformed: Acquire",
+            report_validator.validate_appendix(suffixed_stage),
+        )
+
+    def test_appendix_taxonomy_tables_reject_unknown_rows(self) -> None:
+        stage = valid_appendix().replace(
+            "| Gate/report | `evaluated-clean` | Fixture. |",
+            "| Gate/report | `evaluated-clean` | Fixture. |\n"
+            "| Invented | `evaluated-clean` | Fixture. |",
+        )
+        profile = valid_appendix().replace(
+            "| Runtime performance | `not-selected` | Fixture. |",
+            "| Runtime performance | `not-selected` | Fixture. |\n"
+            "| Invented | `not-selected` | Fixture. |",
+        )
+        self.assertIn(
+            "pipeline-stage coverage contains an unknown stage row",
+            report_validator.validate_appendix(stage),
+        )
+        self.assertIn(
+            "validation-profile status contains an unknown profile row",
+            report_validator.validate_appendix(profile),
+        )
+
+    def test_profile_rows_fail_closed_at_every_truncation(self) -> None:
+        full = "| Marketplace intake | `not-selected` | Fixture. |"
+        for replacement in (
+            "| Marketplace intake |",
+            "| Marketplace intake | `not-selected` |",
+        ):
             with self.subTest(replacement=replacement):
-                report = valid_report().replace(original, replacement)
-
-                errors = report_validator.validate(report)
-
+                appendix = valid_appendix().replace(full, replacement)
                 self.assertIn(
-                    "issue FIX-001 row must contain exactly seven cells", errors
+                    "validation-profile status row is malformed: Marketplace intake",
+                    report_validator.validate_appendix(appendix),
                 )
 
-    def test_valid_markdown_issue_row_syntax_still_checks_owner(self) -> None:
-        variants = (
-            ("FIX-001 |", "High."),
-            ("FIX-001 |", "High. |"),
-            ("   | FIX-001 |", "High."),
-            ("   | FIX-001 |", "High. |"),
+    def test_profile_selection_uses_exact_status_and_activation_shape(self) -> None:
+        mutations = (
+            "`not-selected` contradictory",
+            "`not-applicable` — `user-required`",
+            "`selected`",
+            "`selected` — `unknown-basis`",
         )
-        for prefix, suffix in variants:
-            with self.subTest(prefix=prefix, suffix=suffix):
-                report = valid_report().replace("| FIX-001 |", prefix, 1).replace(
-                    "High. |", suffix, 1
-                ).replace(
-                    "| engine-config | Fixture workaround. |",
-                    "| vendor-license / artist-author | Fixture workaround. |",
+        for selection in mutations:
+            with self.subTest(selection=selection):
+                appendix = valid_appendix().replace(
+                    "| Marketplace intake | `not-selected` | Fixture. |",
+                    f"| Marketplace intake | {selection} | Fixture. |",
+                )
+                self.assertIn(
+                    "validation-profile status row is malformed: Marketplace intake",
+                    report_validator.validate_appendix(appendix),
                 )
 
-                errors = report_validator.validate(report)
+        for basis in V1_ACTIVATION_BASES:
+            with self.subTest(basis=basis):
+                appendix = valid_appendix().replace(
+                    "| Marketplace intake | `not-selected` | Fixture. |",
+                    f"| Marketplace intake | `selected` — `{basis}` | Fixture. |",
+                )
+                self.assertEqual(report_validator.validate_appendix(appendix), [])
 
+    def test_role_totals_reconcile_every_role_and_both_total_counts(self) -> None:
+        for role in V1_PRIMARY_ROLES:
+            for column in ("logical", "files"):
+                with self.subTest(role=role, column=column):
+                    old = f"| `{role}` | 0 | 0 | Fixture. |"
+                    new = (
+                        f"| `{role}` | 1 | 0 | Fixture. |"
+                        if column == "logical"
+                        else f"| `{role}` | 0 | 1 | Fixture. |"
+                    )
+                    appendix = valid_appendix().replace(old, new)
+                    self.assertIn(
+                        "canonical role inventory totals do not reconcile",
+                        report_validator.validate_appendix(appendix),
+                    )
+        for total in (
+            "| **Total** | **1** | **0** | Fixture. |",
+            "| **Total** | **0** | **1** | Fixture. |",
+        ):
+            with self.subTest(total=total):
+                appendix = valid_appendix().replace(
+                    "| **Total** | **0** | **0** | Fixture. |", total
+                )
                 self.assertIn(
-                    "issue FIX-001 has unknown or composite primary owner: "
-                    "'vendor-license / artist-author'",
+                    "canonical role inventory totals do not reconcile",
+                    report_validator.validate_appendix(appendix),
+                )
+
+    def test_role_inventory_rejects_unknown_rows(self) -> None:
+        appendix = valid_appendix().replace(
+            "| **Total** | **0** | **0** | Fixture. |",
+            "| `bogus-role` | 99 | 99 | Fixture. |\n"
+            "| **Total** | **0** | **0** | Fixture. |",
+        )
+        self.assertIn(
+            "canonical role inventory contains an unknown role row",
+            report_validator.validate_appendix(appendix),
+        )
+
+    def test_role_inventory_rejects_unicode_numeric_counts(self) -> None:
+        for old, new in (("| 0 | 0 |", "| ² | 0 |"), ("**0** | **0**", "**²** | **0**")):
+            with self.subTest(new=new):
+                appendix = valid_appendix().replace(old, new, 1)
+                errors = report_validator.validate_appendix(appendix)
+                self.assertTrue(
+                    any(
+                        "canonical role inventory" in error
+                        and ("malformed" in error or "requires one Total" in error)
+                        for error in errors
+                    ),
                     errors,
                 )
 
-    def test_rejects_empty_required_issue_cells(self) -> None:
-        issue_row = (
-            "| FIX-001 | Moderate | Fixture problem. | engine-config | "
-            "Fixture workaround. | Not applicable. | High. |"
+    def test_role_inventory_rejects_oversized_ascii_counts_without_crashing(self) -> None:
+        oversized = "9" * 5000
+        mutations = (
+            ("| `idle-pose` | 0 | 0 |", f"| `idle-pose` | {oversized} | 0 |"),
+            (
+                "| **Total** | **0** | **0** |",
+                f"| **Total** | **{oversized}** | **0** |",
+            ),
         )
-        column_names = (
-            "ID",
-            "Severity",
-            "Problem and impact",
-            "Primary owner",
-            "Current workaround",
-            "Future AnimSmith potential",
-            "Confidence/status",
-        )
-        cells = [cell.strip() for cell in issue_row.strip("|").split("|")]
-        for index, column in enumerate(column_names):
-            with self.subTest(column=column):
-                empty_cells = cells.copy()
-                empty_cells[index] = ""
-                replacement = "| " + " | ".join(empty_cells) + " |"
-                report = valid_report().replace(issue_row, replacement, 1)
-
-                errors = report_validator.validate(report)
-
-                issue_id = "<unknown>" if column == "ID" else "FIX-001"
-                self.assertIn(
-                    f"issue {issue_id} has empty required cells: {column}", errors
+        for old, new in mutations:
+            with self.subTest(total="**Total**" in old):
+                errors = report_validator.validate_appendix(
+                    valid_appendix().replace(old, new, 1)
+                )
+                self.assertTrue(
+                    any(
+                        "canonical role inventory" in error and "malformed" in error
+                        for error in errors
+                    ),
+                    errors,
                 )
 
-    def test_all_published_pack_reports_conform(self) -> None:
+    def test_appendix_runtime_inventory_requires_table_or_exact_absence(self) -> None:
+        appendix = valid_appendix().replace(
+            "| Walk | directional-blend | IP/RM pair | Fixture. | Fixture. |",
+            "| Walk |",
+        )
+        self.assertIn(
+            "runtime-set appendix row 1 is malformed",
+            report_validator.validate_appendix(appendix),
+        )
+        contradictory = valid_appendix().replace(
+            "### Runtime-set inventory\n",
+            "### Runtime-set inventory\nNo runtime sets were identified.\n",
+            1,
+        )
+        self.assertIn(
+            "runtime-set appendix inventory contradicts the explicit no-set result",
+            report_validator.validate_appendix(contradictory),
+        )
+        for unknown in ("banana", "unknown"):
+            with self.subTest(unknown=unknown):
+                malformed_type = valid_appendix().replace(
+                    "| Walk | directional-blend |",
+                    f"| Walk | {unknown} |",
+                )
+                self.assertIn(
+                    f"runtime-set appendix row 1 has unknown type: {unknown}",
+                    report_validator.validate_appendix(malformed_type),
+                )
+
+        duplicate = valid_appendix().replace(
+            "| Walk | directional-blend | IP/RM pair | Fixture. | Fixture. |",
+            "| Walk | directional-blend | IP/RM pair | Fixture. | Fixture. |\n"
+            "| Walk | speed-blend | IP/RM pair | Fixture. | Fixture. |",
+        )
+        self.assertIn(
+            "runtime-set appendix inventory contains duplicate sets: Walk",
+            report_validator.validate_appendix(duplicate),
+        )
+
+        appendix = valid_appendix()
+        start = appendix.index("| Runtime set | Type |")
+        end = appendix.index("\n\n### Pipeline-stage coverage", start)
+        contradictory_absence = (
+            appendix[:start]
+            + "No runtime sets were identified.\n\nVisible contradictory prose."
+            + appendix[end:]
+        )
+        self.assertIn(
+            "runtime-set appendix inventory contradicts the explicit no-set result",
+            report_validator.validate_appendix(contradictory_absence),
+        )
+
+        quoted_absence = (
+            appendix[:start] + "> No runtime sets were identified." + appendix[end:]
+        )
+        self.assertIn(
+            "missing required table header: "
+            "Runtime set | Type | Members/variants | Grouping evidence | "
+            "Validation status",
+            report_validator.validate_appendix(quoted_absence),
+        )
+
+    def test_appendix_runtime_absence_must_be_the_sole_subsection_body(self) -> None:
+        appendix = valid_appendix()
+        start = appendix.index("| Runtime set | Type |")
+        end = appendix.index("\n\n### Pipeline-stage coverage", start)
+        base = appendix[:start] + "No runtime sets were identified." + appendix[end:]
+        for addition in (
+            "\n\n- Candidate set Walk exists.",
+            "\n\n> Candidate set Walk exists.",
+            "\n\n```text\nCandidate set Walk exists.\n```",
+            "\n\n---",
+        ):
+            with self.subTest(addition=addition):
+                mutated = base.replace(
+                    "\n\n### Pipeline-stage coverage",
+                    addition + "\n\n### Pipeline-stage coverage",
+                    1,
+                )
+                self.assertIn(
+                    "runtime-set appendix inventory contradicts the explicit no-set result",
+                    report_validator.validate_appendix(mutated),
+                )
+
+    def test_pair_rejects_runtime_set_presence_disagreement(self) -> None:
+        appendix = valid_appendix()
+        start = appendix.index("| Runtime set | Type |")
+        end = appendix.index("\n\n### Pipeline-stage coverage")
+        no_sets_appendix = (
+            appendix[:start] + "No runtime sets were identified." + appendix[end:]
+        )
+        self.assertEqual(report_validator.validate_appendix(no_sets_appendix), [])
+        self.assertIn(
+            "report and appendix disagree on runtime-set presence",
+            report_validator.validate_pair(
+                valid_report(),
+                no_sets_appendix,
+                "fixture.md",
+                "fixture-evidence.md",
+            ),
+        )
+
+        renamed = valid_appendix().replace(
+            "| Walk | directional-blend |", "| Sprint | directional-blend |", 1
+        )
+        self.assertEqual(report_validator.validate_appendix(renamed), [])
+        self.assertIn(
+            "appendix runtime-set inventory is missing primary sets: Walk",
+            report_validator.validate_pair(
+                valid_report(),
+                renamed,
+                "fixture.md",
+                "fixture-evidence.md",
+            ),
+        )
+
+    def test_pair_allows_appendix_only_candidate_runtime_sets(self) -> None:
+        report = valid_report()
+        start = report.index("| Set/profile |")
+        end = report.index("\n\n## Integration recipe", start)
+        report = (
+            report[:start]
+            + "No important runtime sets were identified."
+            + report[end:]
+        )
+        self.assertEqual(report_validator.validate(report), [])
+        self.assertEqual(
+            report_validator.validate_pair(
+                report,
+                valid_appendix(),
+                "fixture.md",
+                "fixture-evidence.md",
+            ),
+            [],
+        )
+
+    def test_appendix_inventory_tables_require_headers_and_separators(self) -> None:
+        role_header = "| Canonical primary role | Logical motions | Delivered files | Evidence boundary |\n"
+        stage_header = "| Stage | Coverage state | Evidence / remaining gate |\n"
+        stage_separator = "|---|---|---|\n"
+        profile_header = "| Validation profile | Selection | Result / next evidence |\n"
+        cases = (
+            valid_appendix().replace(role_header, "", 1),
+            valid_appendix().replace(
+                stage_header + stage_separator, stage_header, 1
+            ),
+            valid_appendix().replace(profile_header, "", 1),
+        )
+        for appendix in cases:
+            with self.subTest():
+                errors = report_validator.validate_appendix(appendix)
+                self.assertTrue(
+                    any(
+                        "missing required table header" in error
+                        or "missing Markdown separator" in error
+                        for error in errors
+                    ),
+                    errors,
+                )
+
+    def test_appendix_tables_reject_wrong_width_separators(self) -> None:
+        tables = (
+            (
+                "| Canonical primary role | Logical motions | Delivered files | Evidence boundary |\n",
+                "|---|---:|---:|---|\n",
+            ),
+            (
+                "| Runtime set | Type | Members/variants | Grouping evidence | Validation status |\n",
+                "|---|---|---|---|---|\n",
+            ),
+            (
+                "| Stage | Coverage state | Evidence / remaining gate |\n",
+                "|---|---|---|\n",
+            ),
+            (
+                "| Validation profile | Selection | Result / next evidence |\n",
+                "|---|---|---|\n",
+            ),
+        )
+        for header, separator in tables:
+            with self.subTest(header=header):
+                appendix = valid_appendix().replace(
+                    header + separator, header + "|---|\n", 1
+                )
+                self.assertNotEqual(
+                    report_validator.validate_appendix(appendix), []
+                )
+
+    def test_appendix_requires_schema_and_canonical_ladder(self) -> None:
+        appendix = valid_appendix().replace(
+            V1_SCHEMA, "urn:wrong:schema"
+        ).replace(
+            "../game-ready-clips.md#the-readiness-ladder",
+            "../game-ready-clips.md#wrong",
+        )
+        errors = report_validator.validate_appendix(appendix)
+        self.assertIn(
+            f"appendix must identify evaluation manifest schema: {V1_SCHEMA}",
+            errors,
+        )
+        self.assertIn("appendix must link the canonical readiness ladder", errors)
+
+    def test_canonical_ladder_must_be_a_rendered_markdown_link(self) -> None:
+        link = "[canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder)"
+        replacements = (
+            "canonical readiness ladder: ../game-ready-clips.md#the-readiness-ladder",
+            f"`{link}`",
+            "\\[canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder)",
+        )
+        for replacement in replacements:
+            with self.subTest(replacement=replacement):
+                report = valid_report().replace(link, replacement)
+                appendix = valid_appendix().replace(link, replacement)
+                self.assertIn(
+                    "report must link the canonical readiness ladder",
+                    report_validator.validate(report),
+                )
+                self.assertIn(
+                    "appendix must link the canonical readiness ladder",
+                    report_validator.validate_appendix(appendix),
+                )
+
+    def test_appendix_rejects_duplicate_issue_register(self) -> None:
+        appendix = valid_appendix() + "\n## Technical issue register\nFixture.\n"
+        self.assertIn(
+            "appendix must not duplicate the technical issue register",
+            report_validator.validate_appendix(appendix),
+        )
+
+        issue_table = """| ID | Severity | Problem and impact | Primary owner | Current action | Future AnimSmith potential | Evidence/status |
+|---|---|---|---|---|---|---|
+| FIX-001 | moderate | Fixture. | engine-config | Fixture. | N/A. | Fixture. |
+"""
+        appendix = valid_appendix() + "\n" + issue_table
+        self.assertIn(
+            "appendix must not duplicate the technical issue register",
+            report_validator.validate_appendix(appendix),
+        )
+
+    def test_pair_requires_stable_names_and_links(self) -> None:
+        errors = report_validator.validate_pair(
+            valid_report().replace("](fixture-evidence.md)", "](wrong.md)"),
+            valid_appendix().replace("](fixture.md)", "](wrong.md)"),
+            "fixture.md",
+            "appendix.md",
+        )
+        self.assertIn(
+            "appendix filename must be fixture-evidence.md, got appendix.md",
+            errors,
+        )
+        self.assertIn("report must link companion appendix: appendix.md", errors)
+        self.assertIn("appendix must link companion report: fixture.md", errors)
+
+    def test_pair_reconciles_pack_identity_and_evaluation_date(self) -> None:
+        renamed = valid_appendix().replace(
+            "# Animation pack evidence appendix: Validator fixture",
+            "# Animation pack evidence appendix: Completely Different Pack",
+            1,
+        )
+        self.assertIn(
+            "report and appendix must declare the same pack identity",
+            report_validator.validate_pair(
+                valid_report(), renamed, "fixture.md", "fixture-evidence.md"
+            ),
+        )
+        redated = valid_appendix().replace("**2026-08-16**", "**2026-08-15**", 1)
+        self.assertIn(
+            "report and appendix must declare the same evaluation date",
+            report_validator.validate_pair(
+                valid_report(), redated, "fixture.md", "fixture-evidence.md"
+            ),
+        )
+
+        duplicate_h1 = valid_report() + "\n# Animation pack evaluation: Validator fixture\n"
+        self.assertIn(
+            "report must start with '# Animation pack evaluation:'",
+            report_validator.validate(duplicate_h1),
+        )
+
+    def test_pair_rejects_links_hidden_in_comments_or_wrong_declarations(self) -> None:
+        report = valid_report().replace(
+            "> Detailed evidence: [fixture evidence appendix](fixture-evidence.md)",
+            "<!-- ](fixture-evidence.md) -->",
+        )
+        appendix = valid_appendix().replace(
+            "> Companion report: [technical evaluation](fixture.md)",
+            "<!-- ](fixture.md) -->",
+        )
+        errors = report_validator.validate_pair(
+            report,
+            appendix,
+            "fixture.md",
+            "fixture-evidence.md",
+        )
+        self.assertIn(
+            "report must link companion appendix: fixture-evidence.md", errors
+        )
+        self.assertIn("appendix must link companion report: fixture.md", errors)
+
+        for wrapper in ("`{}`", "\\{}"):
+            with self.subTest(wrapper=wrapper):
+                report_link = "[fixture evidence appendix](fixture-evidence.md)"
+                appendix_link = "[technical evaluation](fixture.md)"
+                errors = report_validator.validate_pair(
+                    valid_report().replace(report_link, wrapper.format(report_link)),
+                    valid_appendix().replace(appendix_link, wrapper.format(appendix_link)),
+                    "fixture.md",
+                    "fixture-evidence.md",
+                )
+                self.assertIn(
+                    "report must link companion appendix: fixture-evidence.md", errors
+                )
+                self.assertIn("appendix must link companion report: fixture.md", errors)
+
+    def test_all_published_report_pairs_conform(self) -> None:
         repository = Path(__file__).resolve().parents[4]
+        report_directory = repository / "docs" / "reports"
         reports = sorted(
             report
-            for report in (repository / "docs" / "reports").glob("*.md")
-            if report.name != "README.md"
+            for report in report_directory.glob("*.md")
+            if report.name != "README.md" and not report.stem.endswith("-evidence")
         )
+        appendices = sorted(report_directory.glob("*-evidence.md"))
         self.assertTrue(reports, "expected at least one published pack report")
+        self.assertEqual(
+            {report.stem for report in reports},
+            {appendix.stem.removesuffix("-evidence") for appendix in appendices},
+            "every evidence appendix must have one primary report and vice versa",
+        )
         for report in reports:
+            appendix = report.with_name(f"{report.stem}-evidence.md")
             with self.subTest(report=report.name):
+                self.assertTrue(appendix.is_file(), f"missing {appendix.name}")
+                report_text = report.read_text(encoding="utf-8")
+                appendix_text = appendix.read_text(encoding="utf-8")
+                self.assertEqual(report_validator.validate(report_text), [])
                 self.assertEqual(
-                    report_validator.validate(report.read_text(encoding="utf-8")), []
+                    report_validator.validate_appendix(appendix_text), []
+                )
+                self.assertEqual(
+                    report_validator.validate_pair(
+                        report_text,
+                        appendix_text,
+                        report.name,
+                        appendix.name,
+                    ),
+                    [],
                 )
 
 
@@ -1442,25 +3058,79 @@ class ExecutableContractTests(unittest.TestCase):
         self.assertEqual(malformed.returncode, 2)
         self.assertIn("validate_evaluation_manifest.py:", malformed.stderr)
 
-    def test_report_validator_cli_success_and_invalid_report(self) -> None:
+    def test_report_validator_cli_success_and_failures_across_pair(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             directory = Path(temporary_directory)
-            valid_path = directory / "valid.md"
+            valid_path = directory / "fixture.md"
             valid_path.write_text(valid_report(), encoding="utf-8")
+            valid_appendix_path = directory / "fixture-evidence.md"
+            valid_appendix_path.write_text(valid_appendix(), encoding="utf-8")
             invalid_path = directory / "invalid.md"
             invalid_path.write_text(
                 valid_report() + "\n{{ZETA_PLACEHOLDER}} {{ALPHA_PLACEHOLDER}}\n",
                 encoding="utf-8",
             )
+            invalid_appendix_path = directory / "invalid-evidence.md"
+            invalid_appendix_path.write_text(
+                valid_appendix().replace(
+                    "## Mechanical baseline", "## Mechanical baseline omitted"
+                ),
+                encoding="utf-8",
+            )
+            broken_reverse_path = directory / "broken.md"
+            broken_reverse_path.write_text(
+                valid_report().replace("fixture-evidence.md", "broken-evidence.md"),
+                encoding="utf-8",
+            )
+            broken_reverse_appendix = directory / "broken-evidence.md"
+            broken_reverse_appendix.write_text(
+                valid_appendix().replace("](fixture.md)", "](wrong.md)"),
+                encoding="utf-8",
+            )
+            explicit_report_path = directory / "explicit.md"
+            explicit_appendix_path = directory / "explicit-evidence.md"
+            explicit_report_path.write_text(
+                valid_report().replace(
+                    "fixture-evidence.md", "explicit-evidence.md"
+                ),
+                encoding="utf-8",
+            )
+            explicit_appendix_path.write_text(
+                valid_appendix().replace("fixture.md", "explicit.md"),
+                encoding="utf-8",
+            )
             success = self.run_script("validate_report.py", str(valid_path))
+            direct = subprocess.run(
+                [str(self.scripts / "validate_report.py"), str(valid_path)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
             invalid = self.run_script(
                 "validate_report.py", str(invalid_path), hash_seed="1"
             )
             invalid_repeated = self.run_script(
                 "validate_report.py", str(invalid_path), hash_seed="2"
             )
+            malformed_appendix = self.run_script(
+                "validate_report.py",
+                str(invalid_path),
+                "--appendix",
+                str(invalid_appendix_path),
+            )
+            broken_reverse = self.run_script(
+                "validate_report.py", str(broken_reverse_path)
+            )
+            explicit = self.run_script(
+                "validate_report.py",
+                str(explicit_report_path),
+                "--appendix",
+                str(explicit_appendix_path),
+            )
 
         self.assertEqual(success.returncode, 0, success.stderr)
+        self.assertTrue(os.access(self.scripts / "validate_report.py", os.X_OK))
+        self.assertEqual(direct.returncode, 0, direct.stderr)
         self.assertIn("validated animation-pack report", success.stdout)
         self.assertEqual(success.stderr, "")
         self.assertEqual(invalid.returncode, 1)
@@ -1471,6 +3141,18 @@ class ExecutableContractTests(unittest.TestCase):
             "{{ALPHA_PLACEHOLDER}}, {{ZETA_PLACEHOLDER}}",
             invalid.stderr,
         )
+        self.assertEqual(malformed_appendix.returncode, 1)
+        self.assertIn(
+            "missing required heading: ## Mechanical baseline",
+            malformed_appendix.stderr,
+        )
+        self.assertEqual(broken_reverse.returncode, 1)
+        self.assertIn(
+            "appendix must link companion report: broken.md",
+            broken_reverse.stderr,
+        )
+        self.assertEqual(explicit.returncode, 0, explicit.stderr)
+        self.assertIn("validated animation-pack report pair", explicit.stdout)
 
 
 if __name__ == "__main__":

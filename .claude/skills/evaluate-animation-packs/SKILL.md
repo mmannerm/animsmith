@@ -1,6 +1,6 @@
 ---
 name: evaluate-animation-packs
-description: Evaluate commercial, free, sample, or preview-only skeletal animation packs for game-engine use and produce the repository-standard evidence-backed Markdown purchase/adoption report. Use for marketplace pipeline intake, canonical clip-role/runtime-set classification, game validation profiles, engine readiness, AnimSmith remediation trials, blending or masking analysis, retargeting, and within-pack or cross-pack compatibility.
+description: Evaluate commercial, free, sample, or preview-only skeletal animation packs for game-engine use and produce the repository-standard concise technical Markdown report plus evidence appendix. Use for marketplace pipeline intake, canonical clip-role/runtime-set classification, game validation profiles, engine readiness, AnimSmith remediation trials, blending or masking analysis, retargeting, and within-pack or cross-pack compatibility.
 ---
 
 # Evaluate Animation Packs

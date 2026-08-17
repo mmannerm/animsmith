@@ -1,14 +1,15 @@
 ---
 name: evaluate-animation-packs
-description: Evaluate commercial, free, sample, or preview-only skeletal animation packs for game-engine use and produce a standard evidence-backed Markdown purchase/adoption report. Use for pack due diligence, marketplace pipeline intake, canonical clip-role and runtime-set classification, capability-oriented game validation profiles, engine-readiness assessment, AnimSmith remediation trials, blending or masking analysis, rig and retargeting compatibility, cross-pack compatibility, and triage between current AnimSmith fixes, plausible future generic tooling, engine/project configuration, and artist or vendor changes. Do not use for film/VFX-only suitability or as a substitute for license counsel, engine import testing, or artistic sign-off.
+description: Evaluate commercial, free, sample, or preview-only skeletal animation packs for game-engine use and produce a concise technical Markdown report plus a reproducible evidence appendix. Use for marketplace pipeline intake, canonical clip-role and runtime-set classification, capability-oriented game validation profiles, engine-readiness assessment, AnimSmith remediation trials, blending or masking analysis, rig and retargeting compatibility, cross-pack compatibility, and triage between current AnimSmith fixes, plausible future generic tooling, engine/project configuration, and artist or vendor changes. Do not use for film/VFX-only suitability or as a substitute for license counsel, engine import testing, or artistic sign-off.
 ---
 
 # Evaluate Animation Packs
 
 Assess the delivered evidence in three distinct states: the untouched pack,
 the pack after current AnimSmith operations, and the remaining engine or human
-work. Produce one standard Markdown report without treating a clean lint run as
-game-readiness certification.
+work. Produce two linked Markdown documents—a concise technical report and a
+detailed evidence appendix—without treating a clean lint run as game-readiness
+certification.
 
 Resolve every bundled path relative to this canonical `SKILL.md`. From the
 repository root, the canonical skill directory is
@@ -40,16 +41,17 @@ verdicts or remediation ownership. Read [engine and compatibility checks](refere
 before evaluating any engine, blending, masking, retargeting, or cross-pack
 claim. Read [clip taxonomy and evaluation manifest](references/clip-taxonomy.md)
 before classifying motions or runtime sets. Read [validation profiles](references/validation-profiles.md)
-before selecting hypothetical or target-game use cases. Use [the report
-template](assets/report-template.md) for every final report and preserve all of
-its top-level sections.
+before selecting hypothetical or target-game use cases. Use both [the technical
+report template](assets/report-template.md) and [the evidence appendix
+template](assets/evidence-appendix-template.md) for every final evaluation and
+preserve their top-level sections.
 
 ## Establish scope
 
 Determine and record:
 
-- pack name, edition/version, vendor/source URL, acquisition date, price or
-  free/sample status, license evidence, and whether the input is full,
+- pack name, edition/version, vendor/source URL, acquisition date, optional
+  price or free/sample status, license evidence, and whether the input is full,
   partial, or preview-only;
 - target game types, camera distance, character type, gameplay needs, target
   engines and exact engine versions, platforms, skeletons, and any other packs
@@ -233,6 +235,11 @@ evaluation.
 - Use repair for defects the current version describes as safely repairable.
 - Use transforms only when the edit has an explicit source window, frame rate,
   loop declaration, gait contract, or other required intent.
+- Before gait anchoring, inspect whether any resampled channel accumulates root
+  translation or yaw. If the captured version cyclically resamples those
+  channels, treat root-motion anchoring as unsafe unless a trajectory-preserving
+  method and independent proof exist. Do not extrapolate an in-place success to
+  a root-motion recommendation.
 - Use conversion only when it represents a real engine-facing handoff, and
   verify retained scene, skin, material, texture, and animation facts.
 - Use assembly only with an authoritative base and an explicit versioned
@@ -292,7 +299,7 @@ For every material finding, explain the likely player- or developer-visible
 impact in plain language: for example a pose pop, once-per-cycle pulse, foot
 skate during a blend, frozen limb, controller double motion, wrong-sized
 weapon, lost socket, or increased asset/evaluation cost. Cite the matching
-version-pinned AnimSmith explanation and, where it materially helps the
+repository-relative AnimSmith explanation and, where it materially helps the
 reader, official documentation for the engine feature that consumes the data.
 Documentation establishes why the prerequisite matters; it is not evidence
 that the delivered pack succeeds in that engine.
@@ -324,50 +331,82 @@ the file does not contain.
 
 ## Write and validate the report
 
-Copy `assets/report-template.md`, fill every section, and leave explicit `Not
-evaluated`, `Not applicable`, or `Unknown` entries rather than deleting
-required sections. Use concise summary tables and put raw command detail in the
-appendix.
+Create a linked pair:
 
-Write the executive summary in this order:
+- `<vendor>-<pack>.md`: a concise technical decision report, normally
+  1,500–2,000 rendered words and never more than 2,000 words;
+- `<vendor>-<pack>-evidence.md`: the exhaustive evidence appendix.
 
-1. one short decision statement and the largest confidence boundary;
-2. an exhaustive canonical clip-role inventory whose totals reconcile to the
-   delivered physical-file and logical-motion counts;
-3. a separate inventory of actual runtime sets and grouping evidence;
-4. pipeline-stage coverage from acquisition through gate/report;
-5. a role- and set-based readiness-ladder matrix;
-6. a tooling-frontier table showing untouched state, result after current
-   AnimSmith, plausible future generic/non-destructive tooling, and what still
-   requires engine configuration or artist/vendor work;
-7. validation-profile selection, provenance, results, and unknowns;
-8. a common-engine status matrix;
-9. adoption gates, best fit, and poor fit.
+This two-document contract is report format version 1. Record the format
+version in both files so future AnimSmith revisions can migrate or compare
+reports explicitly.
 
-Do not lead with acquisition prose or a long narrative when mechanical and
-role/set results are available. Keep each summary cell outcome-first and move
-file lists, commands, raw counts, and caveat explanations into the detailed
-sections. The summary must say when paired variants or runtime sets are grouped
-by convention or inference rather than verified behavior.
+Copy `assets/report-template.md` and
+`assets/evidence-appendix-template.md`. Fill every required section and use
+explicit `Not evaluated`, `Not applicable`, or `Unknown` states rather than
+deleting required coverage.
 
-The report must make these answers obvious:
+Write the primary report in this reader order:
 
-- What can ship or prototype unchanged?
-- What becomes usable with the captured AnimSmith version, and at what effort?
+1. technical verdict and largest evidence boundary;
+2. complete, partial, and absent gameplay capabilities;
+3. named important runtime-set members with explicit movement variants, loop
+   policy, measured cycle durations, and root-motion speeds where applicable;
+4. an implementable blend/integration recipe with coordinates or thresholds,
+   loop/phase policy, and movement ownership;
+5. one issue/remediation register, with player/developer impact, one primary
+   owner, and applicable repository-relative `docs/game-ready-clips.md` links;
+6. Unity, Unreal Engine, Godot, and Bevy status;
+7. best fit, poor fit, cross-pack status, and limitations;
+8. a short evidence/provenance boundary and sources.
+
+The primary report is technical, not a commercial scorecard. Keep evaluator
+license/setup failures, acquisition records, prices, and legal uncertainty out
+of the technical verdict. Record them briefly as provenance or
+evaluation-completeness facts in the appendix. Never use a numeric score.
+
+Put the following only in the evidence appendix unless a material result needs
+one sentence in the primary report:
+
+- exhaustive canonical role inventory and reconciled physical/logical totals;
+- runtime-set grouping evidence;
+- all pipeline stages and validation profiles;
+- readiness evidence tied to the canonical six-level ladder;
+- raw mechanical/contract counts, commands, configs, digests, and artifacts;
+- detailed engine procedures;
+- full rig, mask, retarget, and cross-pack matrices;
+- acquisition/license provenance and remaining unknowns.
+
+Do not duplicate the issue register or redefine the readiness ladder in the
+appendix. Link to the canonical ladder instead.
+
+The pair must make these answers obvious:
+
+- What works unchanged?
+- What current AnimSmith makes usable, and under which declarations?
 - What still needs engine configuration, artist/vendor changes, or future
-  tooling?
+  generic tooling?
 - Which game types and animation systems fit or conflict with the pack?
-- How well do important animations blend, mask, sync, retarget, and combine
-  within and across packs?
-- How complete and trustworthy is the evidence, especially for preview or
-  partial packs?
-- What purchase/adoption decision follows, under which conditions?
+- How should the important sets be built and blended?
+- How complete and trustworthy is the evidence?
 
-Run
-`.agents/skills/evaluate-animation-packs/scripts/validate_report.py REPORT.md`.
-Resolve placeholders and structural errors before delivery. Link the report
-and retained evidence, but do not publish licensed source assets.
+Run:
 
-When changing the skill or publishing a repository report, run
+```text
+.agents/skills/evaluate-animation-packs/scripts/validate_report.py \
+  REPORT.md --appendix REPORT-evidence.md
+```
+
+Resolve placeholders, pair-link errors, structural errors, and primary-report
+length errors before delivery. Link retained evidence, but do not publish
+licensed source assets.
+
+Markdown structure is parsed with the repository's pinned `pulldown-cmark`
+CommonMark/GFM parser. Never replace that parser with regular expressions or
+line-oriented recognition of headings, tables, links, code, or HTML blocks.
+Completed reports must not contain raw HTML, including HTML comments.
+
+When changing the skill or publishing repository reports, run
 `just animation-pack-skill`. It exercises the helper executables and validates
-every pack report under `docs/reports/`. The same check is part of `just gates`.
+every report/appendix pair under `docs/reports/`. The same check is part of
+`just gates`.

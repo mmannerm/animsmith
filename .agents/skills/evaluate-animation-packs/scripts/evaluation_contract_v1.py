@@ -40,6 +40,15 @@ CLASSIFICATION_BASES = {
     "inferred",
 }
 CONFIDENCE = {"high", "medium", "low"}
+TECHNICAL_VERDICTS = {
+    "Usable",
+    "Usable with conditions",
+    "Restricted use",
+    "Poor fit",
+    "Insufficient technical evidence",
+}
+EVALUATION_COMPLETENESS = {"complete", "partial", "preview-only"}
+ISSUE_SEVERITIES = {"blocker", "major", "moderate", "minor", "note"}
 
 PROFILE_ROWS = (
     ("marketplace-intake", "Marketplace intake"),

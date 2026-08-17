@@ -98,6 +98,14 @@ For networked games, state who owns movement, how root motion is replicated or
 reconciled, and whether the evaluation actually tested that path. Do not turn a
 single-player playback result into a network-readiness claim.
 
+Before recommending cyclic gait anchoring, inspect what the captured AnimSmith
+version resamples. A time rotation that is appropriate for an in-place cycle
+can reorder root motion that accumulates translation or yaw and break its
+world-space trajectory. Recommend it for root-motion clips only when the
+operation explicitly preserves/rebases the trajectory and an independent
+before/after proof re-derives displacement and yaw. Otherwise retain the raw
+root motion and use runtime phase offsets or artist-authored alignment.
+
 ## Blending and transitions
 
 Test actual runtime blends; static pose similarity is insufficient.
@@ -122,6 +130,13 @@ special authored transition is required. Record blend duration and sync mode.
 Motion matching, pose search, and distance matching need appropriate metadata
 and a sufficiently varied database. Treat general locomotion-loop quality as a
 prerequisite, not proof that the pack is suitable for those systems.
+
+Turn important blend evidence into an implementation recipe in the primary
+report. Name every member, give 1D thresholds or 2D coordinates, record measured
+cycle duration and root-motion speed, identify which members loop, state the
+phase/sync policy, and say whether animation or the gameplay controller owns
+translation and yaw. Keep in-place and root-motion variants in separate graphs
+unless the runtime policy explicitly explains how they interoperate.
 
 ## Upper and lower body masking
 
