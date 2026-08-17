@@ -31,7 +31,7 @@ Evaluated: **Basic Locomotion, Sword & Shield, Campfire, Climbing, and Injured**
 | Surface | Offered/delivered | Evaluated | Findings | Not evaluated and why |
 |---|---:|---:|---:|---|
 | Animation/model files | 493 FBXs | 493 via constituent runs | 479 individual files; known strict-time/seam/rig findings | 18 constituent archives and exhaustive artistic review |
-| Canonical inventory | 479 individual files | 322 logical motions, 64 sets | Five namespaced validated manifests | Visual semantic correctness |
+| Canonical inventory | 479 individual files | 322 logical motions, 64 manifest set records | Five namespaced validated manifests | Visual semantic correctness |
 | Shared logical paths | 10 pack pairs × 25 overlaps | 250 comparisons | 250 byte-identical; zero conflicts | Unevaluated constituents |
 | Engine import/playback | Five reconstructed Unity deliveries | Five in one project | 22/22 required checks pass; one expected outlier fails | Visual controller, compression, player build |
 | Cross-pack composition | 4 current mixers; 1 current mask; 2 props | 7 checks | All required checks execute | Style, contacts, IK, offsets, deformation |
@@ -72,7 +72,9 @@ The retained rollup uses schema `urn:animsmith:skill:animation-pack-evaluation-m
 | Basic-to-Injured state | transition-chain | Basic walk plus Injured A walk/idle | Current Unity mixer and standard rig; low confidence | No authored injury onset; visual-open |
 | Walk + injured torso mask candidate | mask-composition | Basic walk plus Injured A idle | Current Unity Humanoid mask execution; low confidence | Injury readability/pelvis visual-open |
 | Sword-to-Injured state | transition-chain | Sword combat idle plus Injured A idle | Current Unity mixer and standard rig; low confidence | Weapon policy/transition visual-open |
-| Constituent-owned sets | other | 56 directional, speed, transition, contact, and other sets | Five constituent manifests | Exact contracts remain in linked reports |
+| Constituent-owned sets | other | 56 manifest records: 10 Basic, 16 Sword, 6 Campfire, 10 Climbing, and 14 Injured | Five constituent manifests | Exact contracts remain in linked reports |
+
+The count above is the versioned manifest-record count. Four Climbing IP/RM families each use separate in-place and root-motion records in the manifest but one paired row in the Climbing appendix, so the 56 constituent records render there as 52 user-facing rows. Adding the eight cross-pack rows produces 64 manifest records and 60 rendered rows.
 
 ### Pipeline-stage coverage
 
@@ -119,7 +121,7 @@ The retained rollup uses schema `urn:animsmith:skill:animation-pack-evaluation-m
 
 ## Pack inventory and content evidence
 
-The five manifests namespace 479 individual files into 322 logical motions and 64 sets: 56 constituent-owned plus eight collection-owned. Basic supplies general locomotion/transitions; Sword armed combat/equipment; Campfire rest/interactions; Climbing traversal; Injured seven hurt movement/posture styles.
+The five manifests namespace 479 individual files into 322 logical motions and 64 runtime-set records: 56 constituent-owned plus eight collection-owned. Basic supplies general locomotion/transitions; Sword armed combat/equipment; Campfire rest/interactions; Climbing traversal; Injured seven hurt movement/posture styles.
 
 Every pairwise logical-delivery comparison found exactly 25 overlapping paths, all byte-identical. Shared material/actor assets therefore co-install without same-path byte conflicts in this snapshot. Standard motion files share the current 56-bone signature `2b6fe49d5ae6`; specialist, actor/combined, prop, and malformed/outlier structures remain separately classified.
 

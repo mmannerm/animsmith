@@ -90,7 +90,7 @@ The five packs are technically compatible enough to justify a shared project and
 
 ## Evidence status
 
-The partial rollup manifest covers 322 logical motions, 479 individual files, and 64 runtime sets from five constituents. Contextual packs and the rollup use AnimSmith 0.3.0 at `aabac28edf2719db236068339f1208bbf156d0bb`; Basic and Sword retain their separately versioned evidence. The [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-ultimate-animation-collection-evidence.md) retain exact scope, revisions, and reproduction evidence.
+The partial rollup manifest covers 322 logical motions, 479 individual files, and 64 runtime-set records: 56 constituent-owned plus eight cross-pack. Contextual packs and the rollup use AnimSmith 0.3.0 at `aabac28edf2719db236068339f1208bbf156d0bb`; Basic and Sword retain their separately versioned evidence. The [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-ultimate-animation-collection-evidence.md) retain exact scope, revisions, and reproduction evidence.
 
 ## Sources
 
