@@ -922,7 +922,7 @@ fn assembles_synthetic_skinned_recipe_with_complete_public_provenance() {
             (0..KEYS)
                 .map(|key| {
                     let theta = (TAU * key as f64 / KEYS as f64) as f32;
-                    rest + Vec3::new(0.0, sign * 0.06 * theta.sin(), 0.0)
+                    rest + Vec3::new(0.0, sign * 0.06 * theta.sin(), sign * 0.06 * theta.sin())
                 })
                 .collect(),
         )
@@ -1126,8 +1126,9 @@ fn assembles_synthetic_skinned_recipe_with_complete_public_provenance() {
             },
         ],
     };
-    let rotation_a = Quat::from_rotation_y(0.35);
-    let rotation_b = -Quat::from_rotation_y(0.35);
+    let vertical_local_z_basis = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+    let rotation_a = Quat::from_rotation_y(0.35) * vertical_local_z_basis;
+    let rotation_b = -rotation_a;
     let selected = Clip {
         name: "selected_take".into(),
         duration_s: f64::from((KEYS - 1) as f32 / FPS),
@@ -1471,7 +1472,8 @@ fn assembles_synthetic_skinned_recipe_with_complete_public_provenance() {
         unreachable!()
     };
     for (key, rotation) in root_rotations.iter_mut().enumerate() {
-        *rotation = Quat::from_rotation_y(0.35 + key as f32 / (KEYS - 1) as f32);
+        *rotation =
+            Quat::from_rotation_y(0.35 + key as f32 / (KEYS - 1) as f32) * vertical_local_z_basis;
     }
     animsmith_gltf::write::write(&source, &inputs.join("clips.glb"))
         .expect("writes accumulating-yaw source GLB");

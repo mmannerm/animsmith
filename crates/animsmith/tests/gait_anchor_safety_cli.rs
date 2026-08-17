@@ -1,6 +1,6 @@
 //! End-to-end gait-anchor safety boundary for the standalone transform CLI.
 
-use animsmith_core::glam::Vec3;
+use animsmith_core::glam::{Quat, Vec3};
 use animsmith_core::model::{
     Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
 };
@@ -65,7 +65,7 @@ fn root_motion_gait() -> Document {
                 .map(|key| {
                     let theta = (TAU * key as f64 / KEYS as f64) as f32;
                     skeleton.bones[bone].rest.translation
-                        + Vec3::new(0.0, sign * 0.06 * theta.sin(), 0.0)
+                        + Vec3::new(0.0, sign * 0.06 * theta.sin(), sign * 0.06 * theta.sin())
                 })
                 .collect(),
         )
@@ -91,12 +91,18 @@ fn root_motion_gait() -> Document {
     }
 }
 
+fn use_vertical_local_z_basis(document: &mut Document) {
+    document.skeleton.bones[0].rest.rotation = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+}
+
 #[test]
 fn transform_refuses_root_motion_before_publishing_output() {
     let dir = tempfile::tempdir().expect("creates temp directory");
     let input = dir.path().join("root-motion.glb");
     let output = dir.path().join("anchored.glb");
-    animsmith_gltf::write::write(&root_motion_gait(), &input).expect("writes source GLB");
+    let mut source = root_motion_gait();
+    use_vertical_local_z_basis(&mut source);
+    animsmith_gltf::write::write(&source, &input).expect("writes source GLB");
     std::fs::write(
         dir.path().join("animsmith.toml"),
         concat!(
@@ -148,6 +154,62 @@ fn transform_refuses_root_motion_before_publishing_output() {
         std::fs::read(&output).expect("reads unchanged output"),
         b"existing output"
     );
+}
+
+#[test]
+fn transform_accepts_in_place_gait_when_local_z_is_vertical() {
+    let dir = tempfile::tempdir().expect("creates temp directory");
+    let input = dir.path().join("vertical-basis.glb");
+    let output = dir.path().join("anchored.glb");
+    let mut source = root_motion_gait();
+    use_vertical_local_z_basis(&mut source);
+    let TrackValues::Vec3s(root) = &mut source.clips[0].tracks[0].values else {
+        unreachable!()
+    };
+    root.fill(Vec3::ZERO);
+    animsmith_gltf::write::write(&source, &input).expect("writes vertical-basis source GLB");
+    std::fs::write(
+        dir.path().join("animsmith.toml"),
+        concat!(
+            "[rig]\nprofile = \"auto\"\n\n",
+            "[rig.roles]\n",
+            "root = \"root\"\n",
+            "hips = \"hips\"\n",
+            "left_foot = \"left_foot\"\n",
+            "right_foot = \"right_foot\"\n",
+        ),
+    )
+    .expect("writes role config");
+
+    let result = Command::new(env!("CARGO_BIN_EXE_animsmith"))
+        .current_dir(dir.path())
+        .args([
+            "--config",
+            "animsmith.toml",
+            "transform",
+            "vertical-basis.glb",
+            "-o",
+            "anchored.glb",
+            "--clip",
+            "walk_root_motion",
+            "--gait-anchor",
+            "--fps",
+            "32",
+        ])
+        .output()
+        .expect("runs animsmith transform");
+
+    assert!(
+        result.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let stdout = String::from_utf8(result.stdout).expect("UTF-8 summary");
+    assert!(
+        stdout.contains("gait-anchored 'walk_root_motion'"),
+        "stdout: {stdout}"
+    );
+    animsmith_gltf::load(&output).expect("loads published gait-anchored GLB");
 }
 
 #[test]

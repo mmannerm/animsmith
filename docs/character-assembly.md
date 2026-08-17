@@ -120,8 +120,13 @@ apply:
   and track shapes are validated first; declared frames × skeleton bones,
   declared frames × tracks, and maximum authored keys × skeleton bones are
   independently bounded at an inclusive 1,000,000 samples. Yaw uses f64
-  first/final headings plus counted full-turn crossings, so error does not grow
-  with segment count; four f32 successors at the inclusive 1 cm/1° caps cover
+  first/final headings plus counted full-turn crossings. At sample zero it
+  chooses the local `+Z`, `+Y`, or `+X` basis axis with the greatest finite
+  horizontal projection, in that deterministic tie order, and retains it for
+  the entire proof. This supports different source-axis conventions without
+  allowing a later axis switch to hide yaw; loss of the selected horizontal
+  projection refuses. Error does not grow with segment count; four f32
+  successors at the inclusive 1 cm/1° caps cover
   only authored endpoint translation/quaternion quantization;
 - `strip_bones = [...]`: remove every TRS track for named base bones.
 

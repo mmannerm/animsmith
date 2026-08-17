@@ -86,8 +86,13 @@ declared-frame and maximum-authored-key work must independently fit these
 inclusive 1,000,000-sample bounds: declared frames × skeleton bones, declared
 frames × tracks, and maximum authored keys × skeleton bones. The translation
 and yaw caps apply directly; no interior step is an allowance. Yaw uses f64
-first/final headings plus counted full-turn crossings, avoiding error growth
-with the admitted segment count. Four f32 successors at each inclusive cap
+first/final headings plus counted full-turn crossings. At sample zero it
+selects the local `+Z`, `+Y`, or `+X` axis with the greatest finite horizontal
+projection, in that tie order, and keeps that axis for the complete proof. A
+different source-axis convention is therefore accepted without per-sample
+axis switching; if the selected axis later has no horizontal projection, the
+command refuses. This avoids error growth with the admitted segment count.
+Four f32 successors at each inclusive cap
 cover only authored endpoint translation/quaternion quantization; other checks
 are unchanged. A refusal names the clip and selected bone, does not publish or
 replace the requested output, and emits no earlier per-clip success lines:
