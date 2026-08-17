@@ -24,6 +24,10 @@ Claude adapter directory.
 - Keep the acquired source immutable. Put inventories, configs, converted
   files, repaired files, reports, and engine imports in a separate evaluation
   workspace.
+- For commercial or otherwise redistribution-restricted inputs, put that
+  evaluation workspace outside the repository. An authorized one-time local
+  evaluation is allowed; the repository receives only scrubbed text reports,
+  non-recoverable digests, labels, and conclusions.
 - Hash the source before running tools. Use
   `.agents/skills/evaluate-animation-packs/scripts/inventory_pack.py` when a
   directory is available; retain the manifest with the report evidence.
@@ -33,8 +37,15 @@ Claude adapter directory.
 - Report license facts and ambiguities, but do not give legal advice. Quote or
   link the controlling license/marketplace terms and recommend review when the
   intended use or redistribution rights remain uncertain.
-- Do not upload licensed assets, generated reports containing proprietary
-  motion data, or engine project files to public services.
+- Never stage, commit, upload, or cache commercial or otherwise
+  redistribution-restricted source files, excerpts, extracted packages,
+  converted or repaired clips, motion-bearing derived evidence, or generated
+  engine projects. Before committing, inspect every added file and the staged
+  diff for those payloads.
+- Any fixture or validation input that will run in CI must be synthetic or
+  self-authored, or have a license that explicitly permits repository
+  inclusion and CI use/redistribution. Record provenance for non-synthetic
+  fixtures. Never make CI fetch a credential-gated marketplace pack.
 
 Read [assessment taxonomy](references/assessment-taxonomy.md) before assigning
 verdicts or remediation ownership. Read [engine and compatibility checks](references/engine-and-compatibility.md)
@@ -461,7 +472,9 @@ Run:
 
 Resolve placeholders, pair-link errors, structural errors, and primary-report
 length errors before delivery. Link retained evidence, but do not publish
-licensed source assets.
+licensed source assets. Keep commercial inputs and motion-bearing derivatives
+in the external evaluation workspace; published reports may retain only the
+scrubbed facts and identities described above.
 
 Markdown structure is parsed with the repository's pinned `pulldown-cmark`
 CommonMark/GFM parser. Never replace that parser with regular expressions or

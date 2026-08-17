@@ -59,6 +59,14 @@ Use flat, stable filenames for each pair:
 | [Protofactor Sword & Shield](protofactor-sword-and-shield.md) | [Detailed evidence](protofactor-sword-and-shield-evidence.md) | One locally held Sword & Shield pack from the Ultimate Animation Collection | Partial: exhaustive file/tool evaluation plus Unity 6000.5.8f1 combined-project Playables, mask, and prop probe; other engines and visual acceptance deferred |
 | [Protofactor Ultimate Animation Collection](protofactor-ultimate-animation-collection.md) | [Detailed evidence](protofactor-ultimate-animation-collection-evidence.md) | Partial rollup of Basic Locomotion and Sword & Shield only | Partial: exact cross-pack asset/skeleton comparison and Unity co-import/composition evidence; remaining constituents and visual acceptance deferred |
 
-Licensed source files and detailed derived evidence are not committed. Reports
-retain portable artifact labels, digests, evaluator identity, coverage gaps,
-and the procedures needed to audit or repeat the work with authorized inputs.
+Commercial and other redistribution-restricted source files, excerpts,
+motion-bearing derivatives, and generated engine projects are not committed.
+They may be used only in an authorized external workspace for one-time local
+validation. Reports retain scrubbed artifact labels, non-recoverable digests,
+evaluator identity, coverage gaps, and procedures needed to repeat the work
+with authorized inputs.
+
+Repository and CI validation uses only synthetic/self-authored fixtures or
+assets whose licenses explicitly permit repository inclusion and CI
+use/redistribution. CI must not fetch, cache, or publish a credential-gated
+marketplace pack.
