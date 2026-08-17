@@ -39,7 +39,9 @@ shipping is riskier than changing.
    manifest version. On the generated `release-plz-*` branch the same test
    requires every current version claim to equal the bumped workspace manifest.
    It deliberately ignores `CHANGELOG.md`, this completed bootstrap, and
-   roadmap history.
+   roadmap history. The dispatch job checks that generated branch itself in
+   strict mode before succeeding, because GitHub does not initially trigger PR
+   workflows for a PR created with the default `GITHUB_TOKEN`.
 3. When `main` is ready to release, manually dispatch the release workflow:
 
    ```console
