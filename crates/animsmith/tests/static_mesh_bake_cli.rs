@@ -423,6 +423,35 @@ fn option_bearing_text_conversion_diagnoses_closed_stdout_once_after_publication
     for (actual, expected) in baked_primitive.positions.iter().zip(expected_positions) {
         assert_vec3_close(*actual, expected);
     }
+
+    let writable_output = dir.path().join("writable.glb");
+    let writable = Command::new(env!("CARGO_BIN_EXE_animsmith"))
+        .arg("convert")
+        .arg(&input)
+        .arg("-o")
+        .arg(&writable_output)
+        .arg("--bake-static-mesh-transforms")
+        .arg("--material-texture-recipe")
+        .arg(&recipe)
+        .output()
+        .expect("runs writable option-bearing conversion");
+    assert!(
+        writable.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&writable.stderr)
+    );
+    assert!(writable.stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(writable.stdout).expect("conversion summary is UTF-8"),
+        format!(
+            "wrote {} (2 node(s), 0 clip(s), 1 mesh(es) / 3 position(s), 1 material(s))\n\
+             baked 1 static mesh instance(s) into identity-root geometry\n\
+             applied material texture recipe; emitted 2 texture(s)\n",
+            writable_output.display()
+        ),
+        "the real conversion dispatch must retain and order both optional summaries"
+    );
+    animsmith_gltf::load(&writable_output).expect("writable conversion artifact loads");
 }
 
 #[test]

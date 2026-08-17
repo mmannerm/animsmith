@@ -894,6 +894,21 @@ mod tests {
             "fix dispatch must not obtain a render iterator it could materialize"
         );
         let publish_source = include_str!("publish.rs");
+        let diagnosis_wrapper = publish_source
+            .split_once("fn diagnose_write_failure(error:")
+            .and_then(|(_, suffix)| suffix.split_once("fn diagnose_write_failure_to"))
+            .map(|(body, _)| body)
+            .expect("locates the production stderr diagnosis wrapper");
+        assert!(
+            diagnosis_wrapper.contains("diagnose_write_failure_to(&mut std::io::stderr(), error)"),
+            "the production diagnosis wrapper must use the checked stderr writer"
+        );
+        assert!(
+            !diagnosis_wrapper.contains("eprint!(")
+                && !diagnosis_wrapper.contains("eprintln!(")
+                && !diagnosis_wrapper.contains("unwrap("),
+            "the production diagnosis wrapper must not panic when stderr is closed"
+        );
         let fix_wrapper = publish_source
             .split_once("pub(crate) fn emit_fix_reports")
             .and_then(|(_, suffix)| suffix.split_once("/// Write exact rendered"))

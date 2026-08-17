@@ -4044,6 +4044,38 @@ fn closed_stdout_help_and_version_are_checked_successful_deliveries() {
 }
 
 #[test]
+fn parser_and_json_reporting_survive_both_output_streams_being_closed() {
+    let clean = example_asset("clip.glb").display().to_string();
+    for (case, args) in [
+        ("root help", vec!["--help".to_owned()]),
+        ("version", vec!["--version".to_owned()]),
+        (
+            "JSON measure",
+            vec![
+                "measure".to_owned(),
+                clean,
+                "--format".to_owned(),
+                "json".to_owned(),
+            ],
+        ),
+    ] {
+        let (reader, writer) = std::io::pipe().expect("creates a pipe");
+        drop(reader);
+        let status = animsmith()
+            .args(args)
+            .stdout(Stdio::from(writer))
+            .stderr(Stdio::null())
+            .status()
+            .unwrap_or_else(|error| panic!("runs {case} with both streams unavailable: {error}"));
+        assert_eq!(
+            status.code(),
+            Some(0),
+            "{case} must not panic through its production stderr wrapper"
+        );
+    }
+}
+
+#[test]
 fn forced_color_help_preserves_clap_styling_through_checked_stdout() {
     for (case, args, marker) in [
         ("root", vec!["--help"], "Commands:"),
