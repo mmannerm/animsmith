@@ -369,6 +369,6 @@ Run
 Resolve placeholders and structural errors before delivery. Link the report
 and retained evidence, but do not publish licensed source assets.
 
-When changing either validator, run
-`.agents/skills/evaluate-animation-packs/scripts/test_validators.py` before
-publishing the skill.
+When changing the skill or publishing a repository report, run
+`just animation-pack-skill`. It exercises the helper executables and validates
+every pack report under `docs/reports/`. The same check is part of `just gates`.

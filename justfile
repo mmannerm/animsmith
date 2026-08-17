@@ -111,6 +111,10 @@ package-inventory:
 release-packaging:
     bash scripts/check-release-packaging.sh
 
+# Behavioral and published-report checks for the reusable animation-pack skill.
+animation-pack-skill:
+    PYTHONDONTWRITEBYTECODE=1 python3 .agents/skills/evaluate-animation-packs/scripts/test_validators.py
+
 # Full local PR gate, matching CI (includes release builds — expect
 # minutes, not seconds). The GitHub workflow also verifies package
 # assembly on a clean checkout.
@@ -139,6 +143,7 @@ gates: require-cargo-deny require-typos
     cargo run -p animsmith --release --no-default-features -- --version
     just package-inventory
     just release-packaging
+    just animation-pack-skill
 
 # See .agent-instructions/shared.md for the required env var.
 # Env-gated reference tests against licensed assets plus CI-visible FBX coverage.

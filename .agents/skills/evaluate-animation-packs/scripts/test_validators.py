@@ -5,6 +5,9 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path, PurePosixPath
@@ -14,14 +17,53 @@ import validate_evaluation_manifest as manifest_validator
 import validate_report as report_validator
 
 
+V1_SCHEMA = "urn:animsmith:skill:animation-pack-evaluation-manifest:1"
+V1_PRIMARY_ROLES = (
+    "idle-pose",
+    "continuous-locomotion",
+    "locomotion-transition",
+    "airborne",
+    "traversal",
+    "action-interaction",
+    "reaction-death",
+    "emote-cinematic",
+    "other-unknown",
+)
+V1_PROFILE_IDS = (
+    "marketplace-intake",
+    "blended-locomotion",
+    "root-motion-controller",
+    "state-machine-transitions",
+    "layered-upper-body-weapons",
+    "traversal-environment",
+    "contact-actions-interactions",
+    "retargeted-customizable-characters",
+    "motion-matching-search",
+    "networked-movement",
+    "runtime-performance",
+)
+V1_PIPELINE_STAGES = (
+    "acquire",
+    "preserve-raw",
+    "inspect",
+    "segment",
+    "root-motion",
+    "conform",
+    "validate",
+    "optimize",
+    "export",
+    "gate-report",
+)
+
+
 def valid_manifest() -> dict[str, object]:
     roles = {
         role: {"logical_motions": 0, "delivered_files": 0}
-        for role in manifest_validator.PRIMARY_ROLES
+        for role in V1_PRIMARY_ROLES
     }
     roles["idle-pose"] = {"logical_motions": 1, "delivered_files": 1}
     profiles = []
-    for profile_id in manifest_validator.PROFILE_IDS:
+    for profile_id in V1_PROFILE_IDS:
         profile = {
             "profile_id": profile_id,
             "status": "not-selected",
@@ -36,9 +78,9 @@ def valid_manifest() -> dict[str, object]:
         profiles.append(profile)
 
     return {
-        "schema": manifest_validator.SCHEMA,
-        "taxonomy_version": manifest_validator.TAXONOMY_VERSION,
-        "validation_profile_set_version": manifest_validator.PROFILE_SET_VERSION,
+        "schema": V1_SCHEMA,
+        "taxonomy_version": "1",
+        "validation_profile_set_version": "1",
         "evaluator": {"version": "0.2.1", "revision": "fixture"},
         "motions": [
             {
@@ -58,11 +100,47 @@ def valid_manifest() -> dict[str, object]:
                 "status": "evaluated-clean",
                 "evidence": "Fixture evidence.",
             }
-            for stage_id in manifest_validator.PIPELINE_STAGES
+            for stage_id in V1_PIPELINE_STAGES
         ],
         "role_totals": roles,
         "totals": {"logical_motions": 1, "delivered_files": 1, "runtime_sets": 0},
     }
+
+
+def valid_manifest_with_runtime_set() -> dict[str, object]:
+    manifest = valid_manifest()
+    manifest["motions"].append(  # type: ignore[union-attr]
+        {
+            "id": "walk-forward",
+            "vendor_label": "Walk Forward",
+            "primary_role": "continuous-locomotion",
+            "tags": ["direction:forward", "gait:walk"],
+            "classification_basis": ["observed-file"],
+            "files": [{"path": "Walk.fbx", "variant": "in-place"}],
+        }
+    )
+    manifest["runtime_sets"] = [
+        {
+            "id": "idle-to-walk",
+            "set_type": "transition-chain",
+            "confidence": "high",
+            "classification_basis": ["observed-file"],
+            "members": [
+                {"motion_id": "idle-neutral", "file": "Idle.fbx"},
+                {"motion_id": "walk-forward", "file": "Walk.fbx"},
+            ],
+        }
+    ]
+    manifest["role_totals"]["continuous-locomotion"] = {  # type: ignore[index]
+        "logical_motions": 1,
+        "delivered_files": 1,
+    }
+    manifest["totals"] = {
+        "logical_motions": 2,
+        "delivered_files": 2,
+        "runtime_sets": 1,
+    }
+    return manifest
 
 
 def valid_report() -> str:
@@ -213,8 +291,91 @@ class InventoryTests(unittest.TestCase):
 
 
 class ManifestValidatorTests(unittest.TestCase):
+    def test_validator_retains_public_v1_vocabulary(self) -> None:
+        self.assertEqual(manifest_validator.SCHEMA, V1_SCHEMA)
+        self.assertEqual(manifest_validator.TAXONOMY_VERSION, "1")
+        self.assertEqual(manifest_validator.PROFILE_SET_VERSION, "1")
+        self.assertEqual(manifest_validator.PRIMARY_ROLES, V1_PRIMARY_ROLES)
+        self.assertEqual(manifest_validator.PROFILE_IDS, V1_PROFILE_IDS)
+        self.assertEqual(manifest_validator.PIPELINE_STAGES, V1_PIPELINE_STAGES)
+
     def test_accepts_complete_manifest(self) -> None:
         self.assertEqual(manifest_validator.validate_manifest(valid_manifest()), [])
+
+    def test_accepts_analytic_runtime_set(self) -> None:
+        self.assertEqual(
+            manifest_validator.validate_manifest(valid_manifest_with_runtime_set()), []
+        )
+
+    def test_rejects_unknown_runtime_set_type(self) -> None:
+        manifest = valid_manifest_with_runtime_set()
+        manifest["runtime_sets"][0]["set_type"] = "unknown-type"  # type: ignore[index]
+
+        errors = manifest_validator.validate_manifest(manifest)
+
+        self.assertIn(
+            "runtime_sets[0].set_type has unknown value: 'unknown-type'", errors
+        )
+
+    def test_rejects_unknown_runtime_set_confidence(self) -> None:
+        manifest = valid_manifest_with_runtime_set()
+        manifest["runtime_sets"][0]["confidence"] = "certain"  # type: ignore[index]
+
+        errors = manifest_validator.validate_manifest(manifest)
+
+        self.assertIn("runtime_sets[0].confidence has unknown value: 'certain'", errors)
+
+    def test_requires_two_runtime_set_members(self) -> None:
+        manifest = valid_manifest_with_runtime_set()
+        manifest["runtime_sets"][0]["members"] = [  # type: ignore[index]
+            {"motion_id": "idle-neutral", "file": "Idle.fbx"}
+        ]
+
+        errors = manifest_validator.validate_manifest(manifest)
+
+        self.assertIn("runtime_sets[0].members must contain at least two members", errors)
+
+    def test_rejects_unknown_runtime_set_motion_reference(self) -> None:
+        manifest = valid_manifest_with_runtime_set()
+        manifest["runtime_sets"][0]["members"][1]["motion_id"] = "missing"  # type: ignore[index]
+
+        errors = manifest_validator.validate_manifest(manifest)
+
+        self.assertIn(
+            "runtime_sets[0].members[1].motion_id references unknown motion", errors
+        )
+
+    def test_rejects_runtime_set_file_from_another_motion(self) -> None:
+        manifest = valid_manifest_with_runtime_set()
+        manifest["runtime_sets"][0]["members"][1]["file"] = "Idle.fbx"  # type: ignore[index]
+
+        errors = manifest_validator.validate_manifest(manifest)
+
+        self.assertIn(
+            "runtime_sets[0].members[1].file is not a delivered file of 'walk-forward'",
+            errors,
+        )
+
+    def test_rejects_duplicate_runtime_set_members(self) -> None:
+        manifest = valid_manifest_with_runtime_set()
+        first_member = copy.deepcopy(manifest["runtime_sets"][0]["members"][0])  # type: ignore[index]
+        manifest["runtime_sets"][0]["members"][1] = first_member  # type: ignore[index]
+
+        errors = manifest_validator.validate_manifest(manifest)
+
+        self.assertIn(
+            "runtime_sets[0].members[1] duplicates another member", errors
+        )
+
+    def test_runtime_set_total_must_reconcile(self) -> None:
+        manifest = valid_manifest_with_runtime_set()
+        manifest["totals"]["runtime_sets"] = 0  # type: ignore[index]
+
+        errors = manifest_validator.validate_manifest(manifest)
+
+        self.assertIn(
+            "totals does not match motions, physical files, and runtime sets", errors
+        )
 
     def test_rejects_duplicate_physical_file_membership(self) -> None:
         manifest = valid_manifest()
@@ -252,13 +413,54 @@ class ManifestValidatorTests(unittest.TestCase):
             errors,
         )
 
-    def test_reports_malformed_collection_values_without_crashing(self) -> None:
+    def test_rejects_non_string_motion_tag(self) -> None:
         manifest = valid_manifest()
         motion = manifest["motions"][0]  # type: ignore[index]
         motion["tags"] = [{"not": "a string"}]
+
+        errors = manifest_validator.validate_manifest(manifest)
+
+        self.assertIn(
+            "motions[0].tags contains invalid tag: {'not': 'a string'}", errors
+        )
+
+    def test_rejects_non_string_classification_basis(self) -> None:
+        manifest = valid_manifest()
+        motion = manifest["motions"][0]  # type: ignore[index]
         motion["classification_basis"] = [["not-hashable"]]
+
+        errors = manifest_validator.validate_manifest(manifest)
+
+        self.assertIn(
+            "motions[0].classification_basis contains unknown values: ['not-hashable']",
+            errors,
+        )
+
+    def test_rejects_non_string_file_variant(self) -> None:
+        manifest = valid_manifest()
+        motion = manifest["motions"][0]  # type: ignore[index]
         motion["files"][0]["variant"] = {"not": "a string"}
+
+        errors = manifest_validator.validate_manifest(manifest)
+
+        self.assertIn(
+            "motions[0].files[0].variant has unknown value: {'not': 'a string'}",
+            errors,
+        )
+
+    def test_rejects_non_string_profile_status(self) -> None:
+        manifest = valid_manifest()
         manifest["profiles"][0]["status"] = {"not": "a string"}  # type: ignore[index]
+
+        errors = manifest_validator.validate_manifest(manifest)
+
+        self.assertIn(
+            "profiles[marketplace-intake].status has unknown value: {'not': 'a string'}",
+            errors,
+        )
+
+    def test_rejects_non_string_pipeline_status(self) -> None:
+        manifest = valid_manifest()
         manifest["pipeline_stages"][0]["status"] = {  # type: ignore[index]
             "not": "a string"
         }
@@ -266,17 +468,8 @@ class ManifestValidatorTests(unittest.TestCase):
         errors = manifest_validator.validate_manifest(manifest)
 
         self.assertIn(
-            "motions[0].tags contains invalid tag: {'not': 'a string'}", errors
-        )
-        self.assertTrue(
-            any("classification_basis contains unknown values" in error for error in errors)
-        )
-        self.assertIn(
-            "motions[0].files[0].variant has unknown value: {'not': 'a string'}",
+            "pipeline_stages[acquire].status has unknown value: {'not': 'a string'}",
             errors,
-        )
-        self.assertTrue(
-            any("status has unknown value" in error for error in errors), errors
         )
 
     def test_rejects_non_string_selected_profile_activation_basis(self) -> None:
@@ -327,6 +520,82 @@ class ReportValidatorTests(unittest.TestCase):
         errors = report_validator.validate(report)
 
         self.assertIn("missing required heading: ## Sources", errors)
+
+    def test_all_published_pack_reports_conform(self) -> None:
+        repository = Path(__file__).resolve().parents[4]
+        reports = sorted(
+            report
+            for report in (repository / "docs" / "reports").glob("*.md")
+            if report.name != "README.md"
+        )
+        self.assertTrue(reports, "expected at least one published pack report")
+        for report in reports:
+            with self.subTest(report=report.name):
+                self.assertEqual(
+                    report_validator.validate(report.read_text(encoding="utf-8")), []
+                )
+
+
+class ExecutableContractTests(unittest.TestCase):
+    scripts = Path(__file__).resolve().parent
+
+    def run_script(self, name: str, *arguments: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(self.scripts / name), *arguments],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_inventory_cli_success_and_missing_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory) / "pack"
+            root.mkdir()
+            (root / "Walk.fbx").write_bytes(b"motion")
+            success = self.run_script("inventory_pack.py", str(root), "--label", "Pack")
+            missing = self.run_script("inventory_pack.py", str(root / "missing"))
+
+        self.assertEqual(success.returncode, 0, success.stderr)
+        self.assertEqual(json.loads(success.stdout)["pack_label"], "Pack")
+        self.assertEqual(success.stderr, "")
+        self.assertEqual(missing.returncode, 2)
+        self.assertIn("root is not a directory", missing.stderr)
+
+    def test_manifest_validator_cli_success_and_malformed_json(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            valid_path = directory / "valid.json"
+            valid_path.write_text(json.dumps(valid_manifest()), encoding="utf-8")
+            malformed_path = directory / "malformed.json"
+            malformed_path.write_text("{", encoding="utf-8")
+            success = self.run_script(
+                "validate_evaluation_manifest.py", str(valid_path)
+            )
+            malformed = self.run_script(
+                "validate_evaluation_manifest.py", str(malformed_path)
+            )
+
+        self.assertEqual(success.returncode, 0, success.stderr)
+        self.assertIn("validated animation-pack evaluation manifest", success.stdout)
+        self.assertEqual(success.stderr, "")
+        self.assertEqual(malformed.returncode, 2)
+        self.assertIn("validate_evaluation_manifest.py:", malformed.stderr)
+
+    def test_report_validator_cli_success_and_invalid_report(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            valid_path = directory / "valid.md"
+            valid_path.write_text(valid_report(), encoding="utf-8")
+            invalid_path = directory / "invalid.md"
+            invalid_path.write_text("# incomplete\n", encoding="utf-8")
+            success = self.run_script("validate_report.py", str(valid_path))
+            invalid = self.run_script("validate_report.py", str(invalid_path))
+
+        self.assertEqual(success.returncode, 0, success.stderr)
+        self.assertIn("validated animation-pack report", success.stdout)
+        self.assertEqual(success.stderr, "")
+        self.assertEqual(invalid.returncode, 1)
+        self.assertIn("missing required heading: ## Executive decision", invalid.stderr)
 
 
 if __name__ == "__main__":

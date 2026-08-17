@@ -41,6 +41,7 @@ depend on a private runner cache.
 $ just build
 $ just test
 $ just doc
+$ just animation-pack-skill
 $ just gates
 ```
 
@@ -49,7 +50,8 @@ non-trivial PR. It runs formatting, clippy, workspace tests, golden skip
 marker verification, dependency checks, schema-id verification, GitHub
 community-file checks, spell checking, rustdoc with missing public docs
 denied, no-default-features CLI tests and builds, release binary smoke
-checks, and package readiness checks.
+checks, package readiness checks, and the animation-pack skill's behavioral
+and published-report validation.
 
 The corresponding CI workflows also validate the same expectations on a
 clean checkout. Coverage and the security scanners (Scorecard, CodeQL)
