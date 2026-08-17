@@ -31,11 +31,11 @@ schema is
 This lets producers pin conversion provenance independently of measurement
 and lint evidence.
 
-`assemble` writes a separate character-assembly-evidence v3 document to its
+`assemble` writes a separate character-assembly-evidence v4 document to its
 required `--evidence` path, and prints the same record to stdout under
 `--format json`. Its immutable identity is
-`urn:animsmith:schema:character-assembly-evidence:3`; its retrievable schema is
-[`character-assembly-evidence-v3.schema.json`](schemas/character-assembly-evidence-v3.schema.json).
+`urn:animsmith:schema:character-assembly-evidence:4`; its retrievable schema is
+[`character-assembly-evidence-v4.schema.json`](schemas/character-assembly-evidence-v4.schema.json).
 The paired GLB and evidence are prepared before publication, so an operator
 failure emits neither new destination and restores any prior pair.
 
@@ -235,7 +235,7 @@ recipes](material-texture-recipes.md) for containment and image semantics.
 
 ## `assemble`
 
-`assemble` writes character-assembly evidence v3 beside its GLB. The evidence
+`assemble` writes character-assembly evidence v4 beside its GLB. The evidence
 binds the effective recipe and its SHA-256, every base/clip/recipe/texture input
 and digest, selected source takes and windows, exact track-operation counts,
 removed named-bone translation deltas, mesh and skin canonicalization, tool
@@ -243,7 +243,7 @@ identity, and the final artifact digest and counts. When `prune_constant_tracks`
 is enabled, each clip also records the exact removed tracks in
 `pruned_constant_tracks`, including each track's index in the completed,
 normalized output clip immediately before pruning (the pre-prune authored
-order). In assembly evidence v3, `bone_index` is the BoneId in the
+order). In assembly evidence v3 and v4, `bone_index` is the BoneId in the
 post-canonicalization/pre-node-removal skeleton; `removed_nodes` provides the
 stable compaction ledger needed to derive a surviving final index. The array
 is empty when pruning is disabled or no track is removed.
@@ -255,17 +255,29 @@ Paths remain
 operator-declared; canonical host paths used for containment checks are not
 serialized.
 
+When the optional recipe-v4 `rest_bind_scale` operation is active, evidence
+also pins the explicit source skin/root selectors and factor, the exact digest
+and versioned basis fingerprint for the base and every clip input, each
+semantic compatibility result, and the shared scale proof over the exact
+staged artifact bytes. Each input explicitly names the basis fingerprint
+contract as `urn:animsmith:character-assembly-scale-basis:1`.
+`residual_comparison_counts` uses the same twelve stable
+field names as `proof.residuals`, keeping every measured maximum paired with
+the count from the shared proof API without changing immutable scale-evidence
+v4. Omitting the block omits this operation evidence and retains the existing
+assembly transformation behavior under the v4 envelope.
+
 The normative recipe and evidence contracts are
-[`character-assembly-recipe-v3.schema.json`](schemas/character-assembly-recipe-v3.schema.json)
+[`character-assembly-recipe-v4.schema.json`](schemas/character-assembly-recipe-v4.schema.json)
 and
-[`character-assembly-evidence-v3.schema.json`](schemas/character-assembly-evidence-v3.schema.json).
+[`character-assembly-evidence-v4.schema.json`](schemas/character-assembly-evidence-v4.schema.json).
 The recipe identity is
-`urn:animsmith:schema:character-assembly-recipe:3`; v1 and v2 remain immutable
-historical contracts.
+`urn:animsmith:schema:character-assembly-recipe:4`; v1 through v3 remain
+immutable historical contracts.
 See [multi-source character assembly](character-assembly.md) for operation and
-consumer-boundary semantics. Migrate from v2 by selecting recipe/evidence v3;
-an omitted `remove_nodes` list requests no node projection; v3 still applies its
-current shared snapshot validation.
+consumer-boundary semantics. Migrate from v3 by selecting recipe/evidence v4;
+an omitted `rest_bind_scale` block retains the existing behavior, while v3
+continues to reject that block as unknown.
 
 ## `scale`
 

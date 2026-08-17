@@ -200,7 +200,7 @@ enum Cmd {
     },
     /// Assemble a multi-source skinned character from a versioned recipe.
     #[command(
-        long_about = "Assemble one runtime GLB from an authoritative skinned base and animation takes supplied by FBX or glTF inputs. The versioned recipe owns exact mesh selection, skeleton remapping, clip windows and mechanical transforms; source extraction, project policy, and publication remain consumer responsibilities."
+        long_about = "Assemble one runtime GLB from an authoritative skinned base and animation takes supplied by FBX or glTF inputs. The versioned recipe owns exact mesh selection, skeleton remapping, clip windows and mechanical transforms. Recipe v4 can opt into glTF-only rest/bind scale canonicalization with explicit source selectors and expected factor; it validates the base and every clip basis before copying keys. Source extraction, project policy, and publication remain consumer responsibilities."
     )]
     #[cfg(feature = "fbx")]
     Assemble {

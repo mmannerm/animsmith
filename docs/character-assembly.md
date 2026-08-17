@@ -32,8 +32,8 @@ evidence, and publication. DCC automation is outside this command.
 Start from [`examples/character-assembly.toml`](../examples/character-assembly.toml):
 
 ```toml
-schema_version = 3
-schema = "urn:animsmith:schema:character-assembly-recipe:3"
+schema_version = 4
+schema = "urn:animsmith:schema:character-assembly-recipe:4"
 input_root = "inputs"
 base_input = "base-character.fbx"
 mesh_instances = ["character-mesh"]
@@ -43,6 +43,12 @@ canonicalize_skin = true
 ground_and_center = true
 prune_constant_tracks = false
 fps = 30.0
+
+# Optional and glTF-only; every selector and the factor are required together.
+# [rest_bind_scale]
+# source_skin_index = 0
+# source_root_node_index = 3
+# expected_factor = 0.01
 
 [[clips]]
 name = "idle"
@@ -119,6 +125,51 @@ apply:
   only authored endpoint translation/quaternion quantization;
 - `strip_bones = [...]`: remove every TRS track for named base bones.
 
+### Optional rest/bind scale canonicalization
+
+Recipe v4 can opt into the accepted rest/bind scale operation with one
+top-level block:
+
+```toml
+[rest_bind_scale]
+source_skin_index = 0
+source_root_node_index = 3
+expected_factor = 0.01
+```
+
+The block has no defaults: the source skin index, source root node index, and
+finite positive expected factor are all required. It initially accepts only
+glTF/GLB base and clip inputs. FBX inputs and any glTF input whose raw
+capability manifest or source-skeleton coverage is incomplete fail closed.
+Nothing is inferred from filenames, bounds, character height, or inverse-bind
+magnitudes.
+
+The block cannot be combined with `canonicalize_skin`, `ground_and_center`, or
+`remove_nodes`: each changes the proved hierarchy or source basis after the raw
+operation. Assembly returns a named recipe error for these combinations rather
+than degrading into an incomplete-coverage refusal.
+
+Before any clip keys are remapped or copied, assembly captures and validates
+the exact bytes of the base and every separately supplied clip. Each input
+must agree on the selected domain and factor, named parent topology, target
+local rest matrices and orientations, helper-node layout, and coordinate
+convention. Each input's own target paths and plan-owned effective factors are
+validated and fingerprinted; distinct clips need not contain identical target
+paths. A matching digest alone is not compatibility evidence. Topology,
+orientation, helper-layout, basis, selector, or factor disagreement rejects
+the complete operation before publication.
+Topology, raw identities, selectors, and the declared factor compare exactly.
+Rest translations, scales, and matrices use the named Appendix D tolerance
+policy, while quaternion orientation uses shortest-path angular distance, so
+equivalent `q`/`-q` spellings do not become false incompatibilities.
+
+For a compatible clip, translation values and both translation tangents of a
+`CUBICSPLINE` track are rebased in the source basis before exact-name remapping.
+Assembly reuses the same validated scale request, compiled write-set, raw glTF
+rewrite, tolerance policy, and paired proof residuals as `animsmith scale`.
+The assembled artifact is serialized, reloaded from its exact staged bytes,
+and proved once before the artifact/evidence pair can be published.
+
 `complete_tracks = true` fills absent TRS channels from the base rest pose for
 the union of selected skin joints and nodes targeted by any emitted clip.
 Per-clip `strip_bones` entries stay excluded. Rotation key values are
@@ -192,15 +243,16 @@ boundary described in [Material texture recipes](material-texture-recipes.md),
 including BaseColor, normal, metallic-roughness, and occlusion slots.
 
 The normative current recipe schema is
-[`character-assembly-recipe-v3.schema.json`](schemas/character-assembly-recipe-v3.schema.json).
-Recipe v1 and v2 remain immutable historical contracts. To migrate from v2,
-change `schema_version` and `schema` to v3, then add `remove_nodes` or omit it
-to request no node projection. V3 still applies its current shared snapshot validation.
+[`character-assembly-recipe-v4.schema.json`](schemas/character-assembly-recipe-v4.schema.json).
+Recipe v1, v2, and v3 remain immutable historical contracts. To migrate from
+v3, change `schema_version` and `schema` to v4, then add `rest_bind_scale` or
+omit it to retain the existing assembly behavior. V3 continues to reject the
+new block as unknown rather than silently adopting v4 behavior.
 
 ## Evidence and determinism
 
 The current evidence identity is
-`urn:animsmith:schema:character-assembly-evidence:3`. It records the effective
+`urn:animsmith:schema:character-assembly-evidence:4`. It records the effective
 recipe, recipe and input SHA-256 digests, the selected configuration file's
 declared path and digest (or an explicit built-in-defaults marker), selected takes and windows, exact
 source/base bone remap names and indices, and track
@@ -221,11 +273,27 @@ once in original pre-removal node order: its exact name, original node index,
 nullable original parent index, and whether the recipe selected it directly
 rather than through an ancestor. It is empty when `remove_nodes` is omitted or
 empty. See
-[`character-assembly-evidence-v3.schema.json`](schemas/character-assembly-evidence-v3.schema.json).
+[`character-assembly-evidence-v4.schema.json`](schemas/character-assembly-evidence-v4.schema.json).
 
-Evidence v1 and v2 remain immutable historical contracts; v1 does not describe
-pruning and neither historical version describes structural node removal.
-Consumers migrating to v3 must verify `removed_nodes` against the effective
+When `rest_bind_scale` is active, v4 additionally pins each exact base/clip
+input digest and its versioned basis fingerprint, the explicit selectors and
+factor, every compatibility result, and the shared final-artifact scale proof.
+The staged-source digest and exact emitted-byte read-back digest make the two
+serialization boundaries explicit; the read-back digest equals the published
+artifact identity on every accepted run.
+Each input names the fingerprint contract explicitly as
+`urn:animsmith:character-assembly-scale-basis:1`, so consumers never infer its
+version from the digest. The operation record also carries
+the sibling `residual_comparison_counts` record pairing every shared
+maximum residual to its comparison count by the same stable field name. These
+records let a consumer verify that assembly validated and transformed every
+participating input before remapping and that proof consumed the exact bytes
+subsequently published.
+
+Evidence v1, v2, and v3 remain immutable historical contracts; v1 does not
+describe pruning, v1 and v2 do not describe structural node removal, and none
+of them describe rest/bind scale compatibility. Consumers migrating from v2 or
+v3 must verify `removed_nodes` against the effective
 recipe and output hierarchy rather than inferring removal from track evidence
 or lint configuration.
 

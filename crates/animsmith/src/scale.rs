@@ -284,6 +284,46 @@ struct ResidualsRecord {
     unaffected_inverse_bind: Residual,
 }
 
+/// Comparison counts paired with the immutable scale-evidence v4 maxima.
+///
+/// Character-assembly evidence v4 records this beside the shared v4 proof
+/// projection. Keeping construction here prevents a second producer from
+/// re-deriving or mispairing the twelve residual identities.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[cfg(feature = "fbx")]
+pub(crate) struct ResidualComparisonCounts {
+    rest_translation: usize,
+    rest_rotation: usize,
+    unit_scale: usize,
+    transform_only_affine: usize,
+    track_value: usize,
+    mesh_position: usize,
+    key_translation: usize,
+    cubic_interior: usize,
+    trajectory: usize,
+    skin_matrix: usize,
+    bounds: usize,
+    unaffected_inverse_bind: usize,
+}
+
+#[cfg(feature = "fbx")]
+pub(crate) fn residual_comparison_counts(proof: &ScaleProof) -> ResidualComparisonCounts {
+    ResidualComparisonCounts {
+        rest_translation: proof.rest_translation.comparisons(),
+        rest_rotation: proof.rest_rotation.comparisons(),
+        unit_scale: proof.unit_scale.comparisons(),
+        transform_only_affine: proof.transform_only_affine.comparisons(),
+        track_value: proof.track_value.comparisons(),
+        mesh_position: proof.mesh_position.comparisons(),
+        key_translation: proof.key_translation.comparisons(),
+        cubic_interior: proof.cubic_interior.comparisons(),
+        trajectory: proof.trajectory.comparisons(),
+        skin_matrix: proof.skin_matrix.comparisons(),
+        bounds: proof.bounds.comparisons(),
+        unaffected_inverse_bind: proof.unaffected_inverse_bind.comparisons(),
+    }
+}
+
 /// The fixed tolerance policy, recorded by identity and in full.
 ///
 /// §D.7 forbids per-run tolerance flags: the command uses the policy version
@@ -443,13 +483,60 @@ struct ArtifactRecord {
 
 /// Everything a published run adds to the record.
 #[derive(Debug, Clone, Serialize)]
-struct PublishedRecord {
+pub(crate) struct SharedScaleEvidence {
     tolerance: ToleranceRecord,
     factors: FactorsRecord,
     affected: AffectedRecord,
     domain_rewrites: DomainRewritesRecord,
     proof: ProofRecord,
     artifact: ArtifactRecord,
+}
+
+/// Build the one shared, immutable scale proof/evidence projection.
+///
+/// Assembly nests this record in its v4 evidence rather than reproducing the
+/// residual evaluated/count mapping, tolerance policy, factor witnesses, or
+/// raw-artifact write-set policy owned by the standalone scale producer.
+pub(crate) fn shared_scale_evidence(
+    plan: &ScalePlan,
+    artifact: &GltfScaleArtifact,
+    proof: &GltfScaleArtifactProof,
+) -> Result<SharedScaleEvidence, String> {
+    let policy = plan.tolerance_policy();
+    Ok(SharedScaleEvidence {
+        tolerance: policy.into(),
+        factors: FactorsRecord {
+            declared: Finite(plan.common_factor()),
+            planned_observed: Finite(proof.core.planned_observed_factor),
+            proved_observed: Finite(proof.core.observed_factor),
+            divergence: Finite(proof.core.observed_factor_divergence),
+            divergence_ceiling: Finite(policy.observed_factor_divergence_ceiling()),
+        },
+        affected: AffectedRecord {
+            source_nodes: artifact.affected_source_nodes().to_vec(),
+            source_skins: artifact.affected_source_skins().to_vec(),
+            transform_only_attachment_count: plan.transform_only_attachments().len(),
+        },
+        domain_rewrites: DomainRewritesRecord::from_operation(plan.operation())?,
+        proof: ProofRecord {
+            sample_time_count: proof.core.sample_time_count,
+            residuals: residuals(&proof.core),
+            artifact: ArtifactProofRecord {
+                length_factor_residual: Finite(proof.length_factor_residual),
+                dimensionless_residual: Finite(proof.dimensionless_residual),
+                preserved_byte_ranges: proof.preserved_byte_ranges,
+                rewritten_accessor_count: proof.rewritten_accessor_count,
+            },
+            read_back_digest_matches: true,
+        },
+        artifact: ArtifactRecord {
+            container: artifact.container(),
+            identity: InputIdentity::from_bytes(artifact.bytes()),
+            rewritten_accessors: artifact.rewritten_accessors().to_vec(),
+            rewritten_json_pointers: artifact.rewritten_json_pointers().to_vec(),
+            reencoded_buffers: artifact.reencoded_buffers().to_vec(),
+        },
+    })
 }
 
 /// Where in the pipeline a refusal was raised.
@@ -568,7 +655,7 @@ struct ScaleEvidence<'a> {
     /// far enough to inventory one. §D.6 asks for the raw manifest, and a
     /// digest of one is not a manifest.
     capability: Option<&'a GltfCapabilityManifest>,
-    result: Option<PublishedRecord>,
+    result: Option<SharedScaleEvidence>,
     rejection: Option<RejectionRecord>,
 }
 
@@ -1004,7 +1091,6 @@ struct Produced {
     artifact: GltfScaleArtifact,
     proof: GltfScaleArtifactProof,
     artifact_temp: tempfile::TempPath,
-    artifact_identity: InputIdentity,
 }
 
 /// Plan, rewrite, prove, and stage the artifact — everything up to but not
@@ -1043,14 +1129,11 @@ fn produce(request: &Request, source: &GltfScaleSource) -> Result<Produced, Fail
     // The third artifact check: the bytes that landed are the bytes proved.
     let (read_back_sha256, _) = read_digest(&artifact_temp).map_err(Failure::from)?;
     require_read_back_match(&read_back_sha256, &sha256_hex(artifact.bytes()))?;
-    let artifact_identity = InputIdentity::from_bytes(artifact.bytes());
-
     Ok(Produced {
         plan,
         artifact,
         proof,
         artifact_temp,
-        artifact_identity,
     })
 }
 
@@ -1089,9 +1172,7 @@ fn publish(
         artifact,
         proof,
         artifact_temp,
-        artifact_identity,
     } = produced;
-    let policy = plan.tolerance_policy();
     let record = ScaleEvidence {
         schema_version: SCALE_EVIDENCE_SCHEMA_VERSION,
         schema: SCALE_EVIDENCE_SCHEMA_ID,
@@ -1102,40 +1183,7 @@ fn publish(
         paths: paths.clone(),
         input: identity,
         capability: Some(source.manifest()),
-        result: Some(PublishedRecord {
-            tolerance: policy.into(),
-            factors: FactorsRecord {
-                declared: Finite(plan.common_factor()),
-                planned_observed: Finite(proof.core.planned_observed_factor),
-                proved_observed: Finite(proof.core.observed_factor),
-                divergence: Finite(proof.core.observed_factor_divergence),
-                divergence_ceiling: Finite(policy.observed_factor_divergence_ceiling()),
-            },
-            affected: AffectedRecord {
-                source_nodes: artifact.affected_source_nodes().to_vec(),
-                source_skins: artifact.affected_source_skins().to_vec(),
-                transform_only_attachment_count: plan.transform_only_attachments().len(),
-            },
-            domain_rewrites: DomainRewritesRecord::from_operation(plan.operation())?,
-            proof: ProofRecord {
-                sample_time_count: proof.core.sample_time_count,
-                residuals: residuals(&proof.core),
-                artifact: ArtifactProofRecord {
-                    length_factor_residual: Finite(proof.length_factor_residual),
-                    dimensionless_residual: Finite(proof.dimensionless_residual),
-                    preserved_byte_ranges: proof.preserved_byte_ranges,
-                    rewritten_accessor_count: proof.rewritten_accessor_count,
-                },
-                read_back_digest_matches: true,
-            },
-            artifact: ArtifactRecord {
-                container: artifact.container(),
-                identity: artifact_identity,
-                rewritten_accessors: artifact.rewritten_accessors().to_vec(),
-                rewritten_json_pointers: artifact.rewritten_json_pointers().to_vec(),
-                reencoded_buffers: artifact.reencoded_buffers().to_vec(),
-            },
-        }),
+        result: Some(shared_scale_evidence(&plan, &artifact, &proof)?),
         rejection: None,
     };
     let evidence_bytes = serialize_record(&record)?;

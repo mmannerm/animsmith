@@ -69,12 +69,18 @@ use glam::{Mat3, Mat4, Vec4};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
+mod assembly_basis;
 mod numeric;
 mod planning;
 mod proof;
 mod reference;
 mod validation;
 
+pub use assembly_basis::{
+    ASSEMBLY_SCALE_BASIS_VERSION, AssemblyScaleBasis, AssemblyScaleCompatibilityError,
+    AssemblyScaleNamedNode, AssemblyScaleSourceNode, AssemblyScaleSourceRest,
+    AssemblyScaleTargetPath, assembly_scale_basis, require_assembly_scale_compatibility,
+};
 pub use planning::plan_scale;
 use planning::validate_plan_document_inventory;
 pub use proof::{ScaleProof, ScaleProofResidual, prove_scale};
@@ -1605,6 +1611,103 @@ impl ScalePlan {
     /// Inspect the exact read-only topology, field, and obligation ledger.
     pub fn ledger(&self) -> ScalePlanLedger<'_> {
         ScalePlanLedger { plan: self }
+    }
+
+    /// Resolve the effective multiplier for one animation track's stored
+    /// values from this compiled plan.
+    ///
+    /// This is the assembly compatibility boundary from Appendix D §D.5: a
+    /// producer can fingerprint the exact target-basis factor without
+    /// reproducing rest/bind arithmetic outside the shared plan. Values and
+    /// CUBICSPLINE tangents use the same multiplier because both occupy the
+    /// track's one typed field row.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ScaleError::PlanDocumentMismatch`] when the document or
+    /// requested track no longer matches the compiled ledger.
+    pub fn animation_value_factor(
+        &self,
+        document: &Document,
+        clip_index: usize,
+        track_index: usize,
+    ) -> Result<f64, ScaleError> {
+        validate_plan_document_inventory(document, self)?;
+        let row = self
+            .field_rows()
+            .iter()
+            .find(|row| {
+                matches!(
+                    row.target(),
+                    ScaleFieldTarget::AnimationValues {
+                        clip_index: candidate_clip,
+                        track_index: candidate_track,
+                        ..
+                    } if candidate_clip == clip_index && candidate_track == track_index
+                )
+            })
+            .ok_or(ScaleError::PlanDocumentMismatch {
+                reason: "compiled_animation_row_missing",
+            })?;
+        let ScaleFieldTarget::AnimationValues { bone, property, .. } = row.target() else {
+            unreachable!("the selected row is an animation row")
+        };
+        self.animation_target_factor_unchecked(document, bone, property)
+    }
+
+    /// Resolve the effective multiplier for an animation target basis.
+    ///
+    /// Unlike [`Self::animation_value_factor`], this accepts a semantic target
+    /// rather than an existing track row. Character assembly uses it to
+    /// compare a base skeleton with independently supplied clip files before
+    /// any channel is copied or remapped. All factor arithmetic remains owned
+    /// by the compiled plan.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ScaleError::PlanDocumentMismatch`] when `document` no longer
+    /// matches the plan or the target is outside its skeleton.
+    pub fn animation_target_factor(
+        &self,
+        document: &Document,
+        bone: BoneId,
+        property: Property,
+    ) -> Result<f64, ScaleError> {
+        validate_plan_document_inventory(document, self)?;
+        self.animation_target_factor_unchecked(document, bone, property)
+    }
+
+    pub(in crate::scale) fn animation_target_factor_unchecked(
+        &self,
+        document: &Document,
+        bone: BoneId,
+        property: Property,
+    ) -> Result<f64, ScaleError> {
+        let affected = self.affected_set();
+        let node_factor = if affected.contains(&bone) {
+            self.common_factor()
+        } else {
+            1.0
+        };
+        let parent_factor = document
+            .skeleton
+            .bones
+            .get(bone)
+            .ok_or(ScaleError::BoneIndexOutOfRange { index: bone })?
+            .parent
+            .filter(|parent| affected.contains(parent))
+            .map_or(1.0, |_| self.common_factor());
+        Ok(match (self.operation(), property) {
+            (ScaleOperation::WholeDocumentLinearUnits { .. }, Property::Translation) => {
+                self.common_factor()
+            }
+            (ScaleOperation::WholeDocumentLinearUnits { .. }, _) => 1.0,
+            (ScaleOperation::RestBindUniformScale { .. }, Property::Translation) => parent_factor,
+            (ScaleOperation::RestBindUniformScale { .. }, Property::Scale) => {
+                parent_factor / node_factor
+            }
+            (ScaleOperation::RestBindUniformScale { .. }, Property::Rotation) => 1.0,
+        })
     }
 
     fn affected_set(&self) -> BTreeSet<BoneId> {

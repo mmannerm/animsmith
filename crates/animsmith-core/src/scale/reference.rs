@@ -376,14 +376,16 @@ pub(in crate::scale) fn build_rest_bind(
                 ScaleFieldTarget::AnimationValues {
                     clip_index,
                     track_index,
-                    bone,
                     ..
                 },
                 rule @ (ScaleRewriteRule::RestBindParentBasis
                 | ScaleRewriteRule::RestBindLocalScale),
             ) => match rule {
                 ScaleRewriteRule::RestBindParentBasis => {
-                    let s_parent = parent_factor(bone)?;
+                    let property = document.clips[clip_index].tracks[track_index].property;
+                    let bone = document.clips[clip_index].tracks[track_index].bone;
+                    let s_parent =
+                        plan.animation_target_factor_unchecked(document, bone, property)? as f32;
                     if let TrackValues::Vec3s(values) =
                         &mut candidate.clips[clip_index].tracks[track_index].values
                     {
@@ -393,8 +395,10 @@ pub(in crate::scale) fn build_rest_bind(
                     }
                 }
                 ScaleRewriteRule::RestBindLocalScale => {
+                    let property = document.clips[clip_index].tracks[track_index].property;
+                    let bone = document.clips[clip_index].tracks[track_index].bone;
                     let multiplier =
-                        scale_animation_multiplier(document, bone, &affected, plan.common_factor());
+                        plan.animation_target_factor_unchecked(document, bone, property)?;
                     if let TrackValues::Vec3s(values) =
                         &mut candidate.clips[clip_index].tracks[track_index].values
                     {
@@ -688,32 +692,4 @@ fn rebase_matrix(matrix: Mat4, s_parent: f32, s_node: f32) -> Mat4 {
         scaled.z_axis * inverse_node,
         scaled.w_axis,
     )
-}
-
-/// The local-scale multiplier which preserves animated pose scale across a
-/// rest/bind basis reparameterization.
-///
-/// The builder changes local rest scale by `s_parent / s_node`. Because an
-/// animation scale *replaces* rather than multiplies the rest scale, an
-/// animated value needs that same multiplier relative to the original value:
-/// the selected closure root is `1 / s`, every affected strict descendant is
-/// `s / s = 1`, and nodes outside the closure remain one.
-fn scale_animation_multiplier(
-    document: &Document,
-    node: BoneId,
-    affected: &BTreeSet<BoneId>,
-    common_factor: f64,
-) -> f64 {
-    if !affected.contains(&node) {
-        return 1.0;
-    }
-    match document
-        .skeleton
-        .bones
-        .get(node)
-        .and_then(|bone| bone.parent)
-    {
-        Some(parent) if affected.contains(&parent) => 1.0,
-        _ => 1.0 / common_factor,
-    }
 }

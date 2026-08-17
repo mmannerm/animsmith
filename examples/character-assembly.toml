@@ -1,5 +1,5 @@
-schema_version = 3
-schema = "urn:animsmith:schema:character-assembly-recipe:3"
+schema_version = 4
+schema = "urn:animsmith:schema:character-assembly-recipe:4"
 input_root = "inputs"
 base_input = "base-character.fbx"
 mesh_instances = ["character-mesh"]
