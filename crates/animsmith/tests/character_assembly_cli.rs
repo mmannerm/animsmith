@@ -1098,21 +1098,24 @@ fn assembles_synthetic_skinned_recipe_with_complete_public_provenance() {
                 bone: 0,
                 property: Property::Rotation,
                 interpolation: Interpolation::Linear,
-                times: vec![0.0, (KEYS - 1) as f32 / FPS],
-                values: TrackValues::Quats(vec![
-                    Quat::from_xyzw(
-                        rotation_a.x * 2.0,
-                        rotation_a.y * 2.0,
-                        rotation_a.z * 2.0,
-                        rotation_a.w * 2.0,
-                    ),
-                    Quat::from_xyzw(
-                        rotation_b.x * 3.0,
-                        rotation_b.y * 3.0,
-                        rotation_b.z * 3.0,
-                        rotation_b.w * 3.0,
-                    ),
-                ]),
+                times: (0..KEYS).map(|key| key as f32 / FPS).collect(),
+                values: TrackValues::Quats(
+                    (0..KEYS)
+                        .map(|key| {
+                            let (rotation, magnitude) = if key % 2 == 0 {
+                                (rotation_a, 2.0)
+                            } else {
+                                (rotation_b, 3.0)
+                            };
+                            Quat::from_xyzw(
+                                rotation.x * magnitude,
+                                rotation.y * magnitude,
+                                rotation.z * magnitude,
+                                rotation.w * magnitude,
+                            )
+                        })
+                        .collect(),
+                ),
             },
             foot_track(1, source_skeleton.bones[1].rest.translation, -1.0),
             foot_track(2, source_skeleton.bones[2].rest.translation, 1.0),
@@ -1425,7 +1428,9 @@ fn assembles_synthetic_skinned_recipe_with_complete_public_provenance() {
     let TrackValues::Quats(root_rotations) = &mut source.clips[1].tracks[1].values else {
         unreachable!()
     };
-    root_rotations[1] = Quat::from_rotation_y(1.35);
+    for (key, rotation) in root_rotations.iter_mut().enumerate() {
+        *rotation = Quat::from_rotation_y(0.35 + key as f32 / (KEYS - 1) as f32);
+    }
     animsmith_gltf::write::write(&source, &inputs.join("clips.glb"))
         .expect("writes accumulating-yaw source GLB");
     let refusal = run(dir.path());

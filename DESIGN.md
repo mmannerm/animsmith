@@ -59,13 +59,14 @@ output, and a self-contained HTML report with a 3D preview.
   only `InPlace`. Before any channel is cyclically reordered, AnimSmith samples
   the resolved Root role (falling back to Hips) and refuses missing/non-finite
   evidence, horizontal accumulation above 1 cm, or yaw accumulation above 1°.
-  Every key of a nonconstant channel that can affect that bone's model-space
-  position or yaw must map to a distinct declared whole-frame sample over
-  `[0, duration]` (within f32 roundoff). Sparse channels may omit frames because
-  the verifier samples every declared frame; irregular/off-grid times or two
-  authored events aliasing to one frame refuse rather than hiding motion
-  between samples. Constant channels need no grid because cyclic reordering
-  cannot change them.
+  Every nonconstant channel that can affect that bone's model-space position or
+  yaw must contain exactly one key at each declared whole-frame sample over
+  `[0, duration]` (within f32 roundoff). Sparse, differently framed, duplicate,
+  or off-grid trajectory evidence refuses: a phase shift must bijectively
+  permute authored values rather than synthesize values at omitted frames.
+  Constant channels need no grid because cyclic reordering cannot change them.
+  Before allocating its pose grid, the public core boundary also requires
+  `frame samples × skeleton bones <= 1,000,000`.
   Because an open loop omits its repeated closing frame, the measurement first
   allows one ordinary interior in-clip step, then judges only the excess
   endpoint displacement or accumulated yaw. Boundary steps cannot supply the

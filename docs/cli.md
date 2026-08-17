@@ -71,12 +71,13 @@ when authoring `assemble` or material texture recipes.
 is an in-place cyclic gait. Before rewriting, it samples the configured Root
 role (or Hips fallback) and refuses the whole command if trajectory evidence is
 missing/non-finite, horizontal accumulation exceeds 1 cm, or yaw accumulation
-exceeds 1°. Every key of a nonconstant channel that can affect the selected
-bone's model-space position or yaw must map to a distinct `--fps` whole-frame
-sample over the clip duration, within f32 roundoff. Sparse channels may omit
-frames because the verifier samples every declared frame; irregular/off-grid
-times and multiple events aliasing to one frame refuse so finite motion cannot
-hide between samples. Constant channels are exempt. One ordinary
+exceeds 1°. Every nonconstant channel that can affect the selected bone's
+model-space position or yaw must contain exactly one key at each `--fps`
+whole-frame sample over the clip duration, within f32 roundoff. Sparse,
+differently framed, duplicate, or off-grid trajectory evidence refuses so the
+phase shift remains a bijective authored-value permutation. Constant channels
+are exempt. The safety grid also refuses before allocation when frame samples
+times skeleton bones exceeds 1,000,000. One ordinary
 interior frame step is allowed for the omitted closing sample of an open cycle;
 an edge jump cannot supply that allowance. A refusal names the clip and selected bone and does not
 publish the requested output. Keep authored root motion unchanged, apply a
