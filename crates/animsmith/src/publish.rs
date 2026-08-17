@@ -8,9 +8,9 @@
 //! found it.
 //!
 //! It also owns the CLI's checked stdout boundary. Human-readable output goes
-//! through [`emit_text`] or [`emit_text_lines`], while [`serialize_record`]
-//! produces pretty JSON bytes and [`emit`] writes them to stdout. A producer
-//! calls it once and hands the same `Vec<u8>` to its
+//! through [`emit_text`], [`emit_text_lines`], or [`emit_text_chunks`], while
+//! [`serialize_record`] produces pretty JSON bytes and [`emit`] writes them to
+//! stdout. A producer calls it once and hands the same `Vec<u8>` to its
 //! evidence file and to stdout, so the two cannot drift apart;
 //! [`crate::render::print_json`] routes the output-v7 envelopes through the
 //! same pair, so every `--format json` path renders and fails alike.
@@ -132,6 +132,19 @@ pub(crate) fn emit_text_lines(lines: impl IntoIterator<Item = String>) {
     }
 }
 
+/// Write exact rendered human-readable chunks to stdout under one lock.
+///
+/// Unlike [`emit_text_lines`], this does not add separators: callers use it
+/// when independently rendered parts already carry their own newlines. The
+/// iterator remains lazy, so a failed stream does not retain or render the
+/// rest of a potentially asset-sized transcript.
+pub(crate) fn emit_text_chunks(chunks: impl IntoIterator<Item = String>) {
+    let mut stdout = std::io::stdout().lock();
+    if let Err(error) = emit_text_chunks_to(&mut stdout, chunks) {
+        diagnose_write_failure(&error);
+    }
+}
+
 /// Best-effort reporting for a stdout failure. Deliberately ignores stderr's
 /// own error so losing both streams can never turn reporting into a panic.
 fn diagnose_write_failure(error: &str) {
@@ -176,6 +189,16 @@ fn emit_text_lines_to(
     for line in lines {
         emit_text_to(sink, line.as_bytes())?;
         emit_text_to(sink, b"\n")?;
+    }
+    Ok(())
+}
+
+fn emit_text_chunks_to(
+    sink: &mut impl std::io::Write,
+    chunks: impl IntoIterator<Item = String>,
+) -> Result<(), String> {
+    for chunk in chunks {
+        emit_text_to(sink, chunk.as_bytes())?;
     }
     Ok(())
 }
@@ -483,6 +506,28 @@ mod tests {
             lines.starts_with("cannot write text output to stdout"),
             "{lines}"
         );
+
+        let chunks = emit_text_chunks_to(
+            &mut BrokenPipe,
+            ["first\n".to_owned(), "second\n".to_owned()],
+        )
+        .expect_err("a closed chunk stream must be diagnosed");
+        assert!(
+            chunks.starts_with("cannot write text output to stdout"),
+            "{chunks}"
+        );
+    }
+
+    #[test]
+    fn failed_text_iterators_do_not_render_unreached_transcript_parts() {
+        let mut rendered = 0;
+        let chunks = ["first", "unreached"].into_iter().map(|chunk| {
+            rendered += 1;
+            assert_eq!(rendered, 1, "closed output must stop lazy rendering");
+            format!("{chunk}\n")
+        });
+        emit_text_chunks_to(&mut BrokenPipe, chunks).expect_err("first chunk must fail");
+        assert_eq!(rendered, 1);
     }
 
     #[test]
@@ -525,6 +570,19 @@ mod tests {
         assert!(
             main_source.contains("Cli::try_parse()"),
             "CLI parsing must retain display-help/version for checked delivery"
+        );
+        let fix_dispatch = main_source
+            .rsplit_once("Cmd::Fix {")
+            .and_then(|(_, suffix)| suffix.split_once("#[cfg(feature = \"fbx\")]"))
+            .map(|(fix, _)| fix)
+            .expect("locates fix dispatch arm");
+        assert!(
+            !fix_dispatch.contains(".collect::<Vec<_>>()"),
+            "fix rendering must remain a lazy iterator rather than retaining its transcript"
+        );
+        assert!(
+            fix_dispatch.contains("publish::emit_text_lines(report_lines)"),
+            "all fix reports must share one checked line-stream attempt"
         );
     }
 

@@ -406,7 +406,7 @@ fn main() -> ExitCode {
             // swallows a broken pipe. Keep those successful parser outcomes,
             // but route their stdout through the same checked delivery rule as
             // every command result so a closed stream is diagnosed.
-            publish::emit_text(&error.render().to_string());
+            publish::emit_text_chunks(std::iter::once(error.render().to_string()));
             return ExitCode::SUCCESS;
         }
         Err(error) => error.exit(),
@@ -799,15 +799,13 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 session.write(&input, output).map_err(|e| e.to_string())?;
             }
             // clap rejects --dry-run with a write target, so `output` is None
-            // exactly when this is a dry run. Collect every selected repair's
-            // lines before the one checked stream attempt: one closed stdout
-            // must produce one diagnosis, regardless of the repair count.
-            let report_lines = reports
-                .iter()
-                .flat_map(|(repair, report)| {
-                    render::render_fix_report(*repair, report, output.as_deref())
-                })
-                .collect::<Vec<_>>();
+            // exactly when this is a dry run. Stream every selected repair's
+            // lines through one checked attempt: one closed stdout must
+            // produce one diagnosis, regardless of the repair count, without
+            // retaining an asset-sized transcript.
+            let report_lines = reports.iter().flat_map(|(repair, report)| {
+                render::render_fix_report(*repair, report, output.as_deref())
+            });
             publish::emit_text_lines(report_lines);
             // Dry run doubles as a CI check mode: pending repairs are
             // findings, mirroring `lint`'s exit contract.
@@ -855,19 +853,22 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 animsmith_gltf::write::write(output_doc, &output).map_err(|e| e.to_string())?;
             match format {
                 Format::Text => {
-                    publish::emit_text(&render::render_write_summary(&output, &summary));
-                    if let Some(bake) = &static_mesh_bake {
-                        publish::emit_text(&format!(
+                    let transcript = std::iter::once(render::render_write_summary(
+                        &output, &summary,
+                    ))
+                    .chain(static_mesh_bake.as_ref().map(|bake| {
+                        format!(
                             "baked {} static mesh instance(s) into identity-root geometry\n",
                             bake.evidence.entries.len(),
-                        ));
-                    }
-                    if let Some(application) = &recipe_application {
-                        publish::emit_text(&format!(
+                        )
+                    }))
+                    .chain(recipe_application.as_ref().map(|application| {
+                        format!(
                             "applied material texture recipe; emitted {} texture(s)\n",
                             application.evidence.emitted_textures.len(),
-                        ));
-                    }
+                        )
+                    }));
+                    publish::emit_text_chunks(transcript);
                 }
                 Format::Json => render::print_json(&ConversionEnvelope {
                     schema_version: CONVERSION_EVIDENCE_SCHEMA_VERSION,

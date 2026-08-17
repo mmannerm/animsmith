@@ -10,7 +10,7 @@ use animsmith_core::model::{
 };
 use serde_json::Value;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 const CONVERSION_SCHEMA: &str =
     include_str!("../../../docs/schemas/conversion-evidence-v2.schema.json");
@@ -292,6 +292,55 @@ fn convert_static_bake_emits_schema_valid_evidence_and_byte_stable_identity_outp
             && rotation == [0.0, 0.0, 0.0, 1.0]
             && scale == [1.0, 1.0, 1.0]
     }));
+}
+
+#[test]
+fn option_bearing_text_conversion_diagnoses_closed_stdout_once_after_publication() {
+    let dir = tempfile::tempdir().expect("creates temp directory");
+    let input = dir.path().join("input.glb");
+    let output = dir.path().join("baked.glb");
+    animsmith_gltf::write::write(&fixture(), &input).expect("writes input fixture");
+
+    let (reader, writer) = std::io::pipe().expect("creates a pipe");
+    drop(reader);
+    let result = Command::new(env!("CARGO_BIN_EXE_animsmith"))
+        .arg("convert")
+        .arg(&input)
+        .arg("-o")
+        .arg(&output)
+        .arg("--bake-static-mesh-transforms")
+        .stdout(Stdio::from(writer))
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawns option-bearing conversion")
+        .wait_with_output()
+        .expect("waits for option-bearing conversion");
+
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert_eq!(
+        result.status.code(),
+        Some(0),
+        "published conversion remains successful; stderr:\n{stderr}"
+    );
+    assert_eq!(
+        stderr
+            .matches("animsmith: cannot write text output to stdout")
+            .count(),
+        1,
+        "one conversion transcript must produce one diagnostic:\n{stderr}"
+    );
+    assert!(!stderr.contains("panicked at"), "stderr:\n{stderr}");
+
+    let published = animsmith_gltf::load(&output).expect("published artifact loads");
+    assert_eq!(published.assets.instances.len(), 1);
+    assert!(
+        published
+            .skeleton
+            .bones
+            .iter()
+            .all(|bone| bone.rest == Transform::IDENTITY),
+        "the option-bearing conversion was published before reporting"
+    );
 }
 
 #[test]
