@@ -68,7 +68,10 @@ cargo run -p animsmith --example embed
    adjusted/compensated or derived target-
    coordinate values, not exact authored FBX members. The inventory explicitly
    records baked curves, rebuilt payloads, omitted authored face/edge members,
-   uninstanced mesh definitions, and unavailable raw span proof.
+   uninstanced or non-polygon-only mesh definitions, and unavailable raw span
+   proof. Stackless source curves are present but unsupported. Retained mesh
+   definitions and source-skin attachments share the stable ufbx mesh identity
+   even when an earlier source definition emits no normalized primitive.
 2. **Resolve rig roles.** Use `resolve_configured_roles` to apply the same
    named/auto profile plus inline-override policy as the CLI. Lower-level
    `detect_profile`, `profile::resolve_named`, and

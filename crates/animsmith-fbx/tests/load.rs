@@ -337,6 +337,53 @@ fn checked_in_fixtures_publish_complete_conservative_scale_inventories() {
 }
 
 #[test]
+fn connected_stackless_animation_is_unsupported_instead_of_absent() {
+    let source = std::fs::read_to_string(fixture())
+        .expect("read fixture")
+        .replace("\r\n", "\n")
+        .replacen("\tCount: 8", "\tCount: 7", 1)
+        .replacen("\tObjectType: \"AnimationStack\" { Count: 1 }\n", "", 1);
+    let stack = r#"	AnimationStack: 3001, "AnimStack::take", "" {
+		Properties70: {
+			P: "LocalStart", "KTime", "Time", "",0
+			P: "LocalStop", "KTime", "Time", "",46186158000
+			P: "ReferenceStart", "KTime", "Time", "",0
+			P: "ReferenceStop", "KTime", "Time", "",46186158000
+		}
+	}
+"#;
+    assert_eq!(source.matches(stack).count(), 1);
+    let source = source
+        .replacen(stack, "", 1)
+        .replacen("\tC: \"OO\",3002,3001", "", 1);
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("stackless-animation.fbx");
+    std::fs::write(&path, source).expect("write analytic stackless-animation fixture");
+
+    let loaded = animsmith_fbx::load_scale_source(&path).expect("stackless fixture parses");
+    assert!(loaded.document().clips.is_empty());
+    assert_eq!(loaded.inventory().animation_take_count, 0);
+    assert_eq!(loaded.inventory().source_animation_curve_count, 1);
+    assert!(!loaded.inventory().authored_curve_keys_preserved);
+    assert_eq!(
+        loaded.inventory().domains.translation_animation,
+        FbxScaleDomainStatus::Unsupported
+    );
+    assert_eq!(
+        loaded.inventory().domains.rotation_and_scale_animation,
+        FbxScaleDomainStatus::Unsupported
+    );
+    assert_eq!(
+        loaded.inventory().domains.root_motion_and_velocity,
+        FbxScaleDomainStatus::Unsupported
+    );
+    assert_eq!(
+        loaded.inventory().domains.animation_targeting_matrix_nodes,
+        FbxScaleDomainStatus::Unsupported
+    );
+}
+
+#[test]
 fn capability_projection_maps_each_core_refusal_domain_independently() {
     type InventoryMutation = fn(&mut animsmith_fbx::FbxScaleCapabilityInventory);
 
@@ -443,6 +490,63 @@ fn polygon_triangulation_and_exact_welding_are_inventoried() {
     let facts = animsmith_fbx::capability_facts(inventory);
     assert!(facts.non_triangle_primitives_present);
     assert!(facts.unsupported_vertex_attributes_present);
+}
+
+#[test]
+fn point_and_line_faces_make_omitted_geometry_unsupported() {
+    let cases = [
+        (
+            "point",
+            "Vertices: *3 { a: 0,0,0 }",
+            "PolygonVertexIndex: *1 { a: -1 }",
+            "Indexes: *1 { a: 0 }",
+            "Weights: *1 { a: 1 }",
+        ),
+        (
+            "line",
+            "Vertices: *6 { a: 0,0,0,100,0,0 }",
+            "PolygonVertexIndex: *2 { a: 0,-2 }",
+            "Indexes: *2 { a: 0,1 }",
+            "Weights: *2 { a: 1,1 }",
+        ),
+    ];
+
+    for (label, vertices, polygon, indexes, weights) in cases {
+        let source = std::fs::read_to_string(fixture())
+            .expect("read fixture")
+            .replacen("Vertices: *9 { a: 0,0,0,100,0,0,0,100,0 }", vertices, 1)
+            .replacen("PolygonVertexIndex: *3 { a: 0,1,-3 }", polygon, 1)
+            .replacen("Indexes: *3 { a: 0,1,2 }", indexes, 1)
+            .replacen("Weights: *3 { a: 1,1,1 }", weights, 1);
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join(format!("{label}-face.fbx"));
+        std::fs::write(&path, source).expect("write analytic omitted-face fixture");
+
+        let loaded = animsmith_fbx::load_scale_source(&path).expect("omitted face fixture parses");
+        assert_eq!(loaded.inventory().uninstanced_mesh_definition_count, 0);
+        assert_eq!(loaded.inventory().non_triangle_face_count, 1, "{label}");
+        assert_eq!(
+            loaded.inventory().omitted_non_polygon_face_count,
+            1,
+            "{label}"
+        );
+        assert!(loaded.document().assets.meshes.is_empty(), "{label}");
+        assert!(loaded.document().assets.instances.is_empty(), "{label}");
+        assert_eq!(
+            loaded.inventory().domains.base_mesh_geometry,
+            FbxScaleDomainStatus::Unsupported,
+            "{label}"
+        );
+        assert_eq!(
+            loaded.inventory().domains.other_vertex_and_source_data,
+            FbxScaleDomainStatus::Unsupported,
+            "{label}"
+        );
+        assert!(
+            animsmith_fbx::capability_facts(loaded.inventory()).non_triangle_primitives_present,
+            "{label}"
+        );
+    }
 }
 
 #[test]
@@ -989,6 +1093,68 @@ fn a_detached_source_mesh_definition_is_not_called_rebuilt() {
     );
     assert!(
         animsmith_fbx::capability_facts(loaded.inventory()).unsupported_vertex_attributes_present
+    );
+}
+
+#[test]
+fn a_skipped_source_mesh_does_not_renumber_a_retained_mesh_attachment() {
+    let source = std::fs::read_to_string(fixture())
+        .expect("read fixture")
+        .replacen("\tCount: 8", "\tCount: 10", 1)
+        .replacen(
+            "ObjectType: \"Model\" { Count: 2 }",
+            "ObjectType: \"Model\" { Count: 3 }",
+            1,
+        )
+        .replacen(
+            "ObjectType: \"Geometry\" { Count: 1 }",
+            "ObjectType: \"Geometry\" { Count: 2 }",
+            1,
+        );
+    let omitted_point = r#"
+	Geometry: 1500, "Geometry::point", "Mesh" {
+		Vertices: *3 { a: 0,0,0 }
+		PolygonVertexIndex: *1 { a: -1 }
+	}
+	Model: 1501, "Model::point", "Mesh" {
+		Version: 232
+		Properties70: {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0,0,0
+			P: "Lcl Rotation", "Lcl Rotation", "", "A",0,0,0
+			P: "Lcl Scaling", "Lcl Scaling", "", "A",1,1,1
+		}
+	}
+"#;
+    let source = source.replacen(
+        "\tGeometry: 2001, \"Geometry::tri\", \"Mesh\" {",
+        &format!("{omitted_point}\tGeometry: 2001, \"Geometry::tri\", \"Mesh\" {{"),
+        1,
+    );
+    let source = source.replacen(
+        "\tC: \"OO\",1002,1001",
+        "\tC: \"OO\",1501,1001\n\tC: \"OO\",1500,1501\n\tC: \"OO\",1002,1001",
+        1,
+    );
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("skipped-before-retained.fbx");
+    std::fs::write(&path, source).expect("write analytic source-identity fixture");
+
+    let loaded = animsmith_fbx::load_scale_source(&path).expect("source-identity fixture parses");
+    assert_eq!(loaded.inventory().source_meshes.len(), 2);
+    assert_eq!(loaded.inventory().uninstanced_mesh_definition_count, 0);
+    assert_eq!(loaded.inventory().omitted_non_polygon_face_count, 1);
+    assert_eq!(loaded.document().assets.meshes.len(), 1);
+    assert_eq!(loaded.document().assets.instances.len(), 1);
+    assert_eq!(loaded.document().assets.meshes[0].source_mesh_index, 1);
+    assert_eq!(loaded.document().assets.instances[0].mesh, 0);
+    let attachment = &loaded.document().assets.source_skeleton.skins[0].attachments[0];
+    assert_eq!(attachment.source_mesh_index, Some(1));
+    assert_eq!(
+        loaded.document().assets.meshes[0].source_mesh_index,
+        attachment
+            .source_mesh_index
+            .expect("attachment names a mesh"),
+        "the compact output index must not replace the stable ufbx join key"
     );
 }
 

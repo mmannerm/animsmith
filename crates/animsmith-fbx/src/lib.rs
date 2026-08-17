@@ -781,19 +781,20 @@ fn extract_assets(
         if primitives.is_empty() {
             continue;
         }
-        let source_mesh_index = assets.meshes.len();
+        let normalized_mesh_index = assets.meshes.len();
+        let source_mesh_index = mesh.element.typed_id as usize;
         assets.meshes.push(MeshAsset {
             name: mesh.element.name.to_string(),
-            // FBX has no glTF-style mesh/node arrays to preserve. Use the
-            // source traversal order so these ids are deterministic within
-            // the normalized document.
+            // Retain the stable ufbx mesh identity even when an earlier
+            // source definition emitted no normalized primitive. The compact
+            // normalized vector index is owned independently by MeshInstance.
             source_mesh_index,
             primitives,
         });
         assets.instances.push(MeshInstance {
             source_node_index,
             node: node_id,
-            mesh: source_mesh_index,
+            mesh: normalized_mesh_index,
             skin_joints,
             skin_ibms,
         });

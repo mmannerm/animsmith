@@ -26,9 +26,11 @@ format-independent model.
 the same ufbx parse. The inventory gives every current DESIGN.md Appendix D.4
 domain an explicit status and records the ingestion boundary: original/target units and axes,
 adjusted transforms, helper nodes and inherit-mode compensation, baked takes
-and discarded authored curve keys, generated normals, cluster-derived bind
+and discarded authored curve keys (including unsupported stackless curves),
+generated normals, cluster-derived bind
 matrices, influence truncation and renormalization, triangulation and exact-bit
-welding, omitted authored face/edge payloads, uninstanced mesh definitions,
+welding, omitted point/line/empty geometry, authored face/edge payloads,
+uninstanced mesh definitions,
 unsupported deformers/payloads, external resources, and stable ufbx source
 identities. Invalid or unrepresentable influences have an explicit rejected
 count. Only successfully projected cluster binds count toward bone-convenience
@@ -36,7 +38,9 @@ overwrites. The document also carries the documented source-node/source-skin
 identity projection in normalized ufbx order when every joint slot is
 representable. A missing cluster bone downgrades that generic projection to
 `Unavailable`, and an unreadable bind declaration retains no shifted matrix
-prefix. `Complete` is coverage of the adjusted/compensated projection, not a
+prefix. Normalized mesh definitions and source-skin attachments use the same
+stable ufbx mesh identity even when an earlier source mesh emits no primitive.
+`Complete` is coverage of the adjusted/compensated projection, not a
 claim that raw FBX transform members or object payloads were preserved.
 
 `capability_facts` projects the inventory into `animsmith-core`'s

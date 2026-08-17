@@ -493,23 +493,30 @@ pub(crate) fn inventory(
         })
         .count();
 
-    let animation = if scene.anim_stacks.is_empty() {
-        FbxScaleDomainStatus::Absent
-    } else {
+    let stackless_animation_present = scene.anim_stacks.is_empty()
+        && (!scene.anim_layers.is_empty()
+            || !scene.anim_values.is_empty()
+            || !scene.anim_curves.is_empty());
+    let animation = if !scene.anim_stacks.is_empty() {
         FbxScaleDomainStatus::Baked
+    } else if stackless_animation_present {
+        // No take was available to bake, but authored curve/value/layer rows
+        // were parsed and discarded by normalized clip extraction.
+        FbxScaleDomainStatus::Unsupported
+    } else {
+        FbxScaleDomainStatus::Absent
     };
     let domains = FbxScaleDomainInventory {
         rest_hierarchy: FbxScaleDomainStatus::Normalized,
         translation_animation: animation,
         rotation_and_scale_animation: animation,
-        root_motion_and_velocity: if scene.anim_stacks.is_empty() {
-            FbxScaleDomainStatus::Absent
-        } else {
-            FbxScaleDomainStatus::Derived
+        root_motion_and_velocity: match animation {
+            FbxScaleDomainStatus::Baked => FbxScaleDomainStatus::Derived,
+            status => status,
         },
         base_mesh_geometry: if scene.meshes.is_empty() {
             FbxScaleDomainStatus::Absent
-        } else if uninstanced_mesh_definition_count > 0 {
+        } else if uninstanced_mesh_definition_count > 0 || omitted_non_polygon_face_count > 0 {
             FbxScaleDomainStatus::Unsupported
         } else {
             FbxScaleDomainStatus::Rebuilt
@@ -543,6 +550,7 @@ pub(crate) fn inventory(
         },
         other_vertex_and_source_data: if unsupported_vertex_payload_mesh_count > 0
             || uninstanced_mesh_definition_count > 0
+            || omitted_non_polygon_face_count > 0
             || multiple_skin_deformer_mesh_count > 0
             || dual_quaternion_skin_count > 0
             || conversion.truncated_influence_vertex_count > 0
