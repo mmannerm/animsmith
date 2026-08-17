@@ -106,8 +106,8 @@ def inventory(
     while pending:
         directory, relative_dir = pending.pop()
         with os.scandir(directory) as entries:
-            ordered = sorted(entries, key=lambda item: os.fsencode(item.name))
-        for entry in ordered:
+            directory_entries = list(entries)
+        for entry in directory_entries:
             relative = relative_dir / entry.name
             if is_excluded(relative, exclusions):
                 continue
