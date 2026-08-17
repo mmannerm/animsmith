@@ -57,6 +57,24 @@ cargo run -p animsmith --example embed
    defects load and become findings. The same document carries meshes, skins,
    factor-only materials, and available base-color and normal textures for
    scene round-trips.
+   An FBX host that needs auditable scale-boundary facts uses
+   `animsmith_fbx::load_scale_source` instead: the returned wrapper retains the
+   document and `FbxScaleCapabilityInventory` from one parse. The inventory
+   and normalized source-skeleton sidecar do not enable FBX scaling. `Complete`
+   means the documented ufbx projection covers every representable node/skin
+   identity and joint slot; a missing cluster bone downgrades the sidecar to
+   `Unavailable` instead of dropping that slot. Unreadable ordered bind
+   declarations retain no finite prefix. The local rests and bind matrices are
+   adjusted/compensated or derived target-
+   coordinate values, not exact authored FBX members. The inventory explicitly
+   records baked curves, rebuilt payloads, omitted authored face/edge members,
+   uninstanced, non-polygon-only, or zero-face mesh definitions (including
+   stable identities for zero-face omissions), and unavailable raw span
+   proof. Stackless source curves are present but unsupported. Retained mesh
+   definitions and source-skin attachments share the stable ufbx mesh identity
+   even when an earlier source definition emits no normalized primitive. A
+   shared FBX geometry remains one normalized definition with multiple compact
+   node instances, so that stable identity stays unique in measurements.
 2. **Resolve rig roles.** Use `resolve_configured_roles` to apply the same
    named/auto profile plus inline-override policy as the CLI. Lower-level
    `detect_profile`, `profile::resolve_named`, and
@@ -217,6 +235,13 @@ For an embedded producer:
    declared bounds, aliasing, deterministic bytes, and the actual write set.
 6. Publish only the proved artifact and matching evidence as one coordinated
    pair, preserving the CLI's rollback and documented process-crash semantics.
+
+Those producer steps currently apply to glTF/GLB only. FBX embedders may call
+`animsmith_fbx::capability_facts` to inspect the conservative projection, but
+it remains unsupported for both operations. The FBX inventory makes the later
+writer/proof work explicit; it is not authority to substitute a normalized
+writer or claim raw FBX spans, object properties, curve keys, or vertex
+identity were preserved.
 
 `ScaleCandidate` grants no authority: proof independently validates the
 source, plan inventory, candidate structure, and numeric claims. A frontend

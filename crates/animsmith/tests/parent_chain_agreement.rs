@@ -278,16 +278,24 @@ fn the_testkit_document_builder_still_plans() {
 #[cfg(feature = "fbx")]
 #[test]
 fn the_fbx_loader_still_plans() {
-    // The FBX loader sets no `source_skeleton` at all, so its documents carry
-    // the `Unavailable` default and the check does not examine them. Asserted
-    // rather than assumed: a later loader that started projecting source nodes
-    // would land here first.
+    // The FBX loader now supplies every normalized ufbx node and skin under
+    // complete source coverage. This sweep deliberately supplies a fabricated
+    // supported capability projection: real FBX inventory remains unsupported,
+    // while this isolates the source-parent agreement gate itself.
     for name in ["rigged_triangle.fbx", "rigged_triangle_empty_take.fbx"] {
         let path = repo_path(&format!("crates/animsmith-fbx/testdata/{name}"));
         let document = animsmith_fbx::load(&path).unwrap_or_else(|error| panic!("{name}: {error}"));
         assert_eq!(
             document.assets.source_skeleton.coverage,
-            SourceSkeletonCoverage::Unavailable
+            SourceSkeletonCoverage::Complete
+        );
+        assert!(
+            document
+                .assets
+                .source_skeleton
+                .nodes
+                .iter()
+                .all(|node| node.bone.is_some())
         );
         accepts(name, &document);
     }

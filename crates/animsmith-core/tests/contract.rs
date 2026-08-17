@@ -1164,7 +1164,7 @@ fn measurement_contract_rejects_inconsistent_skeleton_source_evidence() {
             assets.skins[0].inverse_bind_accessor.matrices.clear();
         },
         "skins[0].inverse_bind_accessor",
-        "an unreadable declared inverse-bind accessor retains its count but cannot serialize raw matrices",
+        "an unreadable inverse-bind declaration retains its count but cannot serialize matrices",
     );
     invalid(
         &|assets| {
@@ -1187,7 +1187,7 @@ fn measurement_contract_rejects_inconsistent_skeleton_source_evidence() {
                 .expect("source matrix")[12] = 1.0;
         },
         "skins[0].joints[0].joint_bind_to_mesh.source_inverse_bind_matrix",
-        "source_inverse_bind_matrix must equal the raw accessor slot exactly",
+        "source_inverse_bind_matrix must equal the retained declaration slot exactly",
     );
     invalid(
         &|assets| {

@@ -401,18 +401,18 @@ pub struct SkeletonNodeMeasurements {
     pub rest_world_matrix_unavailable_reason: Option<SkeletonRestWorldMatrixUnavailableReason>,
 }
 
-/// Source-level read state for one inverse-bind accessor.
+/// Source-level read state for one inverse-bind declaration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct SkinInverseBindAccessorMeasurements {
-    /// Whether the source accessor was absent, readable, empty, short, or
-    /// unreadable.
+    /// Whether the source declaration was absent, readable, empty, short, or unreadable.
     pub status: SourceInverseBindAccessorStatus,
-    /// Declared source accessor count, when an accessor was declared.
+    /// Declared source matrix count, when matrices were declared.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub declared_count: Option<usize>,
-    /// Every readable finite raw matrix in accessor order, including entries
-    /// beyond the skin's joint count.
+    /// Every readable finite retained matrix in declaration order, including
+    /// entries beyond the skin's joint count. glTF values are exact accessor
+    /// values; another loader may expose a documented normalized projection.
     pub matrices: Vec<[f32; 16]>,
 }
 
@@ -424,9 +424,9 @@ pub struct SkinJointMeasurements {
     pub joint_index: usize,
     /// Stable source node index for this joint.
     pub node_index: usize,
-    /// Inverse of the usable raw IBM: joint bind space to mesh bind space.
+    /// Inverse of the usable retained IBM: joint bind space to mesh bind space.
     pub joint_bind_to_mesh: SkinDerivedMatrixMeasurements,
-    /// `joint_rest_world * raw_inverse_bind` for this joint slot. This is a
+    /// `joint_rest_world * retained_inverse_bind` for this joint slot. This is a
     /// per-joint observation of mesh bind world, not a policy judgment that
     /// all slots must agree.
     pub mesh_bind_world: SkinDerivedMatrixMeasurements,
@@ -448,23 +448,23 @@ pub struct SkinAttachmentMeasurements {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum SkinDerivedMatrixUnavailableReason {
-    /// The skin did not declare an inverse-bind accessor.
+    /// The skin did not declare inverse-bind matrices.
     InverseBindAccessorAbsent,
-    /// The skin declared a count-zero inverse-bind accessor.
+    /// The skin declared a count-zero inverse-bind matrix payload.
     InverseBindAccessorEmpty,
-    /// The readable accessor has fewer matrices than declared joint slots.
+    /// The readable declaration has fewer matrices than declared joint slots.
     InverseBindAccessorCountMismatch,
-    /// The declared accessor could not be read safely, including non-finite
-    /// raw matrix data that JSON cannot represent.
+    /// The declaration could not be read safely, including non-finite retained
+    /// matrix data that JSON cannot represent.
     InverseBindAccessorUnreadable,
     /// The joint's accumulated rest-world matrix is unavailable.
     JointRestWorldUnavailable,
-    /// The raw inverse-bind matrix cannot itself be inverted.
+    /// The retained inverse-bind matrix cannot itself be inverted.
     InverseBindMatrixNonInvertible,
-    /// The raw inverse-bind matrix is not affine within the documented
+    /// The retained inverse-bind matrix is not affine within the documented
     /// bottom-row tolerance.
     InverseBindMatrixNonAffine,
-    /// The raw inverse-bind matrix is affine but its linear part is too poorly
+    /// The retained inverse-bind matrix is affine but its linear part is too poorly
     /// conditioned to publish a trustworthy inverse.
     InverseBindMatrixIllConditioned,
     /// Multiplication produced a non-finite derived matrix.
@@ -490,9 +490,11 @@ pub struct SkinMatrixInversionQuality {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct SkinDerivedMatrixMeasurements {
-    /// Exact finite source inverse-bind matrix used by this observation, in
-    /// column-major order. It remains present when a later derivation step is
-    /// unavailable, and is absent only when no readable source slot exists.
+    /// Finite retained source-declaration matrix used by this observation, in
+    /// column-major order. This is exact accessor data for glTF and may be a
+    /// documented loader-normalized projection for another format. It remains
+    /// present when a later derivation step is unavailable and is absent only
+    /// when no readable source slot exists.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_inverse_bind_matrix: Option<[f32; 16]>,
     /// Inversion quality for `joint_bind_to_mesh`. This is present whenever a
@@ -581,7 +583,7 @@ pub struct SkinMeasurements {
     pub joints: Vec<SkinJointMeasurements>,
     /// Aggregate of the joints' bind-to-mesh linear-transform facts.
     pub joint_bind_linear_summary: SkinBindLinearSummaryMeasurements,
-    /// Exact source accessor state and finite readable raw matrices.
+    /// Source declaration state and finite retained matrices.
     pub inverse_bind_accessor: SkinInverseBindAccessorMeasurements,
     /// Source nodes that reference this skin, in source-node order.
     pub attachments: Vec<SkinAttachmentMeasurements>,

@@ -19,6 +19,41 @@ Scene assets carry triangulated meshes, skins, factor-only materials, and
 linked or embedded PNG/JPEG base-color and normal textures into the shared
 format-independent model.
 
+## Scale capability inventory
+
+`load_scale_source` and `load_scale_source_bytes` return the normalized
+`Document` together with a deterministic `FbxScaleCapabilityInventory` from
+the same ufbx parse. The inventory gives every current DESIGN.md Appendix D.4
+domain an explicit status and records the ingestion boundary: original/target units and axes,
+adjusted transforms, helper nodes and inherit-mode compensation, baked takes
+and discarded authored curve keys (including unsupported stackless curves),
+generated normals, cluster-derived bind
+matrices, influence truncation and renormalization, triangulation and exact-bit
+welding, omitted point/line faces and zero-face mesh definitions (with stable
+source identities), authored face/edge payloads,
+uninstanced mesh definitions,
+unsupported deformers/payloads, external resources, and stable ufbx source
+identities. Shared source geometry remains one normalized mesh definition with
+multiple node instances rather than duplicate definitions. Invalid or
+unrepresentable influences have an explicit rejected
+count. Only successfully projected cluster binds count toward bone-convenience
+overwrites. The document also carries the documented source-node/source-skin
+identity projection in normalized ufbx order when every joint slot is
+representable. A missing cluster bone downgrades that generic projection to
+`Unavailable`, and an unreadable bind declaration retains no shifted matrix
+prefix. Normalized mesh definitions and source-skin attachments use the same
+stable ufbx mesh identity even when an earlier source mesh emits no primitive.
+`Complete` is coverage of the adjusted/compensated projection, not a
+claim that raw FBX transform members or object payloads were preserved.
+
+`capability_facts` projects the inventory into `animsmith-core`'s
+format-neutral scale gate. The projection is deliberately unsupported in this
+inventory-only slice: FBX loading has already normalized transform/unit state,
+rebuilt geometry, and baked curves, while ufbx exposes no raw payload spans for
+artifact-preservation proof. Neither rest/bind nor whole-document scaling is
+enabled. No API here claims raw FBX bytes, raw object properties, authored
+curve keys, or source vertex identity are preserved.
+
 ## Install
 
 ```toml

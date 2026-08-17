@@ -263,6 +263,10 @@ the selected node's inherited rest-world uniform factor with
 and singular transforms are distinct findings. This policy never infers units
 from mesh bounds or asset height.
 
+The source hierarchy is loader-projected evidence: exact authored node members
+for glTF, but documented metre/Y-up, adjusted and inheritance-compensated ufbx
+state for FBX. An FBX result must not be read as the raw FBX transform stack.
+
 The four loop-continuity caps may also be declared under a clip name or
 `*`-glob: `max_loop_position_delta_m`, `max_loop_rotation_delta_deg`, and
 `max_loop_velocity_delta_mps`, and `max_loop_angular_velocity_delta_degps`.

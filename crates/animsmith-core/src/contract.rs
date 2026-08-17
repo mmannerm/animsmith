@@ -890,7 +890,7 @@ fn validate_skeleton_measurements(
                 {
                     return Err(invalid(
                         format!("skins[{offset}].inverse_bind_accessor"),
-                        "an absent inverse-bind accessor has no declared count or matrices",
+                        "an absent inverse-bind declaration has no declared count or matrices",
                     ));
                 }
             }
@@ -900,7 +900,7 @@ fn validate_skeleton_measurements(
                 {
                     return Err(invalid(
                         format!("skins[{offset}].inverse_bind_accessor"),
-                        "an empty inverse-bind accessor has declared_count 0 and no matrices",
+                        "an empty inverse-bind declaration has declared_count 0 and no matrices",
                     ));
                 }
             }
@@ -911,7 +911,7 @@ fn validate_skeleton_measurements(
                 {
                     return Err(invalid(
                         format!("skins[{offset}].inverse_bind_accessor"),
-                        "an available inverse-bind accessor must retain its declared finite matrices and cover every joint",
+                        "an available inverse-bind declaration must retain its declared finite matrices and cover every joint",
                     ));
                 }
             }
@@ -922,7 +922,7 @@ fn validate_skeleton_measurements(
                 {
                     return Err(invalid(
                         format!("skins[{offset}].inverse_bind_accessor"),
-                        "a count-mismatched inverse-bind accessor retains fewer matrices than joints",
+                        "a count-mismatched inverse-bind declaration retains fewer matrices than joints",
                     ));
                 }
             }
@@ -932,7 +932,7 @@ fn validate_skeleton_measurements(
                 {
                     return Err(invalid(
                         format!("skins[{offset}].inverse_bind_accessor"),
-                        "an unreadable declared inverse-bind accessor retains its count but cannot serialize raw matrices",
+                        "an unreadable inverse-bind declaration retains its count but cannot serialize matrices",
                     ));
                 }
             }
@@ -1177,7 +1177,7 @@ fn validate_derived_source(
     if measurements.source_inverse_bind_matrix.as_ref() != expected_source {
         return Err(invalid(
             format!("{path}.source_inverse_bind_matrix"),
-            "source_inverse_bind_matrix must equal the raw accessor slot exactly",
+            "source_inverse_bind_matrix must equal the retained declaration slot exactly",
         ));
     }
     let Some(source) = expected_source else {

@@ -628,6 +628,30 @@ to *that* frame N. Determinism is the feature.
   modes into resampled TRS keys (rate from the FBX TimeMode,
   overridable). Each anim stack (take) becomes one core `Clip`. This
   sidesteps the entire FBX-curve-semantics swamp.
+- **Scale inventory without enablement**: the same successful parse produces
+  a deterministic ufbx-side status for every current Appendix D.4 domain and a
+  documented normalized source-node/source-skin projection when every declared
+  skin slot can be represented. A missing cluster bone downgrades that generic
+  projection to unavailable instead of silently dropping the slot. It
+  explicitly names coordinate/inherit normalization, baked and lost curve state, generated
+  normals/helper nodes, cluster-derived bind provenance, four-influence
+  truncation/renormalization, rejected negative/non-finite/unrepresentable
+  influences, triangulation/welding, omitted face/edge payloads, uninstanced
+  mesh definitions, unsupported source data, and ufbx source identities. Only
+  successfully projected cluster binds count as bone-convenience overwrites.
+  One unreadable cluster makes its ordered bind declaration
+  atomically unreadable; finite prefixes are not retained under shifted slots.
+  Stackless authored curves, point/line faces, and attached zero-face mesh
+  definitions are present-but-unsupported rather than absent or rebuilt; the
+  zero-face definitions retain an exact count and stable source identity.
+  Retained normalized meshes keep one definition per stable ufbx mesh identity;
+  shared source geometry produces multiple node instances that reference the
+  same compact normalized definition. They keep their stable ufbx typed
+  identity so source-skin attachment joins cannot shift
+  when an earlier source mesh emits no primitive.
+  Its core capability projection remains
+  unsupported; neither scale operation is an FBX producer yet, and no raw FBX
+  span or artifact-preservation claim is made.
 - **`convert`** emits glTF 2.0 GLB: nodes + skin (computed IBMs) + one
   animation per clip with at least one writable track; mesh + weights when
   present; `--animation-only` to strip mesh. The glTF writer returns counts
@@ -1591,17 +1615,30 @@ it is safe to rewrite.
 
 The current glTF writer rebuilds nodes as TRS, emits only modeled triangle
 attributes, creates skin/holder structures, and does not preserve arbitrary
-source JSON. The current FBX loader bakes takes, normalizes coordinates,
-generates some missing data, and exposes no complete source skeleton sidecar.
-Consequently neither current load-`Document`-write route qualifies as a
+source JSON. The FBX loader mechanically inventories every current row above,
+including the unverifiable unreferenced-accessor analogue, and exposes a
+documented normalized ufbx source-node/source-skin sidecar when every declared
+joint slot is representable. A missing cluster bone downgrades the generic
+sidecar to unavailable, and one unreadable converted bind makes its whole
+ordered declaration unreadable with no retained prefix. Complete coverage here
+means every adjusted/compensated ufbx node and skin has stable identity and
+projected values; it does not relabel those values as raw authored FBX
+transform or payload evidence. The inventory also records
+that it bakes takes, normalizes coordinate and inheritance semantics, generates
+some missing data, truncates/renormalizes influences, counts rejected invalid
+or unrepresentable influences, triangulates, welds, and cannot prove raw
+payload spans. Consequently neither current
+load-`Document`-write route qualifies as a
 preservation-proof frontend for these operations without the raw capability
 preflight and explicitly bounded writer work. Unknown extensions or extras,
 unsupported morph semantics or unsafe morph storage, cameras, lights, collision metadata, non-triangle primitives,
 unmodeled vertex attributes, secondary influence payloads, malformed or
 missing inverse binds, node transforms outside the glTF 2.0 contract, and image
-payloads sharing bytes with a rewritten accessor fail closed. FBX support
-follows only after its loader can prove the declared boundary; evidence must
-state that FBX curves were baked, not preserved as authored curves.
+payloads sharing bytes with a rewritten accessor fail closed. The FBX
+inventory is evidence of why the current frontend remains refused, not an
+enablement signal. A later FBX producer may enable only an operation whose
+complete inventory/write/proof boundary it satisfies; it must state that FBX
+curves were baked, not preserved as authored curves.
 
 Source validity is decided once, at the preflight, and not re-derived per
 operation. The preflight's byte-disjointness inspection therefore ranges every
@@ -2127,8 +2164,12 @@ The implementation status is:
 - shipped: glTF-only assembly integration in recipe/evidence v4, including the
   versioned basis fingerprint/comparator, pre-remap clip rebasing, exact input
   digests, compatibility evidence, and proof over the exact staged artifact;
-- deferred: FBX scale output in issue #286, after complete ufbx-side capability
-  evidence exists;
+- shipped: issue #286-A's explicit conservative ufbx-side status for every
+  current D.4 domain and documented normalized source-skeleton projection, with
+  both FBX scale operations
+  still refused and no raw-span/artifact-preservation claim;
+- deferred: FBX rest/bind output in the remaining issue #286 enablement slice,
+  after an FBX writer and proof boundary can consume that inventory;
 - shipped: raw glTF whole-document scaling for dense `f32` morph `POSITION`
   deltas with numeric-value preservation for static JSON weights and byte-exact
   preservation for animated weight accessors (issue #298);
