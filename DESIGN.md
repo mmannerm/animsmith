@@ -135,6 +135,17 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   pending repairs under `fix --dry-run`), `2` operator/tool error
   (unreadable file, bad config).
   `--deny-warnings` promotes warnings to errors.
+- **Stdout is reporting, not outcome authority.** Every JSON, text, and
+  Markdown stdout write uses the CLI's checked output boundary. A closed pipe
+  or other write failure is diagnosed with a best-effort checked stderr write,
+  never panics, and never replaces the command's eventual `0`, `1`, or `2`.
+  This deliberately includes output-centric commands such as `inspect`: exit
+  `0` states that inspection completed, not that an external consumer accepted
+  every byte. Assigning a new outcome to text alone would make exit semantics
+  depend on presentation format and would relabel real findings or completed
+  publication as operator errors. JSON serialization failure remains an
+  operator error because it means no truthful record could be formed; failure
+  to deliver already-rendered bytes is only a reporting failure.
 - Human-readable command results are assembled by pure functions in the CLI's
   renderer module. Command dispatch keeps execution, file writes, and exit
   policy in `main.rs` and passes structured values to the renderer; the

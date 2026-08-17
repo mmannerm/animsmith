@@ -364,6 +364,35 @@ fn a_published_run_whose_stdout_is_closed_keeps_exit_0_and_diagnoses_on_stderr()
     assert!(dir.path().join("character.assembly.json").is_file());
 }
 
+#[test]
+fn a_published_text_summary_with_closed_stdout_keeps_exit_0() {
+    let dir = tempfile::tempdir().expect("creates temp directory");
+    write_inputs(dir.path());
+    std::fs::write(dir.path().join("recipe.toml"), success_recipe()).expect("writes recipe");
+
+    let output = run_args_into_closed_stdout(
+        dir.path(),
+        &[
+            "recipe.toml",
+            "-o",
+            "character.glb",
+            "--evidence",
+            "character.assembly.json",
+            "--format",
+            "text",
+        ],
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "stderr:\n{stderr}");
+    assert!(
+        stderr.starts_with("animsmith: cannot write text output to stdout"),
+        "stderr:\n{stderr}"
+    );
+    assert!(dir.path().join("character.glb").is_file());
+    assert!(dir.path().join("character.assembly.json").is_file());
+}
+
 /// The publication summary escapes its declared paths, because it now goes
 /// through `render.rs` beside every other command summary rather than being
 /// an inline `println!` of a raw `Path::display`.

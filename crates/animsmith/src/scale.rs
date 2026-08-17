@@ -67,8 +67,8 @@
 //! for the raw manifest and a digest of one is not a manifest.
 
 use crate::publish::{
-    destination_identity, emit, input_identity, parent_or_current, publish_pair, read_digest,
-    require_writable_destination, serialize_record, sha256_hex,
+    destination_identity, emit, emit_text, input_identity, parent_or_current, publish_pair,
+    read_digest, require_writable_destination, serialize_record, sha256_hex,
 };
 use crate::{Format, render};
 use animsmith_core::scale::{
@@ -1211,18 +1211,15 @@ fn publish(
         // rather than raised: the pair is on disk, and a run that published
         // it does not report an operator error.
         Format::Json => emit(&evidence_bytes),
-        Format::Text => print!(
-            "{}",
-            render::render_scale_published(
-                &request.output,
-                &request.evidence,
-                request.operation.label(),
-                request.operation.declared_factor(),
-                artifact.affected_source_nodes().len(),
-                artifact.affected_source_skins().len(),
-                proof.core.sample_time_count,
-            )
-        ),
+        Format::Text => emit_text(&render::render_scale_published(
+            &request.output,
+            &request.evidence,
+            request.operation.label(),
+            request.operation.declared_factor(),
+            artifact.affected_source_nodes().len(),
+            artifact.affected_source_skins().len(),
+            proof.core.sample_time_count,
+        )),
     }
     Ok(ExitCode::SUCCESS)
 }

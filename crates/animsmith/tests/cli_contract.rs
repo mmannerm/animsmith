@@ -3857,6 +3857,131 @@ fn a_closed_stdout_is_diagnosed_without_rewriting_any_json_command_outcome() {
     }
 }
 
+/// Human-readable output follows the same reporting boundary as JSON: losing
+/// stdout is diagnosed, never panicked over, and never substitutes exit `2`
+/// for the command's own success or finding/refusal status.
+///
+/// This matrix includes iterator-shaped renderers (`inspect`, `measure`, and
+/// `diff`), whole-result text and Markdown (`lint`), and write-summary paths
+/// (`transform` and, when enabled, `report`). The non-feature-gated cases are
+/// also run by the required `--no-default-features` CLI gate.
+#[test]
+fn a_closed_stdout_preserves_text_and_markdown_command_outcomes() {
+    let dir = unique_temp_dir("closed-stdout-text");
+    let clean = example_asset("clip.glb").display().to_string();
+    let dirty = example_asset("clip-dirty.glb").display().to_string();
+    let other = example_asset("walk.glb").display().to_string();
+
+    #[cfg_attr(not(feature = "report"), expect(unused_mut))]
+    let mut cases: Vec<(&str, Vec<String>, i32)> = vec![
+        ("inspect", vec!["inspect".to_owned(), clean.clone()], 0),
+        (
+            "measure text",
+            vec![
+                "measure".to_owned(),
+                clean.clone(),
+                "--format".to_owned(),
+                "text".to_owned(),
+            ],
+            0,
+        ),
+        (
+            "lint text refusal",
+            vec![
+                "lint".to_owned(),
+                dirty.clone(),
+                "--format".to_owned(),
+                "text".to_owned(),
+            ],
+            1,
+        ),
+        (
+            "lint markdown refusal",
+            vec![
+                "lint".to_owned(),
+                dirty,
+                "--format".to_owned(),
+                "markdown".to_owned(),
+            ],
+            1,
+        ),
+        (
+            "diff refusal",
+            vec![
+                "diff".to_owned(),
+                clean.clone(),
+                other,
+                "--format".to_owned(),
+                "text".to_owned(),
+            ],
+            1,
+        ),
+        (
+            "transform summary",
+            vec![
+                "transform".to_owned(),
+                clean.clone(),
+                "-o".to_owned(),
+                dir.path().join("transformed.glb").display().to_string(),
+                "--hold-extend".to_owned(),
+                "0.1".to_owned(),
+            ],
+            0,
+        ),
+    ];
+    #[cfg(feature = "report")]
+    cases.push((
+        "report summary",
+        vec![
+            "report".to_owned(),
+            clean,
+            "-o".to_owned(),
+            dir.path().join("report.html").display().to_string(),
+        ],
+        0,
+    ));
+
+    for (case, args, expected_exit) in cases {
+        let (reader, writer) = std::io::pipe().expect("creates a pipe");
+        drop(reader);
+        let output = animsmith()
+            .args(&args)
+            .stdout(Stdio::from(writer))
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap_or_else(|error| panic!("spawns {case}: {error}"))
+            .wait_with_output()
+            .unwrap_or_else(|error| panic!("waits for {case}: {error}"));
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            output.status.code(),
+            Some(expected_exit),
+            "{case} must keep its own outcome when stdout is closed; stderr:\n{stderr}"
+        );
+        assert!(
+            stderr.starts_with("animsmith: cannot write text output to stdout"),
+            "{case} stderr:\n{stderr}"
+        );
+        assert!(!stderr.contains("panicked at"), "{case} stderr:\n{stderr}");
+    }
+
+    let (reader, writer) = std::io::pipe().expect("creates a pipe");
+    drop(reader);
+    let closed_both_input = example_asset("clip.glb");
+    let status = animsmith()
+        .args(["inspect", closed_both_input.to_str().unwrap()])
+        .stdout(Stdio::from(writer))
+        .stderr(Stdio::null())
+        .status()
+        .expect("runs inspect with both reporting streams unavailable");
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "a closed diagnostic stream must not turn reporting into a panic"
+    );
+}
+
 // --- #30: exit-code, config-path, and inspect contract ---
 
 fn write_config(dir: &std::path::Path, name: &str, toml: &str) -> PathBuf {

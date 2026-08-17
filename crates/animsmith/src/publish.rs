@@ -7,9 +7,10 @@
 //! publishes a complete new pair or leaves the previous one exactly as it
 //! found it.
 //!
-//! It also owns the one place anything in this CLI becomes pretty JSON:
-//! [`serialize_record`] produces the bytes and [`emit`] writes them to
-//! stdout. A producer calls it once and hands the same `Vec<u8>` to its
+//! It also owns the CLI's checked stdout boundary. Human-readable output goes
+//! through [`emit_text`] or [`emit_text_lines`], while [`serialize_record`]
+//! produces pretty JSON bytes and [`emit`] writes them to stdout. A producer
+//! calls it once and hands the same `Vec<u8>` to its
 //! evidence file and to stdout, so the two cannot drift apart;
 //! [`crate::render::print_json`] routes the output-v7 envelopes through the
 //! same pair, so every `--format json` path renders and fails alike.
@@ -49,7 +50,6 @@
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 /// Serialize one record or envelope as the pretty, newline-terminated JSON
@@ -103,9 +103,43 @@ pub(crate) fn emit(bytes: &[u8]) {
         // Best effort, and deliberately not `eprint!`: if stderr is gone too
         // then there is nothing left to report with, and `eprint!` would
         // panic for exactly the reason stdout just failed.
-        let _ =
-            std::io::stderr().write_all(crate::render::render_operator_error(&error).as_bytes());
+        diagnose_write_failure(&error);
     }
+}
+
+/// Write one already-rendered human-readable result to stdout, diagnosing a
+/// write failure on stderr without changing the command's outcome.
+///
+/// Rendering stays in [`crate::render`]; this boundary owns only the fallible
+/// I/O. A checked `write_all` replaces `print!`, whose hidden stdout write
+/// panics on a closed pipe. The stderr diagnosis is itself best effort because
+/// a command may have lost both output streams.
+pub(crate) fn emit_text(text: &str) {
+    if let Err(error) = emit_text_to(&mut std::io::stdout().lock(), text.as_bytes()) {
+        diagnose_write_failure(&error);
+    }
+}
+
+/// Write rendered human-readable lines to stdout under one lock.
+///
+/// This is the iterator-shaped counterpart to [`emit_text`]. It appends the
+/// newline that `println!("{line}")` supplied, stops after the first failed
+/// write, and emits at most one diagnosis for the attempted stream.
+pub(crate) fn emit_text_lines(lines: impl IntoIterator<Item = String>) {
+    let mut stdout = std::io::stdout().lock();
+    if let Err(error) = emit_text_lines_to(&mut stdout, lines) {
+        diagnose_write_failure(&error);
+    }
+}
+
+/// Best-effort reporting for a stdout failure. Deliberately ignores stderr's
+/// own error so losing both streams can never turn reporting into a panic.
+fn diagnose_write_failure(error: &str) {
+    diagnose_write_failure_to(&mut std::io::stderr(), error);
+}
+
+fn diagnose_write_failure_to(sink: &mut impl std::io::Write, error: &str) {
+    let _ = sink.write_all(crate::render::render_operator_error(error).as_bytes());
 }
 
 /// Write exactly these bytes to `sink`, reporting a failure as a typed error.
@@ -126,6 +160,24 @@ pub(crate) fn emit(bytes: &[u8]) {
 fn emit_to(sink: &mut impl std::io::Write, bytes: &[u8]) -> Result<(), String> {
     sink.write_all(bytes)
         .map_err(|error| format!("cannot write JSON output to stdout: {error}"))
+}
+
+/// Checked human-readable stdout write, split out so failure paths are unit
+/// testable without replacing the process stdout handle.
+fn emit_text_to(sink: &mut impl std::io::Write, bytes: &[u8]) -> Result<(), String> {
+    sink.write_all(bytes)
+        .map_err(|error| format!("cannot write text output to stdout: {error}"))
+}
+
+fn emit_text_lines_to(
+    sink: &mut impl std::io::Write,
+    lines: impl IntoIterator<Item = String>,
+) -> Result<(), String> {
+    for line in lines {
+        emit_text_to(sink, line.as_bytes())?;
+        emit_text_to(sink, b"\n")?;
+    }
+    Ok(())
 }
 
 /// The directory a path lives in, treating a bare file name as `.`.
@@ -414,6 +466,57 @@ mod tests {
             "{error}"
         );
         assert!(error.contains("the reader is gone"), "{error}");
+    }
+
+    #[test]
+    fn checked_text_writes_cover_single_results_and_iterator_lines() {
+        let single = emit_text_to(&mut BrokenPipe, b"summary\n")
+            .expect_err("a closed text stream must be diagnosed");
+        assert!(
+            single.starts_with("cannot write text output to stdout"),
+            "{single}"
+        );
+
+        let lines = emit_text_lines_to(&mut BrokenPipe, ["first".to_owned(), "second".to_owned()])
+            .expect_err("a closed line stream must be diagnosed");
+        assert!(
+            lines.starts_with("cannot write text output to stdout"),
+            "{lines}"
+        );
+    }
+
+    #[test]
+    fn a_closed_stderr_cannot_turn_a_stdout_diagnosis_into_a_panic() {
+        diagnose_write_failure_to(
+            &mut BrokenPipe,
+            "cannot write text output to stdout: the reader is gone",
+        );
+    }
+
+    #[test]
+    fn command_stdout_sites_cannot_bypass_the_checked_text_boundary() {
+        for (name, source) in [
+            ("main.rs", include_str!("main.rs")),
+            ("assembly.rs", include_str!("assembly.rs")),
+            ("scale.rs", include_str!("scale.rs")),
+        ] {
+            let bypasses = source
+                .lines()
+                .enumerate()
+                .filter(|(_, line)| {
+                    (line.contains("print!(") || line.contains("println!("))
+                        && !line.contains("eprint!(")
+                        && !line.contains("eprintln!(")
+                })
+                .map(|(index, line)| format!("{}: {}", index + 1, line.trim()))
+                .collect::<Vec<_>>();
+            assert!(
+                bypasses.is_empty(),
+                "{name} has unchecked stdout macros; route them through emit_text or \
+                 emit_text_lines:\n{}",
+                bypasses.join("\n")
+            );
+        }
     }
 
     #[test]

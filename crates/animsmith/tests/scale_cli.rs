@@ -87,16 +87,16 @@ impl Fixture {
             .expect("runs animsmith")
     }
 
-    /// `scale rest-bind --format json` with a stdout nobody is reading.
+    /// `scale rest-bind` with a stdout nobody is reading.
     ///
     /// The pipe's read end is dropped **before** the child is spawned, so its
     /// stdout has no reader from the moment it exists: the write failure is a
     /// property of the setup rather than a race against how quickly the child
     /// reaches its write.
-    fn rest_bind_into_closed_stdout(&self, expected_factor: &str) -> Output {
+    fn rest_bind_into_closed_stdout(&self, expected_factor: &str, format: &str) -> Output {
         let (reader, writer) = std::io::pipe().expect("creates a pipe");
         drop(reader);
-        self.rest_bind_command(expected_factor, "json")
+        self.rest_bind_command(expected_factor, format)
             .stdout(Stdio::from(writer))
             .stderr(Stdio::piped())
             .spawn()
@@ -1390,7 +1390,7 @@ fn a_refusal_in_text_mode_writes_prose_to_stderr_and_nothing_to_stdout() {
 #[test]
 fn a_published_run_whose_stdout_is_closed_keeps_exit_0_and_diagnoses_on_stderr() {
     let fixture = Fixture::new();
-    let output = fixture.rest_bind_into_closed_stdout("0.01");
+    let output = fixture.rest_bind_into_closed_stdout("0.01", "json");
 
     assert_eq!(
         output.status.code(),
@@ -1410,6 +1410,29 @@ fn a_published_run_whose_stdout_is_closed_keeps_exit_0_and_diagnoses_on_stderr()
     assert_eq!(read_json(&fixture.path("out.json"))["outcome"], "published");
 }
 
+/// The minimal-build producer's default text summary uses the same checked
+/// boundary as JSON. Publication remains the outcome even when the summary's
+/// consumer has already gone away.
+#[test]
+fn a_published_text_summary_with_closed_stdout_keeps_exit_0() {
+    let fixture = Fixture::new();
+    let output = fixture.rest_bind_into_closed_stdout("0.01", "text");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    assert!(
+        stderr(&output).starts_with("animsmith: cannot write text output to stdout"),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    assert!(fixture.path("out.glb").is_file());
+    assert_eq!(read_json(&fixture.path("out.json"))["outcome"], "published");
+}
+
 /// The same for a refusal, where raising the write failure is an actual
 /// inversion rather than merely a wrong number: `scale … --format json | head`
 /// on a refused asset would report an operator error (`2`) for something that
@@ -1418,7 +1441,7 @@ fn a_published_run_whose_stdout_is_closed_keeps_exit_0_and_diagnoses_on_stderr()
 #[test]
 fn a_refused_run_whose_stdout_is_closed_keeps_exit_1_and_diagnoses_on_stderr() {
     let fixture = Fixture::new();
-    let output = fixture.rest_bind_into_closed_stdout("0.02");
+    let output = fixture.rest_bind_into_closed_stdout("0.02", "json");
 
     assert_eq!(
         output.status.code(),
