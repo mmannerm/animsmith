@@ -273,7 +273,7 @@ The [scale workflow](scale.md) explains when to choose each operation and how
 the rewrite/reload/proof/publication transaction produces this record. This
 section is the wire-format authority.
 
-`scale` writes scale evidence v3 beside its artifact. One record serves both
+`scale` writes scale evidence v4 beside its artifact. One record serves both
 outcomes, discriminated by `outcome`:
 
 | `outcome` | `result` | `rejection` | Published | Exit |
@@ -299,8 +299,9 @@ raised before an inventory existed — bytes that never parsed. A published
 record always carries the manifest, because publication is reachable only
 through a preflight that built one. In v4 that manifest includes the sorted
 JSON-pointer inventory of every static mesh/node and animated morph-weight
-source accepted for byte-exact preservation. A published run adds the fixed tolerance
-policy by identity and in full, both observed-factor witnesses with the
+source accepted for preservation. Static JSON weights retain their numeric
+values, while animated weight accessor payloads remain byte-exact. A published
+run adds the fixed tolerance policy by identity and in full, both observed-factor witnesses with the
 divergence between them and the ceiling the design expects of it, the affected
 node and skin identities in the raw source index space the selectors use, the
 rewritten model domains, proof coverage and results, the artifact-level
@@ -333,7 +334,7 @@ evidence. Nothing in the record carries a timestamp.
 The normative contract is
 [`scale-evidence-v4.schema.json`](schemas/scale-evidence-v4.schema.json).
 The current CLI emits v4 exclusively; immutable
-[`scale-evidence-v1.schema.json`](schemas/scale-evidence-v1.schema.json) and
+[`scale-evidence-v1.schema.json`](schemas/scale-evidence-v1.schema.json),
 [`scale-evidence-v2.schema.json`](schemas/scale-evidence-v2.schema.json), and
 [`scale-evidence-v3.schema.json`](schemas/scale-evidence-v3.schema.json)
 remain available for historical records.

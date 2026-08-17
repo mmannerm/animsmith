@@ -347,7 +347,19 @@ fn manifest_violations(manifest: &GltfCapabilityManifest) -> Vec<GltfCapabilityV
     out
 }
 
-fn require_scale_capability(
+/// Validate a raw glTF capability manifest for one selected scale operation.
+///
+/// This operation-aware gate preserves the format frontend's complete,
+/// located violation inventory. Producers that already hold a captured
+/// [`GltfScaleSource`] call it before format-neutral planning so a rest/bind
+/// morph refusal cannot collapse into core's coarser incomplete-capability
+/// error with no source locations.
+///
+/// # Errors
+///
+/// Returns [`GltfScaleRewriteError::Capability`] with deterministic located
+/// violations when the selected operation cannot preserve the source.
+pub fn operation_capability_facts(
     manifest: &GltfCapabilityManifest,
     operation: ScaleOperation,
 ) -> Result<ScaleCapabilityFacts, GltfScaleRewriteError> {
@@ -818,7 +830,7 @@ pub fn rewrite_linear_units(
     factor: f64,
 ) -> Result<GltfScaleArtifact, GltfScaleRewriteError> {
     let operation = ScaleOperation::WholeDocumentLinearUnits { factor };
-    let facts = require_scale_capability(source.manifest(), operation)?;
+    let facts = operation_capability_facts(source.manifest(), operation)?;
     let plan = plan_scale(&ScaleRequest {
         operation,
         document: source.document(),
@@ -846,7 +858,7 @@ pub fn rewrite_scale_plan(
     source: &GltfScaleSource,
     plan: &animsmith_core::scale::ScalePlan,
 ) -> Result<GltfScaleArtifact, GltfScaleRewriteError> {
-    require_scale_capability(source.manifest(), plan.operation())?;
+    operation_capability_facts(source.manifest(), plan.operation())?;
     match plan.operation() {
         ScaleOperation::WholeDocumentLinearUnits { .. } => rewrite_linear_units_plan(source, plan),
         ScaleOperation::RestBindUniformScale { .. } => {

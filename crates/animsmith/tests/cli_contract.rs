@@ -1311,6 +1311,7 @@ fn scale_help_requires_every_factor_and_selector_of_appendix_d7() {
     assert!(out.contains("--format <FORMAT>"), "{out}");
     assert!(out.contains("[default: text]"), "{out}");
     assert!(out.contains("[possible values: text, json]"), "{out}");
+    assert!(out.contains("POSITION morph-target deltas"), "{out}");
     assert!(
         !out.contains("--in-place") && !out.contains("--tolerance"),
         "there is no in-place mode and no per-run tolerance flag: {out}"

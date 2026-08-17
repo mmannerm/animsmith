@@ -516,6 +516,27 @@ fn an_interleaved_morph_position_accessor_is_refused_at_its_own_location() {
 }
 
 #[test]
+fn dense_non_f32_and_normalized_morph_positions_are_exactly_located_refusals() {
+    for (name, normalized) in [("non-f32", false), ("normalized", true)] {
+        let (mut value, _) = morph_json();
+        value["accessors"][1]["componentType"] = json!(5123);
+        if normalized {
+            value["accessors"][1]["normalized"] = json!(true);
+        }
+
+        let violations = rejected(&format!("morph-{name}.gltf"), &value);
+        assert_eq!(
+            violations,
+            [GltfCapabilityViolation {
+                kind: GltfCapabilityViolationKind::UnsafeAccessorLayout,
+                location: "/accessors/1".into(),
+            }],
+            "{name} must identify the morph accessor itself"
+        );
+    }
+}
+
+#[test]
 fn a_morph_position_accessor_aliasing_an_image_payload_is_refused() {
     let (mut value, _) = morph_json();
     value["images"] = json!([{ "bufferView": 1, "mimeType": "image/png" }]);

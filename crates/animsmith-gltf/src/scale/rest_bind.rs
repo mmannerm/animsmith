@@ -589,7 +589,7 @@ pub fn rewrite_rest_bind(
         source_root_node_index,
         expected_factor,
     };
-    let facts = super::require_scale_capability(source.manifest(), operation)?;
+    let facts = super::operation_capability_facts(source.manifest(), operation)?;
     let plan = plan_scale(&ScaleRequest {
         operation,
         document: source.document(),

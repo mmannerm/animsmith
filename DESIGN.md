@@ -736,9 +736,10 @@ core plan, typed ledger, exact-source writers, independent core and artifact
 proofs, atomic CLI publisher, and immutable scale-evidence v4 producer are the
 current contract. Character assembly does not apply either scale operation;
 its recipe/evidence v3 remains unchanged. Whole-document conversion supports
-raw glTF `POSITION` morph deltas with byte-preserved static and animated
-weights; other morph semantics and every rest/bind morph payload remain
-refused. FBX scale output remains deferred.
+raw glTF `POSITION` morph deltas while preserving static JSON weights as
+numeric values and animated weight accessor payloads byte-exactly; other morph
+semantics and every rest/bind morph payload remain refused. FBX scale output
+remains deferred.
 
 ### D.1 Problem and two distinct operations
 
@@ -1529,7 +1530,7 @@ field row or obligation.
 | Rotation and scale animation | Retained as dimensionless values | Leave unchanged | Rotation unchanged; rebase each scale VEC3 by `s_parent / s_i`, including cubic tangents |
 | Root motion and velocity | Derived from translation tracks | Convert tracks, then recompute | Preserve sampled trajectory and derived velocity |
 | Base mesh geometry | Base `POSITION` and normals are retained | Scale positions; normals unchanged | Leave positions and normals unchanged |
-| Morphs | Not retained by the normalized core; raw glTF ownership inventories target accessor identities and weight locations | Raw glTF only: scale dense `f32` `POSITION` deltas once per unique accessor; preserve static/animated weights exactly; reject other semantics and unsafe aliases/layouts | Reject: rest/bind morph preservation is not proven |
+| Morphs | Not retained by the normalized core; raw glTF ownership inventories target accessor identities and weight locations | Raw glTF only: scale dense `f32` `POSITION` deltas once per unique accessor; preserve static JSON weights as numeric values and animated weight accessor payloads byte-exactly; reject other semantics and unsafe aliases/layouts | Reject: rest/bind morph preservation is not proven |
 | Skin binds | Per-instance IBMs plus a lossy bone convenience value | Conjugate every per-skin matrix | Regenerate every per-skin matrix from output joints and unchanged `G` |
 | Cameras/lights | Node transform only; typed fields are not modeled | Reject until all length fields have handlers | Reject when attached to the affected domain until preservation is proven |
 | Collision/custom data | No semantic model for extras or extensions | Reject unless a registered handler covers every length | Reject when affected unless exact preservation is proven |
@@ -1754,9 +1755,10 @@ For whole-document conversion, the corresponding length facts must differ by
 exactly the declared factor within tolerance while dimensionless facts remain
 equal. The raw glTF artifact proof independently walks admitted morph
 `POSITION` accessors, requires one conversion per unique accessor (including
-base/morph and cross-target aliases), and compares every static and animated
-morph-weight byte exactly. Both operations prove finite output, the skin
-equation, deterministic artifact bytes, and deterministic evidence bytes.
+base/morph and cross-target aliases), compares every static JSON morph-weight
+numeric value, and compares every animated weight accessor byte exactly. Both
+operations prove finite output, the skin equation, deterministic artifact
+bytes, and deterministic evidence bytes.
 
 **Every obligation above is derived from the evidence it needs.** The typed
 ledger contains a row only when the validated planned inventory carries the
@@ -2077,7 +2079,8 @@ The implementation status is:
 - deferred: FBX scale output in issue #286, after complete ufbx-side capability
   evidence exists;
 - shipped: raw glTF whole-document scaling for dense `f32` morph `POSITION`
-  deltas with byte-exact static/animated weight preservation (issue #298);
+  deltas with numeric-value preservation for static JSON weights and byte-exact
+  preservation for animated weight accessors (issue #298);
   rest/bind morphs and a normalized core morph model remain out of scope.
 
 The live implementation sequence is owned by tracker issue #344 and roadmap

@@ -77,7 +77,9 @@ and matrix translation columns, mesh `POSITION`, translation animation values
 and cubic tangents, raw glTF morph-target `POSITION` deltas, inverse-bind
 translation columns, and corresponding accessor bounds. Rotation, scale,
 normals, UVs, static and animated morph weights, key times, and other
-dimensionless payload remain outside the write set.
+dimensionless payloads remain outside the write set. Static JSON morph weights
+retain their numeric values; animated weight accessor payloads remain
+byte-exact.
 
 Rest/bind reparameterization derives every multiplier from the selected raw
 topology. It rewrites the necessary node-local translation/scale or matrix
@@ -97,9 +99,9 @@ cannot preserve completely. Whole-document conversion admits only raw glTF
 `POSITION` morph-target deltas with dimensionless static/animated weights;
 `NORMAL`, `TANGENT`, sparse/interleaved scale-bearing accessors, unsafe aliases,
 and every morph payload under rest/bind reparameterization remain refused.
-It also refuses cameras, lights, GPU instancing, unregistered extensions,
-`extras`, non-triangle primitives, secondary skin-influence sets, unsafe
-accessor layouts, and animation targeting a matrix-authored node. The
+It also refuses cameras and lights, along with GPU instancing, unregistered
+extensions, `extras`, non-triangle primitives, secondary skin-influence sets,
+unsafe accessor layouts, and animation targeting a matrix-authored node. The
 rejection record contains the complete typed violation inventory.
 
 Do not read the core model's static unprojected-connector rows as a current glTF

@@ -80,7 +80,7 @@ use animsmith_gltf::{
     GltfCapabilityManifest, GltfCapabilityViolation, GltfContainerKind, GltfRawJsonDifference,
     GltfRawJsonDifferenceKind, GltfRawJsonDifferenceSummary, GltfScaleArtifact,
     GltfScaleArtifactProof, GltfScalePreflightError, GltfScaleRewriteError, GltfScaleSource,
-    capability_facts, preflight_scale_source_bytes, prove_rewritten_artifact,
+    operation_capability_facts, preflight_scale_source_bytes, prove_rewritten_artifact,
     prove_rewritten_rest_bind, rewrite_scale_plan,
 };
 use serde::ser::Error as _;
@@ -993,9 +993,11 @@ struct Produced {
 /// Plan, rewrite, prove, and stage the artifact — everything up to but not
 /// including publication.
 fn produce(request: &Request, source: &GltfScaleSource) -> Result<Produced, Failure> {
-    let facts = capability_facts(source.manifest());
+    let operation = request.operation.core();
+    let facts = operation_capability_facts(source.manifest(), operation)
+        .map_err(|error| rewrite_failure(Stage::Preflight, error))?;
     let plan = plan_scale(&ScaleRequest {
-        operation: request.operation.core(),
+        operation,
         document: source.document(),
         capability: &facts,
     })
