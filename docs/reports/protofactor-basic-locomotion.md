@@ -47,7 +47,7 @@ Pipeline stages describe completed work and remaining decisions; they are not re
 
 | Stage | Coverage state | Pack result or required decision | Evidence / next gate |
 |---|---|---|---|
-| Acquire | `partially-evaluated` | Local commercial archive is available and hashed; exact edition and historical entitlement are unverified | Confirm purchase/license record |
+| Acquire | `partially-evaluated` | Local commercial archive is available and hashed; user states it was downloaded from Protofactor.biz, but the exact edition, receipt, and historical license revision are unavailable | Confirm purchase/license record |
 | Preserve raw | `evaluated-clean` | Immutable RAR retained; extraction and generated outputs are separate | Source and output hashes retained |
 | Inspect | `evaluated-finding` | All 179 FBX files inspect/measure/lint; 12 have negative-time failures and three skeleton signatures exist | 0.2.1 exhaustive evidence |
 | Segment | `partially-evaluated` | 177 per-motion files are atomic candidates; the combined take lacks a complete range manifest | Ignore combined take or obtain authoritative segmentation |
@@ -104,7 +104,7 @@ Profiles capture capability-oriented game uses without pretending that one unive
 
 | Validation profile | Selection and activation basis | Result | Evidence boundary / next test |
 |---|---|---|---|
-| Marketplace intake | `selected` — `user-required` | **Partial/finding:** complete file/tool intake; license edition and all engine behavior remain incomplete | Resolve entitlement/edition and runtime import |
+| Marketplace intake | `selected` — `user-required` | **Partial/finding:** complete file/tool intake; historical license revision, archive edition, and all engine behavior remain incomplete | Locate the transaction/license record and complete runtime import |
 | Blended locomotion | `selected` — `observed-pack-capability` | **Finding/partial:** six 8-way rings have raw phase mismatch; three in-place rings were anchored | Test all six in engine with contacts, loop policy, and transitions |
 | Root-motion controller | `selected` — `observed-pack-capability` | **Partial:** 70 counterpart pairs measured; translation pairing is strong | Measure/declare yaw, extraction, controller ownership, and turn behavior |
 | State-machine transitions | `selected` — `observed-pack-capability` | **Partial/not evaluated at runtime:** 30 canonical transition motions plus airborne/action boundaries; chains not authoritative | Declare chains and test crossfades, contacts, interruption, and recovery |
@@ -143,7 +143,7 @@ The complete engine-capability study and prototype matrix is deliberately deferr
 
 ### Adoption conditions
 
-1. Confirm that the existing purchase/license covers the intended organization, seats, distribution, and stored archive; the current store page is not proof of the historical transaction.
+1. Locate the Protofactor.biz receipt/download record and the license revision that governed it. Confirm that the current EULA's single-individual license and protected-application distribution terms fit the intended team and release; current web terms are not proof of the historical transaction.
 2. Complete the deferred Unity, Unreal Engine, Godot, and Bevy documentation/prototype matrix; prioritize the engine actually intended for production and test on its target character/controller.
 3. Slice the 12 negative-time files from the authoritative Unity clip frame range, or obtain corrected sources from the author.
 4. Define the true loop set. Remove loop semantics from one-shots, then review and either artist-fix or deliberately crossfade the remaining locomotion seam failures.
@@ -157,17 +157,17 @@ The complete engine-capability study and prototype matrix is deliberately deferr
 |---|---|
 | Pack | Local `Animset@BasicLocomotion_PACKAGE.unitypackage`; edition/version not declared in the archive |
 | Vendor/source | Protofactor; [current Basic Locomotion product page](https://protofactor.biz/product/animset-basic-locomotion/) |
-| Access | Locally held commercial archive inside “Protofactor Ultimate Animation Collection” |
-| Price observed | Current Basic Locomotion page: USD 14.99; current [Ultimate Animation Collection Unity listing](https://marketplace.unity.com/packages/3d/animations/ultimate-animation-collection-195459): USD 249.99 on 2026-08-16. Neither proves the local artifact's edition or purchase terms. |
+| Access | Locally held commercial archive inside “Protofactor Ultimate Animation Collection”; user states it was downloaded from Protofactor.biz |
+| Price observed | Current Basic Locomotion page: USD 14.99; current [Protofactor Ultimate Animation Collection](https://protofactor.biz/product/ultimate-animation-collection/): USD 259.99; current [Unity listing](https://marketplace.unity.com/packages/3d/animations/ultimate-animation-collection-195459): USD 249.99 on 2026-08-16. None proves the local artifact's edition or purchase terms. |
 | Delivered scope | Full local RAR → one Unitypackage → 179 FBX files, including 177 per-motion FBX files, one combined animation FBX, and one skinned reference FBX; materials/textures and Unity metadata also delivered |
 | Target game/use | Game-engine use only; no specific game, camera, character, controller, platform, networking model, or quality bar supplied |
 | Target engines | Broad matrix now includes Unity, Unreal Engine, Godot, and Bevy. Unity 6000.3.6f1 was attempted but blocked by activation; the complete four-engine research/prototype pass is deferred. |
 | Target rigs/packs | Delivered Protof-Actor reference only; no project character or other animation pack supplied |
-| License evidence | No local license document in the archive. The current Unity listing names the Standard Unity Asset Store EULA and Single Entity license; [current Unity Asset Store Terms](https://unity.com/legal/as-terms) were consulted, but historical entitlement remains unverified. |
+| License evidence | `user-stated`: the archive was downloaded from Protofactor.biz. No license document, receipt, download date, or transaction record is retained with the archive. The current [Protofactor EULA](https://protofactor.biz/end-user-license-agreement/) permits one license owner to use and modify assets in protected published real-time applications while restricting transfer, raw/derived asset resale, and redistribution. The historical terms remain unverified; this is technical due diligence, not legal advice. |
 | Source manifest | `<evaluation-workspace>/evidence/logical-asset-manifest.json` |
 | Evaluation manifest | `evidence/animsmith-0.2.1/evaluation-manifest.json`; schema `urn:animsmith:skill:animation-pack-evaluation-manifest:1`; taxonomy/profile-set version 1; SHA-256 `a0a2249b0f29f1f60ac582bc053891c4fc98417c8531c2fca1d8ee510772e143` |
 
-The current vendor Basic Locomotion page advertises 34 animations (12 root-motion and 22 in-place), whereas this local archive contains 177 per-motion files and 70 `_RM` files. The current product page therefore cannot be treated as the manifest for this artifact. The local content was evaluated as an edition-unknown artifact, not as a verified copy of today's SKU.
+The current vendor Basic Locomotion page advertises 34 animations (12 root-motion and 22 in-place), whereas this local archive contains 177 per-motion files and 70 `_RM` files. The current product page therefore cannot be treated as the manifest for this artifact. The local content was evaluated as an edition-unknown artifact, not as a verified copy of today's SKU. The current Protofactor collection page says the collection contains 23 animsets and more than 2,300 animations, including Basic Locomotion; that is useful collection-scope context but not proof of which constituent packs or versions are present in the local archive.
 
 ### Evidence coverage
 
@@ -183,7 +183,7 @@ The current vendor Basic Locomotion page advertises 34 animations (12 root-motio
 
 ### Claim legend
 
-Use: `observed-file`, `observed-animsmith`, `observed-report`,
+Use: `user-stated`, `observed-file`, `observed-animsmith`, `observed-report`,
 `observed-engine`, `vendor-stated`, `documentation-stated`, `inferred`, and
 `not-evaluated`.
 
@@ -220,7 +220,7 @@ Organization is usable but not clean enough to be its own production contract:
 
 | Readiness lane | Verdict | Evidence | Adoption consequence |
 |---|---|---|---|
-| Acquisition and rights | Unknown | observed-file: no local license; documentation-stated: current store terms only | Confirm historical entitlement before redistribution in a game build. |
+| Acquisition and rights | Unknown | user-stated: downloaded from Protofactor.biz; observed-file: no local license/receipt; documentation-stated: current Protofactor EULA only | Locate the transaction record and historical EULA revision before distributing a game build. |
 | Delivery completeness/organization | Conditional | observed-file: full Unitypackage, but incomplete combined-file segmentation and 15 missing explicit clip definitions | Prefer per-motion FBX files and maintain a project manifest. |
 | AnimSmith-readable formats | Ready | observed-animsmith: 179/179 inspect and measure success | Mechanical automation can start immediately. |
 | Untouched mechanical clip health | Conditional | observed-animsmith: 12/179 files fail monotonic time; others pass default errors | Exclude or slice those 12 before strict-pipeline use. |
@@ -388,7 +388,7 @@ A meaningful future cross-pack report should compare at least: humanoid role map
 | AP-004 | Moderate | Three skeleton signatures prevent exact-skeleton interchange across all files | engine-config | Unity Humanoid Avatar/retarget configuration | General retargeting is intentionally outside current automatic rewrite scope; diagnostics could improve | High file evidence; engine result unknown |
 | AP-005 | Moderate | All files contain many baked constant tracks; possible source/runtime bloat | animsmith-current-declared | Keep tracks for now; measure target runtime and transition/reset behavior before optimizing | Current pruning preserves standalone sampled motion but may make property coverage sparse; [#401](https://github.com/mmannerm/animsmith/issues/401) and [#402](https://github.com/mmannerm/animsmith/issues/402) track property scope and emitted coverage evidence | High that tracks exist; unknown performance impact; trial not approved |
 | AP-006 | Moderate | Embedded name `Take 001` in every file and current file-by-file semantics make cross-file set contracts cumbersome | animsmith-future-candidate | Generate per-file configs and aggregate measurements externally, as this evaluation did | A format-neutral file-scoped identity/group contract could help; no matching public issue found, so no commitment | High current ergonomics evidence; future suitability medium |
-| AP-007 | Major | Local license/edition provenance is absent and current store listings conflict with local counts | vendor-license | Locate purchase invoice/license snapshot and map it to this archive hash | Not suitable; rights cannot be inferred or repaired mechanically | High that local proof is absent; entitlement unknown |
+| AP-007 | Major | User identifies Protofactor.biz as the download source, but local receipt/license/edition provenance is absent and current listings conflict with local counts | vendor-license | Locate the Protofactor purchase/download record and applicable historical license snapshot, then map them to this archive hash | Not suitable; rights cannot be inferred or repaired mechanically | High that local proof is absent; historical terms unknown |
 | AP-008 | Major | Unity import/runtime evidence is missing because Editor activation failed | engine-config | Activate Unity and rerun disposable-project import/test matrix | Not suitable; external engine environment | High; observed log, evaluation incomplete |
 | AP-009 | Moderate | Combined FBX, bundled animation list, and Unity clip range disagree; unsliced take is not gameplay-ready | vendor-license / artist-author | Use the 177 per-motion files; only slice combined regions backed by an authoritative manifest | Declared slicing can execute known ranges, but cannot invent missing semantic boundaries | High file evidence |
 | AP-010 | Moderate | Fifteen files lack explicit Unity clip declarations; 111 loop flags include likely one-shots | engine-config | Maintain a reviewed project-side clip manifest and override importer flags | Generic manifest validation could help; automatic semantic inference is unsafe | High file evidence; intended semantics partly unknown |
@@ -407,7 +407,7 @@ A meaningful future cross-pack report should compare at least: humanoid role map
 
 If the team already owns this exact archive, it offers unusually broad prototype coverage and has strong mechanical readability. The current tools can resolve the one unambiguous structural defect class and improve directional phase alignment with bounded, reproducible operations. That is enough to justify a prototype evaluation in Unity.
 
-It is not enough to approve production use or a new purchase based solely on this artifact. The local archive does not match the current vendor page's advertised counts, the acquisition license is not retained with it, runtime engine evidence is absent, and genuine cyclic seams may need source-level work. Do not use the current USD prices as a value calculation for the local edition. If considering a new purchase, obtain the current package manifest/version and license from the storefront and rerun this skill against that delivered artifact.
+It is not enough to approve production use or a new purchase based solely on this artifact. Although the user identifies Protofactor.biz as the download source, the local archive does not match the current vendor page's advertised counts, the applicable historical license/receipt is not retained with it, runtime engine evidence is absent, and genuine cyclic seams may need source-level work. Do not use the current USD prices as a value calculation for the local edition. If considering a new purchase, obtain the current package manifest/version and license from the storefront and rerun this skill against that delivered artifact.
 
 ## Limitations and unknowns
 
@@ -517,8 +517,9 @@ Observed result: exit 198 before project creation/import because no valid Unity 
 
 - Local source archive and extracted Unity metadata — private local artifact identified above, accessed 2026-08-16.
 - Protofactor, [Animset: Basic Locomotion](https://protofactor.biz/product/animset-basic-locomotion/) — current product description, counts, formats, Unity compatibility, and price, accessed 2026-08-16.
+- Protofactor, [Ultimate Animation Collection](https://protofactor.biz/product/ultimate-animation-collection/) — current collection price, constituent-pack list, and advertised aggregate count, accessed 2026-08-16.
+- Protofactor, [End User License Agreement](https://protofactor.biz/end-user-license-agreement/) — current one-owner, protected-real-time-application, modification, transfer, and redistribution terms; not evidence of the local transaction's governing terms, accessed 2026-08-16.
 - Unity Asset Store, [Ultimate Animation Collection](https://marketplace.unity.com/packages/3d/animations/ultimate-animation-collection-195459) — current collection version/date, price, license tier, and original Unity version, accessed 2026-08-16.
-- Unity, [Asset Store Terms of Service and EULA](https://unity.com/legal/as-terms) — current license terms reference only; not evidence of the local purchase, accessed 2026-08-16.
 - AnimSmith public issue [#165](https://github.com/mmannerm/animsmith/issues/165) — current roadmap guardrails for automatic animation rewrites, accessed 2026-08-16.
 - AnimSmith public issues [#401](https://github.com/mmannerm/animsmith/issues/401) and [#402](https://github.com/mmannerm/animsmith/issues/402) — current constant-track pruning and emitted channel-coverage limitations, accessed 2026-08-16.
 - Unity 6.5 Manual, [Animation Blend Trees](https://docs.unity3d.com/6000.5/Documentation/Manual/class-BlendTree.html) — normalized-time/contact alignment context only; no pack result, accessed 2026-08-16.

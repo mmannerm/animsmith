@@ -20,6 +20,7 @@ Attach one or more labels to every consequential claim.
 
 | Label | Meaning | Acceptable evidence |
 |---|---|---|
+| `user-stated` | Supplied by the user but not independently present in the delivered evidence. | Explicit acquisition route, target-game requirement, intended use, or other scoped statement; retain the statement and unresolved corroboration separately. |
 | `observed-file` | Directly established from delivered bytes. | File inventory, hash, parsed structure, or a deterministic tool result. |
 | `observed-animsmith` | Produced by the captured AnimSmith version. | Preserved JSON/evidence plus command, version, config, and exit code. |
 | `observed-report` | Visually inspected in an AnimSmith offline report. | Named report/clip and reviewer note. |
@@ -29,7 +30,8 @@ Attach one or more labels to every consequential claim.
 | `inferred` | Reasoned from other evidence but not directly tested. | Explicit premise, reasoning, and confidence. |
 | `not-evaluated` | No defensible result was obtained. | State why and what evidence would resolve it. |
 
-Do not use `observed` without saying where it was observed. A vendor video is
+Do not use `observed` without saying where it was observed. A user's
+recollection is `user-stated`, not a transaction record. A vendor video is
 `vendor-stated`, not engine or file evidence. A clean representative clip does
 not establish a clean pack.
 

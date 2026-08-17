@@ -155,7 +155,7 @@ the engine pass is deferred.
 
 ### Claim legend
 
-Use: `observed-file`, `observed-animsmith`, `observed-report`,
+Use: `user-stated`, `observed-file`, `observed-animsmith`, `observed-report`,
 `observed-engine`, `vendor-stated`, `documentation-stated`, `inferred`, and
 `not-evaluated`.
 
