@@ -140,6 +140,11 @@ For gait anchoring, explicitly state whether any root translation or yaw
 accumulates. AnimSmith versions that cyclically resample every channel must not
 be recommended on root-motion clips without independently re-derived
 displacement and yaw proof for a trajectory-preserving operation.
+Also record whether the current version accepted or refused each representative
+set, whether the selected root heading basis was measurable, and whether an
+output was actually produced. On a version refresh, retain older successful
+outputs only as historical comparison; do not carry their post-transform
+measurements into the current result or integration recommendation.
 
 ## Engine procedures and evidence
 

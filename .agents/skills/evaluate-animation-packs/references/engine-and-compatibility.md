@@ -106,6 +106,13 @@ operation explicitly preserves/rebases the trajectory and an independent
 before/after proof re-derives displacement and yaw. Otherwise retain the raw
 root motion and use runtime phase offsets or artist-authored alignment.
 
+For every current-version gait-anchor trial, record whether the operation
+produced output or refused, the selected movement policy, and whether its root
+heading basis was measurable for the source rig. A fail-closed refusal prevents
+an unsafe rewrite but does not align the set. If an older evaluator produced an
+output that the current evaluator refuses, keep the older measurement clearly
+historical and base the current controller recommendation on the refusal.
+
 ## Blending and transitions
 
 Test actual runtime blends; static pose similarity is insufficient.

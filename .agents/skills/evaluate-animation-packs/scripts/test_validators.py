@@ -3000,6 +3000,25 @@ class RegenerationContractTests(unittest.TestCase):
         self.assertIn("root translation or yaw", appendix_template)
         self.assertIn("displacement and yaw proof", appendix_template)
 
+    def test_version_refresh_keeps_refusal_distinct_from_remediation(self) -> None:
+        skill = self.read("SKILL.md")
+        report_template = self.read("assets/report-template.md")
+        appendix_template = self.read("assets/evidence-appendix-template.md")
+        engine_reference = self.read("references/engine-and-compatibility.md")
+
+        self.assertIn("Treat earlier generated outputs as historical", skill)
+        self.assertIn("it is not a successful remediation", skill)
+        self.assertIn(
+            "A current safety refusal is not\na successful remediation",
+            report_template,
+        )
+        self.assertIn(
+            "whether the current version accepted or refused", appendix_template
+        )
+        self.assertIn(
+            "whether the operation\nproduced output or refused", engine_reference
+        )
+
 
 class ExecutableContractTests(unittest.TestCase):
     scripts = Path(__file__).resolve().parent

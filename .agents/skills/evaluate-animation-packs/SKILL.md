@@ -108,6 +108,13 @@ Before assessing assets:
    a command, repair, transform, check id, schema version, or format feature
    exists because another AnimSmith version had it.
 
+When refreshing an earlier evaluation for a newer AnimSmith version, rerun the
+baseline, every selected contract, every adopted or recommended remediation,
+and any check that was previously unavailable because loader evidence was
+missing. Treat earlier generated outputs as historical evidence. A new
+fail-closed refusal is a current result, but it is not a successful remediation
+and must not inherit the earlier version's post-transform claims.
+
 Use the version-matched project sources as authorities:
 
 - [README](../../../README.md) for the current check and command overview;
@@ -246,6 +253,11 @@ evaluation.
   channels, treat root-motion anchoring as unsafe unless a trajectory-preserving
   method and independent proof exist. Do not extrapolate an in-place success to
   a root-motion recommendation.
+- Record whether every current-version gait-anchor trial produced an output or
+  refused, including the exact safety policy and evidence behind the result.
+  Verify that the selected root heading basis is measurable for the source rig.
+  Describe a safe refusal as protection from a destructive rewrite, not as a
+  repair of gait phase or set readiness.
 - Use conversion only when it represents a real engine-facing handoff, and
   verify retained scene, skin, material, texture, and animation facts.
 - Use assembly only with an authoritative base and an explicit versioned

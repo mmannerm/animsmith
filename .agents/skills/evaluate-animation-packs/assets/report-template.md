@@ -23,6 +23,11 @@ State separately:
 - what still needs engine, artist/vendor, or future-tool work;
 - the largest confidence boundary.
 
+If this is a refresh against a newer AnimSmith version, state which baseline,
+contract, and remediation conclusions changed. A current safety refusal is not
+a successful remediation; keep older generated-output measurements explicitly
+historical and do not use them as the current integration recipe.
+
 Do not let evaluator setup, price, or transaction-record gaps change the
 technical verdict. Put provenance and evaluation-completeness limitations in
 their own places.
