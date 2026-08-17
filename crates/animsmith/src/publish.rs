@@ -134,15 +134,31 @@ pub(crate) fn emit_text_lines(lines: impl IntoIterator<Item = String>) {
     }
 }
 
+/// Ask clap to deliver its already-styled help or version output, diagnosing
+/// a failed stdout write without changing the successful parser outcome.
+///
+/// This deliberately uses [`clap::Error::print`] instead of formatting the
+/// rendered value into a `String`: `StyledStr`'s `Display` implementation
+/// strips ANSI styling, while clap's writer preserves its configured
+/// Auto/Always/Never color policy.
+pub(crate) fn emit_clap_output(output: &clap::Error) {
+    if let Err(error) = output.print() {
+        diagnose_write_failure(&format!("cannot write text output to stdout: {error}"));
+    }
+}
+
 /// Render and write all `fix` reports without exposing a transcript to command
 /// dispatch.
 ///
 /// Rendering stays lazy inside this checked boundary: a failed write stops
 /// before a later report is pulled or rendered. The whole stream owns one
 /// stdout lock and at most one diagnosis.
-pub(crate) fn emit_fix_reports(reports: &[(Repair, FixReport)], target: Option<&Path>) {
-    let mut stdout = std::io::stdout().lock();
-    if let Err(error) = emit_fix_reports_to(&mut stdout, reports.iter(), target) {
+pub(crate) fn emit_fix_reports<'a>(
+    mut stdout: impl std::io::Write,
+    reports: impl IntoIterator<Item = &'a (Repair, FixReport)>,
+    target: Option<&'a Path>,
+) {
+    if let Err(error) = emit_fix_reports_to(&mut stdout, reports, target) {
         diagnose_write_failure(&error);
     }
 }
@@ -153,6 +169,7 @@ pub(crate) fn emit_fix_reports(reports: &[(Repair, FixReport)], target: Option<&
 /// when independently rendered parts already carry their own newlines. The
 /// iterator remains lazy, so a failed stream does not retain or render the
 /// rest of a potentially asset-sized transcript.
+#[cfg_attr(not(feature = "fbx"), allow(dead_code))]
 pub(crate) fn emit_text_chunks(chunks: impl IntoIterator<Item = String>) {
     let mut stdout = std::io::stdout().lock();
     if let Err(error) = emit_text_chunks_to(&mut stdout, chunks) {
@@ -230,6 +247,7 @@ fn emit_fix_reports_to<'a>(
     })
 }
 
+#[cfg_attr(not(feature = "fbx"), allow(dead_code))]
 fn emit_text_chunks_to(
     sink: &mut impl std::io::Write,
     chunks: impl IntoIterator<Item = String>,
@@ -578,12 +596,7 @@ mod tests {
             pulled += 1;
             assert_eq!(pulled, 1, "closed output must not pull a later report");
         });
-        let error = emit_fix_reports_to(&mut BrokenPipe, reports, None)
-            .expect_err("the first rendered fix line must fail");
-        assert!(
-            error.starts_with("cannot write text output to stdout"),
-            "{error}"
-        );
+        emit_fix_reports(&mut BrokenPipe, reports, None);
         assert_eq!(pulled, 1);
     }
 
@@ -628,13 +641,21 @@ mod tests {
             main_source.contains("Cli::try_parse()"),
             "CLI parsing must retain display-help/version for checked delivery"
         );
+        assert!(
+            main_source.contains("publish::emit_clap_output(&error)"),
+            "clap display-help/version must preserve its styled checked writer"
+        );
+        assert!(
+            !main_source.contains("error.render().to_string()"),
+            "formatting clap StyledStr through Display strips forced ANSI styling"
+        );
         let fix_dispatch = main_source
             .rsplit_once("Cmd::Fix {")
             .and_then(|(_, suffix)| suffix.split_once("#[cfg(feature = \"fbx\")]"))
             .map(|(fix, _)| fix)
             .expect("locates fix dispatch arm");
         assert!(
-            fix_dispatch.contains("publish::emit_fix_reports(&reports, output.as_deref())"),
+            fix_dispatch.contains("publish::emit_fix_reports("),
             "fix dispatch must hand reports directly to the specialized checked boundary"
         );
         assert!(

@@ -405,8 +405,10 @@ fn main() -> ExitCode {
             // clap normally writes display-help/version itself and silently
             // swallows a broken pipe. Keep those successful parser outcomes,
             // but route their stdout through the same checked delivery rule as
-            // every command result so a closed stream is diagnosed.
-            publish::emit_text_chunks(std::iter::once(error.render().to_string()));
+            // every command result so a closed stream is diagnosed. Let clap
+            // perform the write so its Auto/Always/Never color policy and
+            // styled rendering remain byte-for-byte authoritative.
+            publish::emit_clap_output(&error);
             return ExitCode::SUCCESS;
         }
         Err(error) => error.exit(),
@@ -803,7 +805,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             // lines through one checked attempt: one closed stdout must
             // produce one diagnosis, regardless of the repair count, without
             // retaining an asset-sized transcript.
-            publish::emit_fix_reports(&reports, output.as_deref());
+            publish::emit_fix_reports(std::io::stdout().lock(), reports.iter(), output.as_deref());
             // Dry run doubles as a CI check mode: pending repairs are
             // findings, mirroring `lint`'s exit contract.
             Ok(if dry_run && pending {

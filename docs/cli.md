@@ -206,6 +206,8 @@ form a truthful record; delivery failure after rendering is only reporting.
 Commands that render several related pieces attempt one checked stream when a
 single delivery boundary is promised. In particular, all selected `fix`
 repair reports produce at most one stdout-failure diagnostic.
+Help and version delivery uses clap's own fallible styled writer, so forced
+ANSI color remains intact while a closed destination still follows this rule.
 Only stdout is affected; nothing about artifact publication changes.
 
 A role-dependent check with missing prerequisites reports a typed coverage

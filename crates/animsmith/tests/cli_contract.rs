@@ -4015,6 +4015,51 @@ fn closed_stdout_help_and_version_are_checked_successful_deliveries() {
 }
 
 #[test]
+fn forced_color_help_preserves_clap_styling_through_checked_stdout() {
+    let output = animsmith()
+        .arg("--help")
+        .env_remove("NO_COLOR")
+        .env("CLICOLOR_FORCE", "1")
+        .output()
+        .expect("runs forced-color help");
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stderr.is_empty());
+    assert!(
+        output.stdout.windows(2).any(|bytes| bytes == b"\x1b["),
+        "forced-color clap help must retain ANSI styling"
+    );
+    let visible = String::from_utf8_lossy(&output.stdout);
+    assert!(visible.contains("Usage:"), "help output:\n{visible}");
+    assert!(visible.contains("Commands:"), "help output:\n{visible}");
+}
+
+#[test]
+fn forced_color_help_into_closed_stdout_is_diagnosed_without_a_panic() {
+    let (reader, writer) = std::io::pipe().expect("creates a pipe");
+    drop(reader);
+    let output = animsmith()
+        .arg("--help")
+        .env_remove("NO_COLOR")
+        .env("CLICOLOR_FORCE", "1")
+        .stdout(Stdio::from(writer))
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawns forced-color help")
+        .wait_with_output()
+        .expect("waits for forced-color help");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "stderr:\n{stderr}");
+    assert_eq!(
+        stderr
+            .matches("animsmith: cannot write text output to stdout")
+            .count(),
+        1,
+        "stderr:\n{stderr}"
+    );
+    assert!(!stderr.contains("panicked at"), "stderr:\n{stderr}");
+}
+
+#[test]
 fn closed_stdout_fix_with_multiple_reports_is_diagnosed_once() {
     let dir = unique_temp_dir("closed-stdout-fix-multiple");
     let input = dir.path().join("distinct-repairs.glb");

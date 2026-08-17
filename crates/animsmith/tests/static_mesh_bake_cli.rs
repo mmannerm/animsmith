@@ -303,6 +303,16 @@ fn option_bearing_text_conversion_diagnoses_closed_stdout_once_after_publication
     let output = dir.path().join("baked.glb");
     let recipe = dir.path().join("materials.toml");
     animsmith_gltf::write::write(&fixture(), &input).expect("writes input fixture");
+    let source = animsmith_gltf::load(&input).expect("reloads source fixture");
+    let source_instance = &source.assets.instances[0];
+    let source_primitive = &source.assets.meshes[source_instance.mesh].primitives[0];
+    let source_world = source.skeleton.bones[0].rest.to_mat4()
+        * source.skeleton.bones[source_instance.node].rest.to_mat4();
+    let expected_positions = source_primitive
+        .positions
+        .iter()
+        .map(|position| source_world.transform_point3(*position))
+        .collect::<Vec<_>>();
     for (name, pixel) in [
         ("base.png", [32, 64, 96, 255]),
         ("normal.png", [128, 128, 255, 255]),
@@ -371,10 +381,48 @@ fn option_bearing_text_conversion_diagnoses_closed_stdout_once_after_publication
         "the option-bearing conversion was published before reporting"
     );
     let material = &published.assets.materials[0];
-    assert!(
-        material.base_color_texture.is_some() && material.normal_texture.is_some(),
-        "the material recipe was applied before the combined summary failed"
+    let base_color = material
+        .base_color_texture
+        .as_ref()
+        .expect("recipe emits a base-color texture");
+    assert_eq!(base_color.mime, "image/png");
+    assert_ne!(base_color.bytes, TINY_JPEG);
+    assert_eq!(
+        image::load_from_memory(&base_color.bytes)
+            .expect("decodes emitted base-color texture")
+            .to_rgba8()
+            .into_raw(),
+        vec![32, 64, 96, 255],
+        "published bytes contain the recipe's base-color pixel"
     );
+    assert_eq!(material.base_color, [1.0, 1.0, 1.0, 1.0]);
+
+    let normal = material
+        .normal_texture
+        .as_ref()
+        .expect("recipe emits a normal texture");
+    assert_eq!(normal.texture.mime, "image/png");
+    assert_ne!(normal.texture.bytes, TINY_JPEG);
+    assert_eq!(
+        image::load_from_memory(&normal.texture.bytes)
+            .expect("decodes emitted normal texture")
+            .to_rgba8()
+            .into_raw(),
+        vec![128, 128, 255, 255],
+        "published bytes contain the recipe's normal pixel"
+    );
+    assert_eq!(normal.scale, 1.0);
+
+    let baked_primitive =
+        &published.assets.meshes[published.assets.instances[0].mesh].primitives[0];
+    assert_ne!(
+        baked_primitive.positions, source_primitive.positions,
+        "the fixture must distinguish a skipped static bake"
+    );
+    assert_eq!(baked_primitive.positions.len(), expected_positions.len());
+    for (actual, expected) in baked_primitive.positions.iter().zip(expected_positions) {
+        assert_vec3_close(*actual, expected);
+    }
 }
 
 #[test]

@@ -150,6 +150,9 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   Multi-part human output is attempted as one checked stream where one command
   can produce multiple records; in particular, all selected `fix` repair
   reports yield at most one stdout-failure diagnostic.
+  Parser output remains clap-owned: the checked boundary calls clap's
+  fallible writer directly so its configured automatic/forced ANSI styling is
+  preserved instead of being stripped while materializing a plain string.
 - Human-readable command results are assembled by pure functions in the CLI's
   renderer module. Command dispatch keeps execution, file writes, and exit
   policy in `main.rs` and passes structured values to the renderer; the
