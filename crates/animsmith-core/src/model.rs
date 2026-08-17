@@ -979,7 +979,11 @@ pub struct SourceSkinAsset {
     pub skeleton_root_source_node_index: Option<usize>,
     /// Source joints in declared skin-slot order.
     pub joint_source_node_indices: Vec<usize>,
-    /// Exact inverse-bind accessor evidence for this skin.
+    /// Source inverse-bind declaration evidence for this skin.
+    ///
+    /// glTF retains exact accessor values. Other loaders may retain a
+    /// documented coordinate-normalized projection, as described by
+    /// [`SourceInverseBindAccessor`].
     pub inverse_bind_accessor: SourceInverseBindAccessor,
     /// Source nodes that reference this skin, in source-node order.
     pub attachments: Vec<SourceSkinAttachment>,

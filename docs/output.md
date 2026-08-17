@@ -15,8 +15,8 @@ is a retrieval location, not the protocol identity.
 Measurement evidence is nested and independently versioned as
 `urn:animsmith:schema:measurements:13`. Its retrievable schema is
 [`measurements-v13.schema.json`](schemas/measurements-v13.schema.json). Version
-13 retains each per-joint raw inverse-bind matrix beside the observations
-derived from it, refuses non-affine sources, and publishes a scale-free
+13 retains each per-joint source-declaration inverse-bind matrix beside the
+observations derived from it, refuses non-affine sources, and publishes a scale-free
 reciprocal infinity-norm condition number before trusting an inversion.
 Measurements v12 and output v6 remain immutable historical contracts. Because
 each output schema statically pins its nested measurement URN, advancing the
@@ -602,11 +602,13 @@ definition](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#nodes-and-
 are in declared skin-slot order; each joint row owns its `joint_index`,
 `node_index`, `joint_bind_to_mesh`, and `mesh_bind_world` observations.
 `skeleton_root_node_index` is present only when the source explicitly declares
-one. `inverse_bind_accessor` reports
-whether the inverse-bind accessor was absent, readable, empty, count-mismatched,
-or unreadable. A readable finite accessor retains its raw column-major matrices
-in slot order. Absent, malformed, and non-finite inverse-bind evidence is not
-inferred from node-local rest data.
+one. The wire field `inverse_bind_accessor` reports whether the source
+inverse-bind declaration was absent, readable, empty, count-mismatched, or
+unreadable. A readable finite declaration retains its column-major matrices in
+slot order. For glTF these are exact accessor values. For FBX they are matrices
+projected from ufbx's converted cluster binds, not raw FBX payloads. Absent,
+malformed, and non-finite inverse-bind evidence is not inferred from node-local
+rest data.
 
 Each skin's `attachments` names every source node that declares use of that
 skin, in source-node order. In each joint row, `joint_bind_to_mesh` is
@@ -619,9 +621,9 @@ are identity evidence, not an extra transform folded into either calculation.
 Each available derived field preserves its finite matrix and adds the same
 `linear` facts used by rest-world nodes. Otherwise it carries a typed
 unavailable reason. Both observations repeat the exact finite
-`source_inverse_bind_matrix` for their joint slot, even when a later
+`source_inverse_bind_matrix` for their retained declaration slot, even when a later
 derivation is unavailable, so a consumer can verify the arithmetic without a
-second accessor decoder. For glTF that matrix is the exact finite accessor
+second source decoder. For glTF that matrix is the exact finite accessor
 value; for FBX it is the finite matrix derived from ufbx's converted cluster
 binds and is explicitly not a raw-payload preservation claim.
 `joint_bind_to_mesh.inversion_quality` reports
@@ -633,7 +635,7 @@ error amplification grows. Values at or below `1e-6` refuse as
 absolute `1e-6` of `[0, 0, 0, 1]`, which admits ordinary binary32 round-trip
 noise while refusing projective matrices as `inverse_bind_matrix_non_affine`.
 `mesh_bind_world` has no inversion quality because it multiplies rather than
-inverts the raw source. `joint_bind_linear_summary` summarizes only
+inverts the retained source-declaration matrix. `joint_bind_linear_summary` summarizes only
 `joint_bind_to_mesh`: it reports joint/available/unavailable counts and
 distinguishes a shared `consistent_uniform` factor, differing `mixed_uniform`
 factors, `non_uniform_or_sheared`, `reflected_or_singular`, mixed groups, and
@@ -647,7 +649,7 @@ child socket translation of `11.5`. The local value remains
 `11.5` parent-space metres while the accumulated rest-world contribution is
 approximately `0.115 m`. A skin can still render at its intended size when an
 inverse bind contributes the compensating factor: a joint may show effective
-rest-world scale `0.01`, raw inverse-bind scale `100`, joint-bind-to-mesh scale
+rest-world scale `0.01`, retained inverse-bind scale `100`, joint-bind-to-mesh scale
 `0.01`, and mesh-bind-world scale `1`. That compensation applies to the
 skinning equation; an ordinary weapon,
 effect, or collision object parented to the socket generally inherits the

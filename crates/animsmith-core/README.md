@@ -62,8 +62,10 @@ geometry evidence, not a center of mass, placement policy, or repaired pivot.
 ## Skeleton Rest-Pose Evidence
 
 When a loader supplies source skeleton identity, `AssetMeasurements` also
-records source-order nodes, per-skin joint lists and inverse-bind accessor
-state, and finite derived bind-domain matrices with typed unavailability.
+records source-order nodes, per-skin joint lists and inverse-bind declaration
+state, and finite derived bind-domain matrices with typed unavailability. glTF
+retains exact accessor values; FBX records documented ufbx-normalized cluster
+bind projections and does not claim raw FBX payload preservation.
 Node-local TRS/matrix data, rest-world transforms, and mesh-local bind data
 remain distinct coordinate domains. This is generic evidence only: embedders
 choose required joints, comparison tolerances, canonical roots, and any

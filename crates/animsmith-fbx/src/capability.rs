@@ -234,6 +234,8 @@ pub struct FbxScaleCapabilityInventory {
     pub discarded_influence_count: usize,
     /// Number of normalized vertices whose retained weights changed during renormalization.
     pub renormalized_influence_vertex_count: usize,
+    /// Number of non-finite, negative, or unrepresentable source influences rejected.
+    pub rejected_influence_count: usize,
     /// Number of emitted skinned corners whose source vertex had no influence record.
     pub missing_skin_influence_corner_count: usize,
     /// Number of source faces that are not triangles.
@@ -252,6 +254,10 @@ pub struct FbxScaleCapabilityInventory {
     pub dual_quaternion_skin_count: usize,
     /// Number of blend deformers (morph domains) not represented by the normalized model.
     pub blend_deformer_count: usize,
+    /// Number of blend channels not represented by the normalized model.
+    pub blend_channel_count: usize,
+    /// Number of blend shapes not represented by the normalized model.
+    pub blend_shape_count: usize,
     /// Number of geometry cache deformers not represented by the normalized model.
     pub cache_deformer_count: usize,
     /// Number of meshes carrying unsupported modeled-vertex payloads.
@@ -309,8 +315,11 @@ impl FbxScaleSource {
 pub fn capability_facts(inventory: &FbxScaleCapabilityInventory) -> ScaleCapabilityFacts {
     let mut facts = ScaleCapabilityFacts::default();
     facts.coverage = ScaleCapabilityCoverage::Complete;
-    facts.morphs_present = inventory.blend_deformer_count > 0;
-    facts.morph_weights_present = inventory.blend_deformer_count > 0;
+    let morph_source_present = inventory.blend_deformer_count > 0
+        || inventory.blend_channel_count > 0
+        || inventory.blend_shape_count > 0;
+    facts.morphs_present = morph_source_present;
+    facts.morph_weights_present = morph_source_present;
     facts.cameras_present = inventory.camera_count > 0;
     facts.lights_present = inventory.light_count > 0;
     facts.instancing_present = inventory.shared_mesh_definition_count > 0;
@@ -327,6 +336,7 @@ pub fn capability_facts(inventory: &FbxScaleCapabilityInventory) -> ScaleCapabil
         || inventory.dual_quaternion_skin_count > 0
         || inventory.cache_deformer_count > 0
         || inventory.missing_skin_influence_corner_count > 0
+        || inventory.rejected_influence_count > 0
         || inventory.pre_weld_vertex_count != inventory.post_weld_vertex_count;
     facts.secondary_skin_influences_present = inventory.truncated_influence_vertex_count > 0;
     facts.inverse_bind_issues_present =
@@ -344,6 +354,7 @@ pub(crate) struct AssetConversionFacts {
     pub(crate) truncated_influence_vertex_count: usize,
     pub(crate) discarded_influence_count: usize,
     pub(crate) renormalized_influence_vertex_count: usize,
+    pub(crate) rejected_influence_count: usize,
     pub(crate) missing_skin_influence_corner_count: usize,
     pub(crate) pre_weld_vertex_count: usize,
     pub(crate) post_weld_vertex_count: usize,
@@ -497,13 +508,18 @@ pub(crate) fn inventory(
         } else {
             FbxScaleDomainStatus::Rebuilt
         },
-        morphs: if scene.blend_deformers.is_empty() {
+        morphs: if scene.blend_deformers.is_empty()
+            && scene.blend_channels.is_empty()
+            && scene.blend_shapes.is_empty()
+        {
             FbxScaleDomainStatus::Absent
         } else {
             FbxScaleDomainStatus::Unsupported
         },
         skin_binds: if scene.skin_deformers.is_empty() {
             FbxScaleDomainStatus::Absent
+        } else if incomplete_bind_cluster_count > 0 || empty_skin_deformer_count > 0 {
+            FbxScaleDomainStatus::Unsupported
         } else {
             FbxScaleDomainStatus::Derived
         },
@@ -524,6 +540,7 @@ pub(crate) fn inventory(
             || dual_quaternion_skin_count > 0
             || conversion.truncated_influence_vertex_count > 0
             || conversion.missing_skin_influence_corner_count > 0
+            || conversion.rejected_influence_count > 0
             || !scene.blend_deformers.is_empty()
             || !scene.blend_channels.is_empty()
             || !scene.blend_shapes.is_empty()
@@ -586,6 +603,7 @@ pub(crate) fn inventory(
         truncated_influence_vertex_count: conversion.truncated_influence_vertex_count,
         discarded_influence_count: conversion.discarded_influence_count,
         renormalized_influence_vertex_count: conversion.renormalized_influence_vertex_count,
+        rejected_influence_count: conversion.rejected_influence_count,
         missing_skin_influence_corner_count: conversion.missing_skin_influence_corner_count,
         non_triangle_face_count,
         triangulated_face_count,
@@ -595,6 +613,8 @@ pub(crate) fn inventory(
         multiple_skin_deformer_mesh_count,
         dual_quaternion_skin_count,
         blend_deformer_count: scene.blend_deformers.len(),
+        blend_channel_count: scene.blend_channels.len(),
+        blend_shape_count: scene.blend_shapes.len(),
         cache_deformer_count: scene.cache_deformers.len(),
         unsupported_vertex_payload_mesh_count,
         camera_count: scene.cameras.len(),

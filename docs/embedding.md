@@ -61,8 +61,11 @@ cargo run -p animsmith --example embed
    `animsmith_fbx::load_scale_source` instead: the returned wrapper retains the
    document and `FbxScaleCapabilityInventory` from one parse. The inventory
    and normalized source-skeleton sidecar do not enable FBX scaling. `Complete`
-   means the documented ufbx projection covers its node/skin identity domain;
-   local rests and bind matrices are adjusted/compensated or derived target-
+   means the documented ufbx projection covers every representable node/skin
+   identity and joint slot; a missing cluster bone downgrades the sidecar to
+   `Unavailable` instead of dropping that slot. Unreadable ordered bind
+   declarations retain no finite prefix. The local rests and bind matrices are
+   adjusted/compensated or derived target-
    coordinate values, not exact authored FBX members. The inventory explicitly
    records baked curves, rebuilt payloads, and unavailable raw span proof.
 2. **Resolve rig roles.** Use `resolve_configured_roles` to apply the same

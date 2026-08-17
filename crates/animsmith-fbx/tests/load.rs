@@ -6,8 +6,9 @@ use animsmith_core::model::{
 use animsmith_core::scale::{
     ScaleCapabilityCoverage, ScaleError, ScaleOperation, ScaleRequest, plan_scale,
 };
-use animsmith_core::{Document, TrackValues, validate_document_shape};
+use animsmith_core::{Document, MeasurementContract, TrackValues, validate_document_shape};
 use animsmith_fbx::{FbxCoordinateAxis, FbxScaleDomainStatus};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 /// A valid 1x1 PNG used as an externally referenced FBX normal map.
@@ -279,6 +280,7 @@ fn checked_in_fixtures_publish_complete_conservative_scale_inventories() {
         assert_eq!(inventory.truncated_influence_vertex_count, 0);
         assert_eq!(inventory.discarded_influence_count, 0);
         assert_eq!(inventory.renormalized_influence_vertex_count, 0);
+        assert_eq!(inventory.rejected_influence_count, 0);
         assert_eq!(inventory.missing_skin_influence_corner_count, 0);
         assert_eq!(inventory.non_triangle_face_count, 0);
         assert_eq!(inventory.triangulated_face_count, 0);
@@ -288,6 +290,8 @@ fn checked_in_fixtures_publish_complete_conservative_scale_inventories() {
         assert_eq!(inventory.multiple_skin_deformer_mesh_count, 0);
         assert_eq!(inventory.dual_quaternion_skin_count, 0);
         assert_eq!(inventory.blend_deformer_count, 0);
+        assert_eq!(inventory.blend_channel_count, 0);
+        assert_eq!(inventory.blend_shape_count, 0);
         assert_eq!(inventory.cache_deformer_count, 0);
         assert_eq!(inventory.unsupported_vertex_payload_mesh_count, 0);
         assert_eq!(inventory.camera_count, 0);
@@ -337,7 +341,13 @@ fn capability_projection_maps_each_core_refusal_domain_independently() {
     let source = animsmith_fbx::load_scale_source(&fixture()).expect("fixture loads");
     let baseline = source.inventory();
     let cases: &[(&str, InventoryMutation)] = &[
-        ("morph", |inventory| inventory.blend_deformer_count = 1),
+        ("morph-deformer", |inventory| {
+            inventory.blend_deformer_count = 1
+        }),
+        ("morph-channel", |inventory| {
+            inventory.blend_channel_count = 1
+        }),
+        ("morph-shape", |inventory| inventory.blend_shape_count = 1),
         ("camera", |inventory| inventory.camera_count = 1),
         ("light", |inventory| inventory.light_count = 1),
         ("instancing", |inventory| {
@@ -358,6 +368,9 @@ fn capability_projection_maps_each_core_refusal_domain_independently() {
         ("missing-influence", |inventory| {
             inventory.missing_skin_influence_corner_count = 1
         }),
+        ("rejected-influence", |inventory| {
+            inventory.rejected_influence_count = 1
+        }),
         ("secondary-influence", |inventory| {
             inventory.truncated_influence_vertex_count = 1
         }),
@@ -373,7 +386,9 @@ fn capability_projection_maps_each_core_refusal_domain_independently() {
         mutate(&mut inventory);
         let facts = animsmith_fbx::capability_facts(&inventory);
         let mapped = match *label {
-            "morph" => facts.morphs_present && facts.morph_weights_present,
+            "morph-deformer" | "morph-channel" | "morph-shape" => {
+                facts.morphs_present && facts.morph_weights_present
+            }
             "camera" => facts.cameras_present,
             "light" => facts.lights_present,
             "instancing" => facts.instancing_present,
@@ -381,7 +396,9 @@ fn capability_projection_maps_each_core_refusal_domain_independently() {
             "extras" => facts.extras_present,
             "non-triangle" => facts.non_triangle_primitives_present,
             "vertex-payload" => facts.unsupported_vertex_attributes_present,
-            "missing-influence" => facts.unsupported_vertex_attributes_present,
+            "missing-influence" | "rejected-influence" => {
+                facts.unsupported_vertex_attributes_present
+            }
             "secondary-influence" => facts.secondary_skin_influences_present,
             "inverse-bind" => facts.inverse_bind_issues_present,
             "external-resource" => facts.external_resources_present,
@@ -510,6 +527,69 @@ fn non_finite_derived_cluster_bind_is_unreadable_in_every_projection() {
 }
 
 #[test]
+fn one_invalid_bind_makes_a_multi_cluster_declaration_atomically_unreadable() {
+    let source = std::fs::read_to_string(fixture())
+        .expect("read fixture")
+        .replacen(
+            "ObjectType: \"Deformer\" { Count: 2 }",
+            "ObjectType: \"Deformer\" { Count: 3 }",
+            1,
+        );
+    let invalid_cluster = r#"
+	Deformer: 4003, "SubDeformer::invalid_cluster", "Cluster" {
+		Version: 100
+		Indexes: *3 { a: 0,1,2 }
+		Weights: *3 { a: 0.5,0.5,0.5 }
+		Transform: *16 { a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }
+		TransformLink: *16 { a: 0,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }
+	}
+"#;
+    let source = source.replacen(
+        "\tAnimationStack: 3001",
+        &format!("{invalid_cluster}\tAnimationStack: 3001"),
+        1,
+    );
+    let source = source.replacen(
+        "\tC: \"OO\",3002,3001",
+        "\tC: \"OO\",4003,4001\n\tC: \"OO\",1001,4003\n\tC: \"OO\",3002,3001",
+        1,
+    );
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("mixed-readable-binds.fbx");
+    std::fs::write(&path, source).expect("write analytic mixed-bind fixture");
+
+    let loaded = animsmith_fbx::load_scale_source(&path).expect("mixed bind fixture parses");
+    assert_eq!(loaded.inventory().skin_cluster_count, 2);
+    assert_eq!(loaded.inventory().incomplete_bind_cluster_count, 1);
+    assert_eq!(
+        loaded.inventory().domains.skin_binds,
+        FbxScaleDomainStatus::Unsupported
+    );
+    let source_skin = &loaded.document().assets.source_skeleton.skins[0];
+    assert_eq!(source_skin.joint_source_node_indices, vec![1, 1]);
+    assert_eq!(
+        source_skin.inverse_bind_accessor.status,
+        SourceInverseBindAccessorStatus::Unreadable
+    );
+    assert_eq!(source_skin.inverse_bind_accessor.declared_count, Some(2));
+    assert!(
+        source_skin.inverse_bind_accessor.matrices.is_empty(),
+        "an unreadable declaration cannot retain a prefix that shifts later slots"
+    );
+
+    let measured = measure_assets(loaded.document());
+    assert_eq!(measured.skins.len(), 1);
+    assert_eq!(
+        measured.skins[0].inverse_bind_accessor.status,
+        SourceInverseBindAccessorStatus::Unreadable
+    );
+    assert!(measured.skins[0].inverse_bind_accessor.matrices.is_empty());
+    assert_eq!(measured.skins[0].joints.len(), 2);
+    MeasurementContract::new(BTreeMap::new(), measured)
+        .expect("the measured unreadable declaration satisfies the public contract");
+}
+
+#[test]
 fn zero_weight_skin_vertices_are_missing_effective_influence_evidence() {
     for (label, weights) in [("zero", "0,0,0"), ("negative", "-1,-1,-1")] {
         let source = std::fs::read_to_string(fixture())
@@ -525,6 +605,10 @@ fn zero_weight_skin_vertices_are_missing_effective_influence_evidence() {
 
         let loaded =
             animsmith_fbx::load_scale_source(&path).expect("ineffective-weight skin parses");
+        assert_eq!(
+            loaded.inventory().rejected_influence_count,
+            if label == "negative" { 3 } else { 0 }
+        );
         assert_eq!(loaded.inventory().missing_skin_influence_corner_count, 3);
         assert_eq!(
             loaded.inventory().domains.other_vertex_and_source_data,
@@ -540,6 +624,85 @@ fn zero_weight_skin_vertices_are_missing_effective_influence_evidence() {
             "the convenience payload may remain zero but must not be called complete evidence"
         );
     }
+}
+
+#[test]
+fn mixed_positive_and_negative_influences_retain_rejection_evidence() {
+    let source = std::fs::read_to_string(fixture())
+        .expect("read fixture")
+        .replacen(
+            "ObjectType: \"Deformer\" { Count: 2 }",
+            "ObjectType: \"Deformer\" { Count: 3 }",
+            1,
+        );
+    let negative_cluster = r#"
+	Deformer: 4003, "SubDeformer::negative_cluster", "Cluster" {
+		Version: 100
+		Indexes: *3 { a: 0,1,2 }
+		Weights: *3 { a: -0.25,-0.25,-0.25 }
+		Transform: *16 { a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }
+		TransformLink: *16 { a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }
+	}
+"#;
+    let source = source.replacen(
+        "\tAnimationStack: 3001",
+        &format!("{negative_cluster}\tAnimationStack: 3001"),
+        1,
+    );
+    let source = source.replacen(
+        "\tC: \"OO\",3002,3001",
+        "\tC: \"OO\",4003,4001\n\tC: \"OO\",1001,4003\n\tC: \"OO\",3002,3001",
+        1,
+    );
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("mixed-sign-influences.fbx");
+    std::fs::write(&path, source).expect("write analytic mixed-sign fixture");
+
+    let loaded = animsmith_fbx::load_scale_source(&path).expect("mixed-sign fixture parses");
+    assert_eq!(loaded.inventory().rejected_influence_count, 3);
+    assert_eq!(loaded.inventory().missing_skin_influence_corner_count, 0);
+    assert_eq!(loaded.inventory().renormalized_influence_vertex_count, 0);
+    assert_eq!(
+        loaded.inventory().domains.other_vertex_and_source_data,
+        FbxScaleDomainStatus::Unsupported
+    );
+    assert!(
+        animsmith_fbx::capability_facts(loaded.inventory()).unsupported_vertex_attributes_present
+    );
+    assert_eq!(
+        loaded.document().assets.meshes[0].primitives[0].weights,
+        vec![[1.0, 0.0, 0.0, 0.0]; 3],
+        "the usable positive projection must not erase rejected negative source evidence"
+    );
+}
+
+#[test]
+fn a_skin_cluster_without_a_bone_downgrades_the_source_projection() {
+    let source = std::fs::read_to_string(fixture())
+        .expect("read fixture")
+        .replacen("\tC: \"OO\",1001,4002\n", "", 1);
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("missing-cluster-bone.fbx");
+    std::fs::write(&path, source).expect("write analytic missing-bone fixture");
+
+    let loaded = animsmith_fbx::load_scale_source(&path).expect("missing-bone fixture parses");
+    assert_eq!(loaded.inventory().incomplete_bind_cluster_count, 1);
+    assert!(animsmith_fbx::capability_facts(loaded.inventory()).inverse_bind_issues_present);
+    let projection = &loaded.document().assets.source_skeleton;
+    assert_eq!(projection.coverage, SourceSkeletonCoverage::Unavailable);
+    assert!(projection.nodes.is_empty());
+    assert!(projection.skins.is_empty());
+    validate_document_shape(loaded.document())
+        .expect("unavailable source projection leaves a valid normalized document");
+    let measured = measure_assets(loaded.document());
+    assert_eq!(
+        measured.skeleton_source_coverage,
+        SourceSkeletonCoverage::Unavailable
+    );
+    assert!(measured.skeleton_nodes.is_empty());
+    assert!(measured.skins.is_empty());
+    MeasurementContract::new(BTreeMap::new(), measured)
+        .expect("downgraded source coverage is a valid public measurement");
 }
 
 #[test]
@@ -576,6 +739,64 @@ fn valid_unmodeled_ufbx_typed_lists_are_counted_conservatively() {
         "the detached cache record is unsupported mesh/source payload"
     );
     assert!(animsmith_fbx::capability_facts(loaded.inventory()).unregistered_extensions_present);
+}
+
+#[test]
+fn every_morph_typed_list_independently_marks_the_domain_present() {
+    let cases = [
+        (
+            "deformer",
+            "ObjectType: \"Deformer\" { Count: 2 }",
+            "ObjectType: \"Deformer\" { Count: 3 }",
+            "\tDeformer: 5001, \"Deformer::blend\", \"BlendShape\" { Version: 100 }\n",
+            [1, 0, 0],
+        ),
+        (
+            "channel",
+            "ObjectType: \"Deformer\" { Count: 2 }",
+            "ObjectType: \"Deformer\" { Count: 3 }",
+            "\tDeformer: 5001, \"SubDeformer::channel\", \"BlendShapeChannel\" { Version: 100 DeformPercent: 0 FullWeights: *1 { a: 100 } }\n",
+            [0, 1, 0],
+        ),
+        (
+            "shape",
+            "ObjectType: \"Geometry\" { Count: 1 }",
+            "ObjectType: \"Geometry\" { Count: 2 }",
+            "\tGeometry: 5001, \"Geometry::shape\", \"Shape\" { Version: 100 Indexes: *1 { a: 0 } Vertices: *3 { a: 0,0,0 } Normals: *3 { a: 0,1,0 } }\n",
+            [0, 0, 1],
+        ),
+    ];
+    for (label, definition, replacement, object, expected) in cases {
+        let source = std::fs::read_to_string(fixture())
+            .expect("read fixture")
+            .replacen(definition, replacement, 1)
+            .replacen(
+                "\tAnimationStack: 3001",
+                &format!("{object}\tAnimationStack: 3001"),
+                1,
+            );
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join(format!("detached-morph-{label}.fbx"));
+        std::fs::write(&path, source).expect("write analytic morph fixture");
+
+        let loaded = animsmith_fbx::load_scale_source(&path).expect("morph fixture parses");
+        assert_eq!(
+            [
+                loaded.inventory().blend_deformer_count,
+                loaded.inventory().blend_channel_count,
+                loaded.inventory().blend_shape_count,
+            ],
+            expected,
+            "{label} must retain its own typed-list count"
+        );
+        assert_eq!(
+            loaded.inventory().domains.morphs,
+            FbxScaleDomainStatus::Unsupported
+        );
+        let facts = animsmith_fbx::capability_facts(loaded.inventory());
+        assert!(facts.morphs_present, "{label}");
+        assert!(facts.morph_weights_present, "{label}");
+    }
 }
 
 #[test]

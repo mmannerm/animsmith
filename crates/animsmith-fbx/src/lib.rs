@@ -430,6 +430,42 @@ fn normal_texture(
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ProjectedInfluence {
+    Absent,
+    Retained(u16, f32),
+    Rejected,
+}
+
+fn project_skin_influence(
+    source_weight: f64,
+    cluster_index: Option<usize>,
+    cluster_count: usize,
+    cluster_has_bone: bool,
+) -> ProjectedInfluence {
+    let weight = source_weight as f32;
+    if !source_weight.is_finite()
+        || source_weight < 0.0
+        || !weight.is_finite()
+        || (source_weight > 0.0 && weight == 0.0)
+    {
+        return ProjectedInfluence::Rejected;
+    }
+    if weight == 0.0 {
+        return ProjectedInfluence::Absent;
+    }
+    let Some(cluster_index) = cluster_index else {
+        return ProjectedInfluence::Rejected;
+    };
+    if cluster_index >= cluster_count || !cluster_has_bone {
+        return ProjectedInfluence::Rejected;
+    }
+    match u16::try_from(cluster_index) {
+        Ok(index) => ProjectedInfluence::Retained(index, weight),
+        Err(_) => ProjectedInfluence::Rejected,
+    }
+}
+
 /// Project every normalized ufbx node and skin deformer in stable typed-list
 /// order. These are source-side identities after the documented coordinate,
 /// helper-node, and inherit-mode normalization; they are not raw FBX object
@@ -458,6 +494,21 @@ fn extract_source_skeleton(scene: &ufbx::Scene) -> SourceSkeletonAssets {
         })
         .collect();
 
+    // A missing cluster bone removes a declared joint slot from the current
+    // format-neutral shape: SourceSkinAsset has no optional/invalid joint-row
+    // representation. Do not filter that slot and still claim complete source
+    // coverage. The capability inventory retains the exact incomplete-cluster
+    // count while the generic sidecar fails closed as globally unavailable.
+    if scene.skin_clusters.iter().any(|cluster| {
+        cluster.bone_node.as_ref().is_none_or(|bone| {
+            usize::try_from(bone.element.typed_id)
+                .ok()
+                .is_none_or(|index| index >= scene.nodes.len())
+        })
+    }) {
+        return SourceSkeletonAssets::default();
+    }
+
     let mut attachments = vec![Vec::new(); scene.skin_deformers.len()];
     for node in &scene.nodes {
         let Some(mesh) = &node.mesh else { continue };
@@ -477,17 +528,17 @@ fn extract_source_skeleton(scene: &ufbx::Scene) -> SourceSkeletonAssets {
         .iter()
         .map(|skin| {
             let source_skin_index = skin.element.typed_id as usize;
-            let matrices = skin
+            let projected_matrices = skin
                 .clusters
                 .iter()
-                .filter_map(|cluster| project_cluster_bind(cluster).map(|(_, bind)| bind))
-                .collect::<Vec<_>>();
-            let status = if skin.clusters.is_empty() {
-                SourceInverseBindAccessorStatus::Absent
-            } else if matrices.len() != skin.clusters.len() {
-                SourceInverseBindAccessorStatus::Unreadable
-            } else {
-                SourceInverseBindAccessorStatus::Available
+                .map(|cluster| project_cluster_bind(cluster).map(|(_, bind)| bind))
+                .collect::<Option<Vec<_>>>();
+            let (status, matrices) = match (skin.clusters.is_empty(), projected_matrices) {
+                (true, _) => (SourceInverseBindAccessorStatus::Absent, Vec::new()),
+                (false, Some(matrices)) => (SourceInverseBindAccessorStatus::Available, matrices),
+                // Unreadable is declaration-wide because the generic shape
+                // cannot retain a hole without shifting later joint slots.
+                (false, None) => (SourceInverseBindAccessorStatus::Unreadable, Vec::new()),
             };
             SourceSkinAsset {
                 source_skin_index,
@@ -622,9 +673,24 @@ fn extract_assets(
                             let begin = sv.weight_begin as usize;
                             let end = begin.saturating_add(sv.num_weights as usize);
                             for sw in s.weights.get(begin..end).unwrap_or_default() {
-                                let weight = sw.weight as f32;
-                                if weight.is_finite() && weight > 0.0 {
-                                    pairs.push((sw.cluster_index as u16, weight));
+                                let source_weight = sw.weight;
+                                let cluster_index = usize::try_from(sw.cluster_index).ok();
+                                let cluster_has_bone = cluster_index
+                                    .and_then(|index| s.clusters.get(index))
+                                    .is_some_and(|cluster| cluster.bone_node.is_some());
+                                match project_skin_influence(
+                                    source_weight,
+                                    cluster_index,
+                                    s.clusters.len(),
+                                    cluster_has_bone,
+                                ) {
+                                    ProjectedInfluence::Absent => {}
+                                    ProjectedInfluence::Retained(index, weight) => {
+                                        pairs.push((index, weight));
+                                    }
+                                    ProjectedInfluence::Rejected => {
+                                        conversion.rejected_influence_count += 1;
+                                    }
                                 }
                             }
                         }
@@ -745,4 +811,40 @@ fn extract_assets(
     assets.default_scene = Some(0);
     assets.source_skeleton = extract_source_skeleton(scene);
     (assets, conversion)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ProjectedInfluence, project_skin_influence};
+
+    #[test]
+    fn influence_projection_checks_sign_range_and_u16_cluster_narrowing() {
+        assert_eq!(
+            project_skin_influence(0.0, Some(0), 1, true),
+            ProjectedInfluence::Absent
+        );
+        assert_eq!(
+            project_skin_influence(-0.25, Some(0), 1, true),
+            ProjectedInfluence::Rejected
+        );
+        assert_eq!(
+            project_skin_influence(1.0, Some(1), 1, true),
+            ProjectedInfluence::Rejected,
+            "a source cluster index outside the declaration must not survive"
+        );
+        assert_eq!(
+            project_skin_influence(
+                1.0,
+                Some(usize::from(u16::MAX) + 1),
+                usize::from(u16::MAX) + 2,
+                true,
+            ),
+            ProjectedInfluence::Rejected,
+            "u32/usize cluster identity must not wrap while narrowing to u16"
+        );
+        assert_eq!(
+            project_skin_influence(0.5, Some(7), 8, true),
+            ProjectedInfluence::Retained(7, 0.5)
+        );
+    }
 }

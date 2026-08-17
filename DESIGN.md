@@ -630,11 +630,16 @@ to *that* frame N. Determinism is the feature.
   sidesteps the entire FBX-curve-semantics swamp.
 - **Scale inventory without enablement**: the same successful parse produces
   a deterministic ufbx-side status for every current Appendix D.4 domain and a
-  complete documented normalized source-node/source-skin projection. It explicitly names
-  coordinate/inherit normalization, baked and lost curve state, generated
+  documented normalized source-node/source-skin projection when every declared
+  skin slot can be represented. A missing cluster bone downgrades that generic
+  projection to unavailable instead of silently dropping the slot. It
+  explicitly names coordinate/inherit normalization, baked and lost curve state, generated
   normals/helper nodes, cluster-derived bind provenance, four-influence
-  truncation/renormalization, triangulation/welding, unsupported source data,
-  and ufbx source identities. Its core capability projection remains
+  truncation/renormalization, rejected negative/non-finite/unrepresentable
+  influences, triangulation/welding, unsupported source data, and ufbx source
+  identities. One unreadable cluster makes its ordered bind declaration
+  atomically unreadable; finite prefixes are not retained under shifted slots.
+  Its core capability projection remains
   unsupported; neither scale operation is an FBX producer yet, and no raw FBX
   span or artifact-preservation claim is made.
 - **`convert`** emits glTF 2.0 GLB: nodes + skin (computed IBMs) + one
@@ -1603,13 +1608,16 @@ attributes, creates skin/holder structures, and does not preserve arbitrary
 source JSON. The FBX loader mechanically inventories every current row above,
 including the unverifiable unreferenced-accessor analogue, and exposes a
 documented normalized ufbx source-node/source-skin sidecar when every declared
-slot is representable. Complete coverage here means every adjusted/compensated
-ufbx node and skin has stable identity and projected values; it does not relabel
-those values as raw authored FBX transform or payload evidence. The inventory
-also records that it bakes takes, normalizes coordinate and inheritance
-semantics, generates
-some missing data, truncates/renormalizes influences, triangulates, welds, and
-cannot prove raw payload spans. Consequently neither current
+joint slot is representable. A missing cluster bone downgrades the generic
+sidecar to unavailable, and one unreadable converted bind makes its whole
+ordered declaration unreadable with no retained prefix. Complete coverage here
+means every adjusted/compensated ufbx node and skin has stable identity and
+projected values; it does not relabel those values as raw authored FBX
+transform or payload evidence. The inventory also records
+that it bakes takes, normalizes coordinate and inheritance semantics, generates
+some missing data, truncates/renormalizes influences, counts rejected invalid
+or unrepresentable influences, triangulates, welds, and cannot prove raw
+payload spans. Consequently neither current
 load-`Document`-write route qualifies as a
 preservation-proof frontend for these operations without the raw capability
 preflight and explicitly bounded writer work. Unknown extensions or extras,
