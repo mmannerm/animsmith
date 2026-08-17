@@ -139,6 +139,25 @@ def validate(text: str) -> list[str]:
                     f"issue {issue_id} row must contain exactly seven cells"
                 )
                 continue
+            column_names = (
+                "ID",
+                "Severity",
+                "Problem and impact",
+                "Primary owner",
+                "Current workaround",
+                "Future AnimSmith potential",
+                "Confidence/status",
+            )
+            missing_cells = [
+                column_names[index] for index, cell in enumerate(cells) if not cell
+            ]
+            if missing_cells:
+                issue_id = cells[0] or "<unknown>"
+                errors.append(
+                    f"issue {issue_id} has empty required cells: "
+                    + ", ".join(missing_cells)
+                )
+                continue
             owner = cells[3].strip("`")
             if owner not in PRIMARY_OWNERS:
                 errors.append(

@@ -232,6 +232,54 @@ def valid_manifest_with_runtime_set() -> dict[str, object]:
     return manifest
 
 
+def valid_manifest_with_multiple_counts() -> dict[str, object]:
+    manifest = valid_manifest_with_runtime_set()
+    manifest["motions"].append(  # type: ignore[union-attr]
+        {
+            "id": "walk-backward",
+            "vendor_label": "Walk Backward",
+            "primary_role": "continuous-locomotion",
+            "tags": ["direction:backward", "gait:walk"],
+            "classification_basis": ["observed-file"],
+            "files": [
+                {"path": "WalkBack.fbx", "variant": "in-place"},
+                {"path": "WalkBack_RM.fbx", "variant": "root-motion"},
+            ],
+        }
+    )
+    manifest["runtime_sets"].append(  # type: ignore[union-attr]
+        {
+            "id": "locomotion-sync",
+            "set_type": "sync-group",
+            "confidence": "medium",
+            "classification_basis": ["vendor-stated"],
+            "members": [
+                {"motion_id": "walk-forward", "file": "Walk.fbx"},
+                {"motion_id": "walk-backward", "file": "WalkBack.fbx"},
+            ],
+        }
+    )
+    manifest["role_totals"]["continuous-locomotion"] = {  # type: ignore[index]
+        "logical_motions": 2,
+        "delivered_files": 3,
+    }
+    manifest["totals"] = {
+        "logical_motions": 3,
+        "delivered_files": 4,
+        "runtime_sets": 2,
+    }
+    return manifest
+
+
+def assign_path(
+    document: dict[str, object], path: tuple[str | int, ...], value: object
+) -> None:
+    target: object = document
+    for component in path[:-1]:
+        target = target[component]  # type: ignore[index]
+    target[path[-1]] = value  # type: ignore[index]
+
+
 def valid_report() -> str:
     role_rows = "\n".join(f"| `{role}` | 0 |" for role in V1_PRIMARY_ROLES)
     stage_rows = "\n".join(
@@ -510,6 +558,12 @@ class ManifestValidatorTests(unittest.TestCase):
             manifest_validator.validate_manifest(valid_manifest_with_runtime_set()), []
         )
 
+    def test_accepts_multiple_motions_files_and_runtime_sets(self) -> None:
+        self.assertEqual(
+            manifest_validator.validate_manifest(valid_manifest_with_multiple_counts()),
+            [],
+        )
+
     def test_rejects_unknown_runtime_set_type(self) -> None:
         manifest = valid_manifest_with_runtime_set()
         manifest["runtime_sets"][0]["set_type"] = "unknown-type"  # type: ignore[index]
@@ -580,6 +634,76 @@ class ManifestValidatorTests(unittest.TestCase):
                 manifest = valid_manifest_with_runtime_set()
                 mutate(manifest)
                 self.assertIn(expected, manifest_validator.validate_manifest(manifest))
+
+    def test_rejects_non_string_values_for_every_manifest_enum(self) -> None:
+        cases = (
+            (
+                "primary-role",
+                ("motions", 0, "primary_role"),
+                False,
+                "motions[0].primary_role has unknown value:",
+            ),
+            (
+                "variant",
+                ("motions", 0, "files", 0, "variant"),
+                False,
+                "motions[0].files[0].variant has unknown value:",
+            ),
+            (
+                "set-type",
+                ("runtime_sets", 0, "set_type"),
+                False,
+                "runtime_sets[0].set_type has unknown value:",
+            ),
+            (
+                "confidence",
+                ("runtime_sets", 0, "confidence"),
+                False,
+                "runtime_sets[0].confidence has unknown value:",
+            ),
+            (
+                "motion-classification-basis",
+                ("motions", 0, "classification_basis"),
+                True,
+                "motions[0].classification_basis contains unknown values:",
+            ),
+            (
+                "runtime-set-classification-basis",
+                ("runtime_sets", 0, "classification_basis"),
+                True,
+                "runtime_sets[0].classification_basis contains unknown values:",
+            ),
+            (
+                "profile-status",
+                ("profiles", 1, "status"),
+                False,
+                "profiles[blended-locomotion].status has unknown value:",
+            ),
+            (
+                "activation-basis",
+                ("profiles", 0, "activation_basis"),
+                False,
+                "profiles[marketplace-intake].activation_basis is required",
+            ),
+            (
+                "pipeline-state",
+                ("pipeline_stages", 0, "status"),
+                False,
+                "pipeline_stages[acquire].status has unknown value:",
+            ),
+        )
+        for name, path, wrap_in_array, expected in cases:
+            for invalid in (None, 7, True, {}):
+                with self.subTest(enum=name, invalid=repr(invalid)):
+                    manifest = valid_manifest_with_runtime_set()
+                    value = [invalid] if wrap_in_array else invalid
+                    assign_path(manifest, path, value)
+                    self.assertTrue(
+                        any(
+                            error.startswith(expected)
+                            for error in manifest_validator.validate_manifest(manifest)
+                        )
+                    )
 
     def test_rejects_unknown_runtime_set_confidence(self) -> None:
         manifest = valid_manifest_with_runtime_set()
@@ -720,6 +844,23 @@ class ManifestValidatorTests(unittest.TestCase):
             ],
         )
 
+    def test_multiple_unknown_choice_errors_are_deterministic(self) -> None:
+        manifest = valid_manifest()
+        manifest["motions"][0]["classification_basis"] = [  # type: ignore[index]
+            "z-unknown",
+            "a-unknown",
+        ]
+
+        errors = manifest_validator.validate_manifest(manifest)
+
+        self.assertEqual(
+            errors,
+            [
+                "motions[0].classification_basis contains unknown values: "
+                "'a-unknown', 'z-unknown'"
+            ],
+        )
+
     def test_rejects_missing_and_duplicate_required_profiles(self) -> None:
         for index, profile_id in enumerate(V1_PROFILE_IDS):
             with self.subTest(profile_id=profile_id, mutation="missing"):
@@ -750,53 +891,51 @@ class ManifestValidatorTests(unittest.TestCase):
 
     def test_rejects_non_array_top_level_collections(self) -> None:
         for field in ("motions", "runtime_sets", "profiles", "pipeline_stages"):
-            with self.subTest(field=field):
-                manifest = valid_manifest()
-                manifest[field] = {}
+            for invalid in (None, 7, True, "not-an-array", {}):
+                with self.subTest(field=field, invalid=repr(invalid)):
+                    manifest = valid_manifest()
+                    manifest[field] = invalid
 
-                errors = manifest_validator.validate_manifest(manifest)
+                    errors = manifest_validator.validate_manifest(manifest)
 
-                self.assertIn(f"{field} must be an array", errors)
+                    self.assertIn(f"{field} must be an array", errors)
 
     def test_rejects_non_array_nested_collections(self) -> None:
         cases = (
             (
                 "motion-tags",
-                lambda manifest: manifest["motions"][0].__setitem__("tags", {}),  # type: ignore[index]
+                ("motions", 0, "tags"),
                 "motions[0].tags must be an array",
             ),
             (
                 "motion-classification-basis",
-                lambda manifest: manifest["motions"][0].__setitem__(  # type: ignore[index]
-                    "classification_basis", {}
-                ),
+                ("motions", 0, "classification_basis"),
                 "motions[0].classification_basis must be a non-empty array",
             ),
             (
                 "motion-files",
-                lambda manifest: manifest["motions"][0].__setitem__("files", {}),  # type: ignore[index]
+                ("motions", 0, "files"),
                 "motions[0].files must be a non-empty array",
             ),
             (
                 "runtime-set-classification-basis",
-                lambda manifest: manifest["runtime_sets"][0].__setitem__(  # type: ignore[index]
-                    "classification_basis", {}
-                ),
+                ("runtime_sets", 0, "classification_basis"),
                 "runtime_sets[0].classification_basis must be a non-empty array",
             ),
             (
                 "runtime-set-members",
-                lambda manifest: manifest["runtime_sets"][0].__setitem__(  # type: ignore[index]
-                    "members", {}
-                ),
+                ("runtime_sets", 0, "members"),
                 "runtime_sets[0].members must contain at least two members",
             ),
         )
-        for name, mutate, expected in cases:
-            with self.subTest(collection=name):
-                manifest = valid_manifest_with_runtime_set()
-                mutate(manifest)
-                self.assertIn(expected, manifest_validator.validate_manifest(manifest))
+        for name, path, expected in cases:
+            for invalid in (None, 7, True, "not-an-array", {}):
+                with self.subTest(collection=name, invalid=repr(invalid)):
+                    manifest = valid_manifest_with_runtime_set()
+                    assign_path(manifest, path, invalid)
+                    self.assertIn(
+                        expected, manifest_validator.validate_manifest(manifest)
+                    )
 
     def test_requires_selected_profile_activation_basis(self) -> None:
         manifest = valid_manifest()
@@ -981,6 +1120,19 @@ class ReportValidatorTests(unittest.TestCase):
             ],
         )
 
+    def test_multiple_placeholder_errors_are_deterministic(self) -> None:
+        errors = report_validator.validate(
+            valid_report() + "\n{{ZETA_PLACEHOLDER}} {{ALPHA_PLACEHOLDER}}\n"
+        )
+
+        self.assertEqual(
+            errors,
+            [
+                "unresolved template placeholders: "
+                "{{ALPHA_PLACEHOLDER}}, {{ZETA_PLACEHOLDER}}"
+            ],
+        )
+
     def test_rejects_unresolved_template_placeholder(self) -> None:
         errors = report_validator.validate(valid_report() + "\n{{UNRESOLVED}}\n")
 
@@ -1042,9 +1194,15 @@ class ReportValidatorTests(unittest.TestCase):
         )
 
     def test_valid_markdown_issue_row_syntax_still_checks_owner(self) -> None:
-        for prefix in ("FIX-001 |", "   | FIX-001 |"):
-            with self.subTest(prefix=prefix):
+        variants = (
+            ("FIX-001 |", "High."),
+            ("   | FIX-001 |", "High. |"),
+        )
+        for prefix, suffix in variants:
+            with self.subTest(prefix=prefix, suffix=suffix):
                 report = valid_report().replace("| FIX-001 |", prefix, 1).replace(
+                    "High. |", suffix, 1
+                ).replace(
                     "| engine-config | Fixture workaround. |",
                     "| vendor-license / artist-author | Fixture workaround. |",
                 )
@@ -1055,6 +1213,35 @@ class ReportValidatorTests(unittest.TestCase):
                     "issue FIX-001 has unknown or composite primary owner: "
                     "'vendor-license / artist-author'",
                     errors,
+                )
+
+    def test_rejects_empty_required_issue_cells(self) -> None:
+        issue_row = (
+            "| FIX-001 | Moderate | Fixture problem. | engine-config | "
+            "Fixture workaround. | Not applicable. | High. |"
+        )
+        column_names = (
+            "ID",
+            "Severity",
+            "Problem and impact",
+            "Primary owner",
+            "Current workaround",
+            "Future AnimSmith potential",
+            "Confidence/status",
+        )
+        cells = [cell.strip() for cell in issue_row.strip("|").split("|")]
+        for index, column in enumerate(column_names):
+            with self.subTest(column=column):
+                empty_cells = cells.copy()
+                empty_cells[index] = ""
+                replacement = "| " + " | ".join(empty_cells) + " |"
+                report = valid_report().replace(issue_row, replacement, 1)
+
+                errors = report_validator.validate(report)
+
+                issue_id = "<unknown>" if column == "ID" else "FIX-001"
+                self.assertIn(
+                    f"issue {issue_id} has empty required cells: {column}", errors
                 )
 
     def test_all_published_pack_reports_conform(self) -> None:
