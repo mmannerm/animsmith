@@ -10,13 +10,13 @@
 //! `scale` is the first evidence-emitting producer in the minimal binary, and
 //! a feature-gated import here would silently drop that coverage.
 
+use animsmith_core::sha256_hex;
 use animsmith_testkit::{
     clipless_mesh_scale_rig_glb, nodes_only_scale_rig_glb, oversized_proof_scale_rig_glb,
     rest_bind_scale_rig_glb, rest_bind_scale_rig_gltf, rotation_only_meshless_scale_rig_glb,
     unaffected_bind_scale_rig_glb,
 };
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
@@ -143,7 +143,7 @@ fn assert_published_pair_is_bound(fixture: &Fixture) {
     assert_eq!(evidence["outcome"], "published");
     assert_eq!(
         evidence["result"]["artifact"]["sha256"],
-        format!("{:x}", Sha256::digest(&artifact)),
+        sha256_hex(&artifact),
         "scale evidence binds the artifact that landed"
     );
     assert_eq!(
