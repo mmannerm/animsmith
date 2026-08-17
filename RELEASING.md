@@ -32,7 +32,14 @@ shipping is riskier than changing.
 1. Merge feature/fix PRs to `main` as usual (Conventional Commits).
 2. Perform one release-wide documentation-freshness sweep over the root
    and crate READMEs, `docs/`, `examples/`, and current version/status
-   claims. Preserve clearly historical references.
+   claims. Preserve clearly historical references. Stage the intended release
+   line in the dependency snippets and current `tool.version` examples before
+   dispatch if convenient: the `release_version_docs` workspace test accepts
+   exactly the next patch or minor while `main` still carries the previous
+   manifest version. On the generated `release-plz-*` branch the same test
+   requires every current version claim to equal the bumped workspace manifest.
+   It deliberately ignores `CHANGELOG.md`, this completed bootstrap, and
+   roadmap history.
 3. When `main` is ready to release, manually dispatch the release workflow:
 
    ```console
