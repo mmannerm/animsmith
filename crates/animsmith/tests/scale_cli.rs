@@ -1580,6 +1580,72 @@ fn rest_bind_morph_refusal_preserves_the_complete_located_inventory_and_prior_pa
 }
 
 #[test]
+fn early_generic_preflight_refusal_unions_the_selected_operations_morph_inventory() {
+    let source = map_glb_json(rest_bind_scale_rig_with_morphs_glb(), |value| {
+        value["cameras"] = serde_json::json!([{
+            "type": "orthographic",
+            "orthographic": { "xmag": 1, "ymag": 1, "zfar": 10, "znear": 1 }
+        }]);
+    });
+    let fixture = Fixture::with_asset(source);
+    let prior_artifact = b"prior artifact";
+    let prior_evidence = b"prior evidence";
+    std::fs::write(fixture.path("out.glb"), prior_artifact).unwrap();
+    std::fs::write(fixture.path("out.json"), prior_evidence).unwrap();
+
+    let output = fixture.rest_bind("0.01", "json");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(
+        std::fs::read(fixture.path("out.glb")).unwrap(),
+        prior_artifact
+    );
+    assert_eq!(
+        std::fs::read(fixture.path("out.json")).unwrap(),
+        prior_evidence
+    );
+
+    let record: Value = serde_json::from_str(&stdout(&output)).expect("one refusal record");
+    assert_schema_valid(&record);
+    assert_eq!(record["rejection"]["stage"], "preflight");
+    assert_eq!(record["rejection"]["kind"], "unsupported-source-domain");
+    assert_eq!(
+        record["rejection"]["detail"],
+        "glTF scale preflight rejected 5 unsupported source domain(s)"
+    );
+    assert_eq!(
+        record["rejection"]["violations"]
+            .as_array()
+            .expect("violations")
+            .len(),
+        5
+    );
+    assert_eq!(
+        record["rejection"]["violations"],
+        serde_json::json!([
+            { "kind": "morph_target", "location": "/meshes/1/primitives/1/targets" },
+            { "kind": "morph_weights", "location": "/animations/1/channels/1/target/path" },
+            { "kind": "morph_weights", "location": "/meshes/1/weights" },
+            { "kind": "morph_weights", "location": "/nodes/4/weights" },
+            { "kind": "camera", "location": "/cameras" }
+        ])
+    );
+    assert_eq!(
+        record["capability"]["morph_weight_locations"],
+        serde_json::json!([
+            "/animations/1/channels/1/target/path",
+            "/meshes/1/weights",
+            "/nodes/4/weights"
+        ])
+    );
+}
+
+#[test]
 fn an_animation_targeting_a_matrix_node_is_a_typed_preflight_refusal() {
     // glTF requires an animated node to use TRS. The raw guard must enforce
     // that source-contract rule before operation planning: the typed parser

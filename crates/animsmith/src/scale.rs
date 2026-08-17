@@ -926,9 +926,26 @@ pub(crate) fn run(request: &Request, tool: ToolInfo) -> Result<ExitCode, String>
         }
         Err(GltfScalePreflightError::Unsupported {
             manifest,
-            violations,
-            count,
+            mut violations,
+            mut count,
         }) => {
+            // Generic raw preflight can reject before a `GltfScaleSource`
+            // exists. Still apply the selected operation's gate to the
+            // manifest: rest/bind owns additional located refusals for
+            // otherwise whole-document-admissible POSITION morphs and their
+            // weights, and the public record promises the complete union.
+            if let Err(GltfScaleRewriteError::Capability {
+                violations: operation_violations,
+                count: _,
+            }) = operation_capability_facts(&manifest, request.operation.core())
+            {
+                violations.extend(operation_violations);
+                violations.sort_by(|left, right| {
+                    (left.kind, left.location.as_str()).cmp(&(right.kind, right.location.as_str()))
+                });
+                violations.dedup();
+                count = violations.len();
+            }
             let rejection = RejectionRecord {
                 stage: Stage::Preflight,
                 kind: "unsupported-source-domain",
