@@ -41,6 +41,18 @@ grep -Fq \
   || fail "release-pr dispatch must be restricted to refs/heads/main"
 echo "ok: release-pr dispatch is restricted to main"
 
+grep -Fq 'id: release_plz' .github/workflows/release-plz.yml \
+  || fail "release-pr action must expose its generated-PR outputs"
+grep -Fq 'ref: ${{ fromJSON(steps.release_plz.outputs.pr).head_branch }}' \
+  .github/workflows/release-plz.yml \
+  || fail "release-pr job must check out the exact generated branch"
+grep -Fq 'ANIMSMITH_RELEASE_PR: "true"' .github/workflows/release-plz.yml \
+  || fail "generated release branch must enable strict version-doc validation"
+grep -Fq 'run: cargo test -p animsmith --test release_version_docs' \
+  .github/workflows/release-plz.yml \
+  || fail "release-pr job must run the version-doc gate after generation"
+echo "ok: generated release branch runs strict version-doc validation"
+
 grep -Fq \
   "if: \${{ github.event_name == 'push' && vars.RELEASE_PLZ_ARMED == 'true' }}" \
   .github/workflows/release-plz.yml \

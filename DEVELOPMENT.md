@@ -106,6 +106,14 @@ test); review GitHub forms and rendering by inspection. The root
 `README.md` is also the crates.io front page for the `animsmith` CLI
 crate, so keep its links absolute and keep CLI-user content first.
 
+The `release_version_docs` workspace test also keeps the current dependency
+snippets in the published READMEs and embedding guide aligned with the current
+`tool.version` examples. It accepts the manifest version or exactly its next
+patch or minor during pre-dispatch documentation staging; on a generated
+`release-plz-*` branch, every current version claim must exactly match the
+bumped workspace manifest. Historical changelog, bootstrap, and roadmap
+versions are deliberately outside that inventory.
+
 ## Spell Checking
 
 `just gates` runs [`typos`](https://github.com/crate-ci/typos) over source,

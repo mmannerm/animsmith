@@ -32,7 +32,16 @@ shipping is riskier than changing.
 1. Merge feature/fix PRs to `main` as usual (Conventional Commits).
 2. Perform one release-wide documentation-freshness sweep over the root
    and crate READMEs, `docs/`, `examples/`, and current version/status
-   claims. Preserve clearly historical references.
+   claims. Preserve clearly historical references. Stage the intended release
+   line in the dependency snippets and current `tool.version` examples before
+   dispatch if convenient: the `release_version_docs` workspace test accepts
+   exactly the next patch or minor while `main` still carries the previous
+   manifest version. On the generated `release-plz-*` branch the same test
+   requires every current version claim to equal the bumped workspace manifest.
+   It deliberately ignores `CHANGELOG.md`, this completed bootstrap, and
+   roadmap history. The dispatch job checks that generated branch itself in
+   strict mode before succeeding, because GitHub does not initially trigger PR
+   workflows for a PR created with the default `GITHUB_TOKEN`.
 3. When `main` is ready to release, manually dispatch the release workflow:
 
    ```console
@@ -213,11 +222,11 @@ tag and Release per version.
 
 PRs opened with the default `GITHUB_TOKEN` do **not** trigger
 `on: pull_request` workflows, so the release-plz PR will not get its own
-CI run. The manual dispatch does run the full shared checks against `main`
-before opening or updating the PR, and the post-merge `checks` job runs them
-again before publishing. The dispatch-time run checks the pre-bump `main`
-tree, not release-plz's generated version, lockfile, or changelog changes, so
-review those files in the release PR. If branch protection also requires a
-check attached to the release PR itself, give the `release-pr` job a PAT or
-GitHub App token via the release-plz `token` input instead of
-`secrets.GITHUB_TOKEN`.
+full shared-check matrix of its own. The manual dispatch runs that matrix
+against pre-bump `main`, then checks out the exact generated branch and runs
+the focused release-version documentation guard in strict mode. The generated
+lockfile, changelog, and assets still require review, and the post-merge
+`checks` job runs the full matrix again before publishing. If branch protection
+also requires a full-matrix check attached to the release PR itself, give the
+`release-pr` job a PAT or GitHub App token via the release-plz `token` input
+instead of `secrets.GITHUB_TOKEN`.

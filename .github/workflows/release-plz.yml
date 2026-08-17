@@ -130,8 +130,24 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - name: Run release-plz
+        id: release_plz
         uses: release-plz/action@v0.5.130
         with:
           command: release-pr
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # The default GITHUB_TOKEN does not trigger pull_request workflows for
+      # the bot-created PR. Check the generated branch here so a mismatched
+      # release version can never hide behind that GitHub recursion guard.
+      - name: Checkout generated release branch
+        if: ${{ steps.release_plz.outputs.prs_created == 'true' }}
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ fromJSON(steps.release_plz.outputs.pr).head_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify generated release version documentation
+        if: ${{ steps.release_plz.outputs.prs_created == 'true' }}
+        env:
+          ANIMSMITH_RELEASE_PR: "true"
+        run: cargo test -p animsmith --test release_version_docs
