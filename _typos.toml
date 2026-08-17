@@ -18,3 +18,7 @@ ue = "ue"
 metalness = "metalness"
 # Level-of-detail abbreviation surfaced by the ufbx API (`lod_groups`).
 lod = "lod"
+
+[type.md.extend-identifiers]
+# Exact observed identifier in the Protofactor combined-take animation list.
+WalkForwadRight = "WalkForwadRight"

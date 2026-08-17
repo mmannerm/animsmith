@@ -20,6 +20,13 @@ $ just install-rust-tools
 That installs `sccache`, `cargo-deny`, `typos-cli`, and `cargo-llvm-cov`
 if they are missing. Cargo still works with stock defaults.
 
+The animation-pack skill gate also uses Python 3 and PyYAML 6.x to validate
+skill metadata semantically:
+
+```console
+$ python3 -m pip install "PyYAML>=6,<7"
+```
+
 ## sccache
 
 Local `sccache` is optional. To configure a user-level Cargo
@@ -41,6 +48,7 @@ depend on a private runner cache.
 $ just build
 $ just test
 $ just doc
+$ just animation-pack-skill
 $ just gates
 ```
 
@@ -49,7 +57,8 @@ non-trivial PR. It runs formatting, clippy, workspace tests, golden skip
 marker verification, dependency checks, schema-id verification, GitHub
 community-file checks, spell checking, rustdoc with missing public docs
 denied, no-default-features CLI tests and builds, release binary smoke
-checks, and package readiness checks.
+checks, package readiness checks, and the animation-pack skill's behavioral
+and published-report validation.
 
 The corresponding CI workflows also validate the same expectations on a
 clean checkout. Coverage and the security scanners (Scorecard, CodeQL)
