@@ -31,6 +31,12 @@ resolve. A short `POSITION`, index, or modeled attribute is a located
 keeps authored empty geometry distinct from geometry the loader could not
 read. Unreadable inverse binds remain explicit source-skeleton evidence rather
 than a load refusal because that sidecar models their availability directly.
+Integer `TEXCOORD_0` and `WEIGHTS_0` accessors must also declare
+`normalized: true`; otherwise the upstream reader would rescale their values
+despite the missing declaration, so the loader returns a located
+`LoadError::PrimitiveEncoding` instead. Normalized `UNSIGNED_BYTE` and
+`UNSIGNED_SHORT` attributes keep their decoded float values, as do `FLOAT`
+attributes.
 
 Animation sampler accessors are checked against the reader selected by their
 slot and target property before decoding. Key times require `SCALAR`/`FLOAT`,
