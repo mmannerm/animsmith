@@ -8,6 +8,8 @@ use animsmith_core::model::{
     NormalTextureAsset, Primitive, Property, SceneAsset, SceneAssets, Skeleton,
     SourceSkeletonAssets, TextureAsset, Track, TrackValues, Transform,
 };
+use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+use image::{ExtendedColorType, ImageEncoder};
 use serde_json::Value;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
@@ -299,7 +301,32 @@ fn option_bearing_text_conversion_diagnoses_closed_stdout_once_after_publication
     let dir = tempfile::tempdir().expect("creates temp directory");
     let input = dir.path().join("input.glb");
     let output = dir.path().join("baked.glb");
+    let recipe = dir.path().join("materials.toml");
     animsmith_gltf::write::write(&fixture(), &input).expect("writes input fixture");
+    for (name, pixel) in [
+        ("base.png", [32, 64, 96, 255]),
+        ("normal.png", [128, 128, 255, 255]),
+    ] {
+        let mut bytes = Vec::new();
+        PngEncoder::new_with_quality(&mut bytes, CompressionType::Best, FilterType::NoFilter)
+            .write_image(&pixel, 1, 1, ExtendedColorType::Rgba8)
+            .expect("encodes recipe texture");
+        std::fs::write(dir.path().join(name), bytes).expect("writes recipe texture");
+    }
+    std::fs::write(
+        &recipe,
+        concat!(
+            "schema_version = 1\n",
+            "schema = \"urn:animsmith:schema:material-texture-recipe:1\"\n",
+            "max_dimension = 1\n",
+            "\n",
+            "[[materials]]\n",
+            "name = \"painted\"\n",
+            "base_color = \"base.png\"\n",
+            "normal = \"normal.png\"\n",
+        ),
+    )
+    .expect("writes material recipe");
 
     let (reader, writer) = std::io::pipe().expect("creates a pipe");
     drop(reader);
@@ -309,6 +336,8 @@ fn option_bearing_text_conversion_diagnoses_closed_stdout_once_after_publication
         .arg("-o")
         .arg(&output)
         .arg("--bake-static-mesh-transforms")
+        .arg("--material-texture-recipe")
+        .arg(&recipe)
         .stdout(Stdio::from(writer))
         .stderr(Stdio::piped())
         .spawn()
@@ -340,6 +369,11 @@ fn option_bearing_text_conversion_diagnoses_closed_stdout_once_after_publication
             .iter()
             .all(|bone| bone.rest == Transform::IDENTITY),
         "the option-bearing conversion was published before reporting"
+    );
+    let material = &published.assets.materials[0];
+    assert!(
+        material.base_color_texture.is_some() && material.normal_texture.is_some(),
+        "the material recipe was applied before the combined summary failed"
     );
 }
 

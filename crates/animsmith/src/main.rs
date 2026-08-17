@@ -803,10 +803,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             // lines through one checked attempt: one closed stdout must
             // produce one diagnosis, regardless of the repair count, without
             // retaining an asset-sized transcript.
-            let report_lines = reports.iter().flat_map(|(repair, report)| {
-                render::render_fix_report(*repair, report, output.as_deref())
-            });
-            publish::emit_text_lines(report_lines);
+            publish::emit_fix_reports(&reports, output.as_deref());
             // Dry run doubles as a CI check mode: pending repairs are
             // findings, mirroring `lint`'s exit contract.
             Ok(if dry_run && pending {

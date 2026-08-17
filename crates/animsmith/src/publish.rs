@@ -52,6 +52,8 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use animsmith_gltf::fix::{FixReport, Repair};
+
 /// Serialize one record or envelope as the pretty, newline-terminated JSON
 /// this CLI writes everywhere.
 ///
@@ -132,6 +134,19 @@ pub(crate) fn emit_text_lines(lines: impl IntoIterator<Item = String>) {
     }
 }
 
+/// Render and write all `fix` reports without exposing a transcript to command
+/// dispatch.
+///
+/// Rendering stays lazy inside this checked boundary: a failed write stops
+/// before a later report is pulled or rendered. The whole stream owns one
+/// stdout lock and at most one diagnosis.
+pub(crate) fn emit_fix_reports(reports: &[(Repair, FixReport)], target: Option<&Path>) {
+    let mut stdout = std::io::stdout().lock();
+    if let Err(error) = emit_fix_reports_to(&mut stdout, reports.iter(), target) {
+        diagnose_write_failure(&error);
+    }
+}
+
 /// Write exact rendered human-readable chunks to stdout under one lock.
 ///
 /// Unlike [`emit_text_lines`], this does not add separators: callers use it
@@ -191,6 +206,28 @@ fn emit_text_lines_to(
         emit_text_to(sink, b"\n")?;
     }
     Ok(())
+}
+
+fn emit_text_line_groups_to<T, G, L>(
+    sink: &mut impl std::io::Write,
+    groups: G,
+    render: impl FnMut(T) -> L,
+) -> Result<(), String>
+where
+    G: IntoIterator<Item = T>,
+    L: IntoIterator<Item = String>,
+{
+    emit_text_lines_to(sink, groups.into_iter().flat_map(render))
+}
+
+fn emit_fix_reports_to<'a>(
+    sink: &mut impl std::io::Write,
+    reports: impl IntoIterator<Item = &'a (Repair, FixReport)>,
+    target: Option<&'a Path>,
+) -> Result<(), String> {
+    emit_text_line_groups_to(sink, reports, |(repair, report)| {
+        crate::render::render_fix_report(*repair, report, target)
+    })
 }
 
 fn emit_text_chunks_to(
@@ -531,6 +568,26 @@ mod tests {
     }
 
     #[test]
+    fn failed_fix_streams_do_not_pull_or_render_later_reports() {
+        let mut pulled = 0;
+        let reports = [
+            (Repair::QuatNorm, FixReport::default()),
+            (Repair::QuatFlip, FixReport::default()),
+        ];
+        let reports = reports.iter().inspect(|_| {
+            pulled += 1;
+            assert_eq!(pulled, 1, "closed output must not pull a later report");
+        });
+        let error = emit_fix_reports_to(&mut BrokenPipe, reports, None)
+            .expect_err("the first rendered fix line must fail");
+        assert!(
+            error.starts_with("cannot write text output to stdout"),
+            "{error}"
+        );
+        assert_eq!(pulled, 1);
+    }
+
+    #[test]
     fn a_closed_stderr_cannot_turn_a_stdout_diagnosis_into_a_panic() {
         diagnose_write_failure_to(
             &mut BrokenPipe,
@@ -577,12 +634,12 @@ mod tests {
             .map(|(fix, _)| fix)
             .expect("locates fix dispatch arm");
         assert!(
-            !fix_dispatch.contains(".collect::<Vec<_>>()"),
-            "fix rendering must remain a lazy iterator rather than retaining its transcript"
+            fix_dispatch.contains("publish::emit_fix_reports(&reports, output.as_deref())"),
+            "fix dispatch must hand reports directly to the specialized checked boundary"
         );
         assert!(
-            fix_dispatch.contains("publish::emit_text_lines(report_lines)"),
-            "all fix reports must share one checked line-stream attempt"
+            !fix_dispatch.contains("render_fix_report"),
+            "fix dispatch must not obtain a render iterator it could materialize"
         );
     }
 
