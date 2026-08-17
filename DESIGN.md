@@ -644,8 +644,10 @@ to *that* frame N. Determinism is the feature.
   Stackless authored curves, point/line faces, and attached zero-face mesh
   definitions are present-but-unsupported rather than absent or rebuilt; the
   zero-face definitions retain an exact count and stable source identity.
-  Retained normalized meshes keep
-  their stable ufbx typed identity so source-skin attachment joins cannot shift
+  Retained normalized meshes keep one definition per stable ufbx mesh identity;
+  shared source geometry produces multiple node instances that reference the
+  same compact normalized definition. They keep their stable ufbx typed
+  identity so source-skin attachment joins cannot shift
   when an earlier source mesh emits no primitive.
   Its core capability projection remains
   unsupported; neither scale operation is an FBX producer yet, and no raw FBX

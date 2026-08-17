@@ -588,6 +588,7 @@ fn extract_assets(
     let mut conversion = AssetConversionFacts::default();
     let mut material_index: std::collections::BTreeMap<u32, usize> =
         std::collections::BTreeMap::new();
+    let mut normalized_mesh_index_by_source = std::collections::BTreeMap::<u32, usize>::new();
 
     for (source_node_index, node) in scene.nodes.iter().enumerate() {
         let Some(mesh) = &node.mesh else { continue };
@@ -664,6 +665,18 @@ fn extract_assets(
                     .collect::<Option<Vec<_>>>()
             })
             .unwrap_or_default();
+        if let Some(&normalized_mesh_index) =
+            normalized_mesh_index_by_source.get(&mesh.element.typed_id)
+        {
+            assets.instances.push(MeshInstance {
+                source_node_index,
+                node: node_id,
+                mesh: normalized_mesh_index,
+                skin_joints,
+                skin_ibms,
+            });
+            continue;
+        }
         let vertex_influences: Vec<Option<([u16; 4], [f32; 4])>> = skin
             .map(|s| {
                 (0..mesh.num_vertices)
@@ -783,6 +796,7 @@ fn extract_assets(
         }
         let normalized_mesh_index = assets.meshes.len();
         let source_mesh_index = mesh.element.typed_id as usize;
+        normalized_mesh_index_by_source.insert(mesh.element.typed_id, normalized_mesh_index);
         assets.meshes.push(MeshAsset {
             name: mesh.element.name.to_string(),
             // Retain the stable ufbx mesh identity even when an earlier

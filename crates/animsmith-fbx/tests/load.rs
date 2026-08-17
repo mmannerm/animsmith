@@ -549,20 +549,24 @@ fn point_line_and_empty_meshes_make_omitted_geometry_unsupported() {
             expected_empty_count,
             "{label}"
         );
-        assert_eq!(
-            loaded
-                .inventory()
-                .empty_source_meshes
-                .iter()
-                .map(|identity| (identity.source_index, identity.ufbx_typed_id))
-                .collect::<Vec<_>>(),
-            if label == "empty" {
-                vec![(0, 0)]
-            } else {
-                Vec::new()
-            },
-            "{label}"
-        );
+        if label == "empty" {
+            assert_eq!(
+                loaded.inventory().empty_source_meshes,
+                loaded.inventory().source_meshes,
+                "the zero-face omission retains the complete source identity, including the ufbx element id"
+            );
+            assert_eq!(
+                (
+                    loaded.inventory().empty_source_meshes[0].source_index,
+                    loaded.inventory().empty_source_meshes[0].ufbx_typed_id,
+                    loaded.inventory().empty_source_meshes[0].ufbx_element_id,
+                ),
+                (0, 0, 2),
+                "empty geometry keeps its exact stable ufbx location"
+            );
+        } else {
+            assert!(loaded.inventory().empty_source_meshes.is_empty(), "{label}");
+        }
         assert!(loaded.document().assets.meshes.is_empty(), "{label}");
         assert!(loaded.document().assets.instances.is_empty(), "{label}");
         assert_eq!(
@@ -1196,6 +1200,80 @@ fn a_skipped_source_mesh_does_not_renumber_a_retained_mesh_attachment() {
             .expect("attachment names a mesh"),
         "the compact output index must not replace the stable ufbx join key"
     );
+}
+
+#[test]
+fn shared_source_geometry_is_one_definition_with_two_instances() {
+    let source = std::fs::read_to_string(fixture())
+        .expect("read fixture")
+        .replacen("\tCount: 8", "\tCount: 9", 1)
+        .replacen(
+            "ObjectType: \"Model\" { Count: 2 }",
+            "ObjectType: \"Model\" { Count: 3 }",
+            1,
+        );
+    let second_instance = r#"
+	Model: 1501, "Model::tri-copy", "Mesh" {
+		Version: 232
+		Properties70: {
+			P: "Lcl Translation", "Lcl Translation", "", "A",2,0,0
+			P: "Lcl Rotation", "Lcl Rotation", "", "A",0,0,0
+			P: "Lcl Scaling", "Lcl Scaling", "", "A",1,1,1
+		}
+	}
+"#;
+    let source = source.replacen(
+        "\tDeformer: 4001, \"Deformer::skin\", \"Skin\" {",
+        &format!("{second_instance}\tDeformer: 4001, \"Deformer::skin\", \"Skin\" {{"),
+        1,
+    );
+    let source = source.replacen(
+        "\tC: \"OO\",2001,1002",
+        "\tC: \"OO\",2001,1002\n\tC: \"OO\",1501,1001\n\tC: \"OO\",2001,1501",
+        1,
+    );
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("shared-source-geometry.fbx");
+    std::fs::write(&path, source).expect("write analytic shared-geometry fixture");
+
+    let loaded = animsmith_fbx::load_scale_source(&path).expect("shared geometry fixture parses");
+    let inventory = loaded.inventory();
+    assert_eq!(inventory.source_meshes.len(), 1);
+    assert_eq!(inventory.shared_mesh_definition_count, 1);
+    assert!(animsmith_fbx::capability_facts(inventory).instancing_present);
+
+    let document = loaded.document();
+    validate_document_shape(document).expect("shared normalized document is structurally valid");
+    assert_eq!(document.assets.meshes.len(), 1);
+    assert_eq!(document.assets.meshes[0].source_mesh_index, 0);
+    assert_eq!(document.assets.instances.len(), 2);
+    assert_eq!(
+        document
+            .assets
+            .instances
+            .iter()
+            .map(|instance| (instance.source_node_index, instance.node, instance.mesh))
+            .collect::<Vec<_>>(),
+        vec![(2, 2, 0), (3, 3, 0)]
+    );
+
+    let attachments = &document.assets.source_skeleton.skins[0].attachments;
+    assert_eq!(
+        attachments
+            .iter()
+            .map(|attachment| { (attachment.source_node_index, attachment.source_mesh_index,) })
+            .collect::<Vec<_>>(),
+        vec![(2, Some(0)), (3, Some(0))]
+    );
+    assert!(attachments.iter().all(|attachment| {
+        attachment.source_mesh_index == Some(document.assets.meshes[0].source_mesh_index)
+    }));
+
+    let measured = measure_assets(document);
+    assert_eq!(measured.mesh_definitions.len(), 1);
+    assert_eq!(measured.node_instances.len(), 2);
+    MeasurementContract::new(BTreeMap::new(), measured)
+        .expect("shared source geometry satisfies the public measurement contract");
 }
 
 #[test]

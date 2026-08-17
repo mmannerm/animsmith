@@ -72,7 +72,9 @@ cargo run -p animsmith --example embed
    stable identities for zero-face omissions), and unavailable raw span
    proof. Stackless source curves are present but unsupported. Retained mesh
    definitions and source-skin attachments share the stable ufbx mesh identity
-   even when an earlier source definition emits no normalized primitive.
+   even when an earlier source definition emits no normalized primitive. A
+   shared FBX geometry remains one normalized definition with multiple compact
+   node instances, so that stable identity stays unique in measurements.
 2. **Resolve rig roles.** Use `resolve_configured_roles` to apply the same
    named/auto profile plus inline-override policy as the CLI. Lower-level
    `detect_profile`, `profile::resolve_named`, and

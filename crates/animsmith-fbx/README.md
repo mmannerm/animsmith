@@ -33,7 +33,9 @@ welding, omitted point/line faces and zero-face mesh definitions (with stable
 source identities), authored face/edge payloads,
 uninstanced mesh definitions,
 unsupported deformers/payloads, external resources, and stable ufbx source
-identities. Invalid or unrepresentable influences have an explicit rejected
+identities. Shared source geometry remains one normalized mesh definition with
+multiple node instances rather than duplicate definitions. Invalid or
+unrepresentable influences have an explicit rejected
 count. Only successfully projected cluster binds count toward bone-convenience
 overwrites. The document also carries the documented source-node/source-skin
 identity projection in normalized ufbx order when every joint slot is
