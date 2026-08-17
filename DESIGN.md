@@ -47,13 +47,50 @@ output, and a self-contained HTML report with a 3D preview.
   widened 2026-07-03; see Appendix A). In scope: `fix` for lossless
   mechanical repairs (quaternion unit normalization and hemisphere
   normalization), frame-range
-  slice/trim + hold-extend, gait-anchor rotation, opt-in pruning of
-  provably constant multi-key tracks, and format conversion
+  slice/trim + hold-extend, fail-closed in-place gait-anchor rotation, opt-in
+  pruning of provably constant multi-key tracks, and format conversion
   including a full mesh/skin FBX→glTF path (a maintained replacement
   for the archived FBX2glTF). Out of scope stays *artistic*
   transformation: retargeting, motion editing, procedural animation —
   that is DCC work. The rule of thumb: animsmith may rewrite a clip
   only in ways whose correctness its own checks can verify.
+- **Gait anchoring is an explicitly in-place operation.** The core boundary
+  requires a movement policy; the shipped CLI and assembly switches select
+  only `InPlace`. Before any channel is cyclically reordered, AnimSmith samples
+  the resolved Root role (falling back to Hips) and refuses missing/non-finite
+  evidence, horizontal accumulation above 1 cm, or yaw accumulation above 1°.
+  Every nonconstant channel the operation would rotate must contain exactly one
+  key at each declared whole-frame sample over `[0, duration]`, at the exact
+  representable f32 `key / fps` time and exact period endpoint. Sparse,
+  differently framed, duplicate-time, or off-grid evidence refuses; duplicate
+  `(bone, property)` channels, including constant channels, also refuse before
+  sampling. A phase shift must bijectively permute authored values rather than
+  synthesize values at omitted frames. The
+  verifier samples those exact admitted f32 key times, and mutation is an
+  integer-index permutation rather than a second floating-point resample.
+  Constant channels need no grid because cyclic reordering cannot change them;
+  their key times cannot influence the declared period or shift.
+  Before allocating a pose grid, the public core boundary validates all track
+  cardinalities, targets, finite values, all resolved metric-role indices, and
+  the complete acyclic parents-before-children skeleton. Both declared-frame
+  and maximum-authored-key work must independently satisfy the inclusive bounds
+  `declared frames × skeleton bones <= 1,000,000`, `declared frames × tracks <=
+  1,000,000`, and `maximum authored keys × skeleton bones <= 1,000,000`; every
+  verifier and metric sample uses the one bounded declared grid. The 1 cm endpoint-displacement and
+  1° accumulated-yaw caps are applied directly, without any sampled-step
+  allowance an interior outlier could inflate. Yaw is derived from model-space
+  f32 quaternions as binary64 headings, with full-turn crossings counted and
+  the first heading subtracted from the final unwrapped heading. The result has
+  no segment-count-dependent summation error. Only four f32 successors at each
+  inclusive cap cover authored endpoint translation/quaternion quantization;
+  this gait-local rule does not widen other checks. Standalone transform output
+  is transactional too: per-clip success lines and the write summary remain
+  buffered until every selected clip and the artifact write succeed. This
+  admits tightly closed cyclic pelvis/root sway while refusing authored travel
+  and turns. Root-motion phase offsets,
+  root-motion extraction, and trajectory-preserving cyclic rebasing remain
+  runtime or separately designed operations; gait anchoring must not improvise
+  them.
 - **Not a runtime.** It models how engines sample animation; it does not
   play games.
 

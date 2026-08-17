@@ -1082,7 +1082,7 @@ fn assembles_synthetic_skinned_recipe_with_complete_public_provenance() {
         ],
     };
     let rotation_a = Quat::from_rotation_y(0.35);
-    let rotation_b = -Quat::from_rotation_y(0.45);
+    let rotation_b = -Quat::from_rotation_y(0.35);
     let selected = Clip {
         name: "selected_take".into(),
         duration_s: f64::from((KEYS - 1) as f32 / FPS),
@@ -1098,27 +1098,30 @@ fn assembles_synthetic_skinned_recipe_with_complete_public_provenance() {
                 bone: 0,
                 property: Property::Rotation,
                 interpolation: Interpolation::Linear,
-                times: vec![0.0, (KEYS - 1) as f32 / FPS],
-                values: TrackValues::Quats(vec![
-                    Quat::from_xyzw(
-                        rotation_a.x * 2.0,
-                        rotation_a.y * 2.0,
-                        rotation_a.z * 2.0,
-                        rotation_a.w * 2.0,
-                    ),
-                    Quat::from_xyzw(
-                        rotation_b.x * 3.0,
-                        rotation_b.y * 3.0,
-                        rotation_b.z * 3.0,
-                        rotation_b.w * 3.0,
-                    ),
-                ]),
+                times: (0..KEYS).map(|key| key as f32 / FPS).collect(),
+                values: TrackValues::Quats(
+                    (0..KEYS)
+                        .map(|key| {
+                            let (rotation, magnitude) = if key % 2 == 0 {
+                                (rotation_a, 2.0)
+                            } else {
+                                (rotation_b, 3.0)
+                            };
+                            Quat::from_xyzw(
+                                rotation.x * magnitude,
+                                rotation.y * magnitude,
+                                rotation.z * magnitude,
+                                rotation.w * magnitude,
+                            )
+                        })
+                        .collect(),
+                ),
             },
             foot_track(1, source_skeleton.bones[1].rest.translation, -1.0),
             foot_track(2, source_skeleton.bones[2].rest.translation, 1.0),
         ],
     };
-    let source = Document {
+    let mut source = Document {
         skeleton: source_skeleton,
         clips: vec![
             Clip {
@@ -1417,6 +1420,46 @@ fn assembles_synthetic_skinned_recipe_with_complete_public_provenance() {
     let diff: Value = serde_json::from_slice(&diff.stdout).expect("diff JSON");
     assert_eq!(diff["summary"]["deltas"], 0);
     assert_eq!(diff["deltas"], serde_json::json!([]));
+
+    // `gait_anchor = true` is an explicit in-place declaration. Mutating only
+    // the selected Hips trajectory into an accumulating turn must fail inside
+    // the assembly path and leave both previously published outputs intact.
+    let source_before_refusal = std::fs::read(inputs.join("clips.glb")).unwrap();
+    let TrackValues::Quats(root_rotations) = &mut source.clips[1].tracks[1].values else {
+        unreachable!()
+    };
+    for (key, rotation) in root_rotations.iter_mut().enumerate() {
+        *rotation = Quat::from_rotation_y(0.35 + key as f32 / (KEYS - 1) as f32);
+    }
+    animsmith_gltf::write::write(&source, &inputs.join("clips.glb"))
+        .expect("writes accumulating-yaw source GLB");
+    let refusal = run(dir.path());
+    assert_eq!(refusal.status.code(), Some(2));
+    let refusal_stderr = String::from_utf8(refusal.stderr).expect("UTF-8 refusal");
+    for fact in [
+        "assembled_cycle",
+        "Hips fallback bone \"hips\"",
+        "horizontal translation 0.0000 m",
+        "yaw",
+        "retain source root motion",
+        "runtime phase offsets",
+        "trajectory-preserving operation",
+    ] {
+        assert!(
+            refusal_stderr.contains(fact),
+            "missing {fact:?} in: {refusal_stderr}"
+        );
+    }
+    assert_eq!(
+        std::fs::read(dir.path().join("character.glb")).unwrap(),
+        first_glb
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("character.assembly.json")).unwrap(),
+        first_evidence
+    );
+    std::fs::write(inputs.join("clips.glb"), source_before_refusal)
+        .expect("restores in-place source GLB");
 
     #[cfg(unix)]
     {

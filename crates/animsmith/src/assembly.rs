@@ -636,6 +636,7 @@ fn assemble(
                     &mut clip,
                     &roles,
                     recipe.fps,
+                    animsmith_core::transform::GaitTrajectoryPolicy::InPlace,
                 )
                 .map_err(|reason| format!("clip {:?}: {reason}", clip.name))?
                 .frame_offset,

@@ -121,11 +121,22 @@ pub fn default_frame_count(clip: &Clip) -> usize {
 /// hand-built documents must preserve both invariants for correct FK.
 pub fn sample_clip(skeleton: &Skeleton, clip: &Clip, frames: usize) -> PoseGrid {
     let frames = frames.max(2);
-    let nb = skeleton.bones.len();
     let duration = clip.duration_s as f32;
     let times: Vec<f32> = (0..frames)
         .map(|i| duration * i as f32 / (frames - 1) as f32)
         .collect();
+
+    sample_clip_at_times(skeleton, clip, times)
+}
+
+/// Sample a clip at caller-provided times and FK to model space.
+///
+/// Strict transforms use this internal boundary after validating their own
+/// authored grid. Keeping those exact binary32 times avoids synthesizing a
+/// nearby uniform time through a second floating-point formula.
+pub(crate) fn sample_clip_at_times(skeleton: &Skeleton, clip: &Clip, times: Vec<f32>) -> PoseGrid {
+    let frames = times.len();
+    let nb = skeleton.bones.len();
 
     let mut local = vec![Transform::IDENTITY; frames * nb];
     for f in 0..frames {

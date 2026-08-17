@@ -98,8 +98,25 @@ apply:
   `fps`, or `time_window = [START, END]` in seconds;
 - `drop_closing_endpoint = true`: remove one final key from every channel;
 - `hold_frames = N`: duplicate the final pose after `N / fps` seconds;
-- `gait_anchor = true`: run the existing measured gait-anchor transform using
-  the selected `animsmith.toml` rig configuration;
+- `gait_anchor = true`: explicitly declare an in-place cyclic gait and run the
+  measured gait-anchor transform using the selected `animsmith.toml` rig
+  configuration. Assembly refuses before publication when the Root role (or
+  Hips fallback) has missing/non-finite trajectory evidence, more than 1 cm of
+  horizontal endpoint displacement, or more than 1° of yaw accumulation; no
+  interior step is subtracted as an allowance. Every nonconstant channel the
+  operation would rotate must contain exactly one key at each declared `fps`
+  whole-frame sample over the clip duration, at the exact representable f32
+  `key / fps` time and period endpoint. Sparse, differently framed,
+  duplicate-time, or off-grid evidence refuses, as do duplicate `(bone,
+  property)` channels (including constant channels). Exact admitted f32 key times drive verification,
+  and an integer-index permutation performs the rewrite; exempt constant tracks
+  cannot influence its period or shift. The complete skeleton, resolved roles,
+  and track shapes are validated first; declared frames × skeleton bones,
+  declared frames × tracks, and maximum authored keys × skeleton bones are
+  independently bounded at an inclusive 1,000,000 samples. Yaw uses f64
+  first/final headings plus counted full-turn crossings, so error does not grow
+  with segment count; four f32 successors at the inclusive 1 cm/1° caps cover
+  only authored endpoint translation/quaternion quantization;
 - `strip_bones = [...]`: remove every TRS track for named base bones.
 
 `complete_tracks = true` fills absent TRS channels from the base rest pose for

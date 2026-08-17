@@ -67,6 +67,35 @@ when authoring `assemble` or material texture recipes.
 `--config animsmith.toml` is global. Without it, the CLI auto-loads
 `./animsmith.toml` when present and otherwise uses built-in defaults.
 
+`transform --gait-anchor` is an explicit declaration that each selected clip
+is an in-place cyclic gait. Before rewriting, it samples the configured Root
+role (or Hips fallback) and refuses the whole command if trajectory evidence is
+missing/non-finite, horizontal accumulation exceeds 1 cm, or yaw accumulation
+exceeds 1°. Every nonconstant channel the operation would rotate must contain
+exactly one key at each `--fps` whole-frame sample over the clip duration, at
+the exact representable f32 `key / fps` time and period endpoint. Sparse,
+differently framed, duplicate-time, or off-grid trajectory evidence refuses,
+as do duplicate `(bone, property)` channels (including constant channels), so
+the phase shift remains a bijective authored-value permutation. Verification
+samples the exact admitted f32 key times, and mutation permutes output values
+by integer key index rather than resampling. Constant channels are exempt and
+cannot influence the declared period or shift. Before sampling, the command
+validates the complete skeleton,
+resolved metric roles, track targets/cardinalities, and finite evidence. Both
+declared-frame and maximum-authored-key work must independently fit these
+inclusive 1,000,000-sample bounds: declared frames × skeleton bones, declared
+frames × tracks, and maximum authored keys × skeleton bones. The translation
+and yaw caps apply directly; no interior step is an allowance. Yaw uses f64
+first/final headings plus counted full-turn crossings, avoiding error growth
+with the admitted segment count. Four f32 successors at each inclusive cap
+cover only authored endpoint translation/quaternion quantization; other checks
+are unchanged. A refusal names the clip and selected bone, does not publish or
+replace the requested output, and emits no earlier per-clip success lines:
+standalone transform stdout is buffered until all selected clips and the
+artifact write succeed. Keep authored root motion unchanged, apply a
+runtime phase offset, or use separately designed trajectory-preserving tooling.
+The option does not convert root motion to in-place motion.
+
 `scale` is the atomic linear-scale producer. It has two distinct
 subcommands because the two operations rewrite different domains and a factor
 alone does not identify which one was meant: `whole-document` converts every
