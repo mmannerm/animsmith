@@ -152,11 +152,16 @@ than degrading into an incomplete-coverage refusal.
 Before any clip keys are remapped or copied, assembly captures and validates
 the exact bytes of the base and every separately supplied clip. Each input
 must agree on the selected domain and factor, named parent topology, target
-paths, local rest matrices and orientations, helper-node layout, coordinate
-convention, and effective factor at every affected target. A matching digest
-alone is not compatibility evidence. Topology, orientation, helper-layout,
-basis, selector, or factor disagreement rejects the complete operation before
-publication.
+local rest matrices and orientations, helper-node layout, and coordinate
+convention. Each input's own target paths and plan-owned effective factors are
+validated and fingerprinted; distinct clips need not contain identical target
+paths. A matching digest alone is not compatibility evidence. Topology,
+orientation, helper-layout, basis, selector, or factor disagreement rejects
+the complete operation before publication.
+Topology, raw identities, selectors, and the declared factor compare exactly.
+Rest translations, scales, and matrices use the named Appendix D tolerance
+policy, while quaternion orientation uses shortest-path angular distance, so
+equivalent `q`/`-q` spellings do not become false incompatibilities.
 
 For a compatible clip, translation values and both translation tangents of a
 `CUBICSPLINE` track are rebased in the source basis before exact-name remapping.
@@ -273,6 +278,9 @@ empty. See
 When `rest_bind_scale` is active, v4 additionally pins each exact base/clip
 input digest and its versioned basis fingerprint, the explicit selectors and
 factor, every compatibility result, and the shared final-artifact scale proof.
+The staged-source digest and exact emitted-byte read-back digest make the two
+serialization boundaries explicit; the read-back digest equals the published
+artifact identity on every accepted run.
 Each input names the fingerprint contract explicitly as
 `urn:animsmith:character-assembly-scale-basis:1`, so consumers never infer its
 version from the digest. The operation record also carries

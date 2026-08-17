@@ -607,6 +607,7 @@
         "expected_factor",
         "inputs",
         "staged_source_sha256",
+        "read_back_sha256",
         "proof",
         "residual_comparison_counts"
       ],
@@ -631,6 +632,9 @@
           }
         },
         "staged_source_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "read_back_sha256": {
           "$ref": "#/$defs/sha256"
         },
         "proof": {

@@ -78,8 +78,8 @@ mod validation;
 
 pub use assembly_basis::{
     ASSEMBLY_SCALE_BASIS_VERSION, AssemblyScaleBasis, AssemblyScaleCompatibilityError,
-    AssemblyScaleNamedNode, AssemblyScaleSourceNode, AssemblyScaleTargetPath, assembly_scale_basis,
-    require_assembly_scale_compatibility,
+    AssemblyScaleNamedNode, AssemblyScaleSourceNode, AssemblyScaleSourceRest,
+    AssemblyScaleTargetPath, assembly_scale_basis, require_assembly_scale_compatibility,
 };
 pub use planning::plan_scale;
 use planning::validate_plan_document_inventory;

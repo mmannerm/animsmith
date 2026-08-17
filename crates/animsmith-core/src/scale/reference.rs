@@ -376,7 +376,6 @@ pub(in crate::scale) fn build_rest_bind(
                 ScaleFieldTarget::AnimationValues {
                     clip_index,
                     track_index,
-                    bone: _,
                     ..
                 },
                 rule @ (ScaleRewriteRule::RestBindParentBasis

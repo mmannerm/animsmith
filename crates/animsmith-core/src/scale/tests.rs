@@ -164,6 +164,10 @@ fn assembly_basis_fingerprints_target_factors_and_rejects_orientation_or_helper_
     .unwrap();
     let basis = assembly_scale_basis(&document, &plan).unwrap();
     assert_eq!(basis.version, ASSEMBLY_SCALE_BASIS_VERSION);
+    assert_eq!(
+        basis.tolerance_policy_id,
+        ScaleTolerancePolicy::APPENDIX_D_V6.id
+    );
     assert_eq!(basis.target_paths.len(), 1);
     assert_eq!(basis.target_paths[0].factor_bits, 0.01f64.to_bits());
 
@@ -185,8 +189,114 @@ fn assembly_basis_fingerprints_target_factors_and_rejects_orientation_or_helper_
         require_assembly_scale_compatibility(&basis, &orientation_basis)
             .unwrap_err()
             .reason,
-        "named-topology-rest-orientation"
+        "named-orientation"
     );
+
+    let mut equivalent = basis.clone();
+    equivalent.named_nodes[1].rotation_bits = equivalent.named_nodes[1]
+        .rotation_bits
+        .map(|bits| (-f32::from_bits(bits)).to_bits());
+    equivalent.named_nodes[1].translation_bits[1] =
+        f32::from_bits(equivalent.named_nodes[1].translation_bits[1])
+            .next_up()
+            .to_bits();
+    let AssemblyScaleSourceRest::Trs {
+        translation_bits,
+        rotation_bits,
+        ..
+    } = &mut equivalent.source_nodes[1].local_rest
+    else {
+        panic!("fixture source node uses TRS")
+    };
+    *rotation_bits = rotation_bits.map(|bits| (-f32::from_bits(bits)).to_bits());
+    translation_bits[1] = f32::from_bits(translation_bits[1]).next_up().to_bits();
+    assert_eq!(basis, basis.clone());
+    assert_ne!(basis, equivalent, "fingerprint material remains exact");
+    require_assembly_scale_compatibility(&basis, &equivalent)
+        .expect("q/-q and in-band numeric spelling are semantically equivalent");
+
+    for (changed, expected) in [
+        (
+            {
+                let mut changed = basis.clone();
+                changed.version += 1;
+                changed
+            },
+            "basis-version",
+        ),
+        (
+            {
+                let mut changed = basis.clone();
+                changed.coordinate_convention = "left-handed-z-up-centimetres";
+                changed
+            },
+            "coordinate-convention",
+        ),
+        (
+            {
+                let mut changed = basis.clone();
+                changed.tolerance_policy_id = "appendix-d-v999";
+                changed
+            },
+            "tolerance-policy",
+        ),
+        (
+            {
+                let mut changed = basis.clone();
+                changed.source_skin_index += 1;
+                changed
+            },
+            "source-skin-selector",
+        ),
+        (
+            {
+                let mut changed = basis.clone();
+                changed.source_root_node_index += 1;
+                changed
+            },
+            "source-root-selector",
+        ),
+        (
+            {
+                let mut changed = basis.clone();
+                changed.expected_factor_bits = 0.02f64.to_bits();
+                changed
+            },
+            "expected-factor",
+        ),
+        (
+            {
+                let mut changed = basis.clone();
+                changed.named_nodes[1].parent = None;
+                changed
+            },
+            "named-topology",
+        ),
+        (
+            {
+                let mut changed = basis.clone();
+                changed.named_nodes[1].translation_bits[1] = 101.0f32.to_bits();
+                changed
+            },
+            "named-rest-basis",
+        ),
+    ] {
+        assert_eq!(
+            require_assembly_scale_compatibility(&basis, &changed)
+                .unwrap_err()
+                .reason,
+            expected
+        );
+    }
+    let mut distinct_take = basis.clone();
+    distinct_take.target_paths[0].bone = "another-valid-take-target".into();
+    distinct_take.target_paths[0].factor_bits = 0.5f64.to_bits();
+    assert_ne!(
+        basis, distinct_take,
+        "target paths remain fingerprint material"
+    );
+    require_assembly_scale_compatibility(&basis, &distinct_take)
+        .expect("each input validates its own target paths and plan factors");
 
     let mut helper = document.clone();
     helper.assets.source_skeleton.nodes[1].name = Some("changed-helper-name".into());
@@ -202,6 +312,42 @@ fn assembly_basis_fingerprints_target_factors_and_rejects_orientation_or_helper_
             .unwrap_err()
             .reason,
         "source-helper-layout"
+    );
+
+    let mut connector = document.clone();
+    connector.assets.source_skeleton.nodes[1].parent_source_node_index = Some(2);
+    let mut unnamed = SourceNodeAsset::new(2, SourceNodeLocalRest::Matrix(Mat4::IDENTITY));
+    unnamed.parent_source_node_index = Some(0);
+    connector.assets.source_skeleton.nodes.push(unnamed);
+    let connector_plan = plan_scale(&ScaleRequest {
+        operation,
+        document: &connector,
+        capability: &capability,
+    })
+    .unwrap();
+    let connector_basis = assembly_scale_basis(&connector, &connector_plan).unwrap();
+    assert_eq!(
+        require_assembly_scale_compatibility(&basis, &connector_basis)
+            .unwrap_err()
+            .reason,
+        "source-helper-layout"
+    );
+    let mut connector_matrix = connector.clone();
+    connector_matrix.assets.source_skeleton.nodes[2].local_rest =
+        SourceNodeLocalRest::Matrix(Mat4::from_translation(Vec3::new(0.1, 0.0, 0.0)));
+    let connector_matrix_plan = plan_scale(&ScaleRequest {
+        operation,
+        document: &connector_matrix,
+        capability: &capability,
+    })
+    .unwrap();
+    let connector_matrix_basis =
+        assembly_scale_basis(&connector_matrix, &connector_matrix_plan).unwrap();
+    assert_eq!(
+        require_assembly_scale_compatibility(&connector_basis, &connector_matrix_basis)
+            .unwrap_err()
+            .reason,
+        "source-helper-rest-basis"
     );
 }
 

@@ -246,6 +246,7 @@ struct AssemblyRestBindScaleEvidence {
     expected_factor: f64,
     inputs: Vec<AssemblyRestBindScaleInputEvidence>,
     staged_source_sha256: String,
+    read_back_sha256: String,
     residual_comparison_counts: crate::scale::ResidualComparisonCounts,
     proof: crate::scale::SharedScaleEvidence,
 }
@@ -1153,14 +1154,12 @@ fn assemble(
             .map_err(|error| format!("staged assembly scale proof failed: {error}"))?;
         fs::write(&artifact_temp, artifact.bytes())
             .map_err(|error| format!("cannot write proved assembly artifact: {error}"))?;
-        let (read_back_sha256, _) = read_digest(&artifact_temp)?;
+        let read_back_bytes = fs::read(&artifact_temp)
+            .map_err(|error| format!("cannot read proved assembly artifact: {error}"))?;
+        let read_back_sha256 = format!("{:x}", Sha256::digest(&read_back_bytes));
         let proved_sha256 = format!("{:x}", Sha256::digest(artifact.bytes()));
-        if read_back_sha256 != proved_sha256 {
-            return Err(format!(
-                "proved assembly artifact read-back digest mismatch: expected {proved_sha256}, observed {read_back_sha256}"
-            ));
-        }
-        let reloaded = animsmith_gltf::load_bytes(&artifact_temp, artifact.bytes())
+        require_assembly_read_back_match(&read_back_sha256, &proved_sha256)?;
+        let reloaded = animsmith_gltf::load_bytes(&artifact_temp, &read_back_bytes)
             .map_err(|error| format!("cannot reload proved assembly artifact: {error}"))?;
         require_rebased_clips_match(&expected_rebased_clips, &reloaded.clips)?;
         rest_bind_scale_evidence = Some(AssemblyRestBindScaleEvidence {
@@ -1169,6 +1168,7 @@ fn assemble(
             expected_factor: scale.expected_factor,
             inputs: rest_bind_input_evidence,
             staged_source_sha256,
+            read_back_sha256,
             residual_comparison_counts: crate::scale::residual_comparison_counts(&proof.core),
             proof: crate::scale::shared_scale_evidence(&plan, &artifact, &proof)?,
         });
@@ -1525,6 +1525,16 @@ fn require_rebased_clips_match(expected: &[Clip], actual: &[Clip]) -> Result<(),
     Ok(())
 }
 
+fn require_assembly_read_back_match(observed: &str, expected: &str) -> Result<(), String> {
+    if observed == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "proved assembly artifact read-back digest mismatch: expected {expected}, observed {observed}"
+        ))
+    }
+}
+
 fn bone_remap_evidence(
     clip: &Clip,
     source: &Skeleton,
@@ -1876,6 +1886,72 @@ mod tests {
         };
         assert!((values[0].length() - 1.0).abs() < 1e-6);
         assert!(values[0].dot(values[1]) >= 0.0);
+    }
+
+    #[test]
+    fn exact_final_clip_agreement_and_read_back_are_fail_closed() {
+        let clip = Clip {
+            name: "walk".into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 0,
+                property: Property::Translation,
+                interpolation: Interpolation::CubicSpline,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Vec3s(vec![animsmith_core::glam::Vec3::ZERO; 6]),
+            }],
+        };
+        require_rebased_clips_match(std::slice::from_ref(&clip), std::slice::from_ref(&clip))
+            .unwrap();
+        let mut changed = clip.clone();
+        let TrackValues::Vec3s(values) = &mut changed.tracks[0].values else {
+            panic!("translation fixture")
+        };
+        values[5].x = f32::from_bits(1);
+        assert!(
+            require_rebased_clips_match(std::slice::from_ref(&clip), &[changed])
+                .unwrap_err()
+                .contains("stored value 5 component 0 differs")
+        );
+        require_assembly_read_back_match("proved", "proved").unwrap();
+        let mismatch = require_assembly_read_back_match("mutated", "proved").unwrap_err();
+        assert!(mismatch.contains("expected proved"));
+        assert!(mismatch.contains("observed mutated"));
+    }
+
+    #[test]
+    fn staged_rest_bind_selectors_are_mapped_by_named_identity_not_raw_index() {
+        let staged = animsmith_gltf::load_bytes(
+            Path::new("fixture.glb"),
+            &animsmith_testkit::rest_bind_scale_rig_glb(),
+        )
+        .unwrap();
+        let mut original = staged.clone();
+        for node in &mut original.assets.source_skeleton.nodes {
+            node.source_node_index += 10;
+            node.parent_source_node_index = node.parent_source_node_index.map(|index| index + 10);
+        }
+        original.assets.source_skeleton.skins[0].source_skin_index = 7;
+        original.assets.source_skeleton.skins[0].joint_source_node_indices = vec![11];
+        original.assets.source_skeleton.skins[0].skeleton_root_source_node_index = Some(10);
+        let operation = map_staged_rest_bind_operation(
+            &original,
+            &staged,
+            AssemblyRestBindScaleRecipe {
+                source_skin_index: 7,
+                source_root_node_index: 10,
+                expected_factor: 0.01,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            operation,
+            ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 0.01,
+            }
+        );
     }
 
     #[test]

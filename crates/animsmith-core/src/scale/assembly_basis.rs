@@ -1,6 +1,9 @@
 //! Versioned semantic basis projected from an accepted scale plan.
 
-use super::{ScaleError, ScaleOperation, ScalePlan, ScaleProjectedRole, ScaleSourceNodeKind};
+use super::{
+    ScaleError, ScaleOperation, ScalePlan, ScaleProjectedRole, ScaleSourceNodeKind,
+    ScaleTolerancePolicy,
+};
 use crate::model::{Document, SourceNodeLocalRest};
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -34,8 +37,28 @@ pub struct AssemblyScaleSourceNode {
     pub name: Option<String>,
     /// Stable projected/helper role.
     pub role: String,
-    /// Exact column-major authored local matrix bits.
-    pub local_matrix_bits: [u32; 16],
+    /// Authored local-rest representation and exact component bits.
+    pub local_rest: AssemblyScaleSourceRest,
+}
+
+/// Authored raw source-node rest representation retained by a basis.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AssemblyScaleSourceRest {
+    /// Decomposed translation, quaternion, and scale.
+    Trs {
+        /// Translation component bits.
+        translation_bits: [u32; 3],
+        /// Quaternion component bits in `[x, y, z, w]` order.
+        rotation_bits: [u32; 4],
+        /// Scale component bits.
+        scale_bits: [u32; 3],
+    },
+    /// Exact authored column-major local matrix bits.
+    Matrix {
+        /// Matrix component bits.
+        matrix_bits: [u32; 16],
+    },
 }
 
 /// One animation channel target and the plan-owned effective multiplier.
@@ -60,6 +83,8 @@ pub struct AssemblyScaleBasis {
     pub version: u32,
     /// Fixed model coordinate convention.
     pub coordinate_convention: &'static str,
+    /// Tolerance identity used for semantic compatibility.
+    pub tolerance_policy_id: &'static str,
     /// Selected source skin.
     pub source_skin_index: usize,
     /// Selected source root node.
@@ -141,13 +166,19 @@ pub fn assembly_scale_basis(
                 reason: "assembly_basis_source_node_missing",
             },
         )?;
-        let matrix = match source.local_rest {
+        let local_rest = match source.local_rest {
             SourceNodeLocalRest::Trs {
                 translation,
                 rotation,
                 scale,
-            } => glam::Mat4::from_scale_rotation_translation(scale, rotation, translation),
-            SourceNodeLocalRest::Matrix(matrix) => matrix,
+            } => AssemblyScaleSourceRest::Trs {
+                translation_bits: translation.to_array().map(f32::to_bits),
+                rotation_bits: rotation.to_array().map(f32::to_bits),
+                scale_bits: scale.to_array().map(f32::to_bits),
+            },
+            SourceNodeLocalRest::Matrix(matrix) => AssemblyScaleSourceRest::Matrix {
+                matrix_bits: matrix.to_cols_array().map(f32::to_bits),
+            },
         };
         let role = match row.kind() {
             ScaleSourceNodeKind::Projected { role, .. } => match role {
@@ -164,7 +195,7 @@ pub fn assembly_scale_basis(
             parent_source_node_index: row.parent_source_node_index(),
             name: source.name.clone(),
             role: role.to_owned(),
-            local_matrix_bits: matrix.to_cols_array().map(f32::to_bits),
+            local_rest,
         });
     }
     let mut target_paths = Vec::new();
@@ -189,6 +220,7 @@ pub fn assembly_scale_basis(
     Ok(AssemblyScaleBasis {
         version: ASSEMBLY_SCALE_BASIS_VERSION,
         coordinate_convention: "right-handed-y-up-metres",
+        tolerance_policy_id: plan.tolerance_policy().id,
         source_skin_index,
         source_root_node_index,
         expected_factor_bits: expected_factor.to_bits(),
@@ -211,24 +243,157 @@ pub fn require_assembly_scale_compatibility(
     base: &AssemblyScaleBasis,
     input: &AssemblyScaleBasis,
 ) -> Result<(), AssemblyScaleCompatibilityError> {
+    let tolerance = ScaleTolerancePolicy::APPENDIX_D_V6;
     let mismatch = if base.version != input.version {
         Some("basis-version")
     } else if base.coordinate_convention != input.coordinate_convention {
         Some("coordinate-convention")
+    } else if base.tolerance_policy_id != input.tolerance_policy_id
+        || base.tolerance_policy_id != tolerance.id
+    {
+        Some("tolerance-policy")
     } else if base.source_skin_index != input.source_skin_index {
         Some("source-skin-selector")
     } else if base.source_root_node_index != input.source_root_node_index {
         Some("source-root-selector")
     } else if base.expected_factor_bits != input.expected_factor_bits {
         Some("expected-factor")
-    } else if base.named_nodes != input.named_nodes {
-        Some("named-topology-rest-orientation")
-    } else if base.source_nodes != input.source_nodes {
+    } else if !same_named_topology(&base.named_nodes, &input.named_nodes) {
+        Some("named-topology")
+    } else if !same_named_rest(&base.named_nodes, &input.named_nodes, &tolerance) {
+        Some("named-rest-basis")
+    } else if !same_named_orientations(&base.named_nodes, &input.named_nodes, &tolerance) {
+        Some("named-orientation")
+    } else if !same_source_layout(&base.source_nodes, &input.source_nodes) {
         Some("source-helper-layout")
+    } else if !same_source_rest(&base.source_nodes, &input.source_nodes, &tolerance) {
+        Some("source-helper-rest-basis")
     } else {
         None
     };
     mismatch.map_or(Ok(()), |reason| {
         Err(AssemblyScaleCompatibilityError { reason })
     })
+}
+
+fn same_named_topology(base: &[AssemblyScaleNamedNode], input: &[AssemblyScaleNamedNode]) -> bool {
+    base.len() == input.len()
+        && base
+            .iter()
+            .zip(input)
+            .all(|(base, input)| base.name == input.name && base.parent == input.parent)
+}
+
+fn same_named_rest(
+    base: &[AssemblyScaleNamedNode],
+    input: &[AssemblyScaleNamedNode],
+    tolerance: &ScaleTolerancePolicy,
+) -> bool {
+    base.iter().zip(input).all(|(base, input)| {
+        close_f32_bits(&base.translation_bits, &input.translation_bits, tolerance)
+            && close_f32_bits(&base.scale_bits, &input.scale_bits, tolerance)
+    })
+}
+
+fn same_named_orientations(
+    base: &[AssemblyScaleNamedNode],
+    input: &[AssemblyScaleNamedNode],
+    tolerance: &ScaleTolerancePolicy,
+) -> bool {
+    base.iter()
+        .zip(input)
+        .all(|(base, input)| same_quaternion(&base.rotation_bits, &input.rotation_bits, tolerance))
+}
+
+fn same_source_layout(base: &[AssemblyScaleSourceNode], input: &[AssemblyScaleSourceNode]) -> bool {
+    base.len() == input.len()
+        && base.iter().zip(input).all(|(base, input)| {
+            base.source_node_index == input.source_node_index
+                && base.parent_source_node_index == input.parent_source_node_index
+                && base.name == input.name
+                && base.role == input.role
+                && std::mem::discriminant(&base.local_rest)
+                    == std::mem::discriminant(&input.local_rest)
+        })
+}
+
+fn same_source_rest(
+    base: &[AssemblyScaleSourceNode],
+    input: &[AssemblyScaleSourceNode],
+    tolerance: &ScaleTolerancePolicy,
+) -> bool {
+    base.iter().zip(input).all(
+        |(base, input)| match (&base.local_rest, &input.local_rest) {
+            (
+                AssemblyScaleSourceRest::Trs {
+                    translation_bits: base_translation,
+                    rotation_bits: base_rotation,
+                    scale_bits: base_scale,
+                },
+                AssemblyScaleSourceRest::Trs {
+                    translation_bits: input_translation,
+                    rotation_bits: input_rotation,
+                    scale_bits: input_scale,
+                },
+            ) => {
+                close_f32_bits(base_translation, input_translation, tolerance)
+                    && close_f32_bits(base_scale, input_scale, tolerance)
+                    && same_quaternion(base_rotation, input_rotation, tolerance)
+            }
+            (
+                AssemblyScaleSourceRest::Matrix {
+                    matrix_bits: base_matrix,
+                },
+                AssemblyScaleSourceRest::Matrix {
+                    matrix_bits: input_matrix,
+                },
+            ) => close_f32_bits(base_matrix, input_matrix, tolerance),
+            _ => false,
+        },
+    )
+}
+
+fn close_f32_bits<const N: usize>(
+    base: &[u32; N],
+    input: &[u32; N],
+    tolerance: &ScaleTolerancePolicy,
+) -> bool {
+    base.iter().zip(input).all(|(&base, &input)| {
+        close_f64(
+            f32::from_bits(base) as f64,
+            f32::from_bits(input) as f64,
+            tolerance,
+        )
+    })
+}
+
+fn close_f64(base: f64, input: f64, tolerance: &ScaleTolerancePolicy) -> bool {
+    base.is_finite()
+        && input.is_finite()
+        && (base - input).abs()
+            <= tolerance.scalar_absolute + tolerance.scalar_relative * base.abs().max(input.abs())
+}
+
+fn same_quaternion(base: &[u32; 4], input: &[u32; 4], tolerance: &ScaleTolerancePolicy) -> bool {
+    let base = base.map(|bits| f32::from_bits(bits) as f64);
+    let input = input.map(|bits| f32::from_bits(bits) as f64);
+    if !base
+        .iter()
+        .chain(input.iter())
+        .all(|value| value.is_finite())
+    {
+        return false;
+    }
+    let base_norm = base.iter().map(|value| value * value).sum::<f64>().sqrt();
+    let input_norm = input.iter().map(|value| value * value).sum::<f64>().sqrt();
+    if base_norm == 0.0 || input_norm == 0.0 {
+        return false;
+    }
+    let dot = base
+        .iter()
+        .zip(input)
+        .map(|(base, input)| base * input)
+        .sum::<f64>()
+        / (base_norm * input_norm);
+    2.0 * dot.abs().clamp(-1.0, 1.0).acos() <= tolerance.rotation_residual_radians
 }
