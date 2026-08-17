@@ -10,7 +10,7 @@ use crate::profile::{ResolvedRoles, Role};
 use crate::sample::{PoseGrid, default_frame_count, sample_clip, sample_clip_at_times};
 #[cfg(test)]
 use crate::sample::{TrackSample, sample_track};
-use glam::{Quat, Vec3};
+use glam::{DQuat, DVec3, Quat, Vec3};
 use std::collections::BTreeSet;
 use std::fmt;
 use thiserror::Error;
@@ -1388,14 +1388,11 @@ fn verify_in_place_gait_trajectory(
         // available witness; the fixed priority makes exact ties deterministic.
         // Retaining that axis for every later sample prevents a per-sample
         // fallback from switching witnesses and hiding accumulated yaw.
-        let Some(normalized) = normalized_gait_rotation(rotation) else {
-            return Err(format!(
-                "cannot gait-anchor clip {:?} under the in-place policy: selected {role} bone \
-                 {:?} (index {bone}) has non-finite trajectory evidence at sample {frame}; \
-                 {GAIT_TRAJECTORY_ALTERNATIVES}",
-                clip.name, bone_name
-            ));
-        };
+        // The preceding finite/nonzero guard makes normalization total. Use
+        // glam's f64 quaternion/vector path so every candidate axis shares one
+        // well-tested rotation implementation rather than three hand-derived
+        // matrix-column formulas.
+        let normalized = rotation.as_dquat().normalize();
         let axis = *heading_axis.get_or_insert_with(|| select_gait_heading_axis(normalized));
         let (heading_x, heading_z) = gait_heading_horizontal(normalized, axis);
         let horizontal_length = heading_x.hypot(heading_z);
@@ -1474,31 +1471,21 @@ impl GaitHeadingAxis {
     }
 }
 
-/// Normalize one already shape-validated model rotation in binary64 so the
-/// heading calculation does not accumulate binary32 trigonometric error.
-fn normalized_gait_rotation(rotation: glam::Quat) -> Option<[f64; 4]> {
-    let [x, y, z, w] = rotation.to_array().map(f64::from);
-    let norm = (x * x + y * y + z * z + w * w).sqrt();
-    if !norm.is_finite() || norm == 0.0 {
-        return None;
-    }
-    Some([x / norm, y / norm, z / norm, w / norm])
-}
-
 /// Model-space horizontal `(x, z)` projection of one local unit basis axis.
-fn gait_heading_horizontal(rotation: [f64; 4], axis: GaitHeadingAxis) -> (f64, f64) {
-    let [x, y, z, w] = rotation;
-    match axis {
-        GaitHeadingAxis::Z => (2.0 * (x * z + w * y), 1.0 - 2.0 * (x * x + y * y)),
-        GaitHeadingAxis::Y => (2.0 * (x * y - w * z), 2.0 * (y * z + w * x)),
-        GaitHeadingAxis::X => (1.0 - 2.0 * (y * y + z * z), 2.0 * (x * z - w * y)),
-    }
+fn gait_heading_horizontal(rotation: DQuat, axis: GaitHeadingAxis) -> (f64, f64) {
+    let local_axis = match axis {
+        GaitHeadingAxis::Z => DVec3::Z,
+        GaitHeadingAxis::Y => DVec3::Y,
+        GaitHeadingAxis::X => DVec3::X,
+    };
+    let heading = rotation.mul_vec3(local_axis);
+    (heading.x, heading.z)
 }
 
 /// Select the best-conditioned local heading witness at sample zero. Exact
 /// ties retain the declared `+Z`, `+Y`, `+X` priority because replacement is
 /// strict rather than `>=`.
-fn select_gait_heading_axis(rotation: [f64; 4]) -> GaitHeadingAxis {
+fn select_gait_heading_axis(rotation: DQuat) -> GaitHeadingAxis {
     let mut selected = GaitHeadingAxis::Z;
     let (x, z) = gait_heading_horizontal(rotation, selected);
     let mut best_length = x.hypot(z);
