@@ -14,6 +14,8 @@ import tempfile
 import unittest
 from pathlib import Path, PurePosixPath
 
+import yaml
+
 import evaluation_contract_v1 as contract
 import inventory_pack
 import validate_evaluation_manifest as manifest_validator
@@ -3079,14 +3081,22 @@ class RegenerationContractTests(unittest.TestCase):
         canonical = (adapter_path.parent / destinations[0]).resolve()
         self.assertEqual(canonical, (self.skill / "SKILL.md").resolve())
         self.assertTrue(canonical.is_file())
+        metadata = yaml.safe_load(self.read("agents/openai.yaml"))
         self.assertEqual(
-            self.read("agents/openai.yaml"),
-            'interface:\n'
-            '  display_name: "Evaluate Animation Packs"\n'
-            '  short_description: "Assess game-engine animation pack readiness"\n'
-            '  default_prompt: "Use $evaluate-animation-packs to assess this '
-            'animation pack for game-engine use and write the standard concise '
-            'technical report plus evidence appendix."\n',
+            metadata,
+            {
+                "interface": {
+                    "display_name": "Evaluate Animation Packs",
+                    "short_description": (
+                        "Assess game-engine animation pack readiness"
+                    ),
+                    "default_prompt": (
+                        "Use $evaluate-animation-packs to assess this animation "
+                        "pack for game-engine use and write the standard concise "
+                        "technical report plus evidence appendix."
+                    ),
+                }
+            },
         )
 
 

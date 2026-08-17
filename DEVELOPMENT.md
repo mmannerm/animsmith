@@ -20,6 +20,13 @@ $ just install-rust-tools
 That installs `sccache`, `cargo-deny`, `typos-cli`, and `cargo-llvm-cov`
 if they are missing. Cargo still works with stock defaults.
 
+The animation-pack skill gate also uses Python 3 and PyYAML 6.x to validate
+skill metadata semantically:
+
+```console
+$ python3 -m pip install "PyYAML>=6,<7"
+```
+
 ## sccache
 
 Local `sccache` is optional. To configure a user-level Cargo
