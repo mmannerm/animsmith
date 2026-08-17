@@ -960,15 +960,15 @@ pub enum ProofResidualKind {
     SkinMatrix,
     /// Skinned mesh bounds residual.
     Bounds,
-    /// Stored inverse-bind residual for a skin slot *outside* the affected
+    /// Effective inverse-bind residual for a skin slot *outside* the affected
     /// closure — a skin neither operation touches, whose binds must therefore
     /// come through unchanged.
     ///
     /// Slots inside the closure are covered, more strongly, by
     /// [`Self::SkinMatrix`]: that obligation compares the composed `W * B`,
     /// which is what actually deforms a vertex. Outside the closure there is
-    /// no rebase to compose against, so the stored arrays are compared
-    /// directly.
+    /// no rebase to compose against, so each slot is compared through the
+    /// model's inverse-bind fallback chain.
     UnaffectedInverseBind,
     /// The factor [`prove_scale`] re-derived from the documents it was given.
     /// Only ever reported as [`ScaleError::MissingProofEvidence`]: it names a

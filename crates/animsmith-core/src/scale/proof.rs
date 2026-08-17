@@ -12,7 +12,7 @@ use super::planning::{check_factor_narrows, validate_plan_document_inventory};
 use super::reference::ScaleCandidate;
 use super::validation::{
     WorldBonePose, WorldPose, affected_skin_instance_indices, child_translation_rounding_magnitude,
-    instance_bind, local_rest_matrix, rest_world_pose, source_node_index_map, stored_instance_bind,
+    instance_bind, local_rest_matrix, rest_world_pose, source_node_index_map,
     validate_candidate_structure, validate_scale_input,
 };
 use super::{
@@ -978,10 +978,10 @@ pub struct ScaleProof {
     /// Maximum skinned mesh bounds residual, across rest and every sampled
     /// key/cubic-interior time. Its count is six per evaluated pose.
     pub bounds: ScaleProofResidual,
-    /// Maximum stored inverse-bind residual over every skin slot outside the
-    /// affected closure (see [`ProofResidualKind::UnaffectedInverseBind`]).
-    /// Its count is one per stored slot compared outside the closure and zero
-    /// unless the plan declares
+    /// Maximum effective inverse-bind residual over every skin slot outside
+    /// the affected closure (see [`ProofResidualKind::UnaffectedInverseBind`]).
+    /// Its count is one per resolved slot compared outside the closure and
+    /// zero unless the plan declares
     /// [`ScaleProofObligation::UnaffectedInverseBinds`].
     pub unaffected_inverse_bind: ScaleProofResidual,
     /// The operation's observed factor, re-derived by this proof from the
@@ -2445,24 +2445,19 @@ pub(super) fn observed_factor_from_source(
 /// through the public API, since [`ScaleCandidate::from_document`] and
 /// [`prove_scale`] do not require their two documents to be the same one.
 ///
-/// Three cases, kept distinct on purpose (issue #296):
+/// Three effective cases, kept distinct on purpose:
 ///
-/// - both sides store a bind for the slot — compared directly, as the
-///   arrays they are;
-/// - exactly one side stores one — [`ScaleError::MissingProofEvidence`]. A
-///   candidate that dropped an array (falling back to a different bind) or
-///   materialized one where the source had none has changed the skin, and
-///   there is nothing to compare it against;
-/// - neither side stores one — nothing to compare, and nothing is claimed.
+/// - both sides resolve a bind for the slot — compare those effective binds;
+/// - exactly one side resolves one — [`ScaleError::MissingProofEvidence`];
+/// - neither side resolves one — nothing to compare, and nothing is claimed.
 ///
-/// That third case is what makes this fail-*closed* rather than
-/// fail-*everything*. Resolving both sides through [`instance_bind`] instead
-/// would have been the obvious implementation and would newly reject a
-/// document carrying an unrelated skin with no bind evidence at all
-/// (`MissingInverseBind`) — a document the operation genuinely does not
-/// touch. So the resolution here stops at what each document *stores*
-/// ([`stored_instance_bind`]) and reports the evidence-free slot as out of
-/// scope rather than as proven.
+/// The third case keeps a genuinely evidence-free unrelated skin out of scope
+/// rather than refusing a document the operation does not touch. It applies
+/// only when both [`instance_bind`] calls return
+/// [`ScaleError::MissingInverseBind`]. A complete attached source skin whose
+/// accessor status is `Absent` instead resolves the format-defined identity,
+/// so explicit and defaulted identity representations are compared as the
+/// same effective bind.
 ///
 /// Scope, stated exactly: this compares the bind each side resolves *for a
 /// slot*, in the module's own precedence order — the instance array first,
@@ -2480,40 +2475,6 @@ pub(super) fn observed_factor_from_source(
 /// slots. Holding such an instance to "binds unchanged" as well rejects this
 /// module's own output — pinned by
 /// `a_partially_affected_skin_stays_with_the_skin_obligation_that_owns_it`.
-///
-/// # Known trap: a semantics-preserving representation change is refused
-///
-/// The one-stored-side rule is stated over *stored* evidence, and there is a
-/// case where the two sides store different things and mean the same thing.
-/// A complete-coverage source skin whose
-/// [`crate::model::SourceSkinAsset::inverse_bind_accessor`] is
-/// [`crate::model::SourceInverseBindAccessorStatus::Absent`] licenses the format-defined
-/// identity default, so [`instance_bind`] resolves a slot with no stored
-/// evidence to [`Mat4::IDENTITY`]. A candidate that materializes that default
-/// as an explicit `[IDENTITY]` array has changed nothing about the effective
-/// bind — and is exactly what the reference rest/bind writer does for an
-/// *affected* instance, deliberately — yet is refused here as
-/// `MissingProofEvidence { source_slot_bind_missing }`, and the converse as
-/// `candidate_slot_bind_missing`.
-///
-/// This is not reachable through the shipped pipeline: the reference
-/// rest/bind writer materializes an array only for an instance with an
-/// affected joint, and this obligation skips those. It is a trap for a future
-/// rest/bind frontend that normalizes bind representation on the way out.
-///
-/// It is left refusing rather than relaxed, for two reasons. First, the
-/// refusal is the behaviour DESIGN.md §D.6 now states outright ("a slot
-/// exactly one side records is a rewritten skin and is refused"), so
-/// admitting the representation change is a contract amendment rather than a
-/// bug fix. Second, the narrow patch — resolving through [`instance_bind`]
-/// only in the one-sided rows — leaves the three rows incoherent, because the
-/// neither-stored row would then be the only one that does *not* consult the
-/// format default it is entirely about. The coherent alternative is a
-/// differently-shaped rule: resolve both sides through [`instance_bind`] and
-/// treat [`ScaleError::MissingInverseBind`] on *both* sides as the
-/// out-of-scope case, which preserves the fail-closed property the third row
-/// exists for while comparing effective binds throughout. That is a design
-/// change and belongs in its own issue.
 ///
 /// Unconditional, like the per-element comparisons in
 /// [`check_candidate_values`], though for its own reason: it is a structural
@@ -2547,23 +2508,27 @@ fn check_unaffected_instance_binds(
             continue;
         }
         for (slot, &joint) in instance.skin_joints.iter().enumerate() {
-            let before = stored_instance_bind(source, instance, slot, joint)?;
-            let after = stored_instance_bind(candidate, candidate_instance, slot, joint)?;
+            let before = instance_bind(source, instance, slot, joint);
+            let after = instance_bind(candidate, candidate_instance, slot, joint);
             let (before, after) = match (before, after) {
-                (None, None) => continue,
-                (Some(_), None) => {
+                (Ok(before), Ok(after)) => (before, after),
+                (
+                    Err(ScaleError::MissingInverseBind { .. }),
+                    Err(ScaleError::MissingInverseBind { .. }),
+                ) => continue,
+                (Ok(_), Err(ScaleError::MissingInverseBind { .. })) => {
                     return Err(ScaleError::MissingProofEvidence {
                         kind: ProofResidualKind::UnaffectedInverseBind,
                         detail: "candidate_slot_bind_missing",
                     });
                 }
-                (None, Some(_)) => {
+                (Err(ScaleError::MissingInverseBind { .. }), Ok(_)) => {
                     return Err(ScaleError::MissingProofEvidence {
                         kind: ProofResidualKind::UnaffectedInverseBind,
                         detail: "source_slot_bind_missing",
                     });
                 }
-                (Some(before), Some(after)) => (before, after),
+                (Err(error), _) | (_, Err(error)) => return Err(error),
             };
             // Any slot reaching this function is outside a rest/bind closure
             // and therefore unchanged. A valid whole-document plan covers
@@ -2571,17 +2536,15 @@ fn check_unaffected_instance_binds(
             // stale replay before an added bone could reach this walk.
             let expected = before;
             let residual = matrix_residual(expected, after);
-            // Both sides are stored matrices, so the magnitude the
+            // Both sides are effective matrices, so the magnitude the
             // comparison rounded against *is* the magnitude being compared:
             // `scale_translation_only` scales a column, it does not cancel
             // two terms the way composing `W * B` does, and a rotation
             // cannot make one of these entries small while its error stays
             // large. The rounding term is passed for the same base the
             // relative band already uses, which is what makes it inert here
-            // — measured at `0` ulps across the whole rotation sweep,
-            // because a candidate this obligation reads was produced by the
-            // identical `f32` expression on the identical stored inputs. It
-            // is stated rather than omitted so the policy quantity means one
+            // — measured at `0` ulps across the whole rotation sweep. It is
+            // stated rather than omitted so the policy quantity means one
             // thing across every obligation that compares `f32` matrices.
             let magnitude = matrix_magnitude(expected).max(matrix_magnitude(after));
             check_and_track_f32_rounded(

@@ -961,13 +961,12 @@ below the `1e-5` the relative band already allows. The `2^-23` is
   that is entirely wrong, and the over-acceptance calibration fixture refuses
   exactly that case.
 
-  For an unaffected instance's binds the two operands are the stored matrix
+  For an unaffected instance's binds the two operands are the effective matrix
   and the declared factor, and scaling a column cancels nothing, so the term
-  is inert there: the residual is exactly zero on every path a candidate
-  reaches this comparison by, because both sides evaluate the same `f32`
-  expression on the same stored inputs. It is stated rather than omitted so
-  that the policy quantity means one thing across every obligation that
-  compares `f32` matrices.
+  is inert there: a correctly built candidate leaves the effective bind
+  unchanged and therefore has exactly zero residual. It is stated rather than
+  omitted so that the policy quantity means one thing across every obligation
+  that compares `f32` matrices.
 
 - **Rest translation** and **sampled trajectory** compare a node's world
   translation between the two documents, and take `magnitude` as that node's
@@ -1725,13 +1724,16 @@ within versioned tolerances:
   proof's normalized-skeleton witness remains independent of planning's
   raw-projection witness; a structurally stale plan still cannot omit a newly
   added bone, connector, or payload from every proof walk. The
-  unaffected-bind comparison is over stored evidence, in the resolution order
-  the model defines (per-instance array, then the bone convenience value). A
-  slot exactly one side records is a rewritten skin and is refused;
-  a slot neither side records is reported as out of the proof's scope, never
-  as proven — a document carrying an unrelated skin with no bind evidence at
-  all is not an operation this record touches, and must not be refused for
-  lacking evidence about it;
+  unaffected-bind comparison is over each slot's effective bind, in the
+  resolution order the model defines: per-instance array, then the bone
+  convenience value, then the format-defined identity only when a complete
+  attached source skin declares its inverse-bind accessor `Absent`. When both
+  sides resolve, the effective matrices are compared even if their stored
+  representations differ. Exactly one side resolving is missing proof
+  evidence; neither side resolving is reported as out of the proof's scope,
+  never as proven — a document carrying an unrelated skin with no bind
+  evidence and no licensed identity default is not an operation this record
+  touches, and must not be refused for lacking evidence about it;
 - unit composed scale for every affected node, measured per axis against the
   derived bound of §D.1; and
 - the analytically expected full world affine of a transform-only attached
