@@ -243,8 +243,12 @@ pub struct FbxScaleCapabilityInventory {
     pub non_triangle_face_count: usize,
     /// Number of polygon faces with more than three corners that were triangulated.
     pub triangulated_face_count: usize,
-    /// Number of point/line/empty faces omitted from triangle output.
+    /// Number of point/line faces omitted from triangle output.
     pub omitted_non_polygon_face_count: usize,
+    /// Number of source mesh definitions that declare no faces.
+    pub empty_mesh_definition_count: usize,
+    /// Stable identities of the zero-face source mesh definitions counted above.
+    pub empty_source_meshes: Vec<FbxSourceIdentity>,
     /// Number of unindexed corners submitted to exact-bit welding.
     pub pre_weld_vertex_count: usize,
     /// Number of normalized vertices retained after exact-bit welding.
@@ -338,6 +342,7 @@ pub fn capability_facts(inventory: &FbxScaleCapabilityInventory) -> ScaleCapabil
     facts.unsupported_vertex_attributes_present = inventory.unsupported_vertex_payload_mesh_count
         > 0
         || inventory.uninstanced_mesh_definition_count > 0
+        || inventory.empty_mesh_definition_count > 0
         || inventory.multiple_skin_deformer_mesh_count > 0
         || inventory.dual_quaternion_skin_count > 0
         || inventory.cache_deformer_count > 0
@@ -396,6 +401,14 @@ pub(crate) fn inventory(
         .flat_map(|mesh| mesh.faces.iter())
         .filter(|face| face.num_indices < 3)
         .count();
+    let empty_source_meshes = scene
+        .meshes
+        .iter()
+        .enumerate()
+        .filter(|(_, mesh)| mesh.faces.is_empty())
+        .map(|(index, mesh)| identity(index, &mesh.element))
+        .collect::<Vec<_>>();
+    let empty_mesh_definition_count = empty_source_meshes.len();
     let generated_normal_mesh_count = scene
         .meshes
         .iter()
@@ -516,7 +529,10 @@ pub(crate) fn inventory(
         },
         base_mesh_geometry: if scene.meshes.is_empty() {
             FbxScaleDomainStatus::Absent
-        } else if uninstanced_mesh_definition_count > 0 || omitted_non_polygon_face_count > 0 {
+        } else if uninstanced_mesh_definition_count > 0
+            || omitted_non_polygon_face_count > 0
+            || empty_mesh_definition_count > 0
+        {
             FbxScaleDomainStatus::Unsupported
         } else {
             FbxScaleDomainStatus::Rebuilt
@@ -551,6 +567,7 @@ pub(crate) fn inventory(
         other_vertex_and_source_data: if unsupported_vertex_payload_mesh_count > 0
             || uninstanced_mesh_definition_count > 0
             || omitted_non_polygon_face_count > 0
+            || empty_mesh_definition_count > 0
             || multiple_skin_deformer_mesh_count > 0
             || dual_quaternion_skin_count > 0
             || conversion.truncated_influence_vertex_count > 0
@@ -623,6 +640,8 @@ pub(crate) fn inventory(
         non_triangle_face_count,
         triangulated_face_count,
         omitted_non_polygon_face_count,
+        empty_mesh_definition_count,
+        empty_source_meshes,
         pre_weld_vertex_count: conversion.pre_weld_vertex_count,
         post_weld_vertex_count: conversion.post_weld_vertex_count,
         multiple_skin_deformer_mesh_count,

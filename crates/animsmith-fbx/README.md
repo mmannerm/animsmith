@@ -29,7 +29,8 @@ adjusted transforms, helper nodes and inherit-mode compensation, baked takes
 and discarded authored curve keys (including unsupported stackless curves),
 generated normals, cluster-derived bind
 matrices, influence truncation and renormalization, triangulation and exact-bit
-welding, omitted point/line/empty geometry, authored face/edge payloads,
+welding, omitted point/line faces and zero-face mesh definitions (with stable
+source identities), authored face/edge payloads,
 uninstanced mesh definitions,
 unsupported deformers/payloads, external resources, and stable ufbx source
 identities. Invalid or unrepresentable influences have an explicit rejected

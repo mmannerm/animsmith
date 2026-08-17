@@ -68,7 +68,8 @@ cargo run -p animsmith --example embed
    adjusted/compensated or derived target-
    coordinate values, not exact authored FBX members. The inventory explicitly
    records baked curves, rebuilt payloads, omitted authored face/edge members,
-   uninstanced or non-polygon-only mesh definitions, and unavailable raw span
+   uninstanced, non-polygon-only, or zero-face mesh definitions (including
+   stable identities for zero-face omissions), and unavailable raw span
    proof. Stackless source curves are present but unsupported. Retained mesh
    definitions and source-skin attachments share the stable ufbx mesh identity
    even when an earlier source definition emits no normalized primitive.

@@ -285,6 +285,8 @@ fn checked_in_fixtures_publish_complete_conservative_scale_inventories() {
         assert_eq!(inventory.non_triangle_face_count, 0);
         assert_eq!(inventory.triangulated_face_count, 0);
         assert_eq!(inventory.omitted_non_polygon_face_count, 0);
+        assert_eq!(inventory.empty_mesh_definition_count, 0);
+        assert!(inventory.empty_source_meshes.is_empty());
         assert_eq!(inventory.pre_weld_vertex_count, 3);
         assert_eq!(inventory.post_weld_vertex_count, 3);
         assert_eq!(inventory.multiple_skin_deformer_mesh_count, 0);
@@ -405,6 +407,9 @@ fn capability_projection_maps_each_core_refusal_domain_independently() {
         ("uninstanced-mesh", |inventory| {
             inventory.uninstanced_mesh_definition_count = 1
         }),
+        ("empty-mesh", |inventory| {
+            inventory.empty_mesh_definition_count = 1
+        }),
         ("extension", |inventory| {
             inventory.unsupported_source_element_count = 1
         }),
@@ -447,7 +452,9 @@ fn capability_projection_maps_each_core_refusal_domain_independently() {
             "extension" => facts.unregistered_extensions_present,
             "extras" => facts.extras_present,
             "non-triangle" => facts.non_triangle_primitives_present,
-            "uninstanced-mesh" | "vertex-payload" => facts.unsupported_vertex_attributes_present,
+            "uninstanced-mesh" | "empty-mesh" | "vertex-payload" => {
+                facts.unsupported_vertex_attributes_present
+            }
             "missing-influence" | "rejected-influence" => {
                 facts.unsupported_vertex_attributes_present
             }
@@ -493,7 +500,7 @@ fn polygon_triangulation_and_exact_welding_are_inventoried() {
 }
 
 #[test]
-fn point_and_line_faces_make_omitted_geometry_unsupported() {
+fn point_line_and_empty_meshes_make_omitted_geometry_unsupported() {
     let cases = [
         (
             "point",
@@ -509,6 +516,7 @@ fn point_and_line_faces_make_omitted_geometry_unsupported() {
             "Indexes: *2 { a: 0,1 }",
             "Weights: *2 { a: 1,1 }",
         ),
+        ("empty", "", "", "Indexes: *0 { a: }", "Weights: *0 { a: }"),
     ];
 
     for (label, vertices, polygon, indexes, weights) in cases {
@@ -524,10 +532,35 @@ fn point_and_line_faces_make_omitted_geometry_unsupported() {
 
         let loaded = animsmith_fbx::load_scale_source(&path).expect("omitted face fixture parses");
         assert_eq!(loaded.inventory().uninstanced_mesh_definition_count, 0);
-        assert_eq!(loaded.inventory().non_triangle_face_count, 1, "{label}");
+        let expected_face_count = usize::from(label != "empty");
+        assert_eq!(
+            loaded.inventory().non_triangle_face_count,
+            expected_face_count,
+            "{label}"
+        );
         assert_eq!(
             loaded.inventory().omitted_non_polygon_face_count,
-            1,
+            expected_face_count,
+            "{label}"
+        );
+        let expected_empty_count = usize::from(label == "empty");
+        assert_eq!(
+            loaded.inventory().empty_mesh_definition_count,
+            expected_empty_count,
+            "{label}"
+        );
+        assert_eq!(
+            loaded
+                .inventory()
+                .empty_source_meshes
+                .iter()
+                .map(|identity| (identity.source_index, identity.ufbx_typed_id))
+                .collect::<Vec<_>>(),
+            if label == "empty" {
+                vec![(0, 0)]
+            } else {
+                Vec::new()
+            },
             "{label}"
         );
         assert!(loaded.document().assets.meshes.is_empty(), "{label}");
@@ -542,8 +575,15 @@ fn point_and_line_faces_make_omitted_geometry_unsupported() {
             FbxScaleDomainStatus::Unsupported,
             "{label}"
         );
-        assert!(
-            animsmith_fbx::capability_facts(loaded.inventory()).non_triangle_primitives_present,
+        let facts = animsmith_fbx::capability_facts(loaded.inventory());
+        assert_eq!(
+            facts.non_triangle_primitives_present,
+            label != "empty",
+            "{label}"
+        );
+        assert_eq!(
+            facts.unsupported_vertex_attributes_present,
+            label == "empty",
             "{label}"
         );
     }

@@ -641,8 +641,10 @@ to *that* frame N. Determinism is the feature.
   successfully projected cluster binds count as bone-convenience overwrites.
   One unreadable cluster makes its ordered bind declaration
   atomically unreadable; finite prefixes are not retained under shifted slots.
-  Stackless authored curves and point/line/empty geometry are present-but-
-  unsupported rather than absent or rebuilt. Retained normalized meshes keep
+  Stackless authored curves, point/line faces, and attached zero-face mesh
+  definitions are present-but-unsupported rather than absent or rebuilt; the
+  zero-face definitions retain an exact count and stable source identity.
+  Retained normalized meshes keep
   their stable ufbx typed identity so source-skin attachment joins cannot shift
   when an earlier source mesh emits no primitive.
   Its core capability projection remains
