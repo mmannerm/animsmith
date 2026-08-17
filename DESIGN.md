@@ -195,7 +195,11 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   `TEXCOORD_0` or `WEIGHTS_0` accessor that omits `normalized: true`, or an
   animation sampler accessor whose declared element does not match its
   property-selected reader — is rejected
-  at load (operator error, exit 2; run glTF-Validator for the details).
+  at load. For `convert` and `assemble`, a rejection derived from readable
+  source bytes is an asset refusal (exit 1); an unreadable primary file or a
+  missing/unreadable declared external resource is still an operator error
+  (exit 2). Commands outside that producer boundary retain their historical
+  operator-error load policy. Run glTF-Validator for structural details.
   Recovering a non-forest graph would force an arbitrary parent choice or
   silently drop a cyclic subtree, so the loader rejects rather than repairs
   (decision recorded for #92). Likewise, substituting an empty position/index

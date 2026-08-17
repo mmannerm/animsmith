@@ -134,7 +134,7 @@ impl<T, E: ToString> Classify<T> for Result<T, E> {
 }
 
 #[derive(Serialize)]
-struct RefusalRecord {
+pub(crate) struct RefusalRecord {
     schema_version: u32,
     schema: &'static str,
     tool: ToolInfo,
@@ -148,6 +148,34 @@ fn serialize_refusal(record: &impl Serialize) -> Result<Vec<u8>, String> {
     serialize_record(record)
 }
 
+/// Injectable refusal presentation used by the real command dispatch.
+///
+/// Keeping serialization and delivery behind this seam lets tests force the
+/// otherwise-unreachable serde failure while exercising the exact
+/// [`emit_rejection`] function production calls. A serializer failure returns
+/// before either output method can run.
+pub(crate) trait RefusalDelivery {
+    fn serialize(&mut self, record: &RefusalRecord) -> Result<Vec<u8>, String>;
+    fn emit_json(&mut self, bytes: &[u8]);
+    fn emit_text(&mut self, text: &str);
+}
+
+pub(crate) struct ProcessRefusalDelivery;
+
+impl RefusalDelivery for ProcessRefusalDelivery {
+    fn serialize(&mut self, record: &RefusalRecord) -> Result<Vec<u8>, String> {
+        serialize_refusal(record)
+    }
+
+    fn emit_json(&mut self, bytes: &[u8]) {
+        emit(bytes);
+    }
+
+    fn emit_text(&mut self, text: &str) {
+        emit_error_text(text);
+    }
+}
+
 /// Present one already-established refusal without changing its exit code.
 ///
 /// Serialization is intentionally fallible and remains an operator error.
@@ -158,44 +186,26 @@ pub(crate) fn emit_rejection(
     format: Format,
     tool: ToolInfo,
     rejection: Rejection,
+    delivery: &mut impl RefusalDelivery,
 ) -> Result<ExitCode, String> {
     match format {
-        Format::Json => emit(&serialize_refusal(&RefusalRecord {
-            schema_version: REFUSAL_SCHEMA_VERSION,
-            schema: REFUSAL_SCHEMA_ID,
-            tool,
-            command,
-            outcome: "rejected",
-            result: None,
-            rejection,
-        })?),
-        Format::Text => emit_error_text(&crate::render::render_producer_rejected(
+        Format::Json => {
+            let bytes = delivery.serialize(&RefusalRecord {
+                schema_version: REFUSAL_SCHEMA_VERSION,
+                schema: REFUSAL_SCHEMA_ID,
+                tool,
+                command,
+                outcome: "rejected",
+                result: None,
+                rejection,
+            })?;
+            delivery.emit_json(&bytes);
+        }
+        Format::Text => delivery.emit_text(&crate::render::render_producer_rejected(
             command.label(),
             rejection.kind.label(),
             &rejection.detail,
         )),
     }
     Ok(ExitCode::from(EXIT_FINDINGS))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde::Serializer;
-
-    struct FalseRecord;
-
-    impl Serialize for FalseRecord {
-        fn serialize<S: Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
-            Err(serde::ser::Error::custom("refusal record is not truthful"))
-        }
-    }
-
-    #[test]
-    fn refusal_serialization_failure_remains_an_operator_error() {
-        let error = serialize_refusal(&FalseRecord).unwrap_err();
-        assert!(error.contains("cannot serialize JSON output"), "{error}");
-        // `emit_rejection` uses `?` on this exact seam, so no stdout write is
-        // attempted and command dispatch receives `Err(String)` -> exit 2.
-    }
 }

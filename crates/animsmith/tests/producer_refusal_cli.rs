@@ -29,6 +29,20 @@ fn into_closed_stdout(dir: &Path, args: &[&str], close_stderr: bool) -> Output {
     command.spawn().unwrap().wait_with_output().unwrap()
 }
 
+fn into_closed_stderr(dir: &Path, args: &[&str]) -> Output {
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    binary()
+        .current_dir(dir)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::from(writer))
+        .spawn()
+        .unwrap()
+        .wait_with_output()
+        .unwrap()
+}
+
 fn assert_schema(value: &Value) {
     let schema: Value = serde_json::from_str(REFUSAL_SCHEMA).expect("schema JSON");
     let validator = jsonschema::validator_for(&schema).expect("schema compiles");
@@ -64,12 +78,12 @@ fn write_assembly_inputs(dir: &Path) {
     std::fs::write(dir.join("inputs/motion.fbx"), RIGGED_TRIANGLE_FBX).unwrap();
 }
 
-fn assembly_recipe(take: &str) -> String {
+fn assembly_recipe_with_base(base_input: &str, take: &str) -> String {
     format!(
         "schema_version = 3\n\
          schema = \"urn:animsmith:schema:character-assembly-recipe:3\"\n\
          input_root = \"inputs\"\n\
-         base_input = \"base.fbx\"\n\
+         base_input = {base_input:?}\n\
          mesh_instances = [\"tri\"]\n\
          complete_tracks = true\n\
          canonicalize_skin = true\n\
@@ -84,6 +98,19 @@ fn assembly_recipe(take: &str) -> String {
          hold_frames = 3\n\
          strip_bones = [\"<fbx-root>\"]\n"
     )
+}
+
+fn assembly_recipe(take: &str) -> String {
+    assembly_recipe_with_base("base.fbx", take)
+}
+
+fn missing_external_buffer_gltf() -> &'static [u8] {
+    br#"{
+      "asset": {"version": "2.0"},
+      "buffers": [{"uri": "missing.bin", "byteLength": 1}],
+      "scenes": [{"nodes": []}],
+      "scene": 0
+    }"#
 }
 
 fn assemble(dir: &Path, format: &str) -> Output {
@@ -183,6 +210,134 @@ fn json_consumers_distinguish_asset_refusals_from_operator_errors_without_prose(
     assert_eq!(assembly_operator.status.code(), Some(2));
     assert!(assembly_operator.stdout.is_empty());
     assert!(!assembly_operator.stderr.is_empty());
+}
+
+#[test]
+fn typed_load_errors_distinguish_external_io_from_malformed_asset_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    write_assembly_inputs(dir.path());
+    std::fs::write(
+        dir.path().join("external.gltf"),
+        missing_external_buffer_gltf(),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("inputs/external.gltf"),
+        missing_external_buffer_gltf(),
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("malformed.gltf"), b"not glTF").unwrap();
+    std::fs::write(dir.path().join("inputs/malformed.gltf"), b"not glTF").unwrap();
+
+    for format in ["json", "text"] {
+        let convert_external = binary()
+            .current_dir(dir.path())
+            .args([
+                "convert",
+                "external.gltf",
+                "-o",
+                "converted.glb",
+                "--format",
+                format,
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(convert_external.status.code(), Some(2));
+        assert!(convert_external.stdout.is_empty());
+        assert!(!convert_external.stderr.is_empty());
+
+        std::fs::write(
+            dir.path().join("recipe.toml"),
+            assembly_recipe_with_base("external.gltf", "missing"),
+        )
+        .unwrap();
+        let assembly_external = assemble(dir.path(), format);
+        assert_eq!(assembly_external.status.code(), Some(2));
+        assert!(assembly_external.stdout.is_empty());
+        assert!(!assembly_external.stderr.is_empty());
+
+        let convert_malformed = binary()
+            .current_dir(dir.path())
+            .args([
+                "convert",
+                "malformed.gltf",
+                "-o",
+                "converted.glb",
+                "--format",
+                format,
+            ])
+            .output()
+            .unwrap();
+        if format == "json" {
+            let record = assert_refusal(&convert_malformed, "convert", "unreadable-source");
+            assert_eq!(record["rejection"]["stage"], "load");
+        } else {
+            assert_eq!(convert_malformed.status.code(), Some(1));
+            assert!(convert_malformed.stdout.is_empty());
+            let stderr = String::from_utf8(convert_malformed.stderr).unwrap();
+            assert!(stderr.contains("convert refused"), "{stderr}");
+            assert!(stderr.contains("[unreadable-source]"), "{stderr}");
+        }
+
+        std::fs::write(
+            dir.path().join("recipe.toml"),
+            assembly_recipe_with_base("malformed.gltf", "missing"),
+        )
+        .unwrap();
+        let assembly_malformed = assemble(dir.path(), format);
+        if format == "json" {
+            let record = assert_refusal(&assembly_malformed, "assemble", "unreadable-source");
+            assert_eq!(record["rejection"]["stage"], "load");
+        } else {
+            assert_eq!(assembly_malformed.status.code(), Some(1));
+            assert!(assembly_malformed.stdout.is_empty());
+            let stderr = String::from_utf8(assembly_malformed.stderr).unwrap();
+            assert!(stderr.contains("assemble refused"), "{stderr}");
+            assert!(stderr.contains("[unreadable-source]"), "{stderr}");
+        }
+    }
+
+    assert!(!dir.path().join("converted.glb").exists());
+    assert!(!dir.path().join("character.glb").exists());
+    assert!(!dir.path().join("character.json").exists());
+}
+
+#[test]
+fn post_parse_operator_errors_survive_a_truly_broken_stderr() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("recipe.toml"), "not = [valid").unwrap();
+
+    for format in ["json", "text"] {
+        let convert = into_closed_stderr(
+            dir.path(),
+            &[
+                "convert",
+                "missing.glb",
+                "-o",
+                "output.glb",
+                "--format",
+                format,
+            ],
+        );
+        assert_eq!(convert.status.code(), Some(2));
+        assert!(convert.stdout.is_empty());
+
+        let assembly = into_closed_stderr(
+            dir.path(),
+            &[
+                "assemble",
+                "recipe.toml",
+                "-o",
+                "character.glb",
+                "--evidence",
+                "character.json",
+                "--format",
+                format,
+            ],
+        );
+        assert_eq!(assembly.status.code(), Some(2));
+        assert!(assembly.stdout.is_empty());
+    }
 }
 
 #[test]

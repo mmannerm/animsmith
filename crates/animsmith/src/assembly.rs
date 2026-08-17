@@ -491,10 +491,9 @@ fn input_evidence(
 }
 
 fn load_input(path: &Path) -> Result<Document, crate::producer::Failure> {
-    use crate::producer::{Failure, Kind, Stage};
+    use crate::producer::Failure;
     let (format, bytes) = crate::capture_input(path).map_err(Failure::operator)?;
-    crate::load_bytes(path, format, &bytes)
-        .map_err(|error| Failure::refusal(Stage::Load, Kind::UnreadableSource, error))
+    crate::load_bytes_typed(path, format, &bytes).map_err(crate::producer_load_failure)
 }
 
 fn rest_bind_operation(recipe: AssemblyRestBindScaleRecipe) -> ScaleOperation {
@@ -656,11 +655,13 @@ pub(crate) fn run(request: &Request, tool: ToolInfo) -> Result<ExitCode, String>
     ) {
         Ok(crate::producer::Outcome::Published(published)) => published,
         Ok(crate::producer::Outcome::Rejected(rejection)) => {
+            let mut delivery = crate::producer::ProcessRefusalDelivery;
             return crate::producer::emit_rejection(
                 crate::producer::Command::Assemble,
                 request.format,
                 tool,
                 rejection,
+                &mut delivery,
             );
         }
         Err(message) => return Err(message),

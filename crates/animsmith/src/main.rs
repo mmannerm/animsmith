@@ -419,11 +419,13 @@ fn produce_conversion_inner(
 ) -> Result<Converted, producer::Failure> {
     use producer::{Failure, Kind, Stage};
 
-    // Extension and primary-file I/O are invocation/filesystem facts. Once
-    // the bytes are captured, loader rejection is a fact about the asset.
+    // Extension and primary-file I/O are invocation/filesystem facts. Keep
+    // the typed loader error after capturing the primary bytes: parse and
+    // structure defects are asset facts, while external-resource I/O remains
+    // an operator failure.
     let (input_format, input_bytes) = capture_input(request.input).map_err(Failure::operator)?;
-    let mut doc = load_bytes(request.input, input_format, &input_bytes)
-        .map_err(|error| Failure::refusal(Stage::Load, Kind::UnreadableSource, error))?;
+    let mut doc = load_bytes_typed(request.input, input_format, &input_bytes)
+        .map_err(producer_load_failure)?;
     if request.animation_only {
         doc.assets = animsmith_core::model::SceneAssets::default();
     }
@@ -472,11 +474,13 @@ fn run_conversion(request: &ConversionRequest<'_>, tool: ToolInfo) -> Result<Exi
     let converted = match produce_conversion(request) {
         Ok(producer::Outcome::Published(converted)) => converted,
         Ok(producer::Outcome::Rejected(rejection)) => {
+            let mut delivery = producer::ProcessRefusalDelivery;
             return producer::emit_rejection(
                 producer::Command::Convert,
                 request.format,
                 tool,
                 rejection,
+                &mut delivery,
             );
         }
         Err(message) => return Err(message),
@@ -590,10 +594,19 @@ fn main() -> ExitCode {
         }
         Err(error) => error.exit(),
     };
-    match run(cli) {
+    finish_run(run(cli))
+}
+
+fn finish_run(result: Result<ExitCode, String>) -> ExitCode {
+    finish_run_with(result, publish::emit_error_text)
+}
+
+fn finish_run_with(result: Result<ExitCode, String>, emit_error: impl FnOnce(&str)) -> ExitCode {
+    match result {
         Ok(code) => code,
         Err(message) => {
-            eprint!("{}", render::render_operator_error(&message));
+            let rendered = render::render_operator_error(&message);
+            emit_error(&rendered);
             ExitCode::from(EXIT_OPERATOR)
         }
     }
@@ -1215,6 +1228,45 @@ enum InputFormat {
     Fbx,
 }
 
+#[cfg(feature = "fbx")]
+enum InputLoadError {
+    Gltf(animsmith_gltf::LoadError),
+    Fbx(animsmith_fbx::LoadError),
+}
+
+#[cfg(feature = "fbx")]
+fn producer_load_failure(error: InputLoadError) -> producer::Failure {
+    use animsmith_gltf::LoadError as GltfError;
+    use producer::{Failure, Kind, Stage};
+
+    match error {
+        InputLoadError::Gltf(error) => match error {
+            GltfError::Io { .. } => Failure::operator(error),
+            GltfError::Gltf(_)
+            | GltfError::Buffer(_)
+            | GltfError::Malformed(_)
+            | GltfError::Topology(_)
+            | GltfError::PrimitiveEncoding { .. }
+            | GltfError::PrimitiveAccessorLayout { .. }
+            | GltfError::AnimationAccessorLayout { .. }
+            | GltfError::AnimationEncoding { .. } => {
+                Failure::refusal(Stage::Load, Kind::UnreadableSource, error)
+            }
+            // `LoadError` is non-exhaustive. A new typed loader defect is an
+            // asset fact until its provenance receives an explicit policy;
+            // it must never silently become an operator error through prose.
+            _ => Failure::refusal(Stage::Load, Kind::UnreadableSource, error),
+        },
+        InputLoadError::Fbx(error) => match error {
+            animsmith_fbx::LoadError::Path(_) => Failure::operator(error),
+            animsmith_fbx::LoadError::Fbx(_) | animsmith_fbx::LoadError::Bake { .. } => {
+                Failure::refusal(Stage::Load, Kind::UnreadableSource, error)
+            }
+            _ => Failure::refusal(Stage::Load, Kind::UnreadableSource, error),
+        },
+    }
+}
+
 fn input_format(path: &Path) -> Result<InputFormat, String> {
     let ext = path
         .extension()
@@ -1251,14 +1303,31 @@ fn capture_input(path: &Path) -> Result<(InputFormat, Vec<u8>), String> {
     Ok((format, bytes))
 }
 
+#[cfg(feature = "fbx")]
+fn load_bytes_typed(
+    path: &Path,
+    format: InputFormat,
+    bytes: &[u8],
+) -> Result<Document, InputLoadError> {
+    match format {
+        InputFormat::Gltf => animsmith_gltf::load_bytes(path, bytes).map_err(InputLoadError::Gltf),
+        InputFormat::Fbx => animsmith_fbx::load_bytes(path, bytes).map_err(InputLoadError::Fbx),
+    }
+}
+
+#[cfg(feature = "fbx")]
+fn load_bytes(path: &Path, format: InputFormat, bytes: &[u8]) -> Result<Document, String> {
+    load_bytes_typed(path, format, bytes).map_err(|error| match error {
+        InputLoadError::Gltf(error) => error.to_string(),
+        InputLoadError::Fbx(error) => error.to_string(),
+    })
+}
+
+#[cfg(not(feature = "fbx"))]
 fn load_bytes(path: &Path, format: InputFormat, bytes: &[u8]) -> Result<Document, String> {
     match format {
         InputFormat::Gltf => {
             animsmith_gltf::load_bytes(path, bytes).map_err(|error| error.to_string())
-        }
-        #[cfg(feature = "fbx")]
-        InputFormat::Fbx => {
-            animsmith_fbx::load_bytes(path, bytes).map_err(|error| error.to_string())
         }
     }
 }
@@ -1281,6 +1350,60 @@ fn load_with_identity(path: &Path) -> Result<(Document, InputIdentity), String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "fbx")]
+    struct SerializationFailureDelivery {
+        stdout: Vec<u8>,
+        text_stderr: Vec<u8>,
+    }
+
+    #[cfg(feature = "fbx")]
+    impl producer::RefusalDelivery for SerializationFailureDelivery {
+        fn serialize(&mut self, _record: &producer::RefusalRecord) -> Result<Vec<u8>, String> {
+            Err("cannot serialize JSON output: injected refusal failure".into())
+        }
+
+        fn emit_json(&mut self, bytes: &[u8]) {
+            self.stdout.extend_from_slice(bytes);
+        }
+
+        fn emit_text(&mut self, text: &str) {
+            self.text_stderr.extend_from_slice(text.as_bytes());
+        }
+    }
+
+    #[cfg(feature = "fbx")]
+    #[test]
+    fn refusal_serialization_failure_dispatches_as_operator_without_stdout() {
+        let mut delivery = SerializationFailureDelivery {
+            stdout: Vec::new(),
+            text_stderr: Vec::new(),
+        };
+        let result = producer::emit_rejection(
+            producer::Command::Convert,
+            Format::Json,
+            current_tool(),
+            producer::Rejection::new(
+                producer::Stage::Load,
+                producer::Kind::UnreadableSource,
+                "malformed source bytes",
+            ),
+            &mut delivery,
+        );
+        let mut operator_stderr = String::new();
+        let code = finish_run_with(result, |rendered| operator_stderr.push_str(rendered));
+
+        assert_eq!(code, ExitCode::from(EXIT_OPERATOR));
+        assert!(delivery.stdout.is_empty(), "serialization wrote stdout");
+        assert!(
+            delivery.text_stderr.is_empty(),
+            "JSON refusal used the text refusal channel"
+        );
+        assert!(
+            operator_stderr.contains("cannot serialize JSON output"),
+            "{operator_stderr}"
+        );
+    }
 
     #[test]
     fn diff_owns_remediation_for_invalid_measurements() {
