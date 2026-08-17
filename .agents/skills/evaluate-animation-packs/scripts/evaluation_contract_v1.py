@@ -88,3 +88,13 @@ COVERAGE_STATES = {
     "unsupported-input",
     "unavailable-evidence",
 }
+
+PRIMARY_OWNERS = {
+    "engine-config",
+    "animsmith-current-safe",
+    "animsmith-current-declared",
+    "animsmith-future-candidate",
+    "artist-author",
+    "vendor-license",
+    "unknown",
+}

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from evaluation_contract_v1 import (
     PIPELINE_STAGE_ROWS,
+    PRIMARY_OWNERS,
     PRIMARY_ROLES,
     PROFILE_ROWS,
     SCHEMA,
@@ -120,6 +121,22 @@ def validate(text: str) -> list[str]:
 
     if MANIFEST_SCHEMA not in text:
         errors.append(f"report must identify evaluation manifest schema: {MANIFEST_SCHEMA}")
+
+    issue_start = heading_position(text, "## Issue and remediation register")
+    issue_end = heading_position(text, "## Acquisition and adoption guidance")
+    if 0 <= issue_start < issue_end:
+        issue_section = text[issue_start:issue_end]
+        for line in issue_section.splitlines():
+            if not line.startswith("|"):
+                continue
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            if len(cells) != 7 or cells[0] in {"ID", "---"}:
+                continue
+            owner = cells[3].strip("`")
+            if owner not in PRIMARY_OWNERS:
+                errors.append(
+                    f"issue {cells[0]} has unknown or composite primary owner: {owner!r}"
+                )
 
     placeholders = sorted(set(PLACEHOLDER.findall(text)))
     if placeholders:

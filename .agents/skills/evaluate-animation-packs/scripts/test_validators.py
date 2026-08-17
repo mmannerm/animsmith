@@ -102,6 +102,15 @@ V1_COVERAGE_STATES = {
     "unsupported-input",
     "unavailable-evidence",
 }
+V1_PRIMARY_OWNERS = {
+    "engine-config",
+    "animsmith-current-safe",
+    "animsmith-current-declared",
+    "animsmith-future-candidate",
+    "artist-author",
+    "vendor-license",
+    "unknown",
+}
 
 
 def valid_manifest() -> dict[str, object]:
@@ -267,7 +276,9 @@ Fixture result.
 Fixture result.
 
 ## Issue and remediation register
-Fixture result.
+| ID | Severity | Problem and impact | Primary owner | Current workaround | Future AnimSmith potential | Confidence/status |
+|---|---|---|---|---|---|---|
+| FIX-001 | Moderate | Fixture problem. | engine-config | Fixture workaround. | Not applicable. | High. |
 
 ## Acquisition and adoption guidance
 Fixture result.
@@ -355,6 +366,7 @@ class ManifestValidatorTests(unittest.TestCase):
         self.assertEqual(manifest_validator.ACTIVATION_BASES, V1_ACTIVATION_BASES)
         self.assertEqual(manifest_validator.PIPELINE_STAGES, V1_PIPELINE_STAGES)
         self.assertEqual(manifest_validator.COVERAGE_STATES, V1_COVERAGE_STATES)
+        self.assertEqual(report_validator.PRIMARY_OWNERS, V1_PRIMARY_OWNERS)
 
     def test_report_validator_retains_public_v1_vocabulary(self) -> None:
         self.assertEqual(report_validator.MANIFEST_SCHEMA, V1_SCHEMA)
@@ -631,6 +643,20 @@ class ReportValidatorTests(unittest.TestCase):
         errors = report_validator.validate(report)
 
         self.assertIn("missing required heading: ## Sources", errors)
+
+    def test_rejects_composite_primary_issue_owner(self) -> None:
+        report = valid_report().replace(
+            "| engine-config | Fixture workaround. |",
+            "| vendor-license / artist-author | Fixture workaround. |",
+        )
+
+        errors = report_validator.validate(report)
+
+        self.assertIn(
+            "issue FIX-001 has unknown or composite primary owner: "
+            "'vendor-license / artist-author'",
+            errors,
+        )
 
     def test_all_published_pack_reports_conform(self) -> None:
         repository = Path(__file__).resolve().parents[4]
