@@ -325,7 +325,13 @@ uses one input as the authoritative skinned base, and exact-name remaps selected
 takes from other FBX or glTF inputs. It writes a GLB and assembly-evidence JSON
 as a rollback-safe publication pair. The command owns generic asset transforms;
 source extraction, project policy, and publication remain consumer concerns.
-The current recipe/evidence pair is v3. Set `prune_constant_tracks = true` to
+The current recipe/evidence pair is v4. Recipe v4 may include an optional
+`[rest_bind_scale]` block whose source skin index, source root node index, and
+expected factor are all required. The block is glTF/GLB-only and validates the
+base plus every clip's complete capability inventory and versioned skeleton
+basis before remapping any keys. It cannot be combined with
+`canonicalize_skin`, `ground_and_center`, or `remove_nodes`, because those
+operations change the proved basis. Set `prune_constant_tracks = true` to
 remove only tracks proven constant after all other transforms, including track
 completion. Because this is all-property pruning, it can remove
 completion-generated `(bone, property)` coverage whose completed value is
@@ -339,10 +345,11 @@ Root-level `remove_nodes` exact-names base nodes and removes their descendant
 closure after animation transforms; any surviving track, mesh-instance, or
 skin reference refuses the operation.
 It performs no material, texture, or mesh garbage collection. Recipe/evidence
-v1 and v2 remain immutable historical contracts.
+v1 through v3 remain immutable historical contracts; v3 rejects
+`rest_bind_scale` as unknown.
 The recipe identity is
-`urn:animsmith:schema:character-assembly-recipe:3`; see
-[`character-assembly-recipe-v3.schema.json`](schemas/character-assembly-recipe-v3.schema.json).
+`urn:animsmith:schema:character-assembly-recipe:4`; see
+[`character-assembly-recipe-v4.schema.json`](schemas/character-assembly-recipe-v4.schema.json).
 
 ## Static mesh transform bake
 
@@ -414,9 +421,9 @@ It records the requested options, counts from the written artifact, exact
 static-mesh transforms when requested, and recipe provenance when a material
 texture recipe is used. `text` is the default human-readable write summary.
 
-`assemble` writes evidence v3 to its required `--evidence` path, with immutable
-identity `urn:animsmith:schema:character-assembly-evidence:3`; see
-[`character-assembly-evidence-v3.schema.json`](schemas/character-assembly-evidence-v3.schema.json).
+`assemble` writes evidence v4 to its required `--evidence` path, with immutable
+identity `urn:animsmith:schema:character-assembly-evidence:4`; see
+[`character-assembly-evidence-v4.schema.json`](schemas/character-assembly-evidence-v4.schema.json).
 `assemble --format json` prints the same record to stdout — the identical bytes
 the evidence file receives, serialized once — in place of the default `text`
 publication summary. Every `assemble` failure still exits 2 with prose on

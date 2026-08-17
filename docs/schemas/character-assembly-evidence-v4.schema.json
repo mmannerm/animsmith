@@ -1,0 +1,1103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:animsmith:schema:character-assembly-evidence:4",
+  "title": "animsmith character assembly evidence v4",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "schema",
+    "tool",
+    "command",
+    "recipe",
+    "config",
+    "inputs",
+    "clips",
+    "transforms",
+    "artifact"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 4
+    },
+    "schema": {
+      "const": "urn:animsmith:schema:character-assembly-evidence:4"
+    },
+    "tool": {
+      "$ref": "#/$defs/tool"
+    },
+    "command": {
+      "const": "assemble"
+    },
+    "recipe": {
+      "$ref": "#/$defs/recipe"
+    },
+    "config": {
+      "$ref": "#/$defs/config"
+    },
+    "inputs": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "$ref": "#/$defs/input"
+      }
+    },
+    "clips": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/clip"
+      }
+    },
+    "transforms": {
+      "$ref": "#/$defs/transforms"
+    },
+    "material_texture_recipe": {
+      "type": "object"
+    },
+    "artifact": {
+      "$ref": "#/$defs/artifact"
+    },
+    "rest_bind_scale": {
+      "$ref": "#/$defs/rest_bind_scale"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "tool": {
+      "type": "object",
+      "required": [
+        "name",
+        "version",
+        "source"
+      ],
+      "properties": {
+        "name": {
+          "const": "animsmith"
+        },
+        "version": {
+          "type": "string"
+        },
+        "source": {
+          "type": "object",
+          "required": [
+            "revision",
+            "dirty"
+          ],
+          "properties": {
+            "revision": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9a-fA-F]{40}$"
+            },
+            "dirty": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "recipe": {
+      "type": "object",
+      "required": [
+        "path",
+        "sha256",
+        "effective"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "effective": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "config": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "source",
+            "path",
+            "sha256",
+            "bytes"
+          ],
+          "properties": {
+            "source": {
+              "const": "file"
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "bytes": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "source",
+            "path",
+            "sha256",
+            "bytes"
+          ],
+          "properties": {
+            "source": {
+              "const": "built-in-defaults"
+            },
+            "path": {
+              "type": "null"
+            },
+            "sha256": {
+              "type": "null"
+            },
+            "bytes": {
+              "type": "null"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "input": {
+      "type": "object",
+      "required": [
+        "role",
+        "declared_path",
+        "sha256",
+        "bytes"
+      ],
+      "properties": {
+        "role": {
+          "enum": [
+            "base",
+            "clip",
+            "material_texture_recipe",
+            "texture"
+          ]
+        },
+        "declared_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "clip": {
+      "type": "object",
+      "required": [
+        "name",
+        "declared_input",
+        "source_take",
+        "source_tracks",
+        "emitted_tracks",
+        "remapped_tracks",
+        "bone_remaps",
+        "completed_tracks",
+        "stripped_tracks",
+        "stripped_bone_motion",
+        "pruned_constant_tracks",
+        "duration_s",
+        "frame_window",
+        "time_window",
+        "dropped_closing_endpoint",
+        "hold_frames",
+        "gait_anchor_frame_offset"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "declared_input": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_take": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_tracks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "emitted_tracks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "remapped_tracks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bone_remaps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/bone_remap"
+          }
+        },
+        "completed_tracks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stripped_tracks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stripped_bone_motion": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/stripped_bone_motion"
+          }
+        },
+        "pruned_constant_tracks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pruned_constant_track"
+          }
+        },
+        "duration_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "frame_window": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "time_window": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "minimum": 0
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "dropped_closing_endpoint": {
+          "type": "boolean"
+        },
+        "hold_frames": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "gait_anchor_frame_offset": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "bone_remap": {
+      "type": "object",
+      "required": [
+        "source_bone",
+        "source_index",
+        "base_bone",
+        "base_index"
+      ],
+      "properties": {
+        "source_bone": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "base_bone": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base_index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "BoneId in the post-canonicalization, pre-node-removal base skeleton."
+        }
+      },
+      "additionalProperties": false
+    },
+    "stripped_bone_motion": {
+      "type": "object",
+      "required": [
+        "bone",
+        "translation_start",
+        "translation_end",
+        "translation_delta",
+        "duration_s"
+      ],
+      "properties": {
+        "bone": {
+          "type": "string",
+          "minLength": 1
+        },
+        "translation_start": {
+          "$ref": "#/$defs/optional_vec3"
+        },
+        "translation_end": {
+          "$ref": "#/$defs/optional_vec3"
+        },
+        "translation_delta": {
+          "$ref": "#/$defs/optional_vec3"
+        },
+        "duration_s": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "optional_vec3": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "pruned_constant_track": {
+      "type": "object",
+      "required": [
+        "original_track_index",
+        "bone",
+        "bone_index",
+        "property",
+        "interpolation",
+        "key_count"
+      ],
+      "properties": {
+        "original_track_index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Index in the completed, normalized output clip immediately before pruning; records retain pre-prune authored order."
+        },
+        "bone": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bone_index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "BoneId in the post-canonicalization, pre-node-removal skeleton."
+        },
+        "property": {
+          "enum": [
+            "translation",
+            "rotation",
+            "scale"
+          ]
+        },
+        "interpolation": {
+          "enum": [
+            "linear",
+            "step",
+            "cubic_spline"
+          ]
+        },
+        "key_count": {
+          "type": "integer",
+          "minimum": 2
+        }
+      },
+      "additionalProperties": false
+    },
+    "removed_node": {
+      "type": "object",
+      "required": [
+        "name",
+        "original_node_index",
+        "original_parent_node_index",
+        "selected"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "original_node_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "original_parent_node_index": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "selected": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "transforms": {
+      "type": "object",
+      "required": [
+        "retained_mesh_instances",
+        "removed_mesh_instances",
+        "removed_nodes",
+        "canonicalized_skin",
+        "ground_and_center",
+        "source_world_to_canonical",
+        "converted_bounds_min",
+        "converted_bounds_max"
+      ],
+      "properties": {
+        "retained_mesh_instances": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "removed_mesh_instances": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "removed_nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/removed_node"
+          }
+        },
+        "canonicalized_skin": {
+          "type": "boolean"
+        },
+        "ground_and_center": {
+          "type": "boolean"
+        },
+        "source_world_to_canonical": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number"
+          },
+          "minItems": 16,
+          "maxItems": 16
+        },
+        "converted_bounds_min": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "converted_bounds_max": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        }
+      },
+      "additionalProperties": false
+    },
+    "artifact": {
+      "type": "object",
+      "required": [
+        "path",
+        "sha256",
+        "bytes",
+        "nodes",
+        "animations",
+        "meshes",
+        "primitive_positions",
+        "materials",
+        "clips_without_writable_tracks"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "nodes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "animations": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "meshes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "primitive_positions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "materials": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "clips_without_writable_tracks": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "rest_bind_scale": {
+      "type": "object",
+      "required": [
+        "source_skin_index",
+        "source_root_node_index",
+        "expected_factor",
+        "inputs",
+        "staged_source_sha256",
+        "proof",
+        "residual_comparison_counts"
+      ],
+      "properties": {
+        "source_skin_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "source_root_node_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expected_factor": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "inputs": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/rest_bind_scale_input"
+          }
+        },
+        "staged_source_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "proof": {
+          "$ref": "#/$defs/shared_scale_evidence"
+        },
+        "residual_comparison_counts": {
+          "$ref": "#/$defs/residual_comparison_counts"
+        }
+      },
+      "additionalProperties": false
+    },
+    "rest_bind_scale_input": {
+      "type": "object",
+      "required": [
+        "role",
+        "declared_path",
+        "sha256",
+        "bytes",
+        "basis_schema",
+        "basis_fingerprint",
+        "compatible",
+        "compatibility"
+      ],
+      "properties": {
+        "role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "declared_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "basis_schema": {
+          "const": "urn:animsmith:character-assembly-scale-basis:1"
+        },
+        "basis_fingerprint": {
+          "$ref": "#/$defs/sha256"
+        },
+        "compatible": {
+          "const": true
+        },
+        "compatibility": {
+          "const": "compatible"
+        }
+      },
+      "additionalProperties": false
+    },
+    "residual_comparison_counts": {
+      "description": "The shared proof's comparison counts, paired by stable residual name with proof.residuals.",
+      "type": "object",
+      "required": [
+        "rest_translation",
+        "rest_rotation",
+        "unit_scale",
+        "transform_only_affine",
+        "track_value",
+        "mesh_position",
+        "key_translation",
+        "cubic_interior",
+        "trajectory",
+        "skin_matrix",
+        "bounds",
+        "unaffected_inverse_bind"
+      ],
+      "properties": {
+        "rest_translation": { "$ref": "#/$defs/index" },
+        "rest_rotation": { "$ref": "#/$defs/index" },
+        "unit_scale": { "$ref": "#/$defs/index" },
+        "transform_only_affine": { "$ref": "#/$defs/index" },
+        "track_value": { "$ref": "#/$defs/index" },
+        "mesh_position": { "$ref": "#/$defs/index" },
+        "key_translation": { "$ref": "#/$defs/index" },
+        "cubic_interior": { "$ref": "#/$defs/index" },
+        "trajectory": { "$ref": "#/$defs/index" },
+        "skin_matrix": { "$ref": "#/$defs/index" },
+        "bounds": { "$ref": "#/$defs/index" },
+        "unaffected_inverse_bind": { "$ref": "#/$defs/index" }
+      },
+      "additionalProperties": false
+    },
+    "shared_scale_evidence": {
+      "type": "object",
+      "required": [
+        "tolerance",
+        "factors",
+        "affected",
+        "domain_rewrites",
+        "proof",
+        "artifact"
+      ],
+      "properties": {
+        "tolerance": {
+          "$ref": "#/$defs/scale_tolerance"
+        },
+        "factors": {
+          "$ref": "#/$defs/scale_factors"
+        },
+        "affected": {
+          "$ref": "#/$defs/scale_affected"
+        },
+        "domain_rewrites": {
+          "$ref": "#/$defs/scale_domain_rewrites"
+        },
+        "proof": {
+          "$ref": "#/$defs/scale_proof"
+        },
+        "artifact": {
+          "$ref": "#/$defs/scale_artifact"
+        }
+      },
+      "additionalProperties": false
+    },
+    "scale_tolerance": {
+      "description": "The fixed tolerance policy, by identity and in full. There are no per-run tolerance flags; a policy change requires a new policy_id.",
+      "type": "object",
+      "required": [
+        "policy_id",
+        "relative_orthogonality",
+        "equal_axis",
+        "common_factor",
+        "singular_determinant_relative",
+        "scalar_absolute",
+        "scalar_relative",
+        "rotation_residual_radians",
+        "postcondition_unit_scale_residual",
+        "proof_sample_work_budget",
+        "f32_rounding_ulps"
+      ],
+      "properties": {
+        "policy_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "relative_orthogonality": {
+          "type": "number",
+          "minimum": 0
+        },
+        "equal_axis": {
+          "type": "number",
+          "minimum": 0
+        },
+        "common_factor": {
+          "type": "number",
+          "minimum": 0
+        },
+        "singular_determinant_relative": {
+          "type": "number",
+          "minimum": 0
+        },
+        "scalar_absolute": {
+          "type": "number",
+          "minimum": 0
+        },
+        "scalar_relative": {
+          "type": "number",
+          "minimum": 0
+        },
+        "rotation_residual_radians": {
+          "type": "number",
+          "minimum": 0
+        },
+        "postcondition_unit_scale_residual": {
+          "type": "number",
+          "minimum": 0
+        },
+        "proof_sample_work_budget": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "f32_rounding_ulps": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "scale_factors": {
+      "description": "Both observed-factor witnesses and the divergence between them. planned_observed is measured from the raw source projection's parent chain, proved_observed from the normalized skeleton's; the two chains are validated to describe the same tree, but nothing reconciles the two readings, since each composes its own stored transforms. That is why both are recorded. The divergence is reported, never enforced.",
+      "type": "object",
+      "required": [
+        "declared",
+        "planned_observed",
+        "proved_observed",
+        "divergence",
+        "divergence_ceiling"
+      ],
+      "properties": {
+        "declared": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "planned_observed": {
+          "type": "number"
+        },
+        "proved_observed": {
+          "type": "number"
+        },
+        "divergence": {
+          "type": "number",
+          "minimum": 0
+        },
+        "divergence_ceiling": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "scale_affected": {
+      "description": "Affected identities in the raw source index space the selectors use, not normalized bone ids.",
+      "type": "object",
+      "required": [
+        "source_nodes",
+        "source_skins",
+        "transform_only_attachment_count"
+      ],
+      "properties": {
+        "source_nodes": {
+          "$ref": "#/$defs/index_array"
+        },
+        "source_skins": {
+          "$ref": "#/$defs/index_array"
+        },
+        "transform_only_attachment_count": {
+          "$ref": "#/$defs/index"
+        }
+      },
+      "additionalProperties": false
+    },
+    "scale_domain_rewrites": {
+      "type": "object",
+      "required": [
+        "rest_hierarchy",
+        "translation_animation",
+        "scale_animation",
+        "inverse_binds",
+        "base_mesh_positions"
+      ],
+      "properties": {
+        "rest_hierarchy": {
+          "type": "boolean"
+        },
+        "translation_animation": {
+          "type": "boolean"
+        },
+        "scale_animation": {
+          "type": "boolean"
+        },
+        "inverse_binds": {
+          "type": "boolean"
+        },
+        "base_mesh_positions": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "scale_proof": {
+      "type": "object",
+      "required": [
+        "sample_time_count",
+        "residuals",
+        "artifact",
+        "read_back_digest_matches"
+      ],
+      "properties": {
+        "sample_time_count": {
+          "$ref": "#/$defs/index"
+        },
+        "residuals": {
+          "$ref": "#/$defs/scale_residuals"
+        },
+        "artifact": {
+          "$ref": "#/$defs/scale_artifact_proof"
+        },
+        "read_back_digest_matches": {
+          "const": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "scale_artifact": {
+      "type": "object",
+      "required": [
+        "container",
+        "sha256",
+        "bytes",
+        "rewritten_accessors",
+        "rewritten_json_pointers",
+        "reencoded_buffers"
+      ],
+      "properties": {
+        "container": {
+          "enum": [
+            "gltf",
+            "glb"
+          ]
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rewritten_accessors": {
+          "$ref": "#/$defs/index_array"
+        },
+        "rewritten_json_pointers": {
+          "$ref": "#/$defs/string_array"
+        },
+        "reencoded_buffers": {
+          "$ref": "#/$defs/index_array"
+        }
+      },
+      "additionalProperties": false
+    },
+    "scale_artifact_proof": {
+      "type": "object",
+      "required": [
+        "length_factor_residual",
+        "dimensionless_residual",
+        "preserved_byte_ranges",
+        "rewritten_accessor_count"
+      ],
+      "properties": {
+        "length_factor_residual": {
+          "type": "number",
+          "minimum": 0
+        },
+        "dimensionless_residual": {
+          "type": "number",
+          "minimum": 0
+        },
+        "preserved_byte_ranges": {
+          "$ref": "#/$defs/index"
+        },
+        "rewritten_accessor_count": {
+          "$ref": "#/$defs/index"
+        }
+      },
+      "additionalProperties": false
+    },
+    "scale_residuals": {
+      "type": "object",
+      "required": [
+        "rest_translation",
+        "rest_rotation",
+        "unit_scale",
+        "transform_only_affine",
+        "track_value",
+        "mesh_position",
+        "key_translation",
+        "cubic_interior",
+        "trajectory",
+        "skin_matrix",
+        "bounds",
+        "unaffected_inverse_bind"
+      ],
+      "properties": {
+        "rest_translation": {
+          "$ref": "#/$defs/scale_residual"
+        },
+        "rest_rotation": {
+          "$ref": "#/$defs/scale_residual"
+        },
+        "unit_scale": {
+          "$ref": "#/$defs/scale_residual"
+        },
+        "transform_only_affine": {
+          "$ref": "#/$defs/scale_residual"
+        },
+        "track_value": {
+          "$ref": "#/$defs/scale_residual"
+        },
+        "mesh_position": {
+          "$ref": "#/$defs/scale_residual"
+        },
+        "key_translation": {
+          "$ref": "#/$defs/scale_residual"
+        },
+        "cubic_interior": {
+          "$ref": "#/$defs/scale_residual"
+        },
+        "trajectory": {
+          "$ref": "#/$defs/scale_residual"
+        },
+        "skin_matrix": {
+          "$ref": "#/$defs/scale_residual"
+        },
+        "bounds": {
+          "$ref": "#/$defs/scale_residual"
+        },
+        "unaffected_inverse_bind": {
+          "$ref": "#/$defs/scale_residual"
+        }
+      },
+      "additionalProperties": false
+    },
+    "scale_residual": {
+      "description": "One proof residual. max is null exactly when evaluated is false, so an obligation nothing checked reports an absence rather than a fabricated zero.",
+      "type": "object",
+      "required": [
+        "evaluated",
+        "max"
+      ],
+      "properties": {
+        "evaluated": {
+          "type": "boolean"
+        },
+        "max": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "if": {
+        "properties": {
+          "evaluated": {
+            "const": true
+          }
+        },
+        "required": [
+          "evaluated"
+        ]
+      },
+      "then": {
+        "properties": {
+          "max": {
+            "type": "number",
+            "minimum": 0
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "max": {
+            "type": "null"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "index": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "index_array": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/index"
+      }
+    },
+    "string_array": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

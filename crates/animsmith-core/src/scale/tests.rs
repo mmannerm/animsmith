@@ -126,6 +126,85 @@ fn unit_rig() -> Vec<RigNode> {
     ]
 }
 
+#[test]
+fn assembly_basis_fingerprints_target_factors_and_rejects_orientation_or_helper_drift() {
+    let nodes = vec![
+        RigNode {
+            parent: None,
+            source_node_index: 0,
+            translation: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::splat(0.01),
+        },
+        rig(Some(0), 1, Vec3::new(0.0, 100.0, 0.0)),
+    ];
+    let mut document = rig_document(&nodes, &[1], 0, Mat4::IDENTITY);
+    document.clips.push(Clip {
+        name: "cubic".into(),
+        duration_s: 1.0,
+        tracks: vec![Track {
+            bone: 1,
+            property: Property::Translation,
+            interpolation: Interpolation::CubicSpline,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Vec3s(vec![Vec3::ZERO; 6]),
+        }],
+    });
+    let capability = complete_capability();
+    let operation = ScaleOperation::RestBindUniformScale {
+        source_skin_index: 0,
+        source_root_node_index: 0,
+        expected_factor: 0.01,
+    };
+    let plan = plan_scale(&ScaleRequest {
+        operation,
+        document: &document,
+        capability: &capability,
+    })
+    .unwrap();
+    let basis = assembly_scale_basis(&document, &plan).unwrap();
+    assert_eq!(basis.version, ASSEMBLY_SCALE_BASIS_VERSION);
+    assert_eq!(basis.target_paths.len(), 1);
+    assert_eq!(basis.target_paths[0].factor_bits, 0.01f64.to_bits());
+
+    let mut orientation = document.clone();
+    orientation.skeleton.bones[1].rest.rotation = Quat::from_rotation_z(0.01);
+    if let SourceNodeLocalRest::Trs { rotation, .. } =
+        &mut orientation.assets.source_skeleton.nodes[1].local_rest
+    {
+        *rotation = Quat::from_rotation_z(0.01);
+    }
+    let orientation_plan = plan_scale(&ScaleRequest {
+        operation,
+        document: &orientation,
+        capability: &capability,
+    })
+    .unwrap();
+    let orientation_basis = assembly_scale_basis(&orientation, &orientation_plan).unwrap();
+    assert_eq!(
+        require_assembly_scale_compatibility(&basis, &orientation_basis)
+            .unwrap_err()
+            .reason,
+        "named-topology-rest-orientation"
+    );
+
+    let mut helper = document.clone();
+    helper.assets.source_skeleton.nodes[1].name = Some("changed-helper-name".into());
+    let helper_plan = plan_scale(&ScaleRequest {
+        operation,
+        document: &helper,
+        capability: &capability,
+    })
+    .unwrap();
+    let helper_basis = assembly_scale_basis(&helper, &helper_plan).unwrap();
+    assert_eq!(
+        require_assembly_scale_compatibility(&basis, &helper_basis)
+            .unwrap_err()
+            .reason,
+        "source-helper-layout"
+    );
+}
+
 // --- Whole-document conversion ------------------------------------
 
 #[test]

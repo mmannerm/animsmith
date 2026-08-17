@@ -15,8 +15,16 @@ use crate::{Format, render};
 use animsmith_core::model::{
     Clip, Document, Interpolation, MaterialAsset, MeshAsset, Property, Skeleton, TrackValues,
 };
+use animsmith_core::scale::{
+    AssemblyScaleBasis, ScaleOperation, ScaleRequest, assembly_scale_basis, plan_scale,
+    require_assembly_scale_compatibility,
+};
 use animsmith_core::{Config, ToolInfo, resolve_configured_roles};
 use animsmith_gltf::write::WriteSummary;
+use animsmith_gltf::{
+    operation_capability_facts, preflight_scale_source_bytes, prove_rewritten_rest_bind,
+    rewrite_scale_plan,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -24,10 +32,14 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::ExitCode;
 
-const RECIPE_SCHEMA_VERSION: u32 = 3;
-const RECIPE_SCHEMA_ID: &str = "urn:animsmith:schema:character-assembly-recipe:3";
-const EVIDENCE_SCHEMA_VERSION: u32 = 3;
-const EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:character-assembly-evidence:3";
+const RECIPE_SCHEMA_VERSION_V3: u32 = 3;
+const RECIPE_SCHEMA_ID_V3: &str = "urn:animsmith:schema:character-assembly-recipe:3";
+const RECIPE_SCHEMA_VERSION_V4: u32 = 4;
+const RECIPE_SCHEMA_ID_V4: &str = "urn:animsmith:schema:character-assembly-recipe:4";
+const EVIDENCE_SCHEMA_VERSION_V3: u32 = 3;
+const EVIDENCE_SCHEMA_ID_V3: &str = "urn:animsmith:schema:character-assembly-evidence:3";
+const EVIDENCE_SCHEMA_VERSION_V4: u32 = 4;
+const EVIDENCE_SCHEMA_ID_V4: &str = "urn:animsmith:schema:character-assembly-evidence:4";
 
 fn default_fps() -> f64 {
     30.0
@@ -58,7 +70,17 @@ struct AssemblyRecipe {
     ground_and_center: bool,
     #[serde(default = "default_fps")]
     fps: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rest_bind_scale: Option<AssemblyRestBindScaleRecipe>,
     clips: Vec<AssemblyClipRecipe>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct AssemblyRestBindScaleRecipe {
+    source_skin_index: usize,
+    source_root_node_index: usize,
+    expected_factor: f64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -187,7 +209,7 @@ struct AssemblyArtifactEvidence {
     clips_without_writable_tracks: usize,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Serialize)]
 struct AssemblyEvidence {
     schema_version: u32,
     schema: &'static str,
@@ -200,7 +222,39 @@ struct AssemblyEvidence {
     transforms: AssemblyTransformEvidence,
     #[serde(skip_serializing_if = "Option::is_none")]
     material_texture_recipe: Option<MaterialTextureRecipeEvidence>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rest_bind_scale: Option<AssemblyRestBindScaleEvidence>,
     artifact: AssemblyArtifactEvidence,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AssemblyRestBindScaleInputEvidence {
+    role: String,
+    declared_path: String,
+    sha256: String,
+    bytes: u64,
+    basis_schema: &'static str,
+    basis_fingerprint: String,
+    compatible: bool,
+    compatibility: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct AssemblyRestBindScaleEvidence {
+    source_skin_index: usize,
+    source_root_node_index: usize,
+    expected_factor: f64,
+    inputs: Vec<AssemblyRestBindScaleInputEvidence>,
+    staged_source_sha256: String,
+    residual_comparison_counts: crate::scale::ResidualComparisonCounts,
+    proof: crate::scale::SharedScaleEvidence,
+}
+
+struct PreparedScaleInput {
+    document: Document,
+    rebased_document: Document,
+    basis: AssemblyScaleBasis,
+    evidence: AssemblyRestBindScaleInputEvidence,
 }
 
 /// What one published assembly leaves for the caller to report: the counts
@@ -306,10 +360,32 @@ fn reject_symlink_path(base: &Path, declared: &Path, label: &str) -> Result<(), 
 }
 
 fn validate_recipe(recipe: &AssemblyRecipe) -> Result<(), String> {
-    if recipe.schema_version != RECIPE_SCHEMA_VERSION || recipe.schema != RECIPE_SCHEMA_ID {
-        return Err(format!(
-            "unsupported assembly recipe identity; expected schema_version {RECIPE_SCHEMA_VERSION} and schema {RECIPE_SCHEMA_ID:?}"
-        ));
+    let identity_supported = matches!(
+        (recipe.schema_version, recipe.schema.as_str()),
+        (RECIPE_SCHEMA_VERSION_V3, RECIPE_SCHEMA_ID_V3)
+            | (RECIPE_SCHEMA_VERSION_V4, RECIPE_SCHEMA_ID_V4)
+    );
+    if !identity_supported {
+        return Err(
+            "unsupported assembly recipe identity; expected schema_version 3/4 with its matching character-assembly-recipe URN"
+                .into(),
+        );
+    }
+    if recipe.schema_version == RECIPE_SCHEMA_VERSION_V3 && recipe.rest_bind_scale.is_some() {
+        return Err("assembly recipe v3 does not admit rest_bind_scale; use recipe v4".into());
+    }
+    if let Some(scale) = recipe.rest_bind_scale {
+        if !scale.expected_factor.is_finite() || scale.expected_factor <= 0.0 {
+            return Err(
+                "rest_bind_scale.expected_factor must be finite and greater than zero".into(),
+            );
+        }
+        if recipe.canonicalize_skin || recipe.ground_and_center || !recipe.remove_nodes.is_empty() {
+            return Err(
+                "rest_bind_scale cannot be combined with canonicalize_skin, ground_and_center, or remove_nodes because those operations change its proved basis"
+                    .into(),
+            );
+        }
     }
     if !recipe.fps.is_finite() || recipe.fps <= 0.0 || recipe.fps > 1000.0 {
         return Err("fps must be finite and in 0..=1000".into());
@@ -357,6 +433,25 @@ fn validate_recipe(recipe: &AssemblyRecipe) -> Result<(), String> {
     Ok(())
 }
 
+fn parse_recipe(text: &str) -> Result<AssemblyRecipe, String> {
+    let value: toml::Value =
+        toml::from_str(text).map_err(|error| format!("invalid assembly recipe: {error}"))?;
+    let version = value
+        .get("schema_version")
+        .and_then(toml::Value::as_integer);
+    if version == Some(i64::from(RECIPE_SCHEMA_VERSION_V3))
+        && value.get("rest_bind_scale").is_some()
+    {
+        return Err(
+            "invalid assembly recipe: unknown field `rest_bind_scale` in character-assembly-recipe v3"
+                .into(),
+        );
+    }
+    value
+        .try_into()
+        .map_err(|error| format!("invalid assembly recipe: {error}"))
+}
+
 fn unique_nonempty(values: &[String], label: &str) -> Result<(), String> {
     let mut seen = BTreeSet::new();
     for value in values {
@@ -386,6 +481,110 @@ fn input_evidence(
 
 fn load_input(path: &Path) -> Result<Document, String> {
     crate::load(path)
+}
+
+fn rest_bind_operation(recipe: AssemblyRestBindScaleRecipe) -> ScaleOperation {
+    ScaleOperation::RestBindUniformScale {
+        source_skin_index: recipe.source_skin_index,
+        source_root_node_index: recipe.source_root_node_index,
+        expected_factor: recipe.expected_factor,
+    }
+}
+
+fn prepare_scale_input(
+    role: String,
+    declared: &Path,
+    resolved: &Path,
+    scale: AssemblyRestBindScaleRecipe,
+    tool: &ToolInfo,
+) -> Result<PreparedScaleInput, String> {
+    let extension = resolved
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default();
+    if !extension.eq_ignore_ascii_case("gltf") && !extension.eq_ignore_ascii_case("glb") {
+        return Err(format!(
+            "rest_bind_scale input {} is not glTF/GLB; assembly scale integration is glTF-only",
+            declared.display()
+        ));
+    }
+    let bytes = fs::read(resolved)
+        .map_err(|error| format!("cannot read input {}: {error}", declared.display()))?;
+    let sha256 = format!("{:x}", Sha256::digest(&bytes));
+    let byte_count = u64::try_from(bytes.len())
+        .map_err(|_| format!("input {} size exceeds u64", declared.display()))?;
+    let source = preflight_scale_source_bytes(resolved, &bytes).map_err(|error| {
+        format!(
+            "rest_bind_scale preflight rejected input {}: {error}",
+            declared.display()
+        )
+    })?;
+    let operation = rest_bind_operation(scale);
+    let facts = operation_capability_facts(source.manifest(), operation).map_err(|error| {
+        format!(
+            "rest_bind_scale capability rejected input {}: {error}",
+            declared.display()
+        )
+    })?;
+    let plan = plan_scale(&ScaleRequest {
+        operation,
+        document: source.document(),
+        capability: &facts,
+    })
+    .map_err(|error| {
+        format!(
+            "rest_bind_scale plan rejected input {}: {error}",
+            declared.display()
+        )
+    })?;
+    let basis = assembly_scale_basis(source.document(), &plan).map_err(|error| {
+        format!(
+            "rest_bind_scale basis rejected input {}: {error}",
+            declared.display()
+        )
+    })?;
+    let artifact = rewrite_scale_plan(&source, &plan).map_err(|error| {
+        format!(
+            "rest_bind_scale rewrite rejected input {}: {error}",
+            declared.display()
+        )
+    })?;
+    let rebased_document =
+        animsmith_gltf::load_bytes(resolved, artifact.bytes()).map_err(|error| {
+            format!(
+                "cannot reload rest_bind_scale rewrite for input {}: {error}",
+                declared.display()
+            )
+        })?;
+    #[derive(Serialize)]
+    struct Fingerprint<'a> {
+        schema: &'static str,
+        tool: &'a ToolInfo,
+        input_sha256: &'a str,
+        basis: &'a AssemblyScaleBasis,
+    }
+    let fingerprint_bytes = serde_json::to_vec(&Fingerprint {
+        schema: "urn:animsmith:character-assembly-scale-basis:1",
+        tool,
+        input_sha256: &sha256,
+        basis: &basis,
+    })
+    .map_err(|error| format!("cannot serialize assembly scale basis: {error}"))?;
+    Ok(PreparedScaleInput {
+        document: source.document().clone(),
+        rebased_document,
+        basis,
+        evidence: AssemblyRestBindScaleInputEvidence {
+            role,
+            declared_path: declared.display().to_string(),
+            sha256,
+            bytes: byte_count,
+            basis_schema: "urn:animsmith:character-assembly-scale-basis:1",
+            basis_fingerprint: format!("{:x}", Sha256::digest(fingerprint_bytes)),
+            compatible: true,
+            compatibility: "compatible",
+        },
+    })
 }
 
 /// One parsed `assemble` invocation, including the global `--config` this
@@ -479,8 +678,7 @@ fn assemble(
         .map_err(|error| format!("cannot read recipe {}: {error}", recipe_path.display()))?;
     let recipe_text = std::str::from_utf8(&recipe_bytes)
         .map_err(|error| format!("recipe {} is not UTF-8: {error}", recipe_path.display()))?;
-    let recipe: AssemblyRecipe =
-        toml::from_str(recipe_text).map_err(|error| format!("invalid assembly recipe: {error}"))?;
+    let recipe = parse_recipe(recipe_text)?;
     validate_recipe(&recipe)?;
     let resolver = InputResolver::new(recipe_path, recipe.input_root.as_deref())?;
     let config_evidence = match config_source {
@@ -501,8 +699,64 @@ fn assemble(
     };
 
     let base_path = resolver.resolve(&recipe.base_input)?;
-    let mut inputs = vec![input_evidence("base", &recipe.base_input, &base_path)?];
-    let mut base = load_input(&base_path)?;
+    // The v4 scale path captures and validates every source before any
+    // assembly transform, remap, or copy. The same captured normalized
+    // documents feed assembly; no later reopen can race validation.
+    let mut prepared_scale_inputs = BTreeMap::<PathBuf, PreparedScaleInput>::new();
+    let mut rest_bind_input_evidence = Vec::new();
+    if let Some(scale) = recipe.rest_bind_scale {
+        let prepared = prepare_scale_input(
+            "base".to_owned(),
+            &recipe.base_input,
+            &base_path,
+            scale,
+            &tool,
+        )?;
+        let base_basis = prepared.basis.clone();
+        rest_bind_input_evidence.push(prepared.evidence.clone());
+        prepared_scale_inputs.insert(base_path.clone(), prepared);
+        for clip_recipe in &recipe.clips {
+            let resolved = resolver.resolve(&clip_recipe.input)?;
+            if let Some(existing) = prepared_scale_inputs.get(&resolved) {
+                let mut evidence = existing.evidence.clone();
+                evidence.role = format!("clip:{}", clip_recipe.name);
+                evidence.declared_path = clip_recipe.input.display().to_string();
+                rest_bind_input_evidence.push(evidence);
+                continue;
+            }
+            let prepared = prepare_scale_input(
+                format!("clip:{}", clip_recipe.name),
+                &clip_recipe.input,
+                &resolved,
+                scale,
+                &tool,
+            )?;
+            require_assembly_scale_compatibility(&base_basis, &prepared.basis).map_err(
+                |error| {
+                    format!(
+                        "rest_bind_scale input {} is incompatible with base: {error}",
+                        clip_recipe.input.display()
+                    )
+                },
+            )?;
+            rest_bind_input_evidence.push(prepared.evidence.clone());
+            prepared_scale_inputs.insert(resolved, prepared);
+        }
+    }
+    let mut inputs = if let Some(prepared) = prepared_scale_inputs.get(&base_path) {
+        vec![AssemblyInputEvidence {
+            role: "base",
+            declared_path: recipe.base_input.display().to_string(),
+            sha256: prepared.evidence.sha256.clone(),
+            bytes: prepared.evidence.bytes,
+        }]
+    } else {
+        vec![input_evidence("base", &recipe.base_input, &base_path)?]
+    };
+    let mut base = prepared_scale_inputs.get(&base_path).map_or_else(
+        || load_input(&base_path),
+        |prepared| Ok(prepared.document.clone()),
+    )?;
     ensure_unique_bones(&base.skeleton, "base input")?;
     let (retained_mesh_instances, removed_mesh_instances) =
         select_mesh_instances(&mut base, &recipe.mesh_instances)?;
@@ -582,11 +836,25 @@ fn assemble(
     let mut loaded = BTreeMap::<PathBuf, Document>::new();
     let mut clip_evidence = Vec::with_capacity(recipe.clips.len());
     let mut output_clips = Vec::with_capacity(recipe.clips.len());
+    let mut expected_rebased_clips = Vec::with_capacity(recipe.clips.len());
+    let rebased_base = prepared_scale_inputs
+        .get(&base_path)
+        .map(|prepared| &prepared.rebased_document);
     for clip_recipe in &recipe.clips {
         let resolved = resolver.resolve(&clip_recipe.input)?;
         if !loaded.contains_key(&resolved) {
-            inputs.push(input_evidence("clip", &clip_recipe.input, &resolved)?);
-            loaded.insert(resolved.clone(), load_input(&resolved)?);
+            if let Some(prepared) = prepared_scale_inputs.get(&resolved) {
+                inputs.push(AssemblyInputEvidence {
+                    role: "clip",
+                    declared_path: clip_recipe.input.display().to_string(),
+                    sha256: prepared.evidence.sha256.clone(),
+                    bytes: prepared.evidence.bytes,
+                });
+                loaded.insert(resolved.clone(), prepared.document.clone());
+            } else {
+                inputs.push(input_evidence("clip", &clip_recipe.input, &resolved)?);
+                loaded.insert(resolved.clone(), load_input(&resolved)?);
+            }
         }
         let source = &loaded[&resolved];
         ensure_unique_bones(
@@ -594,6 +862,20 @@ fn assemble(
             &format!("clip input {}", clip_recipe.input.display()),
         )?;
         let source_clip = exact_take(source, &clip_recipe.take, &clip_recipe.input)?;
+        if let (Some(scale_source), Some(scale_base)) = (
+            prepared_scale_inputs
+                .get(&resolved)
+                .map(|prepared| &prepared.rebased_document),
+            rebased_base,
+        ) {
+            expected_rebased_clips.push(process_rebased_clip_before_copy(
+                scale_source,
+                scale_base,
+                clip_recipe,
+                recipe.fps,
+                config,
+            )?);
+        }
         let source_tracks = source_clip.tracks.len();
         let mut clip = source_clip.clone();
         clip.name.clone_from(&clip_recipe.name);
@@ -759,6 +1041,63 @@ fn assemble(
         }
         evidence.emitted_tracks = clip.tracks.len();
     }
+    if let Some(scale_base) = rebased_base {
+        for ((clip, clip_recipe), evidence) in expected_rebased_clips
+            .iter_mut()
+            .zip(&recipe.clips)
+            .zip(&clip_evidence)
+        {
+            if recipe.complete_tracks {
+                let excluded = clip_recipe
+                    .strip_bones
+                    .iter()
+                    .map(|name| base_bones_by_name[name.as_str()])
+                    .collect::<BTreeSet<_>>();
+                animsmith_core::assembly::complete_rest_pose_tracks_for_bones(
+                    clip,
+                    &scale_base.skeleton,
+                    completion_targets
+                        .iter()
+                        .copied()
+                        .filter(|bone| !excluded.contains(bone)),
+                    animsmith_core::assembly::RestPoseTrackOptions::ALL,
+                )
+                .map_err(|error| format!("rebased clip {:?}: {error}", clip.name))?;
+            }
+            validate_unique_channels(clip, &scale_base.skeleton)?;
+            normalize_quaternion_magnitudes(clip)?;
+            animsmith_core::assembly::normalize_quaternion_hemispheres(clip);
+            if recipe.prune_constant_tracks {
+                let protected_bones = config
+                    .expectations_for(&clip.name)
+                    .animates_bones
+                    .as_deref()
+                    .map(|names| {
+                        scale_base
+                            .skeleton
+                            .bones
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(index, bone)| {
+                                names.iter().any(|name| name == &bone.name).then_some(index)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let outcome = animsmith_core::transform::prune_constant_tracks(
+                    &scale_base.skeleton,
+                    clip,
+                    &protected_bones,
+                );
+                if outcome.removed.len() != evidence.pruned_constant_tracks.len() {
+                    return Err(format!(
+                        "rebased clip {:?} changed constant-track pruning membership",
+                        clip.name
+                    ));
+                }
+            }
+        }
+    }
     base.clips = output_clips;
     let removed_nodes = node_removal
         .removed_nodes()
@@ -787,10 +1126,63 @@ fn assemble(
         .into_temp_path();
     let summary =
         animsmith_gltf::write::write(&base, &artifact_temp).map_err(|error| error.to_string())?;
+    let mut rest_bind_scale_evidence = None;
+    if let Some(scale) = recipe.rest_bind_scale {
+        let staged_bytes = fs::read(&artifact_temp)
+            .map_err(|error| format!("cannot read staged assembly source: {error}"))?;
+        let staged_source_sha256 = format!("{:x}", Sha256::digest(&staged_bytes));
+        let staged_source = preflight_scale_source_bytes(&artifact_temp, &staged_bytes)
+            .map_err(|error| format!("staged assembly scale preflight failed: {error}"))?;
+        let original_base = &prepared_scale_inputs
+            .get(&base_path)
+            .ok_or_else(|| "missing captured base scale input".to_owned())?
+            .document;
+        let staged_operation =
+            map_staged_rest_bind_operation(original_base, staged_source.document(), scale)?;
+        let facts = operation_capability_facts(staged_source.manifest(), staged_operation)
+            .map_err(|error| format!("staged assembly scale capability failed: {error}"))?;
+        let plan = plan_scale(&ScaleRequest {
+            operation: staged_operation,
+            document: staged_source.document(),
+            capability: &facts,
+        })
+        .map_err(|error| format!("staged assembly scale plan failed: {error}"))?;
+        let artifact = rewrite_scale_plan(&staged_source, &plan)
+            .map_err(|error| format!("staged assembly scale rewrite failed: {error}"))?;
+        let proof = prove_rewritten_rest_bind(&staged_source, &artifact, &plan)
+            .map_err(|error| format!("staged assembly scale proof failed: {error}"))?;
+        fs::write(&artifact_temp, artifact.bytes())
+            .map_err(|error| format!("cannot write proved assembly artifact: {error}"))?;
+        let (read_back_sha256, _) = read_digest(&artifact_temp)?;
+        let proved_sha256 = format!("{:x}", Sha256::digest(artifact.bytes()));
+        if read_back_sha256 != proved_sha256 {
+            return Err(format!(
+                "proved assembly artifact read-back digest mismatch: expected {proved_sha256}, observed {read_back_sha256}"
+            ));
+        }
+        let reloaded = animsmith_gltf::load_bytes(&artifact_temp, artifact.bytes())
+            .map_err(|error| format!("cannot reload proved assembly artifact: {error}"))?;
+        require_rebased_clips_match(&expected_rebased_clips, &reloaded.clips)?;
+        rest_bind_scale_evidence = Some(AssemblyRestBindScaleEvidence {
+            source_skin_index: scale.source_skin_index,
+            source_root_node_index: scale.source_root_node_index,
+            expected_factor: scale.expected_factor,
+            inputs: rest_bind_input_evidence,
+            staged_source_sha256,
+            residual_comparison_counts: crate::scale::residual_comparison_counts(&proof.core),
+            proof: crate::scale::shared_scale_evidence(&plan, &artifact, &proof)?,
+        });
+    }
     let (artifact_sha256, artifact_bytes) = read_digest(&artifact_temp)?;
+    let (evidence_schema_version, evidence_schema) =
+        if recipe.schema_version == RECIPE_SCHEMA_VERSION_V4 {
+            (EVIDENCE_SCHEMA_VERSION_V4, EVIDENCE_SCHEMA_ID_V4)
+        } else {
+            (EVIDENCE_SCHEMA_VERSION_V3, EVIDENCE_SCHEMA_ID_V3)
+        };
     let evidence = AssemblyEvidence {
-        schema_version: EVIDENCE_SCHEMA_VERSION,
-        schema: EVIDENCE_SCHEMA_ID,
+        schema_version: evidence_schema_version,
+        schema: evidence_schema,
         tool,
         command: "assemble",
         recipe: AssemblyRecipeEvidence {
@@ -818,6 +1210,7 @@ fn assemble(
                 .map(|result| result.converted_bounds_max.to_array()),
         },
         material_texture_recipe: material_application.map(|application| application.evidence),
+        rest_bind_scale: rest_bind_scale_evidence,
         artifact: artifact_evidence(output, artifact_sha256, artifact_bytes, summary),
     };
     let evidence_bytes = serialize_record(&evidence)?;
@@ -879,6 +1272,257 @@ fn exact_take<'a>(doc: &'a Document, take: &str, input: &Path) -> Result<&'a Cli
             input.display()
         )),
     }
+}
+
+/// Apply clip-local assembly transforms to an already raw-rebased input.
+///
+/// This path is deliberately entered before name remapping/copy. Its result
+/// is retained as an independent expected clip and compared with the final
+/// exact-artifact reload after the staged assembled source is rewritten and
+/// proved once.
+fn process_rebased_clip_before_copy(
+    source: &Document,
+    base: &Document,
+    recipe: &AssemblyClipRecipe,
+    fps: f64,
+    config: &Config,
+) -> Result<Clip, String> {
+    ensure_unique_bones(
+        &source.skeleton,
+        &format!("rebased clip input {}", recipe.input.display()),
+    )?;
+    let mut clip = exact_take(source, &recipe.take, &recipe.input)?.clone();
+    clip.name.clone_from(&recipe.name);
+    apply_window(&mut clip, recipe, fps)?;
+    if recipe.drop_closing_endpoint {
+        let removed = animsmith_core::assembly::remove_final_keys(&mut clip);
+        if removed == 0 || clip.tracks.is_empty() {
+            return Err(format!(
+                "rebased clip {:?} has no retained animation after closing-endpoint removal",
+                clip.name
+            ));
+        }
+    }
+    if recipe.hold_frames > 0 {
+        animsmith_core::transform::hold_extend(&mut clip, f64::from(recipe.hold_frames) / fps);
+    }
+    clip = animsmith_core::assembly::remap_clip_to_base(&clip, &source.skeleton, &base.skeleton)
+        .map_err(|error| format!("rebased clip {:?}: {error}", clip.name))?;
+    validate_unique_channels(&clip, &base.skeleton)?;
+    require_named_bones(&base.skeleton, &recipe.strip_bones, "strip_bones")?;
+    animsmith_core::assembly::strip_named_bone_tracks(
+        &mut clip,
+        &base.skeleton,
+        &recipe.strip_bones,
+    )
+    .map_err(|error| format!("rebased clip {:?}: {error}", clip.name))?;
+    if recipe.gait_anchor {
+        let roles = resolve_configured_roles(&base.skeleton, &config.rig);
+        animsmith_core::transform::align_gait_anchor(
+            &base.skeleton,
+            &mut clip,
+            &roles,
+            fps,
+            animsmith_core::transform::GaitTrajectoryPolicy::InPlace,
+        )
+        .map_err(|reason| format!("rebased clip {:?}: {reason}", clip.name))?;
+    }
+    Ok(clip)
+}
+
+fn map_staged_rest_bind_operation(
+    original: &Document,
+    staged: &Document,
+    recipe: AssemblyRestBindScaleRecipe,
+) -> Result<ScaleOperation, String> {
+    let original_root = original
+        .assets
+        .source_skeleton
+        .nodes
+        .iter()
+        .find(|node| node.source_node_index == recipe.source_root_node_index)
+        .and_then(|node| node.bone)
+        .and_then(|bone| original.skeleton.bones.get(bone))
+        .ok_or_else(|| {
+            format!(
+                "source_root_node_index {} has no named normalized base node",
+                recipe.source_root_node_index
+            )
+        })?;
+    let staged_root_bone = staged
+        .skeleton
+        .bones
+        .iter()
+        .position(|bone| bone.name == original_root.name)
+        .ok_or_else(|| {
+            format!(
+                "assembled artifact has no root node named {:?}",
+                original_root.name
+            )
+        })?;
+    let staged_root_matches = staged
+        .assets
+        .source_skeleton
+        .nodes
+        .iter()
+        .filter(|node| node.bone == Some(staged_root_bone))
+        .map(|node| node.source_node_index)
+        .collect::<Vec<_>>();
+    let [staged_root_node_index] = staged_root_matches.as_slice() else {
+        return Err(format!(
+            "assembled artifact does not map root {:?} to exactly one raw node",
+            original_root.name
+        ));
+    };
+    let original_skin = original
+        .assets
+        .source_skeleton
+        .skins
+        .iter()
+        .find(|skin| skin.source_skin_index == recipe.source_skin_index)
+        .ok_or_else(|| {
+            format!(
+                "source_skin_index {} is absent from base input",
+                recipe.source_skin_index
+            )
+        })?;
+    let joint_names = original_skin
+        .joint_source_node_indices
+        .iter()
+        .map(|source_index| {
+            original
+                .assets
+                .source_skeleton
+                .nodes
+                .iter()
+                .find(|node| node.source_node_index == *source_index)
+                .and_then(|node| node.bone)
+                .and_then(|bone| original.skeleton.bones.get(bone))
+                .map(|bone| bone.name.as_str())
+                .ok_or_else(|| format!("selected base skin joint {source_index} is not named"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let staged_skin_matches = staged
+        .assets
+        .source_skeleton
+        .skins
+        .iter()
+        .filter(|skin| {
+            let names = skin
+                .joint_source_node_indices
+                .iter()
+                .filter_map(|source_index| {
+                    staged
+                        .assets
+                        .source_skeleton
+                        .nodes
+                        .iter()
+                        .find(|node| node.source_node_index == *source_index)
+                        .and_then(|node| node.bone)
+                        .and_then(|bone| staged.skeleton.bones.get(bone))
+                        .map(|bone| bone.name.as_str())
+                })
+                .collect::<Vec<_>>();
+            names == joint_names
+        })
+        .map(|skin| skin.source_skin_index)
+        .collect::<Vec<_>>();
+    let [staged_skin_index] = staged_skin_matches.as_slice() else {
+        return Err("assembled artifact does not contain exactly one skin with the selected named joint topology".into());
+    };
+    Ok(ScaleOperation::RestBindUniformScale {
+        source_skin_index: *staged_skin_index,
+        source_root_node_index: *staged_root_node_index,
+        expected_factor: recipe.expected_factor,
+    })
+}
+
+fn require_rebased_clips_match(expected: &[Clip], actual: &[Clip]) -> Result<(), String> {
+    if expected.len() != actual.len() {
+        return Err(format!(
+            "proved artifact has {} clips but pre-remap rebase expected {}",
+            actual.len(),
+            expected.len()
+        ));
+    }
+    for (clip_index, (expected_clip, actual_clip)) in expected.iter().zip(actual).enumerate() {
+        if expected_clip.name != actual_clip.name
+            || expected_clip.tracks.len() != actual_clip.tracks.len()
+        {
+            return Err(format!(
+                "proved artifact clip {clip_index} structure differs from its pre-remap rebase"
+            ));
+        }
+        for (track_index, (expected_track, actual_track)) in expected_clip
+            .tracks
+            .iter()
+            .zip(&actual_clip.tracks)
+            .enumerate()
+        {
+            if expected_track.bone != actual_track.bone
+                || expected_track.property != actual_track.property
+                || expected_track.interpolation != actual_track.interpolation
+                || expected_track.times.len() != actual_track.times.len()
+                || expected_track
+                    .times
+                    .iter()
+                    .zip(&actual_track.times)
+                    .any(|(left, right)| left.to_bits() != right.to_bits())
+            {
+                return Err(format!(
+                    "proved artifact clip {clip_index} track {track_index} identity differs from its pre-remap rebase"
+                ));
+            }
+            match (&expected_track.values, &actual_track.values) {
+                (TrackValues::Vec3s(expected_values), TrackValues::Vec3s(actual_values)) => {
+                    if expected_values.len() != actual_values.len() {
+                        return Err(format!(
+                            "proved artifact clip {clip_index} track {track_index} value count differs"
+                        ));
+                    }
+                    for (value_index, (expected_value, actual_value)) in
+                        expected_values.iter().zip(actual_values).enumerate()
+                    {
+                        for (component, (expected_component, actual_component)) in expected_value
+                            .to_array()
+                            .into_iter()
+                            .zip(actual_value.to_array())
+                            .enumerate()
+                        {
+                            if expected_component.to_bits() != actual_component.to_bits() {
+                                return Err(format!(
+                                    "proved artifact clip {clip_index} track {track_index} stored value {value_index} component {component} differs from its pre-remap rebase"
+                                ));
+                            }
+                        }
+                    }
+                }
+                (TrackValues::Quats(expected_values), TrackValues::Quats(actual_values)) => {
+                    if expected_values.len() != actual_values.len()
+                        || expected_values
+                            .iter()
+                            .zip(actual_values)
+                            .any(|(left, right)| {
+                                left.to_array()
+                                    .into_iter()
+                                    .zip(right.to_array())
+                                    .any(|(left, right)| left.to_bits() != right.to_bits())
+                            })
+                    {
+                        return Err(format!(
+                            "proved artifact clip {clip_index} track {track_index} rotation values differ from its pre-remap rebase"
+                        ));
+                    }
+                }
+                _ => {
+                    return Err(format!(
+                        "proved artifact clip {clip_index} track {track_index} value type differs"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn bone_remap_evidence(
@@ -1313,8 +1957,8 @@ mod tests {
     #[test]
     fn recipe_rejects_duplicate_outputs_and_conflicting_windows() {
         let recipe = AssemblyRecipe {
-            schema_version: RECIPE_SCHEMA_VERSION,
-            schema: RECIPE_SCHEMA_ID.into(),
+            schema_version: RECIPE_SCHEMA_VERSION_V3,
+            schema: RECIPE_SCHEMA_ID_V3.into(),
             input_root: None,
             base_input: "base.glb".into(),
             mesh_instances: vec![],
@@ -1325,6 +1969,7 @@ mod tests {
             canonicalize_skin: false,
             ground_and_center: false,
             fps: 30.0,
+            rest_bind_scale: None,
             clips: vec![
                 AssemblyClipRecipe {
                     name: "same".into(),

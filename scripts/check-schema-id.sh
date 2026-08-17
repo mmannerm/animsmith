@@ -81,9 +81,11 @@ check_schema docs/schemas/scale-evidence-v2.schema.json urn:animsmith:schema:sca
 check_schema docs/schemas/scale-evidence-v3.schema.json urn:animsmith:schema:scale-evidence:3
 check_schema docs/schemas/scale-evidence-v4.schema.json urn:animsmith:schema:scale-evidence:4 crates/animsmith/src/scale.rs docs/output.md docs/cli.md
 check_schema docs/schemas/character-assembly-recipe-v2.schema.json urn:animsmith:schema:character-assembly-recipe:2
-check_schema docs/schemas/character-assembly-recipe-v3.schema.json urn:animsmith:schema:character-assembly-recipe:3 crates/animsmith/src/assembly.rs docs/character-assembly.md docs/cli.md docs/output.md examples/character-assembly.toml
+check_schema docs/schemas/character-assembly-recipe-v3.schema.json urn:animsmith:schema:character-assembly-recipe:3 crates/animsmith/src/assembly.rs
+check_schema docs/schemas/character-assembly-recipe-v4.schema.json urn:animsmith:schema:character-assembly-recipe:4 crates/animsmith/src/assembly.rs docs/character-assembly.md docs/cli.md docs/output.md examples/character-assembly.toml
 check_schema docs/schemas/character-assembly-evidence-v2.schema.json urn:animsmith:schema:character-assembly-evidence:2
-check_schema docs/schemas/character-assembly-evidence-v3.schema.json urn:animsmith:schema:character-assembly-evidence:3 crates/animsmith/src/assembly.rs docs/character-assembly.md docs/cli.md docs/output.md
+check_schema docs/schemas/character-assembly-evidence-v3.schema.json urn:animsmith:schema:character-assembly-evidence:3 crates/animsmith/src/assembly.rs
+check_schema docs/schemas/character-assembly-evidence-v4.schema.json urn:animsmith:schema:character-assembly-evidence:4 crates/animsmith/src/assembly.rs docs/character-assembly.md docs/cli.md docs/output.md
 if ! cmp -s docs/schemas/scale-evidence-v2.schema.json <(
   sed \
     -e 's/urn:animsmith:schema:scale-evidence:3/urn:animsmith:schema:scale-evidence:2/g' \
@@ -153,6 +155,63 @@ if ! cmp -s docs/schemas/character-assembly-evidence-v2.schema.json <(
 ); then
   fail 'character-assembly-evidence-v3 must differ from immutable character-assembly-evidence-v2 only by identity, removed_nodes, and pre-removal index descriptions'
 fi
+if ! cmp -s <(jq -S . docs/schemas/character-assembly-recipe-v3.schema.json) <(
+  jq -S '
+    .["$id"] = "urn:animsmith:schema:character-assembly-recipe:3"
+    | .title = "animsmith character assembly recipe v3"
+    | .properties.schema_version.const = 3
+    | .properties.schema.const = "urn:animsmith:schema:character-assembly-recipe:3"
+    | del(.properties.rest_bind_scale, .["$defs"].rest_bind_scale)
+  ' docs/schemas/character-assembly-recipe-v4.schema.json
+); then
+  fail 'character-assembly-recipe-v4 must differ from immutable character-assembly-recipe-v3 only by identity and rest_bind_scale'
+fi
+if ! cmp -s <(jq -S . docs/schemas/character-assembly-evidence-v3.schema.json) <(
+  jq -S '
+    .["$id"] = "urn:animsmith:schema:character-assembly-evidence:3"
+    | .title = "animsmith character assembly evidence v3"
+    | .properties.schema_version.const = 3
+    | .properties.schema.const = "urn:animsmith:schema:character-assembly-evidence:3"
+    | del(
+        .properties.rest_bind_scale,
+        .["$defs"].rest_bind_scale,
+        .["$defs"].rest_bind_scale_input,
+        .["$defs"].residual_comparison_counts,
+        .["$defs"].shared_scale_evidence,
+        .["$defs"].scale_tolerance,
+        .["$defs"].scale_factors,
+        .["$defs"].scale_affected,
+        .["$defs"].scale_domain_rewrites,
+        .["$defs"].scale_proof,
+        .["$defs"].scale_artifact,
+        .["$defs"].scale_artifact_proof,
+        .["$defs"].scale_residuals,
+        .["$defs"].scale_residual,
+        .["$defs"].index,
+        .["$defs"].index_array,
+        .["$defs"].string_array
+      )
+  ' docs/schemas/character-assembly-evidence-v4.schema.json
+); then
+  fail 'character-assembly-evidence-v4 must differ from immutable character-assembly-evidence-v3 only by identity and rest_bind_scale evidence'
+fi
+if ! jq -e '
+  .["$defs"].residual_comparison_counts.required
+    == .["$defs"].scale_residuals.required
+  and (
+    (.["$defs"].residual_comparison_counts.properties | keys)
+      == (.["$defs"].scale_residuals.properties | keys)
+  )
+' docs/schemas/character-assembly-evidence-v4.schema.json >/dev/null; then
+  fail 'character-assembly-evidence-v4 residual comparison counts must exactly pair every shared proof residual name'
+fi
+for basis_reference in \
+  crates/animsmith/src/assembly.rs \
+  docs/character-assembly.md \
+  docs/output.md; do
+  grep -Fq 'urn:animsmith:character-assembly-scale-basis:1' "$basis_reference" \
+    || fail "$basis_reference does not reference the assembly scale basis fingerprint identity"
+done
 
 # Current-contract descriptions must not send readers back to the immutable
 # output-v2 schema. Keep these exact statements aligned with the current outer

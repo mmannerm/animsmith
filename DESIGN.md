@@ -233,7 +233,8 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   mesh-instance, skin-joint, or complete source-skin reference; it remaps the
   surviving hierarchy but does not reparent descendants or garbage-collect
   mesh, material, or texture resources.
-  Character-assembly recipe/evidence v3 owns that node-removal contract.
+  Character-assembly recipe/evidence v3 introduced that node-removal contract;
+  v4 retains it unchanged while adding optional rest/bind scale integration.
   Selectors resolve by exact unique name against the post-canonicalization base;
   their descendant union is planned before completion, excluded from completion
   targets, and projected after clip processing and constant-track pruning.
@@ -768,11 +769,14 @@ These decisions record result-contract ownership after output v3 finalization:
 
 ## Appendix D — decision record: skinned rest/bind scale canonicalization
 
-**Status (2026-08-14): implemented for self-contained glTF/GLB.** The shared
+**Status (2026-08-17): implemented for self-contained glTF/GLB and character
+assembly recipe/evidence v4.** The shared
 core plan, typed ledger, exact-source writers, independent core and artifact
 proofs, atomic CLI publisher, and immutable scale-evidence v4 producer are the
-current contract. Character assembly does not apply either scale operation;
-its recipe/evidence v3 remains unchanged. Whole-document conversion supports
+current contract. Character assembly v4 can opt into rest/bind scale with
+explicit selectors and factor after validating a versioned basis for the base
+and every separate clip; recipe/evidence v1 through v3 remain unchanged.
+Whole-document conversion supports
 raw glTF `POSITION` morph deltas while preserving static JSON weights as
 numeric values and animated weight accessor payloads byte-exactly; other morph
 semantics and every rest/bind morph payload remain refused. FBX scale output
@@ -1647,6 +1651,14 @@ Different rest translation bases, parent scale, parent rotation, helper layout,
 or effective factor reject before remapping. A digest identifies the evidence
 record but does not replace tolerance-aware semantic comparison.
 
+Character-assembly recipe/evidence v4 implements this record and comparator.
+It captures the exact base and clip bytes once, performs the raw glTF
+capability preflight and plan before remapping, and rebases each compatible
+clip's translation values and both `CUBICSPLINE` translation tangents in the
+source basis. Evidence pins every input digest and basis fingerprint together
+with the compatibility result. V1 through v3 remain immutable and v3 rejects
+the v4 block as unknown.
+
 ### D.6 Proof, evidence, publication, and rollback
 
 The candidate is serialized before it is proved, and the proof runs **once**,
@@ -1915,8 +1927,8 @@ their divergence introduces no band of its own and no new policy identity.
 Migration is opt-in. `assemble.canonicalize_skin` in recipe v3 remains the
 existing unanimated bind-geometry operation with identity source-to-metre
 conversion; it does not gain rest-scale rewriting, and old recipes are not
-silently reinterpreted. A later assembly integration requires a new immutable
-recipe/evidence version and explicit basis-compatibility evidence. Consumers that invert scaled
+silently reinterpreted. Recipe/evidence v4 adds the optional, explicit
+`rest_bind_scale` operation and basis-compatibility evidence. Consumers that invert scaled
 inverse binds with the rigid-only shortcut `-A^T t` can observe a change by
 `s^2`; that exposes a pre-existing consumer error because the shortcut is valid
 only for an orthonormal linear part, not a geometry change made by this
@@ -1945,10 +1957,11 @@ change requires a new policy identity and compatibility review.
 
 The single-document producer has no `animsmith.toml` key and no separate plan
 file: mutation must not become an incidental effect of a lint configuration.
-Assembly recipe v3 has no rest/bind-scale block and rejects unknown fields.
-Any future assembly integration tracked by issue #285 requires a new immutable
-recipe/evidence version, explicit selectors with no defaults, and validation
-of every base and clip basis before applying the operation.
+Assembly recipe v4 exposes the same rest/bind operation only through an
+optional `[rest_bind_scale]` block whose selectors and factor are all required.
+It validates every base and clip basis before applying the operation or
+remapping keys. Recipe v3 has no such block and continues to reject it as
+unknown.
 
 The public `animsmith-core` shape is a non-exhaustive `ScaleOperation` with
 distinct `WholeDocumentLinearUnits { factor }` and
@@ -2038,7 +2051,7 @@ single-document operation and preserve assembly's currently insufficient
 separate-clip proof. A standalone command with unrelated duplicate math was
 also rejected. The chosen end state is one shared core transform-plan and proof
 layer with distinct, explicit frontends: the shipped single-document producer
-and any later versioned assembly integration. The existing
+and character-assembly recipe/evidence v4 integration. The existing
 `canonicalize_skinned_bind_pose` remains the narrower unanimated bind-geometry
 foundation; it is not silently widened or renamed into this contract.
 
@@ -2111,8 +2124,9 @@ The implementation status is:
 - shipped: raw glTF/GLB capability preflight, the shared core plan/ledger and
   proof, preservation-safe whole-document and rest/bind exact-source writers,
   artifact proof, and atomic CLI publication with scale-evidence v4;
-- deferred: assembly integration in issue #285, which requires a new immutable
-  recipe/evidence version rather than changing v3;
+- shipped: glTF-only assembly integration in recipe/evidence v4, including the
+  versioned basis fingerprint/comparator, pre-remap clip rebasing, exact input
+  digests, compatibility evidence, and proof over the exact staged artifact;
 - deferred: FBX scale output in issue #286, after complete ufbx-side capability
   evidence exists;
 - shipped: raw glTF whole-document scaling for dense `f32` morph `POSITION`

@@ -93,6 +93,13 @@ projection while refusing live animation, mesh, and skin references. It rejects 
 at a retargeting relationship. For a final-pose hold, use the existing
 `animsmith_core::transform::hold_extend` helper.
 
+For recipe-v4 rest/bind integration, `animsmith_core::scale` also builds and
+compares versioned assembly basis records before remapping. Those records bind
+named parent topology, target paths, rests and orientations, helper layout,
+coordinate convention, effective target factors, explicit operation selectors,
+and factor. The same compiled plan supplies the pre-remap translation and
+`CUBICSPLINE` tangent factors; assembly does not own a second scale algorithm.
+
 ## Constant-Track Pruning
 
 `animsmith_core::transform::prune_constant_tracks` is an opt-in mechanical
