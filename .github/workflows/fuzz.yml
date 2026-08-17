@@ -43,7 +43,7 @@ jobs:
           # sanitizer instruments it too; that needs the source component.
           components: rust-src
       - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
+        uses: mozilla-actions/sccache-action@v0.0.11
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: fuzz
