@@ -1527,7 +1527,7 @@ field row or obligation.
 | Rotation and scale animation | Retained as dimensionless values | Leave unchanged | Rotation unchanged; rebase each scale VEC3 by `s_parent / s_i`, including cubic tangents |
 | Root motion and velocity | Derived from translation tracks | Convert tracks, then recompute | Preserve sampled trajectory and derived velocity |
 | Base mesh geometry | Base `POSITION` and normals are retained | Scale positions; normals unchanged | Leave positions and normals unchanged |
-| Morphs | Morph deltas and morph-weight animation are not retained | Reject until `POSITION` deltas can be scaled and all data preserved | Reject until full morph preservation is proven |
+| Morphs | Not retained by the normalized core; raw glTF ownership inventories target accessor identities and weight locations | Raw glTF only: scale dense `f32` `POSITION` deltas once per unique accessor; preserve static/animated weights exactly; reject other semantics and unsafe aliases/layouts | Reject: rest/bind morph preservation is not proven |
 | Skin binds | Per-instance IBMs plus a lossy bone convenience value | Conjugate every per-skin matrix | Regenerate every per-skin matrix from output joints and unchanged `G` |
 | Cameras/lights | Node transform only; typed fields are not modeled | Reject until all length fields have handlers | Reject when attached to the affected domain until preservation is proven |
 | Collision/custom data | No semantic model for extras or extensions | Reject unless a registered handler covers every length | Reject when affected unless exact preservation is proven |
@@ -1552,7 +1552,7 @@ generates some missing data, and exposes no complete source skeleton sidecar.
 Consequently neither current load-`Document`-write route qualifies as a
 preservation-proof frontend for these operations without the raw capability
 preflight and explicitly bounded writer work. Unknown extensions or extras,
-unmodeled morphs, cameras, lights, collision metadata, non-triangle primitives,
+unsupported morph semantics or unsafe morph storage, cameras, lights, collision metadata, non-triangle primitives,
 unmodeled vertex attributes, secondary influence payloads, malformed or
 missing inverse binds, node transforms outside the glTF 2.0 contract, and image
 payloads sharing bytes with a rewritten accessor fail closed. FBX support
@@ -1750,8 +1750,11 @@ within versioned tolerances:
 
 For whole-document conversion, the corresponding length facts must differ by
 exactly the declared factor within tolerance while dimensionless facts remain
-equal. Both operations prove finite output, the skin equation, deterministic
-artifact bytes, and deterministic evidence bytes.
+equal. The raw glTF artifact proof independently walks admitted morph
+`POSITION` accessors, requires one conversion per unique accessor (including
+base/morph and cross-target aliases), and compares every static and animated
+morph-weight byte exactly. Both operations prove finite output, the skin
+equation, deterministic artifact bytes, and deterministic evidence bytes.
 
 **Every obligation above is derived from the evidence it needs.** The typed
 ledger contains a row only when the validated planned inventory carries the
@@ -2071,7 +2074,9 @@ The implementation status is:
   recipe/evidence version rather than changing v3;
 - deferred: FBX scale output in issue #286, after complete ufbx-side capability
   evidence exists;
-- deferred: morph-target scaling in issue #298.
+- shipped: raw glTF whole-document scaling for dense `f32` morph `POSITION`
+  deltas with byte-exact static/animated weight preservation (issue #298);
+  rest/bind morphs and a normalized core morph model remain out of scope.
 
 The live implementation sequence is owned by tracker issue #344 and roadmap
 issue #165, not by a numbered future-slice list in this decision record. Work

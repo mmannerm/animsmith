@@ -315,6 +315,29 @@ fn rig(interpolation: &str) -> (Value, Vec<u8>) {
 }
 
 #[test]
+fn rest_bind_refuses_position_morphs_that_whole_document_can_preserve() {
+    let (mut value, _) = rig("LINEAR");
+    value["meshes"][0]["primitives"][0]["targets"] = json!([{ "POSITION": 0 }]);
+    value["meshes"][0]["weights"] = json!([0.5]);
+    value["nodes"][3]["weights"] = json!([0.5]);
+    let source = accepted("rest-bind-morph.gltf", &value);
+    match rewrite_rest_bind(&source, 0, 0, 0.01) {
+        Err(GltfScaleRewriteError::Capability { violations, count }) => {
+            assert_eq!(count, violations.len());
+            assert!(violations.iter().any(|violation| {
+                violation.kind == GltfCapabilityViolationKind::MorphTarget
+                    && violation.location == "/meshes/0/primitives/0/targets"
+            }));
+            assert!(violations.iter().any(|violation| {
+                violation.kind == GltfCapabilityViolationKind::MorphWeights
+                    && violation.location == "/meshes/0/weights"
+            }));
+        }
+        other => panic!("rest/bind morph source should fail at capability: {other:?}"),
+    }
+}
+
+#[test]
 fn a_rest_bind_plan_from_a_different_primitive_inventory_is_refused_before_raw_binding() {
     let (mut planned_value, mut buffer) = rig("LINEAR");
     buffer[at::SPARE..at::SPARE + 36]

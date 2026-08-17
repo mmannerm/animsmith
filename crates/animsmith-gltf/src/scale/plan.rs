@@ -144,6 +144,10 @@ pub(crate) enum RawAccessorTarget {
     MeshNormals {
         disposition: ScaleFieldDisposition,
     },
+    /// Raw-only glTF `POSITION` morph-target deltas. The normalized core has
+    /// no morph model; this identity is admitted only by the whole-document
+    /// raw writer.
+    MorphPositions,
     InstanceInverseBind {
         source_skin_index: usize,
     },
@@ -695,6 +699,11 @@ fn validate_accessor_dispositions(
                 };
                 require_disposition(*disposition, expected, "invalid_mesh_position_disposition")?;
             }
+            RawAccessorTarget::MorphPositions => {
+                if !whole_document {
+                    return Err(plan_mismatch("morph_positions_unsupported_for_rest_bind"));
+                }
+            }
             RawAccessorTarget::Animation {
                 property,
                 disposition,
@@ -842,6 +851,7 @@ fn bind_raw_accessors(
     for (mesh_index, mesh) in array(root, "meshes").iter().enumerate() {
         for (primitive_index, primitive) in array_value(mesh.get("primitives")).iter().enumerate() {
             let base = format!("/meshes/{mesh_index}/primitives/{primitive_index}");
+            let mut base_position_count = None;
             if let Some(attributes) = primitive.get("attributes").and_then(Value::as_object) {
                 for (semantic, value) in attributes {
                     let Some(accessor_index) = as_index(Some(value)) else {
@@ -869,12 +879,15 @@ fn bind_raw_accessors(
                         },
                         _ => (None, RawAccessorTarget::PreserveExact),
                     };
-                    bind(
+                    let count = bind(
                         accessor_index,
                         format!("{base}/attributes/{semantic}"),
                         required,
                         target,
                     )?;
+                    if semantic == "POSITION" {
+                        base_position_count = Some(count);
+                    }
                 }
             }
             if let Some(accessor_index) = as_index(primitive.get("indices")) {
@@ -891,12 +904,25 @@ fn bind_raw_accessors(
                 };
                 for (semantic, value) in target {
                     if let Some(accessor_index) = as_index(Some(value)) {
-                        bind(
+                        let (required, target) = if semantic == "POSITION" {
+                            (
+                                Some(RestBindComponents::Vec3),
+                                RawAccessorTarget::MorphPositions,
+                            )
+                        } else {
+                            (None, RawAccessorTarget::PreserveExact)
+                        };
+                        let count = bind(
                             accessor_index,
                             format!("{base}/targets/{target_index}/{semantic}"),
-                            None,
-                            RawAccessorTarget::PreserveExact,
+                            required,
+                            target,
                         )?;
+                        if semantic == "POSITION"
+                            && base_position_count.is_none_or(|base_count| base_count != count)
+                        {
+                            return Err(plan_mismatch("morph_position_count_mismatch"));
+                        }
                     }
                 }
             }

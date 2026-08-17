@@ -225,6 +225,64 @@ fn minimal_json(positions: &[f32]) -> (Value, Vec<u8>) {
     )
 }
 
+const MORPH_BASE: [f32; 9] = [1.0, 2.0, 3.0, -1.0, 0.5, 4.0, 2.0, -2.0, 0.0];
+const MORPH_A: [f32; 9] = [0.25, 0.0, -0.5, 1.0, -1.0, 2.0, 0.0, 0.5, 0.25];
+const MORPH_B: [f32; 9] = [-0.5, 1.0, 0.0, 0.25, 0.25, -0.25, 2.0, 0.0, 1.0];
+const MORPH_TIMES: [f32; 2] = [0.0, 1.0];
+const MORPH_WEIGHTS: [f32; 4] = [0.25, 0.75, 0.5, 0.5];
+
+fn morph_json() -> (Value, Vec<u8>) {
+    let mut buffer = Vec::new();
+    for values in [
+        &MORPH_BASE[..],
+        &MORPH_A,
+        &MORPH_B,
+        &MORPH_TIMES,
+        &MORPH_WEIGHTS,
+    ] {
+        buffer.extend(f32_bytes(values));
+    }
+    let length = buffer.len();
+    (
+        json!({
+            "asset": { "version": "2.0" },
+            "buffers": [{ "uri": data_uri(&buffer), "byteLength": length }],
+            "bufferViews": [
+                { "buffer": 0, "byteOffset": 0, "byteLength": 36 },
+                { "buffer": 0, "byteOffset": 36, "byteLength": 36 },
+                { "buffer": 0, "byteOffset": 72, "byteLength": 36 },
+                { "buffer": 0, "byteOffset": 108, "byteLength": 8 },
+                { "buffer": 0, "byteOffset": 116, "byteLength": 16 }
+            ],
+            "accessors": [
+                { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+                  "min": [-1.0, -2.0, 0.0], "max": [2.0, 2.0, 4.0] },
+                { "bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3",
+                  "min": [0.0, -1.0, -0.5], "max": [1.0, 0.5, 2.0] },
+                { "bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC3" },
+                { "bufferView": 3, "componentType": 5126, "count": 2, "type": "SCALAR",
+                  "min": [0.0], "max": [1.0] },
+                { "bufferView": 4, "componentType": 5126, "count": 4, "type": "SCALAR" }
+            ],
+            "meshes": [{
+                "weights": [0.25, 0.75],
+                "primitives": [{
+                    "attributes": { "POSITION": 0 },
+                    "targets": [{ "POSITION": 1 }, { "POSITION": 2 }]
+                }]
+            }],
+            "nodes": [{ "mesh": 0, "weights": [0.5, 0.5] }],
+            "scenes": [{ "nodes": [0] }],
+            "scene": 0,
+            "animations": [{
+                "samplers": [{ "input": 3, "output": 4, "interpolation": "LINEAR" }],
+                "channels": [{ "sampler": 0, "target": { "node": 0, "path": "weights" } }]
+            }]
+        }),
+        buffer,
+    )
+}
+
 const RIG_POSITIONS: [f32; 9] = [1.0, 2.0, -3.0, 0.5, -0.25, 4.0, 2.0, 0.0, 1.5];
 const RIG_NORMALS: [f32; 9] = [0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0];
 const RIG_TEXCOORDS: [f32; 6] = [0.0, 0.0, 1.0, 0.0, 0.0, 1.0];
@@ -361,6 +419,115 @@ fn rig_json(interpolation: &str, buffer: &[u8]) -> Value {
             ]
         }]
     })
+}
+
+// --- Raw POSITION morph targets --------------------------------------------
+
+#[test]
+fn whole_document_scales_raw_position_morphs_and_preserves_every_weight_byte() {
+    let (json, original) = morph_json();
+    let mut glb_json = json.clone();
+    glb_json["buffers"][0]
+        .as_object_mut()
+        .expect("buffer object")
+        .remove("uri");
+    for (name, source) in [
+        ("morph.gltf", accepted("morph.gltf", &json)),
+        ("morph.glb", accepted_glb("morph.glb", &glb_json, &original)),
+    ] {
+        let plan = plan_for(&source, 2.0);
+        let artifact = rewrite_scale_plan(&source, &plan).expect("raw morph conversion");
+        let (artifact_json, buffers) = artifact_parts(&artifact);
+        assert_eq!(artifact.rewritten_accessors(), [0, 1, 2], "{name}");
+        assert_eq!(
+            read_f32(&buffers[0][0..108]),
+            MORPH_BASE
+                .iter()
+                .chain(MORPH_A.iter())
+                .chain(MORPH_B.iter())
+                .map(|value| value * 2.0)
+                .collect::<Vec<_>>(),
+            "{name}"
+        );
+        assert_eq!(&buffers[0][108..132], &original[108..132], "{name}");
+        assert_eq!(artifact_json["meshes"][0]["weights"], json!([0.25, 0.75]));
+        assert_eq!(artifact_json["nodes"][0]["weights"], json!([0.5, 0.5]));
+        assert_eq!(
+            artifact_json["accessors"][1]["min"],
+            json!([0.0, -2.0, -1.0])
+        );
+        assert_eq!(artifact_json["accessors"][1]["max"], json!([2.0, 1.0, 4.0]));
+        prove_rewritten_artifact(&source, &artifact, &plan).expect("raw-byte artifact proof");
+    }
+}
+
+#[test]
+fn morph_position_aliases_are_scaled_once_per_unique_accessor() {
+    let (mut json, _) = morph_json();
+    json["meshes"][0]["primitives"][0]["targets"] =
+        json!([{ "POSITION": 0 }, { "POSITION": 1 }, { "POSITION": 1 }]);
+    json["meshes"][0]["weights"] = json!([0.25, 0.5, 0.25]);
+    json["nodes"][0]["weights"] = json!([0.25, 0.5, 0.25]);
+    json["animations"] = json!([]);
+    let source = accepted("morph-alias.gltf", &json);
+    let plan = plan_for(&source, 2.0);
+    let artifact = rewrite_scale_plan(&source, &plan).expect("compatible aliases collapse");
+    let (_, buffers) = artifact_parts(&artifact);
+    assert_eq!(artifact.rewritten_accessors(), [0, 1]);
+    assert_eq!(
+        read_f32(&buffers[0][0..36]),
+        MORPH_BASE.map(|value| value * 2.0)
+    );
+    assert_eq!(
+        read_f32(&buffers[0][36..72]),
+        MORPH_A.map(|value| value * 2.0)
+    );
+    prove_rewritten_artifact(&source, &artifact, &plan).expect("alias proof");
+}
+
+#[test]
+fn unsupported_and_unsafe_morph_payloads_refuse_before_any_rewrite() {
+    let (base, original_buffer) = morph_json();
+    let original_json = bytes(&base);
+    for semantic in ["NORMAL", "TANGENT"] {
+        let mut unsupported = base.clone();
+        unsupported["meshes"][0]["primitives"][0]["targets"][0] = json!({ (semantic): 1 });
+        let violations = rejected(&format!("morph-{semantic}.gltf"), &unsupported);
+        assert_eq!(
+            kinds(&violations),
+            [GltfCapabilityViolationKind::MorphTarget]
+        );
+        assert_eq!(
+            violations[0].location,
+            format!("/meshes/0/primitives/0/targets/0/{semantic}")
+        );
+    }
+
+    let mut sparse = base.clone();
+    sparse["accessors"][1]["sparse"] = json!({
+        "count": 1,
+        "indices": { "bufferView": 3, "componentType": 5123 },
+        "values": { "bufferView": 1 }
+    });
+    let violations = rejected("morph-sparse.gltf", &sparse);
+    assert!(kinds(&violations).contains(&GltfCapabilityViolationKind::UnsafeAccessorLayout));
+
+    let mut overlapping = base.clone();
+    overlapping["bufferViews"][2]["byteOffset"] = json!(60);
+    let violations = rejected("morph-overlap.gltf", &overlapping);
+    assert!(kinds(&violations).contains(&GltfCapabilityViolationKind::OverlappingAccessorRanges));
+
+    let mut conflicting = base.clone();
+    conflicting["meshes"][0]["primitives"][0]["attributes"]["NORMAL"] = json!(1);
+    let violations = rejected("morph-normal-alias.gltf", &conflicting);
+    assert!(kinds(&violations).contains(&GltfCapabilityViolationKind::ConflictingAccessorUse));
+
+    assert_eq!(
+        bytes(&base),
+        original_json,
+        "refusal leaves source JSON untouched"
+    );
+    assert_eq!(data_uri(&original_buffer), base["buffers"][0]["uri"]);
 }
 
 // --- 1: node rest translation ----------------------------------------------
@@ -1355,7 +1522,7 @@ fn every_unpreservable_payload_is_refused_before_an_artifact_exists() {
     );
 
     let mut morph = base();
-    morph["meshes"][0]["primitives"][0]["targets"] = json!([{ "POSITION": 0 }]);
+    morph["meshes"][0]["primitives"][0]["targets"] = json!([{ "TANGENT": 0 }]);
     assert!(
         kinds(&rejected("morph.gltf", &morph)).contains(&GltfCapabilityViolationKind::MorphTarget)
     );

@@ -11606,9 +11606,7 @@ fn every_unsupported_capability_domain_rejects_planning_on_its_own() {
     // One flag at a time, against an otherwise complete projection, so a
     // dropped clause cannot hide behind a sibling.
     let doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
-    let domains: [CapabilityDomainCase; 14] = [
-        ("morphs_present", |f| f.morphs_present = true),
-        ("morph_weights_present", |f| f.morph_weights_present = true),
+    let domains: [CapabilityDomainCase; 12] = [
         ("cameras_present", |f| f.cameras_present = true),
         ("lights_present", |f| f.lights_present = true),
         ("instancing_present", |f| f.instancing_present = true),
@@ -11668,6 +11666,67 @@ fn every_unsupported_capability_domain_rejects_planning_on_its_own() {
     // The complete projection these were derived from is genuinely
     // supported, so each rejection above is attributable to its own flag.
     assert!(complete_capability().is_supported());
+}
+
+#[test]
+fn morph_capabilities_are_whole_document_only() {
+    let doc = rig_document(&unit_rig(), &[1], 0, Mat4::IDENTITY);
+    for (name, set_flag) in [
+        (
+            "morphs_present",
+            (|facts: &mut ScaleCapabilityFacts| facts.morphs_present = true)
+                as fn(&mut ScaleCapabilityFacts),
+        ),
+        (
+            "morph_weights_present",
+            |facts: &mut ScaleCapabilityFacts| {
+                facts.morph_weights_present = true;
+            },
+        ),
+    ] {
+        let mut capability = complete_capability();
+        set_flag(&mut capability);
+        assert!(
+            !capability.is_supported(),
+            "the operation-agnostic query remains conservative for {name}"
+        );
+
+        assert_eq!(
+            plan_scale(&ScaleRequest {
+                operation: ScaleOperation::WholeDocumentLinearUnits { factor: 0.01 },
+                document: &doc,
+                capability: &capability,
+            })
+            .unwrap_err(),
+            ScaleError::IncompleteCapability,
+            "presence without a raw preservation witness must reject {name}"
+        );
+        capability.whole_document_morphs_preservable = true;
+        let whole_document = ScaleRequest {
+            operation: ScaleOperation::WholeDocumentLinearUnits { factor: 0.01 },
+            document: &doc,
+            capability: &capability,
+        };
+        assert!(
+            plan_scale(&whole_document).is_ok(),
+            "raw format adapters may discharge {name} for whole-document conversion"
+        );
+
+        let rest_bind = ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 1.0,
+            },
+            document: &doc,
+            capability: &capability,
+        };
+        assert_eq!(
+            plan_scale(&rest_bind).unwrap_err(),
+            ScaleError::IncompleteCapability,
+            "rest/bind has no raw morph preservation proof for {name}"
+        );
+    }
 }
 
 // --- Tolerance policy identity -----------------------------------------

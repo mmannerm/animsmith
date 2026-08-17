@@ -813,6 +813,9 @@ fn scale_bearing_accessors(
                 validate_proof_whole_document_disposition(*disposition, factor_changes)?
                     .then_some(ProofAccessorRule::AllComponents)
             }
+            RawAccessorTarget::MorphPositions => {
+                factor_changes.then_some(ProofAccessorRule::AllComponents)
+            }
             RawAccessorTarget::InstanceInverseBind { source_skin_index } => {
                 let skin = plan.skin_binding(*source_skin_index)?;
                 let mut rewrite = None;

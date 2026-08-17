@@ -292,9 +292,9 @@ fn collect_rest_bind_claims(
     for binding in plan.accessor_bindings() {
         let factors = match &binding.target {
             RawAccessorTarget::PreserveExact => RestBindFactors::Uniform(1.0),
-            RawAccessorTarget::MeshNormals { .. } | RawAccessorTarget::MeshPositions { .. } => {
-                RestBindFactors::Uniform(1.0)
-            }
+            RawAccessorTarget::MeshNormals { .. }
+            | RawAccessorTarget::MeshPositions { .. }
+            | RawAccessorTarget::MorphPositions => RestBindFactors::Uniform(1.0),
             RawAccessorTarget::InstanceInverseBind { source_skin_index } => {
                 let skin = plan.skin_binding(*source_skin_index)?;
                 RestBindFactors::PerElement(
@@ -584,12 +584,12 @@ pub fn rewrite_rest_bind(
     source_root_node_index: usize,
     expected_factor: f64,
 ) -> Result<GltfScaleArtifact, GltfScaleRewriteError> {
-    let facts = super::require_scale_capability(source.manifest())?;
     let operation = ScaleOperation::RestBindUniformScale {
         source_skin_index,
         source_root_node_index,
         expected_factor,
     };
+    let facts = super::require_scale_capability(source.manifest(), operation)?;
     let plan = plan_scale(&ScaleRequest {
         operation,
         document: source.document(),

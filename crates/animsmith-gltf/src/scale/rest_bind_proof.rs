@@ -376,9 +376,9 @@ fn expected_rebases(
     for binding in plan.accessor_bindings() {
         let factors = match &binding.target {
             RawAccessorTarget::PreserveExact => ExpectedFactors::Uniform(1.0),
-            RawAccessorTarget::MeshNormals { .. } | RawAccessorTarget::MeshPositions { .. } => {
-                ExpectedFactors::Uniform(1.0)
-            }
+            RawAccessorTarget::MeshNormals { .. }
+            | RawAccessorTarget::MeshPositions { .. }
+            | RawAccessorTarget::MorphPositions => ExpectedFactors::Uniform(1.0),
             RawAccessorTarget::InstanceInverseBind {
                 source_skin_index: skin,
             } => {
@@ -427,9 +427,9 @@ fn proof_target_components(
     declared: RestBindComponents,
 ) -> RestBindComponents {
     match target {
-        RawAccessorTarget::MeshPositions { .. } | RawAccessorTarget::MeshNormals { .. } => {
-            RestBindComponents::Vec3
-        }
+        RawAccessorTarget::MeshPositions { .. }
+        | RawAccessorTarget::MeshNormals { .. }
+        | RawAccessorTarget::MorphPositions => RestBindComponents::Vec3,
         RawAccessorTarget::InstanceInverseBind { .. } => RestBindComponents::Mat4Rows,
         RawAccessorTarget::Animation {
             property: animsmith_core::Property::Rotation,

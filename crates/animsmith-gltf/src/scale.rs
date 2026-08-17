@@ -118,12 +118,6 @@ pub use rest_bind_proof::prove_rewritten_rest_bind;
 ///
 /// # Authority
 ///
-/// The manifest is a projection, not the boundary. Two domains it does not
-/// record are static morph weights on `/nodes/*/weights` and
-/// `/meshes/*/weights`; both are only meaningful alongside morph targets,
-/// which the manifest does record, so a schema-valid source carrying them
-/// still reports `morphs_present`.
-///
 /// Four preflight violation kinds are **not** re-derivable here at all,
 /// because the manifest records neither resolved byte ranges, nor images, nor
 /// what a node authored beyond its rest kind:
@@ -157,6 +151,16 @@ fn capability_facts_from_violations(
     for violation in violations {
         record_violation(&mut facts, violation.kind);
     }
+    facts.morphs_present = manifest
+        .primitives
+        .iter()
+        .any(|primitive| primitive.morph_target_count > 0);
+    facts.morph_weights_present = !manifest.morph_weight_locations.is_empty();
+    facts.whole_document_morphs_preservable = (facts.morphs_present || facts.morph_weights_present)
+        && manifest
+            .primitives
+            .iter()
+            .all(|primitive| primitive.unsupported_morph_locations.is_empty());
     facts
 }
 
@@ -254,15 +258,6 @@ fn manifest_violations(manifest: &GltfCapabilityManifest) -> Vec<GltfCapabilityV
         })
         .collect::<BTreeSet<_>>();
     for channel in &manifest.animation_channels {
-        if channel.target_path == "weights" {
-            add(
-                Kind::MorphWeights,
-                format!(
-                    "/animations/{}/channels/{}/target/path",
-                    channel.animation_index, channel.channel_index
-                ),
-            );
-        }
         if matrix_nodes.contains(&channel.target_node_index) {
             add(
                 Kind::AnimatedMatrixNode,
@@ -278,8 +273,8 @@ fn manifest_violations(manifest: &GltfCapabilityManifest) -> Vec<GltfCapabilityV
             "/meshes/{}/primitives/{}",
             primitive.mesh_index, primitive.primitive_index
         );
-        if primitive.morph_target_count > 0 {
-            add(Kind::MorphTarget, format!("{base}/targets"));
+        for location in &primitive.unsupported_morph_locations {
+            add(Kind::MorphTarget, location.clone());
         }
         if primitive.mode != 4 {
             add(Kind::NonTrianglePrimitive, format!("{base}/mode"));
@@ -354,11 +349,39 @@ fn manifest_violations(manifest: &GltfCapabilityManifest) -> Vec<GltfCapabilityV
 
 fn require_scale_capability(
     manifest: &GltfCapabilityManifest,
+    operation: ScaleOperation,
 ) -> Result<ScaleCapabilityFacts, GltfScaleRewriteError> {
-    let violations = manifest_violations(manifest);
+    let mut violations = manifest_violations(manifest);
     let facts = capability_facts_from_violations(manifest, &violations);
-    if facts.is_supported() {
+    if facts.is_supported_for(operation) {
         return Ok(facts);
+    }
+    if matches!(operation, ScaleOperation::RestBindUniformScale { .. }) {
+        for primitive in &manifest.primitives {
+            if primitive.morph_target_count > 0 {
+                violations.push(GltfCapabilityViolation {
+                    kind: GltfCapabilityViolationKind::MorphTarget,
+                    location: format!(
+                        "/meshes/{}/primitives/{}/targets",
+                        primitive.mesh_index, primitive.primitive_index
+                    ),
+                });
+            }
+        }
+        violations.extend(
+            manifest
+                .morph_weight_locations
+                .iter()
+                .cloned()
+                .map(|location| GltfCapabilityViolation {
+                    kind: GltfCapabilityViolationKind::MorphWeights,
+                    location,
+                }),
+        );
+        violations.sort_by(|left, right| {
+            (left.kind, left.location.as_str()).cmp(&(right.kind, right.location.as_str()))
+        });
+        violations.dedup();
     }
     let count = violations.len();
     Err(GltfScaleRewriteError::Capability { violations, count })
@@ -381,6 +404,7 @@ fn scale_bearing_accessors(manifest: &GltfCapabilityManifest) -> BTreeSet<usize>
                 out.insert(attribute.accessor_index);
             }
         }
+        out.extend(primitive.morph_position_accessors.iter().copied());
     }
     for skin in &manifest.skins {
         out.extend(skin.inverse_bind_accessor_index);
@@ -793,9 +817,10 @@ pub fn rewrite_linear_units(
     source: &GltfScaleSource,
     factor: f64,
 ) -> Result<GltfScaleArtifact, GltfScaleRewriteError> {
-    let facts = require_scale_capability(source.manifest())?;
+    let operation = ScaleOperation::WholeDocumentLinearUnits { factor };
+    let facts = require_scale_capability(source.manifest(), operation)?;
     let plan = plan_scale(&ScaleRequest {
-        operation: ScaleOperation::WholeDocumentLinearUnits { factor },
+        operation,
         document: source.document(),
         capability: &facts,
     })?;
@@ -821,7 +846,7 @@ pub fn rewrite_scale_plan(
     source: &GltfScaleSource,
     plan: &animsmith_core::scale::ScalePlan,
 ) -> Result<GltfScaleArtifact, GltfScaleRewriteError> {
-    require_scale_capability(source.manifest())?;
+    require_scale_capability(source.manifest(), plan.operation())?;
     match plan.operation() {
         ScaleOperation::WholeDocumentLinearUnits { .. } => rewrite_linear_units_plan(source, plan),
         ScaleOperation::RestBindUniformScale { .. } => {
@@ -1212,7 +1237,9 @@ mod tests {
                 }],
                 morph_target_count: 0,
                 morph_position_accessors: Vec::new(),
+                unsupported_morph_locations: Vec::new(),
             }],
+            morph_weight_locations: Vec::new(),
             instancing: Vec::new(),
             skins: Vec::new(),
             camera_count: 0,
@@ -1685,6 +1712,7 @@ mod tests {
             input_accessor_index: 1,
             output_accessor_index: 2,
         }];
+        manifest.morph_weight_locations = vec!["/animations/0/channels/0/target/path".to_owned()];
         let facts = capability_facts(&manifest);
         assert!(facts.morph_weights_present);
         assert!(!facts.is_supported());

@@ -500,6 +500,12 @@ pub struct ScaleCapabilityFacts {
     pub morphs_present: bool,
     /// Static or animated morph weights are present.
     pub morph_weights_present: bool,
+    /// The format adapter owns exact preservation of every present morph
+    /// payload for whole-document conversion.
+    ///
+    /// Presence alone is never permission: this witness is set only after a
+    /// raw adapter has validated its operation-specific write set and proof.
+    pub whole_document_morphs_preservable: bool,
     /// A camera is present.
     pub cameras_present: bool,
     /// A punctual light is present.
@@ -528,11 +534,40 @@ pub struct ScaleCapabilityFacts {
 
 impl ScaleCapabilityFacts {
     /// A capability projection declaring complete coverage and no
-    /// unsupported domain — the only facts planning accepts.
+    /// unsupported domain for either operation.
+    ///
+    /// This operation-agnostic query stays conservative for callers that do
+    /// not yet have an operation in hand. Planning uses
+    /// [`Self::is_supported_for`] so a format adapter that owns raw morph
+    /// preservation can admit morphs for whole-document conversion without
+    /// weakening the rest/bind boundary.
     pub fn is_supported(&self) -> bool {
+        self.common_domains_supported() && !self.morphs_present && !self.morph_weights_present
+    }
+
+    /// Whether this complete projection is supported for `operation`.
+    ///
+    /// Morph targets are deliberately operation-specific. A
+    /// whole-document format adapter may scale raw `POSITION` deltas and
+    /// preserve dimensionless weights outside [`crate::Document`]; rest/bind
+    /// still refuses every morph because its raw preservation proof has not
+    /// been defined. All other capability domains retain the same refusal for
+    /// both operations.
+    pub fn is_supported_for(&self, operation: ScaleOperation) -> bool {
+        self.common_domains_supported()
+            && match operation {
+                ScaleOperation::WholeDocumentLinearUnits { .. } => {
+                    (!self.morphs_present && !self.morph_weights_present)
+                        || self.whole_document_morphs_preservable
+                }
+                ScaleOperation::RestBindUniformScale { .. } => {
+                    !self.morphs_present && !self.morph_weights_present
+                }
+            }
+    }
+
+    fn common_domains_supported(&self) -> bool {
         self.coverage == ScaleCapabilityCoverage::Complete
-            && !self.morphs_present
-            && !self.morph_weights_present
             && !self.cameras_present
             && !self.lights_present
             && !self.instancing_present
