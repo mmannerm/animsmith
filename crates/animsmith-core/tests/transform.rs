@@ -387,6 +387,48 @@ fn gait_anchor_refuses_accumulating_root_yaw_without_horizontal_speed() {
 }
 
 #[test]
+fn gait_anchor_refuses_a_full_turn_even_when_endpoint_heading_aliases_start() {
+    const WINDING_FRAMES: usize = 5;
+    const WINDING_FPS: f64 = 1.0;
+    let (skel, mut clip) = open_walk();
+    let roles = roles(&skel);
+    clip.name = "full_turn_root_motion".into();
+    clip.duration_s = (WINDING_FRAMES - 1) as f64;
+    for track in &mut clip.tracks {
+        track.times = (0..WINDING_FRAMES).map(|key| key as f32).collect();
+        let TrackValues::Vec3s(values) = &mut track.values else {
+            unreachable!()
+        };
+        values.truncate(WINDING_FRAMES);
+    }
+    clip.tracks.push(Track {
+        bone: 0,
+        property: Property::Rotation,
+        interpolation: Interpolation::Linear,
+        times: (0..WINDING_FRAMES).map(|key| key as f32).collect(),
+        values: TrackValues::Quats(
+            (0..WINDING_FRAMES)
+                .map(|key| Quat::from_rotation_y(key as f32 * std::f32::consts::FRAC_PI_2))
+                .collect(),
+        ),
+    });
+    let before = format!("{clip:?}");
+
+    let error = align_gait_anchor(
+        &skel,
+        &mut clip,
+        &roles,
+        WINDING_FPS,
+        GaitTrajectoryPolicy::InPlace,
+    )
+    .unwrap_err();
+
+    assert_gait_refusal_is_located_and_atomic(&clip, &before, &error);
+    assert!(error.contains("translation 0.0000 m"), "got: {error}");
+    assert!(error.contains("yaw 360.000 deg"), "got: {error}");
+}
+
+#[test]
 fn gait_anchor_refuses_mixed_root_translation_and_yaw() {
     let (skel, mut clip) = open_walk();
     let roles = roles(&skel);
