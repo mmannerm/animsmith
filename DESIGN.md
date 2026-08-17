@@ -87,7 +87,7 @@ animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hol
 animsmith fix     <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
 animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb> [--material-texture-recipe recipe.toml] [--animation-only|--bake-static-mesh-transforms] [--format text|json]
 animsmith assemble <recipe.toml> -o <out.glb> --evidence <out.json>
-animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file output-v6 measure/lint JSON
+animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file output-v7 measure/lint JSON
 ```
 
 - `lint` = measure + judge against config. `measure` is lint minus
@@ -487,8 +487,8 @@ learns an embedder's contract schema.
 
 - **Text** (default): findings grouped per clip, measured-vs-expected on
   one line, colored; `--quiet` for CI summaries.
-- **JSON** (`--format json`): final output v6, identified by
-  `urn:animsmith:schema:output:6`. Lint emits one result per catalog check and
+- **JSON** (`--format json`): final output v7, identified by
+  `urn:animsmith:schema:output:7`. Lint emits one result per catalog check and
   represents selection, configuration, applicability, evaluation coverage,
   content findings, completed scopes, and typed gaps independently. Measure
   and lint share a nested, independently versioned measurement contract. The
@@ -502,11 +502,11 @@ learns an embedder's contract schema.
   facts. This remains measurement evidence, not an image acceptance, repair,
   resize, transcode, color-space, writer-preservation, or recipe-authority
   policy.
-  Measurements v12 keeps that payload's JSON shape and vocabulary but corrects
-  its linear-transform observations through shared f64 affine facts. Its
-  tolerant measurement policy compares every axis to the mean using the longer
-  operand, retains pair-normalized orthogonality and measurement-specific
-  classification precedence, and leaves v11 as immutable historical evidence.
+  Measurements v13 retains exact raw inverse-bind matrices and publishes
+  affine and conditioning evidence before deriving their inverses. It also
+  carries forward v12's corrected linear-transform observations through shared
+  f64 affine facts; v12 and earlier contracts remain immutable historical
+  evidence.
   `convert --format json` instead emits the separately versioned
   `urn:animsmith:schema:conversion-evidence:2` producer-evidence contract:
   requested options, written-artifact counts, optional static mesh bake entries
@@ -515,7 +515,7 @@ learns an embedder's contract schema.
   the current CLI emits v2 exclusively.
   CLI exit status derives only from content severity (warnings block only
   with `--deny-warnings`); coverage gaps are nonblocking evidence.
-  The output-v6 envelope types and immutable identities live in
+  The output-v7 envelope types and immutable identities live in
   `animsmith-core` so CLI and embedded producers serialize the same reporting
   contract. Static-bake evidence is also a public core type; the conversion
   envelope remains a CLI producer contract.
@@ -2037,6 +2037,20 @@ pins its nested measurement URN; measurements v11 and output-v5 remain
 immutable historical evidence. In general, changing a nested identity that an
 immutable outer schema references requires a new outer identity too; historical
 outer schemas are never retargeted or broadened in place.
+
+Measurements v13 makes inverse-bind derivation auditable and fail-closed. Each
+per-joint bind observation retains the exact finite raw inverse-bind matrix for
+its accessor slot. Before publishing an inverse, the source bottom row must be
+within absolute `1e-6` of affine `[0, 0, 0, 1]`; this admits several binary32
+round trips around one but refuses projective translation columns. The linear
+3x3 reports the scale-free reciprocal infinity-norm condition number
+`1 / (norm_inf(A) * norm_inf(inverse(A)))`. Exactly singular sources and
+finite sources at or below `1e-6` use distinct `non_invertible` and
+`ill_conditioned` unavailable reasons. This avoids the prior scale-bearing,
+exact-zero determinant decision: a uniformly small but well-conditioned matrix
+is assessed by its error amplification rather than its determinant magnitude.
+The new nested shape advances the immutable outer envelope to output v7;
+measurements v12 and output v6 remain historical.
 
 The implementation status is:
 

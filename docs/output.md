@@ -7,21 +7,24 @@ future machine serializers should project the JSON contract.
 
 ## Contract identities
 
-Validation and comparison JSON commands emit output contract v6 with the immutable protocol
-identity `urn:animsmith:schema:output:6`. The retrievable schema is
-[`output-v6.schema.json`](schemas/output-v6.schema.json); its repository URL
+Validation and comparison JSON commands emit output contract v7 with the immutable protocol
+identity `urn:animsmith:schema:output:7`. The retrievable schema is
+[`output-v7.schema.json`](schemas/output-v7.schema.json); its repository URL
 is a retrieval location, not the protocol identity.
 
 Measurement evidence is nested and independently versioned as
-`urn:animsmith:schema:measurements:12`. Its retrievable schema is
-[`measurements-v12.schema.json`](schemas/measurements-v12.schema.json). Version
-12 preserves the v11 JSON shape and vocabulary, but corrects the derivation of
-rest-world and skin-bind linear-transform facts. Because each output schema
-statically pins its nested measurement URN, that correction also requires the
-new output-v6 identity; it does not redesign the envelope shape.
+`urn:animsmith:schema:measurements:13`. Its retrievable schema is
+[`measurements-v13.schema.json`](schemas/measurements-v13.schema.json). Version
+13 retains each per-joint raw inverse-bind matrix beside the observations
+derived from it, refuses non-affine sources, and publishes a scale-free
+reciprocal infinity-norm condition number before trusting an inversion.
+Measurements v12 and output v6 remain immutable historical contracts. Because
+each output schema statically pins its nested measurement URN, advancing the
+nested contract also requires the new output-v7 identity; it does not redesign
+the envelope shape.
 
 `convert --format json` is deliberately a separate conversion-evidence
-contract, not another command in the output-v6 envelope. Its immutable
+contract, not another command in the output-v7 envelope. Its immutable
 identity is `urn:animsmith:schema:conversion-evidence:2`; its retrievable
 schema is
 [`conversion-evidence-v2.schema.json`](schemas/conversion-evidence-v2.schema.json).
@@ -74,15 +77,15 @@ exclusively; regenerate v1 evidence when a v2 consumer is required.
 [`output-v4`](schemas/output-v4.schema.json), and
 [`output-v5`](schemas/output-v5.schema.json) remain historical immutable
 contracts. The current CLI emits and
-`diff` reads output-v6; regenerate a current output-v6 report from the original
+`diff` reads output-v7; regenerate a current output-v7 report from the original
 asset with `animsmith measure --format json` before passing it to `diff`.
 
 ## Common envelope
 
 ```json
 {
-  "schema_version": 6,
-  "schema": "urn:animsmith:schema:output:6",
+  "schema_version": 7,
+  "schema": "urn:animsmith:schema:output:7",
   "tool": {
     "name": "animsmith",
     "version": "0.2.1",
@@ -366,8 +369,8 @@ Both commands put evidence under `files[].measurements`:
 
 ```json
 {
-  "schema_version": 12,
-  "schema": "urn:animsmith:schema:measurements:12",
+  "schema_version": 13,
+  "schema": "urn:animsmith:schema:measurements:13",
   "clips": {},
   "mesh_definitions": [],
   "node_instances": [],
@@ -597,7 +600,19 @@ remain per-joint observations rather than claims that rows agree. Attachments
 are identity evidence, not an extra transform folded into either calculation.
 Each available derived field preserves its finite matrix and adds the same
 `linear` facts used by rest-world nodes. Otherwise it carries a typed
-unavailable reason. `joint_bind_linear_summary` summarizes only
+unavailable reason. Both observations repeat the exact finite
+`source_inverse_bind_matrix` for their joint slot, even when a later
+derivation is unavailable, so a consumer can verify the arithmetic without a
+second accessor decoder. `joint_bind_to_mesh.inversion_quality` reports
+`1 / (norm_inf(A) * norm_inf(inverse(A)))` for the source linear 3x3. This
+scale-free value is zero for a singular source and approaches zero as forward
+error amplification grows. Values at or below `1e-6` refuse as
+`inverse_bind_matrix_ill_conditioned`; an exactly singular linear part uses
+`inverse_bind_matrix_non_invertible`. A source bottom row must be affine within
+absolute `1e-6` of `[0, 0, 0, 1]`, which admits ordinary binary32 round-trip
+noise while refusing projective matrices as `inverse_bind_matrix_non_affine`.
+`mesh_bind_world` has no inversion quality because it multiplies rather than
+inverts the raw source. `joint_bind_linear_summary` summarizes only
 `joint_bind_to_mesh`: it reports joint/available/unavailable counts and
 distinguishes a shared `consistent_uniform` factor, differing `mixed_uniform`
 factors, `non_uniform_or_sheared`, `reflected_or_singular`, mixed groups, and
@@ -733,13 +748,13 @@ the same numeric value to a conforming adapter.
 
 ## `diff`
 
-`diff --format json` uses the same output v6 header and emits `inputs`, a
+`diff --format json` uses the same output v7 header and emits `inputs`, a
 delta count, and structured metric deltas:
 
 ```json
 {
-  "schema_version": 6,
-  "schema": "urn:animsmith:schema:output:6",
+  "schema_version": 7,
+  "schema": "urn:animsmith:schema:output:7",
   "tool": {
     "name": "animsmith",
     "version": "0.2.1",
@@ -754,7 +769,7 @@ delta count, and structured metric deltas:
 }
 ```
 
-`diff` accepts asset files or one-file v6 `measure`/`lint` reports carrying
+`diff` accepts asset files or one-file v7 `measure`/`lint` reports carrying
 measurement contract v12. v11 reports are historical and are rejected with
 guidance to regenerate them from the original asset. Multi-file reports and
 other unsupported contract versions are also rejected as operator errors.

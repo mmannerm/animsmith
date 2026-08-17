@@ -36,12 +36,14 @@ check_schema docs/schemas/output-v2.schema.json urn:animsmith:schema:output:2
 check_schema docs/schemas/output-v3.schema.json urn:animsmith:schema:output:3
 check_schema docs/schemas/output-v4.schema.json urn:animsmith:schema:output:4
 check_schema docs/schemas/output-v5.schema.json urn:animsmith:schema:output:5
-check_schema docs/schemas/output-v6.schema.json urn:animsmith:schema:output:6 crates/animsmith-core/src/contract.rs docs/output.md
+check_schema docs/schemas/output-v6.schema.json urn:animsmith:schema:output:6
+check_schema docs/schemas/output-v7.schema.json urn:animsmith:schema:output:7 crates/animsmith-core/src/contract.rs docs/output.md
 check_schema docs/schemas/measurements-v8.schema.json urn:animsmith:schema:measurements:8
 check_schema docs/schemas/measurements-v9.schema.json urn:animsmith:schema:measurements:9
 check_schema docs/schemas/measurements-v10.schema.json urn:animsmith:schema:measurements:10
 check_schema docs/schemas/measurements-v11.schema.json urn:animsmith:schema:measurements:11 docs/schemas/output-v4.schema.json docs/schemas/output-v5.schema.json
-check_schema docs/schemas/measurements-v12.schema.json urn:animsmith:schema:measurements:12 crates/animsmith-core/src/contract.rs docs/schemas/output-v6.schema.json docs/output.md
+check_schema docs/schemas/measurements-v12.schema.json urn:animsmith:schema:measurements:12
+check_schema docs/schemas/measurements-v13.schema.json urn:animsmith:schema:measurements:13 crates/animsmith-core/src/contract.rs docs/schemas/output-v7.schema.json docs/output.md
 for historical_output in docs/schemas/output-v4.schema.json docs/schemas/output-v5.schema.json; do
   jq -e --arg expected 'urn:animsmith:schema:measurements:11' \
     '.["$defs"].file_report.properties.measurements["$ref"] == $expected' \
@@ -49,7 +51,10 @@ for historical_output in docs/schemas/output-v4.schema.json docs/schemas/output-
 done
 jq -e --arg expected 'urn:animsmith:schema:measurements:12' \
   '.["$defs"].file_report.properties.measurements["$ref"] == $expected' \
-  docs/schemas/output-v6.schema.json >/dev/null || fail 'docs/schemas/output-v6.schema.json must reference measurements-v12'
+  docs/schemas/output-v6.schema.json >/dev/null || fail 'docs/schemas/output-v6.schema.json must retain measurements-v12'
+jq -e --arg expected 'urn:animsmith:schema:measurements:13' \
+  '.["$defs"].file_report.properties.measurements["$ref"] == $expected' \
+  docs/schemas/output-v7.schema.json >/dev/null || fail 'docs/schemas/output-v7.schema.json must reference measurements-v13'
 if ! cmp -s docs/schemas/measurements-v11.schema.json <(
   sed \
     -e 's/urn:animsmith:schema:measurements:12/urn:animsmith:schema:measurements:11/g' \
@@ -140,10 +145,10 @@ fi
 # Current-contract descriptions must not send readers back to the immutable
 # output-v2 schema. Keep these exact statements aligned with the current outer
 # contract when it advances.
-grep -Fq 'Final output-v6 record for one catalog check.' crates/animsmith-core/src/evaluation.rs \
-  || fail 'CheckEvaluation documentation does not identify output v6'
-grep -Fq 'regenerate a current output-v6 report from the original' docs/output.md \
-  || fail 'report migration documentation does not identify output v6'
+grep -Fq 'Final output-v7 record for one catalog check.' crates/animsmith-core/src/evaluation.rs \
+  || fail 'CheckEvaluation documentation does not identify output v7'
+grep -Fq 'regenerate a current output-v7 report from the original' docs/output.md \
+  || fail 'report migration documentation does not identify output v7'
 
 for removed_schema in \
   docs/schemas/output-v1.schema.json \
@@ -309,7 +314,7 @@ legacy_candidate_pattern='"schema_version"'
 
 # Pin the scanner against a normal outer envelope whose schema/tool fields sit
 # between its version and command. Also prove that current nested measurements in a
-# current output-v6 envelope are not mistaken for an outer legacy contract.
+# current output-v7 envelope are not mistaken for an outer legacy contract.
 legacy_scanner_regression=$(
   printf '%s\n' \
     '{' \
@@ -394,14 +399,14 @@ modern_scanner_regression=$(
     '  "schema_version": 2,' \
     '  "command": "measure",' \
     '  "files": [{ "measurements": {' \
-    '    "schema_version": 12,' \
-    '    "schema": "urn:animsmith:schema:measurements:12"' \
+    '    "schema_version": 13,' \
+    '    "schema": "urn:animsmith:schema:measurements:13"' \
     '  }}]' \
     '}' \
     | awk "$legacy_envelope_awk"
 )
 if [ -n "$modern_scanner_regression" ]; then
-  fail "legacy-envelope scanner misclassified nested measurements v12"
+  fail "legacy-envelope scanner misclassified nested measurements v13"
 fi
 
 legacy_envelope=$(
