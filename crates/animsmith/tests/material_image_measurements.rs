@@ -8,7 +8,7 @@ use std::path::Path;
 use std::process::Command;
 
 const MEASUREMENTS_SCHEMA: &str =
-    include_str!("../../../docs/schemas/measurements-v12.schema.json");
+    include_str!("../../../docs/schemas/measurements-v13.schema.json");
 
 fn assert_valid_measurements(value: &Value) {
     let schema = serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid v12 schema JSON");

@@ -31,6 +31,15 @@ pub const MIN_RECORDED_ROTATION_DEG: f64 = 0.1;
 pub const LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE: f64 = 1.0e-5;
 /// Scale-relative determinant threshold used to classify singular matrices.
 pub const LINEAR_CLASSIFICATION_SINGULAR_TOLERANCE: f64 = 1.0e-6;
+/// Absolute tolerance for the affine bottom row of a source inverse-bind
+/// matrix. This admits several binary32 round trips around one while rejecting
+/// projective matrices whose translation column is not a Cartesian point.
+pub const INVERSE_BIND_AFFINE_TOLERANCE: f64 = 1.0e-6;
+/// Minimum accepted reciprocal infinity-norm condition number for the linear
+/// 3x3 part of an inverse-bind matrix. At the boundary, binary32 input error
+/// may be amplified by about one million, leaving too little trustworthy
+/// precision for a published inverse.
+pub const INVERSE_BIND_MIN_RECIPROCAL_CONDITION_INF: f64 = 1.0e-6;
 
 /// Axis-aligned bounding box whose coordinates use the owning measurement's
 /// documented definition-local, node-world, or scene-world domain.
@@ -452,8 +461,27 @@ pub enum SkinDerivedMatrixUnavailableReason {
     JointRestWorldUnavailable,
     /// The raw inverse-bind matrix cannot itself be inverted.
     InverseBindMatrixNonInvertible,
+    /// The raw inverse-bind matrix is not affine within the documented
+    /// bottom-row tolerance.
+    InverseBindMatrixNonAffine,
+    /// The raw inverse-bind matrix is affine but its linear part is too poorly
+    /// conditioned to publish a trustworthy inverse.
+    InverseBindMatrixIllConditioned,
     /// Multiplication produced a non-finite derived matrix.
     NonFiniteDerivedMatrix,
+}
+
+/// Numerical quality of an inverse-bind matrix inversion.
+///
+/// The reciprocal condition number uses the matrix infinity norm over the
+/// linear 3x3 part: `1 / (norm_inf(A) * norm_inf(inverse(A)))`. It is
+/// scale-free, ranges from zero through one, and approaches zero as the
+/// matrix approaches singularity.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct SkinMatrixInversionQuality {
+    /// Reciprocal infinity-norm condition number of the source linear 3x3.
+    pub reciprocal_condition_number_inf: f64,
 }
 
 /// One per-joint derived bind-domain matrix.
@@ -462,6 +490,17 @@ pub enum SkinDerivedMatrixUnavailableReason {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct SkinDerivedMatrixMeasurements {
+    /// Exact finite source inverse-bind matrix used by this observation, in
+    /// column-major order. It remains present when a later derivation step is
+    /// unavailable, and is absent only when no readable source slot exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_inverse_bind_matrix: Option<[f32; 16]>,
+    /// Inversion quality for `joint_bind_to_mesh`. This is present whenever a
+    /// readable affine source matrix can be assessed, including singular or
+    /// ill-conditioned sources, and is absent for `mesh_bind_world`, which
+    /// does not invert the source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inversion_quality: Option<SkinMatrixInversionQuality>,
     /// Matrix in the documented coordinate domain, in column-major order.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub matrix: Option<[f32; 16]>,
@@ -885,13 +924,140 @@ fn derived_accessor_global_unavailable_reason(
     }
 }
 
-fn invertible_matrix(matrix: Mat4) -> Option<Mat4> {
-    let determinant = matrix.determinant();
-    if !determinant.is_finite() || determinant == 0.0 {
-        return None;
+pub(crate) struct InverseBindAssessment {
+    pub(crate) inverse: Result<Mat4, SkinDerivedMatrixUnavailableReason>,
+    pub(crate) quality: Option<SkinMatrixInversionQuality>,
+}
+
+pub(crate) fn assess_inverse_bind(matrix: Mat4) -> InverseBindAssessment {
+    let values = matrix.to_cols_array();
+    let affine = [values[3], values[7], values[11]]
+        .into_iter()
+        .all(|value| f64::from(value).abs() <= INVERSE_BIND_AFFINE_TOLERANCE)
+        && (f64::from(values[15]) - 1.0).abs() <= INVERSE_BIND_AFFINE_TOLERANCE;
+    if !affine {
+        return InverseBindAssessment {
+            inverse: Err(SkinDerivedMatrixUnavailableReason::InverseBindMatrixNonAffine),
+            quality: None,
+        };
     }
-    let inverse = matrix.inverse();
-    matrix_is_finite(inverse).then_some(inverse)
+
+    let linear = [
+        [
+            f64::from(values[0]),
+            f64::from(values[4]),
+            f64::from(values[8]),
+        ],
+        [
+            f64::from(values[1]),
+            f64::from(values[5]),
+            f64::from(values[9]),
+        ],
+        [
+            f64::from(values[2]),
+            f64::from(values[6]),
+            f64::from(values[10]),
+        ],
+    ];
+    let determinant = linear[0][0] * (linear[1][1] * linear[2][2] - linear[1][2] * linear[2][1])
+        - linear[0][1] * (linear[1][0] * linear[2][2] - linear[1][2] * linear[2][0])
+        + linear[0][2] * (linear[1][0] * linear[2][1] - linear[1][1] * linear[2][0]);
+    let norm = linear
+        .iter()
+        .map(|row| row.iter().map(|value| value.abs()).sum::<f64>())
+        .fold(0.0_f64, f64::max);
+    if determinant == 0.0 || norm == 0.0 || !determinant.is_finite() || !norm.is_finite() {
+        return InverseBindAssessment {
+            inverse: Err(SkinDerivedMatrixUnavailableReason::InverseBindMatrixNonInvertible),
+            quality: Some(SkinMatrixInversionQuality {
+                reciprocal_condition_number_inf: 0.0,
+            }),
+        };
+    }
+    let inverse_linear = [
+        [
+            (linear[1][1] * linear[2][2] - linear[1][2] * linear[2][1]) / determinant,
+            (linear[0][2] * linear[2][1] - linear[0][1] * linear[2][2]) / determinant,
+            (linear[0][1] * linear[1][2] - linear[0][2] * linear[1][1]) / determinant,
+        ],
+        [
+            (linear[1][2] * linear[2][0] - linear[1][0] * linear[2][2]) / determinant,
+            (linear[0][0] * linear[2][2] - linear[0][2] * linear[2][0]) / determinant,
+            (linear[0][2] * linear[1][0] - linear[0][0] * linear[1][2]) / determinant,
+        ],
+        [
+            (linear[1][0] * linear[2][1] - linear[1][1] * linear[2][0]) / determinant,
+            (linear[0][1] * linear[2][0] - linear[0][0] * linear[2][1]) / determinant,
+            (linear[0][0] * linear[1][1] - linear[0][1] * linear[1][0]) / determinant,
+        ],
+    ];
+    let inverse_norm = inverse_linear
+        .iter()
+        .map(|row| row.iter().map(|value| value.abs()).sum::<f64>())
+        .fold(0.0_f64, f64::max);
+    let reciprocal_condition_number_inf = (1.0 / (norm * inverse_norm)).clamp(0.0, 1.0);
+    let quality = Some(SkinMatrixInversionQuality {
+        reciprocal_condition_number_inf,
+    });
+    if !reciprocal_condition_number_inf.is_finite()
+        || reciprocal_condition_number_inf <= INVERSE_BIND_MIN_RECIPROCAL_CONDITION_INF
+    {
+        return InverseBindAssessment {
+            inverse: Err(SkinDerivedMatrixUnavailableReason::InverseBindMatrixIllConditioned),
+            quality,
+        };
+    }
+    let mut inverse = matrix.inverse();
+    if !matrix_is_finite(inverse) {
+        let translation = [
+            f64::from(values[12]),
+            f64::from(values[13]),
+            f64::from(values[14]),
+        ];
+        let inverse_translation = [
+            -inverse_linear[0]
+                .iter()
+                .zip(translation)
+                .map(|(coefficient, value)| coefficient * value)
+                .sum::<f64>(),
+            -inverse_linear[1]
+                .iter()
+                .zip(translation)
+                .map(|(coefficient, value)| coefficient * value)
+                .sum::<f64>(),
+            -inverse_linear[2]
+                .iter()
+                .zip(translation)
+                .map(|(coefficient, value)| coefficient * value)
+                .sum::<f64>(),
+        ];
+        let widened = [
+            inverse_linear[0][0],
+            inverse_linear[1][0],
+            inverse_linear[2][0],
+            0.0,
+            inverse_linear[0][1],
+            inverse_linear[1][1],
+            inverse_linear[2][1],
+            0.0,
+            inverse_linear[0][2],
+            inverse_linear[1][2],
+            inverse_linear[2][2],
+            0.0,
+            inverse_translation[0],
+            inverse_translation[1],
+            inverse_translation[2],
+            1.0,
+        ];
+        let narrowed = widened.map(|value| value as f32);
+        inverse = Mat4::from_cols_array(&narrowed);
+    }
+    InverseBindAssessment {
+        inverse: matrix_is_finite(inverse)
+            .then_some(inverse)
+            .ok_or(SkinDerivedMatrixUnavailableReason::NonFiniteDerivedMatrix),
+        quality,
+    }
 }
 
 /// Derive deterministic scale, orientation, and shape facts from an affine
@@ -1052,6 +1218,8 @@ fn unavailable_derived_matrix(
     reason: SkinDerivedMatrixUnavailableReason,
 ) -> SkinDerivedMatrixMeasurements {
     SkinDerivedMatrixMeasurements {
+        source_inverse_bind_matrix: None,
+        inversion_quality: None,
         matrix: None,
         linear: None,
         unavailable_reason: Some(reason),
@@ -1060,10 +1228,22 @@ fn unavailable_derived_matrix(
 
 fn available_derived_matrix(matrix: Mat4) -> SkinDerivedMatrixMeasurements {
     SkinDerivedMatrixMeasurements {
+        source_inverse_bind_matrix: None,
+        inversion_quality: None,
         matrix: Some(matrix_to_columns(matrix)),
         linear: Some(measure_linear_transform(matrix)),
         unavailable_reason: None,
     }
+}
+
+fn with_inverse_bind_source(
+    mut measurements: SkinDerivedMatrixMeasurements,
+    raw: Mat4,
+    quality: Option<SkinMatrixInversionQuality>,
+) -> SkinDerivedMatrixMeasurements {
+    measurements.source_inverse_bind_matrix = Some(matrix_to_columns(raw));
+    measurements.inversion_quality = quality;
+    measurements
 }
 
 pub(crate) fn measure_source_skeleton(
@@ -1219,13 +1399,14 @@ pub(crate) fn measure_source_skeleton(
                             }
                         },
                     };
-                    let joint_bind_to_mesh = invertible_matrix(raw).map_or_else(
-                        || {
-                            unavailable_derived_matrix(
-                                SkinDerivedMatrixUnavailableReason::InverseBindMatrixNonInvertible,
-                            )
+                    let assessment = assess_inverse_bind(raw);
+                    let joint_bind_to_mesh = with_inverse_bind_source(
+                        match assessment.inverse {
+                            Ok(inverse) => available_derived_matrix(inverse),
+                            Err(reason) => unavailable_derived_matrix(reason),
                         },
-                        available_derived_matrix,
+                        raw,
+                        assessment.quality,
                     );
                     let world = worlds
                         .get(&node_index)
@@ -1234,17 +1415,21 @@ pub(crate) fn measure_source_skeleton(
                     let mesh_bind_world = match world {
                         Ok(world) => {
                             let matrix = world * raw;
-                            matrix_is_finite(matrix).then_some(()).map_or_else(
+                            with_inverse_bind_source(matrix_is_finite(matrix).then_some(()).map_or_else(
                                 || {
                                     unavailable_derived_matrix(
                                         SkinDerivedMatrixUnavailableReason::NonFiniteDerivedMatrix,
                                     )
                                 },
                                 |_| available_derived_matrix(matrix),
-                            )
+                            ), raw, None)
                         }
-                        Err(_) => unavailable_derived_matrix(
-                            SkinDerivedMatrixUnavailableReason::JointRestWorldUnavailable,
+                        Err(_) => with_inverse_bind_source(
+                            unavailable_derived_matrix(
+                                SkinDerivedMatrixUnavailableReason::JointRestWorldUnavailable,
+                            ),
+                            raw,
+                            None,
                         ),
                     };
                     SkinJointMeasurements {
@@ -3528,5 +3713,143 @@ mod tests {
                 }
             })
         );
+    }
+
+    #[test]
+    fn inverse_bind_conditioning_is_scale_free_and_tracks_anisotropy() {
+        for (scales, expected) in [
+            (Vec3::splat(1.0), 1.0),
+            (Vec3::new(1.0, 0.1, 0.1), 0.1),
+            (Vec3::new(1.0, 0.01, 0.01), 0.01),
+            (Vec3::splat(1.0e-20), 1.0),
+        ] {
+            let assessment = assess_inverse_bind(Mat4::from_scale(scales));
+            assert!(assessment.inverse.is_ok(), "scales {scales:?}");
+            let actual = assessment
+                .quality
+                .expect("affine linear transform has quality")
+                .reciprocal_condition_number_inf;
+            assert!(
+                (actual - expected).abs() <= 1.0e-6,
+                "{actual} != {expected}"
+            );
+        }
+
+        let shear = Mat4::from_cols_array(&[
+            1.0, 0.0, 0.0, 0.0, // first column
+            1.0, 1.0, 0.0, 0.0, // second column
+            0.0, 0.0, 1.0, 0.0, // third column
+            0.0, 0.0, 0.0, 1.0,
+        ]);
+        let quality = assess_inverse_bind(shear)
+            .quality
+            .expect("finite affine shear has quality");
+        assert_eq!(
+            quality.reciprocal_condition_number_inf, 0.25,
+            "infinity-norm conditioning includes off-diagonal row sums"
+        );
+    }
+
+    #[test]
+    fn inverse_bind_assessment_distinguishes_non_affine_singular_and_ill_conditioned() {
+        let inside_zero = INVERSE_BIND_AFFINE_TOLERANCE as f32;
+        let outside_zero = f32::from_bits(inside_zero.to_bits() + 1);
+        assert!(f64::from(inside_zero) <= INVERSE_BIND_AFFINE_TOLERANCE);
+        assert!(f64::from(outside_zero) > INVERSE_BIND_AFFINE_TOLERANCE);
+        for slot in [3, 7, 11] {
+            for value in [inside_zero, -inside_zero] {
+                let mut affine = Mat4::IDENTITY.to_cols_array();
+                affine[slot] = value;
+                assert!(
+                    assess_inverse_bind(Mat4::from_cols_array(&affine))
+                        .inverse
+                        .is_ok(),
+                    "bottom-row slot {slot} accepts signed values inside the tolerance"
+                );
+            }
+            for value in [outside_zero, -outside_zero] {
+                let mut non_affine = Mat4::IDENTITY.to_cols_array();
+                non_affine[slot] = value;
+                let assessment = assess_inverse_bind(Mat4::from_cols_array(&non_affine));
+                assert_eq!(
+                    assessment.inverse,
+                    Err(SkinDerivedMatrixUnavailableReason::InverseBindMatrixNonAffine),
+                    "bottom-row slot {slot} rejects signed values outside the tolerance"
+                );
+                assert_eq!(assessment.quality, None);
+            }
+        }
+        let inside_one = 1.0 + INVERSE_BIND_AFFINE_TOLERANCE as f32;
+        let outside_one = f32::from_bits(inside_one.to_bits() + 1);
+        assert!((f64::from(inside_one) - 1.0).abs() <= INVERSE_BIND_AFFINE_TOLERANCE);
+        assert!((f64::from(outside_one) - 1.0).abs() > INVERSE_BIND_AFFINE_TOLERANCE);
+        for value in [inside_one, 2.0 - inside_one] {
+            let mut affine = Mat4::IDENTITY.to_cols_array();
+            affine[15] = value;
+            assert!(
+                assess_inverse_bind(Mat4::from_cols_array(&affine))
+                    .inverse
+                    .is_ok()
+            );
+        }
+        for value in [outside_one, 2.0 - outside_one] {
+            let mut non_affine = Mat4::IDENTITY.to_cols_array();
+            non_affine[15] = value;
+            assert_eq!(
+                assess_inverse_bind(Mat4::from_cols_array(&non_affine)).inverse,
+                Err(SkinDerivedMatrixUnavailableReason::InverseBindMatrixNonAffine)
+            );
+        }
+
+        let singular = assess_inverse_bind(Mat4::from_scale(Vec3::new(1.0, 1.0, 0.0)));
+        assert_eq!(
+            singular.inverse,
+            Err(SkinDerivedMatrixUnavailableReason::InverseBindMatrixNonInvertible)
+        );
+        assert_eq!(
+            singular
+                .quality
+                .expect("singular affine matrix has quality")
+                .reciprocal_condition_number_inf,
+            0.0
+        );
+
+        let ill_conditioned = assess_inverse_bind(Mat4::from_scale(Vec3::new(1.0, 1.0, 1.0e-7)));
+        assert_eq!(
+            ill_conditioned.inverse,
+            Err(SkinDerivedMatrixUnavailableReason::InverseBindMatrixIllConditioned)
+        );
+        assert_eq!(
+            ill_conditioned
+                .quality
+                .expect("ill-conditioned affine matrix has quality")
+                .reciprocal_condition_number_inf,
+            1.0e-7_f32 as f64
+        );
+
+        for (shear, expected_reason) in [
+            (
+                999.0,
+                Some(SkinDerivedMatrixUnavailableReason::InverseBindMatrixIllConditioned),
+            ),
+            (998.0, None),
+        ] {
+            let matrix = Mat4::from_cols_array(&[
+                1.0, 0.0, 0.0, 0.0, shear, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+            ]);
+            let assessment = assess_inverse_bind(matrix);
+            let expected_quality = 1.0 / (1.0 + f64::from(shear)).powi(2);
+            assert_eq!(
+                assessment
+                    .quality
+                    .expect("affine shear has quality")
+                    .reciprocal_condition_number_inf,
+                expected_quality
+            );
+            match expected_reason {
+                Some(reason) => assert_eq!(assessment.inverse, Err(reason)),
+                None => assert!(assessment.inverse.is_ok()),
+            }
+        }
     }
 }

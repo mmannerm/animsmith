@@ -906,7 +906,7 @@ fn measurement_report_input_identifies_invalid_file_without_cli_remediation() {
 }
 
 #[test]
-fn tool_source_drops_revision_text_outside_the_v6_schema() {
+fn tool_source_drops_revision_text_outside_the_v7_schema() {
     for invalid in ["f".repeat(39), "z".repeat(40), "f".repeat(41)] {
         let source = ToolSource::new(Some(invalid), Some(true));
         let json =
@@ -1075,10 +1075,13 @@ fn complete_skeleton_assets() -> AssetMeasurements {
             "joints": [{
                 "joint_index": 0, "node_index": 0,
                 "joint_bind_to_mesh": {
+                    "source_inverse_bind_matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+                    "inversion_quality": { "reciprocal_condition_number_inf": 1.0 },
                     "matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
                     "linear": { "classification": "unit_orthonormal", "axis_lengths": [1.0, 1.0, 1.0], "determinant": 1.0, "orientation": "positive", "uniform_scale": 1.0 }
                 },
                 "mesh_bind_world": {
+                    "source_inverse_bind_matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
                     "matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
                     "linear": { "classification": "unit_orthonormal", "axis_lengths": [1.0, 1.0, 1.0], "determinant": 1.0, "orientation": "positive", "uniform_scale": 1.0 }
                 }
@@ -1174,6 +1177,51 @@ fn measurement_contract_rejects_inconsistent_skeleton_source_evidence() {
         },
         "skins[0].joints[0].joint_bind_to_mesh.unavailable_reason",
         "a usable inverse-bind matrix cannot be reported as accessor-unavailable",
+    );
+    invalid(
+        &|assets| {
+            assets.skins[0].joints[0]
+                .joint_bind_to_mesh
+                .source_inverse_bind_matrix
+                .as_mut()
+                .expect("source matrix")[12] = 1.0;
+        },
+        "skins[0].joints[0].joint_bind_to_mesh.source_inverse_bind_matrix",
+        "source_inverse_bind_matrix must equal the raw accessor slot exactly",
+    );
+    invalid(
+        &|assets| {
+            assets.skins[0].joints[0]
+                .joint_bind_to_mesh
+                .inversion_quality
+                .as_mut()
+                .expect("inversion quality")
+                .reciprocal_condition_number_inf = 0.5;
+        },
+        "skins[0].joints[0].joint_bind_to_mesh.inversion_quality",
+        "inversion quality must be derived from the source linear 3x3",
+    );
+    invalid(
+        &|assets| {
+            assets.skins[0].joints[0]
+                .joint_bind_to_mesh
+                .matrix
+                .as_mut()
+                .expect("derived inverse")[12] = 1.0;
+        },
+        "skins[0].joints[0].joint_bind_to_mesh",
+        "a trustworthy source inverse-bind matrix requires its exact inverse",
+    );
+    invalid(
+        &|assets| {
+            assets.skins[0].joints[0]
+                .mesh_bind_world
+                .matrix
+                .as_mut()
+                .expect("derived mesh bind")[12] = 1.0;
+        },
+        "skins[0].joints[0].mesh_bind_world",
+        "mesh_bind_world must equal joint_rest_world times the source inverse bind",
     );
     invalid(
         &|assets| {
@@ -1312,15 +1360,31 @@ fn measurement_contract_accepts_deep_parent_chains_and_singular_raw_inverse_bind
         .expect("a deep acyclic source hierarchy is valid without recursive traversal");
 
     let mut assets = complete_skeleton_assets();
-    assets.skins[0].inverse_bind_accessor.matrices[0] = [0.0; 16];
+    let singular = Mat4::from_scale(glam::Vec3::new(1.0, 1.0, 0.0)).to_cols_array();
+    assets.skins[0].inverse_bind_accessor.matrices[0] = singular;
+    assets.skins[0].joints[0]
+        .joint_bind_to_mesh
+        .source_inverse_bind_matrix = Some(singular);
+    assets.skins[0].joints[0]
+        .joint_bind_to_mesh
+        .inversion_quality = Some(
+        serde_json::from_value(serde_json::json!({
+            "reciprocal_condition_number_inf": 0.0
+        }))
+        .expect("singular quality fixture"),
+    );
     assets.skins[0].joints[0].joint_bind_to_mesh.matrix = None;
     assets.skins[0].joints[0].joint_bind_to_mesh.linear = None;
     assets.skins[0].joints[0]
         .joint_bind_to_mesh
         .unavailable_reason =
         Some(SkinDerivedMatrixUnavailableReason::InverseBindMatrixNonInvertible);
-    assets.skins[0].joints[0].mesh_bind_world.matrix = Some([0.0; 16]);
-    assets.skins[0].joints[0].mesh_bind_world.linear = Some(measure_linear_transform(Mat4::ZERO));
+    assets.skins[0].joints[0].mesh_bind_world.matrix = Some(singular);
+    assets.skins[0].joints[0]
+        .mesh_bind_world
+        .source_inverse_bind_matrix = Some(singular);
+    assets.skins[0].joints[0].mesh_bind_world.linear =
+        Some(measure_linear_transform(Mat4::from_cols_array(&singular)));
     assets.skins[0].joint_bind_linear_summary = serde_json::from_value(serde_json::json!({
         "classification": "unavailable",
         "joint_count": 1,

@@ -18,8 +18,8 @@ use crate::measure::{
     Aabb, AssetMeasurements, ClipMeasurements, ImageMeasurements, LinearTransformClassification,
     LinearTransformMeasurements, MaterialDefinitionMeasurements, SkeletonNodeLocalRestMeasurements,
     SkeletonRestWorldMatrixUnavailableReason, SkinDerivedMatrixMeasurements,
-    SkinDerivedMatrixUnavailableReason, TextureMeasurements, measure_linear_transform,
-    summarize_skin_bind_linear,
+    SkinDerivedMatrixUnavailableReason, TextureMeasurements, assess_inverse_bind,
+    measure_linear_transform, summarize_skin_bind_linear,
 };
 use crate::model::{
     DecodedImageColorType, MaterialResourceCoverage, SourceInverseBindAccessorStatus,
@@ -29,13 +29,13 @@ use crate::profile::ResolvedRoles;
 use crate::{Document, Severity};
 
 /// Current outer result-envelope version.
-pub const OUTPUT_SCHEMA_VERSION: u32 = 6;
+pub const OUTPUT_SCHEMA_VERSION: u32 = 7;
 /// Immutable identity of the current outer result envelope.
-pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:6";
+pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:7";
 /// Current nested measurement-contract version.
-pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 12;
+pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 13;
 /// Immutable identity of the current nested measurement contract.
-pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:12";
+pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:13";
 
 /// Source checkout identity for the producing animsmith build.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -50,7 +50,7 @@ impl ToolSource {
     /// Packaged or otherwise provenance-free builds use `None` for fields they
     /// cannot establish rather than claiming a clean checkout. Revisions that
     /// are not full 40-character hexadecimal Git object ids are dropped so an
-    /// envelope constructed through this API remains within output v6.
+    /// envelope constructed through this API remains within output v7.
     pub fn new(revision: Option<String>, dirty: Option<bool>) -> Self {
         let revision = revision.filter(|revision| {
             revision.len() == 40 && revision.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -944,6 +944,7 @@ fn validate_skeleton_measurements(
             )?;
         }
         for (joint_offset, joint) in skin.joints.iter().enumerate() {
+            let expected_source = skin.inverse_bind_accessor.matrices.get(joint_offset);
             let joint_bind_path =
                 format!("skins[{offset}].joints[{joint_offset}].joint_bind_to_mesh");
             validate_derived_matrix(
@@ -957,6 +958,14 @@ fn validate_skeleton_measurements(
                 skin.inverse_bind_accessor.status,
                 skin.inverse_bind_accessor.matrices.len(),
                 joint_offset,
+                &joint_bind_path,
+                DerivedMatrixDomain::JointBindToMesh,
+                invalid,
+            )?;
+            validate_derived_source(
+                &joint.joint_bind_to_mesh,
+                expected_source,
+                None,
                 &joint_bind_path,
                 DerivedMatrixDomain::JointBindToMesh,
                 invalid,
@@ -989,10 +998,21 @@ fn validate_skeleton_measurements(
                 })?
                 .rest_world_matrix
                 .is_some();
+            let joint_rest_world = assets.skeleton_nodes[joint.node_index]
+                .rest_world_matrix
+                .as_ref();
             validate_mesh_bind_world_reason_compatibility(
                 &joint.mesh_bind_world,
                 joint_rest_world_available,
                 &mesh_bind_path,
+                invalid,
+            )?;
+            validate_derived_source(
+                &joint.mesh_bind_world,
+                expected_source,
+                joint_rest_world,
+                &mesh_bind_path,
+                DerivedMatrixDomain::MeshBindWorld,
                 invalid,
             )?;
         }
@@ -1080,10 +1100,7 @@ fn validate_derived_reason_compatibility(
             }
             (
                 DerivedMatrixDomain::JointBindToMesh,
-                Some(
-                    SkinDerivedMatrixUnavailableReason::JointRestWorldUnavailable
-                    | SkinDerivedMatrixUnavailableReason::NonFiniteDerivedMatrix,
-                ),
+                Some(SkinDerivedMatrixUnavailableReason::JointRestWorldUnavailable),
             ) => {
                 return Err(invalid(
                     format!("{path}.unavailable_reason"),
@@ -1092,7 +1109,11 @@ fn validate_derived_reason_compatibility(
             }
             (
                 DerivedMatrixDomain::MeshBindWorld,
-                Some(SkinDerivedMatrixUnavailableReason::InverseBindMatrixNonInvertible),
+                Some(
+                    SkinDerivedMatrixUnavailableReason::InverseBindMatrixNonInvertible
+                    | SkinDerivedMatrixUnavailableReason::InverseBindMatrixNonAffine
+                    | SkinDerivedMatrixUnavailableReason::InverseBindMatrixIllConditioned,
+                ),
             ) => {
                 return Err(invalid(
                     format!("{path}.unavailable_reason"),
@@ -1145,12 +1166,112 @@ enum DerivedMatrixDomain {
     MeshBindWorld,
 }
 
+fn validate_derived_source(
+    measurements: &SkinDerivedMatrixMeasurements,
+    expected_source: Option<&[f32; 16]>,
+    joint_rest_world: Option<&[f32; 16]>,
+    path: &str,
+    domain: DerivedMatrixDomain,
+    invalid: &impl Fn(String, &str) -> MeasurementContractError,
+) -> Result<(), MeasurementContractError> {
+    if measurements.source_inverse_bind_matrix.as_ref() != expected_source {
+        return Err(invalid(
+            format!("{path}.source_inverse_bind_matrix"),
+            "source_inverse_bind_matrix must equal the raw accessor slot exactly",
+        ));
+    }
+    let Some(source) = expected_source else {
+        if measurements.inversion_quality.is_some() {
+            return Err(invalid(
+                format!("{path}.inversion_quality"),
+                "inversion quality requires a readable source inverse-bind matrix",
+            ));
+        }
+        return Ok(());
+    };
+    let raw = Mat4::from_cols_array(source);
+    match domain {
+        DerivedMatrixDomain::JointBindToMesh => {
+            let assessment = assess_inverse_bind(raw);
+            if measurements.inversion_quality != assessment.quality {
+                return Err(invalid(
+                    format!("{path}.inversion_quality"),
+                    "inversion quality must be derived from the source linear 3x3",
+                ));
+            }
+            match assessment.inverse {
+                Ok(inverse) => {
+                    if measurements.matrix != Some(inverse.to_cols_array())
+                        || measurements.unavailable_reason.is_some()
+                    {
+                        return Err(invalid(
+                            path.into(),
+                            "a trustworthy source inverse-bind matrix requires its exact inverse",
+                        ));
+                    }
+                }
+                Err(reason) => {
+                    if measurements.matrix.is_some()
+                        || measurements.unavailable_reason != Some(reason)
+                    {
+                        return Err(invalid(
+                            path.into(),
+                            "an untrustworthy source inverse-bind matrix requires its derived reason",
+                        ));
+                    }
+                }
+            }
+        }
+        DerivedMatrixDomain::MeshBindWorld => {
+            if measurements.inversion_quality.is_some() {
+                return Err(invalid(
+                    format!("{path}.inversion_quality"),
+                    "mesh_bind_world does not invert its source matrix",
+                ));
+            }
+            if let Some(world) = joint_rest_world {
+                let expected = Mat4::from_cols_array(world) * raw;
+                if expected.to_cols_array().into_iter().all(f32::is_finite) {
+                    if measurements.matrix != Some(expected.to_cols_array())
+                        || measurements.unavailable_reason.is_some()
+                    {
+                        return Err(invalid(
+                            path.into(),
+                            "mesh_bind_world must equal joint_rest_world times the source inverse bind",
+                        ));
+                    }
+                } else if measurements.unavailable_reason
+                    != Some(SkinDerivedMatrixUnavailableReason::NonFiniteDerivedMatrix)
+                {
+                    return Err(invalid(
+                        format!("{path}.unavailable_reason"),
+                        "a non-finite mesh-bind product requires its typed unavailable reason",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_derived_matrix(
     matrix: &SkinDerivedMatrixMeasurements,
     path: &str,
     finite_matrix: &impl Fn(&[f32; 16], &str) -> Result<(), MeasurementContractError>,
     invalid: &impl Fn(String, &str) -> MeasurementContractError,
 ) -> Result<(), MeasurementContractError> {
+    if let Some(source) = &matrix.source_inverse_bind_matrix {
+        finite_matrix(source, &format!("{path}.source_inverse_bind_matrix"))?;
+    }
+    if let Some(quality) = matrix.inversion_quality {
+        let value = quality.reciprocal_condition_number_inf;
+        if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+            return Err(invalid(
+                format!("{path}.inversion_quality.reciprocal_condition_number_inf"),
+                "reciprocal condition number must be finite and between zero and one",
+            ));
+        }
+    }
     match (
         &matrix.matrix,
         matrix.linear.as_ref(),

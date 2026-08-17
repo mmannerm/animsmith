@@ -5,7 +5,7 @@
 use serde_json::{Value, json};
 
 const MEASUREMENTS_SCHEMA: &str =
-    include_str!("../../../docs/schemas/measurements-v12.schema.json");
+    include_str!("../../../docs/schemas/measurements-v13.schema.json");
 const DEEP_HIERARCHY_DEPTH: usize = 4_096;
 
 #[derive(Clone, Copy)]
@@ -13,6 +13,8 @@ enum InverseBindCase {
     Available,
     Absent,
     Singular,
+    NonAffine,
+    IllConditioned,
 }
 
 fn append_f32s(bytes: &mut Vec<u8>, values: impl IntoIterator<Item = f32>) -> (usize, usize) {
@@ -62,7 +64,15 @@ fn write_source_skin_gltf(path: &std::path::Path, case: InverseBindCase, multipl
         [0.0_f32, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
     );
     let first_ibm = match case {
-        InverseBindCase::Singular => [0.0; 16],
+        InverseBindCase::Singular => matrix_uniform_scale(0.0),
+        InverseBindCase::NonAffine => {
+            let mut matrix = matrix_translation(-3.0, -4.0, -5.0);
+            matrix[3] = 0.1;
+            matrix
+        }
+        InverseBindCase::IllConditioned => [
+            1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0e-7, 0.0, 0.0, 0.0, 0.0, 1.0,
+        ],
         _ => matrix_translation(0.0, -3.0, 0.0),
     };
     let (first_ibm_offset, first_ibm_length) = append_f32s(&mut bytes, first_ibm);
@@ -235,7 +245,9 @@ fn write_inverse_bind_state_gltf(path: &std::path::Path) {
             .chain(matrix_translation(6.0, 0.0, 0.0)),
     );
     let (short_offset, short_length) = append_f32s(&mut bytes, matrix_translation(0.0, -3.0, 0.0));
-    let (non_finite_offset, non_finite_length) = append_f32s(&mut bytes, [f32::NAN; 16]);
+    let mut non_finite_bottom_row = matrix_uniform_scale(1.0);
+    non_finite_bottom_row[3] = f32::NAN;
+    let (non_finite_offset, non_finite_length) = append_f32s(&mut bytes, non_finite_bottom_row);
     let wrong_type_indices_offset = bytes.len();
     bytes.push(0);
     let (wrong_type_values_offset, wrong_type_values_length) =
@@ -518,9 +530,20 @@ fn assert_skeleton_serializer_order(stdout: &[u8]) {
         ],
     );
     let joint_bind_to_mesh = json_container_after_key(joint, "joint_bind_to_mesh", b'{', b'}');
-    assert_ordered_key_markers(joint_bind_to_mesh, &["matrix", "linear"]);
+    assert_ordered_key_markers(
+        joint_bind_to_mesh,
+        &[
+            "source_inverse_bind_matrix",
+            "inversion_quality",
+            "matrix",
+            "linear",
+        ],
+    );
     let mesh_bind_world = json_container_after_key(joint, "mesh_bind_world", b'{', b'}');
-    assert_ordered_key_markers(mesh_bind_world, &["matrix", "linear"]);
+    assert_ordered_key_markers(
+        mesh_bind_world,
+        &["source_inverse_bind_matrix", "matrix", "linear"],
+    );
 }
 
 fn assert_inverse_bind_serializer_order(
@@ -577,10 +600,10 @@ fn cli_measure_preserves_source_skin_identity_and_coordinate_domains() {
         measurements, &second["files"][0]["measurements"],
         "deterministic measurements"
     );
-    assert_eq!(measurements["schema_version"], 12);
+    assert_eq!(measurements["schema_version"], 13);
     assert_eq!(
         measurements["schema"],
-        "urn:animsmith:schema:measurements:12"
+        "urn:animsmith:schema:measurements:13"
     );
     assert_eq!(measurements["skeleton_source_coverage"], "complete");
     assert_eq!(
@@ -683,6 +706,21 @@ fn cli_measure_preserves_source_skin_identity_and_coordinate_domains() {
         skins[1]["inverse_bind_accessor"]["matrices"][0],
         json!(matrix_translation(-1.0, -3.0, 0.0))
     );
+    for skin in skins {
+        let raw = skin["inverse_bind_accessor"]["matrices"][0].clone();
+        assert_eq!(
+            skin["joints"][0]["joint_bind_to_mesh"]["source_inverse_bind_matrix"],
+            raw
+        );
+        assert_eq!(
+            skin["joints"][0]["mesh_bind_world"]["source_inverse_bind_matrix"],
+            raw
+        );
+        assert_eq!(
+            skin["joints"][0]["joint_bind_to_mesh"]["inversion_quality"]["reciprocal_condition_number_inf"],
+            1.0
+        );
+    }
     assert_eq!(
         skins[0]["joints"][0]["joint_bind_to_mesh"]["matrix"],
         json!(matrix_translation(0.0, 3.0, 0.0))
@@ -734,6 +772,18 @@ fn cli_measure_publishes_a_canonical_multi_joint_uniform_summary() {
             })
             .collect::<Vec<_>>();
         assert_ne!(factors[0], factors[1], "joint factors must be distinct");
+        let raw_matrices = skin["inverse_bind_accessor"]["matrices"]
+            .as_array()
+            .expect("raw inverse-bind matrices");
+        assert_eq!(raw_matrices.len(), joints.len());
+        for (slot, joint) in joints.iter().enumerate() {
+            for field in ["joint_bind_to_mesh", "mesh_bind_world"] {
+                assert_eq!(
+                    joint[field]["source_inverse_bind_matrix"], raw_matrices[slot],
+                    "joint slot {slot} {field} retains its exact raw accessor matrix"
+                );
+            }
+        }
         factors.sort_by(f64::total_cmp);
         assert_eq!(
             factors
@@ -826,6 +876,13 @@ fn cli_measure_marks_absent_and_singular_inverse_binds_without_substitution() {
         singular_skin["joints"][0]["joint_bind_to_mesh"]["unavailable_reason"],
         "inverse_bind_matrix_non_invertible"
     );
+    let singular_raw = singular_skin["inverse_bind_accessor"]["matrices"][0].clone();
+    for field in ["joint_bind_to_mesh", "mesh_bind_world"] {
+        assert_eq!(
+            singular_skin["joints"][0][field]["source_inverse_bind_matrix"], singular_raw,
+            "singular derivation still retains raw evidence in {field}"
+        );
+    }
     assert!(
         singular_skin["joints"][0]["joint_bind_to_mesh"]
             .get("matrix")
@@ -833,12 +890,52 @@ fn cli_measure_marks_absent_and_singular_inverse_binds_without_substitution() {
     );
     assert_eq!(
         singular_skin["joints"][0]["mesh_bind_world"]["matrix"],
-        json!(vec![0.0; 16])
+        json!([
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 10.0, 3.0, 0.0, 1.0
+        ])
     );
     assert_eq!(
         singular_skin["joints"][0]["mesh_bind_world"]["linear"]["classification"],
         "singular"
     );
+}
+
+#[test]
+fn cli_measure_refuses_non_affine_and_ill_conditioned_inverse_binds_with_raw_evidence() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    for (case, expected_reason, expected_quality) in [
+        (
+            InverseBindCase::NonAffine,
+            "inverse_bind_matrix_non_affine",
+            None,
+        ),
+        (
+            InverseBindCase::IllConditioned,
+            "inverse_bind_matrix_ill_conditioned",
+            Some(1.0e-7_f32 as f64),
+        ),
+    ] {
+        let input = dir.path().join(format!("{expected_reason}.gltf"));
+        write_source_skin_gltf(&input, case, false);
+        let (output, _) = measure(&input);
+        let skin = &output["files"][0]["measurements"]["skins"][0];
+        let source = skin["inverse_bind_accessor"]["matrices"][0].clone();
+        let derived = &skin["joints"][0]["joint_bind_to_mesh"];
+        assert_eq!(derived["source_inverse_bind_matrix"], source);
+        assert_eq!(derived["unavailable_reason"], expected_reason);
+        assert!(derived.get("matrix").is_none());
+        match expected_quality {
+            Some(expected) => assert_eq!(
+                derived["inversion_quality"]["reciprocal_condition_number_inf"],
+                expected
+            ),
+            None => assert!(derived.get("inversion_quality").is_none()),
+        }
+        assert_eq!(
+            skin["joints"][0]["mesh_bind_world"]["source_inverse_bind_matrix"],
+            source
+        );
+    }
 }
 
 #[test]
