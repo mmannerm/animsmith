@@ -47,8 +47,8 @@
 //! to open a directory for `fsync`, and failing publication for that would be
 //! worse than publishing without the extra guarantee.
 
+use animsmith_core::sha256_hex;
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -402,11 +402,6 @@ pub(crate) fn require_writable_destination(path: &Path) -> Result<(), String> {
         return Err(format!("output {} is not a regular file", path.display()));
     }
     Ok(())
-}
-
-/// Lowercase hex SHA-256 of exactly these bytes.
-pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
 }
 
 /// Read a file back and report its digest and byte count.

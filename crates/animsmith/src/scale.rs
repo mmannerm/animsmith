@@ -69,14 +69,14 @@
 
 use crate::publish::{
     destination_identity, emit, emit_text, input_identity, parent_or_current, publish_pair,
-    read_digest, require_writable_destination, serialize_record, sha256_hex,
+    read_digest, require_writable_destination, serialize_record,
 };
 use crate::{Format, render};
 use animsmith_core::scale::{
     ScaleError, ScaleOperation, ScalePlan, ScaleProof, ScaleProofResidual, ScaleRequest,
     ScaleTolerancePolicy, plan_scale,
 };
-use animsmith_core::{DocumentShapeError, InputIdentity, ToolInfo};
+use animsmith_core::{DocumentShapeError, InputIdentity, ToolInfo, sha256_hex};
 use animsmith_gltf::{
     GltfCapabilityManifest, GltfCapabilityViolation, GltfContainerKind, GltfRawJsonDifference,
     GltfRawJsonDifferenceKind, GltfRawJsonDifferenceSummary, GltfScaleArtifact,

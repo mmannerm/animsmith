@@ -5,6 +5,7 @@
 //! wire shape or hard-coding URNs.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 
 use glam::Mat4;
 use serde::{Deserialize, Serialize};
@@ -89,11 +90,25 @@ pub struct InputIdentity {
     bytes: u64,
 }
 
+/// Lowercase hexadecimal SHA-256 digest of exactly these bytes.
+///
+/// The digest type carries no `LowerHex` impl, so every producer of a
+/// contract `sha256` field goes through this one formatter rather than
+/// re-deriving the encoding.
+#[must_use]
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hex = String::with_capacity(64);
+    for byte in Sha256::digest(bytes) {
+        let _ = write!(hex, "{byte:02x}");
+    }
+    hex
+}
+
 impl InputIdentity {
     /// Calculate the identity for source bytes.
     pub fn from_bytes(bytes: &[u8]) -> Self {
         Self {
-            sha256: format!("{:x}", Sha256::digest(bytes)),
+            sha256: sha256_hex(bytes),
             bytes: bytes.len() as u64,
         }
     }

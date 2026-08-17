@@ -7,10 +7,10 @@ use animsmith_core::model::{Interpolation, Property, TrackValues};
 use animsmith_core::scale::{
     AssemblyScaleBasis, ScaleOperation, ScaleRequest, assembly_scale_basis, plan_scale,
 };
+use animsmith_core::sha256_hex;
 use animsmith_testkit::{rest_bind_scale_rig_glb, rest_bind_scale_rig_gltf};
 use serde::Serialize;
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -195,13 +195,10 @@ fn expected_basis_fingerprint(path: &Path, tool: &Value) -> String {
                 dirty: &tool["source"]["dirty"],
             },
         },
-        input_sha256: format!("{:x}", Sha256::digest(bytes)),
+        input_sha256: sha256_hex(&bytes),
         basis: &basis,
     };
-    format!(
-        "{:x}",
-        Sha256::digest(serde_json::to_vec(&fingerprint).unwrap())
-    )
+    sha256_hex(&serde_json::to_vec(&fingerprint).unwrap())
 }
 
 #[test]
@@ -269,7 +266,7 @@ fn v4_rebases_before_remap_then_proves_and_publishes_the_exact_final_artifact() 
         assert_eq!(input["declared_path"], declared);
         assert_eq!(input["bytes"], bytes.len());
         assert_eq!(bytes.len(), 2516);
-        assert_eq!(input["sha256"], format!("{:x}", Sha256::digest(&bytes)));
+        assert_eq!(input["sha256"], sha256_hex(&bytes));
         assert_eq!(input["sha256"], expected_sha256);
         assert_eq!(
             input["basis_schema"],
@@ -303,10 +300,7 @@ fn v4_rebases_before_remap_then_proves_and_publishes_the_exact_final_artifact() 
         expected_basis_fingerprint(&digest_only_variant, &evidence["tool"]),
         "exact input digest is fingerprint material"
     );
-    assert_eq!(
-        evidence["artifact"]["sha256"],
-        format!("{:x}", Sha256::digest(&artifact))
-    );
+    assert_eq!(evidence["artifact"]["sha256"], sha256_hex(&artifact));
     assert_eq!(
         evidence["artifact"]["sha256"],
         "29afdfd82159164ba05045dc48da9fbd2b9a828937d38971e7376ddc789c5c65"

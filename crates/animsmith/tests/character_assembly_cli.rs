@@ -2,8 +2,8 @@
 
 #![cfg(feature = "fbx")]
 
+use animsmith_core::sha256_hex;
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
@@ -106,7 +106,7 @@ fn assert_published_pair_is_bound(dir: &Path) {
     assert_schema_valid(&evidence, EVIDENCE_SCHEMA);
     assert_eq!(
         evidence["artifact"]["sha256"],
-        format!("{:x}", Sha256::digest(&artifact)),
+        sha256_hex(&artifact),
         "assembly evidence binds the artifact that landed"
     );
 }
@@ -159,10 +159,7 @@ fn assembles_schema_valid_byte_stable_character_and_evidence() {
     assert_eq!(evidence["recipe"]["effective"]["input_root"], "inputs");
     assert_eq!(evidence["config"]["source"], "file");
     assert_eq!(evidence["config"]["path"], "animsmith.toml");
-    assert_eq!(
-        evidence["config"]["sha256"],
-        format!("{:x}", Sha256::digest(b""))
-    );
+    assert_eq!(evidence["config"]["sha256"], sha256_hex(b""));
     assert_eq!(evidence["config"]["bytes"], 0);
     assert_eq!(evidence["clips"][0]["source_tracks"], 3);
     assert_eq!(evidence["clips"][0]["remapped_tracks"], 3);
@@ -187,10 +184,7 @@ fn assembles_schema_valid_byte_stable_character_and_evidence() {
     );
     assert_eq!(evidence["transforms"]["canonicalized_skin"], true);
     assert_eq!(evidence["transforms"]["ground_and_center"], true);
-    assert_eq!(
-        evidence["artifact"]["sha256"],
-        format!("{:x}", Sha256::digest(&first_glb))
-    );
+    assert_eq!(evidence["artifact"]["sha256"], sha256_hex(&first_glb));
 
     let document =
         animsmith_gltf::load(&dir.path().join("character.glb")).expect("assembled GLB reloads");
@@ -1336,10 +1330,7 @@ fn assembles_synthetic_skinned_recipe_with_complete_public_provenance() {
             "occlusion.png"
         ]
     );
-    assert_eq!(
-        evidence["artifact"]["sha256"],
-        format!("{:x}", Sha256::digest(&first_glb))
-    );
+    assert_eq!(evidence["artifact"]["sha256"], sha256_hex(&first_glb));
     assert_eq!(evidence["artifact"]["animations"], 1);
     assert_eq!(evidence["artifact"]["meshes"], 1);
     assert_eq!(evidence["artifact"]["materials"], 1);

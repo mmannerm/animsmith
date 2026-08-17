@@ -19,14 +19,13 @@ use animsmith_core::scale::{
     AssemblyScaleBasis, ScaleOperation, ScaleRequest, assembly_scale_basis, plan_scale,
     require_assembly_scale_compatibility,
 };
-use animsmith_core::{Config, ToolInfo, resolve_configured_roles};
+use animsmith_core::{Config, ToolInfo, resolve_configured_roles, sha256_hex};
 use animsmith_gltf::write::WriteSummary;
 use animsmith_gltf::{
     operation_capability_facts, preflight_scale_source_bytes, prove_rewritten_rest_bind,
     rewrite_scale_plan,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -525,7 +524,7 @@ fn prepare_scale_input(
     let bytes = fs::read(resolved)
         .map_err(|error| format!("cannot read input {}: {error}", declared.display()))
         .operator()?;
-    let sha256 = format!("{:x}", Sha256::digest(&bytes));
+    let sha256 = sha256_hex(&bytes);
     let byte_count = u64::try_from(bytes.len())
         .map_err(|_| format!("input {} size exceeds u64", declared.display()))
         .operator()?;
@@ -607,7 +606,7 @@ fn prepare_scale_input(
             sha256,
             bytes: byte_count,
             basis_schema: "urn:animsmith:character-assembly-scale-basis:1",
-            basis_fingerprint: format!("{:x}", Sha256::digest(fingerprint_bytes)),
+            basis_fingerprint: sha256_hex(&fingerprint_bytes),
             compatible: true,
             compatibility: "compatible",
         },
@@ -755,7 +754,7 @@ fn assemble_inner(
         Some((path, contents)) => AssemblyConfigEvidence {
             source: "file",
             path: Some(path.display().to_string()),
-            sha256: Some(format!("{:x}", Sha256::digest(contents))),
+            sha256: Some(sha256_hex(contents)),
             bytes: Some(
                 u64::try_from(contents.len())
                     .map_err(|_| "config size exceeds u64".to_owned())
@@ -1081,7 +1080,7 @@ fn assemble_inner(
         let staged_bytes = fs::read(&artifact_temp)
             .map_err(|error| format!("cannot read staged assembly source: {error}"))
             .operator()?;
-        let staged_source_sha256 = format!("{:x}", Sha256::digest(&staged_bytes));
+        let staged_source_sha256 = sha256_hex(&staged_bytes);
         let staged_source = preflight_scale_source_bytes(&artifact_temp, &staged_bytes)
             .map_err(|error| format!("staged assembly scale preflight failed: {error}"))
             .refusal(Stage::Proof, Kind::ProofFailed)?;
@@ -1115,8 +1114,8 @@ fn assemble_inner(
         let read_back_bytes = fs::read(&artifact_temp)
             .map_err(|error| format!("cannot read proved assembly artifact: {error}"))
             .operator()?;
-        let read_back_sha256 = format!("{:x}", Sha256::digest(&read_back_bytes));
-        let proved_sha256 = format!("{:x}", Sha256::digest(artifact.bytes()));
+        let read_back_sha256 = sha256_hex(&read_back_bytes);
+        let proved_sha256 = sha256_hex(artifact.bytes());
         require_assembly_read_back_match(&read_back_sha256, &proved_sha256)
             .refusal(Stage::Proof, Kind::ProofFailed)?;
         let reloaded = animsmith_gltf::load_bytes(&artifact_temp, &read_back_bytes)
@@ -1150,7 +1149,7 @@ fn assemble_inner(
         command: "assemble",
         recipe: AssemblyRecipeEvidence {
             path: recipe_path.display().to_string(),
-            sha256: format!("{:x}", Sha256::digest(&recipe_bytes)),
+            sha256: sha256_hex(&recipe_bytes),
             effective: recipe.clone(),
         },
         config: config_evidence,

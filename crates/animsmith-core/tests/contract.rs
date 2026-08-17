@@ -18,7 +18,7 @@ use animsmith_core::{
     MeasurementReportError, MeasurementReportFile, MeasurementReportInput, MetricGrids,
     OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, ResolvedRoles, RigInfo, RigInfoError, Role, Severity,
     SourceInverseBindAccessorStatus, SourceSkeletonCoverage, ToolInfo, ToolSource, Transform,
-    evaluate_checks,
+    evaluate_checks, sha256_hex,
 };
 
 fn tool() -> ToolInfo {
@@ -38,6 +38,20 @@ fn measurements() -> MeasurementContract {
 
 fn input(bytes: &[u8]) -> InputIdentity {
     InputIdentity::from_bytes(bytes)
+}
+
+#[test]
+fn sha256_hex_matches_published_vectors() {
+    // NIST vectors, pinned because the digest type carries no `LowerHex` impl
+    // and the encoding is ours: fixed-width lowercase, no separators.
+    assert_eq!(
+        sha256_hex(b""),
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    );
+    assert_eq!(
+        sha256_hex(b"abc"),
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    );
 }
 
 #[test]
