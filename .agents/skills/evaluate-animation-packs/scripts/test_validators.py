@@ -6,6 +6,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -519,6 +520,16 @@ class ManifestValidatorTests(unittest.TestCase):
             "runtime_sets[0].set_type has unknown value: 'unknown-type'", errors
         )
 
+    def test_rejects_unknown_primary_role(self) -> None:
+        manifest = valid_manifest()
+        manifest["motions"][0]["primary_role"] = "unknown-role"  # type: ignore[index]
+
+        errors = manifest_validator.validate_manifest(manifest)
+
+        self.assertIn(
+            "motions[0].primary_role has unknown value: 'unknown-role'", errors
+        )
+
     def test_rejects_unknown_runtime_set_confidence(self) -> None:
         manifest = valid_manifest_with_runtime_set()
         manifest["runtime_sets"][0]["confidence"] = "certain"  # type: ignore[index]
@@ -589,61 +600,94 @@ class ManifestValidatorTests(unittest.TestCase):
 
         self.assertIn("physical file 'Idle.fbx' belongs to more than one motion", errors)
 
-    def test_rejects_declared_totals_that_do_not_reconcile(self) -> None:
-        manifest = valid_manifest()
-        manifest["totals"] = {
-            "logical_motions": 99,
+    def test_rejects_each_declared_total_that_does_not_reconcile(self) -> None:
+        declared = {
+            "logical_motions": 1,
             "delivered_files": 1,
             "runtime_sets": 0,
         }
+        for field in declared:
+            with self.subTest(field=field):
+                manifest = valid_manifest()
+                manifest["totals"][field] = declared[field] + 1  # type: ignore[index]
+
+                errors = manifest_validator.validate_manifest(manifest)
+
+                self.assertIn(
+                    "totals does not match motions, physical files, and runtime sets",
+                    errors,
+                )
+
+    def test_rejects_each_role_total_that_does_not_reconcile(self) -> None:
+        for role in V1_PRIMARY_ROLES:
+            for field in ("logical_motions", "delivered_files"):
+                with self.subTest(role=role, field=field):
+                    manifest = valid_manifest()
+                    current = manifest["role_totals"][role][field]  # type: ignore[index]
+                    manifest["role_totals"][role][field] = current + 1  # type: ignore[index,operator]
+
+                    errors = manifest_validator.validate_manifest(manifest)
+
+                    self.assertIn(
+                        "role_totals does not match totals derived from motions", errors
+                    )
+
+    def test_validation_error_order_is_deterministic(self) -> None:
+        manifest = valid_manifest()
+        manifest["schema"] = "urn:wrong:schema"
+        manifest["taxonomy_version"] = "wrong"
+        manifest["role_totals"]["idle-pose"]["delivered_files"] = 2  # type: ignore[index]
+        manifest["totals"]["logical_motions"] = 2  # type: ignore[index]
 
         errors = manifest_validator.validate_manifest(manifest)
 
-        self.assertIn(
-            "totals does not match motions, physical files, and runtime sets", errors
+        self.assertEqual(
+            errors,
+            [
+                f"schema must be {V1_SCHEMA!r}",
+                "taxonomy_version must be '1'",
+                "role_totals does not match totals derived from motions",
+                "totals does not match motions, physical files, and runtime sets",
+            ],
         )
 
-    def test_rejects_role_totals_that_do_not_reconcile(self) -> None:
-        manifest = valid_manifest()
-        manifest["role_totals"]["idle-pose"]["logical_motions"] = 2  # type: ignore[index]
+    def test_rejects_missing_and_duplicate_required_profiles(self) -> None:
+        for index, profile_id in enumerate(V1_PROFILE_IDS):
+            with self.subTest(profile_id=profile_id, mutation="missing"):
+                manifest = valid_manifest()
+                manifest["profiles"].pop(index)  # type: ignore[union-attr]
+                errors = manifest_validator.validate_manifest(manifest)
+                self.assertIn(f"profiles is missing: {profile_id}", errors)
+            with self.subTest(profile_id=profile_id, mutation="duplicate"):
+                manifest = valid_manifest()
+                duplicate = copy.deepcopy(manifest["profiles"][index])  # type: ignore[index]
+                manifest["profiles"].append(duplicate)  # type: ignore[union-attr]
+                errors = manifest_validator.validate_manifest(manifest)
+                self.assertIn(f"duplicate profile_id: {profile_id}", errors)
 
-        errors = manifest_validator.validate_manifest(manifest)
+    def test_rejects_missing_and_duplicate_required_pipeline_stages(self) -> None:
+        for index, stage_id in enumerate(V1_PIPELINE_STAGES):
+            with self.subTest(stage_id=stage_id, mutation="missing"):
+                manifest = valid_manifest()
+                manifest["pipeline_stages"].pop(index)  # type: ignore[union-attr]
+                errors = manifest_validator.validate_manifest(manifest)
+                self.assertIn(f"pipeline_stages is missing: {stage_id}", errors)
+            with self.subTest(stage_id=stage_id, mutation="duplicate"):
+                manifest = valid_manifest()
+                duplicate = copy.deepcopy(manifest["pipeline_stages"][index])  # type: ignore[index]
+                manifest["pipeline_stages"].append(duplicate)  # type: ignore[union-attr]
+                errors = manifest_validator.validate_manifest(manifest)
+                self.assertIn(f"duplicate stage_id: {stage_id}", errors)
 
-        self.assertIn("role_totals does not match totals derived from motions", errors)
+    def test_rejects_non_array_top_level_collections(self) -> None:
+        for field in ("motions", "runtime_sets", "profiles", "pipeline_stages"):
+            with self.subTest(field=field):
+                manifest = valid_manifest()
+                manifest[field] = {}
 
-    def test_rejects_missing_required_profile(self) -> None:
-        manifest = valid_manifest()
-        manifest["profiles"].pop(1)  # type: ignore[union-attr]
+                errors = manifest_validator.validate_manifest(manifest)
 
-        errors = manifest_validator.validate_manifest(manifest)
-
-        self.assertIn("profiles is missing: blended-locomotion", errors)
-
-    def test_rejects_duplicate_required_profile(self) -> None:
-        manifest = valid_manifest()
-        duplicate = copy.deepcopy(manifest["profiles"][1])  # type: ignore[index]
-        manifest["profiles"].append(duplicate)  # type: ignore[union-attr]
-
-        errors = manifest_validator.validate_manifest(manifest)
-
-        self.assertIn("duplicate profile_id: blended-locomotion", errors)
-
-    def test_rejects_missing_required_pipeline_stage(self) -> None:
-        manifest = valid_manifest()
-        manifest["pipeline_stages"].pop(1)  # type: ignore[union-attr]
-
-        errors = manifest_validator.validate_manifest(manifest)
-
-        self.assertIn("pipeline_stages is missing: preserve-raw", errors)
-
-    def test_rejects_duplicate_required_pipeline_stage(self) -> None:
-        manifest = valid_manifest()
-        duplicate = copy.deepcopy(manifest["pipeline_stages"][1])  # type: ignore[index]
-        manifest["pipeline_stages"].append(duplicate)  # type: ignore[union-attr]
-
-        errors = manifest_validator.validate_manifest(manifest)
-
-        self.assertIn("duplicate stage_id: preserve-raw", errors)
+                self.assertIn(f"{field} must be an array", errors)
 
     def test_requires_selected_profile_activation_basis(self) -> None:
         manifest = valid_manifest()
@@ -797,6 +841,21 @@ class ReportValidatorTests(unittest.TestCase):
             f"report must identify evaluation manifest schema: {V1_SCHEMA}", errors
         )
 
+    def test_report_error_order_is_deterministic(self) -> None:
+        report = valid_report().replace("## Sources\n", "## Sources omitted\n")
+        report = report.replace(V1_SCHEMA, "urn:wrong:schema") + "\n{{UNRESOLVED}}\n"
+
+        errors = report_validator.validate(report)
+
+        self.assertEqual(
+            errors,
+            [
+                "missing required heading: ## Sources",
+                f"report must identify evaluation manifest schema: {V1_SCHEMA}",
+                "unresolved template placeholders: {{UNRESOLVED}}",
+            ],
+        )
+
     def test_rejects_unresolved_template_placeholder(self) -> None:
         errors = report_validator.validate(valid_report() + "\n{{UNRESOLVED}}\n")
 
@@ -845,6 +904,18 @@ class ReportValidatorTests(unittest.TestCase):
             errors,
         )
 
+    def test_rejects_malformed_issue_table_row(self) -> None:
+        report = valid_report().replace(
+            "| engine-config | Fixture workaround. |",
+            "| engine-config | unexpected | Fixture workaround. |",
+        )
+
+        errors = report_validator.validate(report)
+
+        self.assertIn(
+            "issue FIX-001 row must contain exactly seven cells", errors
+        )
+
     def test_all_published_pack_reports_conform(self) -> None:
         repository = Path(__file__).resolve().parents[4]
         reports = sorted(
@@ -863,12 +934,18 @@ class ReportValidatorTests(unittest.TestCase):
 class ExecutableContractTests(unittest.TestCase):
     scripts = Path(__file__).resolve().parent
 
-    def run_script(self, name: str, *arguments: str) -> subprocess.CompletedProcess[str]:
+    def run_script(
+        self, name: str, *arguments: str, hash_seed: str | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        environment = None
+        if hash_seed is not None:
+            environment = dict(os.environ, PYTHONHASHSEED=hash_seed)
         return subprocess.run(
             [sys.executable, str(self.scripts / name), *arguments],
             check=False,
             capture_output=True,
             text=True,
+            env=environment,
         )
 
     def test_inventory_cli_success_and_missing_root(self) -> None:
@@ -876,10 +953,17 @@ class ExecutableContractTests(unittest.TestCase):
             root = Path(temporary_directory) / "pack"
             root.mkdir()
             (root / "Walk.fbx").write_bytes(b"motion")
-            success = self.run_script("inventory_pack.py", str(root), "--label", "Pack")
+            success = self.run_script(
+                "inventory_pack.py", str(root), "--label", "Pack", hash_seed="1"
+            )
+            repeated = self.run_script(
+                "inventory_pack.py", str(root), "--label", "Pack", hash_seed="2"
+            )
             missing = self.run_script("inventory_pack.py", str(root / "missing"))
 
         self.assertEqual(success.returncode, 0, success.stderr)
+        self.assertEqual(repeated.returncode, 0, repeated.stderr)
+        self.assertEqual(success.stdout, repeated.stdout)
         self.assertEqual(json.loads(success.stdout)["pack_label"], "Pack")
         self.assertEqual(success.stderr, "")
         self.assertEqual(missing.returncode, 2)

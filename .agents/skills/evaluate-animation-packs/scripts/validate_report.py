@@ -130,7 +130,13 @@ def validate(text: str) -> list[str]:
             if not line.startswith("|"):
                 continue
             cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-            if len(cells) != 7 or cells[0] in {"ID", "---"}:
+            if cells[0] in {"ID", "---"}:
+                continue
+            if len(cells) != 7:
+                issue_id = cells[0] or "<unknown>"
+                errors.append(
+                    f"issue {issue_id} row must contain exactly seven cells"
+                )
                 continue
             owner = cells[3].strip("`")
             if owner not in PRIMARY_OWNERS:
