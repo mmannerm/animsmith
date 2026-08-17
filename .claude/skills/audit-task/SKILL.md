@@ -59,25 +59,25 @@ comment.
    title,body`. Their acceptance criteria are part of the intent
    contract and feed the claims ledger (step 2).
 3. **Diff under review.** `git diff origin/main...HEAD` (or `gh pr diff <N>`).
-4. **Build + test status.** Capture the exact-head PR checks and uncovered local
-   evidence required by step 1. Build evidence is keyed by commit SHA, not by
-   reviewer.
+4. **Build + test status.** Capture the author's pre-push local-gate result, the
+   exact-head PR checks, and uncovered local evidence required by step 1. Build
+   evidence is keyed by commit SHA, not by reviewer.
 
 ## Required workflow
 
 ### 1. Build, test, lint
 
-Obtain and capture the required PR-check results for the exact HEAD. Treat them
-as the canonical mechanical gate when they cover formatting, lint, workspace
-tests, supported build variants, docs/package checks, and the other repository
-CI contracts. Do not also run `just gates` locally or inside each review agent
-solely to duplicate successful required checks.
+Confirm that the author ran the pre-push `just gates` required by
+[DEVELOPMENT.md](../../../DEVELOPMENT.md#common-commands) and captured its
+command, exit status, and exact HEAD. Then obtain the required PR-check results
+for that same HEAD. Do not run `just gates` again inside `audit-task`, a
+cross-model reviewer, or each audit subagent solely to duplicate that author
+gate or successful CI.
 
-Before pushing, an author may run a narrow preflight that is cheaper than a
-failed CI round trip. Run the full local `just gates` only when required PR
-checks are unavailable or when diagnosing a failure that cannot be resolved
-from CI output. Cross-model reviewers and audit subagents consume the captured
-exact-head result; they do not compile the commit independently.
+If the recorded pre-push gate is missing or belongs to another commit, BLOCK
+until the author supplies one exact-head result. Reviewer independence comes
+from reading the raw artifacts and reaching an independent verdict, not from
+compiling the same commit repeatedly.
 
 Run additional checks only for surfaces CI cannot exercise. For example, if the
 diff touches measurement code (`metrics.rs`, `sample.rs`, check algorithms), run
@@ -87,10 +87,10 @@ asset, and task-specific manifest validation when those claims matter. Any
 required PR-check or additional-check failure is a hard fail: report the exact
 error and BLOCK.
 
-Record the HEAD SHA and check URLs or retained local evidence. After a HEAD
-change, wait for fresh PR checks and rerun only uncovered checks affected by the
-delta. Reviewer independence comes from reading raw artifacts and reaching an
-independent verdict, not from duplicating mechanical work.
+Record the HEAD SHA, author gate, and PR-check URLs or retained local evidence.
+After a HEAD change, the author reruns the pre-push gate before pushing the
+amendment; audit reviewers wait for fresh PR checks, resume against the delta,
+and rerun only uncovered checks affected by it.
 
 ### 2. PR-description intent adherence — the audit-specific check
 
@@ -254,6 +254,7 @@ agent attribution line at the bottom of the comment.
 **Verdict:** [APPROVE] / [APPROVE WITH FOLLOW-UPS] / [BLOCK]
 
 ### Build / test / lint
+- author pre-push `just gates`: ✓ / ✗ <exact HEAD and retained result>
 - required PR checks: ✓ / ✗ <exact HEAD and links/details>
 - additional checks:  ✓ / ✗ / skipped (unavailable) / not applicable
 

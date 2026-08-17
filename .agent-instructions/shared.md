@@ -76,7 +76,9 @@ for a maintainer merge decision.
   narrow deltas; medium for ordinary code; high for numerical proof, security,
   untrusted input, or public-contract changes. Record the cross-model choice.
 - Run independent reviewer passes in parallel when practical, reuse captured
-  exact-head PR-check evidence, and request concise evidence-linked findings.
-- Follow the audit workflow's canonical check selection. Do not rerun the same
-  exact-head mechanical suite in every agent.
+  exact-head author-gate and PR-check evidence, and request concise
+  evidence-linked findings.
+- The author runs `just gates` once per candidate head, before pushing it. The
+  later audit consumes that result and CI; audit agents do not rerun the same
+  exact-head mechanical suite independently.
 - Poll an active process for status; do not relaunch the same work.

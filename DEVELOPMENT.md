@@ -52,16 +52,17 @@ $ just animation-pack-skill
 $ just gates
 ```
 
-`just gates` is the comprehensive local equivalent of the mechanical PR gate.
-Use narrow preflight checks before pushing when they are cheaper than a failed
-CI round trip; use the required PR checks as the canonical exact-head result.
-Run the full local gate when PR checks are unavailable or when diagnosing a
-failure, rather than duplicating successful CI in every reviewer. The command
-runs formatting, clippy, workspace tests, golden skip marker verification,
-dependency checks, schema-id verification, GitHub community-file checks, spell
-checking, rustdoc with missing public docs denied, no-default-features CLI tests
-and builds, release binary smoke checks, package readiness checks, and the
-animation-pack skill's behavioral and published-report validation.
+`just gates` is the local PR gate and should be green on each candidate head
+before pushing a non-trivial PR. It runs formatting, clippy, workspace tests,
+golden skip marker verification, dependency checks, schema-id verification,
+GitHub community-file checks, spell checking, rustdoc with missing public docs
+denied, no-default-features CLI tests and builds, release binary smoke checks,
+package readiness checks, and the animation-pack skill's behavioral and
+published-report validation.
+
+This author-side pre-push gate is distinct from the later PR audit. Once the
+same commit is pushed, audit agents reuse the captured local result and the PR's
+required checks; they do not rerun `just gates` independently.
 
 The corresponding CI workflows also validate the same expectations on a
 clean checkout. Coverage and the security scanners (Scorecard, CodeQL)
