@@ -98,8 +98,13 @@ apply:
   `fps`, or `time_window = [START, END]` in seconds;
 - `drop_closing_endpoint = true`: remove one final key from every channel;
 - `hold_frames = N`: duplicate the final pose after `N / fps` seconds;
-- `gait_anchor = true`: run the existing measured gait-anchor transform using
-  the selected `animsmith.toml` rig configuration;
+- `gait_anchor = true`: explicitly declare an in-place cyclic gait and run the
+  measured gait-anchor transform using the selected `animsmith.toml` rig
+  configuration. Assembly refuses before publication when the Root role (or
+  Hips fallback) has missing/non-finite trajectory evidence, more than 1 cm of
+  horizontal accumulation, or more than 1° of yaw accumulation after the
+  ordinary interior open-loop wrap-step allowance (boundary jumps are not an
+  allowance);
 - `strip_bones = [...]`: remove every TRS track for named base bones.
 
 `complete_tracks = true` fills absent TRS channels from the base rest pose for

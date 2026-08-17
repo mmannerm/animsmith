@@ -246,8 +246,10 @@ wrote held.glb (2 node(s), 1 clip(s), 0 mesh(es) / 0 position(s), 0 material(s))
 ```
 
 Other transforms: `--gait-anchor` rotates a cyclic clip so its stride
-anchor lands at t=0 (needs resolvable hips + feet roles), and `--fps N`
-sets the grid used for retiming. See
+anchor lands at t=0. It is an explicit in-place declaration and needs
+resolvable Root (or Hips fallback), Hips, and feet roles; accumulating root
+translation/yaw refuses without writing the output. Retain root motion or use
+runtime phase offsets instead. `--fps N` sets the grid used for retiming. See
 [cli.md](../docs/cli.md#commands) for the full flag list.
 
 For a loop exported with frame 0 copied again at the inclusive final frame,

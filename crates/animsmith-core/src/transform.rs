@@ -6,7 +6,7 @@
 use crate::checks::constant_track::{is_constant_track, quaternion_angular_delta};
 use crate::metrics::foot_cycle_metrics;
 use crate::model::{BoneId, Clip, Interpolation, Property, Skeleton, Track, TrackValues};
-use crate::profile::ResolvedRoles;
+use crate::profile::{ResolvedRoles, Role};
 use crate::sample::{PoseGrid, TrackSample, default_frame_count, sample_clip, sample_track};
 use glam::{Quat, Vec3};
 use std::collections::BTreeSet;
@@ -1122,6 +1122,31 @@ pub struct GaitAlignOutcome {
     pub frame_offset: i32,
 }
 
+/// Declared movement contract under which gait-anchor rotation may run.
+///
+/// The policy is an explicit caller obligation rather than an inference from
+/// clip names or measured speed. Gait anchoring cyclically reorders every
+/// animated channel, so it is only safe when the selected root trajectory is
+/// itself cyclic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum GaitTrajectoryPolicy {
+    /// The caller declares that gameplay, not the clip, owns locomotion travel.
+    /// The transform verifies that declaration before rewriting any channel.
+    InPlace,
+}
+
+/// Maximum horizontal root-trajectory accumulation admitted by the in-place
+/// gait-anchor policy, after allowing one ordinary open-loop wrap step.
+pub const GAIT_ANCHOR_MAX_HORIZONTAL_ACCUMULATION_M: f64 = 0.01;
+
+/// Maximum accumulated root yaw admitted by the in-place gait-anchor policy,
+/// after allowing one ordinary open-loop wrap step.
+pub const GAIT_ANCHOR_MAX_YAW_ACCUMULATION_DEG: f64 = 1.0;
+
+const GAIT_TRAJECTORY_ALTERNATIVES: &str = "retain source root motion, use runtime phase offsets, or use a separately designed \
+     trajectory-preserving operation";
+
 /// Rotate a cyclic clip in time so its measured stride anchor (the
 /// trough of the L−R foot-height fundamental) lands at clip time 0.
 ///
@@ -1143,7 +1168,10 @@ pub struct GaitAlignOutcome {
 /// Returns an error when the clip has no measurable stride anchor, the
 /// left-right foot amplitude is too small to define a stable phase, a
 /// non-constant cubic-spline track would need lossy resampling, or no
-/// tested rotation candidate remains measurable.
+/// tested rotation candidate remains measurable. Under
+/// [`GaitTrajectoryPolicy::InPlace`], missing/non-finite selected-root
+/// evidence and material horizontal translation or yaw accumulation are also
+/// errors. All errors are returned before `clip` is changed.
 ///
 /// # Panics
 ///
@@ -1154,7 +1182,12 @@ pub fn align_gait_anchor(
     clip: &mut Clip,
     roles: &ResolvedRoles,
     fps: f64,
+    trajectory_policy: GaitTrajectoryPolicy,
 ) -> Result<GaitAlignOutcome, String> {
+    match trajectory_policy {
+        GaitTrajectoryPolicy::InPlace => verify_in_place_gait_trajectory(skeleton, clip, roles)?,
+    }
+
     let measure = |c: &Clip| -> Option<(f64, Option<f64>, f64)> {
         let frames = crate::metrics::metric_frame_count(c)?;
         let grid = sample_clip(skeleton, c, frames);
@@ -1222,6 +1255,194 @@ pub fn align_gait_anchor(
     };
     *clip = rotated;
     Ok(outcome)
+}
+
+/// Verify that cyclic time rotation cannot move an authored world trajectory
+/// wrap into the middle of the clip.
+///
+/// An open loop omits its repeated closing sample, so a valid cyclic root may
+/// differ from its first sample by one ordinary frame step. The safety fact is
+/// therefore the endpoint displacement/yaw in excess of the largest interior
+/// in-clip step, not exact endpoint equality. Boundary steps are deliberately
+/// excluded from the allowance: otherwise one arbitrary jump at either edge
+/// could masquerade as the omitted closing sample. A travelling ramp or
+/// authored turn accumulates across many steps and remains well above that
+/// allowance.
+fn verify_in_place_gait_trajectory(
+    skeleton: &Skeleton,
+    clip: &Clip,
+    roles: &ResolvedRoles,
+) -> Result<(), String> {
+    let (role, bone) = roles
+        .get(Role::Root)
+        .map(|bone| ("Root", bone))
+        .or_else(|| roles.get(Role::Hips).map(|bone| ("Hips fallback", bone)))
+        .ok_or_else(|| {
+            format!(
+                "cannot gait-anchor clip {:?} under the in-place policy: selected Root/\
+                 Hips trajectory evidence is missing; {GAIT_TRAJECTORY_ALTERNATIVES}",
+                clip.name
+            )
+        })?;
+    let Some(bone_name) = skeleton.bones.get(bone).map(|entry| entry.name.as_str()) else {
+        return Err(format!(
+            "cannot gait-anchor clip {:?} under the in-place policy: selected {role} bone \
+             index {bone} is outside the skeleton, so trajectory evidence is missing; \
+             {GAIT_TRAJECTORY_ALTERNATIVES}",
+            clip.name
+        ));
+    };
+
+    // Sampling alone is insufficient evidence for irregular or STEP tracks:
+    // a non-finite authored interval can fall entirely between uniform grid
+    // samples. Inspect every authored value and time on the selected bone and
+    // its ancestors, because all of those channels contribute to the selected
+    // model-space trajectory.
+    let mut trajectory_bones = vec![false; skeleton.bones.len()];
+    let mut cursor = Some(bone);
+    let mut ancestor_count = 0usize;
+    while let Some(index) = cursor {
+        let Some(entry) = skeleton.bones.get(index) else {
+            return Err(format!(
+                "cannot gait-anchor clip {:?} under the in-place policy: selected {role} bone \
+                 {:?} (index {bone}) has an out-of-range ancestor index {index}, so trajectory \
+                 evidence is missing; {GAIT_TRAJECTORY_ALTERNATIVES}",
+                clip.name, bone_name
+            ));
+        };
+        if trajectory_bones[index] || ancestor_count >= skeleton.bones.len() {
+            return Err(format!(
+                "cannot gait-anchor clip {:?} under the in-place policy: selected {role} bone \
+                 {:?} (index {bone}) has a cyclic ancestor chain, so trajectory evidence is \
+                 missing; {GAIT_TRAJECTORY_ALTERNATIVES}",
+                clip.name, bone_name
+            ));
+        }
+        trajectory_bones[index] = true;
+        ancestor_count += 1;
+        cursor = entry.parent;
+    }
+    for (track_index, track) in clip.tracks.iter().enumerate() {
+        if !trajectory_bones.get(track.bone).copied().unwrap_or(false) {
+            continue;
+        }
+        let has_non_finite_value = match &track.values {
+            TrackValues::Vec3s(values) => values.iter().any(|value| !value.is_finite()),
+            TrackValues::Quats(values) => values.iter().any(|value| !value.is_finite()),
+        };
+        if track.times.iter().any(|time| !time.is_finite()) || has_non_finite_value {
+            return Err(format!(
+                "cannot gait-anchor clip {:?} under the in-place policy: selected {role} bone \
+                 {:?} (index {bone}) has non-finite authored trajectory evidence in track \
+                 {track_index}; {GAIT_TRAJECTORY_ALTERNATIVES}",
+                clip.name, bone_name
+            ));
+        }
+    }
+    let Some(frames) = crate::metrics::metric_frame_count(clip) else {
+        return Err(format!(
+            "cannot gait-anchor clip {:?} under the in-place policy: selected {role} bone \
+             {:?} (index {bone}) has no finite cycle grid for trajectory evidence; \
+             {GAIT_TRAJECTORY_ALTERNATIVES}",
+            clip.name, bone_name
+        ));
+    };
+    let grid = sample_clip(skeleton, clip, frames);
+    if grid.frame_count() < 3 {
+        return Err(format!(
+            "cannot gait-anchor clip {:?} under the in-place policy: selected {role} bone \
+             {:?} (index {bone}) has fewer than three trajectory samples; \
+             {GAIT_TRAJECTORY_ALTERNATIVES}",
+            clip.name, bone_name
+        ));
+    }
+
+    let mut horizontal = Vec::with_capacity(grid.frame_count());
+    let mut yaw_steps_deg = Vec::with_capacity(grid.frame_count() - 1);
+    let mut previous_forward: Option<Vec3> = None;
+    for frame in 0..grid.frame_count() {
+        let position = grid.model_position(frame, bone);
+        let rotation = grid.model_rotation(frame, bone);
+        if !position.is_finite()
+            || !rotation.is_finite()
+            || !rotation.length_squared().is_finite()
+            || rotation.length_squared() == 0.0
+        {
+            return Err(format!(
+                "cannot gait-anchor clip {:?} under the in-place policy: selected {role} bone \
+                 {:?} (index {bone}) has non-finite trajectory evidence at sample {frame}; \
+                 {GAIT_TRAJECTORY_ALTERNATIVES}",
+                clip.name, bone_name
+            ));
+        }
+        horizontal.push(Vec3::new(position.x, 0.0, position.z));
+
+        let forward_3d = rotation.normalize() * Vec3::Z;
+        let forward_xz = Vec3::new(forward_3d.x, 0.0, forward_3d.z);
+        let length = forward_xz.length();
+        if !length.is_finite() || length <= f32::EPSILON {
+            return Err(format!(
+                "cannot gait-anchor clip {:?} under the in-place policy: selected {role} bone \
+                 {:?} (index {bone}) has no finite horizontal forward axis at sample {frame}; \
+                 {GAIT_TRAJECTORY_ALTERNATIVES}",
+                clip.name, bone_name
+            ));
+        }
+        let forward = forward_xz / length;
+        if let Some(previous) = previous_forward {
+            let cross_y = previous.cross(forward).y;
+            let dot = previous.dot(forward).clamp(-1.0, 1.0);
+            let step_deg = f64::from(cross_y.atan2(dot).to_degrees());
+            if !step_deg.is_finite() {
+                return Err(format!(
+                    "cannot gait-anchor clip {:?} under the in-place policy: selected {role} \
+                     bone {:?} (index {bone}) has non-finite yaw evidence at sample {frame}; \
+                     {GAIT_TRAJECTORY_ALTERNATIVES}",
+                    clip.name, bone_name
+                ));
+            }
+            yaw_steps_deg.push(step_deg);
+        }
+        previous_forward = Some(forward);
+    }
+
+    let last = horizontal.len() - 1;
+    let horizontal_endpoint_m = f64::from((horizontal[last] - horizontal[0]).length());
+    let horizontal_wrap_step_m = horizontal
+        .windows(2)
+        .skip(1)
+        .take(horizontal.len().saturating_sub(3))
+        .map(|step| f64::from((step[1] - step[0]).length()))
+        .fold(0.0, f64::max);
+    let horizontal_accumulation_m = (horizontal_endpoint_m - horizontal_wrap_step_m).max(0.0);
+    let accumulated_yaw_deg = yaw_steps_deg.iter().sum::<f64>().abs();
+    let yaw_wrap_step_deg = yaw_steps_deg
+        .iter()
+        .skip(1)
+        .take(yaw_steps_deg.len().saturating_sub(2))
+        .map(|step| step.abs())
+        .fold(0.0, f64::max);
+    let yaw_accumulation_deg = (accumulated_yaw_deg - yaw_wrap_step_deg).max(0.0);
+
+    if !horizontal_accumulation_m.is_finite()
+        || !yaw_accumulation_deg.is_finite()
+        || horizontal_accumulation_m > GAIT_ANCHOR_MAX_HORIZONTAL_ACCUMULATION_M
+        || yaw_accumulation_deg > GAIT_ANCHOR_MAX_YAW_ACCUMULATION_DEG
+    {
+        return Err(format!(
+            "cannot gait-anchor clip {:?} under the in-place policy: selected {role} bone \
+             {:?} (index {bone}) accumulates horizontal translation \
+             {horizontal_accumulation_m:.4} m (endpoint {horizontal_endpoint_m:.4} m, ordinary \
+             interior-step allowance {horizontal_wrap_step_m:.4} m, cap \
+             {GAIT_ANCHOR_MAX_HORIZONTAL_ACCUMULATION_M:.4} m) and yaw \
+             {yaw_accumulation_deg:.3} deg (sampled total {accumulated_yaw_deg:.3} deg, ordinary \
+             interior-step allowance {yaw_wrap_step_deg:.3} deg, cap \
+             {GAIT_ANCHOR_MAX_YAW_ACCUMULATION_DEG:.3} deg); \
+             {GAIT_TRAJECTORY_ALTERNATIVES}",
+            clip.name, bone_name
+        ));
+    }
+    Ok(())
 }
 
 /// Exact representation-level predicate used by gait-anchor rotation. It is

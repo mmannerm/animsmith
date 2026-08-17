@@ -139,8 +139,8 @@ enum Cmd {
         /// authored track proves the endpoint is mechanically redundant.
         #[arg(long, conflicts_with = "hold_extend")]
         drop_duplicate_loop_endpoint: bool,
-        /// Rotate cyclic clips so the measured stride anchor lands at
-        /// t=0 (needs hips+feet rig roles).
+        /// Declare an in-place cyclic gait and rotate its measured stride
+        /// anchor to t=0. Refuses accumulating root translation or yaw.
         #[arg(long)]
         gait_anchor: bool,
         /// Remove provably constant multi-key tracks after all other transforms.
@@ -687,22 +687,23 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     }
                 }
                 if gait_anchor {
-                    match animsmith_core::transform::align_gait_anchor(&skeleton, c, &roles, fps) {
-                        Ok(outcome) => print!(
-                            "{}",
-                            render::render_transform_gait_anchor(
-                                &c.name,
-                                outcome.phase_before,
-                                outcome.phase_after,
-                                outcome.frame_offset,
-                                outcome.seam_after
-                            )
-                        ),
-                        Err(reason) => print!(
-                            "{}",
-                            render::render_transform_gait_anchor_skipped(&c.name, &reason)
-                        ),
-                    }
+                    let outcome = animsmith_core::transform::align_gait_anchor(
+                        &skeleton,
+                        c,
+                        &roles,
+                        fps,
+                        animsmith_core::transform::GaitTrajectoryPolicy::InPlace,
+                    )?;
+                    print!(
+                        "{}",
+                        render::render_transform_gait_anchor(
+                            &c.name,
+                            outcome.phase_before,
+                            outcome.phase_after,
+                            outcome.frame_offset,
+                            outcome.seam_after
+                        )
+                    );
                 }
                 if prune_constant_tracks {
                     // `animates_bones` is an animation/motion contract.  Keep its

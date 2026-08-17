@@ -47,13 +47,26 @@ output, and a self-contained HTML report with a 3D preview.
   widened 2026-07-03; see Appendix A). In scope: `fix` for lossless
   mechanical repairs (quaternion unit normalization and hemisphere
   normalization), frame-range
-  slice/trim + hold-extend, gait-anchor rotation, opt-in pruning of
-  provably constant multi-key tracks, and format conversion
+  slice/trim + hold-extend, fail-closed in-place gait-anchor rotation, opt-in
+  pruning of provably constant multi-key tracks, and format conversion
   including a full mesh/skin FBX→glTF path (a maintained replacement
   for the archived FBX2glTF). Out of scope stays *artistic*
   transformation: retargeting, motion editing, procedural animation —
   that is DCC work. The rule of thumb: animsmith may rewrite a clip
   only in ways whose correctness its own checks can verify.
+- **Gait anchoring is an explicitly in-place operation.** The core boundary
+  requires a movement policy; the shipped CLI and assembly switches select
+  only `InPlace`. Before any channel is cyclically reordered, AnimSmith samples
+  the resolved Root role (falling back to Hips) and refuses missing/non-finite
+  evidence, horizontal accumulation above 1 cm, or yaw accumulation above 1°.
+  Because an open loop omits its repeated closing frame, the measurement first
+  allows one ordinary interior in-clip step, then judges only the excess
+  endpoint displacement or accumulated yaw. Boundary steps cannot supply the
+  allowance, so a single edge jump is still refused. This admits cyclic pelvis/root
+  sway while refusing authored travel and turns. Root-motion phase offsets,
+  root-motion extraction, and trajectory-preserving cyclic rebasing remain
+  runtime or separately designed operations; gait anchoring must not improvise
+  them.
 - **Not a runtime.** It models how engines sample animation; it does not
   play games.
 

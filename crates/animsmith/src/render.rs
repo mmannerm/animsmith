@@ -702,15 +702,6 @@ pub(crate) fn render_transform_gait_anchor(
     )
 }
 
-/// Render the message emitted when gait-anchor alignment is skipped.
-pub(crate) fn render_transform_gait_anchor_skipped(clip_name: &str, reason: &str) -> String {
-    format!(
-        "  gait-anchor skipped '{}': {}\n",
-        text_atom(clip_name),
-        text_atom(reason)
-    )
-}
-
 /// Render the opt-in constant-track pruning decision for one clip.
 ///
 /// The original track index is part of each line so an operator can identify
@@ -2435,11 +2426,6 @@ mod tests {
             render_transform_gait_anchor("walk\nclip", 0.25, 0.0, -1, Some(1.234)),
             "  gait-anchored 'walk\\nclip': phase 0.250 -> 0.000 (offset -1, seam 1.23)\n"
         );
-        assert_eq!(
-            render_transform_gait_anchor_skipped("walk\nclip", "bad\nreason"),
-            "  gait-anchor skipped 'walk\\nclip': bad\\nreason\n"
-        );
-
         let clip_with_tracks = Clip {
             name: "multi".into(),
             duration_s: 1.0,

@@ -344,9 +344,10 @@ fields it supplies, so a one-off authored clip need not copy every inherited
 value. This is a contract choice, not a repair: it does not make a
 discontinuous source clip smooth.
 
-There is no general automatic repair. `transform --gait-anchor` can rotate a
-locomotion cycle in time to choose a better stride cut, but it does not rewrite
-arbitrary bone endpoint poses or tangents. Angular-velocity C1 continuity,
+There is no general automatic repair. `transform --gait-anchor` can rotate an
+explicitly in-place locomotion cycle in time to choose a better stride cut; it
+refuses accumulating root translation or yaw and does not rewrite arbitrary
+bone endpoint poses or tangents. Angular-velocity C1 continuity,
 acceleration/jerk continuity, root-motion extraction policy, and runtime blend
 settings remain out of scope.
 
@@ -404,7 +405,14 @@ max_gait_phase_spread = 0.15
 
 `transform --gait-anchor` is the matching repair-by-transform: it
 rotates a cyclic clip so its stride anchor lands at t=0, aligning the
-set member by member.
+set member by member. Selecting it explicitly declares the clip in-place.
+AnimSmith verifies the Root role (or Hips fallback) before rewriting and
+refuses missing/non-finite evidence, horizontal accumulation above 1 cm, or
+yaw accumulation above 1° after allowing one ordinary interior step of an open
+cycle; a boundary jump cannot supply that allowance. Do not apply it to
+authored root motion: retain that trajectory, use
+runtime phase offsets, or use a separately designed trajectory-preserving
+operation. Gait anchoring does not convert root motion to in-place motion.
 
 ### A blend pair is time-complementary
 
@@ -653,7 +661,7 @@ order; they are not general animation cleanup.
 | Wrong length, freezes at the end | `duration-sanity`, `fps` | `transform --slice`, `--hold-extend` | `[clips.<name>] duration_s`, `fps` | [Editing a clip](../examples/README.md#3-editing-a-clip) |
 | The loop pops or pulses at the wrap | `duplicate-loop-endpoint`, `loop-closure`, `loop-seam-vel`, `loop-seam-rot`, `loop-seam` | drop a strict duplicated endpoint with `transform --drop-duplicate-loop-endpoint`; otherwise re-author endpoint pose/tangents; `transform --gait-anchor` only for locomotion phase | `[clips.<name>] loop = true`, `[checks.loop-closure]`, `[checks.loop-seam-vel]`, `[checks.loop-seam-rot]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Glides or runs in place | `in-place`, `root-motion-speed` | re-export; `measure` for ground truth | `[clips.<name>] in_place`, `speed_mps` | [Contract config](../examples/README.md#4-a-project-contract-config) |
-| Feet skate across blends | `gait-group` | `transform --gait-anchor` | `[gait_groups.<name>]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
+| Feet skate across blends | `gait-group` | `transform --gait-anchor` for explicitly in-place cycles; runtime phase offsets for root motion | `[gait_groups.<name>]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Same-time blend members drift or pop | `sync-group` | re-slice or re-time at source | `[sync_groups.<name>]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Same-time pair looks mirrored or swaps footfall timing | `time-complement` | align contacts in DCC, add markers, or phase-remap in the runtime | `[sync_groups.<name>.time_complement]` | [A blend pair is time-complementary](#a-blend-pair-is-time-complementary) |
 | Feet slide within a clip | `foot-slide` | re-author in DCC | `[clips.<name>] speed_mps` | [Contract config](../examples/README.md#4-a-project-contract-config) |
