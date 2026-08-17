@@ -1066,6 +1066,122 @@ fn rejects_unsafe_shared_and_overlapping_scale_accessor_layouts() {
     );
 }
 
+/// One converted `POSITION` accessor plus one accessor no source object
+/// references. The unreferenced accessor may be dense or sparse, but its raw
+/// payload remains source data that the byte-surgical scale writer owes.
+fn positions_and_unreferenced_accessor(accessor: Value, buffer_views: Vec<Value>) -> Value {
+    json!({
+        "asset": { "version": "2.0" },
+        "buffers": [{ "uri": data_uri(&[0u8; 128]), "byteLength": 128 }],
+        "bufferViews": buffer_views,
+        "accessors": [
+            {
+                "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+                "min": [0, 0, 0], "max": [0, 0, 0]
+            },
+            accessor
+        ],
+        "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 } }] }]
+    })
+}
+
+#[test]
+fn rejects_an_unreferenced_dense_accessor_overlapping_a_rewritten_accessor() {
+    let value = positions_and_unreferenced_accessor(
+        json!({ "bufferView": 1, "componentType": 5121, "count": 1, "type": "SCALAR" }),
+        vec![
+            json!({ "buffer": 0, "byteOffset": 0, "byteLength": 36 }),
+            json!({ "buffer": 0, "byteOffset": 35, "byteLength": 1 }),
+        ],
+    );
+    let (violations, _) = unsupported(&value);
+    assert_eq!(
+        locations(
+            &violations,
+            GltfCapabilityViolationKind::OverlappingAccessorRanges
+        ),
+        vec!["/accessors/0", "/accessors/1"]
+    );
+}
+
+#[test]
+fn rejects_unreferenced_sparse_payloads_overlapping_a_rewritten_accessor() {
+    for (name, indices_offset, values_offset, sparse_location) in [
+        (
+            "sparse index enters POSITION",
+            35usize,
+            40usize,
+            "/accessors/1/sparse/indices/bufferView",
+        ),
+        (
+            "sparse values enter POSITION",
+            36,
+            24,
+            "/accessors/1/sparse/values/bufferView",
+        ),
+    ] {
+        let value = positions_and_unreferenced_accessor(
+            json!({
+                "componentType": 5126,
+                "count": 3,
+                "type": "VEC3",
+                "sparse": {
+                    "count": 1,
+                    "indices": { "bufferView": 1, "componentType": 5121 },
+                    "values": { "bufferView": 2 }
+                }
+            }),
+            vec![
+                json!({ "buffer": 0, "byteOffset": 0, "byteLength": 36 }),
+                json!({ "buffer": 0, "byteOffset": indices_offset, "byteLength": 1 }),
+                json!({ "buffer": 0, "byteOffset": values_offset, "byteLength": 12 }),
+            ],
+        );
+        let (violations, _) = unsupported(&value);
+        assert_eq!(
+            locations(
+                &violations,
+                GltfCapabilityViolationKind::OverlappingAccessorRanges
+            ),
+            vec!["/accessors/0", sparse_location],
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn accepts_harmless_unreferenced_dense_and_sparse_accessors() {
+    let dense = positions_and_unreferenced_accessor(
+        json!({ "bufferView": 1, "componentType": 5121, "count": 4, "type": "SCALAR" }),
+        vec![
+            json!({ "buffer": 0, "byteOffset": 0, "byteLength": 36 }),
+            json!({ "buffer": 0, "byteOffset": 36, "byteLength": 4 }),
+        ],
+    );
+    preflight_scale_source_bytes(Path::new("unreferenced-dense.gltf"), &bytes(&dense))
+        .expect("a disjoint unreferenced dense accessor remains supported");
+
+    let sparse = positions_and_unreferenced_accessor(
+        json!({
+            "componentType": 5126,
+            "count": 3,
+            "type": "VEC3",
+            "sparse": {
+                "count": 1,
+                "indices": { "bufferView": 1, "componentType": 5121 },
+                "values": { "bufferView": 2 }
+            }
+        }),
+        vec![
+            json!({ "buffer": 0, "byteOffset": 0, "byteLength": 36 }),
+            json!({ "buffer": 0, "byteOffset": 36, "byteLength": 1 }),
+            json!({ "buffer": 0, "byteOffset": 40, "byteLength": 12 }),
+        ],
+    );
+    preflight_scale_source_bytes(Path::new("unreferenced-sparse.gltf"), &bytes(&sparse))
+        .expect("disjoint unreferenced sparse payloads remain supported");
+}
+
 #[test]
 fn rejects_unreadable_inverse_binds_and_animated_morph_weights() {
     let mut value = base_json();
