@@ -254,7 +254,7 @@ pub enum GltfCapabilityViolationKind {
     UnsafeAccessorLayout,
     /// One accessor is shared between scale-bearing and dimensionless semantics.
     ConflictingAccessorUse,
-    /// A scale-bearing accessor overlaps another used byte range in a source
+    /// A scale-bearing accessor overlaps another owned byte range in a source
     /// buffer. The other range is an accessor, or an `image` payload reported
     /// alongside it as [`GltfCapabilityViolationKind::ImagePayloadOverlap`].
     OverlappingAccessorRanges,
