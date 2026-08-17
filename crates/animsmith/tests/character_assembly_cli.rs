@@ -95,6 +95,22 @@ fn assert_schema_valid(instance: &Value, schema_text: &str) {
     assert!(errors.is_empty(), "schema errors: {errors:#?}");
 }
 
+fn assert_published_pair_is_bound(dir: &Path) {
+    let artifact_path = dir.join("character.glb");
+    let evidence_path = dir.join("character.assembly.json");
+    let artifact = std::fs::read(&artifact_path).expect("reads assembled artifact");
+    animsmith_gltf::load(&artifact_path).expect("assembled artifact reloads");
+    let evidence: Value =
+        serde_json::from_slice(&std::fs::read(&evidence_path).expect("reads assembly evidence"))
+            .expect("assembly evidence parses");
+    assert_schema_valid(&evidence, EVIDENCE_SCHEMA);
+    assert_eq!(
+        evidence["artifact"]["sha256"],
+        format!("{:x}", Sha256::digest(&artifact)),
+        "assembly evidence binds the artifact that landed"
+    );
+}
+
 #[test]
 fn assembles_schema_valid_byte_stable_character_and_evidence() {
     let dir = tempfile::tempdir().expect("creates temp directory");
@@ -355,13 +371,47 @@ fn a_published_run_whose_stdout_is_closed_keeps_exit_0_and_diagnoses_on_stderr()
     assert_eq!(output.status.code(), Some(0), "stderr:\n{stderr}");
     // Ours, not the OS's: the platform's wording for a reader-less pipe is
     // not this contract.
-    assert!(
-        stderr.starts_with("animsmith: cannot write JSON output to stdout"),
+    assert_eq!(
+        stderr
+            .matches("animsmith: cannot write JSON output to stdout")
+            .count(),
+        1,
         "stderr:\n{stderr}"
     );
-    // And the run really did publish, which is why it is a success.
-    assert!(dir.path().join("character.glb").is_file());
-    assert!(dir.path().join("character.assembly.json").is_file());
+    // And the run really did publish a self-consistent pair, which is why it
+    // remains a success even though its summary could not be delivered.
+    assert_published_pair_is_bound(dir.path());
+}
+
+#[test]
+fn a_published_text_summary_with_closed_stdout_keeps_exit_0() {
+    let dir = tempfile::tempdir().expect("creates temp directory");
+    write_inputs(dir.path());
+    std::fs::write(dir.path().join("recipe.toml"), success_recipe()).expect("writes recipe");
+
+    let output = run_args_into_closed_stdout(
+        dir.path(),
+        &[
+            "recipe.toml",
+            "-o",
+            "character.glb",
+            "--evidence",
+            "character.assembly.json",
+            "--format",
+            "text",
+        ],
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "stderr:\n{stderr}");
+    assert_eq!(
+        stderr
+            .matches("animsmith: cannot write text output to stdout")
+            .count(),
+        1,
+        "stderr:\n{stderr}"
+    );
+    assert_published_pair_is_bound(dir.path());
 }
 
 /// The publication summary escapes its declared paths, because it now goes

@@ -190,14 +190,29 @@ tangents.
 | 2 | Operator/tool error: unopenable input, bad config, unsupported format, or invalid flags. |
 
 The code reports what the run *did*, never how well it could report it. This
-holds for **every** `--format json` path — `measure`, `lint`, `diff`,
-`convert`, `assemble`, `scale`. If the record cannot reach stdout — a closed
-pipe, a full filesystem — the write failure is diagnosed on stderr and the
-command's own code stands: `lint … --format json | head` still exits `1` for
-findings it found, `scale` still exits `1` for a refusal and `0` for a
-published pair. Raising it instead would report an operator error for work
-that was actually done, and would turn an asset-property refusal into exit
-`2`. Only stdout is affected; nothing about publication changes.
+holds for **every stdout presentation**: parser-rendered help/version, text,
+Markdown, and every `--format json` path (`measure`, `lint`, `diff`, `convert`,
+`assemble`, `scale`). If
+stdout cannot accept the result — a closed pipe or full filesystem — the
+checked write never panics, a best-effort checked diagnostic goes to stderr,
+and the stdout-bearing path's already-established code stands. Thus
+`lint … --format text | head` still
+exits `1` for findings it found, `inspect … | head` still exits `0` for an
+inspection it completed, and `scale` still exits `1` for a refusal or `0` for
+a published pair. Stderr may itself be closed; losing both streams is still
+not a panic. Raising the stdout failure instead would report an operator error
+for work that was actually done and make exit semantics depend on presentation
+format. JSON serialization failure remains exit `2` because the CLI could not
+form a truthful record; delivery failure after rendering is only reporting.
+Other operator errors occur before stdout reporting, remain stderr-only, and
+retain exit `2`.
+Commands that render several related pieces attempt one checked stream when a
+single delivery boundary is promised. In particular, all selected `fix`
+repair reports and all parts of one conversion summary produce at most one
+stdout-failure diagnostic.
+Help and version delivery uses clap's own fallible styled writer, so forced
+ANSI color remains intact while a closed destination still follows this rule.
+Only stdout is affected; nothing about artifact publication changes.
 
 A role-dependent check with missing prerequisites reports a typed coverage
 gap and does not fail the run — exit `0` means no failing findings among the
@@ -430,8 +445,9 @@ identity `urn:animsmith:schema:character-assembly-evidence:4`; see
 the evidence file receives, serialized once — in place of the default `text`
 publication summary. Every `assemble` failure still exits 2 with prose on
 stderr, whatever the format, and emits nothing on stdout; a run whose stdout
-itself fails mid-record is the one exception, leaving a truncated record there
-and reporting the write failure on stderr without changing the exit code.
+itself fails mid-record or mid-summary is the one exception, leaving a
+truncated result there and reporting the write failure on stderr without
+changing the exit code.
 
 `scale` writes scale evidence v4 to its required `--evidence` path, with
 immutable identity `urn:animsmith:schema:scale-evidence:4`; see

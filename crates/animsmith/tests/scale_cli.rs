@@ -16,6 +16,7 @@ use animsmith_testkit::{
     unaffected_bind_scale_rig_glb,
 };
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
@@ -87,16 +88,16 @@ impl Fixture {
             .expect("runs animsmith")
     }
 
-    /// `scale rest-bind --format json` with a stdout nobody is reading.
+    /// `scale rest-bind` with a stdout nobody is reading.
     ///
     /// The pipe's read end is dropped **before** the child is spawned, so its
     /// stdout has no reader from the moment it exists: the write failure is a
     /// property of the setup rather than a race against how quickly the child
     /// reaches its write.
-    fn rest_bind_into_closed_stdout(&self, expected_factor: &str) -> Output {
+    fn rest_bind_into_closed_stdout(&self, expected_factor: &str, format: &str) -> Output {
         let (reader, writer) = std::io::pipe().expect("creates a pipe");
         drop(reader);
-        self.rest_bind_command(expected_factor, "json")
+        self.rest_bind_command(expected_factor, format)
             .stdout(Stdio::from(writer))
             .stderr(Stdio::piped())
             .spawn()
@@ -130,6 +131,29 @@ fn assert_schema_valid(instance: &Value) {
         .map(|error| format!("{}: {error}", error.instance_path()))
         .collect();
     assert!(errors.is_empty(), "schema errors: {}", errors.join("; "));
+}
+
+fn assert_published_pair_is_bound(fixture: &Fixture) {
+    let artifact_path = fixture.path("out.glb");
+    let evidence_path = fixture.path("out.json");
+    let artifact = std::fs::read(&artifact_path).expect("reads published scale artifact");
+    animsmith_gltf::load(&artifact_path).expect("published scale artifact reloads");
+    let evidence = read_json(&evidence_path);
+    assert_schema_valid(&evidence);
+    assert_eq!(evidence["outcome"], "published");
+    assert_eq!(
+        evidence["result"]["artifact"]["sha256"],
+        format!("{:x}", Sha256::digest(&artifact)),
+        "scale evidence binds the artifact that landed"
+    );
+    assert_eq!(
+        evidence["result"]["artifact"]["bytes"],
+        artifact.len() as u64
+    );
+    assert_eq!(
+        evidence["result"]["proof"]["read_back_digest_matches"],
+        true
+    );
 }
 
 fn glb(value: &Value, binary: &[u8]) -> Vec<u8> {
@@ -1390,7 +1414,7 @@ fn a_refusal_in_text_mode_writes_prose_to_stderr_and_nothing_to_stdout() {
 #[test]
 fn a_published_run_whose_stdout_is_closed_keeps_exit_0_and_diagnoses_on_stderr() {
     let fixture = Fixture::new();
-    let output = fixture.rest_bind_into_closed_stdout("0.01");
+    let output = fixture.rest_bind_into_closed_stdout("0.01", "json");
 
     assert_eq!(
         output.status.code(),
@@ -1400,14 +1424,42 @@ fn a_published_run_whose_stdout_is_closed_keeps_exit_0_and_diagnoses_on_stderr()
     );
     // Ours, not the OS's: the platform's wording for a reader-less pipe is
     // not this contract.
-    assert!(
-        stderr(&output).starts_with("animsmith: cannot write JSON output to stdout"),
+    assert_eq!(
+        stderr(&output)
+            .matches("animsmith: cannot write JSON output to stdout")
+            .count(),
+        1,
         "stderr:\n{}",
         stderr(&output)
     );
-    // And the run really did publish, which is why it is a success.
-    assert!(fixture.path("out.glb").is_file());
-    assert_eq!(read_json(&fixture.path("out.json"))["outcome"], "published");
+    // And the run really did publish a self-consistent pair, which is why it
+    // remains a success even though its summary could not be delivered.
+    assert_published_pair_is_bound(&fixture);
+}
+
+/// The minimal-build producer's default text summary uses the same checked
+/// boundary as JSON. Publication remains the outcome even when the summary's
+/// consumer has already gone away.
+#[test]
+fn a_published_text_summary_with_closed_stdout_keeps_exit_0() {
+    let fixture = Fixture::new();
+    let output = fixture.rest_bind_into_closed_stdout("0.01", "text");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    assert_eq!(
+        stderr(&output)
+            .matches("animsmith: cannot write text output to stdout")
+            .count(),
+        1,
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    assert_published_pair_is_bound(&fixture);
 }
 
 /// The same for a refusal, where raising the write failure is an actual
@@ -1418,7 +1470,7 @@ fn a_published_run_whose_stdout_is_closed_keeps_exit_0_and_diagnoses_on_stderr()
 #[test]
 fn a_refused_run_whose_stdout_is_closed_keeps_exit_1_and_diagnoses_on_stderr() {
     let fixture = Fixture::new();
-    let output = fixture.rest_bind_into_closed_stdout("0.02");
+    let output = fixture.rest_bind_into_closed_stdout("0.02", "json");
 
     assert_eq!(
         output.status.code(),
@@ -1426,8 +1478,11 @@ fn a_refused_run_whose_stdout_is_closed_keeps_exit_1_and_diagnoses_on_stderr() {
         "a refusal whose record could not be printed is still a refusal; stderr:\n{}",
         stderr(&output)
     );
-    assert!(
-        stderr(&output).starts_with("animsmith: cannot write JSON output to stdout"),
+    assert_eq!(
+        stderr(&output)
+            .matches("animsmith: cannot write JSON output to stdout")
+            .count(),
+        1,
         "stderr:\n{}",
         stderr(&output)
     );

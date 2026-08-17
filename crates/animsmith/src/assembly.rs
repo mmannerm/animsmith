@@ -8,7 +8,7 @@ use crate::material_recipe::{
     MaterialTextureRecipeEvidence, apply_material_texture_recipe_in_root,
 };
 use crate::publish::{
-    destination_identity, emit, parent_or_current, publish_pair, read_digest,
+    destination_identity, emit, emit_text, parent_or_current, publish_pair, read_digest,
     require_writable_destination, serialize_record,
 };
 use crate::{Format, render};
@@ -643,16 +643,13 @@ pub(crate) fn run(request: &Request, tool: ToolInfo) -> Result<ExitCode, String>
         // rather than raised: the pair is on disk, and a run that published
         // it does not report an operator error.
         Format::Json => emit(&published.evidence_bytes),
-        Format::Text => print!(
-            "{}",
-            render::render_assemble_published(
-                &request.output,
-                &request.evidence,
-                published.animations,
-                published.meshes,
-                published.materials,
-            )
-        ),
+        Format::Text => emit_text(&render::render_assemble_published(
+            &request.output,
+            &request.evidence,
+            published.animations,
+            published.meshes,
+            published.materials,
+        )),
     }
     Ok(ExitCode::SUCCESS)
 }

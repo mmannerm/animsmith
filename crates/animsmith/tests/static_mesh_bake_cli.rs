@@ -8,9 +8,11 @@ use animsmith_core::model::{
     NormalTextureAsset, Primitive, Property, SceneAsset, SceneAssets, Skeleton,
     SourceSkeletonAssets, TextureAsset, Track, TrackValues, Transform,
 };
+use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+use image::{ExtendedColorType, ImageEncoder};
 use serde_json::Value;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 const CONVERSION_SCHEMA: &str =
     include_str!("../../../docs/schemas/conversion-evidence-v2.schema.json");
@@ -292,6 +294,164 @@ fn convert_static_bake_emits_schema_valid_evidence_and_byte_stable_identity_outp
             && rotation == [0.0, 0.0, 0.0, 1.0]
             && scale == [1.0, 1.0, 1.0]
     }));
+}
+
+#[test]
+fn option_bearing_text_conversion_diagnoses_closed_stdout_once_after_publication() {
+    let dir = tempfile::tempdir().expect("creates temp directory");
+    let input = dir.path().join("input.glb");
+    let output = dir.path().join("baked.glb");
+    let recipe = dir.path().join("materials.toml");
+    animsmith_gltf::write::write(&fixture(), &input).expect("writes input fixture");
+    let source = animsmith_gltf::load(&input).expect("reloads source fixture");
+    let source_instance = &source.assets.instances[0];
+    let source_primitive = &source.assets.meshes[source_instance.mesh].primitives[0];
+    let source_world = source.skeleton.bones[0].rest.to_mat4()
+        * source.skeleton.bones[source_instance.node].rest.to_mat4();
+    let expected_positions = source_primitive
+        .positions
+        .iter()
+        .map(|position| source_world.transform_point3(*position))
+        .collect::<Vec<_>>();
+    for (name, pixel) in [
+        ("base.png", [32, 64, 96, 255]),
+        ("normal.png", [128, 128, 255, 255]),
+    ] {
+        let mut bytes = Vec::new();
+        PngEncoder::new_with_quality(&mut bytes, CompressionType::Best, FilterType::NoFilter)
+            .write_image(&pixel, 1, 1, ExtendedColorType::Rgba8)
+            .expect("encodes recipe texture");
+        std::fs::write(dir.path().join(name), bytes).expect("writes recipe texture");
+    }
+    std::fs::write(
+        &recipe,
+        concat!(
+            "schema_version = 1\n",
+            "schema = \"urn:animsmith:schema:material-texture-recipe:1\"\n",
+            "max_dimension = 1\n",
+            "\n",
+            "[[materials]]\n",
+            "name = \"painted\"\n",
+            "base_color = \"base.png\"\n",
+            "normal = \"normal.png\"\n",
+        ),
+    )
+    .expect("writes material recipe");
+
+    let (reader, writer) = std::io::pipe().expect("creates a pipe");
+    drop(reader);
+    let result = Command::new(env!("CARGO_BIN_EXE_animsmith"))
+        .arg("convert")
+        .arg(&input)
+        .arg("-o")
+        .arg(&output)
+        .arg("--bake-static-mesh-transforms")
+        .arg("--material-texture-recipe")
+        .arg(&recipe)
+        .stdout(Stdio::from(writer))
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawns option-bearing conversion")
+        .wait_with_output()
+        .expect("waits for option-bearing conversion");
+
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert_eq!(
+        result.status.code(),
+        Some(0),
+        "published conversion remains successful; stderr:\n{stderr}"
+    );
+    assert_eq!(
+        stderr
+            .matches("animsmith: cannot write text output to stdout")
+            .count(),
+        1,
+        "one conversion transcript must produce one diagnostic:\n{stderr}"
+    );
+    assert!(!stderr.contains("panicked at"), "stderr:\n{stderr}");
+
+    let published = animsmith_gltf::load(&output).expect("published artifact loads");
+    assert_eq!(published.assets.instances.len(), 1);
+    assert!(
+        published
+            .skeleton
+            .bones
+            .iter()
+            .all(|bone| bone.rest == Transform::IDENTITY),
+        "the option-bearing conversion was published before reporting"
+    );
+    let material = &published.assets.materials[0];
+    let base_color = material
+        .base_color_texture
+        .as_ref()
+        .expect("recipe emits a base-color texture");
+    assert_eq!(base_color.mime, "image/png");
+    assert_ne!(base_color.bytes, TINY_JPEG);
+    assert_eq!(
+        image::load_from_memory(&base_color.bytes)
+            .expect("decodes emitted base-color texture")
+            .to_rgba8()
+            .into_raw(),
+        vec![32, 64, 96, 255],
+        "published bytes contain the recipe's base-color pixel"
+    );
+    assert_eq!(material.base_color, [1.0, 1.0, 1.0, 1.0]);
+
+    let normal = material
+        .normal_texture
+        .as_ref()
+        .expect("recipe emits a normal texture");
+    assert_eq!(normal.texture.mime, "image/png");
+    assert_ne!(normal.texture.bytes, TINY_JPEG);
+    assert_eq!(
+        image::load_from_memory(&normal.texture.bytes)
+            .expect("decodes emitted normal texture")
+            .to_rgba8()
+            .into_raw(),
+        vec![128, 128, 255, 255],
+        "published bytes contain the recipe's normal pixel"
+    );
+    assert_eq!(normal.scale, 1.0);
+
+    let baked_primitive =
+        &published.assets.meshes[published.assets.instances[0].mesh].primitives[0];
+    assert_ne!(
+        baked_primitive.positions, source_primitive.positions,
+        "the fixture must distinguish a skipped static bake"
+    );
+    assert_eq!(baked_primitive.positions.len(), expected_positions.len());
+    for (actual, expected) in baked_primitive.positions.iter().zip(expected_positions) {
+        assert_vec3_close(*actual, expected);
+    }
+
+    let writable_output = dir.path().join("writable.glb");
+    let writable = Command::new(env!("CARGO_BIN_EXE_animsmith"))
+        .arg("convert")
+        .arg(&input)
+        .arg("-o")
+        .arg(&writable_output)
+        .arg("--bake-static-mesh-transforms")
+        .arg("--material-texture-recipe")
+        .arg(&recipe)
+        .output()
+        .expect("runs writable option-bearing conversion");
+    assert!(
+        writable.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&writable.stderr)
+    );
+    assert!(writable.stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(writable.stdout).expect("conversion summary is UTF-8"),
+        format!(
+            "wrote {} (2 node(s), 0 clip(s), 1 mesh(es) / 3 position(s), 1 material(s))\n\
+             baked 1 static mesh instance(s) into identity-root geometry\n\
+             applied material texture recipe; emitted 2 texture(s)\n",
+            writable_output.display()
+        ),
+        "the real conversion dispatch must retain and order both optional summaries"
+    );
+    animsmith_gltf::load(&writable_output).expect("writable conversion artifact loads");
 }
 
 #[test]

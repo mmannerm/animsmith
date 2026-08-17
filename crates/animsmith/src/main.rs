@@ -399,7 +399,20 @@ fn current_tool() -> ToolInfo {
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) if !error.use_stderr() => {
+            // clap normally writes display-help/version itself and silently
+            // swallows a broken pipe. Keep those successful parser outcomes,
+            // but route their stdout through the same checked delivery rule as
+            // every command result so a closed stream is diagnosed. Let clap
+            // perform the write so its Auto/Always/Never color policy and
+            // styled rendering remain byte-for-byte authoritative.
+            publish::emit_clap_output(&error);
+            return ExitCode::SUCCESS;
+        }
+        Err(error) => error.exit(),
+    };
     match run(cli) {
         Ok(code) => code,
         Err(message) => {
@@ -478,9 +491,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let config = load_config(cli.config.as_deref())?;
             let doc = load(&file)?;
             let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
-            for line in render::render_inspect(&doc, &roles) {
-                println!("{line}");
-            }
+            publish::emit_text_lines(render::render_inspect(&doc, &roles));
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Measure { files, format } => {
@@ -508,9 +519,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     render::print_json(&envelope)?;
                 }
                 Format::Text => {
-                    for line in render::render_measure_text(&reports) {
-                        println!("{line}");
-                    }
+                    publish::emit_text_lines(render::render_measure_text(&reports));
                 }
             }
             Ok(ExitCode::SUCCESS)
@@ -571,8 +580,10 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     let envelope = LintEnvelope::new(current_tool(), reports);
                     render::print_json(&envelope)?;
                 }
-                LintFormat::Text => print!("{}", render::render_text(&reports, &allow)),
-                LintFormat::Markdown => print!("{}", render::render_markdown(&reports, &allow)),
+                LintFormat::Text => publish::emit_text(&render::render_text(&reports, &allow)),
+                LintFormat::Markdown => {
+                    publish::emit_text(&render::render_markdown(&reports, &allow));
+                }
             }
             let fail_at = if deny_warnings {
                 Severity::Warning
@@ -600,10 +611,12 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let html = animsmith_report::render(&grids, &roles, &findings, clip.as_deref());
             std::fs::write(&output, &html)
                 .map_err(|e| format!("cannot write {}: {e}", output.display()))?;
-            print!(
-                "{}",
-                render::render_report_written(&output, doc.clips.len(), findings.len(), html.len())
-            );
+            publish::emit_text(&render::render_report_written(
+                &output,
+                doc.clips.len(),
+                findings.len(),
+                html.len(),
+            ));
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Transform {
@@ -742,7 +755,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             }
             let summary = animsmith_gltf::write::write(&doc, &output).map_err(|e| e.to_string())?;
             messages.push_str(&render::render_write_summary(&output, &summary));
-            print!("{messages}");
+            publish::emit_text(&messages);
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Fix {
@@ -787,13 +800,12 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             if let Some(output) = output.as_deref() {
                 session.write(&input, output).map_err(|e| e.to_string())?;
             }
-            for (repair, report) in &reports {
-                // clap rejects --dry-run with a write target, so
-                // `output` is None exactly when this is a dry run.
-                for line in render::render_fix_report(*repair, report, output.as_deref()) {
-                    println!("{line}");
-                }
-            }
+            // clap rejects --dry-run with a write target, so `output` is None
+            // exactly when this is a dry run. Stream every selected repair's
+            // lines through one checked attempt: one closed stdout must
+            // produce one diagnosis, regardless of the repair count, without
+            // retaining an asset-sized transcript.
+            publish::emit_fix_reports(reports.iter(), output.as_deref());
             // Dry run doubles as a CI check mode: pending repairs are
             // findings, mirroring `lint`'s exit contract.
             Ok(if dry_run && pending {
@@ -840,19 +852,22 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 animsmith_gltf::write::write(output_doc, &output).map_err(|e| e.to_string())?;
             match format {
                 Format::Text => {
-                    print!("{}", render::render_write_summary(&output, &summary));
-                    if let Some(bake) = &static_mesh_bake {
-                        println!(
-                            "baked {} static mesh instance(s) into identity-root geometry",
-                            bake.evidence.entries.len()
-                        );
-                    }
-                    if let Some(application) = &recipe_application {
-                        println!(
-                            "applied material texture recipe; emitted {} texture(s)",
-                            application.evidence.emitted_textures.len()
-                        );
-                    }
+                    let transcript = std::iter::once(render::render_write_summary(
+                        &output, &summary,
+                    ))
+                    .chain(static_mesh_bake.as_ref().map(|bake| {
+                        format!(
+                            "baked {} static mesh instance(s) into identity-root geometry\n",
+                            bake.evidence.entries.len(),
+                        )
+                    }))
+                    .chain(recipe_application.as_ref().map(|application| {
+                        format!(
+                            "applied material texture recipe; emitted {} texture(s)\n",
+                            application.evidence.emitted_textures.len(),
+                        )
+                    }));
+                    publish::emit_text_chunks(transcript);
                 }
                 Format::Json => render::print_json(&ConversionEnvelope {
                     schema_version: CONVERSION_EVIDENCE_SCHEMA_VERSION,
@@ -944,9 +959,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     deltas,
                 ))?,
                 Format::Text => {
-                    for line in render::render_diff_text(&deltas) {
-                        println!("{line}");
-                    }
+                    publish::emit_text_lines(render::render_diff_text(&deltas));
                 }
             }
             Ok(if has_deltas {
