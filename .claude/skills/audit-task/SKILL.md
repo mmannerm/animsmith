@@ -19,10 +19,12 @@ This workflow is written to be followable by any agent (Claude, Codex,
 ## Freeze gate
 
 Before launching cold or external review passes, finish the author
-self-review, PR body, documentation-freshness sweep, and local gates;
-record the exact HEAD SHA. If HEAD changes, stop in-flight audits,
-revalidate the amendment locally, and resume the same reviewer sessions
-against the delta. Do not keep an audit running against a stale head.
+self-review, PR body, documentation-freshness sweep, and available exact-head
+verification; record the exact HEAD SHA. Prefer the PR's required checks as the
+canonical mechanical gate. Run only task-specific checks that CI does not
+cover. If HEAD changes, stop in-flight audits, obtain fresh exact-head evidence,
+and resume the same reviewer sessions against the delta. Do not keep an audit
+running against a stale head.
 
 ## Required reciprocal cross-model audit
 
@@ -72,8 +74,8 @@ Conserve reviewer tokens without weakening independence:
 - apply the same low/medium/high risk tiers above to subagent model choice and
   reasoning effort, using the lowest capable combination for each lens;
 - run independent passes in parallel when practical, reuse exact-head build
-  evidence, and resume existing reviewer sessions instead of replaying the full
-  PR context;
+  and PR-check evidence without rerunning equivalent commands, and resume
+  existing reviewer sessions instead of replaying the full PR context;
 - ask reviewers for concise, evidence-linked findings rather than long
   restatements of the diff.
 
@@ -94,32 +96,42 @@ cold lenses; the other provider supplies model-diversity review.
    contract and feed the claims ledger (step 2).
 3. **Diff under review.** `git diff origin/main...HEAD` (or `gh pr diff <N>`).
 4. **Build + test status.** Build evidence is keyed by commit SHA, not by
-   reviewer. Reuse a complete captured result for the exact HEAD when its
-   command, output, and exit status are available; otherwise run it. Do
-   not repeat identical gates solely to make each reviewer compile the
-   same commit independently.
+   reviewer. Prefer the required PR checks for the exact HEAD and retain their
+   result URLs. Do not rerun CI-equivalent mechanical gates locally or in each
+   reviewer merely for independence. Run only checks the PR workflow does not
+   cover, such as licensed-reference goldens, local engine probes, or
+   task-specific artifact validation. If CI is unavailable, state the gap and
+   use the narrowest local substitute necessary rather than reflexively running
+   every gate in every agent.
 
 ## Required workflow
 
 ### 1. Build, test, lint
 
-Obtain and capture an exact-head result for:
+Obtain and capture the required PR-check results for the exact HEAD. Treat them
+as the canonical mechanical gate when they cover formatting, lint, workspace
+tests, supported build variants, docs/package checks, and the other repository
+CI contracts. Do not also run `just gates` locally or inside each review agent
+solely to duplicate successful required checks.
 
-```
-just gates
-```
+Before pushing, an author may run a narrow preflight that is cheaper than a
+failed CI round trip. Run the full local `just gates` only when required PR
+checks are unavailable or when diagnosing a failure that cannot be resolved
+from CI output. Cross-model reviewers and audit subagents consume the captured
+exact-head result; they do not compile the commit independently.
 
-(`cargo fmt --all --check`, `cargo clippy --workspace --all-targets --
--D warnings`, `cargo test --workspace`, and the `--no-default-features`
-CLI build.) If the diff touches measurement code (`metrics.rs`,
-`sample.rs`, check algorithms), also run the env-gated golden tests
-(`just golden`) when the reference assets are available, and say so
-either way. Any non-zero exit code is a hard fail. Report the exact
+Run additional checks only for surfaces CI cannot exercise. For example, if the
+diff touches measurement code (`metrics.rs`, `sample.rs`, check algorithms), run
+the env-gated golden tests (`just golden`) when licensed reference assets are
+available and say so either way. Likewise preserve local engine, authorized
+asset, and task-specific manifest validation when those claims matter. Any
+required PR-check or additional-check failure is a hard fail: report the exact
 error and BLOCK.
 
-Record the tested HEAD SHA with the result. Rerun after any HEAD change;
-reviewer independence comes from reading the raw artifacts and reaching
-an independent verdict, not from duplicating the same build.
+Record the HEAD SHA and check URLs or retained local evidence. After a HEAD
+change, wait for fresh PR checks and rerun only uncovered checks affected by the
+delta. Reviewer independence comes from reading raw artifacts and reaching an
+independent verdict, not from duplicating mechanical work.
 
 ### 2. PR-description intent adherence — the audit-specific check
 
@@ -283,8 +295,8 @@ agent attribution line at the bottom of the comment.
 **Verdict:** [APPROVE] / [APPROVE WITH FOLLOW-UPS] / [BLOCK]
 
 ### Build / test / lint
-- just gates: ✓ / ✗ <details>
-- golden:     ✓ / ✗ / skipped (assets unavailable) / not applicable
+- required PR checks: ✓ / ✗ <exact HEAD and links/details>
+- additional checks:  ✓ / ✗ / skipped (unavailable) / not applicable
 
 ### Findings
 

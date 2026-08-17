@@ -77,5 +77,8 @@ for a maintainer merge decision.
   narrow deltas; medium for ordinary code; high for numerical proof, security,
   untrusted input, or public-contract changes. Record the cross-model choice.
 - Run independent reviewer passes in parallel when practical, reuse captured
-  exact-head gate evidence, and request concise evidence-linked findings.
+  exact-head PR-check evidence, and request concise evidence-linked findings.
+- Treat successful required PR checks as the canonical mechanical gate. Do not
+  rerun CI-equivalent suites in every agent; run only narrow preflight or
+  additional checks for surfaces CI cannot cover.
 - Poll an active process for status; do not relaunch the same work.
