@@ -368,23 +368,31 @@ fn validate_snapshot(
 }
 
 fn is_release_plz_pr(root: &Path) -> bool {
-    if let Ok(value) = std::env::var("ANIMSMITH_RELEASE_PR") {
-        return matches!(value.as_str(), "1" | "true");
-    }
-    if std::env::var("GITHUB_HEAD_REF").is_ok_and(|head| head.starts_with("release-plz-")) {
-        return true;
-    }
-    Command::new("git")
+    let branch = Command::new("git")
         .arg("-C")
         .arg(root)
         .args(["branch", "--show-current"])
         .output()
-        .is_ok_and(|output| {
-            output.status.success()
-                && String::from_utf8_lossy(&output.stdout)
-                    .trim()
-                    .starts_with("release-plz-")
-        })
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned());
+    strict_release_mode(
+        std::env::var("ANIMSMITH_RELEASE_PR").ok().as_deref(),
+        std::env::var("GITHUB_HEAD_REF").ok().as_deref(),
+        branch.as_deref(),
+    )
+}
+
+fn strict_release_mode(
+    explicit: Option<&str>,
+    github_head_ref: Option<&str>,
+    branch: Option<&str>,
+) -> bool {
+    if let Some(value) = explicit {
+        return matches!(value, "1" | "true");
+    }
+    github_head_ref.is_some_and(|head| head.starts_with("release-plz-"))
+        || branch.is_some_and(|branch| branch.starts_with("release-plz-"))
 }
 
 fn replace_all(docs: &mut BTreeMap<&str, String>, from: &str, to: &str) {
@@ -501,12 +509,110 @@ fn acceptance_inventory_names_every_current_version_document() {
 
 #[test]
 fn version_comparison_rejects_noncanonical_semver_spelling() {
-    for version in ["00.2.1", "0.02.1", "0.2.01", "+0.2.1", "0.2.1-alpha"] {
+    for version in [
+        "00.2.1",
+        "0.02.1",
+        "0.2.01",
+        "+0.2.1",
+        "v0.2.1",
+        " 0.2.1",
+        "0.2.1 ",
+        "0.2.1-alpha",
+    ] {
         assert!(
             Version::parse(version).is_err(),
             "noncanonical version {version:?} must not compare equal to a manifest version"
         );
     }
+}
+
+#[test]
+fn every_release_context_signal_selects_strict_mode() {
+    assert!(strict_release_mode(Some("1"), None, None));
+    assert!(strict_release_mode(Some("true"), None, None));
+    assert!(strict_release_mode(
+        None,
+        Some("release-plz-2026-08-16"),
+        None
+    ));
+    assert!(strict_release_mode(
+        None,
+        None,
+        Some("release-plz-2026-08-16")
+    ));
+    assert!(!strict_release_mode(
+        None,
+        Some("feature/docs"),
+        Some("main")
+    ));
+    assert!(
+        !strict_release_mode(Some("false"), Some("release-plz-generated"), None),
+        "an explicit false override keeps local diagnostic runs non-strict"
+    );
+}
+
+#[test]
+fn successor_policy_rejects_two_patches_ahead_and_cross_domain_drift() {
+    let root = repo_root();
+    let workspace = workspace_version(&root).expect("reads workspace version");
+    let original = documentation_snapshot(&root).expect("reads current-version documentation");
+    let (documented_dependency, documented_tool) = documented_versions(&original);
+
+    let two_patches = Version {
+        patch: workspace.patch + 2,
+        ..workspace
+    };
+    let mut too_far = original.clone();
+    replace_all(
+        &mut too_far,
+        &format!("\"version\": \"{documented_tool}\""),
+        &format!("\"version\": \"{two_patches}\""),
+    );
+    assert!(
+        validate_snapshot(workspace, &too_far, false)
+            .iter()
+            .any(|error| error.contains("current docs describe")),
+        "ordinary main may not stage two patch releases ahead"
+    );
+
+    let dependency_next_minor = workspace.next_minor();
+    let tool_next_patch = workspace.next_patch();
+    let mut crossed = original;
+    replace_all(
+        &mut crossed,
+        &format!(" = \"{}\"", documented_dependency.dependency_line()),
+        &format!(" = \"{}\"", dependency_next_minor.dependency_line()),
+    );
+    replace_all(
+        &mut crossed,
+        &format!("\"version\": \"{documented_tool}\""),
+        &format!("\"version\": \"{tool_next_patch}\""),
+    );
+    assert!(
+        validate_snapshot(workspace, &crossed, false)
+            .iter()
+            .any(|error| error.contains("dependency snippets use")),
+        "individually allowed successors must still describe one release line"
+    );
+}
+
+#[test]
+fn malformed_current_tool_json_is_rejected() {
+    let root = repo_root();
+    let workspace = workspace_version(&root).expect("reads workspace version");
+    let mut docs = documentation_snapshot(&root).expect("reads current-version documentation");
+    let content = docs.get_mut("docs/mixamo-tutorial.md").expect("tutorial");
+    *content = content.replacen(
+        "\"name\": \"animsmith\"",
+        "\"name\": \"animsmith\", INVALID",
+        1,
+    );
+    assert!(
+        validate_snapshot(workspace, &docs, false)
+            .iter()
+            .any(|error| error.contains("parses current `tool` example")),
+        "the gate must parse the complete tool object rather than extract version text"
+    );
 }
 
 #[test]
@@ -518,36 +624,52 @@ fn every_stale_dependency_and_tool_version_mutation_fails() {
 
     for &(path, packages) in DEPENDENCY_SNIPPETS {
         for &package in packages {
-            let mut stale = docs.clone();
-            let content = stale.get_mut(path).unwrap();
+            let stale = docs.clone();
             let from = format!(
                 "{package} = \"{}\"",
                 documented_dependency.dependency_line()
             );
-            *content = replace_nth(content, &from, &format!("{package} = \"999.999\""), 0);
-            let errors = validate_snapshot(workspace, &stale, false);
-            assert!(
-                errors
-                    .iter()
-                    .any(|error| error.contains(path) && error.contains(package)),
-                "stale {package} dependency in {path} must fail: {errors:?}"
-            );
+            for stale_version in ["0.0", "999.999"] {
+                let mut mutated = stale.clone();
+                let content = mutated.get_mut(path).unwrap();
+                *content = replace_nth(
+                    content,
+                    &from,
+                    &format!("{package} = \"{stale_version}\""),
+                    0,
+                );
+                let errors = validate_snapshot(workspace, &mutated, false);
+                assert!(
+                    errors
+                        .iter()
+                        .any(|error| error.contains(path) && error.contains(package)),
+                    "stale {package} dependency {stale_version} in {path} must fail: {errors:?}"
+                );
+            }
         }
     }
 
     let from = format!("\"version\": \"{documented_tool}\"");
     for &(path, count) in TOOL_VERSION_SNIPPETS {
         for occurrence in 0..count {
-            let mut stale = docs.clone();
-            let content = stale.get_mut(path).unwrap();
-            *content = replace_nth(content, &from, "\"version\": \"999.999.999\"", occurrence);
-            let errors = validate_snapshot(workspace, &stale, false);
-            assert!(
-                errors
-                    .iter()
-                    .any(|error| error.contains(path) && error.contains("tool.version")),
-                "stale tool.version occurrence {occurrence} in {path} must fail: {errors:?}"
-            );
+            let stale = docs.clone();
+            for stale_version in ["0.0.0", "999.999.999"] {
+                let mut mutated = stale.clone();
+                let content = mutated.get_mut(path).unwrap();
+                *content = replace_nth(
+                    content,
+                    &from,
+                    &format!("\"version\": \"{stale_version}\""),
+                    occurrence,
+                );
+                let errors = validate_snapshot(workspace, &mutated, false);
+                assert!(
+                    errors
+                        .iter()
+                        .any(|error| error.contains(path) && error.contains("tool.version")),
+                    "stale tool.version {stale_version} occurrence {occurrence} in {path} must fail: {errors:?}"
+                );
+            }
         }
     }
 }
