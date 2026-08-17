@@ -13018,12 +13018,9 @@ fn an_unaffected_skin_with_no_bind_evidence_on_either_side_still_proves() {
     assert_eq!(proof.unaffected_inverse_bind.max(), 0.0);
 }
 
-#[test]
-fn two_defaulted_identity_slots_are_each_compared_as_effective_binds() {
+fn two_defaulted_identity_slots_document() -> Document {
     // Both sides omit every stored bind, but the complete attached source
     // skin licenses the format-defined identity default for both slots.
-    // Keeping two slots makes the comparison count pin the "every slot"
-    // obligation as well as the both-defaulted fallback.
     let mut doc = compensated_document_with_unrelated_skin(None);
     attach_unrelated_source_skin(&mut doc, SourceInverseBindAccessorStatus::Absent);
 
@@ -13075,6 +13072,14 @@ fn two_defaulted_identity_slots_are_each_compared_as_effective_binds() {
             .iter()
             .all(|bone| bone.inverse_bind.is_none())
     );
+    doc
+}
+
+#[test]
+fn two_defaulted_identity_slots_are_each_compared_as_effective_binds() {
+    // Keeping two slots makes the comparison count pin the "every slot"
+    // obligation as well as the both-defaulted fallback.
+    let doc = two_defaulted_identity_slots_document();
     let capability = complete_capability();
     let plan = compensated_rest_bind_plan(&doc, &capability);
     let candidate = build_scale_candidate(&doc, &plan).unwrap();
@@ -13086,6 +13091,62 @@ fn two_defaulted_identity_slots_are_each_compared_as_effective_binds() {
     let proof = prove_scale(&doc, &candidate, &plan).unwrap();
     assert_eq!(proof.unaffected_inverse_bind.comparisons(), 2);
     assert_eq!(proof.unaffected_inverse_bind.max(), 0.0);
+}
+
+fn assert_unaffected_bind_rewrite(error: ScaleError) {
+    let ScaleError::ProofResidualExceeded {
+        kind: ProofResidualKind::UnaffectedInverseBind,
+        observed,
+        ..
+    } = error
+    else {
+        panic!("expected an unaffected-inverse-bind residual, got {error:?}");
+    };
+    assert_eq!(observed, 1.0);
+}
+
+#[test]
+fn materializing_a_different_bind_in_defaulted_slot_zero_is_refused() {
+    // Slot 1 remains explicit identity, so an implementation that compares
+    // only slot 1 (or compares it twice) cannot observe this rewrite.
+    let doc = two_defaulted_identity_slots_document();
+    let plan = compensated_rest_bind_plan(&doc, &complete_capability());
+    let candidate = build_scale_candidate(&doc, &plan).unwrap();
+    let mut rewritten = candidate.document().clone();
+    rewritten.assets.instances[1].skin_ibms =
+        vec![Mat4::from_scale(Vec3::splat(2.0)), Mat4::IDENTITY];
+
+    let error = prove_scale(
+        &doc,
+        &ScaleCandidate {
+            document: rewritten,
+        },
+        &plan,
+    )
+    .unwrap_err();
+    assert_unaffected_bind_rewrite(error);
+}
+
+#[test]
+fn materializing_a_different_bind_in_defaulted_slot_one_is_refused() {
+    // Slot 0 remains explicit identity, so an implementation that compares
+    // only slot 0 (or compares it twice) cannot observe this rewrite.
+    let doc = two_defaulted_identity_slots_document();
+    let plan = compensated_rest_bind_plan(&doc, &complete_capability());
+    let candidate = build_scale_candidate(&doc, &plan).unwrap();
+    let mut rewritten = candidate.document().clone();
+    rewritten.assets.instances[1].skin_ibms =
+        vec![Mat4::IDENTITY, Mat4::from_scale(Vec3::splat(2.0))];
+
+    let error = prove_scale(
+        &doc,
+        &ScaleCandidate {
+            document: rewritten,
+        },
+        &plan,
+    )
+    .unwrap_err();
+    assert_unaffected_bind_rewrite(error);
 }
 
 #[test]
