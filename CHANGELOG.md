@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- *(measure)* harden inverse-bind evidence
 - *(cli)* type producer asset refusals
 - *(fbx)* inventory scale capabilities without enablement
 - *(assemble)* add rest-bind scale integration
@@ -18,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- *(release)* verify generated version docs
+- *(gltf)* reject unnormalized integer attributes
 - *(cli)* make producer load policy universal
 - *(cli)* preserve typed producer load failures
 - *(cli)* preserve checked transcript semantics
