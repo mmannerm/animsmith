@@ -41,6 +41,8 @@ use std::process::ExitCode;
 mod assembly;
 #[cfg(feature = "fbx")]
 mod material_recipe;
+#[cfg(feature = "fbx")]
+mod producer;
 mod publish;
 mod render;
 mod scale;
@@ -176,7 +178,7 @@ enum Cmd {
     },
     /// Convert FBX or glTF input to glTF.
     #[command(
-        long_about = "Convert FBX or glTF input to glTF: skeleton, animation, triangulated meshes, skins, PBR materials, and embedded PNG/JPEG base-color, normal, metallic-roughness, and occlusion textures. A glTF input is re-emitted carrying its geometry; --animation-only drops it. --material-texture-recipe applies exact, declarative BaseColor, normal, metallic-roughness, and occlusion textures. --bake-static-mesh-transforms produces a strict canonical static scene whose mesh-local geometry includes accumulated rest transforms. Output format by extension: .glb binary, .gltf JSON with an embedded buffer."
+        long_about = "Convert FBX or glTF input to glTF: skeleton, animation, triangulated meshes, skins, PBR materials, and embedded PNG/JPEG base-color, normal, metallic-roughness, and occlusion textures. A glTF input is re-emitted carrying its geometry; --animation-only drops it. --material-texture-recipe applies exact, declarative BaseColor, normal, metallic-roughness, and occlusion textures. --bake-static-mesh-transforms produces a strict canonical static scene whose mesh-local geometry includes accumulated rest transforms. Output format by extension: .glb binary, .gltf JSON with an embedded buffer. Asset-property refusals exit 1; under --format json they emit producer-refusal v1 on stdout. Invocation, recipe, path, and I/O errors exit 2 with stderr only."
     )]
     #[cfg(feature = "fbx")]
     Convert {
@@ -200,7 +202,7 @@ enum Cmd {
     },
     /// Assemble a multi-source skinned character from a versioned recipe.
     #[command(
-        long_about = "Assemble one runtime GLB from an authoritative skinned base and animation takes supplied by FBX or glTF inputs. The versioned recipe owns exact mesh selection, skeleton remapping, clip windows and mechanical transforms. Recipe v4 can opt into glTF-only rest/bind scale canonicalization with explicit source selectors and expected factor; it validates the base and every clip basis before copying keys. Source extraction, project policy, and publication remain consumer responsibilities."
+        long_about = "Assemble one runtime GLB from an authoritative skinned base and animation takes supplied by FBX or glTF inputs. The versioned recipe owns exact mesh selection, skeleton remapping, clip windows and mechanical transforms. Recipe v4 can opt into glTF-only rest/bind scale canonicalization with explicit source selectors and expected factor; it validates the base and every clip basis before copying keys. Asset-property refusals exit 1; under --format json they emit producer-refusal v1 on stdout without publishing either output. Recipe, path, I/O, and publication errors exit 2 with stderr only. Source extraction, project policy, and publication remain consumer responsibilities."
     )]
     #[cfg(feature = "fbx")]
     Assemble {
@@ -350,6 +352,181 @@ struct ConversionEnvelope<'a> {
     static_mesh_bake: Option<&'a animsmith_core::StaticMeshBakeEvidence>,
     #[serde(skip_serializing_if = "Option::is_none")]
     material_texture_recipe: Option<&'a material_recipe::MaterialTextureRecipeEvidence>,
+}
+
+#[cfg(feature = "fbx")]
+struct ConversionRequest<'a> {
+    input: &'a Path,
+    output: &'a Path,
+    animation_only: bool,
+    material_texture_recipe: Option<&'a Path>,
+    bake_static_mesh_transforms: bool,
+    format: Format,
+}
+
+#[cfg(feature = "fbx")]
+struct Converted {
+    summary: animsmith_gltf::write::WriteSummary,
+    static_mesh_bake: Option<animsmith_core::StaticMeshBake>,
+    recipe_application: Option<material_recipe::MaterialTextureRecipeApplication>,
+}
+
+#[cfg(feature = "fbx")]
+fn material_recipe_failure(
+    error: material_recipe::MaterialTextureRecipeError,
+) -> producer::Failure {
+    use material_recipe::MaterialTextureRecipeError as Error;
+    use producer::{Failure, Kind, Stage};
+
+    match error {
+        Error::Recipe(_)
+        | Error::UnsafePath { .. }
+        | Error::InvalidRoot { .. }
+        | Error::TextureFile { .. }
+        | Error::DuplicateRecipeMaterial { .. } => Failure::operator(error),
+        Error::AmbiguousSourceMaterial { .. }
+        | Error::UnusedRecipeMaterial { .. }
+        | Error::MissingMaterialMapping { .. } => {
+            Failure::refusal(Stage::Selection, Kind::AssetRecipeMismatch, error)
+        }
+        Error::TextureTooLarge { .. } | Error::Image { .. } => {
+            Failure::refusal(Stage::Transform, Kind::TransformRefused, error)
+        }
+    }
+}
+
+#[cfg(feature = "fbx")]
+fn conversion_write_failure(error: animsmith_gltf::WriteError) -> producer::Failure {
+    use animsmith_gltf::WriteError;
+    use producer::{Failure, Kind, Stage};
+
+    match error {
+        WriteError::Io { .. } => Failure::operator(error),
+        WriteError::Serialize(_) | WriteError::TooLarge { .. } => {
+            Failure::refusal(Stage::Encode, Kind::UnrepresentableArtifact, error)
+        }
+        // `WriteError` is non-exhaustive. A future document-driven writer
+        // rejection must fail closed as an asset refusal until it receives an
+        // explicit classification; it can never silently become exit 2 by
+        // falling through a string boundary.
+        _ => Failure::refusal(Stage::Encode, Kind::UnrepresentableArtifact, error),
+    }
+}
+
+#[cfg(feature = "fbx")]
+fn produce_conversion_inner(
+    request: &ConversionRequest<'_>,
+) -> Result<Converted, producer::Failure> {
+    use producer::{Failure, Kind, Stage};
+
+    // Extension and primary-file I/O are invocation/filesystem facts. Once
+    // the bytes are captured, loader rejection is a fact about the asset.
+    let (input_format, input_bytes) = capture_input(request.input).map_err(Failure::operator)?;
+    let mut doc = load_bytes(request.input, input_format, &input_bytes)
+        .map_err(|error| Failure::refusal(Stage::Load, Kind::UnreadableSource, error))?;
+    if request.animation_only {
+        doc.assets = animsmith_core::model::SceneAssets::default();
+    }
+    let recipe_application = request
+        .material_texture_recipe
+        .map(|path| material_recipe::apply_material_texture_recipe(path, &doc))
+        .transpose()
+        .map_err(material_recipe_failure)?;
+    let recipe_doc = recipe_application
+        .as_ref()
+        .map_or(&doc, |application| &application.document);
+    let static_mesh_bake = if request.bake_static_mesh_transforms {
+        Some(
+            animsmith_core::bake_static_mesh_transforms(recipe_doc).map_err(|error| {
+                Failure::refusal(Stage::Transform, Kind::TransformRefused, error)
+            })?,
+        )
+    } else {
+        None
+    };
+    let output_doc = static_mesh_bake
+        .as_ref()
+        .map_or(recipe_doc, |bake| &bake.document);
+    let summary = animsmith_gltf::write::write(output_doc, request.output)
+        .map_err(conversion_write_failure)?;
+    Ok(Converted {
+        summary,
+        static_mesh_bake,
+        recipe_application,
+    })
+}
+
+#[cfg(feature = "fbx")]
+fn produce_conversion(
+    request: &ConversionRequest<'_>,
+) -> Result<producer::Outcome<Converted>, String> {
+    match produce_conversion_inner(request) {
+        Ok(converted) => Ok(producer::Outcome::Published(converted)),
+        Err(producer::Failure::Refusal(rejection)) => Ok(producer::Outcome::Rejected(rejection)),
+        Err(producer::Failure::Operator(message)) => Err(message),
+    }
+}
+
+#[cfg(feature = "fbx")]
+fn run_conversion(request: &ConversionRequest<'_>, tool: ToolInfo) -> Result<ExitCode, String> {
+    let converted = match produce_conversion(request) {
+        Ok(producer::Outcome::Published(converted)) => converted,
+        Ok(producer::Outcome::Rejected(rejection)) => {
+            return producer::emit_rejection(
+                producer::Command::Convert,
+                request.format,
+                tool,
+                rejection,
+            );
+        }
+        Err(message) => return Err(message),
+    };
+    match request.format {
+        Format::Text => {
+            let transcript = std::iter::once(render::render_write_summary(
+                request.output,
+                &converted.summary,
+            ))
+            .chain(converted.static_mesh_bake.as_ref().map(|bake| {
+                format!(
+                    "baked {} static mesh instance(s) into identity-root geometry\n",
+                    bake.evidence.entries.len(),
+                )
+            }))
+            .chain(converted.recipe_application.as_ref().map(|application| {
+                format!(
+                    "applied material texture recipe; emitted {} texture(s)\n",
+                    application.evidence.emitted_textures.len(),
+                )
+            }));
+            publish::emit_text_chunks(transcript);
+        }
+        Format::Json => render::print_json(&ConversionEnvelope {
+            schema_version: CONVERSION_EVIDENCE_SCHEMA_VERSION,
+            schema: CONVERSION_EVIDENCE_SCHEMA_ID,
+            tool,
+            command: "convert",
+            input: request.input.display().to_string(),
+            output: request.output.display().to_string(),
+            options: ConversionOptions {
+                animation_only: request.animation_only,
+                bake_static_mesh_transforms: request.bake_static_mesh_transforms,
+                material_texture_recipe: request
+                    .material_texture_recipe
+                    .map(|path| path.display().to_string()),
+            },
+            artifact: converted.summary.into(),
+            static_mesh_bake: converted
+                .static_mesh_bake
+                .as_ref()
+                .map(|bake| &bake.evidence),
+            material_texture_recipe: converted
+                .recipe_application
+                .as_ref()
+                .map(|application| &application.evidence),
+        })?,
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Output format for `lint`. Adds a presentation-only Markdown rendering
@@ -822,76 +999,17 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             material_texture_recipe,
             bake_static_mesh_transforms,
             format,
-        } => {
-            let mut doc = load(&input)?;
-            // `--animation-only` clears assets uniformly across formats:
-            // this is where a conversion drops its geometry on request.
-            if animation_only {
-                doc.assets = animsmith_core::model::SceneAssets::default();
-            }
-            let recipe_application = material_texture_recipe
-                .as_deref()
-                .map(|path| material_recipe::apply_material_texture_recipe(path, &doc))
-                .transpose()
-                .map_err(|error| error.to_string())?;
-            let recipe_doc = recipe_application
-                .as_ref()
-                .map_or(&doc, |application| &application.document);
-            let static_mesh_bake = if bake_static_mesh_transforms {
-                Some(
-                    animsmith_core::bake_static_mesh_transforms(recipe_doc)
-                        .map_err(|e| e.to_string())?,
-                )
-            } else {
-                None
-            };
-            let output_doc = static_mesh_bake
-                .as_ref()
-                .map_or(recipe_doc, |bake| &bake.document);
-            let summary =
-                animsmith_gltf::write::write(output_doc, &output).map_err(|e| e.to_string())?;
-            match format {
-                Format::Text => {
-                    let transcript = std::iter::once(render::render_write_summary(
-                        &output, &summary,
-                    ))
-                    .chain(static_mesh_bake.as_ref().map(|bake| {
-                        format!(
-                            "baked {} static mesh instance(s) into identity-root geometry\n",
-                            bake.evidence.entries.len(),
-                        )
-                    }))
-                    .chain(recipe_application.as_ref().map(|application| {
-                        format!(
-                            "applied material texture recipe; emitted {} texture(s)\n",
-                            application.evidence.emitted_textures.len(),
-                        )
-                    }));
-                    publish::emit_text_chunks(transcript);
-                }
-                Format::Json => render::print_json(&ConversionEnvelope {
-                    schema_version: CONVERSION_EVIDENCE_SCHEMA_VERSION,
-                    schema: CONVERSION_EVIDENCE_SCHEMA_ID,
-                    tool: current_tool(),
-                    command: "convert",
-                    input: input.display().to_string(),
-                    output: output.display().to_string(),
-                    options: ConversionOptions {
-                        animation_only,
-                        bake_static_mesh_transforms,
-                        material_texture_recipe: material_texture_recipe
-                            .as_ref()
-                            .map(|path| path.display().to_string()),
-                    },
-                    artifact: summary.into(),
-                    static_mesh_bake: static_mesh_bake.as_ref().map(|bake| &bake.evidence),
-                    material_texture_recipe: recipe_application
-                        .as_ref()
-                        .map(|application| &application.evidence),
-                })?,
-            }
-            Ok(ExitCode::SUCCESS)
-        }
+        } => run_conversion(
+            &ConversionRequest {
+                input: &input,
+                output: &output,
+                animation_only,
+                material_texture_recipe: material_texture_recipe.as_deref(),
+                bake_static_mesh_transforms,
+                format,
+            },
+            current_tool(),
+        ),
         #[cfg(feature = "fbx")]
         Cmd::Assemble {
             recipe,

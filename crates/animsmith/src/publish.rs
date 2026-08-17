@@ -50,6 +50,8 @@
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::fs;
+#[cfg(feature = "fbx")]
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use animsmith_gltf::fix::{FixReport, Repair};
@@ -122,6 +124,15 @@ pub(crate) fn emit_text(text: &str) {
         &mut std::io::stderr(),
         text.as_bytes(),
     );
+}
+
+/// Best-effort checked human-readable stderr delivery.
+///
+/// Asset refusals use stderr in text mode. A closed stderr cannot change the
+/// already-established refusal or panic while trying to report it.
+#[cfg(feature = "fbx")]
+pub(crate) fn emit_error_text(text: &str) {
+    let _ = std::io::stderr().write_all(text.as_bytes());
 }
 
 /// Write rendered human-readable lines to stdout under one lock.
