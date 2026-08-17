@@ -60,9 +60,11 @@ cargo run -p animsmith --example embed
    An FBX host that needs auditable scale-boundary facts uses
    `animsmith_fbx::load_scale_source` instead: the returned wrapper retains the
    document and `FbxScaleCapabilityInventory` from one parse. The inventory
-   and complete normalized source-skeleton sidecar do not enable FBX scaling;
-   they explicitly record baked curves, rebuilt payloads, and unavailable raw
-   span proof.
+   and normalized source-skeleton sidecar do not enable FBX scaling. `Complete`
+   means the documented ufbx projection covers its node/skin identity domain;
+   local rests and bind matrices are adjusted/compensated or derived target-
+   coordinate values, not exact authored FBX members. The inventory explicitly
+   records baked curves, rebuilt payloads, and unavailable raw span proof.
 2. **Resolve rig roles.** Use `resolve_configured_roles` to apply the same
    named/auto profile plus inline-override policy as the CLI. Lower-level
    `detect_profile`, `profile::resolve_named`, and

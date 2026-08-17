@@ -23,14 +23,16 @@ format-independent model.
 
 `load_scale_source` and `load_scale_source_bytes` return the normalized
 `Document` together with a deterministic `FbxScaleCapabilityInventory` from
-the same ufbx parse. The inventory names every domain from DESIGN.md Appendix
-D.4 and records the exact ingestion boundary: original/target units and axes,
+the same ufbx parse. The inventory gives every current DESIGN.md Appendix D.4
+domain an explicit status and records the ingestion boundary: original/target units and axes,
 adjusted transforms, helper nodes and inherit-mode compensation, baked takes
 and discarded authored curve keys, generated normals, cluster-derived bind
 matrices, influence truncation and renormalization, triangulation and exact-bit
 welding, unsupported deformers/payloads, external resources, and stable ufbx
-source identities. The document also carries a complete source-node and
-source-skin sidecar in normalized ufbx order.
+source identities. The document also carries the complete documented source-
+node/source-skin identity projection in normalized ufbx order. `Complete` is
+coverage of that adjusted/compensated projection, not a claim that raw FBX
+transform members or object payloads were preserved.
 
 `capability_facts` projects the inventory into `animsmith-core`'s
 format-neutral scale gate. The projection is deliberately unsupported in this

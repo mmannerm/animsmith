@@ -551,8 +551,11 @@ Structurally inconsistent source identity tables, such as a missing parent or
 parent cycle, downgrade the whole skeleton source domain to `"unavailable"`
 instead of publishing a self-contradictory complete table.
 
-Every source node records its authored `local_rest`, tagged as `"trs"`,
-`"matrix"`, or `"unavailable"`. A TRS has
+Every source node records its source-projected `local_rest`, tagged as `"trs"`,
+`"matrix"`, or `"unavailable"`. For glTF this is the exact authored node
+member. FBX instead reports ufbx's documented metre/Y-up,
+inheritance-compensated projection, which can include adjusted transforms and
+generated helper nodes; it is not the raw FBX transform stack. A TRS has
 `translation_parent_space_m`, `rotation_xyzw`, and `scale`; the quaternion is
 `[x, y, z, w]`. The translation is expressed in the direct parent's coordinate
 frame. Even though glTF linear distances use metres, its numeric value is not
@@ -590,7 +593,7 @@ numeric fields.
 The local representation is never silently decomposed or replaced by the
 world transform. A declared scene is membership only, not a transform domain:
 `scene_root_indices` is membership evidence and adds no transform. A
-transformed node selected as a scene root retains its own local rest record,
+transformed node selected as a scene root retains its own projected local-rest record,
 and its ancestors determine the derived world matrix. These composition rules
 follow the [glTF node hierarchy and transform
 definition](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#nodes-and-hierarchy).
@@ -610,7 +613,7 @@ skin, in source-node order. In each joint row, `joint_bind_to_mesh` is
 `inverse(inverse_bind_matrix)`, so it maps joint bind-local coordinates into
 the mesh-local bind domain declared by that skin; `mesh_bind_world` is
 `joint_rest_world * inverse_bind_matrix`, mapping that mesh-local bind domain
-into world bind coordinates when the authored rest and bind poses agree. These
+into world bind coordinates when the projected rest and bind evidence agree. These
 remain per-joint observations rather than claims that rows agree. Attachments
 are identity evidence, not an extra transform folded into either calculation.
 Each available derived field preserves its finite matrix and adds the same
@@ -618,7 +621,10 @@ Each available derived field preserves its finite matrix and adds the same
 unavailable reason. Both observations repeat the exact finite
 `source_inverse_bind_matrix` for their joint slot, even when a later
 derivation is unavailable, so a consumer can verify the arithmetic without a
-second accessor decoder. `joint_bind_to_mesh.inversion_quality` reports
+second accessor decoder. For glTF that matrix is the exact finite accessor
+value; for FBX it is the finite matrix derived from ufbx's converted cluster
+binds and is explicitly not a raw-payload preservation claim.
+`joint_bind_to_mesh.inversion_quality` reports
 `1 / (norm_inf(A) * norm_inf(inverse(A)))` for the source linear 3x3. This
 scale-free value is zero for a singular source and approaches zero as forward
 error amplification grows. Values at or below `1e-6` refuse as

@@ -109,17 +109,18 @@ capability. The glTF loader projects every accepted node today, and the raw
 writer has no connector-bridge implementation; that path is outside the
 supported source boundary.
 
-FBX scaling is not enabled. The FBX loader now publishes a complete
-conservative ufbx-side inventory and a normalized source-skeleton projection
-when every declared slot is representable, but that inventory records consumed
-coordinate/unit and inheritance semantics, baked (not authored) curves,
-rebuilt geometry, and unavailable raw payload-span proof. It therefore keeps
-both operations refused rather than discharging an artifact-preservation
-boundary that no FBX writer implements. Character assembly likewise does not
-silently apply either scale operation. Its existing bind-pose canonicalization
-remains a distinct, explicit recipe operation. Morph support intentionally
-remains a raw glTF whole-document capability; it does not add morphs to the
-shared normalized model or enable rest/bind morph reparameterization.
+FBX scaling is not enabled. The FBX loader now publishes an explicit status
+for every current Appendix D.4 domain and a normalized source-skeleton projection
+when every declared slot is representable,
+but that inventory records consumed coordinate/unit and inheritance semantics,
+baked (not authored) curves, rebuilt geometry, and unavailable raw payload-span
+proof. It therefore keeps both operations refused rather than discharging an
+artifact-preservation boundary that no FBX writer implements. Character
+assembly likewise does not silently apply either scale operation. Its existing
+bind-pose canonicalization remains a distinct, explicit recipe operation.
+Morph support intentionally remains a raw glTF whole-document capability; it
+does not add morphs to the shared normalized model or enable rest/bind morph
+reparameterization.
 
 ## Outcomes and evidence
 

@@ -56,6 +56,25 @@ fn fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/rigged_triangle.fbx")
 }
 
+fn appendix_d4_domain_names() -> Vec<&'static str> {
+    let appendix = include_str!("../../../DESIGN.md")
+        .split_once("### D.4 Modeled domains and preservation coverage")
+        .expect("DESIGN has Appendix D.4")
+        .1;
+    appendix
+        .lines()
+        .skip_while(|line| !line.starts_with("| Domain |"))
+        .skip(2)
+        .take_while(|line| line.starts_with('|'))
+        .map(|line| {
+            line.split('|')
+                .nth(1)
+                .expect("D.4 row has a domain cell")
+                .trim()
+        })
+        .collect()
+}
+
 fn assert_same_loaded_shape(left: &Document, right: &Document) {
     assert_eq!(left.source.path, right.source.path);
     assert_eq!(left.source.format, right.source.format);
@@ -217,8 +236,17 @@ fn checked_in_fixtures_publish_complete_conservative_scale_inventories() {
             FbxScaleDomainStatus::Unverifiable
         );
         assert_eq!(
+            domains.unreferenced_accessor_payloads,
+            FbxScaleDomainStatus::Unverifiable
+        );
+        assert_eq!(
             domains.image_payload_aliases,
             FbxScaleDomainStatus::Unverifiable
+        );
+        assert_eq!(
+            domains.named_rows().map(|(name, _)| name).as_slice(),
+            appendix_d4_domain_names(),
+            "the public FBX inventory must name every current D.4 row in table order"
         );
 
         assert_eq!(
@@ -327,6 +355,9 @@ fn capability_projection_maps_each_core_refusal_domain_independently() {
         ("vertex-payload", |inventory| {
             inventory.unsupported_vertex_payload_mesh_count = 1
         }),
+        ("missing-influence", |inventory| {
+            inventory.missing_skin_influence_corner_count = 1
+        }),
         ("secondary-influence", |inventory| {
             inventory.truncated_influence_vertex_count = 1
         }),
@@ -350,6 +381,7 @@ fn capability_projection_maps_each_core_refusal_domain_independently() {
             "extras" => facts.extras_present,
             "non-triangle" => facts.non_triangle_primitives_present,
             "vertex-payload" => facts.unsupported_vertex_attributes_present,
+            "missing-influence" => facts.unsupported_vertex_attributes_present,
             "secondary-influence" => facts.secondary_skin_influences_present,
             "inverse-bind" => facts.inverse_bind_issues_present,
             "external-resource" => facts.external_resources_present,
@@ -432,6 +464,150 @@ fn influence_truncation_renormalization_and_lossy_bone_bind_overwrite_are_invent
     assert_eq!(inventory.renormalized_influence_vertex_count, 3);
     assert!(!inventory.identity_bind_defaults_invented);
     assert!(animsmith_fbx::capability_facts(inventory).secondary_skin_influences_present);
+}
+
+#[test]
+fn non_finite_derived_cluster_bind_is_unreadable_in_every_projection() {
+    let cases = [
+        (
+            "singular-inverse",
+            "TransformLink: *16 { a: 0,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }",
+            "Transform: *16 { a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }",
+        ),
+        (
+            "overflowing-product",
+            "TransformLink: *16 { a: 1e-30,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }",
+            "Transform: *16 { a: 1e30,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }",
+        ),
+    ];
+    for (label, transform_link, transform) in cases {
+        let source = std::fs::read_to_string(fixture())
+            .expect("read fixture")
+            .replacen(
+                "TransformLink: *16 { a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }",
+                transform_link,
+                1,
+            )
+            .replacen(
+                "Transform: *16 { a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }",
+                transform,
+                1,
+            );
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join(format!("{label}.fbx"));
+        std::fs::write(&path, source).expect("write analytic invalid-bind fixture");
+
+        let loaded = animsmith_fbx::load_scale_source(&path).expect("invalid bind parses");
+        assert_eq!(loaded.inventory().incomplete_bind_cluster_count, 1);
+        assert!(animsmith_fbx::capability_facts(loaded.inventory()).inverse_bind_issues_present);
+        let accessor = &loaded.document().assets.source_skeleton.skins[0].inverse_bind_accessor;
+        assert_eq!(accessor.status, SourceInverseBindAccessorStatus::Unreadable);
+        assert_eq!(accessor.declared_count, Some(1));
+        assert!(accessor.matrices.is_empty());
+        validate_document_shape(loaded.document())
+            .expect("unreadable derived bind is omitted instead of publishing non-finite matrices");
+    }
+}
+
+#[test]
+fn zero_weight_skin_vertices_are_missing_effective_influence_evidence() {
+    for (label, weights) in [("zero", "0,0,0"), ("negative", "-1,-1,-1")] {
+        let source = std::fs::read_to_string(fixture())
+            .expect("read fixture")
+            .replacen(
+                "Weights: *3 { a: 1,1,1 }",
+                &format!("Weights: *3 {{ a: {weights} }}"),
+                1,
+            );
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join(format!("{label}-weights.fbx"));
+        std::fs::write(&path, source).expect("write analytic ineffective-weight fixture");
+
+        let loaded =
+            animsmith_fbx::load_scale_source(&path).expect("ineffective-weight skin parses");
+        assert_eq!(loaded.inventory().missing_skin_influence_corner_count, 3);
+        assert_eq!(
+            loaded.inventory().domains.other_vertex_and_source_data,
+            FbxScaleDomainStatus::Unsupported
+        );
+        assert!(
+            animsmith_fbx::capability_facts(loaded.inventory())
+                .unsupported_vertex_attributes_present
+        );
+        assert_eq!(
+            loaded.document().assets.meshes[0].primitives[0].weights,
+            vec![[0.0; 4]; 3],
+            "the convenience payload may remain zero but must not be called complete evidence"
+        );
+    }
+}
+
+#[test]
+fn valid_unmodeled_ufbx_typed_lists_are_counted_conservatively() {
+    let source = std::fs::read_to_string(fixture()).expect("read fixture");
+    let objects = r#"
+	Pose: 5001, "Pose::bind", "BindPose" {
+		Type: "BindPose"
+		Version: 100
+		NbPoseNodes: 0
+	}
+	Implementation: 5002, "Implementation::shader", "" {}
+	BindingTable: 5003, "BindingTable::binding", "" {}
+	Cache: 5004, "Cache::detached", "" {}
+"#;
+    let source = source.replacen(
+        "\tAnimationStack: 3001",
+        &format!("{objects}\tAnimationStack: 3001"),
+        1,
+    );
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("unmodeled-typed-lists.fbx");
+    std::fs::write(&path, source).expect("write analytic typed-list fixture");
+
+    let loaded = animsmith_fbx::load_scale_source(&path).expect("typed-list fixture parses");
+    assert_eq!(loaded.inventory().unsupported_source_element_count, 4);
+    assert_eq!(
+        loaded.inventory().domains.collision_and_custom_data,
+        FbxScaleDomainStatus::Unsupported
+    );
+    assert_eq!(
+        loaded.inventory().domains.other_vertex_and_source_data,
+        FbxScaleDomainStatus::Unsupported,
+        "the detached cache record is unsupported mesh/source payload"
+    );
+    assert!(animsmith_fbx::capability_facts(loaded.inventory()).unregistered_extensions_present);
+}
+
+#[test]
+fn unsupported_vertex_payload_changes_other_source_data_from_rebuilt_to_unsupported() {
+    let source = std::fs::read_to_string(fixture()).expect("read fixture");
+    let colors = r#"
+		LayerElementColor: 0 {
+			Version: 101
+			Name: "color"
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "Direct"
+			Colors: *12 { a: 1,0,0,1,0,1,0,1,0,0,1,1 }
+		}
+"#;
+    let source = source.replacen(
+        "\t\tPolygonVertexIndex: *3 { a: 0,1,-3 }",
+        &format!("\t\tPolygonVertexIndex: *3 {{ a: 0,1,-3 }}{colors}"),
+        1,
+    );
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("vertex-colors.fbx");
+    std::fs::write(&path, source).expect("write analytic vertex-color fixture");
+
+    let loaded = animsmith_fbx::load_scale_source(&path).expect("vertex-color fixture parses");
+    assert_eq!(loaded.inventory().unsupported_vertex_payload_mesh_count, 1);
+    assert_eq!(
+        loaded.inventory().domains.other_vertex_and_source_data,
+        FbxScaleDomainStatus::Unsupported
+    );
+    assert!(
+        animsmith_fbx::capability_facts(loaded.inventory()).unsupported_vertex_attributes_present
+    );
 }
 
 #[test]

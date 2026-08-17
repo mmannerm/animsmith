@@ -411,7 +411,9 @@ original asset with the current CLI before using `diff`.
 `rest-world-scale` is quiet until its config supplies `node_selectors`.
 Each exact name or `*` glob must resolve to one source node; findings include
 the stable source-node path and ancestry so attachment/import policies can be
-traced back to the authored hierarchy. See the
+traced back to the source projection. For glTF that projection is authored
+node state; for FBX it is ufbx-normalized metre/Y-up, adjusted/inheritance-
+compensated state rather than the raw FBX transform stack. See the
 [selected-node scale workflow](game-ready-clips.md#attachment-nodes-and-inherited-rest-world-scale).
 
 `convert --format json` emits conversion evidence v2, with immutable identity

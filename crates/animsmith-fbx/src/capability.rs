@@ -26,7 +26,7 @@ pub enum FbxScaleDomainStatus {
     Unverifiable,
 }
 
-/// Explicit inventory of every modeled-domain row in DESIGN.md Appendix D.4.
+/// Explicit status for every current domain row in DESIGN.md Appendix D.4.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct FbxScaleDomainInventory {
@@ -56,8 +56,55 @@ pub struct FbxScaleDomainInventory {
     pub animation_targeting_matrix_nodes: FbxScaleDomainStatus,
     /// Shared raw payload spans corresponding to glTF accessors.
     pub shared_raw_accessor_payloads: FbxScaleDomainStatus,
+    /// Raw payload spans corresponding to unreferenced glTF accessors.
+    pub unreferenced_accessor_payloads: FbxScaleDomainStatus,
     /// Image payload spans that could alias scale-bearing source bytes.
     pub image_payload_aliases: FbxScaleDomainStatus,
+}
+
+impl FbxScaleDomainInventory {
+    /// Every Appendix D.4 row in table order with its current FBX status.
+    ///
+    /// This is the mechanical bridge between the public named fields and the
+    /// design table. Tests compare these names with the table so adding a row
+    /// to either authority cannot silently leave the other incomplete.
+    pub fn named_rows(&self) -> [(&'static str, FbxScaleDomainStatus); 15] {
+        [
+            ("Rest hierarchy", self.rest_hierarchy),
+            ("Translation animation", self.translation_animation),
+            (
+                "Rotation and scale animation",
+                self.rotation_and_scale_animation,
+            ),
+            ("Root motion and velocity", self.root_motion_and_velocity),
+            ("Base mesh geometry", self.base_mesh_geometry),
+            ("Morphs", self.morphs),
+            ("Skin binds", self.skin_binds),
+            ("Cameras/lights", self.cameras_and_lights),
+            ("Collision/custom data", self.collision_and_custom_data),
+            (
+                "Other vertex/source data",
+                self.other_vertex_and_source_data,
+            ),
+            (
+                "Out-of-contract node transforms",
+                self.out_of_contract_node_transforms,
+            ),
+            (
+                "Animation targeting a matrix node",
+                self.animation_targeting_matrix_nodes,
+            ),
+            (
+                "Shared raw accessor payloads",
+                self.shared_raw_accessor_payloads,
+            ),
+            (
+                "Unreferenced accessor payloads",
+                self.unreferenced_accessor_payloads,
+            ),
+            ("Image payload aliases", self.image_payload_aliases),
+        ]
+    }
 }
 
 /// A format-independent spelling of one FBX coordinate axis.
@@ -136,8 +183,8 @@ pub enum FbxBindMatrixProvenance {
 
 /// Deterministic capability inventory captured from one successfully parsed FBX scene.
 ///
-/// The inventory is complete for the documented ufbx-facing inspection, but
-/// deliberately contains unsupported and unverifiable states. Call
+/// Every current Appendix D.4 row has a status, but those statuses deliberately
+/// include unsupported and unverifiable states. Call
 /// [`capability_facts`] to project those states into the format-neutral core
 /// gate; #286-A never turns them into operation support.
 #[derive(Debug, Clone, PartialEq)]
@@ -217,7 +264,7 @@ pub struct FbxScaleCapabilityInventory {
     pub shared_mesh_definition_count: usize,
     /// Number of user-defined source properties.
     pub user_defined_property_count: usize,
-    /// Number of unknown or otherwise unmodeled source elements.
+    /// Number of unknown or otherwise unmodeled source elements/scene records.
     pub unsupported_source_element_count: usize,
     /// Number of referenced external texture/video payloads.
     pub external_resource_count: usize,
@@ -237,12 +284,12 @@ pub struct FbxScaleSource {
 }
 
 impl FbxScaleSource {
-    /// The normalized document carrying complete ufbx source-skeleton identity.
+    /// The normalized document carrying the documented ufbx source projection.
     pub fn document(&self) -> &Document {
         &self.document
     }
 
-    /// The complete conservative ufbx-side inventory.
+    /// The conservative ufbx-side inventory.
     pub fn inventory(&self) -> &FbxScaleCapabilityInventory {
         &self.inventory
     }
@@ -255,8 +302,8 @@ impl FbxScaleSource {
 
 /// Project an FBX inventory into the format-neutral core capability gate.
 ///
-/// `coverage` is complete because every Appendix D.4 domain is named by the
-/// inventory. Support remains false: ufbx-normalized transform stacks, baked
+/// `coverage` means every Appendix D.4 domain has an explicit status, not that
+/// any domain is preserved losslessly. Support remains false: normalized transform stacks, baked
 /// curves, rebuilt meshes, and unverifiable raw payload relationships are
 /// recorded as unsupported facts rather than hidden behind absent flags.
 pub fn capability_facts(inventory: &FbxScaleCapabilityInventory) -> ScaleCapabilityFacts {
@@ -355,11 +402,7 @@ pub(crate) fn inventory(
     let incomplete_bind_cluster_count = scene
         .skin_clusters
         .iter()
-        .filter(|cluster| {
-            cluster.bone_node.is_none()
-                || !super::mat4(&cluster.bind_to_world).is_finite()
-                || !super::mat4(&cluster.geometry_to_world).is_finite()
-        })
+        .filter(|cluster| super::project_cluster_bind(cluster).is_none())
         .count();
     let mut clusters_per_bone = std::collections::BTreeMap::<u32, usize>::new();
     for cluster in &scene.skin_clusters {
@@ -409,25 +452,7 @@ pub(crate) fn inventory(
         .flat_map(|element| element.props.props.iter())
         .filter(|prop| prop.flags.has_any(ufbx::PropFlags::USER_DEFINED))
         .count();
-    let unsupported_source_element_count = scene.unknowns.len()
-        + scene.line_curves.len()
-        + scene.nurbs_curves.len()
-        + scene.nurbs_surfaces.len()
-        + scene.nurbs_trim_surfaces.len()
-        + scene.nurbs_trim_boundaries.len()
-        + scene.procedural_geometries.len()
-        + scene.stereo_cameras.len()
-        + scene.camera_switchers.len()
-        + scene.markers.len()
-        + scene.lod_groups.len()
-        + scene.display_layers.len()
-        + scene.selection_sets.len()
-        + scene.selection_nodes.len()
-        + scene.characters.len()
-        + scene.constraints.len()
-        + scene.audio_layers.len()
-        + scene.audio_clips.len()
-        + scene.metadata_objects.len();
+    let unsupported_source_element_count = unsupported_source_element_count(scene);
     let external_resource_count = scene
         .textures
         .iter()
@@ -494,14 +519,27 @@ pub(crate) fn inventory(
         } else {
             FbxScaleDomainStatus::Unsupported
         },
-        other_vertex_and_source_data: if scene.meshes.is_empty() {
-            FbxScaleDomainStatus::Absent
-        } else {
+        other_vertex_and_source_data: if unsupported_vertex_payload_mesh_count > 0
+            || multiple_skin_deformer_mesh_count > 0
+            || dual_quaternion_skin_count > 0
+            || conversion.truncated_influence_vertex_count > 0
+            || conversion.missing_skin_influence_corner_count > 0
+            || !scene.blend_deformers.is_empty()
+            || !scene.blend_channels.is_empty()
+            || !scene.blend_shapes.is_empty()
+            || !scene.cache_deformers.is_empty()
+            || !scene.cache_files.is_empty()
+        {
+            FbxScaleDomainStatus::Unsupported
+        } else if !scene.meshes.is_empty() {
             FbxScaleDomainStatus::Rebuilt
+        } else {
+            FbxScaleDomainStatus::Absent
         },
         out_of_contract_node_transforms: FbxScaleDomainStatus::Normalized,
         animation_targeting_matrix_nodes: animation,
         shared_raw_accessor_payloads: FbxScaleDomainStatus::Unverifiable,
+        unreferenced_accessor_payloads: FbxScaleDomainStatus::Unverifiable,
         image_payload_aliases: FbxScaleDomainStatus::Unverifiable,
     };
 
@@ -584,4 +622,104 @@ pub(crate) fn inventory(
             .map(|(index, skin)| identity(index, &skin.element))
             .collect(),
     }
+}
+
+/// Classify every field in `ufbx::Scene` at one exhaustive structural
+/// boundary. Omitting `..` is deliberate: a ufbx upgrade that adds a typed
+/// list must fail to compile until that list receives a classification.
+fn unsupported_source_element_count(scene: &ufbx::Scene) -> usize {
+    let ufbx::Scene {
+        metadata: _,
+        settings: _,
+        root_node: _,
+        anim: _,
+        // Unknown and source kinds without a normalized core representation.
+        unknowns,
+        nodes: _,
+        meshes: _,
+        // Cameras and lights have dedicated counts/core facts.
+        lights: _,
+        cameras: _,
+        // Bone/empty attributes normalize into the complete node projection.
+        bones: _,
+        empties: _,
+        line_curves,
+        nurbs_curves,
+        nurbs_surfaces,
+        nurbs_trim_surfaces,
+        nurbs_trim_boundaries,
+        procedural_geometries,
+        stereo_cameras,
+        camera_switchers,
+        markers,
+        lod_groups,
+        // Skin rows have dedicated bind/influence counts and sidecars.
+        skin_deformers: _,
+        skin_clusters: _,
+        // Deformers are counted separately; their subordinate payload rows
+        // are still unmodeled source elements.
+        blend_deformers: _,
+        blend_channels,
+        blend_shapes,
+        cache_deformers: _,
+        cache_files,
+        // The loader rebuilds its documented material/texture subset;
+        // external payload absence is counted separately.
+        materials: _,
+        textures: _,
+        videos: _,
+        shaders,
+        shader_bindings,
+        // Animation lists are evaluated through bake_anim.
+        anim_stacks: _,
+        anim_layers: _,
+        anim_values: _,
+        anim_curves: _,
+        display_layers,
+        selection_sets,
+        selection_nodes,
+        characters,
+        constraints,
+        audio_layers,
+        audio_clips,
+        poses,
+        metadata_objects,
+        // Texture-file records carry source linkage beyond the rebuilt
+        // texture subset, so they are conservatively unmodeled.
+        texture_files,
+        // Scene-wide structural indexes are parser-derived views, not source
+        // element domains that need independent semantic counting.
+        elements: _,
+        connections_src: _,
+        connections_dst: _,
+        elements_by_name: _,
+        dom_root: _,
+    } = scene;
+
+    unknowns.len()
+        + line_curves.len()
+        + nurbs_curves.len()
+        + nurbs_surfaces.len()
+        + nurbs_trim_surfaces.len()
+        + nurbs_trim_boundaries.len()
+        + procedural_geometries.len()
+        + stereo_cameras.len()
+        + camera_switchers.len()
+        + markers.len()
+        + lod_groups.len()
+        + blend_channels.len()
+        + blend_shapes.len()
+        + cache_files.len()
+        + shaders.len()
+        + shader_bindings.len()
+        + display_layers.len()
+        + selection_sets.len()
+        + selection_nodes.len()
+        + characters.len()
+        + constraints.len()
+        + audio_layers.len()
+        + audio_clips.len()
+        + poses.len()
+        + metadata_objects.len()
+        + texture_files.len()
 }

@@ -13,11 +13,11 @@
 //! avoid.
 //!
 //! [`load_scale_source`] and [`load_scale_source_bytes`] retain a typed
-//! [`FbxScaleCapabilityInventory`] from the same parse. It names every
-//! Appendix D.4 domain and explicitly records baked curves, normalized
+//! [`FbxScaleCapabilityInventory`] from the same parse. It gives every current
+//! Appendix D.4 domain an explicit status and records baked curves, normalized
 //! transforms, derived binds, truncated/renormalized influences,
 //! triangulation, welding, generated data, and unavailable raw-span proof.
-//! [`capability_facts`] projects that complete inventory into core facts, but
+//! [`capability_facts`] projects that explicit inventory into core facts, but
 //! the result remains unsupported: both scale operations are intentionally
 //! refused until a later FBX writer and proof boundary exists.
 //!
@@ -140,6 +140,22 @@ fn mat4(m: &ufbx::Matrix) -> Mat4 {
     ])
 }
 
+/// Project one converted FBX cluster bind only when the complete derivation
+/// is finite. `Mat4::inverse()` returns non-finite components for a singular
+/// finite input, so checking the two inputs alone is not sufficient evidence.
+fn project_cluster_bind(cluster: &ufbx::SkinCluster) -> Option<(Mat4, Mat4)> {
+    cluster.bone_node.as_ref()?;
+    let bind_to_world = mat4(&cluster.bind_to_world);
+    let geometry_to_world = mat4(&cluster.geometry_to_world);
+    if !bind_to_world.is_finite() || !geometry_to_world.is_finite() {
+        return None;
+    }
+    let bone_inverse = bind_to_world.inverse();
+    let instance_inverse = bone_inverse * geometry_to_world;
+    (bone_inverse.is_finite() && instance_inverse.is_finite())
+        .then_some((bone_inverse, instance_inverse))
+}
+
 /// Load an `.fbx` file into a core [`Document`]: skeleton, animation,
 /// and scene assets (triangulated meshes, skins, factor-only
 /// materials). Consumers that only judge animation ignore
@@ -242,13 +258,15 @@ pub fn load_scale_source_bytes(path: &Path, bytes: &[u8]) -> Result<FbxScaleSour
         });
     }
     for cluster in &scene.skin_clusters {
-        if let Some(bone_node) = &cluster.bone_node {
+        if let (Some(bone_node), Some((bone_inverse, _))) =
+            (&cluster.bone_node, project_cluster_bind(cluster))
+        {
             let id = bone_node.element.typed_id as usize;
             if id < bones.len() {
                 // Joint-centric bind inverse in the converted scene
                 // space; the mesh-dependent part lives per mesh in
                 // `MeshAsset::skin_ibms`.
-                bones[id].inverse_bind = Some(mat4(&cluster.bind_to_world).inverse());
+                bones[id].inverse_bind = Some(bone_inverse);
             }
         }
     }
@@ -462,11 +480,7 @@ fn extract_source_skeleton(scene: &ufbx::Scene) -> SourceSkeletonAssets {
             let matrices = skin
                 .clusters
                 .iter()
-                .filter_map(|cluster| {
-                    let bind =
-                        mat4(&cluster.bind_to_world).inverse() * mat4(&cluster.geometry_to_world);
-                    (cluster.bone_node.is_some() && bind.is_finite()).then_some(bind)
-                })
+                .filter_map(|cluster| project_cluster_bind(cluster).map(|(_, bind)| bind))
                 .collect::<Vec<_>>();
             let status = if skin.clusters.is_empty() {
                 SourceInverseBindAccessorStatus::Absent
@@ -592,14 +606,14 @@ fn extract_assets(
         // both already in ufbx's converted (metres, Y-up) space —
         // `geometry_to_bone` is raw source units and NOT suitable.
         let skin_ibms: Vec<glam::Mat4> = skin
-            .map(|s| {
+            .and_then(|s| {
                 s.clusters
                     .iter()
-                    .map(|c| mat4(&c.bind_to_world).inverse() * mat4(&c.geometry_to_world))
-                    .collect()
+                    .map(|cluster| project_cluster_bind(cluster).map(|(_, bind)| bind))
+                    .collect::<Option<Vec<_>>>()
             })
             .unwrap_or_default();
-        let vertex_influences: Vec<([u16; 4], [f32; 4])> = skin
+        let vertex_influences: Vec<Option<([u16; 4], [f32; 4])>> = skin
             .map(|s| {
                 (0..mesh.num_vertices)
                     .map(|v| {
@@ -608,7 +622,10 @@ fn extract_assets(
                             let begin = sv.weight_begin as usize;
                             let end = begin.saturating_add(sv.num_weights as usize);
                             for sw in s.weights.get(begin..end).unwrap_or_default() {
-                                pairs.push((sw.cluster_index as u16, sw.weight as f32));
+                                let weight = sw.weight as f32;
+                                if weight.is_finite() && weight > 0.0 {
+                                    pairs.push((sw.cluster_index as u16, weight));
+                                }
                             }
                         }
                         pairs.sort_by(|a, b| b.1.total_cmp(&a.1));
@@ -618,6 +635,9 @@ fn extract_assets(
                         }
                         pairs.truncate(4);
                         let total: f32 = pairs.iter().map(|p| p.1).sum();
+                        if pairs.is_empty() || !total.is_finite() || total <= 0.0 {
+                            return None;
+                        }
                         let mut joints = [0u16; 4];
                         let mut weights = [0f32; 4];
                         let mut renormalized = false;
@@ -630,7 +650,7 @@ fn extract_assets(
                         if renormalized {
                             conversion.renormalized_influence_vertex_count += 1;
                         }
-                        (joints, weights)
+                        Some((joints, weights))
                     })
                     .collect()
             })
@@ -673,8 +693,11 @@ fn extract_assets(
                 }
                 if !vertex_influences.is_empty() {
                     let vertex = mesh.vertex_indices[corner] as usize;
-                    let (joints, weights) =
-                        vertex_influences.get(vertex).copied().unwrap_or_else(|| {
+                    let (joints, weights) = vertex_influences
+                        .get(vertex)
+                        .copied()
+                        .flatten()
+                        .unwrap_or_else(|| {
                             conversion.missing_skin_influence_corner_count += 1;
                             ([0; 4], [0.0; 4])
                         });

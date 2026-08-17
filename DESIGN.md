@@ -629,8 +629,8 @@ to *that* frame N. Determinism is the feature.
   overridable). Each anim stack (take) becomes one core `Clip`. This
   sidesteps the entire FBX-curve-semantics swamp.
 - **Scale inventory without enablement**: the same successful parse produces
-  a deterministic ufbx-side inventory for every Appendix D.4 domain and a
-  complete normalized source-node/source-skin projection. It explicitly names
+  a deterministic ufbx-side status for every current Appendix D.4 domain and a
+  complete documented normalized source-node/source-skin projection. It explicitly names
   coordinate/inherit normalization, baked and lost curve state, generated
   normals/helper nodes, cluster-derived bind provenance, four-influence
   truncation/renormalization, triangulation/welding, unsupported source data,
@@ -1600,10 +1600,14 @@ it is safe to rewrite.
 
 The current glTF writer rebuilds nodes as TRS, emits only modeled triangle
 attributes, creates skin/holder structures, and does not preserve arbitrary
-source JSON. The FBX loader now inventories every row above and exposes a
-normalized ufbx source-node/source-skin sidecar when every declared slot is
-representable, while also recording that it bakes takes, normalizes coordinate
-and inheritance semantics, generates
+source JSON. The FBX loader mechanically inventories every current row above,
+including the unverifiable unreferenced-accessor analogue, and exposes a
+documented normalized ufbx source-node/source-skin sidecar when every declared
+slot is representable. Complete coverage here means every adjusted/compensated
+ufbx node and skin has stable identity and projected values; it does not relabel
+those values as raw authored FBX transform or payload evidence. The inventory
+also records that it bakes takes, normalizes coordinate and inheritance
+semantics, generates
 some missing data, truncates/renormalizes influences, triangulates, welds, and
 cannot prove raw payload spans. Consequently neither current
 load-`Document`-write route qualifies as a
@@ -2142,8 +2146,9 @@ The implementation status is:
 - shipped: glTF-only assembly integration in recipe/evidence v4, including the
   versioned basis fingerprint/comparator, pre-remap clip rebasing, exact input
   digests, compatibility evidence, and proof over the exact staged artifact;
-- shipped: issue #286-A's complete conservative ufbx-side capability inventory
-  and normalized source-skeleton projection, with both FBX scale operations
+- shipped: issue #286-A's explicit conservative ufbx-side status for every
+  current D.4 domain and documented normalized source-skeleton projection, with
+  both FBX scale operations
   still refused and no raw-span/artifact-preservation claim;
 - deferred: FBX rest/bind output in the remaining issue #286 enablement slice,
   after an FBX writer and proof boundary can consume that inventory;
