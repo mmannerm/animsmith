@@ -302,6 +302,28 @@ important pair or group, decide separately whether it supports:
 - artist-authored retargeting or cleanup;
 - no defensible conclusion from the available evidence.
 
+When at least two constituents of a collection have been evaluated, create or
+refresh a collection report pair even if the collection is incomplete. Mark it
+as a partial rollup and name both evaluated and missing constituents; never
+extend the two-pack verdict to the collection as sold. Build a namespaced
+rollup manifest from the validated constituent manifests, and keep constituent
+files, motions, and runtime sets traceable to their source pack.
+
+Before concluding that two installed packages coexist safely, compare every
+overlapping logical path by digest. A same-path match is positive packaging
+evidence; a same-path byte conflict is a material integration finding. Compare
+exact skeleton hierarchy/signature, shared reference-rig identity, units/axes,
+root policy, timing, and delivered metadata independently. A matching
+humanoid label or successful co-import is not enough.
+
+For an unarmed/armed or otherwise mode-specific pairing, evaluate a full-body
+state-machine handoff as the conservative baseline. Promote an upper-body mask
+only after its exact base/action members, pelvis/root ownership, support-foot
+behavior, prop/contact/IK requirements, and target-engine visual result are
+tested. A headless mask graph that evaluates without exceptions proves graph
+execution only. Keep kicks, lunges, displacement-bearing actions, and other
+pelvis-driven motions full-body unless stronger evidence supports layering.
+
 Explicitly analyze locomotion blends and sync, transitions, root-motion policy,
 upper/lower-body masks, additive and aim use, attachment and IK expectations,
 contact quality, and style mismatch when relevant to the target game. Do not
@@ -420,6 +442,15 @@ The pair must make these answers obvious:
 - Which game types and animation systems fit or conflict with the pack?
 - How should the important sets be built and blended?
 - How complete and trustworthy is the evidence?
+
+For a partial collection rollup, the pair must additionally make obvious:
+
+- exactly which constituents are included and excluded;
+- which conclusions come from constituent reports versus new cross-pack tests;
+- whether shared package paths are byte-identical or conflicting;
+- whether the recommended integration uses a full-body state handoff, a mask,
+  or both, and the acceptance level actually reached;
+- which gameplay gaps one constituent fills and which remain when combined.
 
 Run:
 

@@ -33,6 +33,10 @@ When the artifact came from a collection, label collection-level and
 constituent-level product facts separately. Never present a current collection
 version, price, release date, or license listing as the local constituent pack's
 revision or transaction record.
+For a partial collection rollup, name every included/excluded constituent,
+build a namespaced manifest from validated constituent manifests, and preserve
+the overlapping-path digest comparison. Keep constituent evidence linked rather
+than duplicated; collection-owned rows contain only new cross-pack conclusions.
 
 ### Evidence coverage
 
@@ -157,6 +161,11 @@ measurements into the current result or integration recommendation.
 | Pack/rig/set pair | Skeleton/retarget | Scale/axes | Root policy | Timing/blend | Overall evidence |
 |---|---|---|---|---|---|
 | {{PAIR}} | {{RESULT}} | {{RESULT}} | {{RESULT}} | {{RESULT}} | {{RESULT_AND_LABEL}} |
+
+For mode-specific combinations, include the conservative full-body state
+handoff and each proposed mask composition separately. Distinguish co-import,
+graph execution, visual blending, contact/IK acceptance, and target-character
+retargeting as different evidence levels.
 
 ## Limitations and unknowns
 
