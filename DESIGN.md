@@ -636,8 +636,10 @@ to *that* frame N. Determinism is the feature.
   explicitly names coordinate/inherit normalization, baked and lost curve state, generated
   normals/helper nodes, cluster-derived bind provenance, four-influence
   truncation/renormalization, rejected negative/non-finite/unrepresentable
-  influences, triangulation/welding, unsupported source data, and ufbx source
-  identities. One unreadable cluster makes its ordered bind declaration
+  influences, triangulation/welding, omitted face/edge payloads, uninstanced
+  mesh definitions, unsupported source data, and ufbx source identities. Only
+  successfully projected cluster binds count as bone-convenience overwrites.
+  One unreadable cluster makes its ordered bind declaration
   atomically unreadable; finite prefixes are not retained under shifted slots.
   Its core capability projection remains
   unsupported; neither scale operation is an FBX producer yet, and no raw FBX

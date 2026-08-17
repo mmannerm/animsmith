@@ -28,9 +28,11 @@ domain an explicit status and records the ingestion boundary: original/target un
 adjusted transforms, helper nodes and inherit-mode compensation, baked takes
 and discarded authored curve keys, generated normals, cluster-derived bind
 matrices, influence truncation and renormalization, triangulation and exact-bit
-welding, unsupported deformers/payloads, external resources, and stable ufbx
-source identities. Invalid or unrepresentable influences have an explicit
-rejected count. The document also carries the documented source-node/source-skin
+welding, omitted authored face/edge payloads, uninstanced mesh definitions,
+unsupported deformers/payloads, external resources, and stable ufbx source
+identities. Invalid or unrepresentable influences have an explicit rejected
+count. Only successfully projected cluster binds count toward bone-convenience
+overwrites. The document also carries the documented source-node/source-skin
 identity projection in normalized ufbx order when every joint slot is
 representable. A missing cluster bone downgrades that generic projection to
 `Unavailable`, and an unreadable bind declaration retains no shifted matrix

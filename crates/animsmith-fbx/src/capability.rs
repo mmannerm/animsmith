@@ -224,7 +224,8 @@ pub struct FbxScaleCapabilityInventory {
     pub bind_matrix_provenance: FbxBindMatrixProvenance,
     /// Number of clusters missing a bone or a finite converted bind matrix.
     pub incomplete_bind_cluster_count: usize,
-    /// Number of times multiple clusters target one bone and overwrite its lossy convenience bind.
+    /// Number of times multiple successfully projected clusters target one bone and overwrite its
+    /// lossy convenience bind. Unreadable clusters are skipped, not counted as writes.
     pub bone_convenience_bind_overwrite_count: usize,
     /// Whether the loader invented identity matrices for missing bind evidence.
     pub identity_bind_defaults_invented: bool,
@@ -268,6 +269,10 @@ pub struct FbxScaleCapabilityInventory {
     pub light_count: usize,
     /// Number of shared mesh definitions with more than one node instance.
     pub shared_mesh_definition_count: usize,
+    /// Number of source mesh definitions with no node instance and no normalized output mesh.
+    pub uninstanced_mesh_definition_count: usize,
+    /// Stable identities of the uninstanced source mesh definitions counted above.
+    pub uninstanced_source_meshes: Vec<FbxSourceIdentity>,
     /// Number of user-defined source properties.
     pub user_defined_property_count: usize,
     /// Number of unknown or otherwise unmodeled source elements/scene records.
@@ -332,6 +337,7 @@ pub fn capability_facts(inventory: &FbxScaleCapabilityInventory) -> ScaleCapabil
     facts.non_triangle_primitives_present = inventory.non_triangle_face_count > 0;
     facts.unsupported_vertex_attributes_present = inventory.unsupported_vertex_payload_mesh_count
         > 0
+        || inventory.uninstanced_mesh_definition_count > 0
         || inventory.multiple_skin_deformer_mesh_count > 0
         || inventory.dual_quaternion_skin_count > 0
         || inventory.cache_deformer_count > 0
@@ -417,7 +423,7 @@ pub(crate) fn inventory(
         .count();
     let mut clusters_per_bone = std::collections::BTreeMap::<u32, usize>::new();
     for cluster in &scene.skin_clusters {
-        if let Some(node) = &cluster.bone_node {
+        if let (Some(node), Some(_)) = (&cluster.bone_node, super::project_cluster_bind(cluster)) {
             *clusters_per_bone.entry(node.element.typed_id).or_default() += 1;
         }
     }
@@ -440,23 +446,21 @@ pub(crate) fn inventory(
     let unsupported_vertex_payload_mesh_count = scene
         .meshes
         .iter()
-        .filter(|mesh| {
-            mesh.vertex_tangent.exists
-                || mesh.vertex_bitangent.exists
-                || mesh.vertex_color.exists
-                || mesh.uv_sets.len() > 1
-                || !mesh.color_sets.is_empty()
-                || mesh.vertex_crease.exists
-                || mesh.subdivision_preview_levels > 0
-                || mesh.subdivision_render_levels > 0
-                || mesh.from_tessellated_nurbs
-        })
+        .filter(|mesh| mesh_has_unsupported_source_payload(mesh))
         .count();
     let shared_mesh_definition_count = scene
         .meshes
         .iter()
         .filter(|mesh| mesh.element.instances.len() > 1)
         .count();
+    let uninstanced_source_meshes = scene
+        .meshes
+        .iter()
+        .enumerate()
+        .filter(|(_, mesh)| mesh.element.instances.is_empty())
+        .map(|(index, mesh)| identity(index, &mesh.element))
+        .collect::<Vec<_>>();
+    let uninstanced_mesh_definition_count = uninstanced_source_meshes.len();
     let user_defined_property_count = scene
         .elements
         .iter()
@@ -505,6 +509,8 @@ pub(crate) fn inventory(
         },
         base_mesh_geometry: if scene.meshes.is_empty() {
             FbxScaleDomainStatus::Absent
+        } else if uninstanced_mesh_definition_count > 0 {
+            FbxScaleDomainStatus::Unsupported
         } else {
             FbxScaleDomainStatus::Rebuilt
         },
@@ -536,6 +542,7 @@ pub(crate) fn inventory(
             FbxScaleDomainStatus::Unsupported
         },
         other_vertex_and_source_data: if unsupported_vertex_payload_mesh_count > 0
+            || uninstanced_mesh_definition_count > 0
             || multiple_skin_deformer_mesh_count > 0
             || dual_quaternion_skin_count > 0
             || conversion.truncated_influence_vertex_count > 0
@@ -620,6 +627,8 @@ pub(crate) fn inventory(
         camera_count: scene.cameras.len(),
         light_count: scene.lights.len(),
         shared_mesh_definition_count,
+        uninstanced_mesh_definition_count,
+        uninstanced_source_meshes,
         user_defined_property_count,
         unsupported_source_element_count,
         external_resource_count,
@@ -642,6 +651,97 @@ pub(crate) fn inventory(
             .map(|(index, skin)| identity(index, &skin.element))
             .collect(),
     }
+}
+
+/// Classify every field in `ufbx::Mesh` at one structural boundary. Omitting
+/// `..` is deliberate: a ufbx upgrade that adds mesh payload must fail to
+/// compile until extraction either models it or this predicate refuses it.
+fn mesh_has_unsupported_source_payload(mesh: &ufbx::Mesh) -> bool {
+    let ufbx::Mesh {
+        element: _,
+        num_vertices: _,
+        num_indices: _,
+        num_faces: _,
+        num_triangles: _,
+        num_edges: _,
+        max_face_triangles: _,
+        num_empty_faces: _,
+        num_point_faces: _,
+        num_line_faces: _,
+        faces: _,
+        // Authored face/edge members are not retained by triangle extraction.
+        face_smoothing,
+        face_material: _,
+        face_group,
+        face_hole,
+        edges,
+        edge_smoothing,
+        edge_crease,
+        edge_visibility,
+        vertex_indices: _,
+        vertices: _,
+        vertex_first_index: _,
+        vertex_position: _,
+        vertex_normal: _,
+        vertex_uv: _,
+        vertex_tangent,
+        vertex_bitangent,
+        vertex_color,
+        vertex_crease,
+        uv_sets,
+        color_sets,
+        materials: _,
+        face_groups,
+        // Mesh parts and skinned views are parser-derived indexes/results.
+        material_parts: _,
+        face_group_parts: _,
+        material_part_usage_order: _,
+        skinned_is_local: _,
+        skinned_position: _,
+        skinned_normal: _,
+        // Deformer kinds have dedicated inventory counters.
+        skin_deformers: _,
+        blend_deformers: _,
+        cache_deformers: _,
+        all_deformers: _,
+        subdivision_preview_levels,
+        subdivision_render_levels,
+        subdivision_display_mode,
+        subdivision_boundary,
+        subdivision_uv_boundary,
+        // Winding conversion and generated-normal state are consumed/counted.
+        reversed_winding: _,
+        generated_normals: _,
+        subdivision_evaluated,
+        subdivision_result,
+        from_tessellated_nurbs,
+    } = mesh;
+
+    !face_smoothing.is_empty()
+        || !face_group.is_empty()
+        || !face_hole.is_empty()
+        || !edges.is_empty()
+        || !edge_smoothing.is_empty()
+        || !edge_crease.is_empty()
+        || !edge_visibility.is_empty()
+        || vertex_tangent.exists
+        || vertex_bitangent.exists
+        || vertex_color.exists
+        || vertex_crease.exists
+        || uv_sets.len() > 1
+        || !color_sets.is_empty()
+        || !face_groups.is_empty()
+        || *subdivision_preview_levels > 0
+        || *subdivision_render_levels > 0
+        || !matches!(
+            subdivision_display_mode,
+            ufbx::SubdivisionDisplayMode::Disabled
+        )
+        || !matches!(subdivision_boundary, ufbx::SubdivisionBoundary::Default)
+        || !matches!(subdivision_uv_boundary, ufbx::SubdivisionBoundary::Default)
+        || *subdivision_evaluated
+        || subdivision_result.is_some()
+        || *from_tessellated_nurbs
 }
 
 /// Classify every field in `ufbx::Scene` at one exhaustive structural

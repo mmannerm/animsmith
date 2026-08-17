@@ -67,7 +67,8 @@ cargo run -p animsmith --example embed
    declarations retain no finite prefix. The local rests and bind matrices are
    adjusted/compensated or derived target-
    coordinate values, not exact authored FBX members. The inventory explicitly
-   records baked curves, rebuilt payloads, and unavailable raw span proof.
+   records baked curves, rebuilt payloads, omitted authored face/edge members,
+   uninstanced mesh definitions, and unavailable raw span proof.
 2. **Resolve rig roles.** Use `resolve_configured_roles` to apply the same
    named/auto profile plus inline-override policy as the CLI. Lower-level
    `detect_profile`, `profile::resolve_named`, and

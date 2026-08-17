@@ -297,6 +297,8 @@ fn checked_in_fixtures_publish_complete_conservative_scale_inventories() {
         assert_eq!(inventory.camera_count, 0);
         assert_eq!(inventory.light_count, 0);
         assert_eq!(inventory.shared_mesh_definition_count, 0);
+        assert_eq!(inventory.uninstanced_mesh_definition_count, 0);
+        assert!(inventory.uninstanced_source_meshes.is_empty());
         assert_eq!(inventory.user_defined_property_count, 0);
         assert_eq!(inventory.unsupported_source_element_count, 0);
         assert_eq!(inventory.external_resource_count, 0);
@@ -353,6 +355,9 @@ fn capability_projection_maps_each_core_refusal_domain_independently() {
         ("instancing", |inventory| {
             inventory.shared_mesh_definition_count = 1
         }),
+        ("uninstanced-mesh", |inventory| {
+            inventory.uninstanced_mesh_definition_count = 1
+        }),
         ("extension", |inventory| {
             inventory.unsupported_source_element_count = 1
         }),
@@ -395,7 +400,7 @@ fn capability_projection_maps_each_core_refusal_domain_independently() {
             "extension" => facts.unregistered_extensions_present,
             "extras" => facts.extras_present,
             "non-triangle" => facts.non_triangle_primitives_present,
-            "vertex-payload" => facts.unsupported_vertex_attributes_present,
+            "uninstanced-mesh" | "vertex-payload" => facts.unsupported_vertex_attributes_present,
             "missing-influence" | "rejected-influence" => {
                 facts.unsupported_vertex_attributes_present
             }
@@ -562,6 +567,17 @@ fn one_invalid_bind_makes_a_multi_cluster_declaration_atomically_unreadable() {
     assert_eq!(loaded.inventory().skin_cluster_count, 2);
     assert_eq!(loaded.inventory().incomplete_bind_cluster_count, 1);
     assert_eq!(
+        loaded.inventory().bone_convenience_bind_overwrite_count,
+        0,
+        "a skipped invalid projection cannot overwrite the valid convenience bind"
+    );
+    assert!(
+        loaded.document().skeleton.bones[1]
+            .inverse_bind
+            .is_some_and(|matrix| matrix.is_finite()),
+        "the readable cluster is still applied to the bone convenience field"
+    );
+    assert_eq!(
         loaded.inventory().domains.skin_binds,
         FbxScaleDomainStatus::Unsupported
     );
@@ -678,31 +694,52 @@ fn mixed_positive_and_negative_influences_retain_rejection_evidence() {
 
 #[test]
 fn a_skin_cluster_without_a_bone_downgrades_the_source_projection() {
-    let source = std::fs::read_to_string(fixture())
+    let canonical = std::fs::read_to_string(fixture())
         .expect("read fixture")
-        .replacen("\tC: \"OO\",1001,4002\n", "", 1);
-    let dir = tempfile::tempdir().expect("temp dir");
-    let path = dir.path().join("missing-cluster-bone.fbx");
-    std::fs::write(&path, source).expect("write analytic missing-bone fixture");
+        .replace("\r\n", "\n");
+    for (label, line_ending) in [("lf", "\n"), ("crlf", "\r\n")] {
+        let source = canonical.replace('\n', line_ending);
+        let connection = "\tC: \"OO\",1001,4002";
+        assert_eq!(source.matches(connection).count(), 1, "{label}");
+        // Do not include the checkout line ending in the match: Windows may
+        // materialize the checked-in fixture as CRLF while Unix uses LF.
+        let source = source.replacen(connection, "", 1);
+        assert!(!source.contains(connection), "{label}");
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join(format!("missing-cluster-bone-{label}.fbx"));
+        std::fs::write(&path, source).expect("write analytic missing-bone fixture");
 
-    let loaded = animsmith_fbx::load_scale_source(&path).expect("missing-bone fixture parses");
-    assert_eq!(loaded.inventory().incomplete_bind_cluster_count, 1);
-    assert!(animsmith_fbx::capability_facts(loaded.inventory()).inverse_bind_issues_present);
-    let projection = &loaded.document().assets.source_skeleton;
-    assert_eq!(projection.coverage, SourceSkeletonCoverage::Unavailable);
-    assert!(projection.nodes.is_empty());
-    assert!(projection.skins.is_empty());
-    validate_document_shape(loaded.document())
-        .expect("unavailable source projection leaves a valid normalized document");
-    let measured = measure_assets(loaded.document());
-    assert_eq!(
-        measured.skeleton_source_coverage,
-        SourceSkeletonCoverage::Unavailable
-    );
-    assert!(measured.skeleton_nodes.is_empty());
-    assert!(measured.skins.is_empty());
-    MeasurementContract::new(BTreeMap::new(), measured)
-        .expect("downgraded source coverage is a valid public measurement");
+        let loaded = animsmith_fbx::load_scale_source(&path).expect("missing-bone fixture parses");
+        assert_eq!(
+            loaded.inventory().incomplete_bind_cluster_count,
+            1,
+            "{label}"
+        );
+        assert!(
+            animsmith_fbx::capability_facts(loaded.inventory()).inverse_bind_issues_present,
+            "{label}"
+        );
+        let projection = &loaded.document().assets.source_skeleton;
+        assert_eq!(
+            projection.coverage,
+            SourceSkeletonCoverage::Unavailable,
+            "{label}"
+        );
+        assert!(projection.nodes.is_empty(), "{label}");
+        assert!(projection.skins.is_empty(), "{label}");
+        validate_document_shape(loaded.document())
+            .expect("unavailable source projection leaves a valid normalized document");
+        let measured = measure_assets(loaded.document());
+        assert_eq!(
+            measured.skeleton_source_coverage,
+            SourceSkeletonCoverage::Unavailable,
+            "{label}"
+        );
+        assert!(measured.skeleton_nodes.is_empty(), "{label}");
+        assert!(measured.skins.is_empty(), "{label}");
+        MeasurementContract::new(BTreeMap::new(), measured)
+            .expect("downgraded source coverage is a valid public measurement");
+    }
 }
 
 #[test]
@@ -822,6 +859,130 @@ fn unsupported_vertex_payload_changes_other_source_data_from_rebuilt_to_unsuppor
 
     let loaded = animsmith_fbx::load_scale_source(&path).expect("vertex-color fixture parses");
     assert_eq!(loaded.inventory().unsupported_vertex_payload_mesh_count, 1);
+    assert_eq!(
+        loaded.inventory().domains.other_vertex_and_source_data,
+        FbxScaleDomainStatus::Unsupported
+    );
+    assert!(
+        animsmith_fbx::capability_facts(loaded.inventory()).unsupported_vertex_attributes_present
+    );
+}
+
+#[test]
+fn authored_face_and_edge_payloads_are_independently_unsupported() {
+    let cases = [
+        (
+            "face-smoothing",
+            r#"
+		LayerElementSmoothing: 0 {
+			Version: 102
+			Name: "smoothing"
+			MappingInformationType: "ByPolygon"
+			ReferenceInformationType: "Direct"
+			Smoothing: *1 { a: 1 }
+		}
+"#,
+        ),
+        (
+            "face-hole",
+            r#"
+		LayerElementHole: 0 {
+			Version: 100
+			Name: "hole"
+			MappingInformationType: "ByPolygon"
+			ReferenceInformationType: "Direct"
+			Hole: *1 { a: 1 }
+		}
+"#,
+        ),
+        (
+            "edge-visibility",
+            r#"
+		Edges: *3 { a: 0,1,2 }
+		LayerElementVisibility: 0 {
+			Version: 100
+			Name: "edge-visibility"
+			MappingInformationType: "ByEdge"
+			ReferenceInformationType: "Direct"
+			Visibility: *3 { a: 1,0,1 }
+		}
+"#,
+        ),
+    ];
+
+    for (label, payload) in cases {
+        let source = std::fs::read_to_string(fixture())
+            .expect("read fixture")
+            .replacen(
+                "\t\tPolygonVertexIndex: *3 { a: 0,1,-3 }",
+                &format!("\t\tPolygonVertexIndex: *3 {{ a: 0,1,-3 }}{payload}"),
+                1,
+            );
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join(format!("{label}.fbx"));
+        std::fs::write(&path, source).expect("write analytic face/edge fixture");
+
+        let loaded = animsmith_fbx::load_scale_source(&path).expect("face/edge fixture parses");
+        assert_eq!(
+            loaded.inventory().unsupported_vertex_payload_mesh_count,
+            1,
+            "{label} is authored payload omitted by triangle extraction"
+        );
+        assert_eq!(
+            loaded.inventory().domains.other_vertex_and_source_data,
+            FbxScaleDomainStatus::Unsupported,
+            "{label} cannot remain rebuilt"
+        );
+        assert!(
+            animsmith_fbx::capability_facts(loaded.inventory())
+                .unsupported_vertex_attributes_present,
+            "{label} must reach the format-neutral refusal"
+        );
+    }
+}
+
+#[test]
+fn a_detached_source_mesh_definition_is_not_called_rebuilt() {
+    let source = std::fs::read_to_string(fixture())
+        .expect("read fixture")
+        .replacen(
+            "ObjectType: \"Geometry\" { Count: 1 }",
+            "ObjectType: \"Geometry\" { Count: 2 }",
+            1,
+        );
+    let detached = r#"
+	Geometry: 5001, "Geometry::detached", "Mesh" {
+		Vertices: *9 { a: 0,0,0,100,0,0,0,100,0 }
+		PolygonVertexIndex: *3 { a: 0,1,-3 }
+	}
+"#;
+    let source = source.replacen(
+        "\tAnimationStack: 3001",
+        &format!("{detached}\tAnimationStack: 3001"),
+        1,
+    );
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("detached-mesh.fbx");
+    std::fs::write(&path, source).expect("write analytic detached-mesh fixture");
+
+    let loaded = animsmith_fbx::load_scale_source(&path).expect("detached mesh fixture parses");
+    assert_eq!(loaded.inventory().source_meshes.len(), 2);
+    assert_eq!(loaded.document().assets.meshes.len(), 1);
+    assert_eq!(loaded.inventory().uninstanced_mesh_definition_count, 1);
+    assert_eq!(
+        loaded
+            .inventory()
+            .uninstanced_source_meshes
+            .iter()
+            .map(|row| (row.source_index, row.ufbx_typed_id, row.ufbx_element_id))
+            .collect::<Vec<_>>(),
+        vec![(1, 1, 6)],
+        "the unsupported definition retains its exact stable source location"
+    );
+    assert_eq!(
+        loaded.inventory().domains.base_mesh_geometry,
+        FbxScaleDomainStatus::Unsupported
+    );
     assert_eq!(
         loaded.inventory().domains.other_vertex_and_source_data,
         FbxScaleDomainStatus::Unsupported
