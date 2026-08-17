@@ -303,6 +303,102 @@ fn typed_load_errors_distinguish_external_io_from_malformed_asset_bytes() {
 }
 
 #[test]
+fn malformed_fbx_is_a_refusal_while_a_missing_fbx_path_is_operator_owned() {
+    let dir = tempfile::tempdir().unwrap();
+    write_assembly_inputs(dir.path());
+    std::fs::write(dir.path().join("malformed.fbx"), b"not an FBX container").unwrap();
+    std::fs::write(
+        dir.path().join("inputs/malformed.fbx"),
+        b"not an FBX container",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("converted.glb"), b"prior convert").unwrap();
+    std::fs::write(dir.path().join("character.glb"), b"prior assembly").unwrap();
+    std::fs::write(dir.path().join("character.json"), b"prior evidence").unwrap();
+
+    for format in ["json", "text"] {
+        let convert_refusal = binary()
+            .current_dir(dir.path())
+            .args([
+                "convert",
+                "malformed.fbx",
+                "-o",
+                "converted.glb",
+                "--format",
+                format,
+            ])
+            .output()
+            .unwrap();
+        if format == "json" {
+            let record = assert_refusal(&convert_refusal, "convert", "unreadable-source");
+            assert_eq!(record["rejection"]["stage"], "load");
+        } else {
+            assert_eq!(convert_refusal.status.code(), Some(1));
+            assert!(convert_refusal.stdout.is_empty());
+            let stderr = String::from_utf8(convert_refusal.stderr).unwrap();
+            assert!(stderr.contains("convert refused"), "{stderr}");
+            assert!(stderr.contains("[unreadable-source]"), "{stderr}");
+        }
+
+        let convert_operator = binary()
+            .current_dir(dir.path())
+            .args([
+                "convert",
+                "missing.fbx",
+                "-o",
+                "converted.glb",
+                "--format",
+                format,
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(convert_operator.status.code(), Some(2));
+        assert!(convert_operator.stdout.is_empty());
+        assert!(!convert_operator.stderr.is_empty());
+
+        std::fs::write(
+            dir.path().join("recipe.toml"),
+            assembly_recipe_with_base("malformed.fbx", "missing"),
+        )
+        .unwrap();
+        let assembly_refusal = assemble(dir.path(), format);
+        if format == "json" {
+            let record = assert_refusal(&assembly_refusal, "assemble", "unreadable-source");
+            assert_eq!(record["rejection"]["stage"], "load");
+        } else {
+            assert_eq!(assembly_refusal.status.code(), Some(1));
+            assert!(assembly_refusal.stdout.is_empty());
+            let stderr = String::from_utf8(assembly_refusal.stderr).unwrap();
+            assert!(stderr.contains("assemble refused"), "{stderr}");
+            assert!(stderr.contains("[unreadable-source]"), "{stderr}");
+        }
+
+        std::fs::write(
+            dir.path().join("recipe.toml"),
+            assembly_recipe_with_base("missing.fbx", "missing"),
+        )
+        .unwrap();
+        let assembly_operator = assemble(dir.path(), format);
+        assert_eq!(assembly_operator.status.code(), Some(2));
+        assert!(assembly_operator.stdout.is_empty());
+        assert!(!assembly_operator.stderr.is_empty());
+    }
+
+    assert_eq!(
+        std::fs::read(dir.path().join("converted.glb")).unwrap(),
+        b"prior convert"
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("character.glb")).unwrap(),
+        b"prior assembly"
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("character.json")).unwrap(),
+        b"prior evidence"
+    );
+}
+
+#[test]
 fn post_parse_operator_errors_survive_a_truly_broken_stderr() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("recipe.toml"), "not = [valid").unwrap();

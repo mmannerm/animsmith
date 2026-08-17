@@ -1235,35 +1235,28 @@ enum InputLoadError {
 }
 
 #[cfg(feature = "fbx")]
+impl std::fmt::Display for InputLoadError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Gltf(error) => error.fmt(formatter),
+            Self::Fbx(error) => error.fmt(formatter),
+        }
+    }
+}
+
+#[cfg(feature = "fbx")]
 fn producer_load_failure(error: InputLoadError) -> producer::Failure {
-    use animsmith_gltf::LoadError as GltfError;
     use producer::{Failure, Kind, Stage};
 
     match error {
-        InputLoadError::Gltf(error) => match error {
-            GltfError::Io { .. } => Failure::operator(error),
-            GltfError::Gltf(_)
-            | GltfError::Buffer(_)
-            | GltfError::Malformed(_)
-            | GltfError::Topology(_)
-            | GltfError::PrimitiveEncoding { .. }
-            | GltfError::PrimitiveAccessorLayout { .. }
-            | GltfError::AnimationAccessorLayout { .. }
-            | GltfError::AnimationEncoding { .. } => {
-                Failure::refusal(Stage::Load, Kind::UnreadableSource, error)
-            }
-            // `LoadError` is non-exhaustive. A new typed loader defect is an
-            // asset fact until its provenance receives an explicit policy;
-            // it must never silently become an operator error through prose.
-            _ => Failure::refusal(Stage::Load, Kind::UnreadableSource, error),
-        },
-        InputLoadError::Fbx(error) => match error {
-            animsmith_fbx::LoadError::Path(_) => Failure::operator(error),
-            animsmith_fbx::LoadError::Fbx(_) | animsmith_fbx::LoadError::Bake { .. } => {
-                Failure::refusal(Stage::Load, Kind::UnreadableSource, error)
-            }
-            _ => Failure::refusal(Stage::Load, Kind::UnreadableSource, error),
-        },
+        InputLoadError::Gltf(error @ animsmith_gltf::LoadError::Io { .. }) => {
+            Failure::operator(error)
+        }
+        InputLoadError::Fbx(error @ animsmith_fbx::LoadError::Path(_)) => Failure::operator(error),
+        // These are the only operator exceptions. Every other current or
+        // future typed loader variant is a fact about bytes the producer was
+        // able to read, so it follows the same stable refusal policy.
+        error => Failure::refusal(Stage::Load, Kind::UnreadableSource, error),
     }
 }
 
@@ -1403,6 +1396,61 @@ mod tests {
             operator_stderr.contains("cannot serialize JSON output"),
             "{operator_stderr}"
         );
+    }
+
+    #[cfg(feature = "fbx")]
+    #[test]
+    fn producer_loader_classifier_has_only_two_operator_exceptions() {
+        let cases = [
+            (
+                InputLoadError::Gltf(animsmith_gltf::LoadError::Io {
+                    path: "missing.bin".into(),
+                    source: std::io::Error::from(std::io::ErrorKind::NotFound),
+                }),
+                true,
+            ),
+            (
+                InputLoadError::Fbx(animsmith_fbx::LoadError::Path("non-UTF-8".into())),
+                true,
+            ),
+            (
+                InputLoadError::Gltf(animsmith_gltf::LoadError::Malformed(
+                    "bad animation shape".into(),
+                )),
+                false,
+            ),
+            (
+                InputLoadError::Fbx(animsmith_fbx::LoadError::Fbx("bad container".into())),
+                false,
+            ),
+            (
+                InputLoadError::Fbx(animsmith_fbx::LoadError::Bake {
+                    take: "walk".into(),
+                    message: "bad curve".into(),
+                }),
+                false,
+            ),
+        ];
+
+        for (error, operator) in cases {
+            let expected_detail = error.to_string();
+            match (producer_load_failure(error), operator) {
+                (producer::Failure::Operator(detail), true) => {
+                    assert_eq!(detail, expected_detail);
+                }
+                (producer::Failure::Refusal(rejection), false) => {
+                    assert_eq!(rejection.stage, producer::Stage::Load);
+                    assert_eq!(rejection.kind, producer::Kind::UnreadableSource);
+                    assert_eq!(rejection.detail, expected_detail);
+                }
+                (producer::Failure::Operator(detail), false) => {
+                    panic!("unexpected operator classification: {detail}");
+                }
+                (producer::Failure::Refusal(rejection), true) => {
+                    panic!("unexpected refusal classification: {}", rejection.detail);
+                }
+            }
+        }
     }
 
     #[test]
