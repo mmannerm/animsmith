@@ -511,6 +511,34 @@ class InventoryTests(unittest.TestCase):
             ],
         )
 
+    def test_inventory_emits_every_documented_file_kind(self) -> None:
+        expected = {
+            "Animation.bvh": "animation-source",
+            "Clip.fbx": "animsmith-input-candidate",
+            "Data.bin": "other",
+            "LICENSE.bin": "license-or-terms",
+            "Manual.pdf": "documentation",
+            "Native.unitypackage": "engine-native",
+            "Source.zip": "archive",
+        }
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory) / "pack"
+            root.mkdir()
+            for name in expected:
+                (root / name).write_bytes(name.encode())
+
+            result = inventory_pack.inventory(root, "Fixture", set(), False)
+
+        actual = {
+            record["path"]: record["kind"]
+            for record in result["files"]
+            if record["type"] == "file"
+        }
+        self.assertEqual(actual, expected)
+        self.assertIsNone(result["hash_algorithm"])
+        self.assertEqual(result["duplicate_file_groups"], [])
+        self.assertTrue(all("sha256" not in record for record in result["files"]))
+
     def test_inventory_records_symlink_without_following_it(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary = Path(temporary_directory)
@@ -2969,20 +2997,28 @@ class RegenerationContractTests(unittest.TestCase):
     def read(self, relative_path: str) -> str:
         return (self.skill / relative_path).read_text(encoding="utf-8")
 
+    def rendered_paragraph_text(self, relative_path: str) -> str:
+        document = report_validator.parse_markdown(self.read(relative_path))
+        return "\n".join(paragraph["text"] for paragraph in document["paragraphs"])
+
     def test_templates_preserve_reviewed_provenance_boundary(self) -> None:
-        skill = self.read("SKILL.md")
-        report_template = self.read("assets/report-template.md")
-        appendix_template = self.read("assets/evidence-appendix-template.md")
+        skill = self.rendered_paragraph_text("SKILL.md")
+        report_template = self.rendered_paragraph_text("assets/report-template.md")
+        appendix_template = self.rendered_paragraph_text(
+            "assets/evidence-appendix-template.md"
+        )
 
         self.assertIn("collection-level or constituent-level", skill)
         self.assertIn("collection version does not identify", skill)
         self.assertIn("distinguish collection listing", report_template)
-        self.assertIn("collection-level and\nconstituent-level", appendix_template)
+        self.assertIn("collection-level and constituent-level", appendix_template)
 
     def test_templates_preserve_primary_evidence_without_duplication(self) -> None:
-        skill = self.read("SKILL.md")
-        report_template = self.read("assets/report-template.md")
-        appendix_template = self.read("assets/evidence-appendix-template.md")
+        skill = self.rendered_paragraph_text("SKILL.md")
+        report_template = self.rendered_paragraph_text("assets/report-template.md")
+        appendix_template = self.rendered_paragraph_text(
+            "assets/evidence-appendix-template.md"
+        )
 
         self.assertIn("appendix must link directly to that evidence", skill)
         self.assertIn("Treat this table as decision evidence", report_template)
@@ -2990,33 +3026,67 @@ class RegenerationContractTests(unittest.TestCase):
         self.assertIn("without duplicating", appendix_template)
 
     def test_exact_source_typos_stay_narrow_and_root_motion_stays_safe(self) -> None:
-        skill = self.read("SKILL.md")
-        taxonomy = self.read("references/clip-taxonomy.md")
-        appendix_template = self.read("assets/evidence-appendix-template.md")
+        skill = self.rendered_paragraph_text("SKILL.md")
+        taxonomy = self.rendered_paragraph_text("references/clip-taxonomy.md")
+        appendix_template = self.rendered_paragraph_text(
+            "assets/evidence-appendix-template.md"
+        )
 
-        self.assertIn("complete\nidentifier", skill)
+        self.assertIn("complete identifier", skill)
         self.assertIn("exact-identifier exception", taxonomy)
         self.assertIn("allowlist the misspelled substring globally", taxonomy)
         self.assertIn("root translation or yaw", appendix_template)
         self.assertIn("displacement and yaw proof", appendix_template)
 
     def test_version_refresh_keeps_refusal_distinct_from_remediation(self) -> None:
-        skill = self.read("SKILL.md")
-        report_template = self.read("assets/report-template.md")
-        appendix_template = self.read("assets/evidence-appendix-template.md")
-        engine_reference = self.read("references/engine-and-compatibility.md")
+        skill = self.rendered_paragraph_text("SKILL.md")
+        report_template = self.rendered_paragraph_text("assets/report-template.md")
+        appendix_template = self.rendered_paragraph_text(
+            "assets/evidence-appendix-template.md"
+        )
+        engine_reference = self.rendered_paragraph_text(
+            "references/engine-and-compatibility.md"
+        )
 
         self.assertIn("Treat earlier generated outputs as historical", skill)
         self.assertIn("it is not a successful remediation", skill)
         self.assertIn(
-            "A current safety refusal is not\na successful remediation",
+            "A current safety refusal is not a successful remediation",
             report_template,
         )
         self.assertIn(
             "whether the current version accepted or refused", appendix_template
         )
         self.assertIn(
-            "whether the operation\nproduced output or refused", engine_reference
+            "whether the operation produced output or refused",
+            engine_reference,
+        )
+
+    def test_discovery_adapters_route_to_the_canonical_skill(self) -> None:
+        adapter_path = (
+            self.repository / ".claude/skills/evaluate-animation-packs/SKILL.md"
+        )
+        adapter = adapter_path.read_text(encoding="utf-8")
+        document = report_validator.parse_markdown(adapter)
+        destinations = [link["destination"] for link in document["links"]]
+
+        self.assertEqual(
+            destinations,
+            ["../../../.agents/skills/evaluate-animation-packs/SKILL.md"],
+        )
+        self.assertFalse(document["has_raw_html"])
+        self.assertEqual(document["placeholders"], [])
+        canonical = (adapter_path.parent / destinations[0]).resolve()
+        self.assertEqual(canonical, (self.skill / "SKILL.md").resolve())
+        self.assertTrue(canonical.is_file())
+        self.assertEqual(
+            self.read("agents/openai.yaml"),
+            'interface:\n'
+            '  display_name: "Evaluate Animation Packs"\n'
+            '  short_description: "Assess game-engine animation pack readiness"\n'
+            '  default_prompt: "Use $evaluate-animation-packs to assess this '
+            'animation pack for game-engine use and write the standard concise '
+            'technical report plus evidence appendix."\n',
         )
 
 
@@ -3062,6 +3132,9 @@ class ExecutableContractTests(unittest.TestCase):
             repeated = self.run_script(
                 "inventory_pack.py", *arguments, hash_seed="2"
             )
+            unhashed = self.run_script(
+                "inventory_pack.py", *arguments, "--no-hash", hash_seed="3"
+            )
             missing = self.run_script("inventory_pack.py", str(root / "missing"))
 
         self.assertEqual(success.returncode, 0, success.stderr)
@@ -3075,6 +3148,13 @@ class ExecutableContractTests(unittest.TestCase):
             ["Alpha.fbx", "Walk.fbx"],
         )
         self.assertEqual(success.stderr, "")
+        self.assertEqual(unhashed.returncode, 0, unhashed.stderr)
+        unhashed_inventory = json.loads(unhashed.stdout)
+        self.assertIsNone(unhashed_inventory["hash_algorithm"])
+        self.assertEqual(unhashed_inventory["duplicate_file_groups"], [])
+        self.assertTrue(
+            all("sha256" not in record for record in unhashed_inventory["files"])
+        )
         self.assertEqual(missing.returncode, 2)
         self.assertIn("root is not a directory", missing.stderr)
 
