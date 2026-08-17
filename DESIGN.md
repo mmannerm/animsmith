@@ -132,9 +132,25 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   that other pipelines can pin.
 - **Exit codes**: `0` no failing findings (warnings, notes, and nonblocking
   coverage gaps may remain), `1` at least one error-severity finding (or
-  pending repairs under `fix --dry-run`), `2` operator/tool error
-  (unreadable file, bad config).
+  pending repairs under `fix --dry-run`) and any producer refusal established
+  as a fact about source asset bytes, `2` operator/tool error (unreadable
+  declared file, bad config or recipe syntax, unsafe/unwritable path, or
+  publication failure).
   `--deny-warnings` promotes warnings to errors.
+- **Producer outcome authority is typed before prose exists.** `convert` and
+  `assemble` carry `Published`, `Rejected`, and `Operator` through one shared
+  boundary. Loader, selector, transform, proof, and representability failures
+  reached after source bytes were read are asset refusals; invocation,
+  recipe-validation, path, file-read, temporary-file, serialization, and
+  publication failures are operator errors. Mixed error enums (notably the
+  material-texture recipe) are matched by variant at the call site. No exit
+  decision parses an error string. JSON refusals use the separately immutable
+  `urn:animsmith:schema:producer-refusal:1` record; existing conversion,
+  assembly, output, and scale evidence identities remain unchanged. Text
+  refusals are one escaped stderr diagnostic carrying the same stable kind.
+  Every refusal precedes publication, preserving a prior assembly pair and a
+  prior convert artifact; this does not claim that convert's direct writer can
+  roll back an operator I/O failure.
 - **Stdout is reporting, not outcome authority.** Every JSON, text, and
   Markdown stdout write, including parser-rendered help and version text, uses
   a fallible checked write followed by a best-effort checked stderr diagnosis.
@@ -179,7 +195,11 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   `TEXCOORD_0` or `WEIGHTS_0` accessor that omits `normalized: true`, or an
   animation sampler accessor whose declared element does not match its
   property-selected reader — is rejected
-  at load (operator error, exit 2; run glTF-Validator for the details).
+  at load. For `convert` and `assemble`, a rejection derived from readable
+  source bytes is an asset refusal (exit 1); an unreadable primary file or a
+  missing/unreadable declared external resource is still an operator error
+  (exit 2). Commands outside that producer boundary retain their historical
+  operator-error load policy. Run glTF-Validator for structural details.
   Recovering a non-forest graph would force an arbitrary parent choice or
   silently drop a cyclic subtree, so the loader rejects rather than repairs
   (decision recorded for #92). Likewise, substituting an empty position/index

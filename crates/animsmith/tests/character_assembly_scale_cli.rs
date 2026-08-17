@@ -129,6 +129,18 @@ fn run(dir: &Path) -> Output {
         .expect("runs assemble")
 }
 
+fn refusal_detail(output: &Output) -> String {
+    assert!(output.stderr.is_empty(), "JSON refusals are stdout-only");
+    let record: Value = serde_json::from_slice(&output.stdout).expect("typed refusal JSON");
+    assert_eq!(record["schema"], "urn:animsmith:schema:producer-refusal:1");
+    assert_eq!(record["command"], "assemble");
+    assert_eq!(record["outcome"], "rejected");
+    record["rejection"]["detail"]
+        .as_str()
+        .expect("refusal detail")
+        .to_owned()
+}
+
 fn assert_schema(instance: &Value, schema: &str) {
     let schema: Value = serde_json::from_str(schema).expect("schema JSON");
     let validator = jsonschema::validator_for(&schema).expect("schema compiles");
@@ -509,12 +521,8 @@ fn v4_rejects_an_orientation_basis_mismatch_atomically() {
     std::fs::write(dir.path().join("recipe.toml"), recipe("clip.gltf")).unwrap();
 
     let output = run(dir.path());
-    assert_eq!(output.status.code(), Some(2));
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("named-orientation"),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert_eq!(output.status.code(), Some(1));
+    assert!(refusal_detail(&output).contains("named-orientation"));
     assert!(!dir.path().join("character.glb").exists());
     assert!(!dir.path().join("character.json").exists());
 }
@@ -586,12 +594,8 @@ fn v4_rejects_an_unsupported_clip_before_any_remap_or_publication() {
     .unwrap();
 
     let output = run(dir.path());
-    assert_eq!(output.status.code(), Some(2));
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("preflight rejected input later.gltf"),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert_eq!(output.status.code(), Some(1));
+    assert!(refusal_detail(&output).contains("preflight rejected input later.gltf"));
     assert_eq!(
         std::fs::read(dir.path().join("character.glb")).unwrap(),
         prior_artifact
@@ -621,12 +625,8 @@ fn v4_rejects_an_unsupported_base_before_publication() {
     std::fs::write(dir.path().join("recipe.toml"), recipe("clip.glb")).unwrap();
 
     let output = run(dir.path());
-    assert_eq!(output.status.code(), Some(2));
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("preflight rejected input base.glb"),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert_eq!(output.status.code(), Some(1));
+    assert!(refusal_detail(&output).contains("preflight rejected input base.glb"));
     assert!(!dir.path().join("character.glb").exists());
     assert!(!dir.path().join("character.json").exists());
 }
@@ -769,12 +769,9 @@ fn assert_scale_refusal(recipe_text: &str, base: &[u8], clip: &[u8], expected: &
     std::fs::write(dir.path().join("inputs/clip.gltf"), clip).unwrap();
     std::fs::write(dir.path().join("recipe.toml"), recipe_text).unwrap();
     let output = run(dir.path());
-    assert_eq!(output.status.code(), Some(2));
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains(expected),
-        "expected {expected:?}: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert_eq!(output.status.code(), Some(1));
+    let detail = refusal_detail(&output);
+    assert!(detail.contains(expected), "expected {expected:?}: {detail}");
     assert!(!dir.path().join("character.glb").exists());
     assert!(!dir.path().join("character.json").exists());
 }

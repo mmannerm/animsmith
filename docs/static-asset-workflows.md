@@ -189,7 +189,7 @@ operation is intentionally narrower and fail-closed.
 
 ### Rejection is part of the contract
 
-The bake exits with operator error `2` and writes no output instead of guessing
+The bake exits with an asset refusal (`1`) and writes no output instead of guessing
 when the source cannot be transformed without violating its preservation
 promises. The [CLI reference](cli.md#static-mesh-transform-bake) owns the exact
 acceptance and rejection list.

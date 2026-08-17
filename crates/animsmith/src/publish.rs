@@ -50,6 +50,7 @@
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use animsmith_gltf::fix::{FixReport, Repair};
@@ -122,6 +123,15 @@ pub(crate) fn emit_text(text: &str) {
         &mut std::io::stderr(),
         text.as_bytes(),
     );
+}
+
+/// Best-effort checked human-readable stderr delivery.
+///
+/// Asset refusals use stderr in text mode, and post-parse operator errors use
+/// the same boundary after rendering. A closed stderr cannot change the
+/// already-established outcome or panic while trying to report it.
+pub(crate) fn emit_error_text(text: &str) {
+    let _ = std::io::stderr().write_all(text.as_bytes());
 }
 
 /// Write rendered human-readable lines to stdout under one lock.

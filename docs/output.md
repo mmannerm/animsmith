@@ -31,6 +31,14 @@ schema is
 This lets producers pin conversion provenance independently of measurement
 and lint evidence.
 
+An asset-property refusal from `convert` or `assemble` is not success
+evidence. Under `--format json` it uses the separate immutable
+`urn:animsmith:schema:producer-refusal:1` contract, whose retrievable schema is
+[`producer-refusal-v1.schema.json`](schemas/producer-refusal-v1.schema.json).
+This keeps conversion evidence v1/v2, assembly evidence v1-v4, output v1-v7,
+and scale evidence v1-v4 immutable. The record has `outcome: "rejected"`, a
+null `result`, the command, and a typed `{stage, kind, detail}` rejection.
+
 `assemble` writes a separate character-assembly-evidence v4 document to its
 required `--evidence` path, and prints the same record to stdout under
 `--format json`. Its immutable identity is
@@ -122,12 +130,43 @@ Operator failures do not emit a JSON envelope. They exit 2, write a diagnostic
 to stderr, and leave stdout empty. Content findings exit 1 at the configured
 threshold; coverage gaps are evidence and are nonblocking by default.
 
+`convert` and `assemble` asset refusals exit 1. JSON mode emits exactly one
+producer-refusal v1 document on stdout and leaves stderr empty; text mode
+leaves stdout empty and emits one escaped stderr line carrying the same stable
+kind. A consumer can therefore branch on exit plus stdout without parsing
+English. Failure to serialize a truthful refusal record is an operator error;
+failure to deliver already serialized bytes keeps exit 1 and is diagnosed
+best-effort on stderr.
+
 ## `convert`
 
 `convert --format json` emits one conversion-evidence v2 document. It records
 the input and output paths, the requested options, and counts derived from the
 written artifact. It is producer evidence: consumers should use the stable
 field names and schema identity rather than parsing the text write summary.
+
+That contract is success-only. A rejected source instead emits the shared
+producer-refusal v1 record:
+
+```json
+{
+  "schema_version": 1,
+  "schema": "urn:animsmith:schema:producer-refusal:1",
+  "tool": {
+    "name": "animsmith",
+    "version": "0.2.1",
+    "source": { "revision": null, "dirty": null }
+  },
+  "command": "convert",
+  "outcome": "rejected",
+  "result": null,
+  "rejection": {
+    "stage": "transform",
+    "kind": "transform-refused",
+    "detail": "cannot bake static transforms: document has no mesh instances"
+  }
+}
+```
 
 ```json
 {
@@ -254,6 +293,11 @@ the recipe selects no nodes.
 Paths remain
 operator-declared; canonical host paths used for containment checks are not
 serialized.
+
+Assembly evidence remains success-only. A valid recipe that does not fit the
+loaded assets exits 1 before publication and uses producer-refusal v1 in JSON
+mode; invalid recipe syntax/schema/values or an input/path/publication I/O
+failure remains exit 2 with empty stdout.
 
 When the optional recipe-v4 `rest_bind_scale` operation is active, evidence
 also pins the explicit source skin/root selectors and factor, the exact digest

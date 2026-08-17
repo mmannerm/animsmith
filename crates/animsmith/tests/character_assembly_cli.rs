@@ -569,7 +569,8 @@ fn rejects_unsupported_malformed_escaping_and_missing_input_selections() {
         write_inputs(dir.path());
         std::fs::write(dir.path().join("recipe.toml"), recipe).expect("writes invalid recipe");
         let output = run(dir.path());
-        assert_eq!(output.status.code(), Some(2), "case {ordinal}");
+        let expected_code = if (9..=11).contains(&ordinal) { 1 } else { 2 };
+        assert_eq!(output.status.code(), Some(expected_code), "case {ordinal}");
         assert!(
             String::from_utf8_lossy(&output.stderr).contains(expected),
             "case {ordinal}: expected {expected:?}, got {}",
@@ -825,7 +826,7 @@ fn duplicate_inspected_mesh_instance_name_fails_closed_without_publication() {
         std::fs::write(dir.path().join("recipe.toml"), recipe).expect("writes ambiguous recipe");
 
         let output = run(dir.path());
-        assert_eq!(output.status.code(), Some(2));
+        assert_eq!(output.status.code(), Some(1));
         assert!(
             String::from_utf8_lossy(&output.stderr)
                 .contains("base input contains ambiguous duplicate bone name \"tri_skinned\""),
@@ -1484,7 +1485,7 @@ fn assembles_synthetic_skinned_recipe_with_complete_public_provenance() {
     animsmith_gltf::write::write(&source, &inputs.join("clips.glb"))
         .expect("writes accumulating-yaw source GLB");
     let refusal = run(dir.path());
-    assert_eq!(refusal.status.code(), Some(2));
+    assert_eq!(refusal.status.code(), Some(1));
     let refusal_stderr = String::from_utf8(refusal.stderr).expect("UTF-8 refusal");
     for fact in [
         "assembled_cycle",
@@ -2165,7 +2166,7 @@ fn assembly_removes_an_unreferenced_subtree_after_pruning_and_completion() {
         )
         .expect("writes refusing recipe");
         let refusal = run(dir.path());
-        assert_eq!(refusal.status.code(), Some(2), "selector {selector}");
+        assert_eq!(refusal.status.code(), Some(1), "selector {selector}");
         assert!(
             String::from_utf8_lossy(&refusal.stderr).contains(expected),
             "selector {selector}: expected {expected:?}, got {}",

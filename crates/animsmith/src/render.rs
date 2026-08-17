@@ -895,6 +895,20 @@ pub(crate) fn render_scale_rejected(
     )
 }
 
+/// Render one `convert` or `assemble` asset refusal for stderr.
+///
+/// Both the stable kind and untrusted detail pass through the terminal-safe
+/// atom renderer, so an asset cannot forge an additional diagnostic line.
+#[cfg(feature = "fbx")]
+pub(crate) fn render_producer_rejected(command: &str, kind: &str, detail: &str) -> String {
+    format!(
+        "animsmith: {} refused: [{}] {}\n",
+        text_atom(command),
+        text_atom(kind),
+        text_atom(detail),
+    )
+}
+
 /// Render human-readable one-line-per-finding text output for `lint`.
 pub(crate) fn render_text(reports: &[LintFileReport], suppressed: &[String]) -> String {
     use std::fmt::Write as _;
@@ -2950,5 +2964,17 @@ mod tests {
         ] {
             assert_eq!(markdown.matches(row).count(), 1, "{markdown}");
         }
+    }
+
+    #[test]
+    #[cfg(feature = "fbx")]
+    fn producer_refusal_renderer_escapes_asset_control_text() {
+        let rendered =
+            render_producer_rejected("convert", "transform-refused", "forged\nline\u{1b}[31m");
+        assert_eq!(
+            rendered,
+            "animsmith: convert refused: [transform-refused] forged\\nline\\u{1b}[31m\n"
+        );
+        assert_eq!(rendered.lines().count(), 1);
     }
 }

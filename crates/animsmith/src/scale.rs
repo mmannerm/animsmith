@@ -43,8 +43,9 @@
 //! rollback I/O failure.
 //!
 //! This follows `lint --format json`, which prints its machine-readable
-//! result to stdout and exits `1` when the asset has a problem; it
-//! deliberately diverges from `assemble`, which maps every failure to `2`.
+//! result to stdout and exits `1` when the asset has a problem. `convert` and
+//! `assemble` now share the same typed outcome split, while retaining their
+//! own separately versioned success and refusal records.
 //!
 //! # Determinism
 //!

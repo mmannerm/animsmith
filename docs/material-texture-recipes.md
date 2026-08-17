@@ -33,8 +33,11 @@ occlusion = "surface-occlusion.png"
 `materials` is a list. Each entry requires one exact source-material
 `name`, one `base_color` path, and one `normal` path. `metallic_roughness` and
 `occlusion` are optional paths for their corresponding glTF PBR slots. Names are matched exactly,
-case-sensitively. A duplicate recipe name, a name that matches no source
-material, or a name that matches multiple source materials is an operator error.
+case-sensitively. A duplicate recipe name is an operator error because the
+recipe is intrinsically ambiguous. A valid recipe name that matches no source
+material, a source material omitted from the recipe, or an ambiguous source
+material is an asset-property refusal (exit `1`): it describes the recipe's
+fit to the loaded asset rather than invalid syntax.
 Every declared entry must be used; a recipe cannot partially apply and succeed.
 Unknown recipe fields are rejected instead of ignored.
 

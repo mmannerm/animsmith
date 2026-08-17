@@ -220,8 +220,13 @@ never weakens the final-reference refusal. The effective clip's
 protected surviving track causes removal to fail. `[rig] required_bones` is a
 lint presence policy, not a node-removal selector or protection list.
 
-Errors are deterministic and no output is published on any refusal. Recipe
-schema and value validation precede input loading. After the base's selected
+Errors are deterministic and no output is published on any refusal. A valid
+recipe that does not fit loaded asset facts is a typed asset refusal (exit
+`1`); JSON mode emits
+[`producer-refusal:1`](schemas/producer-refusal-v1.schema.json), while text
+mode reports the same stable kind on stderr. Recipe syntax/schema/value,
+input/path, and publication failures are operator errors (exit `2`) and emit
+no stdout. Recipe schema and value validation precede input loading. After the base's selected
 mesh and canonicalization steps, selectors and their descendant closure are
 resolved deterministically and the whole-skeleton rule is checked. After all
 clip transforms, every surviving track, mesh attachment, skin reference, and

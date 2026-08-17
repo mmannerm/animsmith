@@ -186,7 +186,7 @@ tangents.
 | Code | Meaning |
 |---:|---|
 | 0 | No failing findings: clean, warnings-only, notes-only, or coverage gaps only. |
-| 1 | At least one failing finding, a significant `diff`, pending repairs under `fix --dry-run`, or a `scale` refusal that is a property of the input asset. |
+| 1 | At least one failing finding, a significant `diff`, pending repairs under `fix --dry-run`, or a `scale`, `convert`, or `assemble` refusal that is a property of source asset bytes. |
 | 2 | Operator/tool error: unopenable input, bad config, unsupported format, or invalid flags. |
 
 The code reports what the run *did*, never how well it could report it. This
@@ -206,6 +206,20 @@ format. JSON serialization failure remains exit `2` because the CLI could not
 form a truthful record; delivery failure after rendering is only reporting.
 Other operator errors occur before stdout reporting, remain stderr-only, and
 retain exit `2`.
+
+For `convert` and `assemble`, classification is by typed provenance, never by
+diagnostic wording. The JSON refusal identity is
+`urn:animsmith:schema:producer-refusal:1`:
+
+| Class | Examples | Code and streams |
+|---|---|---|
+| Asset-property refusal | Source bytes do not parse or are structurally unsupported; a valid recipe names a missing/ambiguous take, node, mesh, or material; static bake, canonicalization, gait, scale, proof, or output representability rejects the asset. | `1`; JSON writes one `producer-refusal:1` record to stdout and nothing to stderr, while text writes one escaped typed refusal to stderr and nothing to stdout. |
+| Operator error | Invalid flags/config; recipe syntax, schema, or intrinsic values; unsupported extension; missing/unreadable declared file; unsafe, aliased, or unwritable paths; temporary/write/publication/rollback I/O; refusal-record serialization. | `2`; prose on stderr and nothing on stdout in either format. |
+
+A refusal is established before publication. It leaves any prior assembly
+artifact/evidence pair and any prior convert artifact byte-identical. Convert
+still writes its successful single artifact directly, so this is not a
+rollback promise for an operator I/O failure during that write.
 Commands that render several related pieces attempt one checked stream when a
 single delivery boundary is promised. In particular, all selected `fix`
 repair reports and all parts of one conversion summary produce at most one
@@ -437,17 +451,19 @@ compensated state rather than the raw FBX transform stack. See the
 It records the requested options, counts from the written artifact, exact
 static-mesh transforms when requested, and recipe provenance when a material
 texture recipe is used. `text` is the default human-readable write summary.
+An asset refusal under `--format json` uses the independent immutable
+[`producer-refusal-v1.schema.json`](schemas/producer-refusal-v1.schema.json)
+identity instead; conversion evidence v2 remains success-only and unchanged.
 
 `assemble` writes evidence v4 to its required `--evidence` path, with immutable
 identity `urn:animsmith:schema:character-assembly-evidence:4`; see
 [`character-assembly-evidence-v4.schema.json`](schemas/character-assembly-evidence-v4.schema.json).
 `assemble --format json` prints the same record to stdout — the identical bytes
 the evidence file receives, serialized once — in place of the default `text`
-publication summary. Every `assemble` failure still exits 2 with prose on
-stderr, whatever the format, and emits nothing on stdout; a run whose stdout
-itself fails mid-record or mid-summary is the one exception, leaving a
-truncated result there and reporting the write failure on stderr without
-changing the exit code.
+publication summary. An asset refusal publishes neither member and exits `1`;
+JSON emits `producer-refusal:1` on stdout, while text emits its stable kind on
+stderr. Operator errors remain exit `2`, stderr-only. A failed stdout delivery
+does not change an already-established success or refusal code.
 
 `scale` writes scale evidence v4 to its required `--evidence` path, with
 immutable identity `urn:animsmith:schema:scale-evidence:4`; see

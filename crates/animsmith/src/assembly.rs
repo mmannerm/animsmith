@@ -490,8 +490,10 @@ fn input_evidence(
     })
 }
 
-fn load_input(path: &Path) -> Result<Document, String> {
-    crate::load(path)
+fn load_input(path: &Path) -> Result<Document, crate::producer::Failure> {
+    use crate::producer::Failure;
+    let (format, bytes) = crate::capture_input(path).map_err(Failure::operator)?;
+    crate::load_bytes_typed(path, format, &bytes).map_err(crate::producer_load_failure)
 }
 
 fn rest_bind_operation(recipe: AssemblyRestBindScaleRecipe) -> ScaleOperation {
@@ -508,35 +510,42 @@ fn prepare_scale_input(
     resolved: &Path,
     scale: AssemblyRestBindScaleRecipe,
     tool: &ToolInfo,
-) -> Result<PreparedScaleInput, String> {
+) -> Result<PreparedScaleInput, crate::producer::Failure> {
+    use crate::producer::{Classify as _, Failure, Kind, Stage};
     let extension = resolved
         .extension()
         .and_then(|extension| extension.to_str())
         .unwrap_or_default();
     if !extension.eq_ignore_ascii_case("gltf") && !extension.eq_ignore_ascii_case("glb") {
-        return Err(format!(
+        return Err(Failure::operator(format!(
             "rest_bind_scale input {} is not glTF/GLB; assembly scale integration is glTF-only",
             declared.display()
-        ));
+        )));
     }
     let bytes = fs::read(resolved)
-        .map_err(|error| format!("cannot read input {}: {error}", declared.display()))?;
+        .map_err(|error| format!("cannot read input {}: {error}", declared.display()))
+        .operator()?;
     let sha256 = format!("{:x}", Sha256::digest(&bytes));
     let byte_count = u64::try_from(bytes.len())
-        .map_err(|_| format!("input {} size exceeds u64", declared.display()))?;
-    let source = preflight_scale_source_bytes(resolved, &bytes).map_err(|error| {
-        format!(
-            "rest_bind_scale preflight rejected input {}: {error}",
-            declared.display()
-        )
-    })?;
+        .map_err(|_| format!("input {} size exceeds u64", declared.display()))
+        .operator()?;
+    let source = preflight_scale_source_bytes(resolved, &bytes)
+        .map_err(|error| {
+            format!(
+                "rest_bind_scale preflight rejected input {}: {error}",
+                declared.display()
+            )
+        })
+        .refusal(Stage::Load, Kind::UnreadableSource)?;
     let operation = rest_bind_operation(scale);
-    let facts = operation_capability_facts(source.manifest(), operation).map_err(|error| {
-        format!(
-            "rest_bind_scale capability rejected input {}: {error}",
-            declared.display()
-        )
-    })?;
+    let facts = operation_capability_facts(source.manifest(), operation)
+        .map_err(|error| {
+            format!(
+                "rest_bind_scale capability rejected input {}: {error}",
+                declared.display()
+            )
+        })
+        .refusal(Stage::Transform, Kind::UnsupportedSourceDomain)?;
     let plan = plan_scale(&ScaleRequest {
         operation,
         document: source.document(),
@@ -547,26 +556,32 @@ fn prepare_scale_input(
             "rest_bind_scale plan rejected input {}: {error}",
             declared.display()
         )
-    })?;
-    let basis = assembly_scale_basis(source.document(), &plan).map_err(|error| {
-        format!(
-            "rest_bind_scale basis rejected input {}: {error}",
-            declared.display()
-        )
-    })?;
-    let artifact = rewrite_scale_plan(&source, &plan).map_err(|error| {
-        format!(
-            "rest_bind_scale rewrite rejected input {}: {error}",
-            declared.display()
-        )
-    })?;
-    let rebased_document =
-        animsmith_gltf::load_bytes(resolved, artifact.bytes()).map_err(|error| {
+    })
+    .refusal(Stage::Transform, Kind::TransformRefused)?;
+    let basis = assembly_scale_basis(source.document(), &plan)
+        .map_err(|error| {
+            format!(
+                "rest_bind_scale basis rejected input {}: {error}",
+                declared.display()
+            )
+        })
+        .refusal(Stage::Proof, Kind::ProofFailed)?;
+    let artifact = rewrite_scale_plan(&source, &plan)
+        .map_err(|error| {
+            format!(
+                "rest_bind_scale rewrite rejected input {}: {error}",
+                declared.display()
+            )
+        })
+        .refusal(Stage::Transform, Kind::TransformRefused)?;
+    let rebased_document = animsmith_gltf::load_bytes(resolved, artifact.bytes())
+        .map_err(|error| {
             format!(
                 "cannot reload rest_bind_scale rewrite for input {}: {error}",
                 declared.display()
             )
-        })?;
+        })
+        .refusal(Stage::Proof, Kind::ProofFailed)?;
     #[derive(Serialize)]
     struct Fingerprint<'a> {
         schema: &'static str,
@@ -580,7 +595,8 @@ fn prepare_scale_input(
         input_sha256: &sha256,
         basis: &basis,
     })
-    .map_err(|error| format!("cannot serialize assembly scale basis: {error}"))?;
+    .map_err(|error| format!("cannot serialize assembly scale basis: {error}"))
+    .operator()?;
     Ok(PreparedScaleInput {
         document: source.document().clone(),
         rebased_document,
@@ -620,13 +636,13 @@ pub(crate) struct Request {
 ///
 /// # Errors
 ///
-/// Returns an operator error (exit `2`) for every failure — a bad recipe, an
-/// unreadable input, an asset the recipe does not fit, or a publication
-/// failure alike. Splitting asset-property refusals out is issue #338's job,
-/// not this dispatch's.
+/// Returns an operator error (exit `2`) for invalid recipe/config/path/I/O or
+/// publication failures. Asset-property failures are typed refusals: this
+/// function renders them and returns exit `1` without publishing either
+/// destination.
 pub(crate) fn run(request: &Request, tool: ToolInfo) -> Result<ExitCode, String> {
     let loaded_config = crate::load_config_with_source(request.config.as_deref())?;
-    let published = assemble(
+    let published = match assemble(
         &request.recipe,
         &request.output,
         &request.evidence,
@@ -635,8 +651,21 @@ pub(crate) fn run(request: &Request, tool: ToolInfo) -> Result<ExitCode, String>
             .source
             .as_ref()
             .map(|source| (source.path.as_path(), source.bytes.as_slice())),
-        tool,
-    )?;
+        tool.clone(),
+    ) {
+        Ok(crate::producer::Outcome::Published(published)) => published,
+        Ok(crate::producer::Outcome::Rejected(rejection)) => {
+            let mut delivery = crate::producer::ProcessRefusalDelivery;
+            return crate::producer::emit_rejection(
+                crate::producer::Command::Assemble,
+                request.format,
+                tool,
+                rejection,
+                &mut delivery,
+            );
+        }
+        Err(message) => return Err(message),
+    };
     match request.format {
         // The very bytes the evidence file received, not a second rendering
         // of the same record. A stdout that cannot take them is diagnosed
@@ -662,40 +691,75 @@ fn assemble(
     config: &Config,
     config_source: Option<(&Path, &[u8])>,
     tool: ToolInfo,
-) -> Result<Published, String> {
+) -> Result<crate::producer::Outcome<Published>, String> {
+    match assemble_inner(
+        recipe_path,
+        output,
+        evidence_output,
+        config,
+        config_source,
+        tool,
+    ) {
+        Ok(published) => Ok(crate::producer::Outcome::Published(published)),
+        Err(crate::producer::Failure::Refusal(rejection)) => {
+            Ok(crate::producer::Outcome::Rejected(rejection))
+        }
+        Err(crate::producer::Failure::Operator(message)) => Err(message),
+    }
+}
+
+fn assemble_inner(
+    recipe_path: &Path,
+    output: &Path,
+    evidence_output: &Path,
+    config: &Config,
+    config_source: Option<(&Path, &[u8])>,
+    tool: ToolInfo,
+) -> Result<Published, crate::producer::Failure> {
+    use crate::producer::{Classify as _, Failure, Kind, Stage};
     if !output
         .extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| extension.eq_ignore_ascii_case("glb"))
     {
-        return Err("assemble output must use the .glb extension".into());
+        return Err(Failure::operator(
+            "assemble output must use the .glb extension",
+        ));
     }
     if output == evidence_output {
-        return Err("artifact and evidence outputs must be different paths".into());
+        return Err(Failure::operator(
+            "artifact and evidence outputs must be different paths",
+        ));
     }
     let output_parent = parent_or_current(output);
     let evidence_parent = parent_or_current(evidence_output);
-    require_writable_destination(output)?;
-    require_writable_destination(evidence_output)?;
-    let output_identity = destination_identity(output)?;
-    let evidence_identity = destination_identity(evidence_output)?;
+    require_writable_destination(output).operator()?;
+    require_writable_destination(evidence_output).operator()?;
+    let output_identity = destination_identity(output).operator()?;
+    let evidence_identity = destination_identity(evidence_output).operator()?;
     if output_identity == evidence_identity {
-        return Err("artifact and evidence outputs must resolve to different paths".into());
+        return Err(Failure::operator(
+            "artifact and evidence outputs must resolve to different paths",
+        ));
     }
     let recipe_bytes = fs::read(recipe_path)
-        .map_err(|error| format!("cannot read recipe {}: {error}", recipe_path.display()))?;
+        .map_err(|error| format!("cannot read recipe {}: {error}", recipe_path.display()))
+        .operator()?;
     let recipe_text = std::str::from_utf8(&recipe_bytes)
-        .map_err(|error| format!("recipe {} is not UTF-8: {error}", recipe_path.display()))?;
-    let recipe = parse_recipe(recipe_text)?;
-    validate_recipe(&recipe)?;
-    let resolver = InputResolver::new(recipe_path, recipe.input_root.as_deref())?;
+        .map_err(|error| format!("recipe {} is not UTF-8: {error}", recipe_path.display()))
+        .operator()?;
+    let recipe = parse_recipe(recipe_text).operator()?;
+    validate_recipe(&recipe).operator()?;
+    let resolver = InputResolver::new(recipe_path, recipe.input_root.as_deref()).operator()?;
     let config_evidence = match config_source {
         Some((path, contents)) => AssemblyConfigEvidence {
             source: "file",
             path: Some(path.display().to_string()),
             sha256: Some(format!("{:x}", Sha256::digest(contents))),
             bytes: Some(
-                u64::try_from(contents.len()).map_err(|_| "config size exceeds u64".to_owned())?,
+                u64::try_from(contents.len())
+                    .map_err(|_| "config size exceeds u64".to_owned())
+                    .operator()?,
             ),
         },
         None => AssemblyConfigEvidence {
@@ -706,7 +770,7 @@ fn assemble(
         },
     };
 
-    let base_path = resolver.resolve(&recipe.base_input)?;
+    let base_path = resolver.resolve(&recipe.base_input).operator()?;
     // The v4 scale path captures and validates every source before any
     // assembly transform, remap, or copy. The same captured normalized
     // documents feed assembly; no later reopen can race validation.
@@ -724,7 +788,7 @@ fn assemble(
         rest_bind_input_evidence.push(prepared.evidence.clone());
         prepared_scale_inputs.insert(base_path.clone(), prepared);
         for clip_recipe in &recipe.clips {
-            let resolved = resolver.resolve(&clip_recipe.input)?;
+            let resolved = resolver.resolve(&clip_recipe.input).operator()?;
             if let Some(existing) = prepared_scale_inputs.get(&resolved) {
                 let mut evidence = existing.evidence.clone();
                 evidence.role = format!("clip:{}", clip_recipe.name);
@@ -739,14 +803,14 @@ fn assemble(
                 scale,
                 &tool,
             )?;
-            require_assembly_scale_compatibility(&base_basis, &prepared.basis).map_err(
-                |error| {
+            require_assembly_scale_compatibility(&base_basis, &prepared.basis)
+                .map_err(|error| {
                     format!(
                         "rest_bind_scale input {} is incompatible with base: {error}",
                         clip_recipe.input.display()
                     )
-                },
-            )?;
+                })
+                .refusal(Stage::Proof, Kind::ProofFailed)?;
             rest_bind_input_evidence.push(prepared.evidence.clone());
             prepared_scale_inputs.insert(resolved, prepared);
         }
@@ -759,29 +823,27 @@ fn assemble(
             bytes: prepared.evidence.bytes,
         }]
     } else {
-        vec![input_evidence("base", &recipe.base_input, &base_path)?]
+        vec![input_evidence("base", &recipe.base_input, &base_path).operator()?]
     };
     let mut base = prepared_scale_inputs.get(&base_path).map_or_else(
         || load_input(&base_path),
         |prepared| Ok(prepared.document.clone()),
     )?;
-    ensure_unique_bones(&base.skeleton, "base input")?;
+    ensure_unique_bones(&base.skeleton, "base input")
+        .refusal(Stage::Load, Kind::InvalidAssetStructure)?;
     let (retained_mesh_instances, removed_mesh_instances) =
-        select_mesh_instances(&mut base, &recipe.mesh_instances)?;
+        select_mesh_instances(&mut base, &recipe.mesh_instances)
+            .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
 
     let material_application = recipe
         .material_texture_recipe
         .as_deref()
         .map(|declared| {
-            let resolved = resolver.resolve(declared)?;
-            inputs.push(input_evidence(
-                "material_texture_recipe",
-                declared,
-                &resolved,
-            )?);
+            let resolved = resolver.resolve(declared).operator()?;
+            inputs.push(input_evidence("material_texture_recipe", declared, &resolved).operator()?);
             let mut application =
                 apply_material_texture_recipe_in_root(&resolved, &base, &resolver.root)
-                    .map_err(|error| error.to_string())?;
+                    .map_err(crate::material_recipe_failure)?;
             let recipe_base = parent_or_current(&resolved);
             let texture_base = application
                 .evidence
@@ -795,17 +857,17 @@ fn assemble(
                             "cannot resolve consumed texture {}: {error}",
                             consumed.declared_path
                         )
-                    })?;
-                inputs.push(input_evidence(
-                    "texture",
-                    Path::new(&consumed.declared_path),
-                    &texture_path,
-                )?);
+                    })
+                    .operator()?;
+                inputs.push(
+                    input_evidence("texture", Path::new(&consumed.declared_path), &texture_path)
+                        .operator()?,
+                );
             }
             // The material helper saw the canonical path needed for its read;
             // assembly evidence retains only the recipe-declared path.
             application.evidence.path = declared.display().to_string();
-            Ok::<_, String>(application)
+            Ok::<_, Failure>(application)
         })
         .transpose()?;
     if let Some(application) = &material_application {
@@ -830,16 +892,18 @@ fn assemble(
             },
         };
         let canonical = animsmith_core::canonicalize_skinned_bind_pose(&base, options)
-            .map_err(|error| error.to_string())?;
+            .refusal(Stage::Transform, Kind::TransformRefused)?;
         base = canonical.document.clone();
         Some(canonical)
     } else {
         None
     };
-    ensure_unique_bones(&base.skeleton, "post-canonicalization base input")?;
+    ensure_unique_bones(&base.skeleton, "post-canonicalization base input")
+        .refusal(Stage::Transform, Kind::InvalidAssetStructure)?;
     let node_removal =
         animsmith_core::assembly::plan_node_subtree_removal(&base, &recipe.remove_nodes)
-            .map_err(|error| format!("cannot plan node removal: {error}"))?;
+            .map_err(|error| format!("cannot plan node removal: {error}"))
+            .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
 
     let mut loaded = BTreeMap::<PathBuf, Document>::new();
     let mut clip_evidence = Vec::with_capacity(recipe.clips.len());
@@ -849,7 +913,7 @@ fn assemble(
         .get(&base_path)
         .map(|prepared| &prepared.rebased_document);
     for clip_recipe in &recipe.clips {
-        let resolved = resolver.resolve(&clip_recipe.input)?;
+        let resolved = resolver.resolve(&clip_recipe.input).operator()?;
         if !loaded.contains_key(&resolved) {
             if let Some(prepared) = prepared_scale_inputs.get(&resolved) {
                 inputs.push(AssemblyInputEvidence {
@@ -860,27 +924,31 @@ fn assemble(
                 });
                 loaded.insert(resolved.clone(), prepared.document.clone());
             } else {
-                inputs.push(input_evidence("clip", &clip_recipe.input, &resolved)?);
+                inputs.push(input_evidence("clip", &clip_recipe.input, &resolved).operator()?);
                 loaded.insert(resolved.clone(), load_input(&resolved)?);
             }
         }
         let source = &loaded[&resolved];
         let staged =
-            process_clip_before_copy(source, &base, clip_recipe, recipe.fps, config, false)?;
+            process_clip_before_copy(source, &base, clip_recipe, recipe.fps, config, false)
+                .refusal(Stage::Transform, Kind::AssetRecipeMismatch)?;
         let rebased = if let (Some(scale_source), Some(scale_base)) = (
             prepared_scale_inputs
                 .get(&resolved)
                 .map(|prepared| &prepared.rebased_document),
             rebased_base,
         ) {
-            Some(process_clip_before_copy(
-                scale_source,
-                scale_base,
-                clip_recipe,
-                recipe.fps,
-                config,
-                true,
-            )?)
+            Some(
+                process_clip_before_copy(
+                    scale_source,
+                    scale_base,
+                    clip_recipe,
+                    recipe.fps,
+                    config,
+                    true,
+                )
+                .refusal(Stage::Transform, Kind::AssetRecipeMismatch)?,
+            )
         } else {
             None
         };
@@ -930,7 +998,8 @@ fn assemble(
             clip_recipe,
             recipe.complete_tracks,
             false,
-        )?;
+        )
+        .refusal(Stage::Transform, Kind::TransformRefused)?;
         let evidence = &mut clip_evidence[index];
         evidence.completed_tracks = staged_completed;
 
@@ -943,7 +1012,8 @@ fn assemble(
                 clip_recipe,
                 recipe.complete_tracks,
                 true,
-            )?;
+            )
+            .refusal(Stage::Transform, Kind::TransformRefused)?;
             evidence.completed_tracks = rebased_completed;
             if recipe.prune_constant_tracks {
                 let protected_bones =
@@ -953,12 +1023,14 @@ fn assemble(
                     rebased_clip,
                     &protected_bones,
                 );
-                apply_authoritative_pruning(staged_clip, &outcome.removed)?;
+                apply_authoritative_pruning(staged_clip, &outcome.removed)
+                    .refusal(Stage::Proof, Kind::ProofFailed)?;
                 evidence.pruned_constant_tracks = pruned_track_evidence(
                     &scale_base.skeleton,
                     &rebased_clip.name,
                     outcome.removed,
-                )?;
+                )
+                .refusal(Stage::Proof, Kind::ProofFailed)?;
             }
         } else if recipe.prune_constant_tracks {
             let protected_bones = protected_clip_bones(&base.skeleton, config, &staged_clip.name);
@@ -968,7 +1040,8 @@ fn assemble(
                 &protected_bones,
             );
             evidence.pruned_constant_tracks =
-                pruned_track_evidence(&base.skeleton, &staged_clip.name, outcome.removed)?;
+                pruned_track_evidence(&base.skeleton, &staged_clip.name, outcome.removed)
+                    .refusal(Stage::Proof, Kind::ProofFailed)?;
         }
         evidence.emitted_tracks = staged_clip.tracks.len();
     }
@@ -984,57 +1057,73 @@ fn assemble(
         })
         .collect();
     animsmith_core::assembly::apply_node_subtree_removal(&mut base, &node_removal)
-        .map_err(|error| format!("cannot remove selected nodes: {error}"))?;
+        .map_err(|error| format!("cannot remove selected nodes: {error}"))
+        .refusal(Stage::Transform, Kind::TransformRefused)?;
 
     let artifact_temp = tempfile::Builder::new()
         .prefix(".animsmith-assemble-")
         .suffix(".glb")
         .tempfile_in(output_parent)
-        .map_err(|error| format!("cannot create temporary output: {error}"))?
+        .map_err(|error| format!("cannot create temporary output: {error}"))
+        .operator()?
         .into_temp_path();
     let evidence_temp = tempfile::Builder::new()
         .prefix(".animsmith-assemble-evidence-")
         .suffix(".json")
         .tempfile_in(evidence_parent)
-        .map_err(|error| format!("cannot create temporary evidence: {error}"))?
+        .map_err(|error| format!("cannot create temporary evidence: {error}"))
+        .operator()?
         .into_temp_path();
-    let summary =
-        animsmith_gltf::write::write(&base, &artifact_temp).map_err(|error| error.to_string())?;
+    let summary = animsmith_gltf::write::write(&base, &artifact_temp)
+        .map_err(crate::conversion_write_failure)?;
     let mut rest_bind_scale_evidence = None;
     if let Some(scale) = recipe.rest_bind_scale {
         let staged_bytes = fs::read(&artifact_temp)
-            .map_err(|error| format!("cannot read staged assembly source: {error}"))?;
+            .map_err(|error| format!("cannot read staged assembly source: {error}"))
+            .operator()?;
         let staged_source_sha256 = format!("{:x}", Sha256::digest(&staged_bytes));
         let staged_source = preflight_scale_source_bytes(&artifact_temp, &staged_bytes)
-            .map_err(|error| format!("staged assembly scale preflight failed: {error}"))?;
+            .map_err(|error| format!("staged assembly scale preflight failed: {error}"))
+            .refusal(Stage::Proof, Kind::ProofFailed)?;
         let original_base = &prepared_scale_inputs
             .get(&base_path)
-            .ok_or_else(|| "missing captured base scale input".to_owned())?
+            .ok_or_else(|| "missing captured base scale input".to_owned())
+            .refusal(Stage::Proof, Kind::ProofFailed)?
             .document;
         let staged_operation =
-            map_staged_rest_bind_operation(original_base, staged_source.document(), scale)?;
+            map_staged_rest_bind_operation(original_base, staged_source.document(), scale)
+                .refusal(Stage::Proof, Kind::ProofFailed)?;
         let facts = operation_capability_facts(staged_source.manifest(), staged_operation)
-            .map_err(|error| format!("staged assembly scale capability failed: {error}"))?;
+            .map_err(|error| format!("staged assembly scale capability failed: {error}"))
+            .refusal(Stage::Proof, Kind::ProofFailed)?;
         let plan = plan_scale(&ScaleRequest {
             operation: staged_operation,
             document: staged_source.document(),
             capability: &facts,
         })
-        .map_err(|error| format!("staged assembly scale plan failed: {error}"))?;
+        .map_err(|error| format!("staged assembly scale plan failed: {error}"))
+        .refusal(Stage::Proof, Kind::ProofFailed)?;
         let artifact = rewrite_scale_plan(&staged_source, &plan)
-            .map_err(|error| format!("staged assembly scale rewrite failed: {error}"))?;
+            .map_err(|error| format!("staged assembly scale rewrite failed: {error}"))
+            .refusal(Stage::Proof, Kind::ProofFailed)?;
         let proof = prove_rewritten_rest_bind(&staged_source, &artifact, &plan)
-            .map_err(|error| format!("staged assembly scale proof failed: {error}"))?;
+            .map_err(|error| format!("staged assembly scale proof failed: {error}"))
+            .refusal(Stage::Proof, Kind::ProofFailed)?;
         fs::write(&artifact_temp, artifact.bytes())
-            .map_err(|error| format!("cannot write proved assembly artifact: {error}"))?;
+            .map_err(|error| format!("cannot write proved assembly artifact: {error}"))
+            .operator()?;
         let read_back_bytes = fs::read(&artifact_temp)
-            .map_err(|error| format!("cannot read proved assembly artifact: {error}"))?;
+            .map_err(|error| format!("cannot read proved assembly artifact: {error}"))
+            .operator()?;
         let read_back_sha256 = format!("{:x}", Sha256::digest(&read_back_bytes));
         let proved_sha256 = format!("{:x}", Sha256::digest(artifact.bytes()));
-        require_assembly_read_back_match(&read_back_sha256, &proved_sha256)?;
+        require_assembly_read_back_match(&read_back_sha256, &proved_sha256)
+            .refusal(Stage::Proof, Kind::ProofFailed)?;
         let reloaded = animsmith_gltf::load_bytes(&artifact_temp, &read_back_bytes)
-            .map_err(|error| format!("cannot reload proved assembly artifact: {error}"))?;
-        require_rebased_clips_match(&expected_rebased_clips, &reloaded.clips)?;
+            .map_err(|error| format!("cannot reload proved assembly artifact: {error}"))
+            .refusal(Stage::Proof, Kind::ProofFailed)?;
+        require_rebased_clips_match(&expected_rebased_clips, &reloaded.clips)
+            .refusal(Stage::Proof, Kind::ProofFailed)?;
         rest_bind_scale_evidence = Some(AssemblyRestBindScaleEvidence {
             source_skin_index: scale.source_skin_index,
             source_root_node_index: scale.source_root_node_index,
@@ -1043,10 +1132,11 @@ fn assemble(
             staged_source_sha256,
             read_back_sha256,
             residual_comparison_counts: crate::scale::residual_comparison_counts(&proof.core),
-            proof: crate::scale::shared_scale_evidence(&plan, &artifact, &proof)?,
+            proof: crate::scale::shared_scale_evidence(&plan, &artifact, &proof)
+                .refusal(Stage::Proof, Kind::ProofFailed)?,
         });
     }
-    let (artifact_sha256, artifact_bytes) = read_digest(&artifact_temp)?;
+    let (artifact_sha256, artifact_bytes) = read_digest(&artifact_temp).operator()?;
     let (evidence_schema_version, evidence_schema) =
         if recipe.schema_version == RECIPE_SCHEMA_VERSION_V4 {
             (EVIDENCE_SCHEMA_VERSION_V4, EVIDENCE_SCHEMA_ID_V4)
@@ -1086,16 +1176,18 @@ fn assemble(
         rest_bind_scale: rest_bind_scale_evidence,
         artifact: artifact_evidence(output, artifact_sha256, artifact_bytes, summary),
     };
-    let evidence_bytes = serialize_record(&evidence)?;
+    let evidence_bytes = serialize_record(&evidence).operator()?;
     fs::write(&evidence_temp, &evidence_bytes)
-        .map_err(|error| format!("cannot write temporary evidence: {error}"))?;
+        .map_err(|error| format!("cannot write temporary evidence: {error}"))
+        .operator()?;
     publish_pair(
         &artifact_temp,
         output,
         &evidence_temp,
         evidence_output,
         false,
-    )?;
+    )
+    .operator()?;
     Ok(Published {
         animations: summary.animations,
         meshes: summary.meshes,

@@ -54,7 +54,7 @@ const DEPENDENCY_SNIPPETS: &[(&str, &[&str])] = &[
 ];
 
 const TOOL_VERSION_SNIPPETS: &[(&str, usize)] = &[
-    ("docs/output.md", 3),
+    ("docs/output.md", 4),
     ("docs/mixamo-tutorial.md", 1),
     ("examples/README.md", 1),
 ];
@@ -499,7 +499,7 @@ fn acceptance_inventory_names_every_current_version_document() {
     assert_eq!(
         TOOL_VERSION_SNIPPETS,
         &[
-            ("docs/output.md", 3),
+            ("docs/output.md", 4),
             ("docs/mixamo-tutorial.md", 1),
             ("examples/README.md", 1),
         ],

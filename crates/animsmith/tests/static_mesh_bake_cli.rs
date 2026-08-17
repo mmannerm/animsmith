@@ -576,13 +576,25 @@ fn convert_static_bake_rejects_invalid_inputs_before_creating_output() {
         let result = run_json_convert(&input, &output, true);
         assert_eq!(
             result.status.code(),
-            Some(2),
+            Some(1),
             "{case} unexpectedly succeeded: {}",
             String::from_utf8_lossy(&result.stderr)
         );
         assert!(
-            result.stdout.is_empty(),
-            "{case} operator failure emits no JSON evidence"
+            result.stderr.is_empty(),
+            "{case} JSON refusal is stdout-only"
+        );
+        let refusal: Value = serde_json::from_slice(&result.stdout).expect("typed refusal JSON");
+        assert_eq!(refusal["schema"], "urn:animsmith:schema:producer-refusal:1");
+        assert_eq!(refusal["command"], "convert");
+        assert_eq!(refusal["outcome"], "rejected");
+        assert_eq!(refusal["rejection"]["kind"], "transform-refused");
+        assert!(
+            refusal["rejection"]["detail"]
+                .as_str()
+                .unwrap()
+                .contains("cannot bake static transforms"),
+            "{case}: {refusal:#}"
         );
         assert!(
             !output.exists(),

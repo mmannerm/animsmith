@@ -16,6 +16,7 @@ use std::process::{Command, Output};
 
 const CONVERSION_SCHEMA: &str =
     include_str!("../../../docs/schemas/conversion-evidence-v2.schema.json");
+const REFUSAL_SCHEMA: &str = include_str!("../../../docs/schemas/producer-refusal-v1.schema.json");
 
 fn fixture() -> Document {
     Document {
@@ -354,7 +355,7 @@ fn inspected_control_bearing_material_name_copies_directly_into_recipe() {
 }
 
 #[test]
-fn recipe_mapping_failure_is_stderr_only_and_leaves_no_output() {
+fn recipe_mapping_failure_is_typed_json_and_leaves_no_output() {
     let dir = tempfile::tempdir().expect("creates temp directory");
     write_success_fixture(dir.path());
     std::fs::write(
@@ -372,12 +373,23 @@ fn recipe_mapping_failure_is_stderr_only_and_leaves_no_output() {
     .expect("rewrites invalid recipe");
 
     let output = run_convert(dir.path(), "recipes/materials.toml");
-    assert_eq!(output.status.code(), Some(2));
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stderr.is_empty());
+    let refusal: Value = serde_json::from_slice(&output.stdout).expect("typed refusal JSON");
+    let schema: Value = serde_json::from_str(REFUSAL_SCHEMA).expect("schema is JSON");
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("matches no source material"),
-        "stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
+        jsonschema::validator_for(&schema)
+            .unwrap()
+            .is_valid(&refusal)
+    );
+    assert_eq!(refusal["command"], "convert");
+    assert_eq!(refusal["outcome"], "rejected");
+    assert_eq!(refusal["rejection"]["kind"], "asset-recipe-mismatch");
+    assert!(
+        refusal["rejection"]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("matches no source material")
     );
     assert!(!dir.path().join("output.glb").exists());
 }
