@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/mmannerm/animsmith/compare/v0.2.1...v0.3.0) - 2026-08-17
+
+### Added
+
+- *(measure)* harden inverse-bind evidence
+- *(cli)* type producer asset refusals
+- *(fbx)* inventory scale capabilities without enablement
+- *(assemble)* add rest-bind scale integration
+- *(scale)* support glTF position morph scaling
+
+### Fixed
+
+- *(release)* verify generated version docs
+- *(gltf)* reject unnormalized integer attributes
+- *(cli)* make producer load policy universal
+- *(cli)* preserve typed producer load failures
+- *(cli)* preserve checked transcript semantics
+- *(cli)* stream checked command transcripts
+- *(cli)* check parser and fix report delivery
+- *(cli)* check text stdout writes
+- *(fbx)* make capability inventory fail closed
+- *(assemble)* apply clip operations in rebased basis
+- *(assemble)* harden rest-bind scale evidence
+- *(core)* close gait anchor verification gaps
+- *(transform)* close gait-anchor safety gaps
+- *(transform)* require lossless gait trajectory grids
+- *(transform)* refuse unsafe gait anchoring
+- *(scale)* union early morph refusals
+- *(scale)* preserve located morph refusals
+- *(scale)* publish complete morph capability
+- *(fbx)* preserve incomplete source evidence
+- *(core)* make gait anchoring lossless across frame rates
+- *(transform)* close gait trajectory sampling gaps
+- *(scale)* compare effective unaffected binds
+- *(gltf)* handle compact matrix accessor ranges
+- *(gltf)* preserve unreferenced accessor payloads
+- *(fbx)* preserve shared mesh definitions
+- *(fbx)* inventory empty mesh definitions
+- *(fbx)* preserve omitted source identities
+- *(fbx)* inventory omitted mesh payloads
+
 ## [0.2.1](https://github.com/mmannerm/animsmith/compare/v0.2.0...v0.2.1) - 2026-08-16
 
 ### Fixed
