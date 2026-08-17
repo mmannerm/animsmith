@@ -107,8 +107,9 @@ contains rest/bind plus the eight whole-document conversions.
 | `256` | `0.578` | `0.578` | `0.034` | `0.034` | `2_313 / 4_626 / 27 / 162` |
 | `512` | `0.578` | `0.578` | `0.019` | `0.019` | `4_617 / 9_234 / 27 / 162` |
 
-An unaffected instance's binds demand `0`, and always will: the two sides are
-the identical `f32` expression over identical stored inputs.
+An unaffected instance's binds demand `0`, and always will: a correctly built
+candidate leaves both effective matrices equal, including when one side stores
+an explicit identity and the other uses the format-defined identity default.
 
 `4` is the next power of two above every figure above, **measured over these
 declared populations**. It is not an analytic bound. An earlier revision

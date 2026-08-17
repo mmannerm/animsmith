@@ -3225,7 +3225,7 @@ fn a_whole_document_conversion_reports_one_factor_under_both_names() {
 /// the skinned instance's vertex at `(0.01, 0, 0)` lands at `(1, 0, 0)`,
 /// and every §D.6 residual reports `0.0`: the rest and unit-scale walks
 /// iterate `plan.affected_nodes`, [`check_unaffected_instance_binds`]
-/// compares stored binds rather than world placement, and
+/// compares effective binds rather than world placement, and
 /// [`check_skin_and_bounds`] skips an instance with no affected joint.
 ///
 /// [`crate::model::validate_document_shape`] is what refuses it, which is why
@@ -12740,6 +12740,32 @@ fn compensated_document_with_unrelated_skin(bind: Option<Mat4>) -> Document {
     doc
 }
 
+/// Attach the unrelated instance to source-skin evidence of `status`.
+fn attach_unrelated_source_skin(doc: &mut Document, status: SourceInverseBindAccessorStatus) {
+    assert_eq!(
+        doc.assets.source_skeleton.coverage,
+        SourceSkeletonCoverage::Complete
+    );
+    let instance = &doc.assets.instances[1];
+    let source_node_index = instance.source_node_index;
+    let source_mesh_index = Some(doc.assets.meshes[instance.mesh].source_mesh_index);
+    let skin = doc
+        .assets
+        .source_skeleton
+        .skins
+        .last_mut()
+        .expect("the unrelated skin has source evidence");
+    assert_eq!(
+        skin.inverse_bind_accessor.status,
+        SourceInverseBindAccessorStatus::Absent
+    );
+    skin.inverse_bind_accessor.status = status;
+    skin.attachments = vec![SourceSkinAttachment {
+        source_node_index,
+        source_mesh_index,
+    }];
+}
+
 fn compensated_rest_bind_plan(doc: &Document, capability: &ScaleCapabilityFacts) -> ScalePlan {
     plan_scale(&ScaleRequest {
         operation: ScaleOperation::RestBindUniformScale {
@@ -12880,12 +12906,12 @@ fn a_partially_affected_skin_stays_with_the_skin_obligation_that_owns_it() {
 
 #[test]
 fn a_slot_carrying_both_an_array_and_a_bone_bind_is_compared_through_the_array() {
-    // The precedence `stored_instance_bind` documents — the per-instance
-    // array first, then the bone convenience value — became normative in
-    // this change's §D.6 amendment ("in the resolution order the model
-    // defines"). No other fixture gives one slot *both*, so reversing the
-    // two orders is invisible: the array-only fixtures resolve through
-    // the array either way, and the bone-only fixture through the bone.
+    // The precedence `instance_bind` documents — the per-instance array
+    // first, then the bone convenience value, then a licensed identity
+    // default — is normative in §D.6. No other fixture gives one slot *both*
+    // stored forms, so reversing the first two is invisible: the array-only
+    // fixtures resolve through the array either way, and the bone-only fixture
+    // through the bone.
     //
     // Here the unrelated slot carries an array bind of `scale(2)` and a
     // bone bind of `scale(4)`, and the two directions are separated by
@@ -12971,12 +12997,12 @@ fn an_unaffected_skin_resolved_through_its_bones_is_proved_the_same_way() {
 
 #[test]
 fn an_unaffected_skin_with_no_bind_evidence_on_either_side_still_proves() {
-    // The reason #296 was deferred out of #288: resolving both sides
-    // through `instance_bind` would reject this document with
-    // `MissingInverseBind`, a fail-closed regression on a skin the
-    // operation genuinely does not touch. Nothing is claimed about this
-    // slot, and nothing needs to be — but the document must still prove.
-    let doc = compensated_document_with_unrelated_skin(None);
+    // Neither side stores a bind, and the complete attached source skin says
+    // its accessor is unreadable rather than absent, so it cannot license the
+    // format-defined identity default. Nothing is claimed about this genuinely
+    // evidence-free slot, and nothing needs to be — but the document proves.
+    let mut doc = compensated_document_with_unrelated_skin(None);
+    attach_unrelated_source_skin(&mut doc, SourceInverseBindAccessorStatus::Unreadable);
     assert!(doc.assets.instances[1].skin_ibms.is_empty());
     assert!(doc.skeleton.bones[3].inverse_bind.is_none());
     let capability = complete_capability();
@@ -12992,6 +13018,202 @@ fn an_unaffected_skin_with_no_bind_evidence_on_either_side_still_proves() {
     assert_eq!(proof.unaffected_inverse_bind.max(), 0.0);
 }
 
+fn two_defaulted_identity_slots_document() -> Document {
+    // Both sides omit every stored bind, but the complete attached source
+    // skin licenses the format-defined identity default for both slots.
+    let mut doc = compensated_document_with_unrelated_skin(None);
+    attach_unrelated_source_skin(&mut doc, SourceInverseBindAccessorStatus::Absent);
+
+    let second_bone = doc.skeleton.bones.len();
+    let second_source_node_index = doc
+        .assets
+        .source_skeleton
+        .nodes
+        .iter()
+        .map(|node| node.source_node_index)
+        .max()
+        .expect("the document projects at least one node")
+        + 1;
+    let second_rest = Transform {
+        translation: Vec3::new(7.0, 0.0, 0.0),
+        rotation: Quat::IDENTITY,
+        scale: Vec3::ONE,
+    };
+    doc.skeleton.bones.push(Bone {
+        name: "unrelated-second".into(),
+        parent: None,
+        rest: second_rest,
+        inverse_bind: None,
+    });
+    doc.assets.source_skeleton.nodes.push(SourceNodeAsset {
+        source_node_index: second_source_node_index,
+        name: None,
+        parent_source_node_index: None,
+        scene_root_indices: vec![0],
+        local_rest: SourceNodeLocalRest::Trs {
+            translation: second_rest.translation,
+            rotation: second_rest.rotation,
+            scale: second_rest.scale,
+        },
+        bone: Some(second_bone),
+    });
+    doc.assets
+        .source_skeleton
+        .skins
+        .last_mut()
+        .expect("the unrelated skin has source evidence")
+        .joint_source_node_indices
+        .push(second_source_node_index);
+    doc.assets.instances[1].skin_joints.push(second_bone);
+
+    assert!(doc.assets.instances[1].skin_ibms.is_empty());
+    assert!(
+        doc.skeleton.bones[3..]
+            .iter()
+            .all(|bone| bone.inverse_bind.is_none())
+    );
+    doc
+}
+
+#[test]
+fn two_defaulted_identity_slots_are_each_compared_as_effective_binds() {
+    // Keeping two slots makes the comparison count pin the "every slot"
+    // obligation as well as the both-defaulted fallback.
+    let doc = two_defaulted_identity_slots_document();
+    let capability = complete_capability();
+    let plan = compensated_rest_bind_plan(&doc, &capability);
+    let candidate = build_scale_candidate(&doc, &plan).unwrap();
+    assert!(
+        candidate.document().assets.instances[1]
+            .skin_ibms
+            .is_empty()
+    );
+    let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+    assert_eq!(proof.unaffected_inverse_bind.comparisons(), 2);
+    assert_eq!(proof.unaffected_inverse_bind.max(), 0.0);
+}
+
+fn assert_unaffected_bind_rewrite(error: ScaleError) {
+    let ScaleError::ProofResidualExceeded {
+        kind: ProofResidualKind::UnaffectedInverseBind,
+        observed,
+        ..
+    } = error
+    else {
+        panic!("expected an unaffected-inverse-bind residual, got {error:?}");
+    };
+    assert_eq!(observed, 1.0);
+}
+
+#[test]
+fn materializing_a_different_bind_in_defaulted_slot_zero_is_refused() {
+    // Slot 1 remains explicit identity, so an implementation that compares
+    // only slot 1 (or compares it twice) cannot observe this rewrite.
+    let doc = two_defaulted_identity_slots_document();
+    let plan = compensated_rest_bind_plan(&doc, &complete_capability());
+    let candidate = build_scale_candidate(&doc, &plan).unwrap();
+    let mut rewritten = candidate.document().clone();
+    rewritten.assets.instances[1].skin_ibms =
+        vec![Mat4::from_scale(Vec3::splat(2.0)), Mat4::IDENTITY];
+
+    let error = prove_scale(
+        &doc,
+        &ScaleCandidate {
+            document: rewritten,
+        },
+        &plan,
+    )
+    .unwrap_err();
+    assert_unaffected_bind_rewrite(error);
+}
+
+#[test]
+fn materializing_a_different_bind_in_defaulted_slot_one_is_refused() {
+    // Slot 0 remains explicit identity, so an implementation that compares
+    // only slot 0 (or compares it twice) cannot observe this rewrite.
+    let doc = two_defaulted_identity_slots_document();
+    let plan = compensated_rest_bind_plan(&doc, &complete_capability());
+    let candidate = build_scale_candidate(&doc, &plan).unwrap();
+    let mut rewritten = candidate.document().clone();
+    rewritten.assets.instances[1].skin_ibms =
+        vec![Mat4::IDENTITY, Mat4::from_scale(Vec3::splat(2.0))];
+
+    let error = prove_scale(
+        &doc,
+        &ScaleCandidate {
+            document: rewritten,
+        },
+        &plan,
+    )
+    .unwrap_err();
+    assert_unaffected_bind_rewrite(error);
+}
+
+#[test]
+fn explicit_and_defaulted_identity_are_the_same_unaffected_bind_in_both_directions() {
+    let capability = complete_capability();
+
+    // Defaulted source, explicit candidate: both resolve to identity and one
+    // effective comparison proves, despite the representation change.
+    let mut defaulted = compensated_document_with_unrelated_skin(None);
+    attach_unrelated_source_skin(&mut defaulted, SourceInverseBindAccessorStatus::Absent);
+    let plan = compensated_rest_bind_plan(&defaulted, &capability);
+    let candidate = build_scale_candidate(&defaulted, &plan).unwrap();
+    let mut explicit = candidate.document().clone();
+    explicit.assets.instances[1].skin_ibms = vec![Mat4::IDENTITY];
+    let proof = prove_scale(&defaulted, &ScaleCandidate { document: explicit }, &plan).unwrap();
+    assert_eq!(proof.unaffected_inverse_bind.comparisons(), 1);
+    assert_eq!(proof.unaffected_inverse_bind.max(), 0.0);
+
+    // The same representation change in reverse also proves.
+    let mut explicit = compensated_document_with_unrelated_skin(Some(Mat4::IDENTITY));
+    attach_unrelated_source_skin(&mut explicit, SourceInverseBindAccessorStatus::Absent);
+    let plan = compensated_rest_bind_plan(&explicit, &capability);
+    let candidate = build_scale_candidate(&explicit, &plan).unwrap();
+    let mut defaulted = candidate.document().clone();
+    defaulted.assets.instances[1].skin_ibms.clear();
+    let proof = prove_scale(
+        &explicit,
+        &ScaleCandidate {
+            document: defaulted,
+        },
+        &plan,
+    )
+    .unwrap();
+    assert_eq!(proof.unaffected_inverse_bind.comparisons(), 1);
+    assert_eq!(proof.unaffected_inverse_bind.max(), 0.0);
+}
+
+#[test]
+fn a_materialized_nonidentity_default_is_a_rewritten_unaffected_bind() {
+    // Materializing a different matrix is a rewritten unaffected bind, refused
+    // by the value residual rather than representation alone.
+    let capability = complete_capability();
+    let mut defaulted = compensated_document_with_unrelated_skin(None);
+    attach_unrelated_source_skin(&mut defaulted, SourceInverseBindAccessorStatus::Absent);
+    let plan = compensated_rest_bind_plan(&defaulted, &capability);
+    let candidate = build_scale_candidate(&defaulted, &plan).unwrap();
+    let mut rewritten = candidate.document().clone();
+    rewritten.assets.instances[1].skin_ibms = vec![Mat4::from_scale(Vec3::splat(2.0))];
+    let error = prove_scale(
+        &defaulted,
+        &ScaleCandidate {
+            document: rewritten,
+        },
+        &plan,
+    )
+    .unwrap_err();
+    let ScaleError::ProofResidualExceeded {
+        kind: ProofResidualKind::UnaffectedInverseBind,
+        observed,
+        ..
+    } = error
+    else {
+        panic!("expected an unaffected-inverse-bind residual, got {error:?}");
+    };
+    assert_eq!(observed, 1.0);
+}
+
 #[test]
 fn an_unaffected_skin_whose_bind_evidence_appears_on_only_one_side_is_missing_not_proven() {
     // Between "unchanged, and I can prove it" and "no evidence either
@@ -12999,7 +13221,9 @@ fn an_unaffected_skin_whose_bind_evidence_appears_on_only_one_side_is_missing_no
     // not. That is a rewritten skin — the candidate either dropped an
     // array, silently changing which bind the slot resolves to, or
     // materialized one the source never had — and it is reported as
-    // missing evidence rather than passed for want of a comparison.
+    // missing evidence rather than passed for want of a comparison. Neither
+    // fixture attaches an absent-accessor source skin to the unrelated
+    // instance, so no format-defined identity is licensed here.
     let capability = complete_capability();
 
     let doc = compensated_document_with_unrelated_skin(Some(Mat4::from_scale(Vec3::splat(2.0))));

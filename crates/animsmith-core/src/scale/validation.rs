@@ -1062,21 +1062,11 @@ pub(in crate::scale) fn affected_skin_classification_steps() -> usize {
 /// precedence order — the instance's own per-slot array first, then the
 /// bone convenience value — or `None` when it stores neither.
 ///
-/// Deliberately stops short of [`instance_bind`]'s last step, the
-/// format-defined identity default a complete-coverage source skin with an
-/// [`SourceInverseBindAccessorStatus::Absent`] accessor licenses. That step
-/// answers "what bind does this slot *have*", which is the right question
-/// when composing `W * B`; this one answers "what bind does this document
-/// *record*", which is the question proof's `check_unaffected_instance_binds` is
-/// asking.
-///
-/// The two questions genuinely disagree on one input — an evidence-free slot
-/// under an `Absent` accessor, where the *effective* bind is identity and the
-/// *recorded* one is nothing — and asking the recorded question there refuses
-/// a candidate that only changed representation. That is a known and
-/// deliberate narrowness, not an oversight; see the trap note on
-/// proof's `check_unaffected_instance_binds` for why it is left standing and what
-/// replacing it would take.
+/// This is the stored-evidence prefix of [`instance_bind`]'s effective
+/// fallback chain. Callers that need the bind a slot *has*, including proof,
+/// must use [`instance_bind`] so a complete attached source skin with an
+/// [`SourceInverseBindAccessorStatus::Absent`] accessor can license the
+/// format-defined identity default.
 ///
 /// The out-of-range branch is unreachable for a document that passed
 /// [`validate_scale_input`], which requires a non-empty `skin_ibms` to be
