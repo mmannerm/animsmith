@@ -197,7 +197,6 @@ pub struct GltfCapabilityManifest {
     /// Mesh primitives in mesh/primitive order.
     pub primitives: Vec<GltfPrimitiveCapability>,
     /// Static and animated morph-weight locations in lexical order.
-    #[serde(skip)]
     pub morph_weight_locations: Vec<String>,
     /// GPU-instancing declarations in source node order.
     pub instancing: Vec<GltfInstancingCapability>,

@@ -89,8 +89,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-const SCALE_EVIDENCE_SCHEMA_VERSION: u32 = 3;
-pub(crate) const SCALE_EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:scale-evidence:3";
+const SCALE_EVIDENCE_SCHEMA_VERSION: u32 = 4;
+pub(crate) const SCALE_EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:scale-evidence:4";
 
 // --- Request ---------------------------------------------------------------
 
@@ -390,7 +390,7 @@ impl DomainRewritesRecord {
             },
             _ => {
                 return Err(
-                    "the scale operation has no scale-evidence v3 domain projection".to_owned(),
+                    "the scale operation has no scale-evidence v4 domain projection".to_owned(),
                 );
             }
         })
@@ -548,7 +548,7 @@ impl From<GltfRawJsonDifferenceKind> for ArtifactProofDifferenceKindRecord {
     }
 }
 
-/// The immutable versioned scale-evidence contract, `scale-evidence:3`.
+/// The immutable versioned scale-evidence contract, `scale-evidence:4`.
 ///
 /// One schema serves both outcomes, discriminated by `outcome`: a published
 /// run carries `result` and a `null` `rejection`, a refused run the reverse.

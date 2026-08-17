@@ -317,21 +317,46 @@ fn rig(interpolation: &str) -> (Value, Vec<u8>) {
 #[test]
 fn rest_bind_refuses_position_morphs_that_whole_document_can_preserve() {
     let (mut value, _) = rig("LINEAR");
-    value["meshes"][0]["primitives"][0]["targets"] = json!([{ "POSITION": 0 }]);
-    value["meshes"][0]["weights"] = json!([0.5]);
-    value["nodes"][3]["weights"] = json!([0.5]);
+    value["meshes"][0]["primitives"][0]["targets"] = json!([{ "POSITION": 0 }, { "POSITION": 0 }]);
+    value["meshes"][0]["weights"] = json!([0.25, 0.75]);
+    value["nodes"][3]["weights"] = json!([0.5, 0.5]);
+    value["animations"][0]["samplers"]
+        .as_array_mut()
+        .expect("samplers")
+        .push(json!({ "input": 4, "interpolation": "LINEAR", "output": 4 }));
+    value["animations"][0]["channels"]
+        .as_array_mut()
+        .expect("channels")
+        .push(json!({ "sampler": 2, "target": { "node": 3, "path": "weights" } }));
     let source = accepted("rest-bind-morph.gltf", &value);
     match rewrite_rest_bind(&source, 0, 0, 0.01) {
         Err(GltfScaleRewriteError::Capability { violations, count }) => {
+            assert_eq!(count, 4);
             assert_eq!(count, violations.len());
-            assert!(violations.iter().any(|violation| {
-                violation.kind == GltfCapabilityViolationKind::MorphTarget
-                    && violation.location == "/meshes/0/primitives/0/targets"
-            }));
-            assert!(violations.iter().any(|violation| {
-                violation.kind == GltfCapabilityViolationKind::MorphWeights
-                    && violation.location == "/meshes/0/weights"
-            }));
+            assert_eq!(
+                violations
+                    .iter()
+                    .map(|violation| (violation.kind, violation.location.as_str()))
+                    .collect::<Vec<_>>(),
+                [
+                    (
+                        GltfCapabilityViolationKind::MorphTarget,
+                        "/meshes/0/primitives/0/targets"
+                    ),
+                    (
+                        GltfCapabilityViolationKind::MorphWeights,
+                        "/animations/0/channels/2/target/path"
+                    ),
+                    (
+                        GltfCapabilityViolationKind::MorphWeights,
+                        "/meshes/0/weights"
+                    ),
+                    (
+                        GltfCapabilityViolationKind::MorphWeights,
+                        "/nodes/3/weights"
+                    ),
+                ]
+            );
         }
         other => panic!("rest/bind morph source should fail at capability: {other:?}"),
     }

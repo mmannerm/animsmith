@@ -20,8 +20,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 const SCALE_EVIDENCE_SCHEMA: &str =
-    include_str!("../../../docs/schemas/scale-evidence-v3.schema.json");
-const SCALE_EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:scale-evidence:3";
+    include_str!("../../../docs/schemas/scale-evidence-v4.schema.json");
+const SCALE_EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:scale-evidence:4";
 
 fn animsmith() -> Command {
     Command::new(env!("CARGO_BIN_EXE_animsmith"))
@@ -130,6 +130,67 @@ fn assert_schema_valid(instance: &Value) {
         .map(|error| format!("{}: {error}", error.instance_path()))
         .collect();
     assert!(errors.is_empty(), "schema errors: {}", errors.join("; "));
+}
+
+fn morph_scale_rig_glb() -> Vec<u8> {
+    let floats: [f32; 22] = [
+        1.0, 2.0, 3.0, -1.0, 0.5, 4.0, 2.0, -2.0, 0.0, // base POSITION
+        0.25, 0.0, -0.5, 1.0, -1.0, 2.0, 0.0, 0.5, 0.25, // morph POSITION
+        0.0, 1.0, // key times
+        0.25, 0.75, // animated weights
+    ];
+    let binary: Vec<u8> = floats
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect();
+    let value = serde_json::json!({
+        "asset": { "version": "2.0" },
+        "buffers": [{ "byteLength": binary.len() }],
+        "bufferViews": [
+            { "buffer": 0, "byteOffset": 0, "byteLength": 36 },
+            { "buffer": 0, "byteOffset": 36, "byteLength": 36 },
+            { "buffer": 0, "byteOffset": 72, "byteLength": 8 },
+            { "buffer": 0, "byteOffset": 80, "byteLength": 8 }
+        ],
+        "accessors": [
+            { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+              "min": [-1.0, -2.0, 0.0], "max": [2.0, 2.0, 4.0] },
+            { "bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3" },
+            { "bufferView": 2, "componentType": 5126, "count": 2, "type": "SCALAR",
+              "min": [0.0], "max": [1.0] },
+            { "bufferView": 3, "componentType": 5126, "count": 2, "type": "SCALAR" }
+        ],
+        "meshes": [{
+            "weights": [0.25],
+            "primitives": [{
+                "attributes": { "POSITION": 0 },
+                "targets": [{ "POSITION": 1 }]
+            }]
+        }],
+        "nodes": [{ "mesh": 0, "weights": [0.5] }],
+        "scenes": [{ "nodes": [0] }],
+        "scene": 0,
+        "animations": [{
+            "samplers": [{ "input": 2, "output": 3, "interpolation": "LINEAR" }],
+            "channels": [{ "sampler": 0, "target": { "node": 0, "path": "weights" } }]
+        }]
+    });
+    let mut json = serde_json::to_vec(&value).expect("morph fixture JSON");
+    while !json.len().is_multiple_of(4) {
+        json.push(b' ');
+    }
+    let total_length = 12 + 8 + json.len() + 8 + binary.len();
+    let mut glb = Vec::with_capacity(total_length);
+    glb.extend_from_slice(b"glTF");
+    glb.extend_from_slice(&2u32.to_le_bytes());
+    glb.extend_from_slice(&(total_length as u32).to_le_bytes());
+    glb.extend_from_slice(&(json.len() as u32).to_le_bytes());
+    glb.extend_from_slice(&0x4e4f_534au32.to_le_bytes());
+    glb.extend_from_slice(&json);
+    glb.extend_from_slice(&(binary.len() as u32).to_le_bytes());
+    glb.extend_from_slice(&0x004e_4942u32.to_le_bytes());
+    glb.extend_from_slice(&binary);
+    glb
 }
 
 fn rest_bind_scale_rig_with_negative_weight_glb(
@@ -255,7 +316,7 @@ fn rest_bind_publishes_a_pair_whose_evidence_names_the_appendix_d6_policy() {
 
     let record = read_json(&fixture.path("out.json"));
     assert_schema_valid(&record);
-    assert_eq!(record["schema_version"], 3);
+    assert_eq!(record["schema_version"], 4);
     assert_eq!(record["schema"], SCALE_EVIDENCE_SCHEMA_ID);
     assert_eq!(record["command"], "scale");
     assert_eq!(record["outcome"], "published");
@@ -405,6 +466,36 @@ fn rest_bind_publishes_a_pair_whose_evidence_names_the_appendix_d6_policy() {
         }),
         "the reparameterization leaves base mesh POSITION alone: the vertices \
          are already authored in the correct world space"
+    );
+}
+
+#[test]
+fn whole_document_v4_evidence_publishes_every_morph_weight_location() {
+    let fixture = Fixture::with_asset(morph_scale_rig_glb());
+    let output = fixture.whole_document("2", "json");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    let record = read_json(&fixture.path("out.json"));
+    assert_schema_valid(&record);
+    assert_eq!(record["schema_version"], 4);
+    assert_eq!(record["schema"], SCALE_EVIDENCE_SCHEMA_ID);
+    assert_eq!(
+        record["capability"]["morph_weight_locations"],
+        serde_json::json!([
+            "/animations/0/channels/0/target/path",
+            "/meshes/0/weights",
+            "/nodes/0/weights"
+        ])
+    );
+    assert_eq!(
+        record["capability"]["primitives"][0]["morph_position_accessors"],
+        serde_json::json!([1])
     );
 }
 
@@ -950,7 +1041,7 @@ fn a_refused_run_publishes_nothing_and_leaves_a_prior_pair_byte_identical() {
 }
 
 #[test]
-fn scale_evidence_v3_schema_pins_artifact_proof_difference_shape() {
+fn scale_evidence_v4_schema_pins_artifact_proof_difference_shape() {
     // Start with a real refusal so the fixture remains a full producer
     // record, then replace only the nullable diagnostic payload.
     let fixture = Fixture::new();

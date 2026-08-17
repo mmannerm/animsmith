@@ -733,10 +733,12 @@ These decisions record result-contract ownership after output v3 finalization:
 
 **Status (2026-08-14): implemented for self-contained glTF/GLB.** The shared
 core plan, typed ledger, exact-source writers, independent core and artifact
-proofs, atomic CLI publisher, and immutable scale-evidence v3 producer are the
+proofs, atomic CLI publisher, and immutable scale-evidence v4 producer are the
 current contract. Character assembly does not apply either scale operation;
-its recipe/evidence v3 remains unchanged. FBX scale output and morph-target
-scaling remain refused and deferred.
+its recipe/evidence v3 remains unchanged. Whole-document conversion supports
+raw glTF `POSITION` morph deltas with byte-preserved static and animated
+weights; other morph semantics and every rest/bind morph payload remain
+refused. FBX scale output remains deferred.
 
 ### D.1 Problem and two distinct operations
 
@@ -1633,7 +1635,7 @@ inventory of every §D.4 domain — and may enable an operation only over the
 domains that inventory covers.
 
 The exact raw-JSON-preservation refusal is diagnostic evidence as well as a
-refusal: the current scale-evidence v3 record carries up to the first 16
+refusal: the current scale-evidence v4 record carries up to the first 16
 deterministic differences, each as a pointer and an added/removed/changed
 direction, plus the omitted remainder; the full count is the retained length
 plus that remainder. The field is null when the exact-preservation walk did
@@ -1806,7 +1808,7 @@ sample set: a bounded proof of a subset would publish evidence for claims it
 did not check. Because the budget lives in the policy identity, it is not a
 per-run flag, and the producer's fixed-policy rule below covers it.
 
-The current producer emits immutable scale-evidence v3 containing
+The current producer emits immutable scale-evidence v4 containing
 the operation kind, declared and observed factors, tolerance policy and
 residuals, affected node/skin identities, raw capability manifest, input/output
 byte digests and counts, proof sample coverage/results, tool identity, and
@@ -2069,7 +2071,7 @@ The implementation status is:
 
 - shipped: raw glTF/GLB capability preflight, the shared core plan/ledger and
   proof, preservation-safe whole-document and rest/bind exact-source writers,
-  artifact proof, and atomic CLI publication with scale-evidence v3;
+  artifact proof, and atomic CLI publication with scale-evidence v4;
 - deferred: assembly integration in issue #285, which requires a new immutable
   recipe/evidence version rather than changing v3;
 - deferred: FBX scale output in issue #286, after complete ufbx-side capability

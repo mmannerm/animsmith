@@ -486,6 +486,65 @@ fn morph_position_aliases_are_scaled_once_per_unique_accessor() {
 }
 
 #[test]
+fn an_interleaved_morph_position_accessor_is_refused_at_its_own_location() {
+    let (mut value, mut buffer) = morph_json();
+    let interleaved_offset = buffer.len();
+    for vector in MORPH_A.chunks_exact(3) {
+        buffer.extend(f32_bytes(vector));
+        buffer.extend(f32::to_le_bytes(1234.0));
+    }
+    value["buffers"][0]["uri"] = json!(data_uri(&buffer));
+    value["buffers"][0]["byteLength"] = json!(buffer.len());
+    value["bufferViews"][1] = json!({
+        "buffer": 0,
+        "byteOffset": interleaved_offset,
+        "byteLength": 48,
+        "byteStride": 16
+    });
+
+    let violations = rejected("morph-interleaved.gltf", &value);
+    assert_eq!(
+        violations
+            .iter()
+            .filter(|violation| {
+                violation.kind == GltfCapabilityViolationKind::UnsafeAccessorLayout
+            })
+            .map(|violation| violation.location.as_str())
+            .collect::<Vec<_>>(),
+        ["/accessors/1"]
+    );
+}
+
+#[test]
+fn a_morph_position_accessor_aliasing_an_image_payload_is_refused() {
+    let (mut value, _) = morph_json();
+    value["images"] = json!([{ "bufferView": 1, "mimeType": "image/png" }]);
+
+    let violations = rejected("morph-image-alias.gltf", &value);
+    assert_eq!(
+        violations
+            .iter()
+            .filter(|violation| {
+                violation.kind == GltfCapabilityViolationKind::ImagePayloadOverlap
+            })
+            .map(|violation| violation.location.as_str())
+            .collect::<Vec<_>>(),
+        ["/images/0/bufferView"]
+    );
+    assert_eq!(
+        violations
+            .iter()
+            .filter(|violation| {
+                violation.kind == GltfCapabilityViolationKind::OverlappingAccessorRanges
+            })
+            .map(|violation| violation.location.as_str())
+            .collect::<Vec<_>>(),
+        ["/accessors/1"],
+        "the morph accessor, not the disjoint base POSITION, owns the unsafe alias"
+    );
+}
+
+#[test]
 fn unsupported_and_unsafe_morph_payloads_refuse_before_any_rewrite() {
     let (base, original_buffer) = morph_json();
     let original_json = bytes(&base);

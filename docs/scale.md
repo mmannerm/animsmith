@@ -6,7 +6,7 @@ artifact before publishing it. Neither operation guesses units or scale policy
 from geometry, names, or asset categories.
 
 Use the [CLI reference](cli.md#commands) for the exact command grammar and
-[machine-readable output](output.md#scale) for the scale-evidence v3 schema.
+[machine-readable output](output.md#scale) for the scale-evidence v4 schema.
 This guide owns the operator workflow and the boundary between the two
 operations.
 
@@ -97,10 +97,10 @@ cannot preserve completely. Whole-document conversion admits only raw glTF
 `POSITION` morph-target deltas with dimensionless static/animated weights;
 `NORMAL`, `TANGENT`, sparse/interleaved scale-bearing accessors, unsafe aliases,
 and every morph payload under rest/bind reparameterization remain refused.
-Cameras, lights, GPU instancing, unregistered extensions, `extras`, non-triangle primitives,
-secondary skin-influence sets, unsafe accessor layouts, and animation targeting
-a matrix-authored node. The rejection record contains the complete typed
-violation inventory.
+It also refuses cameras, lights, GPU instancing, unregistered extensions,
+`extras`, non-triangle primitives, secondary skin-influence sets, unsafe
+accessor layouts, and animation targeting a matrix-authored node. The
+rejection record contains the complete typed violation inventory.
 
 Do not read the core model's static unprojected-connector rows as a current glTF
 capability. The glTF loader projects every accepted node today, and the raw
@@ -117,7 +117,7 @@ capability; it does not add morphs to the shared normalized model.
 ## Outcomes and evidence
 
 The [CLI reference](cli.md#exit-codes) owns exit-status semantics, and the
-[output reference](output.md#scale) owns the scale-evidence v3 wire contract
+[output reference](output.md#scale) owns the scale-evidence v4 wire contract
 and publication outcomes. In brief, `--format json` prints the same record that
 a successful run writes to `--evidence`; a refused run prints its rejection
 record but never writes the evidence destination because there is no
