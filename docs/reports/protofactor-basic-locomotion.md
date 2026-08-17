@@ -20,7 +20,7 @@ Directional root-motion speeds also span 1.35–1.49× within each gait, with a 
 
 It still requires deliberate controller setup and target-character visual acceptance testing.
 
-AnimSmith 0.2.1 can slice the 12 files and phase-align the three **in-place** rings, but cannot repair loop endpoints/tangents. Its gait-anchor transform resamples accumulating root translation, so use runtime phase offsets or artist-aligned exports for root-motion rings.
+AnimSmith 0.2.1 can slice the 12 files and phase-align the three **in-place** rings, but cannot repair loop endpoints/tangents. Its gait-anchor transform resamples accumulating root translation or yaw, so use runtime phase offsets or artist-aligned exports for root-motion rings.
 
 The supplied archive was evaluated as authorized input. Current license and historical-provenance boundaries are appendix evidence, not pack defects.
 

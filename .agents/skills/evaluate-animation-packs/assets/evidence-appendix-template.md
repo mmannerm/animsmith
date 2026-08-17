@@ -29,6 +29,10 @@ remains authoritative.
 
 Do not provide legal advice or let missing transaction records masquerade as a
 pack technical failure.
+When the artifact came from a collection, label collection-level and
+constituent-level product facts separately. Never present a current collection
+version, price, release date, or license listing as the local constituent pack's
+revision or transaction record.
 
 ### Evidence coverage
 
@@ -65,6 +69,10 @@ Include every versioned primary role, including zero-count rows.
 
 Use the exact same set name as the primary report for every promoted set; the
 appendix may also retain additional candidate sets.
+If the primary runtime-set table contains detailed exact members, durations,
+speeds, or ratios, link to that table here. Retain the grouping evidence and
+validation boundary without duplicating the decision table or suggesting that
+its measurements were not captured.
 
 If no runtime sets exist, omit the table and write exactly: `No runtime sets
 were identified.`
@@ -128,9 +136,10 @@ Include every profile in the captured profile-set version.
 |---|---|---|---|---|
 | {{ISSUE}} | {{CAPTURED_COMMAND}} | {{RESULT}} | {{POSTCONDITION_EVIDENCE}} | {{GAP}} |
 
-For gait anchoring, explicitly state whether any accumulating root translation
-exists. AnimSmith versions that cyclically resample every channel must not be
-recommended on root-motion clips without a root-trajectory-preserving proof.
+For gait anchoring, explicitly state whether any root translation or yaw
+accumulates. AnimSmith versions that cyclically resample every channel must not
+be recommended on root-motion clips without independently re-derived
+displacement and yaw proof for a trajectory-preserving operation.
 
 ## Engine procedures and evidence
 

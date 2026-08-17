@@ -79,6 +79,12 @@ AnimSmith documentation. Record URLs and access dates. Treat blogs, videos,
 reviews, and forum posts as secondary context, not proof about the delivered
 files.
 
+When a constituent pack was acquired through a larger collection, keep the two
+product identities separate. Label every observed price, version, release date,
+listing, and license fact as collection-level or constituent-level. A current
+collection version does not identify the revision of a constituent pack or a
+local artifact.
+
 ## Snapshot the AnimSmith evaluator
 
 Use the AnimSmith version requested by the user. Otherwise use the binary from
@@ -381,6 +387,17 @@ one sentence in the primary report:
 
 Do not duplicate the issue register or redefine the readiness ladder in the
 appendix. Link to the canonical ladder instead.
+
+Keep detailed decision evidence where the reader needs it. In particular, an
+implementable primary runtime-set table may retain exact members, timing, and
+motion measurements. The appendix must link directly to that evidence and
+preserve its grouping basis, validation status, and evidence boundary without
+copying the full table or implying that the measurements are absent.
+
+Preserve misspelled source identifiers exactly when they are evidence. If the
+repository's spelling tooling needs an exception, scope it to the complete
+identifier and the narrowest applicable document/file type; never add a
+misspelled component to a global vocabulary or silently correct the source.
 
 The pair must make these answers obvious:
 

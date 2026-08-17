@@ -111,6 +111,10 @@ Preserve the exact delivered file/path and embedded clip identity, including
 case and spelling. A normalized display label or a separate vendor animation
 list is not a substitute; record any disagreement as evidence instead of
 silently correcting the member identifier.
+If a source typo triggers repository spelling checks, preserve the identifier
+and use only an exact-identifier exception scoped to the relevant file type. Do
+not allowlist the misspelled substring globally, because that would hide
+unrelated prose errors.
 
 ## Evaluation manifest
 

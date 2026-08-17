@@ -2962,6 +2962,45 @@ class ReportValidatorTests(unittest.TestCase):
                 )
 
 
+class RegenerationContractTests(unittest.TestCase):
+    repository = Path(__file__).resolve().parents[4]
+    skill = repository / ".agents/skills/evaluate-animation-packs"
+
+    def read(self, relative_path: str) -> str:
+        return (self.skill / relative_path).read_text(encoding="utf-8")
+
+    def test_templates_preserve_reviewed_provenance_boundary(self) -> None:
+        skill = self.read("SKILL.md")
+        report_template = self.read("assets/report-template.md")
+        appendix_template = self.read("assets/evidence-appendix-template.md")
+
+        self.assertIn("collection-level or constituent-level", skill)
+        self.assertIn("collection version does not identify", skill)
+        self.assertIn("distinguish collection listing", report_template)
+        self.assertIn("collection-level and\nconstituent-level", appendix_template)
+
+    def test_templates_preserve_primary_evidence_without_duplication(self) -> None:
+        skill = self.read("SKILL.md")
+        report_template = self.read("assets/report-template.md")
+        appendix_template = self.read("assets/evidence-appendix-template.md")
+
+        self.assertIn("appendix must link directly to that evidence", skill)
+        self.assertIn("Treat this table as decision evidence", report_template)
+        self.assertIn("link to that table here", appendix_template)
+        self.assertIn("without duplicating", appendix_template)
+
+    def test_exact_source_typos_stay_narrow_and_root_motion_stays_safe(self) -> None:
+        skill = self.read("SKILL.md")
+        taxonomy = self.read("references/clip-taxonomy.md")
+        appendix_template = self.read("assets/evidence-appendix-template.md")
+
+        self.assertIn("complete\nidentifier", skill)
+        self.assertIn("exact-identifier exception", taxonomy)
+        self.assertIn("allowlist the misspelled substring globally", taxonomy)
+        self.assertIn("root translation or yaw", appendix_template)
+        self.assertIn("displacement and yaw proof", appendix_template)
+
+
 class ExecutableContractTests(unittest.TestCase):
     scripts = Path(__file__).resolve().parent
 

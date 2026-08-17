@@ -67,6 +67,10 @@ silently normalize them from a vendor list or display label. State separately
 when another bundled manifest or animation list disagrees. `Runtime contract`
 captures the applicable loop, sync, state transition, mask, additive, contact,
 or interaction policy.
+Treat this table as decision evidence. When it carries the detailed per-member
+measurements, the evidence appendix should link to it and preserve only the
+grouping basis, validation status, and evidence boundary rather than duplicating
+the rows.
 Use semicolon-separated `key=value` timing terms (`duration`, `rm_speed`,
 `sample_rate`, `frames`, or `threshold`) with finite non-negative values and
 units. Use semicolon-separated runtime terms keyed by `loop`, `sync`,
@@ -143,6 +147,8 @@ manifest schema, and the largest unevaluated surfaces. Link the
 canonical readiness ladder at `../game-ready-clips.md#the-readiness-ladder` and
 the companion appendix. Acquisition/license evidence belongs here only as a
 short provenance boundary; do not turn it into the technical decision.
+If acquisition was through a collection, distinguish collection listing,
+version, price, and license facts from constituent-pack identity and revision.
 
 ## Sources
 
