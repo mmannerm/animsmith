@@ -693,7 +693,7 @@ class ManifestValidatorTests(unittest.TestCase):
             ),
         )
         for name, path, wrap_in_array, expected in cases:
-            for invalid in (None, 7, True, {}):
+            for invalid in (None, 7, True, {}, []):
                 with self.subTest(enum=name, invalid=repr(invalid)):
                     manifest = valid_manifest_with_runtime_set()
                     value = [invalid] if wrap_in_array else invalid
@@ -925,6 +925,30 @@ class ManifestValidatorTests(unittest.TestCase):
                 manifest["pipeline_stages"].append(duplicate)  # type: ignore[union-attr]
                 errors = manifest_validator.validate_manifest(manifest)
                 self.assertIn(f"duplicate stage_id: {stage_id}", errors)
+
+    def test_rejects_unknown_profile_and_pipeline_stage_identifiers(self) -> None:
+        manifest = valid_manifest()
+        manifest["profiles"].append(  # type: ignore[union-attr]
+            {
+                "profile_id": "unknown-profile",
+                "status": "not-selected",
+                "rationale": "Fixture.",
+            }
+        )
+        manifest["pipeline_stages"].append(  # type: ignore[union-attr]
+            {
+                "stage_id": "unknown-stage",
+                "status": "not-evaluated",
+                "evidence": "Fixture.",
+            }
+        )
+
+        errors = manifest_validator.validate_manifest(manifest)
+
+        self.assertIn("profiles contains unknown identifiers: unknown-profile", errors)
+        self.assertIn(
+            "pipeline_stages contains unknown identifiers: unknown-stage", errors
+        )
 
     def test_rejects_non_array_top_level_collections(self) -> None:
         for field in ("motions", "runtime_sets", "profiles", "pipeline_stages"):
@@ -1218,21 +1242,45 @@ class ReportValidatorTests(unittest.TestCase):
             errors,
         )
 
-    def test_rejects_malformed_issue_table_row(self) -> None:
+    def test_rejects_unknown_single_primary_issue_owner(self) -> None:
         report = valid_report().replace(
             "| engine-config | Fixture workaround. |",
-            "| engine-config | unexpected | Fixture workaround. |",
+            "| unknown-owner | Fixture workaround. |",
         )
 
         errors = report_validator.validate(report)
 
         self.assertIn(
-            "issue FIX-001 row must contain exactly seven cells", errors
+            "issue FIX-001 has unknown or composite primary owner: 'unknown-owner'",
+            errors,
         )
+
+    def test_rejects_malformed_issue_table_row(self) -> None:
+        variants = (
+            (
+                "| engine-config | Fixture workaround. |",
+                "| engine-config | unexpected | Fixture workaround. |",
+            ),
+            (
+                "| Fixture workaround. | Not applicable. | High. |",
+                "| Fixture workaround. | High. |",
+            ),
+        )
+        for original, replacement in variants:
+            with self.subTest(replacement=replacement):
+                report = valid_report().replace(original, replacement)
+
+                errors = report_validator.validate(report)
+
+                self.assertIn(
+                    "issue FIX-001 row must contain exactly seven cells", errors
+                )
 
     def test_valid_markdown_issue_row_syntax_still_checks_owner(self) -> None:
         variants = (
             ("FIX-001 |", "High."),
+            ("FIX-001 |", "High. |"),
+            ("   | FIX-001 |", "High."),
             ("   | FIX-001 |", "High. |"),
         )
         for prefix, suffix in variants:
@@ -1317,19 +1365,39 @@ class ExecutableContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory) / "pack"
             root.mkdir()
+            (root / "a-excluded").mkdir()
+            (root / "a-excluded" / "Ignored.fbx").write_bytes(b"ignored-a")
+            (root / "z-excluded").mkdir()
+            (root / "z-excluded" / "Ignored.fbx").write_bytes(b"ignored-z")
+            (root / "Alpha.fbx").write_bytes(b"motion")
             (root / "Walk.fbx").write_bytes(b"motion")
+            arguments = (
+                str(root),
+                "--label",
+                "Pack",
+                "--exclude",
+                "z-excluded",
+                "--exclude",
+                "a-excluded",
+            )
             success = self.run_script(
-                "inventory_pack.py", str(root), "--label", "Pack", hash_seed="1"
+                "inventory_pack.py", *arguments, hash_seed="1"
             )
             repeated = self.run_script(
-                "inventory_pack.py", str(root), "--label", "Pack", hash_seed="2"
+                "inventory_pack.py", *arguments, hash_seed="2"
             )
             missing = self.run_script("inventory_pack.py", str(root / "missing"))
 
         self.assertEqual(success.returncode, 0, success.stderr)
         self.assertEqual(repeated.returncode, 0, repeated.stderr)
         self.assertEqual(success.stdout, repeated.stdout)
-        self.assertEqual(json.loads(success.stdout)["pack_label"], "Pack")
+        inventory = json.loads(success.stdout)
+        self.assertEqual(inventory["pack_label"], "Pack")
+        self.assertEqual(inventory["excluded_paths"], ["a-excluded", "z-excluded"])
+        self.assertEqual(
+            inventory["duplicate_file_groups"][0]["paths"],
+            ["Alpha.fbx", "Walk.fbx"],
+        )
         self.assertEqual(success.stderr, "")
         self.assertEqual(missing.returncode, 2)
         self.assertIn("root is not a directory", missing.stderr)
@@ -1342,6 +1410,10 @@ class ExecutableContractTests(unittest.TestCase):
             invalid_manifest = valid_manifest()
             invalid_manifest["profiles"] = invalid_manifest["profiles"][2:]  # type: ignore[index]
             invalid_manifest["pipeline_stages"] = invalid_manifest["pipeline_stages"][2:]  # type: ignore[index]
+            invalid_manifest["motions"][0]["classification_basis"] = [  # type: ignore[index]
+                "z-unknown",
+                "a-unknown",
+            ]
             invalid_path = directory / "invalid.json"
             invalid_path.write_text(json.dumps(invalid_manifest), encoding="utf-8")
             malformed_path = directory / "malformed.json"
@@ -1374,15 +1446,29 @@ class ExecutableContractTests(unittest.TestCase):
             valid_path = directory / "valid.md"
             valid_path.write_text(valid_report(), encoding="utf-8")
             invalid_path = directory / "invalid.md"
-            invalid_path.write_text("# incomplete\n", encoding="utf-8")
+            invalid_path.write_text(
+                valid_report() + "\n{{ZETA_PLACEHOLDER}} {{ALPHA_PLACEHOLDER}}\n",
+                encoding="utf-8",
+            )
             success = self.run_script("validate_report.py", str(valid_path))
-            invalid = self.run_script("validate_report.py", str(invalid_path))
+            invalid = self.run_script(
+                "validate_report.py", str(invalid_path), hash_seed="1"
+            )
+            invalid_repeated = self.run_script(
+                "validate_report.py", str(invalid_path), hash_seed="2"
+            )
 
         self.assertEqual(success.returncode, 0, success.stderr)
         self.assertIn("validated animation-pack report", success.stdout)
         self.assertEqual(success.stderr, "")
         self.assertEqual(invalid.returncode, 1)
-        self.assertIn("missing required heading: ## Executive decision", invalid.stderr)
+        self.assertEqual(invalid_repeated.returncode, 1)
+        self.assertEqual(invalid.stderr, invalid_repeated.stderr)
+        self.assertIn(
+            "unresolved template placeholders: "
+            "{{ALPHA_PLACEHOLDER}}, {{ZETA_PLACEHOLDER}}",
+            invalid.stderr,
+        )
 
 
 if __name__ == "__main__":
