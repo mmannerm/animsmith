@@ -147,6 +147,9 @@ Run `scripts/validate_evaluation_manifest.py MANIFEST.json`. The validator
 checks identifiers, references, enumerations, unique physical files, complete
 role totals, profile selection, pipeline-stage coverage, and reconciled counts.
 Extra evidence fields are allowed so a report may retain pack-specific metrics.
+The production authority for version-1 machine identifiers, enumerations, and
+report labels is `scripts/evaluation_contract_v1.py`; this reference explains
+their human meaning.
 
 ## Classification rules
 

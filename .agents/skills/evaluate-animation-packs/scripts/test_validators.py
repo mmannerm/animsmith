@@ -29,31 +29,79 @@ V1_PRIMARY_ROLES = (
     "emote-cinematic",
     "other-unknown",
 )
-V1_PROFILE_IDS = (
-    "marketplace-intake",
-    "blended-locomotion",
-    "root-motion-controller",
-    "state-machine-transitions",
-    "layered-upper-body-weapons",
-    "traversal-environment",
-    "contact-actions-interactions",
-    "retargeted-customizable-characters",
-    "motion-matching-search",
-    "networked-movement",
-    "runtime-performance",
-)
-V1_PIPELINE_STAGES = (
-    "acquire",
-    "preserve-raw",
-    "inspect",
-    "segment",
+V1_VARIANTS = {
+    "in-place",
     "root-motion",
-    "conform",
-    "validate",
-    "optimize",
-    "export",
-    "gate-report",
+    "rotation-only-root",
+    "single",
+    "unknown",
+}
+V1_SET_TYPES = {
+    "directional-blend",
+    "speed-blend",
+    "sync-group",
+    "transition-chain",
+    "mask-composition",
+    "retarget-group",
+    "paired-interaction",
+    "motion-database",
+    "other",
+}
+V1_CLASSIFICATION_BASES = {
+    "user-required",
+    "vendor-stated",
+    "observed-file",
+    "inferred",
+}
+V1_CONFIDENCE = {"high", "medium", "low"}
+V1_PROFILE_ROWS = (
+    ("marketplace-intake", "Marketplace intake"),
+    ("blended-locomotion", "Blended locomotion"),
+    ("root-motion-controller", "Root-motion controller"),
+    ("state-machine-transitions", "State-machine transitions"),
+    ("layered-upper-body-weapons", "Layered upper body/weapons"),
+    ("traversal-environment", "Traversal/environment"),
+    ("contact-actions-interactions", "Contact actions/interactions"),
+    (
+        "retargeted-customizable-characters",
+        "Retargeted/customizable characters",
+    ),
+    ("motion-matching-search", "Motion matching/search"),
+    ("networked-movement", "Networked movement"),
+    ("runtime-performance", "Runtime performance"),
 )
+V1_PROFILE_IDS = tuple(identifier for identifier, _label in V1_PROFILE_ROWS)
+V1_PROFILE_STATUSES = {"selected", "not-selected", "not-applicable"}
+V1_ACTIVATION_BASES = {
+    "user-required",
+    "vendor-intended",
+    "observed-pack-capability",
+    "evaluator-selected-generic-scenario",
+}
+V1_PIPELINE_STAGE_ROWS = (
+    ("acquire", "Acquire"),
+    ("preserve-raw", "Preserve raw"),
+    ("inspect", "Inspect"),
+    ("segment", "Segment"),
+    ("root-motion", "Root motion"),
+    ("conform", "Conform"),
+    ("validate", "Validate"),
+    ("optimize", "Optimize"),
+    ("export", "Export"),
+    ("gate-report", "Gate/report"),
+)
+V1_PIPELINE_STAGES = tuple(
+    identifier for identifier, _label in V1_PIPELINE_STAGE_ROWS
+)
+V1_COVERAGE_STATES = {
+    "evaluated-clean",
+    "evaluated-finding",
+    "partially-evaluated",
+    "not-applicable",
+    "not-evaluated",
+    "unsupported-input",
+    "unavailable-evidence",
+}
 
 
 def valid_manifest() -> dict[str, object]:
@@ -144,12 +192,12 @@ def valid_manifest_with_runtime_set() -> dict[str, object]:
 
 
 def valid_report() -> str:
-    role_rows = "\n".join(f"| `{role}` | 0 |" for role in report_validator.PRIMARY_ROLES)
+    role_rows = "\n".join(f"| `{role}` | 0 |" for role in V1_PRIMARY_ROLES)
     stage_rows = "\n".join(
-        f"| {stage} | evaluated-clean |" for stage in report_validator.PIPELINE_STAGE_LABELS
+        f"| {label} | evaluated-clean |" for _identifier, label in V1_PIPELINE_STAGE_ROWS
     )
     profile_rows = "\n".join(
-        f"| {profile} | not-selected |" for profile in report_validator.PROFILE_LABELS
+        f"| {label} | not-selected |" for _identifier, label in V1_PROFILE_ROWS
     )
     return f"""# Animation pack evaluation: Validator fixture
 
@@ -198,7 +246,7 @@ Fixture result.
 Fixture result.
 
 ## Evaluation scope and evidence
-Schema: `{report_validator.MANIFEST_SCHEMA}`
+Schema: `{V1_SCHEMA}`
 
 ## Pack inventory and content coverage
 Fixture result.
@@ -296,8 +344,29 @@ class ManifestValidatorTests(unittest.TestCase):
         self.assertEqual(manifest_validator.TAXONOMY_VERSION, "1")
         self.assertEqual(manifest_validator.PROFILE_SET_VERSION, "1")
         self.assertEqual(manifest_validator.PRIMARY_ROLES, V1_PRIMARY_ROLES)
+        self.assertEqual(manifest_validator.VARIANTS, V1_VARIANTS)
+        self.assertEqual(manifest_validator.SET_TYPES, V1_SET_TYPES)
+        self.assertEqual(
+            manifest_validator.CLASSIFICATION_BASES, V1_CLASSIFICATION_BASES
+        )
+        self.assertEqual(manifest_validator.CONFIDENCE, V1_CONFIDENCE)
         self.assertEqual(manifest_validator.PROFILE_IDS, V1_PROFILE_IDS)
+        self.assertEqual(manifest_validator.PROFILE_STATUSES, V1_PROFILE_STATUSES)
+        self.assertEqual(manifest_validator.ACTIVATION_BASES, V1_ACTIVATION_BASES)
         self.assertEqual(manifest_validator.PIPELINE_STAGES, V1_PIPELINE_STAGES)
+        self.assertEqual(manifest_validator.COVERAGE_STATES, V1_COVERAGE_STATES)
+
+    def test_report_validator_retains_public_v1_vocabulary(self) -> None:
+        self.assertEqual(report_validator.MANIFEST_SCHEMA, V1_SCHEMA)
+        self.assertEqual(report_validator.PRIMARY_ROLES, V1_PRIMARY_ROLES)
+        self.assertEqual(
+            report_validator.PIPELINE_STAGE_LABELS,
+            tuple(label for _identifier, label in V1_PIPELINE_STAGE_ROWS),
+        )
+        self.assertEqual(
+            report_validator.PROFILE_LABELS,
+            tuple(label for _identifier, label in V1_PROFILE_ROWS),
+        )
 
     def test_accepts_complete_manifest(self) -> None:
         self.assertEqual(manifest_validator.validate_manifest(valid_manifest()), [])
@@ -400,6 +469,48 @@ class ManifestValidatorTests(unittest.TestCase):
         self.assertIn(
             "totals does not match motions, physical files, and runtime sets", errors
         )
+
+    def test_rejects_role_totals_that_do_not_reconcile(self) -> None:
+        manifest = valid_manifest()
+        manifest["role_totals"]["idle-pose"]["logical_motions"] = 2  # type: ignore[index]
+
+        errors = manifest_validator.validate_manifest(manifest)
+
+        self.assertIn("role_totals does not match totals derived from motions", errors)
+
+    def test_rejects_missing_required_profile(self) -> None:
+        manifest = valid_manifest()
+        manifest["profiles"].pop(1)  # type: ignore[union-attr]
+
+        errors = manifest_validator.validate_manifest(manifest)
+
+        self.assertIn("profiles is missing: blended-locomotion", errors)
+
+    def test_rejects_duplicate_required_profile(self) -> None:
+        manifest = valid_manifest()
+        duplicate = copy.deepcopy(manifest["profiles"][1])  # type: ignore[index]
+        manifest["profiles"].append(duplicate)  # type: ignore[union-attr]
+
+        errors = manifest_validator.validate_manifest(manifest)
+
+        self.assertIn("duplicate profile_id: blended-locomotion", errors)
+
+    def test_rejects_missing_required_pipeline_stage(self) -> None:
+        manifest = valid_manifest()
+        manifest["pipeline_stages"].pop(1)  # type: ignore[union-attr]
+
+        errors = manifest_validator.validate_manifest(manifest)
+
+        self.assertIn("pipeline_stages is missing: preserve-raw", errors)
+
+    def test_rejects_duplicate_required_pipeline_stage(self) -> None:
+        manifest = valid_manifest()
+        duplicate = copy.deepcopy(manifest["pipeline_stages"][1])  # type: ignore[index]
+        manifest["pipeline_stages"].append(duplicate)  # type: ignore[union-attr]
+
+        errors = manifest_validator.validate_manifest(manifest)
+
+        self.assertIn("duplicate stage_id: preserve-raw", errors)
 
     def test_requires_selected_profile_activation_basis(self) -> None:
         manifest = valid_manifest()

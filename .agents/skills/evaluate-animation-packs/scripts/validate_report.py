@@ -8,6 +8,13 @@ import re
 import sys
 from pathlib import Path
 
+from evaluation_contract_v1 import (
+    PIPELINE_STAGE_ROWS,
+    PRIMARY_ROLES,
+    PROFILE_ROWS,
+    SCHEMA,
+)
+
 
 REQUIRED_HEADINGS = [
     "## Executive decision",
@@ -39,43 +46,9 @@ REQUIRED_EXECUTIVE_HEADINGS = [
     "### Poor fit or material caveats",
     "### Adoption conditions",
 ]
-PRIMARY_ROLES = [
-    "idle-pose",
-    "continuous-locomotion",
-    "locomotion-transition",
-    "airborne",
-    "traversal",
-    "action-interaction",
-    "reaction-death",
-    "emote-cinematic",
-    "other-unknown",
-]
-PIPELINE_STAGE_LABELS = [
-    "Acquire",
-    "Preserve raw",
-    "Inspect",
-    "Segment",
-    "Root motion",
-    "Conform",
-    "Validate",
-    "Optimize",
-    "Export",
-    "Gate/report",
-]
-PROFILE_LABELS = [
-    "Marketplace intake",
-    "Blended locomotion",
-    "Root-motion controller",
-    "State-machine transitions",
-    "Layered upper body/weapons",
-    "Traversal/environment",
-    "Contact actions/interactions",
-    "Retargeted/customizable characters",
-    "Motion matching/search",
-    "Networked movement",
-    "Runtime performance",
-]
-MANIFEST_SCHEMA = "urn:animsmith:skill:animation-pack-evaluation-manifest:1"
+PIPELINE_STAGE_LABELS = tuple(label for _identifier, label in PIPELINE_STAGE_ROWS)
+PROFILE_LABELS = tuple(label for _identifier, label in PROFILE_ROWS)
+MANIFEST_SCHEMA = SCHEMA
 PLACEHOLDER = re.compile(r"\{\{[^{}]+\}\}")
 
 

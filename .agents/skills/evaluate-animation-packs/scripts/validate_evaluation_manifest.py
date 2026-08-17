@@ -11,77 +11,23 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from evaluation_contract_v1 import (
+    ACTIVATION_BASES,
+    CLASSIFICATION_BASES,
+    CONFIDENCE,
+    COVERAGE_STATES,
+    PIPELINE_STAGES,
+    PRIMARY_ROLES,
+    PROFILE_IDS,
+    PROFILE_SET_VERSION,
+    PROFILE_STATUSES,
+    SCHEMA,
+    SET_TYPES,
+    TAXONOMY_VERSION,
+    VARIANTS,
+)
 
-SCHEMA = "urn:animsmith:skill:animation-pack-evaluation-manifest:1"
-TAXONOMY_VERSION = "1"
-PROFILE_SET_VERSION = "1"
 
-PRIMARY_ROLES = (
-    "idle-pose",
-    "continuous-locomotion",
-    "locomotion-transition",
-    "airborne",
-    "traversal",
-    "action-interaction",
-    "reaction-death",
-    "emote-cinematic",
-    "other-unknown",
-)
-VARIANTS = {"in-place", "root-motion", "rotation-only-root", "single", "unknown"}
-SET_TYPES = {
-    "directional-blend",
-    "speed-blend",
-    "sync-group",
-    "transition-chain",
-    "mask-composition",
-    "retarget-group",
-    "paired-interaction",
-    "motion-database",
-    "other",
-}
-CLASSIFICATION_BASES = {"user-required", "vendor-stated", "observed-file", "inferred"}
-CONFIDENCE = {"high", "medium", "low"}
-PROFILE_IDS = (
-    "marketplace-intake",
-    "blended-locomotion",
-    "root-motion-controller",
-    "state-machine-transitions",
-    "layered-upper-body-weapons",
-    "traversal-environment",
-    "contact-actions-interactions",
-    "retargeted-customizable-characters",
-    "motion-matching-search",
-    "networked-movement",
-    "runtime-performance",
-)
-PROFILE_STATUSES = {"selected", "not-selected", "not-applicable"}
-ACTIVATION_BASES = {
-    "user-required",
-    "vendor-intended",
-    "observed-pack-capability",
-    "evaluator-selected-generic-scenario",
-}
-PIPELINE_STAGES = (
-    "acquire",
-    "preserve-raw",
-    "inspect",
-    "segment",
-    "root-motion",
-    "conform",
-    "validate",
-    "optimize",
-    "export",
-    "gate-report",
-)
-COVERAGE_STATES = {
-    "evaluated-clean",
-    "evaluated-finding",
-    "partially-evaluated",
-    "not-applicable",
-    "not-evaluated",
-    "unsupported-input",
-    "unavailable-evidence",
-}
 IDENTIFIER = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 TAG = re.compile(r"^[a-z][a-z0-9-]*:[a-z0-9][a-z0-9-]*$")
 
