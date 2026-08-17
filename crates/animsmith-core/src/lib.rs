@@ -129,7 +129,7 @@ pub use contract::{
     MEASUREMENTS_SCHEMA_VERSION, MeasureEnvelope, MeasureFileReport, MeasurementContract,
     MeasurementContractError, MeasurementFileError, MeasurementReportError, MeasurementReportFile,
     MeasurementReportInput, OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, RigInfo, RigInfoError,
-    ToolInfo, ToolSource,
+    ToolInfo, ToolSource, sha256_hex,
 };
 pub use evaluation::{
     Applicability, BUILTIN_COVERAGE_GAP_CODES, BUILTIN_EVALUATION_SCOPE_CODES, CheckEvaluation,
