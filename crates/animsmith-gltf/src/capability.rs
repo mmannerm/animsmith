@@ -1449,6 +1449,7 @@ fn preserved_accessor_ranges(
             .unwrap_or(0),
         sparse_count,
         index_size,
+        index_size,
     )?;
     ranges.push((
         indices_range.0,
@@ -1460,7 +1461,7 @@ fn preserved_accessor_ranges(
 
     let values = sparse.get("values")?.as_object()?;
     let component_size = component_size(accessor.get("componentType")?.as_u64()?)?;
-    let element_size = accessor_element_size(accessor.get("type")?.as_str()?, component_size)?;
+    let element_layout = accessor_element_layout(accessor.get("type")?.as_str()?, component_size)?;
     let values_range = packed_view_range(
         root,
         buffers,
@@ -1470,7 +1471,8 @@ fn preserved_accessor_ranges(
             .and_then(Value::as_u64)
             .unwrap_or(0),
         sparse_count,
-        element_size,
+        element_layout.stride,
+        element_layout.terminal_size,
     )?;
     ranges.push((
         values_range.0,
@@ -1489,7 +1491,8 @@ fn packed_view_range(
     view_index: usize,
     relative_offset: u64,
     count: usize,
-    element_size: usize,
+    element_stride: usize,
+    terminal_size: usize,
 ) -> Option<(usize, usize, usize)> {
     let view = root
         .get("bufferViews")?
@@ -1509,7 +1512,9 @@ fn packed_view_range(
         return None;
     }
     let relative_offset: usize = relative_offset.try_into().ok()?;
-    let relative_end = relative_offset.checked_add(count.checked_mul(element_size)?)?;
+    let relative_end = relative_offset
+        .checked_add(count.checked_sub(1)?.checked_mul(element_stride)?)?
+        .checked_add(terminal_size)?;
     if relative_end > view_length {
         return None;
     }
@@ -1733,7 +1738,7 @@ pub(crate) fn dense_f32_accessor_range(
         return None;
     }
     let range = accessor_range(root, buffers, accessor_index)?;
-    if range.stride != range.element_size || !range.start.is_multiple_of(4) {
+    if range.stride != range.element_stride || !range.start.is_multiple_of(4) {
         return None;
     }
     Some((range.buffer, range.start, range.end))
@@ -1762,7 +1767,7 @@ struct AccessorRange {
     start: usize,
     end: usize,
     stride: usize,
-    element_size: usize,
+    element_stride: usize,
 }
 
 fn accessor_range(
@@ -1792,7 +1797,7 @@ fn dense_accessor_range(
     let buffer_views = root.get("bufferViews")?.as_array()?;
     let accessor = accessors.get(accessor_index)?.as_object()?;
     let component_size = component_size(accessor.get("componentType")?.as_u64()?)?;
-    let element_size = accessor_element_size(accessor.get("type")?.as_str()?, component_size)?;
+    let element_layout = accessor_element_layout(accessor.get("type")?.as_str()?, component_size)?;
     let count: usize = accessor.get("count")?.as_u64()?.try_into().ok()?;
     if count == 0 {
         return None;
@@ -1820,15 +1825,15 @@ fn dense_accessor_range(
     let stride: usize = view
         .get("byteStride")
         .and_then(Value::as_u64)
-        .unwrap_or(element_size as u64)
+        .unwrap_or(element_layout.stride as u64)
         .try_into()
         .ok()?;
-    if stride < element_size {
+    if stride < element_layout.stride {
         return None;
     }
     let relative_end = accessor_offset
         .checked_add(count.checked_sub(1)?.checked_mul(stride)?)?
-        .checked_add(element_size)?;
+        .checked_add(element_layout.terminal_size)?;
     if relative_end > view_length {
         return None;
     }
@@ -1839,7 +1844,7 @@ fn dense_accessor_range(
         start,
         end,
         stride,
-        element_size,
+        element_stride: element_layout.stride,
     })
 }
 
@@ -1852,7 +1857,23 @@ fn component_size(component_type: u64) -> Option<usize> {
     }
 }
 
-fn accessor_element_size(accessor_type: &str, component_size: usize) -> Option<usize> {
+/// The stored spacing and terminal occupied extent of one accessor element.
+///
+/// Integer `MAT2` and `MAT3` columns begin on four-byte boundaries. That
+/// padding contributes to the stride between elements, but glTF permits the
+/// trailing padding after the final matrix column to be omitted when no data
+/// follows. Keeping the two lengths separate admits that compact final
+/// element without weakening the bounds on preceding elements.
+#[derive(Debug, Clone, Copy)]
+struct AccessorElementLayout {
+    stride: usize,
+    terminal_size: usize,
+}
+
+fn accessor_element_layout(
+    accessor_type: &str,
+    component_size: usize,
+) -> Option<AccessorElementLayout> {
     let (columns, rows, matrix) = match accessor_type {
         "SCALAR" => (1usize, 1usize, false),
         "VEC2" => (1, 2, false),
@@ -1869,7 +1890,15 @@ fn accessor_element_size(accessor_type: &str, component_size: usize) -> Option<u
     } else {
         column_size
     };
-    columns.checked_mul(stored_column_size)
+    let stride = columns.checked_mul(stored_column_size)?;
+    let terminal_size = columns
+        .checked_sub(1)?
+        .checked_mul(stored_column_size)?
+        .checked_add(column_size)?;
+    Some(AccessorElementLayout {
+        stride,
+        terminal_size,
+    })
 }
 
 fn inspect_schema_members(

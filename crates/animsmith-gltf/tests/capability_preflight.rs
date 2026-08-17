@@ -1214,6 +1214,73 @@ fn accepts_harmless_unreferenced_dense_and_sparse_accessors() {
 }
 
 #[test]
+fn accepts_a_compact_unreferenced_dense_integer_matrix() {
+    let value = positions_and_unreferenced_accessor(
+        json!({ "bufferView": 1, "componentType": 5121, "count": 1, "type": "MAT2" }),
+        vec![
+            json!({ "buffer": 0, "byteOffset": 0, "byteLength": 36 }),
+            // The columns begin at offsets 0 and 4. The last component ends
+            // at byte 6, and glTF permits the final two padding bytes to be
+            // omitted when no further element follows.
+            json!({ "buffer": 0, "byteOffset": 36, "byteLength": 6 }),
+        ],
+    );
+
+    preflight_scale_source_bytes(Path::new("compact-dense-mat2-u8.gltf"), &bytes(&value))
+        .expect("a compact final integer-matrix column remains supported");
+}
+
+#[test]
+fn accepts_compact_unreferenced_sparse_integer_matrix_values() {
+    let value = positions_and_unreferenced_accessor(
+        json!({
+            "componentType": 5121,
+            "count": 1,
+            "type": "MAT2",
+            "sparse": {
+                "count": 1,
+                "indices": { "bufferView": 1, "componentType": 5121 },
+                "values": { "bufferView": 2 }
+            }
+        }),
+        vec![
+            json!({ "buffer": 0, "byteOffset": 0, "byteLength": 36 }),
+            json!({ "buffer": 0, "byteOffset": 36, "byteLength": 1 }),
+            json!({ "buffer": 0, "byteOffset": 40, "byteLength": 6 }),
+        ],
+    );
+
+    preflight_scale_source_bytes(Path::new("compact-sparse-mat2-u8.gltf"), &bytes(&value))
+        .expect("compact sparse integer-matrix values remain supported");
+}
+
+#[test]
+fn keeps_integer_matrix_stride_between_elements() {
+    let matrix = |byte_length| {
+        positions_and_unreferenced_accessor(
+            json!({ "bufferView": 1, "componentType": 5121, "count": 2, "type": "MAT2" }),
+            vec![
+                json!({ "buffer": 0, "byteOffset": 0, "byteLength": 36 }),
+                json!({ "buffer": 0, "byteOffset": 36, "byteLength": byte_length }),
+            ],
+        )
+    };
+
+    preflight_scale_source_bytes(Path::new("two-compact-mat2-u8.gltf"), &bytes(&matrix(14)))
+        .expect("two MAT2 U8 elements use an eight-byte stride and a six-byte final extent");
+
+    let (violations, _) = unsupported(&matrix(13));
+    assert_eq!(
+        locations(
+            &violations,
+            GltfCapabilityViolationKind::UnsafeAccessorLayout
+        ),
+        vec!["/accessors/1"],
+        "the second element still begins at byte 8; compact trailing storage must not collapse its stride"
+    );
+}
+
+#[test]
 fn rejects_unreadable_inverse_binds_and_animated_morph_weights() {
     let mut value = base_json();
     value["meshes"] = json!([]);
