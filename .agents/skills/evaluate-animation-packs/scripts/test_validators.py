@@ -827,10 +827,12 @@ class ManifestValidatorTests(unittest.TestCase):
             invalid_values = (
                 bool(declared),
                 float(declared),  # type: ignore[arg-type]
+                1.5,
                 -1,
                 None,
                 "1",
                 {},
+                [],
             )
             for invalid in invalid_values:
                 with self.subTest(path=".".join(path), invalid=repr(invalid)):
