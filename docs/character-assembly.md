@@ -104,7 +104,11 @@ apply:
   Hips fallback) has missing/non-finite trajectory evidence, more than 1 cm of
   horizontal accumulation, or more than 1° of yaw accumulation after the
   ordinary interior open-loop wrap-step allowance (boundary jumps are not an
-  allowance);
+  allowance). Every key of a nonconstant channel that can affect the selected
+  bone's model-space position or yaw must also map to a distinct declared `fps`
+  whole-frame sample over the clip duration, within f32 roundoff. Sparse
+  channels may omit frames because every declared frame is sampled;
+  irregular/off-grid times and multiple events aliasing to one frame refuse;
 - `strip_bones = [...]`: remove every TRS track for named base bones.
 
 `complete_tracks = true` fills absent TRS channels from the base rest pose for

@@ -346,8 +346,12 @@ discontinuous source clip smooth.
 
 There is no general automatic repair. `transform --gait-anchor` can rotate an
 explicitly in-place locomotion cycle in time to choose a better stride cut; it
-refuses accumulating root translation or yaw and does not rewrite arbitrary
-bone endpoint poses or tangents. Angular-velocity C1 continuity,
+refuses accumulating root translation or yaw. Every key in a nonconstant
+selected Root/Hips trajectory channel must map to a distinct declared
+whole-frame sample; sparse channels may omit frames because every declared
+frame is sampled, while irregular/off-grid or same-frame events refuse rather
+than allowing finite motion to hide between samples. It does not rewrite
+arbitrary bone endpoint poses or tangents. Angular-velocity C1 continuity,
 acceleration/jerk continuity, root-motion extraction policy, and runtime blend
 settings remain out of scope.
 
@@ -409,7 +413,11 @@ set member by member. Selecting it explicitly declares the clip in-place.
 AnimSmith verifies the Root role (or Hips fallback) before rewriting and
 refuses missing/non-finite evidence, horizontal accumulation above 1 cm, or
 yaw accumulation above 1° after allowing one ordinary interior step of an open
-cycle; a boundary jump cannot supply that allowance. Do not apply it to
+cycle; a boundary jump cannot supply that allowance. Every key in a nonconstant
+trajectory channel must map to a distinct declared whole-frame sample over the
+clip duration, within f32 roundoff. Sparse channels may omit frames because
+every declared frame is sampled; irregular/off-grid or same-frame events
+refuse. Do not apply it to
 authored root motion: retain that trajectory, use
 runtime phase offsets, or use a separately designed trajectory-preserving
 operation. Gait anchoring does not convert root motion to in-place motion.

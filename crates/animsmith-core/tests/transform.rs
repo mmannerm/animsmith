@@ -274,6 +274,8 @@ fn assert_gait_refusal_is_located_and_atomic(clip: &Clip, before: &str, error: &
     assert!(error.contains("pelvis"), "got: {error}");
     assert!(error.contains("horizontal translation"), "got: {error}");
     assert!(error.contains("yaw"), "got: {error}");
+    assert!(error.contains("cap 0.0100 m"), "got: {error}");
+    assert!(error.contains("cap 1.000 deg"), "got: {error}");
     assert!(error.contains("retain source root motion"), "got: {error}");
     assert!(error.contains("runtime phase offsets"), "got: {error}");
     assert!(
@@ -374,6 +376,39 @@ fn gait_anchor_refuses_abrupt_boundary_translation_and_yaw() {
 }
 
 #[test]
+fn gait_anchor_refuses_abrupt_final_boundary_translation_and_yaw() {
+    let (skel, mut clip) = open_walk();
+    let roles = roles(&skel);
+    clip.name = "final_boundary_jump".into();
+    clip.tracks.push(root_translation((0..KEYS).map(|key| {
+        if key + 1 == KEYS {
+            Vec3::new(3.0, 1.0, 0.0)
+        } else {
+            Vec3::new(0.0, 1.0, 0.0)
+        }
+    })));
+    clip.tracks.push(root_yaw((0..KEYS).map(|key| {
+        if key + 1 == KEYS {
+            std::f32::consts::PI
+        } else {
+            0.0
+        }
+    })));
+    let before = format!("{clip:?}");
+
+    let error = align_gait_anchor(&skel, &mut clip, &roles, FPS, GaitTrajectoryPolicy::InPlace)
+        .unwrap_err();
+
+    assert_gait_refusal_is_located_and_atomic(&clip, &before, &error);
+    assert!(error.contains("translation 3.0000 m"), "got: {error}");
+    assert!(error.contains("yaw 180.000 deg"), "got: {error}");
+    assert!(
+        error.contains("interior-step allowance 0.0000 m"),
+        "got: {error}"
+    );
+}
+
+#[test]
 fn gait_anchor_accepts_cyclic_root_translation_and_yaw() {
     let (skel, mut clip) = open_walk();
     let roles = roles(&skel);
@@ -425,6 +460,24 @@ fn gait_anchor_policy_pins_translation_and_yaw_caps() {
     )
     .expect("facts immediately inside both fixed caps are admitted");
 
+    let mut at_cap = base.clone();
+    at_cap
+        .tracks
+        .push(linear_root_translation_with_accumulation(
+            GAIT_ANCHOR_MAX_HORIZONTAL_ACCUMULATION_M,
+        ));
+    at_cap.tracks.push(linear_root_yaw_with_accumulation(
+        GAIT_ANCHOR_MAX_YAW_ACCUMULATION_DEG,
+    ));
+    align_gait_anchor(
+        &skel,
+        &mut at_cap,
+        &roles,
+        FPS,
+        GaitTrajectoryPolicy::InPlace,
+    )
+    .expect("facts exactly at both inclusive fixed caps are admitted");
+
     let mut translation_outside = base.clone();
     translation_outside
         .tracks
@@ -443,6 +496,14 @@ fn gait_anchor_policy_pins_translation_and_yaw_caps() {
         translation_error.contains("horizontal translation 0.0101 m"),
         "got: {translation_error}"
     );
+    assert!(
+        translation_error.contains("cap 0.0100 m"),
+        "got: {translation_error}"
+    );
+    assert!(
+        translation_error.contains("cap 1.000 deg"),
+        "got: {translation_error}"
+    );
 
     let mut yaw_outside = base;
     yaw_outside.tracks.push(linear_root_yaw_with_accumulation(
@@ -457,6 +518,8 @@ fn gait_anchor_policy_pins_translation_and_yaw_caps() {
     )
     .unwrap_err();
     assert!(yaw_error.contains("yaw 1.010 deg"), "got: {yaw_error}");
+    assert!(yaw_error.contains("cap 0.0100 m"), "got: {yaw_error}");
+    assert!(yaw_error.contains("cap 1.000 deg"), "got: {yaw_error}");
 }
 
 #[test]
@@ -477,6 +540,78 @@ fn gait_anchor_fails_closed_without_root_or_hips_evidence() {
     assert!(error.contains("walk"), "got: {error}");
     assert!(error.contains("evidence is missing"), "got: {error}");
     assert!(error.contains("retain source root motion"), "got: {error}");
+    assert_eq!(format!("{clip:?}"), before);
+}
+
+#[test]
+fn gait_anchor_fails_closed_on_out_of_range_selected_role() {
+    let (mut skel, mut clip) = open_walk();
+    let roles = roles(&skel);
+    skel.bones.clear();
+    let before = format!("{clip:?}");
+
+    let error = align_gait_anchor(&skel, &mut clip, &roles, FPS, GaitTrajectoryPolicy::InPlace)
+        .unwrap_err();
+
+    assert!(error.contains("Hips fallback"), "got: {error}");
+    assert!(
+        error.contains("index 0 is outside the skeleton"),
+        "got: {error}"
+    );
+    assert!(error.contains("evidence is missing"), "got: {error}");
+    assert_eq!(format!("{clip:?}"), before);
+}
+
+#[test]
+fn gait_anchor_fails_closed_on_out_of_range_ancestor() {
+    let (mut skel, mut clip) = open_walk();
+    skel.bones[0].parent = Some(99);
+    let roles = roles(&skel);
+    let before = format!("{clip:?}");
+
+    let error = align_gait_anchor(&skel, &mut clip, &roles, FPS, GaitTrajectoryPolicy::InPlace)
+        .unwrap_err();
+
+    assert!(error.contains("pelvis"), "got: {error}");
+    assert!(
+        error.contains("out-of-range ancestor index 99"),
+        "got: {error}"
+    );
+    assert!(error.contains("evidence is missing"), "got: {error}");
+    assert_eq!(format!("{clip:?}"), before);
+}
+
+#[test]
+fn gait_anchor_fails_closed_on_cyclic_ancestor_chain() {
+    let (mut skel, mut clip) = open_walk();
+    skel.bones[0].parent = Some(0);
+    let roles = roles(&skel);
+    let before = format!("{clip:?}");
+
+    let error = align_gait_anchor(&skel, &mut clip, &roles, FPS, GaitTrajectoryPolicy::InPlace)
+        .unwrap_err();
+
+    assert!(error.contains("pelvis"), "got: {error}");
+    assert!(error.contains("cyclic ancestor chain"), "got: {error}");
+    assert!(error.contains("evidence is missing"), "got: {error}");
+    assert_eq!(format!("{clip:?}"), before);
+}
+
+#[test]
+fn gait_anchor_fails_closed_without_horizontal_forward_axis() {
+    let (mut skel, mut clip) = open_walk();
+    skel.bones[0].rest.rotation = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    let roles = roles(&skel);
+    let before = format!("{clip:?}");
+
+    let error = align_gait_anchor(&skel, &mut clip, &roles, FPS, GaitTrajectoryPolicy::InPlace)
+        .unwrap_err();
+
+    assert!(error.contains("pelvis"), "got: {error}");
+    assert!(
+        error.contains("no finite horizontal forward axis"),
+        "got: {error}"
+    );
     assert_eq!(format!("{clip:?}"), before);
 }
 
@@ -536,6 +671,119 @@ fn gait_anchor_fails_closed_on_non_finite_authored_interval_between_samples() {
     assert!(error.contains("pelvis"), "got: {error}");
     assert!(error.contains("retain source root motion"), "got: {error}");
     assert_eq!(format!("{clip:?}"), before);
+}
+
+#[test]
+fn gait_anchor_fails_closed_on_finite_step_turn_between_uniform_samples() {
+    let (skel, mut clip) = open_walk();
+    let roles = roles(&skel);
+    clip.name = "hidden_full_turn".into();
+    clip.tracks.push(Track {
+        bone: 0,
+        property: Property::Rotation,
+        interpolation: Interpolation::Step,
+        times: vec![0.0, 0.001, 0.002, 0.003, 0.004, clip.duration_s as f32],
+        values: TrackValues::Quats(
+            [0.0f32, 90.0, 180.0, 270.0, 360.0, 360.0]
+                .into_iter()
+                .map(|degrees| Quat::from_rotation_y(degrees.to_radians()))
+                .collect(),
+        ),
+    });
+    let before = format!("{clip:?}");
+
+    let error = align_gait_anchor(&skel, &mut clip, &roles, FPS, GaitTrajectoryPolicy::InPlace)
+        .unwrap_err();
+
+    assert!(error.contains("hidden_full_turn"), "got: {error}");
+    assert!(error.contains("Hips fallback"), "got: {error}");
+    assert!(error.contains("pelvis"), "got: {error}");
+    assert!(
+        error.contains("irregular/non-frame-aligned trajectory evidence"),
+        "got: {error}"
+    );
+    assert!(error.contains("track 2, key 1"), "got: {error}");
+    assert!(error.contains("retain source root motion"), "got: {error}");
+    assert_eq!(format!("{clip:?}"), before);
+}
+
+#[test]
+fn gait_anchor_fails_closed_on_non_frame_aligned_trajectory_key() {
+    let (skel, mut clip) = open_walk();
+    let roles = roles(&skel);
+    let mut yaw = root_yaw((0..KEYS).map(|key| {
+        let theta = std::f32::consts::TAU * key as f32 / KEYS as f32;
+        0.1 * theta.sin()
+    }));
+    yaw.times[5] += 0.001;
+    clip.tracks.push(yaw);
+    let before = format!("{clip:?}");
+
+    let error = align_gait_anchor(&skel, &mut clip, &roles, FPS, GaitTrajectoryPolicy::InPlace)
+        .unwrap_err();
+
+    assert!(
+        error.contains("irregular/non-frame-aligned trajectory evidence"),
+        "got: {error}"
+    );
+    assert!(error.contains("track 2, key 5"), "got: {error}");
+    assert!(error.contains("32 fps"), "got: {error}");
+    assert_eq!(format!("{clip:?}"), before);
+}
+
+#[test]
+fn gait_anchor_measures_ancestor_driven_model_space_trajectory() {
+    let (old_skel, mut clip) = open_walk();
+    let mut bones = vec![Bone {
+        name: "motion_root".into(),
+        parent: None,
+        rest: Transform::IDENTITY,
+        inverse_bind: None,
+    }];
+    bones.extend(old_skel.bones.into_iter().map(|mut bone| {
+        bone.parent = bone.parent.map(|parent| parent + 1).or(Some(0));
+        bone
+    }));
+    for track in &mut clip.tracks {
+        track.bone += 1;
+    }
+    clip.name = "ancestor_driven".into();
+    clip.tracks.push(Track {
+        bone: 0,
+        property: Property::Translation,
+        interpolation: Interpolation::Linear,
+        times: (0..KEYS).map(|key| key as f32 / FPS as f32).collect(),
+        values: TrackValues::Vec3s(
+            (0..KEYS)
+                .map(|key| Vec3::new(key as f32 * 0.1, 0.0, 0.0))
+                .collect(),
+        ),
+    });
+    clip.tracks.push(Track {
+        bone: 0,
+        property: Property::Rotation,
+        interpolation: Interpolation::Linear,
+        times: (0..KEYS).map(|key| key as f32 / FPS as f32).collect(),
+        values: TrackValues::Quats(
+            (0..KEYS)
+                .map(|key| {
+                    Quat::from_rotation_y(
+                        key as f32 * std::f32::consts::FRAC_PI_2 / (KEYS - 1) as f32,
+                    )
+                })
+                .collect(),
+        ),
+    });
+    let skel = Skeleton { bones };
+    let roles = roles(&skel);
+    let before = format!("{clip:?}");
+
+    let error = align_gait_anchor(&skel, &mut clip, &roles, FPS, GaitTrajectoryPolicy::InPlace)
+        .unwrap_err();
+
+    assert_gait_refusal_is_located_and_atomic(&clip, &before, &error);
+    assert!(error.contains("3.0000 m"), "got: {error}");
+    assert!(error.contains("yaw 87.097 deg"), "got: {error}");
 }
 
 #[test]
@@ -839,7 +1087,11 @@ fn gait_anchor_refuses_cubic_with_nonzero_tangents() {
     let err = align_gait_anchor(&skel, &mut clip, &roles, FPS, GaitTrajectoryPolicy::InPlace)
         .unwrap_err();
     assert!(err.contains("cannot gait-anchor"), "got: {err}");
-    assert!(err.contains("bone 0"), "error should name the track: {err}");
+    assert!(err.contains("pelvis"), "error should name the bone: {err}");
+    assert!(
+        err.contains("track 2"),
+        "error should name the track: {err}"
+    );
     // Refusal is total — nothing rotated.
     for (a, b) in clip.tracks.iter().zip(&before.tracks) {
         assert_eq!(vec3_values(a), vec3_values(b));

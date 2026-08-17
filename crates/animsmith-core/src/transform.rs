@@ -1170,8 +1170,9 @@ const GAIT_TRAJECTORY_ALTERNATIVES: &str = "retain source root motion, use runti
 /// non-constant cubic-spline track would need lossy resampling, or no
 /// tested rotation candidate remains measurable. Under
 /// [`GaitTrajectoryPolicy::InPlace`], missing/non-finite selected-root
-/// evidence and material horizontal translation or yaw accumulation are also
-/// errors. All errors are returned before `clip` is changed.
+/// evidence, nonconstant trajectory channels with keys off the declared
+/// whole-frame grid, and material horizontal translation or yaw accumulation
+/// are also errors. All errors are returned before `clip` is changed.
 ///
 /// # Panics
 ///
@@ -1185,7 +1186,9 @@ pub fn align_gait_anchor(
     trajectory_policy: GaitTrajectoryPolicy,
 ) -> Result<GaitAlignOutcome, String> {
     match trajectory_policy {
-        GaitTrajectoryPolicy::InPlace => verify_in_place_gait_trajectory(skeleton, clip, roles)?,
+        GaitTrajectoryPolicy::InPlace => {
+            verify_in_place_gait_trajectory(skeleton, clip, roles, fps)?
+        }
     }
 
     let measure = |c: &Clip| -> Option<(f64, Option<f64>, f64)> {
@@ -1272,6 +1275,7 @@ fn verify_in_place_gait_trajectory(
     skeleton: &Skeleton,
     clip: &Clip,
     roles: &ResolvedRoles,
+    fps: f64,
 ) -> Result<(), String> {
     let (role, bone) = roles
         .get(Role::Root)
@@ -1339,14 +1343,7 @@ fn verify_in_place_gait_trajectory(
             ));
         }
     }
-    let Some(frames) = crate::metrics::metric_frame_count(clip) else {
-        return Err(format!(
-            "cannot gait-anchor clip {:?} under the in-place policy: selected {role} bone \
-             {:?} (index {bone}) has no finite cycle grid for trajectory evidence; \
-             {GAIT_TRAJECTORY_ALTERNATIVES}",
-            clip.name, bone_name
-        ));
-    };
+    let frames = verify_trajectory_frame_grid(clip, role, bone, bone_name, &trajectory_bones, fps)?;
     let grid = sample_clip(skeleton, clip, frames);
     if grid.frame_count() < 3 {
         return Err(format!(
@@ -1426,8 +1423,14 @@ fn verify_in_place_gait_trajectory(
 
     if !horizontal_accumulation_m.is_finite()
         || !yaw_accumulation_deg.is_finite()
-        || horizontal_accumulation_m > GAIT_ANCHOR_MAX_HORIZONTAL_ACCUMULATION_M
-        || yaw_accumulation_deg > GAIT_ANCHOR_MAX_YAW_ACCUMULATION_DEG
+        || crate::checks::exceeds_f32_cap(
+            horizontal_accumulation_m,
+            GAIT_ANCHOR_MAX_HORIZONTAL_ACCUMULATION_M,
+        )
+        || crate::checks::exceeds_f32_cap(
+            yaw_accumulation_deg,
+            GAIT_ANCHOR_MAX_YAW_ACCUMULATION_DEG,
+        )
     {
         return Err(format!(
             "cannot gait-anchor clip {:?} under the in-place policy: selected {role} bone \
@@ -1443,6 +1446,85 @@ fn verify_in_place_gait_trajectory(
         ));
     }
     Ok(())
+}
+
+/// Require every trajectory-affecting authored event to land on the same
+/// whole-frame grid that the safety verifier samples. Sparse grid-aligned
+/// tracks remain useful because the verifier samples the intervening declared
+/// frames too; two events may not alias to the same frame. This is stricter
+/// than ordinary metric sampling: a finite STEP turn can otherwise begin and
+/// end between two uniform samples and look stationary to the in-place check.
+fn verify_trajectory_frame_grid(
+    clip: &Clip,
+    role: &str,
+    bone: BoneId,
+    bone_name: &str,
+    trajectory_bones: &[bool],
+    fps: f64,
+) -> Result<usize, String> {
+    let intervals = clip.duration_s * fps;
+    let interval_tolerance = f64::from(f32::EPSILON) * intervals.abs().max(1.0) * 4.0;
+    if !fps.is_finite()
+        || fps <= 0.0
+        || !clip.duration_s.is_finite()
+        || clip.duration_s <= 0.0
+        || !intervals.is_finite()
+        || (intervals - intervals.round()).abs() > interval_tolerance
+        || intervals.round() < 1.0
+        || intervals.round() > (usize::MAX - 1) as f64
+    {
+        return Err(format!(
+            "cannot gait-anchor clip {:?} under the in-place policy: selected {role} bone \
+             {:?} (index {bone}) has no finite whole-frame trajectory grid at {fps} fps over \
+             {:.6} s; {GAIT_TRAJECTORY_ALTERNATIVES}",
+            clip.name, bone_name, clip.duration_s
+        ));
+    }
+    let expected_keys = intervals.round() as usize + 1;
+
+    for (track_index, track) in clip.tracks.iter().enumerate() {
+        if !trajectory_bones.get(track.bone).copied().unwrap_or(false)
+            || is_rotation_invariant_track(track)
+            || !track_affects_selected_trajectory(track, bone)
+        {
+            continue;
+        }
+        let mut previous_frame = None;
+        for (key, &time) in track.times.iter().enumerate() {
+            let frame = (f64::from(time) * fps).round();
+            let frame_in_range = (0.0..=(expected_keys - 1) as f64).contains(&frame);
+            let frame = if frame_in_range { frame as usize } else { 0 };
+            let expected = (clip.duration_s * frame as f64 / (expected_keys - 1) as f64) as f32;
+            let time_tolerance = f32::EPSILON * expected.abs().max(1.0) * 4.0;
+            if !frame_in_range
+                || (time - expected).abs() > time_tolerance
+                || previous_frame.is_some_and(|previous| frame <= previous)
+            {
+                return Err(format!(
+                    "cannot gait-anchor clip {:?} under the in-place policy: selected {role} \
+                     bone {:?} (index {bone}) has irregular/non-frame-aligned trajectory evidence \
+                     in track {track_index}, key {key}: authored time {time:.9} s does not map to \
+                     a distinct declared whole-frame sample at {fps} fps (nearest grid time \
+                     {expected:.9} s); {GAIT_TRAJECTORY_ALTERNATIVES}",
+                    clip.name, bone_name
+                ));
+            }
+            previous_frame = Some(frame);
+        }
+    }
+    Ok(expected_keys)
+}
+
+fn track_affects_selected_trajectory(track: &Track, selected_bone: BoneId) -> bool {
+    match &track.values {
+        // The tolerant sampler treats every quaternion-valued channel as
+        // rotation, independent of its property tag.
+        TrackValues::Quats(_) => true,
+        TrackValues::Vec3s(_) => {
+            track.property == Property::Translation
+                || (track.bone != selected_bone && track.property == Property::Scale)
+        }
+    }
 }
 
 /// Exact representation-level predicate used by gait-anchor rotation. It is
