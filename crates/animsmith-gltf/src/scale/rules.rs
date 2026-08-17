@@ -116,6 +116,9 @@ pub(crate) fn collect_accessor_rules(
                 validate_whole_document_disposition(*disposition, factor_changes)?
                     .then_some(AccessorRule::AllComponents)
             }
+            RawAccessorTarget::MorphPositions => {
+                factor_changes.then_some(AccessorRule::AllComponents)
+            }
             RawAccessorTarget::InstanceInverseBind { source_skin_index } => {
                 let skin = plan.skin_binding(*source_skin_index)?;
                 let mut rewrite = None;

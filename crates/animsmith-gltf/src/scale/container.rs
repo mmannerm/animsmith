@@ -185,6 +185,7 @@ mod tests {
             nodes: Vec::new(),
             animation_channels: Vec::new(),
             primitives: Vec::new(),
+            morph_weight_locations: Vec::new(),
             instancing: Vec::new(),
             skins: Vec::new(),
             camera_count: 0,

@@ -80,7 +80,7 @@ use animsmith_gltf::{
     GltfCapabilityManifest, GltfCapabilityViolation, GltfContainerKind, GltfRawJsonDifference,
     GltfRawJsonDifferenceKind, GltfRawJsonDifferenceSummary, GltfScaleArtifact,
     GltfScaleArtifactProof, GltfScalePreflightError, GltfScaleRewriteError, GltfScaleSource,
-    capability_facts, preflight_scale_source_bytes, prove_rewritten_artifact,
+    operation_capability_facts, preflight_scale_source_bytes, prove_rewritten_artifact,
     prove_rewritten_rest_bind, rewrite_scale_plan,
 };
 use serde::ser::Error as _;
@@ -89,8 +89,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-const SCALE_EVIDENCE_SCHEMA_VERSION: u32 = 3;
-pub(crate) const SCALE_EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:scale-evidence:3";
+const SCALE_EVIDENCE_SCHEMA_VERSION: u32 = 4;
+pub(crate) const SCALE_EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:scale-evidence:4";
 
 // --- Request ---------------------------------------------------------------
 
@@ -390,7 +390,7 @@ impl DomainRewritesRecord {
             },
             _ => {
                 return Err(
-                    "the scale operation has no scale-evidence v3 domain projection".to_owned(),
+                    "the scale operation has no scale-evidence v4 domain projection".to_owned(),
                 );
             }
         })
@@ -548,7 +548,7 @@ impl From<GltfRawJsonDifferenceKind> for ArtifactProofDifferenceKindRecord {
     }
 }
 
-/// The immutable versioned scale-evidence contract, `scale-evidence:3`.
+/// The immutable versioned scale-evidence contract, `scale-evidence:4`.
 ///
 /// One schema serves both outcomes, discriminated by `outcome`: a published
 /// run carries `result` and a `null` `rejection`, a refused run the reverse.
@@ -926,9 +926,26 @@ pub(crate) fn run(request: &Request, tool: ToolInfo) -> Result<ExitCode, String>
         }
         Err(GltfScalePreflightError::Unsupported {
             manifest,
-            violations,
-            count,
+            mut violations,
+            mut count,
         }) => {
+            // Generic raw preflight can reject before a `GltfScaleSource`
+            // exists. Still apply the selected operation's gate to the
+            // manifest: rest/bind owns additional located refusals for
+            // otherwise whole-document-admissible POSITION morphs and their
+            // weights, and the public record promises the complete union.
+            if let Err(GltfScaleRewriteError::Capability {
+                violations: operation_violations,
+                count: _,
+            }) = operation_capability_facts(&manifest, request.operation.core())
+            {
+                violations.extend(operation_violations);
+                violations.sort_by(|left, right| {
+                    (left.kind, left.location.as_str()).cmp(&(right.kind, right.location.as_str()))
+                });
+                violations.dedup();
+                count = violations.len();
+            }
             let rejection = RejectionRecord {
                 stage: Stage::Preflight,
                 kind: "unsupported-source-domain",
@@ -993,9 +1010,11 @@ struct Produced {
 /// Plan, rewrite, prove, and stage the artifact — everything up to but not
 /// including publication.
 fn produce(request: &Request, source: &GltfScaleSource) -> Result<Produced, Failure> {
-    let facts = capability_facts(source.manifest());
+    let operation = request.operation.core();
+    let facts = operation_capability_facts(source.manifest(), operation)
+        .map_err(|error| rewrite_failure(Stage::Preflight, error))?;
     let plan = plan_scale(&ScaleRequest {
-        operation: request.operation.core(),
+        operation,
         document: source.document(),
         capability: &facts,
     })

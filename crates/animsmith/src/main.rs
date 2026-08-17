@@ -247,7 +247,7 @@ enum Cmd {
 enum ScaleCmd {
     /// Convert every represented length by a declared factor.
     #[command(
-        long_about = "Convert every represented length in a self-contained glTF/GLB document by the declared finite positive factor: node translations, animated translation tracks, inverse-bind translations, and base mesh positions. Physical size changes; this is appropriate only when the source was authored in a different linear unit. The factor is never inferred."
+        long_about = "Convert every represented length in a self-contained glTF/GLB document by the declared finite positive factor: node translations, animated translation tracks, inverse-bind translations, base mesh positions, and raw glTF POSITION morph-target deltas. Physical size changes; this is appropriate only when the source was authored in a different linear unit. The factor is never inferred."
     )]
     WholeDocument {
         /// Input .glb or .gltf file.

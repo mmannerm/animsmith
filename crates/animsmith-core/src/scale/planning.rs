@@ -33,7 +33,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// capability gap, affine domain, closure incompleteness, factor mismatch,
 /// or invalid document shape.
 pub fn plan_scale(request: &ScaleRequest<'_>) -> Result<ScalePlan, ScaleError> {
-    if !request.capability.is_supported() {
+    if !request.capability.is_supported_for(request.operation) {
         return Err(ScaleError::IncompleteCapability);
     }
     validate_scale_input(request.document)?;

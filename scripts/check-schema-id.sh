@@ -78,7 +78,8 @@ check_schema docs/schemas/conversion-evidence-v1.schema.json urn:animsmith:schem
 check_schema docs/schemas/conversion-evidence-v2.schema.json urn:animsmith:schema:conversion-evidence:2 docs/output.md docs/cli.md
 check_schema docs/schemas/scale-evidence-v1.schema.json urn:animsmith:schema:scale-evidence:1
 check_schema docs/schemas/scale-evidence-v2.schema.json urn:animsmith:schema:scale-evidence:2
-check_schema docs/schemas/scale-evidence-v3.schema.json urn:animsmith:schema:scale-evidence:3 crates/animsmith/src/scale.rs docs/output.md docs/cli.md
+check_schema docs/schemas/scale-evidence-v3.schema.json urn:animsmith:schema:scale-evidence:3
+check_schema docs/schemas/scale-evidence-v4.schema.json urn:animsmith:schema:scale-evidence:4 crates/animsmith/src/scale.rs docs/output.md docs/cli.md
 check_schema docs/schemas/character-assembly-recipe-v2.schema.json urn:animsmith:schema:character-assembly-recipe:2
 check_schema docs/schemas/character-assembly-recipe-v3.schema.json urn:animsmith:schema:character-assembly-recipe:3 crates/animsmith/src/assembly.rs docs/character-assembly.md docs/cli.md docs/output.md examples/character-assembly.toml
 check_schema docs/schemas/character-assembly-evidence-v2.schema.json urn:animsmith:schema:character-assembly-evidence:2
@@ -94,6 +95,17 @@ if ! cmp -s docs/schemas/scale-evidence-v2.schema.json <(
     docs/schemas/scale-evidence-v3.schema.json
 ); then
   fail 'scale-evidence-v3 must differ from immutable scale-evidence-v2 only by identity, scale-animation rewrite evidence, and animated-matrix-node'
+fi
+if ! cmp -s docs/schemas/scale-evidence-v3.schema.json <(
+  sed \
+    -e 's/urn:animsmith:schema:scale-evidence:4/urn:animsmith:schema:scale-evidence:3/g' \
+    -e 's/animsmith scale evidence v4/animsmith scale evidence v3/' \
+    -e 's/"const": 4/"const": 3/' \
+    -e 's/, "morph_weight_locations"//' \
+    -e '/"morph_weight_locations": { "\$ref": "#\/\$defs\/string_array" },/d' \
+    docs/schemas/scale-evidence-v4.schema.json
+); then
+  fail 'scale-evidence-v4 must differ from immutable scale-evidence-v3 only by identity and the complete morph-weight capability inventory'
 fi
 if ! cmp -s docs/schemas/character-assembly-recipe-v1.schema.json <(
   sed \

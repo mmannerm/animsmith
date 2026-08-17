@@ -116,6 +116,9 @@ pub struct GltfPrimitiveCapability {
     pub morph_target_count: usize,
     /// `POSITION` accessor indices from morph targets in target order.
     pub morph_position_accessors: Vec<usize>,
+    /// Located morph semantics this scale boundary cannot preserve.
+    #[serde(skip)]
+    pub unsupported_morph_locations: Vec<String>,
 }
 
 /// One raw `EXT_mesh_gpu_instancing` declaration and its accessor identities.
@@ -193,6 +196,8 @@ pub struct GltfCapabilityManifest {
     pub animation_channels: Vec<GltfAnimationChannelCapability>,
     /// Mesh primitives in mesh/primitive order.
     pub primitives: Vec<GltfPrimitiveCapability>,
+    /// Static and animated morph-weight locations in lexical order.
+    pub morph_weight_locations: Vec<String>,
     /// GPU-instancing declarations in source node order.
     pub instancing: Vec<GltfInstancingCapability>,
     /// Source skins in source order.
@@ -582,6 +587,7 @@ fn inventory(
             nodes: Vec::new(),
             animation_channels: Vec::new(),
             primitives: Vec::new(),
+            morph_weight_locations: Vec::new(),
             instancing: Vec::new(),
             skins: Vec::new(),
             camera_count: 0,
@@ -600,6 +606,7 @@ fn inventory(
         nodes: Vec::new(),
         animation_channels: Vec::new(),
         primitives: Vec::new(),
+        morph_weight_locations: Vec::new(),
         instancing: Vec::new(),
         skins: Vec::new(),
         camera_count: object
@@ -635,6 +642,8 @@ fn inventory(
     manifest.extras_locations.dedup();
     manifest.unknown_member_locations.sort();
     manifest.unknown_member_locations.dedup();
+    manifest.morph_weight_locations.sort();
+    manifest.morph_weight_locations.dedup();
     manifest
 }
 
@@ -933,16 +942,15 @@ fn inventory_nodes(
         if !node.is_object() {
             continue;
         }
-        // `weights` and `camera` stay key-based: a `null` there is a domain
-        // the conversion cannot preserve either way, so refusing it is the
-        // safe direction. `matrix` below cannot, because there a false
+        // `weights` stays key-based because the raw writer preserves the
+        // complete JSON value byte-for-byte; its presence is still an
+        // operation-aware capability fact. `camera` remains a rejection.
+        // `matrix` below cannot use a key-based check, because there a false
         // positive refuses a source that converts correctly.
         if node.get("weights").is_some() {
-            violation(
-                violations,
-                GltfCapabilityViolationKind::MorphWeights,
-                format!("/nodes/{node_index}/weights"),
-            );
+            manifest
+                .morph_weight_locations
+                .push(format!("/nodes/{node_index}/weights"));
         }
         if node.get("camera").is_some() {
             violation(
@@ -1024,11 +1032,9 @@ fn inventory_animations(
                 .unwrap_or_default()
                 .to_owned();
             if target_path == "weights" {
-                violation(
-                    violations,
-                    GltfCapabilityViolationKind::MorphWeights,
-                    format!("/animations/{animation_index}/channels/{channel_index}/target/path"),
-                );
+                manifest.morph_weight_locations.push(format!(
+                    "/animations/{animation_index}/channels/{channel_index}/target/path"
+                ));
             }
             let target_node_index = as_index(target.get("node")).unwrap_or(usize::MAX);
             if manifest
@@ -1074,11 +1080,9 @@ fn inventory_meshes(
             continue;
         };
         if mesh.contains_key("weights") {
-            violation(
-                violations,
-                GltfCapabilityViolationKind::MorphWeights,
-                format!("/meshes/{mesh_index}/weights"),
-            );
+            manifest
+                .morph_weight_locations
+                .push(format!("/meshes/{mesh_index}/weights"));
         }
         let primitives = mesh
             .get("primitives")
@@ -1138,22 +1142,36 @@ fn inventory_meshes(
                 .get("targets")
                 .and_then(Value::as_array)
                 .map_or(0, Vec::len);
-            let morph_position_accessors = primitive
+            let mut morph_position_accessors = Vec::new();
+            let mut unsupported_morph_locations = Vec::new();
+            for (target_index, target) in primitive
                 .get("targets")
                 .and_then(Value::as_array)
-                .map(|targets| {
-                    targets
-                        .iter()
-                        .filter_map(|target| as_index(target.get("POSITION")))
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            if morph_target_count > 0 {
-                violation(
-                    violations,
-                    GltfCapabilityViolationKind::MorphTarget,
-                    format!("/meshes/{mesh_index}/primitives/{primitive_index}/targets"),
-                );
+                .into_iter()
+                .flatten()
+                .enumerate()
+            {
+                let Some(target) = target.as_object() else {
+                    continue;
+                };
+                for (semantic, accessor) in target {
+                    let location = format!(
+                        "/meshes/{mesh_index}/primitives/{primitive_index}/targets/{target_index}/{}",
+                        json_pointer_token(semantic)
+                    );
+                    if semantic == "POSITION" {
+                        if let Some(accessor_index) = as_index(Some(accessor)) {
+                            morph_position_accessors.push(accessor_index);
+                        }
+                    } else {
+                        violation(
+                            violations,
+                            GltfCapabilityViolationKind::MorphTarget,
+                            location.clone(),
+                        );
+                        unsupported_morph_locations.push(location);
+                    }
+                }
             }
             manifest.primitives.push(GltfPrimitiveCapability {
                 mesh_index,
@@ -1162,6 +1180,7 @@ fn inventory_meshes(
                 attributes,
                 morph_target_count,
                 morph_position_accessors,
+                unsupported_morph_locations,
             });
         }
     }

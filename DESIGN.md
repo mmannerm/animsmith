@@ -733,10 +733,13 @@ These decisions record result-contract ownership after output v3 finalization:
 
 **Status (2026-08-14): implemented for self-contained glTF/GLB.** The shared
 core plan, typed ledger, exact-source writers, independent core and artifact
-proofs, atomic CLI publisher, and immutable scale-evidence v3 producer are the
+proofs, atomic CLI publisher, and immutable scale-evidence v4 producer are the
 current contract. Character assembly does not apply either scale operation;
-its recipe/evidence v3 remains unchanged. FBX scale output and morph-target
-scaling remain refused and deferred.
+its recipe/evidence v3 remains unchanged. Whole-document conversion supports
+raw glTF `POSITION` morph deltas while preserving static JSON weights as
+numeric values and animated weight accessor payloads byte-exactly; other morph
+semantics and every rest/bind morph payload remain refused. FBX scale output
+remains deferred.
 
 ### D.1 Problem and two distinct operations
 
@@ -1527,7 +1530,7 @@ field row or obligation.
 | Rotation and scale animation | Retained as dimensionless values | Leave unchanged | Rotation unchanged; rebase each scale VEC3 by `s_parent / s_i`, including cubic tangents |
 | Root motion and velocity | Derived from translation tracks | Convert tracks, then recompute | Preserve sampled trajectory and derived velocity |
 | Base mesh geometry | Base `POSITION` and normals are retained | Scale positions; normals unchanged | Leave positions and normals unchanged |
-| Morphs | Morph deltas and morph-weight animation are not retained | Reject until `POSITION` deltas can be scaled and all data preserved | Reject until full morph preservation is proven |
+| Morphs | Not retained by the normalized core; raw glTF ownership inventories target accessor identities and weight locations | Raw glTF only: scale dense `f32` `POSITION` deltas once per unique accessor; preserve static JSON weights as numeric values and animated weight accessor payloads byte-exactly; reject other semantics and unsafe aliases/layouts | Reject: rest/bind morph preservation is not proven |
 | Skin binds | Per-instance IBMs plus a lossy bone convenience value | Conjugate every per-skin matrix | Regenerate every per-skin matrix from output joints and unchanged `G` |
 | Cameras/lights | Node transform only; typed fields are not modeled | Reject until all length fields have handlers | Reject when attached to the affected domain until preservation is proven |
 | Collision/custom data | No semantic model for extras or extensions | Reject unless a registered handler covers every length | Reject when affected unless exact preservation is proven |
@@ -1552,7 +1555,7 @@ generates some missing data, and exposes no complete source skeleton sidecar.
 Consequently neither current load-`Document`-write route qualifies as a
 preservation-proof frontend for these operations without the raw capability
 preflight and explicitly bounded writer work. Unknown extensions or extras,
-unmodeled morphs, cameras, lights, collision metadata, non-triangle primitives,
+unsupported morph semantics or unsafe morph storage, cameras, lights, collision metadata, non-triangle primitives,
 unmodeled vertex attributes, secondary influence payloads, malformed or
 missing inverse binds, node transforms outside the glTF 2.0 contract, and image
 payloads sharing bytes with a rewritten accessor fail closed. FBX support
@@ -1633,7 +1636,7 @@ inventory of every §D.4 domain — and may enable an operation only over the
 domains that inventory covers.
 
 The exact raw-JSON-preservation refusal is diagnostic evidence as well as a
-refusal: the current scale-evidence v3 record carries up to the first 16
+refusal: the current scale-evidence v4 record carries up to the first 16
 deterministic differences, each as a pointer and an added/removed/changed
 direction, plus the omitted remainder; the full count is the retained length
 plus that remainder. The field is null when the exact-preservation walk did
@@ -1750,8 +1753,12 @@ within versioned tolerances:
 
 For whole-document conversion, the corresponding length facts must differ by
 exactly the declared factor within tolerance while dimensionless facts remain
-equal. Both operations prove finite output, the skin equation, deterministic
-artifact bytes, and deterministic evidence bytes.
+equal. The raw glTF artifact proof independently walks admitted morph
+`POSITION` accessors, requires one conversion per unique accessor (including
+base/morph and cross-target aliases), compares every static JSON morph-weight
+numeric value, and compares every animated weight accessor byte exactly. Both
+operations prove finite output, the skin equation, deterministic artifact
+bytes, and deterministic evidence bytes.
 
 **Every obligation above is derived from the evidence it needs.** The typed
 ledger contains a row only when the validated planned inventory carries the
@@ -1803,7 +1810,7 @@ sample set: a bounded proof of a subset would publish evidence for claims it
 did not check. Because the budget lives in the policy identity, it is not a
 per-run flag, and the producer's fixed-policy rule below covers it.
 
-The current producer emits immutable scale-evidence v3 containing
+The current producer emits immutable scale-evidence v4 containing
 the operation kind, declared and observed factors, tolerance policy and
 residuals, affected node/skin identities, raw capability manifest, input/output
 byte digests and counts, proof sample coverage/results, tool identity, and
@@ -2066,12 +2073,15 @@ The implementation status is:
 
 - shipped: raw glTF/GLB capability preflight, the shared core plan/ledger and
   proof, preservation-safe whole-document and rest/bind exact-source writers,
-  artifact proof, and atomic CLI publication with scale-evidence v3;
+  artifact proof, and atomic CLI publication with scale-evidence v4;
 - deferred: assembly integration in issue #285, which requires a new immutable
   recipe/evidence version rather than changing v3;
 - deferred: FBX scale output in issue #286, after complete ufbx-side capability
   evidence exists;
-- deferred: morph-target scaling in issue #298.
+- shipped: raw glTF whole-document scaling for dense `f32` morph `POSITION`
+  deltas with numeric-value preservation for static JSON weights and byte-exact
+  preservation for animated weight accessors (issue #298);
+  rest/bind morphs and a normalized core morph model remain out of scope.
 
 The live implementation sequence is owned by tracker issue #344 and roadmap
 issue #165, not by a numbered future-slice list in this decision record. Work

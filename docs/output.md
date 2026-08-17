@@ -39,11 +39,11 @@ required `--evidence` path, and prints the same record to stdout under
 The paired GLB and evidence are prepared before publication, so an operator
 failure emits neither new destination and restores any prior pair.
 
-`scale` writes a separate scale-evidence v3 document to its required
+`scale` writes a separate scale-evidence v4 document to its required
 `--evidence` path, and prints the same record to stdout under
 `--format json`. Its immutable identity is
-`urn:animsmith:schema:scale-evidence:3`; its retrievable schema is
-[`scale-evidence-v3.schema.json`](schemas/scale-evidence-v3.schema.json). The
+`urn:animsmith:schema:scale-evidence:4`; its retrievable schema is
+[`scale-evidence-v4.schema.json`](schemas/scale-evidence-v4.schema.json). The
 artifact and its evidence are prepared as temporaries and published as one
 pair, so a refusal or an operator failure emits neither destination and
 restores any prior pair.
@@ -273,7 +273,7 @@ The [scale workflow](scale.md) explains when to choose each operation and how
 the rewrite/reload/proof/publication transaction produces this record. This
 section is the wire-format authority.
 
-`scale` writes scale evidence v3 beside its artifact. One record serves both
+`scale` writes scale evidence v4 beside its artifact. One record serves both
 outcomes, discriminated by `outcome`:
 
 | `outcome` | `result` | `rejection` | Published | Exit |
@@ -297,8 +297,11 @@ declared paths verbatim, the input digest and byte count, and the complete raw
 capability manifest of the source. `capability` is `null` only for a refusal
 raised before an inventory existed — bytes that never parsed. A published
 record always carries the manifest, because publication is reachable only
-through a preflight that built one. A published run adds the fixed tolerance
-policy by identity and in full, both observed-factor witnesses with the
+through a preflight that built one. In v4 that manifest includes the sorted
+JSON-pointer inventory of every static mesh/node and animated morph-weight
+source accepted for preservation. Static JSON weights retain their numeric
+values, while animated weight accessor payloads remain byte-exact. A published
+run adds the fixed tolerance policy by identity and in full, both observed-factor witnesses with the
 divergence between them and the ceiling the design expects of it, the affected
 node and skin identities in the raw source index space the selectors use, the
 rewritten model domains, proof coverage and results, the artifact-level
@@ -329,18 +332,18 @@ are deliberately not serialized, so identical arguments produce byte-identical
 evidence. Nothing in the record carries a timestamp.
 
 The normative contract is
-[`scale-evidence-v3.schema.json`](schemas/scale-evidence-v3.schema.json).
-The current CLI emits v3 exclusively; immutable
-[`scale-evidence-v1.schema.json`](schemas/scale-evidence-v1.schema.json) and
-[`scale-evidence-v2.schema.json`](schemas/scale-evidence-v2.schema.json)
+[`scale-evidence-v4.schema.json`](schemas/scale-evidence-v4.schema.json).
+The current CLI emits v4 exclusively; immutable
+[`scale-evidence-v1.schema.json`](schemas/scale-evidence-v1.schema.json),
+[`scale-evidence-v2.schema.json`](schemas/scale-evidence-v2.schema.json), and
+[`scale-evidence-v3.schema.json`](schemas/scale-evidence-v3.schema.json)
 remain available for historical records.
 
-A whole-document factor of one has no raw write set. Its v3
+A whole-document factor of one has no raw write set. Its v4
 `result.artifact.rewritten_accessors`, `rewritten_json_pointers`, and
 `reencoded_buffers` arrays are empty, and
-`result.proof.artifact.rewritten_accessor_count` is zero. This changes those
-factor-one values from the earlier redundant-rewrite behavior without changing
-the schema identity or field shape.
+`result.proof.artifact.rewritten_accessor_count` is zero. This factor-one
+behavior is carried forward unchanged from v3.
 
 For rest/bind, `result.domain_rewrites.scale_animation` is `true`: every
 stored scale VEC3 is rebased by its topology multiplier — `1 / s` at the

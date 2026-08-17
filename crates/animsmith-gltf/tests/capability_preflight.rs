@@ -851,7 +851,7 @@ fn rejects_external_resources_and_punctual_lights_before_resolution() {
 }
 
 #[test]
-fn rejects_morphs_cameras_modes_attributes_and_secondary_influences() {
+fn rejects_unsupported_morph_semantics_cameras_modes_attributes_and_secondary_influences() {
     let mut value = base_json();
     value["meshes"] = json!([
         {
@@ -859,7 +859,7 @@ fn rejects_morphs_cameras_modes_attributes_and_secondary_influences() {
             "primitives": [{
                 "mode": 1,
                 "attributes": { "POSITION": 0, "COLOR_0": 0, "JOINTS_1": 0, "WEIGHTS_1": 0 },
-                "targets": [{ "POSITION": 0 }, { "POSITION": 0 }]
+                "targets": [{ "POSITION": 0 }, { "NORMAL": 0 }]
             }]
         },
         {
@@ -875,7 +875,6 @@ fn rejects_morphs_cameras_modes_attributes_and_secondary_influences() {
     let (violations, manifest) = unsupported(&value);
     for kind in [
         GltfCapabilityViolationKind::MorphTarget,
-        GltfCapabilityViolationKind::MorphWeights,
         GltfCapabilityViolationKind::Camera,
         GltfCapabilityViolationKind::NonTrianglePrimitive,
         GltfCapabilityViolationKind::UnsupportedVertexAttribute,
@@ -885,7 +884,15 @@ fn rejects_morphs_cameras_modes_attributes_and_secondary_influences() {
     }
     assert_eq!(manifest.primitives[0].mode, 1);
     assert_eq!(manifest.primitives[0].morph_target_count, 2);
-    assert_eq!(manifest.primitives[0].morph_position_accessors, vec![0, 0]);
+    assert_eq!(manifest.primitives[0].morph_position_accessors, vec![0]);
+    assert_eq!(
+        manifest.primitives[0].unsupported_morph_locations,
+        ["/meshes/0/primitives/0/targets/1/NORMAL"]
+    );
+    assert_eq!(
+        manifest.morph_weight_locations,
+        ["/meshes/0/weights", "/nodes/0/weights"]
+    );
     assert_eq!(manifest.primitives[1].mesh_index, 1);
     assert_eq!(manifest.primitives[1].primitive_index, 0);
     assert_eq!(manifest.primitives[1].mode, 0);
@@ -1281,7 +1288,7 @@ fn keeps_integer_matrix_stride_between_elements() {
 }
 
 #[test]
-fn rejects_unreadable_inverse_binds_and_animated_morph_weights() {
+fn rejects_unreadable_inverse_binds_while_inventorying_animated_morph_weights() {
     let mut value = base_json();
     value["meshes"] = json!([]);
     value["nodes"] = json!([{}]);
@@ -1299,7 +1306,15 @@ fn rejects_unreadable_inverse_binds_and_animated_morph_weights() {
         &violations,
         GltfCapabilityViolationKind::UnreadableInverseBinds,
     );
-    assert_has(&violations, GltfCapabilityViolationKind::MorphWeights);
+    assert!(
+        !violations
+            .iter()
+            .any(|violation| violation.kind == GltfCapabilityViolationKind::MorphWeights)
+    );
+    assert_eq!(
+        manifest.morph_weight_locations,
+        ["/animations/0/channels/0/target/path"]
+    );
     assert_eq!(manifest.animation_channels[0].animation_index, 0);
     assert_eq!(manifest.animation_channels[0].channel_index, 0);
     assert_eq!(manifest.animation_channels[0].target_node_index, 0);

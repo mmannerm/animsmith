@@ -20,8 +20,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 const SCALE_EVIDENCE_SCHEMA: &str =
-    include_str!("../../../docs/schemas/scale-evidence-v3.schema.json");
-const SCALE_EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:scale-evidence:3";
+    include_str!("../../../docs/schemas/scale-evidence-v4.schema.json");
+const SCALE_EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:scale-evidence:4";
 
 fn animsmith() -> Command {
     Command::new(env!("CARGO_BIN_EXE_animsmith"))
@@ -130,6 +130,145 @@ fn assert_schema_valid(instance: &Value) {
         .map(|error| format!("{}: {error}", error.instance_path()))
         .collect();
     assert!(errors.is_empty(), "schema errors: {}", errors.join("; "));
+}
+
+fn glb(value: &Value, binary: &[u8]) -> Vec<u8> {
+    let mut json = serde_json::to_vec(value).expect("fixture JSON");
+    while !json.len().is_multiple_of(4) {
+        json.push(b' ');
+    }
+    let mut padded_binary = binary.to_vec();
+    while !padded_binary.len().is_multiple_of(4) {
+        padded_binary.push(0);
+    }
+    let total_length = 12 + 8 + json.len() + 8 + padded_binary.len();
+    let mut asset = Vec::with_capacity(total_length);
+    asset.extend_from_slice(b"glTF");
+    asset.extend_from_slice(&2u32.to_le_bytes());
+    asset.extend_from_slice(&(total_length as u32).to_le_bytes());
+    asset.extend_from_slice(&(json.len() as u32).to_le_bytes());
+    asset.extend_from_slice(&0x4e4f_534au32.to_le_bytes());
+    asset.extend_from_slice(&json);
+    asset.extend_from_slice(&(padded_binary.len() as u32).to_le_bytes());
+    asset.extend_from_slice(&0x004e_4942u32.to_le_bytes());
+    asset.extend_from_slice(&padded_binary);
+    asset
+}
+
+fn map_glb_json(asset: Vec<u8>, mutate: impl FnOnce(&mut Value)) -> Vec<u8> {
+    let json_length = u32::from_le_bytes(asset[12..16].try_into().unwrap()) as usize;
+    let mut value: Value =
+        serde_json::from_slice(&asset[20..20 + json_length]).expect("the fixture has a JSON chunk");
+    let binary_header = 20 + json_length;
+    let binary_length =
+        u32::from_le_bytes(asset[binary_header..binary_header + 4].try_into().unwrap()) as usize;
+    let binary = &asset[binary_header + 8..binary_header + 8 + binary_length];
+    mutate(&mut value);
+    glb(&value, binary)
+}
+
+fn morph_scale_rig_glb() -> Vec<u8> {
+    let floats: [f32; 28] = [
+        1.0, 2.0, 3.0, -1.0, 0.5, 4.0, 2.0, -2.0, 0.0, // base POSITION
+        0.25, 0.0, -0.5, 1.0, -1.0, 2.0, 0.0, 0.5, 0.25, // morph POSITION
+        0.0, 1.0, // key times
+        0.25, 0.75, // animated weights
+        1.0, 1.0, 1.0, 2.0, 2.0, 2.0, // scale animation
+    ];
+    let binary: Vec<u8> = floats
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect();
+    let value = serde_json::json!({
+        "asset": { "version": "2.0" },
+        "buffers": [{ "byteLength": binary.len() }],
+        "bufferViews": [
+            { "buffer": 0, "byteOffset": 0, "byteLength": 36 },
+            { "buffer": 0, "byteOffset": 36, "byteLength": 36 },
+            { "buffer": 0, "byteOffset": 72, "byteLength": 8 },
+            { "buffer": 0, "byteOffset": 80, "byteLength": 8 },
+            { "buffer": 0, "byteOffset": 88, "byteLength": 24 }
+        ],
+        "accessors": [
+            { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+              "min": [-1.0, -2.0, 0.0], "max": [2.0, 2.0, 4.0] },
+            { "bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3" },
+            { "bufferView": 2, "componentType": 5126, "count": 2, "type": "SCALAR",
+              "min": [0.0], "max": [1.0] },
+            { "bufferView": 3, "componentType": 5126, "count": 2, "type": "SCALAR" },
+            { "bufferView": 4, "componentType": 5126, "count": 2, "type": "VEC3" }
+        ],
+        "meshes": [
+            { "primitives": [{ "attributes": { "POSITION": 0 } }] },
+            {
+                "weights": [0.25],
+                "primitives": [{
+                    "attributes": { "POSITION": 0 },
+                    "targets": [{ "POSITION": 1 }]
+                }]
+            }
+        ],
+        "nodes": [{ "mesh": 0 }, { "mesh": 1, "weights": [0.5] }],
+        "scenes": [{ "nodes": [0, 1] }],
+        "scene": 0,
+        "animations": [
+            {
+                "samplers": [{ "input": 2, "output": 4, "interpolation": "LINEAR" }],
+                "channels": [{ "sampler": 0, "target": { "node": 0, "path": "scale" } }]
+            },
+            {
+                "samplers": [
+                    { "input": 2, "output": 4, "interpolation": "LINEAR" },
+                    { "input": 2, "output": 3, "interpolation": "LINEAR" }
+                ],
+                "channels": [
+                    { "sampler": 0, "target": { "node": 0, "path": "scale" } },
+                    { "sampler": 1, "target": { "node": 1, "path": "weights" } }
+                ]
+            }
+        ]
+    });
+    glb(&value, &binary)
+}
+
+fn rest_bind_scale_rig_with_morphs_glb() -> Vec<u8> {
+    map_glb_json(rest_bind_scale_rig_glb(), |value| {
+        value["meshes"]
+            .as_array_mut()
+            .expect("meshes")
+            .push(serde_json::json!({
+                "weights": [0.25],
+                "primitives": [
+                    { "attributes": { "POSITION": 0 } },
+                    {
+                        "attributes": { "POSITION": 0 },
+                        "targets": [{ "POSITION": 0 }]
+                    }
+                ]
+            }));
+        value["nodes"]
+            .as_array_mut()
+            .expect("nodes")
+            .push(serde_json::json!({ "name": "morph-holder", "mesh": 1, "weights": [0.5] }));
+        value["scenes"][0]["nodes"]
+            .as_array_mut()
+            .expect("scene nodes")
+            .push(serde_json::json!(4));
+        value["animations"]
+            .as_array_mut()
+            .expect("animations")
+            .push(serde_json::json!({
+                "name": "morph-clip",
+                "samplers": [
+                    { "input": 4, "interpolation": "LINEAR", "output": 5 },
+                    { "input": 4, "interpolation": "LINEAR", "output": 4 }
+                ],
+                "channels": [
+                    { "sampler": 0, "target": { "node": 1, "path": "translation" } },
+                    { "sampler": 1, "target": { "node": 4, "path": "weights" } }
+                ]
+            }));
+    })
 }
 
 fn rest_bind_scale_rig_with_negative_weight_glb(
@@ -255,7 +394,7 @@ fn rest_bind_publishes_a_pair_whose_evidence_names_the_appendix_d6_policy() {
 
     let record = read_json(&fixture.path("out.json"));
     assert_schema_valid(&record);
-    assert_eq!(record["schema_version"], 3);
+    assert_eq!(record["schema_version"], 4);
     assert_eq!(record["schema"], SCALE_EVIDENCE_SCHEMA_ID);
     assert_eq!(record["command"], "scale");
     assert_eq!(record["outcome"], "published");
@@ -405,6 +544,103 @@ fn rest_bind_publishes_a_pair_whose_evidence_names_the_appendix_d6_policy() {
         }),
         "the reparameterization leaves base mesh POSITION alone: the vertices \
          are already authored in the correct world space"
+    );
+}
+
+#[test]
+fn whole_document_v4_evidence_publishes_every_morph_weight_location() {
+    let fixture = Fixture::with_asset(morph_scale_rig_glb());
+    let output = fixture.whole_document("2", "json");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    let record = read_json(&fixture.path("out.json"));
+    assert_schema_valid(&record);
+    assert_eq!(record["schema_version"], 4);
+    assert_eq!(record["schema"], SCALE_EVIDENCE_SCHEMA_ID);
+    assert_eq!(
+        record["capability"]["morph_weight_locations"],
+        serde_json::json!([
+            "/animations/1/channels/1/target/path",
+            "/meshes/1/weights",
+            "/nodes/1/weights"
+        ])
+    );
+    assert_eq!(
+        record["capability"]["primitives"][1]["morph_position_accessors"],
+        serde_json::json!([1])
+    );
+}
+
+#[test]
+fn factor_one_morph_conversion_is_a_byte_exact_no_write() {
+    let source = morph_scale_rig_glb();
+    let fixture = Fixture::with_asset(source.clone());
+    let output = fixture.whole_document("1", "json");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(
+        std::fs::read(fixture.path("out.glb")).unwrap(),
+        source,
+        "q = 1 must not re-encode even a morph-bearing source"
+    );
+    let record = read_json(&fixture.path("out.json"));
+    assert_schema_valid(&record);
+    assert_eq!(
+        record["result"]["artifact"]["rewritten_accessors"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        record["result"]["artifact"]["rewritten_json_pointers"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        record["result"]["artifact"]["reencoded_buffers"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        record["result"]["proof"]["artifact"]["rewritten_accessor_count"],
+        0
+    );
+}
+
+#[test]
+fn a_morph_position_count_mismatch_is_a_public_atomic_refusal() {
+    let source = map_glb_json(morph_scale_rig_glb(), |value| {
+        value["accessors"][1]["count"] = serde_json::json!(2);
+    });
+    let fixture = Fixture::with_asset(source);
+    let output = fixture.whole_document("2", "json");
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert!(!fixture.path("out.glb").exists());
+    assert!(!fixture.path("out.json").exists());
+    let record: Value = serde_json::from_str(&stdout(&output)).expect("one refusal record");
+    assert_schema_valid(&record);
+    assert_eq!(record["rejection"]["stage"], "rewrite");
+    assert_eq!(record["rejection"]["kind"], "plan-document-mismatch");
+    assert!(
+        record["rejection"]["detail"]
+            .as_str()
+            .expect("detail")
+            .contains("morph_position_count_mismatch")
     );
 }
 
@@ -950,7 +1186,7 @@ fn a_refused_run_publishes_nothing_and_leaves_a_prior_pair_byte_identical() {
 }
 
 #[test]
-fn scale_evidence_v3_schema_pins_artifact_proof_difference_shape() {
+fn scale_evidence_v4_schema_pins_artifact_proof_difference_shape() {
     // Start with a real refusal so the fixture remains a full producer
     // record, then replace only the nullable diagnostic payload.
     let fixture = Fixture::new();
@@ -1286,6 +1522,127 @@ fn an_unsupported_source_domain_is_refused_with_its_typed_violations() {
     // so a consumer can see what else the source declared.
     assert_eq!(record["capability"]["camera_count"], 1);
     assert_eq!(record["capability"]["container"], "gltf");
+}
+
+#[test]
+fn rest_bind_morph_refusal_preserves_the_complete_located_inventory_and_prior_pair() {
+    let fixture = Fixture::with_asset(rest_bind_scale_rig_with_morphs_glb());
+    let prior_artifact = b"prior artifact";
+    let prior_evidence = b"prior evidence";
+    std::fs::write(fixture.path("out.glb"), prior_artifact).unwrap();
+    std::fs::write(fixture.path("out.json"), prior_evidence).unwrap();
+
+    let output = fixture.rest_bind("0.01", "json");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(
+        std::fs::read(fixture.path("out.glb")).unwrap(),
+        prior_artifact
+    );
+    assert_eq!(
+        std::fs::read(fixture.path("out.json")).unwrap(),
+        prior_evidence
+    );
+
+    let record: Value = serde_json::from_str(&stdout(&output)).expect("one refusal record");
+    assert_schema_valid(&record);
+    assert_eq!(record["rejection"]["stage"], "preflight");
+    assert_eq!(record["rejection"]["kind"], "unsupported-source-domain");
+    assert_eq!(
+        record["rejection"]["violations"]
+            .as_array()
+            .expect("violations")
+            .len(),
+        4
+    );
+    assert_eq!(
+        record["rejection"]["violations"],
+        serde_json::json!([
+            { "kind": "morph_target", "location": "/meshes/1/primitives/1/targets" },
+            { "kind": "morph_weights", "location": "/animations/1/channels/1/target/path" },
+            { "kind": "morph_weights", "location": "/meshes/1/weights" },
+            { "kind": "morph_weights", "location": "/nodes/4/weights" }
+        ])
+    );
+    assert_eq!(
+        record["capability"]["morph_weight_locations"],
+        serde_json::json!([
+            "/animations/1/channels/1/target/path",
+            "/meshes/1/weights",
+            "/nodes/4/weights"
+        ])
+    );
+}
+
+#[test]
+fn early_generic_preflight_refusal_unions_the_selected_operations_morph_inventory() {
+    let source = map_glb_json(rest_bind_scale_rig_with_morphs_glb(), |value| {
+        value["cameras"] = serde_json::json!([{
+            "type": "orthographic",
+            "orthographic": { "xmag": 1, "ymag": 1, "zfar": 10, "znear": 1 }
+        }]);
+    });
+    let fixture = Fixture::with_asset(source);
+    let prior_artifact = b"prior artifact";
+    let prior_evidence = b"prior evidence";
+    std::fs::write(fixture.path("out.glb"), prior_artifact).unwrap();
+    std::fs::write(fixture.path("out.json"), prior_evidence).unwrap();
+
+    let output = fixture.rest_bind("0.01", "json");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(
+        std::fs::read(fixture.path("out.glb")).unwrap(),
+        prior_artifact
+    );
+    assert_eq!(
+        std::fs::read(fixture.path("out.json")).unwrap(),
+        prior_evidence
+    );
+
+    let record: Value = serde_json::from_str(&stdout(&output)).expect("one refusal record");
+    assert_schema_valid(&record);
+    assert_eq!(record["rejection"]["stage"], "preflight");
+    assert_eq!(record["rejection"]["kind"], "unsupported-source-domain");
+    assert_eq!(
+        record["rejection"]["detail"],
+        "glTF scale preflight rejected 5 unsupported source domain(s)"
+    );
+    assert_eq!(
+        record["rejection"]["violations"]
+            .as_array()
+            .expect("violations")
+            .len(),
+        5
+    );
+    assert_eq!(
+        record["rejection"]["violations"],
+        serde_json::json!([
+            { "kind": "morph_target", "location": "/meshes/1/primitives/1/targets" },
+            { "kind": "morph_weights", "location": "/animations/1/channels/1/target/path" },
+            { "kind": "morph_weights", "location": "/meshes/1/weights" },
+            { "kind": "morph_weights", "location": "/nodes/4/weights" },
+            { "kind": "camera", "location": "/cameras" }
+        ])
+    );
+    assert_eq!(
+        record["capability"]["morph_weight_locations"],
+        serde_json::json!([
+            "/animations/1/channels/1/target/path",
+            "/meshes/1/weights",
+            "/nodes/4/weights"
+        ])
+    );
 }
 
 #[test]

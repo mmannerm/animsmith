@@ -395,10 +395,10 @@ stderr, whatever the format, and emits nothing on stdout; a run whose stdout
 itself fails mid-record is the one exception, leaving a truncated record there
 and reporting the write failure on stderr without changing the exit code.
 
-`scale` writes scale evidence v3 to its required `--evidence` path, with
-immutable identity `urn:animsmith:schema:scale-evidence:3`; see
+`scale` writes scale evidence v4 to its required `--evidence` path, with
+immutable identity `urn:animsmith:schema:scale-evidence:4`; see
 [output.md](output.md) and
-[`scale-evidence-v3.schema.json`](schemas/scale-evidence-v3.schema.json). The
+[`scale-evidence-v4.schema.json`](schemas/scale-evidence-v4.schema.json). The
 same record is what `scale --format json` prints to stdout, for a refusal as
 well as for a published pair. For an `artifact-proof-failed` refusal from the
 exact-preservation walk, `rejection.artifact_proof_differences` names up to 16

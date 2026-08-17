@@ -6,7 +6,7 @@ artifact before publishing it. Neither operation guesses units or scale policy
 from geometry, names, or asset categories.
 
 Use the [CLI reference](cli.md#commands) for the exact command grammar and
-[machine-readable output](output.md#scale) for the scale-evidence v3 schema.
+[machine-readable output](output.md#scale) for the scale-evidence v4 schema.
 This guide owns the operator workflow and the boundary between the two
 operations.
 
@@ -74,9 +74,12 @@ knob.
 
 Whole-document conversion rewrites represented lengths: node TRS translations
 and matrix translation columns, mesh `POSITION`, translation animation values
-and cubic tangents, inverse-bind translation columns, and corresponding
-accessor bounds. Rotation, scale, normals, UVs, weights, key times, and other
-dimensionless payload remain outside the write set.
+and cubic tangents, raw glTF morph-target `POSITION` deltas, inverse-bind
+translation columns, and corresponding accessor bounds. Rotation, scale,
+normals, UVs, static and animated morph weights, key times, and other
+dimensionless payloads remain outside the write set. Static JSON morph weights
+retain their numeric values; animated weight accessor payloads remain
+byte-exact.
 
 Rest/bind reparameterization derives every multiplier from the selected raw
 topology. It rewrites the necessary node-local translation/scale or matrix
@@ -92,11 +95,14 @@ and evidence-field semantics at that boundary.
 Scale currently accepts self-contained glTF/GLB only. A `.gltf` source with an
 external buffer or image is refused rather than partially converted. Raw
 preflight also refuses any source domain the current model and artifact proof
-cannot preserve completely, including morph targets, cameras, lights, GPU
-instancing, unregistered extensions, `extras`, non-triangle primitives,
-secondary skin-influence sets, unsafe accessor layouts, and animation targeting
-a matrix-authored node. The rejection record contains the complete typed
-violation inventory.
+cannot preserve completely. Whole-document conversion admits only raw glTF
+`POSITION` morph-target deltas with dimensionless static/animated weights;
+`NORMAL`, `TANGENT`, sparse/interleaved scale-bearing accessors, unsafe aliases,
+and every morph payload under rest/bind reparameterization remain refused.
+It also refuses cameras and lights, along with GPU instancing, unregistered
+extensions, `extras`, non-triangle primitives, secondary skin-influence sets,
+unsafe accessor layouts, and animation targeting a matrix-authored node. The
+rejection record contains the complete typed violation inventory.
 
 Do not read the core model's static unprojected-connector rows as a current glTF
 capability. The glTF loader projects every accepted node today, and the raw
@@ -107,13 +113,13 @@ FBX scaling is not enabled: FBX loading has already consumed coordinate/unit
 semantics and no ufbx-side preservation inventory currently discharges the raw
 artifact claims. Character assembly likewise does not silently apply either
 scale operation. Its existing bind-pose canonicalization remains a distinct,
-explicit recipe operation. Morph `POSITION` deltas remain refused until the
-shared model can represent and prove them.
+explicit recipe operation. Morph support intentionally remains a raw glTF
+capability; it does not add morphs to the shared normalized model.
 
 ## Outcomes and evidence
 
 The [CLI reference](cli.md#exit-codes) owns exit-status semantics, and the
-[output reference](output.md#scale) owns the scale-evidence v3 wire contract
+[output reference](output.md#scale) owns the scale-evidence v4 wire contract
 and publication outcomes. In brief, `--format json` prints the same record that
 a successful run writes to `--evidence`; a refused run prints its rejection
 record but never writes the evidence destination because there is no

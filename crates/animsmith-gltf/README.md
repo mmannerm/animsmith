@@ -121,9 +121,12 @@ reserialization can still canonicalize lexical spelling.
 
 Camera, light, and extension length fields have no registered handler in the
 shipped writer, and the preflight rejects those domains outright. Rest/bind
-reparameterization uses the same compiled-plan adapter described below. Morph
-`POSITION` deltas remain refused because the shared model cannot yet represent
-and prove their write domain.
+reparameterization uses the same compiled-plan adapter described below.
+Whole-document conversion handles supported raw glTF `POSITION` morph deltas
+in the exact-source writer and artifact proof without adding them to the
+shared normalized model. Static JSON weights retain their numeric values and
+animated weight accessor payloads remain byte-exact; unsupported morph
+semantics and every rest/bind morph payload remain refused.
 
 ## Rest/Bind Hierarchy Reparameterization
 
