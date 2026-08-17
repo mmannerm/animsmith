@@ -58,8 +58,8 @@ curve keys, or source vertex identity are preserved.
 
 ```toml
 [dependencies]
-animsmith-core = "0.2"
-animsmith-fbx = "0.2"
+animsmith-core = "0.3"
+animsmith-fbx = "0.3"
 ```
 
 The compiling load/check example lives in the crate-level API documentation.

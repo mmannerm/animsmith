@@ -160,8 +160,8 @@ from the normalized document.
 
 ```toml
 [dependencies]
-animsmith-core = "0.2"
-animsmith-gltf = "0.2"
+animsmith-core = "0.3"
+animsmith-gltf = "0.3"
 ```
 
 The compiling load/check and repair examples live in the crate-level API
