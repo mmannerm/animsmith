@@ -992,6 +992,107 @@ fn non_length_attributes_indices_and_materials_are_untouched() {
     assert_eq!(json["skins"], value["skins"]);
 }
 
+#[test]
+fn unreferenced_sparse_accessor_payloads_are_preserved_byte_identical() {
+    let (mut value, mut buffer) = minimal_json(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]);
+    let sparse_index = 2u8;
+    let sparse_value = [
+        0x00, 0x00, 0x80, 0x3f, // 1.0
+        0x00, 0x00, 0x00, 0x40, // 2.0
+        0x00, 0x00, 0x40, 0x40, // 3.0
+    ];
+    buffer.push(sparse_index);
+    buffer.extend_from_slice(&[0, 0, 0]);
+    buffer.extend_from_slice(&sparse_value);
+    value["buffers"][0] = json!({ "uri": data_uri(&buffer), "byteLength": buffer.len() });
+    value["bufferViews"]
+        .as_array_mut()
+        .expect("buffer views")
+        .extend([
+            json!({ "buffer": 0, "byteOffset": 36, "byteLength": 1 }),
+            json!({ "buffer": 0, "byteOffset": 40, "byteLength": 12 }),
+        ]);
+    value["accessors"]
+        .as_array_mut()
+        .expect("accessors")
+        .push(json!({
+            "componentType": 5126,
+            "count": 3,
+            "type": "VEC3",
+            "sparse": {
+                "count": 1,
+                "indices": { "bufferView": 1, "componentType": 5121 },
+                "values": { "bufferView": 2 }
+            }
+        }));
+
+    let source = accepted("unreferenced-sparse.gltf", &value);
+    let artifact = rewrite_linear_units(&source, 2.0).expect("rewrite");
+    let (_, buffers) = artifact_parts(&artifact);
+    assert_eq!(buffers[0][36], sparse_index);
+    assert_eq!(&buffers[0][40..52], &sparse_value);
+
+    let plan = plan_for(&source, 2.0);
+    prove_rewritten_artifact(&source, &artifact, &plan)
+        .expect("artifact proof covers the preserved unreferenced payload");
+}
+
+#[test]
+fn compact_unreferenced_integer_matrix_payloads_are_preserved_byte_identical() {
+    let (mut value, mut buffer) = minimal_json(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]);
+    let dense_matrices = [
+        1, 2, 0xa1, 0xa2, 3, 4, 0xa3, 0xa4, // first MAT2 and inter-element padding
+        5, 6, 0xb1, 0xb2, 7, 8, // compact final MAT2
+    ];
+    let sparse_index = 1u8;
+    let sparse_matrix = [9, 10, 0xc1, 0xc2, 11, 12];
+    buffer.extend_from_slice(&dense_matrices);
+    buffer.push(sparse_index);
+    buffer.push(0);
+    buffer.extend_from_slice(&sparse_matrix);
+    value["buffers"][0] = json!({ "uri": data_uri(&buffer), "byteLength": buffer.len() });
+    value["bufferViews"]
+        .as_array_mut()
+        .expect("buffer views")
+        .extend([
+            json!({ "buffer": 0, "byteOffset": 36, "byteLength": 14 }),
+            json!({ "buffer": 0, "byteOffset": 50, "byteLength": 1 }),
+            json!({ "buffer": 0, "byteOffset": 52, "byteLength": 6 }),
+        ]);
+    value["accessors"]
+        .as_array_mut()
+        .expect("accessors")
+        .extend([
+            json!({
+                "bufferView": 1,
+                "componentType": 5121,
+                "count": 2,
+                "type": "MAT2"
+            }),
+            json!({
+                "componentType": 5121,
+                "count": 2,
+                "type": "MAT2",
+                "sparse": {
+                    "count": 1,
+                    "indices": { "bufferView": 2, "componentType": 5121 },
+                    "values": { "bufferView": 3 }
+                }
+            }),
+        ]);
+
+    let source = accepted("compact-unreferenced-matrices.gltf", &value);
+    let artifact = rewrite_linear_units(&source, 2.0).expect("rewrite");
+    let (_, buffers) = artifact_parts(&artifact);
+    assert_eq!(&buffers[0][36..50], &dense_matrices);
+    assert_eq!(buffers[0][50], sparse_index);
+    assert_eq!(&buffers[0][52..58], &sparse_matrix);
+
+    let plan = plan_for(&source, 2.0);
+    prove_rewritten_artifact(&source, &artifact, &plan)
+        .expect("artifact proof covers compact unreferenced integer matrices");
+}
+
 // --- 11: array identities ---------------------------------------------------
 
 #[test]

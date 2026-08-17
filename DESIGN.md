@@ -1536,6 +1536,7 @@ field row or obligation.
 | Out-of-contract node transforms | A `matrix` beside a TRS member, or a `matrix` whose last row is not **exactly** `(0, 0, 0, 1)` — compared exactly at the gate, never within tolerance (§D.3 case 4) — parses but is not glTF 2.0 | Reject: which transform the author meant is unknowable, and `U M U^-1` leaves `3, 7, 11` unconverted where the basis change owes them `1 / q`, while a `15` other than one is invariant under the rewrite and so would be published still asserting a projective divide (§D.2) | Reject for the same reason, with `1 / s_i` for `1 / q` |
 | Animation targeting a matrix node | glTF 2.0 requires an animated node to use TRS; a typed reader can otherwise decompose `matrix` and lose that source distinction | Reject at raw preflight | Reject at raw preflight |
 | Shared raw accessor payloads | Every accessor use has a component-shape and typed field disposition; preserved uses remain explicit factor-one claims | Convert once per unique accessor: every converted use takes `q` | Reject same-index type/factor conflicts and overlapping distinct accessors when either range is rewritten (§D.2) |
+| Unreferenced accessor payloads | Retained only in the raw source container, including dense bases and sparse index/value payloads | Preserve exactly; reject when any owned byte span overlaps a rewritten accessor | Preserve exactly; reject when any owned byte span overlaps a rewritten accessor |
 | Image payload aliases | An `image` reads a `bufferView` directly and never becomes an accessor | Reject when its bytes overlap a rewritten accessor | Reject when its bytes overlap a rewritten accessor |
 
 The connector exception is deliberately narrower than general helper-node
@@ -1560,20 +1561,18 @@ follows only after its loader can prove the declared boundary; evidence must
 state that FBX curves were baked, not preserved as authored curves.
 
 Source validity is decided once, at the preflight, and not re-derived per
-operation. The preflight's byte-disjointness inspection therefore ranges more
-than accessors. glTF 2.0 core declares four `bufferView` consumers: an
-accessor's own `bufferView`, a sparse accessor's `indices` and `values` views,
-and an `image`'s `bufferView`. The inspection ranges every accessor a mesh or
-skin references, every sampler input and output — including an output whose
-sampler no animation channel selects — and every image view. A referenced
-sparse accessor is refused outright before disjointness matters, and
-extension-defined consumers are unreachable while every extension is itself a
-refusal. It does **not** range a truly unused accessor that no mesh, skin, or
-sampler references, nor that accessor's sparse views — a document may
-therefore still carry unused payload aliasing a converted range. Each operation
-keeps its own guard as defence in depth, since the guard is what must hold if
-the gate is ever relaxed, but it shares the gate's classifier rather than
-re-deriving one.
+operation. The preflight's byte-disjointness inspection therefore ranges every
+accessor, whether or not a mesh, skin, or animation sampler references it, plus
+every image view. An unreferenced accessor contributes its dense base when it
+has one and the packed spans of its sparse indices and values; those bytes are
+preserved source rather than expendable payload. A referenced sparse accessor
+is still refused outright before disjointness matters, and extension-defined
+consumers are unreachable while every extension is itself a refusal. Every
+unreferenced span may sit adjacent to or alias other preserved data, but any
+overlap with a rewritten accessor refuses with both owners located. Each
+operation keeps its own guard as defence in depth, since the guard is what must
+hold if the gate is ever relaxed, but it shares the gate's classifier rather
+than re-deriving one.
 
 The core typed ledger is also the semantic authority for both raw glTF scale
 writers. Before binding raw fields, the adapter replays the plan's complete

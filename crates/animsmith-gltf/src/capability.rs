@@ -254,7 +254,7 @@ pub enum GltfCapabilityViolationKind {
     UnsafeAccessorLayout,
     /// One accessor is shared between scale-bearing and dimensionless semantics.
     ConflictingAccessorUse,
-    /// A scale-bearing accessor overlaps another used byte range in a source
+    /// A scale-bearing accessor overlaps another owned byte range in a source
     /// buffer. The other range is an accessor, or an `image` payload reported
     /// alongside it as [`GltfCapabilityViolationKind::ImagePayloadOverlap`].
     OverlappingAccessorRanges,
@@ -1251,8 +1251,12 @@ enum AccessorUse {
 /// Which source object owns one byte range in the disjointness inspection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum RangeOwner {
-    /// A used accessor's element range.
+    /// An accessor's dense element range.
     Accessor(usize),
+    /// An accessor's sparse-index element range.
+    SparseIndices(usize),
+    /// An accessor's sparse-value element range.
+    SparseValues(usize),
     /// An `image`'s complete buffer view.
     ImagePayload(usize),
 }
@@ -1262,6 +1266,12 @@ impl RangeOwner {
     fn location(self) -> String {
         match self {
             Self::Accessor(index) => format!("/accessors/{index}"),
+            Self::SparseIndices(index) => {
+                format!("/accessors/{index}/sparse/indices/bufferView")
+            }
+            Self::SparseValues(index) => {
+                format!("/accessors/{index}/sparse/values/bufferView")
+            }
             Self::ImagePayload(index) => format!("/images/{index}/bufferView"),
         }
     }
@@ -1270,7 +1280,9 @@ impl RangeOwner {
     /// from a scale-bearing accessor's.
     fn overlap_kind(self) -> GltfCapabilityViolationKind {
         match self {
-            Self::Accessor(_) => GltfCapabilityViolationKind::OverlappingAccessorRanges,
+            Self::Accessor(_) | Self::SparseIndices(_) | Self::SparseValues(_) => {
+                GltfCapabilityViolationKind::OverlappingAccessorRanges
+            }
             Self::ImagePayload(_) => GltfCapabilityViolationKind::ImagePayloadOverlap,
         }
     }
@@ -1287,24 +1299,40 @@ fn inspect_accessor_layouts(
 ) {
     let Some(root) = root.as_object() else { return };
     let mut ranges: Vec<OwnedRange> = Vec::new();
-    for (&accessor_index, accessor_uses) in uses {
-        let scale_bearing = accessor_uses.contains(&AccessorUse::ScaleBearing);
-        let range = if scale_bearing {
-            dense_f32_accessor_range(root, buffers, accessor_index)
-        } else {
-            accessor_range(root, buffers, accessor_index)
-                .map(|range| (range.buffer, range.start, range.end))
-        };
-        match range {
-            Some((buffer, start, end)) => {
-                ranges.push((
-                    buffer,
-                    start,
-                    end,
+    let accessors = root
+        .get("accessors")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    for accessor_index in 0..accessors.len() {
+        let accessor_uses = uses.get(&accessor_index);
+        let scale_bearing =
+            accessor_uses.is_some_and(|uses| uses.contains(&AccessorUse::ScaleBearing));
+        let accessor_ranges = if scale_bearing {
+            dense_f32_accessor_range(root, buffers, accessor_index).map(|range| {
+                vec![(
+                    range.0,
+                    range.1,
+                    range.2,
                     RangeOwner::Accessor(accessor_index),
-                    scale_bearing,
-                ));
-            }
+                    true,
+                )]
+            })
+        } else if accessor_uses.is_some() {
+            accessor_range(root, buffers, accessor_index).map(|range| {
+                vec![(
+                    range.buffer,
+                    range.start,
+                    range.end,
+                    RangeOwner::Accessor(accessor_index),
+                    false,
+                )]
+            })
+        } else {
+            preserved_accessor_ranges(root, buffers, accessor_index)
+        };
+        match accessor_ranges {
+            Some(accessor_ranges) => ranges.extend(accessor_ranges),
             None => violation(
                 violations,
                 GltfCapabilityViolationKind::UnsafeAccessorLayout,
@@ -1354,6 +1382,147 @@ fn inspect_accessor_layouts(
     }
 }
 
+/// Every byte range owned by an unreferenced accessor.
+///
+/// Unlike a referenced sparse accessor, which remains an unsupported reader
+/// layout, an unreferenced sparse accessor is source payload to preserve. Its
+/// optional dense base plus its sparse indices and values therefore enter the
+/// same disjointness ledger as ordinary dense accessors. Returning `None`
+/// fails closed when a declared span cannot be resolved; an empty vector is a
+/// valid accessor with no owned bytes.
+fn preserved_accessor_ranges(
+    root: &Map<String, Value>,
+    buffers: &[Vec<u8>],
+    accessor_index: usize,
+) -> Option<Vec<OwnedRange>> {
+    let accessor = root
+        .get("accessors")?
+        .as_array()?
+        .get(accessor_index)?
+        .as_object()?;
+    let count: usize = accessor.get("count")?.as_u64()?.try_into().ok()?;
+    if count == 0 {
+        return Some(Vec::new());
+    }
+    let Some(sparse) = accessor.get("sparse") else {
+        let range = accessor_range(root, buffers, accessor_index)?;
+        return Some(vec![(
+            range.buffer,
+            range.start,
+            range.end,
+            RangeOwner::Accessor(accessor_index),
+            false,
+        )]);
+    };
+
+    let mut ranges = Vec::with_capacity(3);
+    if accessor.get("bufferView").is_some() {
+        let range = dense_accessor_range(root, buffers, accessor_index)?;
+        ranges.push((
+            range.buffer,
+            range.start,
+            range.end,
+            RangeOwner::Accessor(accessor_index),
+            false,
+        ));
+    }
+
+    let sparse = sparse.as_object()?;
+    let sparse_count: usize = sparse.get("count")?.as_u64()?.try_into().ok()?;
+    if sparse_count == 0 {
+        return Some(ranges);
+    }
+    let indices = sparse.get("indices")?.as_object()?;
+    let index_size = match indices.get("componentType")?.as_u64()? {
+        5121 => 1,
+        5123 => 2,
+        5125 => 4,
+        _ => return None,
+    };
+    let indices_range = packed_view_range(
+        root,
+        buffers,
+        as_index(indices.get("bufferView"))?,
+        indices
+            .get("byteOffset")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        sparse_count,
+        index_size,
+        index_size,
+    )?;
+    ranges.push((
+        indices_range.0,
+        indices_range.1,
+        indices_range.2,
+        RangeOwner::SparseIndices(accessor_index),
+        false,
+    ));
+
+    let values = sparse.get("values")?.as_object()?;
+    let component_size = component_size(accessor.get("componentType")?.as_u64()?)?;
+    let element_layout = accessor_element_layout(accessor.get("type")?.as_str()?, component_size)?;
+    let values_range = packed_view_range(
+        root,
+        buffers,
+        as_index(values.get("bufferView"))?,
+        values
+            .get("byteOffset")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        sparse_count,
+        element_layout.stride,
+        element_layout.terminal_size,
+    )?;
+    ranges.push((
+        values_range.0,
+        values_range.1,
+        values_range.2,
+        RangeOwner::SparseValues(accessor_index),
+        false,
+    ));
+    Some(ranges)
+}
+
+/// Resolve one tightly packed walk within a declared buffer view.
+fn packed_view_range(
+    root: &Map<String, Value>,
+    buffers: &[Vec<u8>],
+    view_index: usize,
+    relative_offset: u64,
+    count: usize,
+    element_stride: usize,
+    terminal_size: usize,
+) -> Option<(usize, usize, usize)> {
+    let view = root
+        .get("bufferViews")?
+        .as_array()?
+        .get(view_index)?
+        .as_object()?;
+    let buffer_index = as_index(view.get("buffer"))?;
+    let buffer = buffers.get(buffer_index)?;
+    let view_offset: usize = view
+        .get("byteOffset")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        .try_into()
+        .ok()?;
+    let view_length: usize = view.get("byteLength")?.as_u64()?.try_into().ok()?;
+    if view_offset.checked_add(view_length)? > buffer.len() {
+        return None;
+    }
+    let relative_offset: usize = relative_offset.try_into().ok()?;
+    let relative_end = relative_offset
+        .checked_add(count.checked_sub(1)?.checked_mul(element_stride)?)?
+        .checked_add(terminal_size)?;
+    if relative_end > view_length {
+        return None;
+    }
+    let start = view_offset.checked_add(relative_offset)?;
+    let end = view_offset.checked_add(relative_end)?;
+    Some((buffer_index, start, end))
+}
+
 /// The byte range every `image` reads directly from a buffer view.
 ///
 /// # Why images, and why only images
@@ -1365,15 +1534,10 @@ fn inspect_accessor_layouts(
 ///
 /// | Consumer | Treatment |
 /// |---|---|
-/// | `/accessors/*/bufferView`, referenced by a mesh, skin or sampler | Ranged by [`inspect_accessor_layouts`] above. |
-/// | `/accessors/*/sparse/indices/bufferView`, `/accessors/*/sparse/values/bufferView` | Out of range: [`accessor_range`] refuses every `sparse` accessor, so a *used* sparse accessor is already an `UnsafeAccessorLayout` violation and never reaches a rewrite. |
+/// | `/accessors/*/bufferView` | Every accessor is ranged by [`inspect_accessor_layouts`] above, whether referenced or not. |
+/// | `/accessors/*/sparse/indices/bufferView`, `/accessors/*/sparse/values/bufferView` | Ranged for unreferenced accessors. A referenced sparse accessor remains an `UnsafeAccessorLayout` refusal and never reaches a rewrite. |
 /// | `/images/*/bufferView` | Ranged here. |
 /// | Extension payloads such as `EXT_meshopt_compression` or `KHR_draco_mesh_compression` | Out of range: this crate registers no extension handler, so every extension declaration *and* every extension payload is already an `ExtensionDeclaration`/`ExtensionPayload` violation. |
-///
-/// An accessor that **no** mesh, skin or animation sampler references is not
-/// in `uses` and is therefore ranged by neither this function nor the
-/// accessor sweep; nor are its `sparse` buffer views. That gap predates this
-/// inspection and is not closed here.
 ///
 /// # Bounds
 ///
@@ -1574,7 +1738,7 @@ pub(crate) fn dense_f32_accessor_range(
         return None;
     }
     let range = accessor_range(root, buffers, accessor_index)?;
-    if range.stride != range.element_size || !range.start.is_multiple_of(4) {
+    if range.stride != range.element_stride || !range.start.is_multiple_of(4) {
         return None;
     }
     Some((range.buffer, range.start, range.end))
@@ -1603,7 +1767,7 @@ struct AccessorRange {
     start: usize,
     end: usize,
     stride: usize,
-    element_size: usize,
+    element_stride: usize,
 }
 
 fn accessor_range(
@@ -1611,19 +1775,29 @@ fn accessor_range(
     buffers: &[Vec<u8>],
     accessor_index: usize,
 ) -> Option<AccessorRange> {
-    let accessors = root.get("accessors")?.as_array()?;
-    let buffer_views = root.get("bufferViews")?.as_array()?;
-    let accessor = accessors.get(accessor_index)?.as_object()?;
+    let accessor = root
+        .get("accessors")?
+        .as_array()?
+        .get(accessor_index)?
+        .as_object()?;
     if accessor.contains_key("sparse") {
         return None;
     }
-    let component_size = match accessor.get("componentType")?.as_u64()? {
-        5120 | 5121 => 1usize,
-        5122 | 5123 => 2,
-        5125 | 5126 => 4,
-        _ => return None,
-    };
-    let element_size = accessor_element_size(accessor.get("type")?.as_str()?, component_size)?;
+    dense_accessor_range(root, buffers, accessor_index)
+}
+
+/// The dense base range of an accessor, including one that also declares
+/// sparse replacement data.
+fn dense_accessor_range(
+    root: &Map<String, Value>,
+    buffers: &[Vec<u8>],
+    accessor_index: usize,
+) -> Option<AccessorRange> {
+    let accessors = root.get("accessors")?.as_array()?;
+    let buffer_views = root.get("bufferViews")?.as_array()?;
+    let accessor = accessors.get(accessor_index)?.as_object()?;
+    let component_size = component_size(accessor.get("componentType")?.as_u64()?)?;
+    let element_layout = accessor_element_layout(accessor.get("type")?.as_str()?, component_size)?;
     let count: usize = accessor.get("count")?.as_u64()?.try_into().ok()?;
     if count == 0 {
         return None;
@@ -1651,15 +1825,15 @@ fn accessor_range(
     let stride: usize = view
         .get("byteStride")
         .and_then(Value::as_u64)
-        .unwrap_or(element_size as u64)
+        .unwrap_or(element_layout.stride as u64)
         .try_into()
         .ok()?;
-    if stride < element_size {
+    if stride < element_layout.stride {
         return None;
     }
     let relative_end = accessor_offset
         .checked_add(count.checked_sub(1)?.checked_mul(stride)?)?
-        .checked_add(element_size)?;
+        .checked_add(element_layout.terminal_size)?;
     if relative_end > view_length {
         return None;
     }
@@ -1670,11 +1844,36 @@ fn accessor_range(
         start,
         end,
         stride,
-        element_size,
+        element_stride: element_layout.stride,
     })
 }
 
-fn accessor_element_size(accessor_type: &str, component_size: usize) -> Option<usize> {
+fn component_size(component_type: u64) -> Option<usize> {
+    match component_type {
+        5120 | 5121 => Some(1),
+        5122 | 5123 => Some(2),
+        5125 | 5126 => Some(4),
+        _ => None,
+    }
+}
+
+/// The stored spacing and terminal occupied extent of one accessor element.
+///
+/// Integer `MAT2` and `MAT3` columns begin on four-byte boundaries. That
+/// padding contributes to the stride between elements, but glTF permits the
+/// trailing padding after the final matrix column to be omitted when no data
+/// follows. Keeping the two lengths separate admits that compact final
+/// element without weakening the bounds on preceding elements.
+#[derive(Debug, Clone, Copy)]
+struct AccessorElementLayout {
+    stride: usize,
+    terminal_size: usize,
+}
+
+fn accessor_element_layout(
+    accessor_type: &str,
+    component_size: usize,
+) -> Option<AccessorElementLayout> {
     let (columns, rows, matrix) = match accessor_type {
         "SCALAR" => (1usize, 1usize, false),
         "VEC2" => (1, 2, false),
@@ -1691,7 +1890,15 @@ fn accessor_element_size(accessor_type: &str, component_size: usize) -> Option<u
     } else {
         column_size
     };
-    columns.checked_mul(stored_column_size)
+    let stride = columns.checked_mul(stored_column_size)?;
+    let terminal_size = columns
+        .checked_sub(1)?
+        .checked_mul(stored_column_size)?
+        .checked_add(column_size)?;
+    Some(AccessorElementLayout {
+        stride,
+        terminal_size,
+    })
 }
 
 fn inspect_schema_members(

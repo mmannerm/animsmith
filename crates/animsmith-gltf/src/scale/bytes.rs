@@ -89,7 +89,7 @@ pub(crate) fn accessor_span_typed(
     //
     // Unreachable today, and deliberately kept: `dense_f32_accessor_range`
     // requires `stride == element_size`, and for a four-byte component
-    // `crate::capability`'s `accessor_element_size` and this module's
+    // `crate::capability`'s `accessor_element_layout` and this module's
     // `components_per_element` derive the same element size from the same
     // `type` string (glTF's matrix column padding rounds each column up to
     // four bytes, a no-op at four-byte components). So the two sizes agree by
@@ -332,7 +332,7 @@ mod tests {
     #[test]
     fn the_two_element_size_tables_agree_for_every_f32_type() {
         // `accessor_span`'s shape guard compares a span sized by
-        // `crate::capability::accessor_element_size` against one sized by
+        // `crate::capability::accessor_element_layout` against one sized by
         // `components_per_element`. The guard is unreachable exactly while
         // the two agree, so the agreement is what gets pinned; if either
         // table changes, this fails here rather than silently arming the
