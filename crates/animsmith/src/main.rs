@@ -399,7 +399,18 @@ fn current_tool() -> ToolInfo {
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) if !error.use_stderr() => {
+            // clap normally writes display-help/version itself and silently
+            // swallows a broken pipe. Keep those successful parser outcomes,
+            // but route their stdout through the same checked delivery rule as
+            // every command result so a closed stream is diagnosed.
+            publish::emit_text(&error.render().to_string());
+            return ExitCode::SUCCESS;
+        }
+        Err(error) => error.exit(),
+    };
     match run(cli) {
         Ok(code) => code,
         Err(message) => {
@@ -787,15 +798,17 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             if let Some(output) = output.as_deref() {
                 session.write(&input, output).map_err(|e| e.to_string())?;
             }
-            for (repair, report) in &reports {
-                // clap rejects --dry-run with a write target, so
-                // `output` is None exactly when this is a dry run.
-                publish::emit_text_lines(render::render_fix_report(
-                    *repair,
-                    report,
-                    output.as_deref(),
-                ));
-            }
+            // clap rejects --dry-run with a write target, so `output` is None
+            // exactly when this is a dry run. Collect every selected repair's
+            // lines before the one checked stream attempt: one closed stdout
+            // must produce one diagnosis, regardless of the repair count.
+            let report_lines = reports
+                .iter()
+                .flat_map(|(repair, report)| {
+                    render::render_fix_report(*repair, report, output.as_deref())
+                })
+                .collect::<Vec<_>>();
+            publish::emit_text_lines(report_lines);
             // Dry run doubles as a CI check mode: pending repairs are
             // findings, mirroring `lint`'s exit contract.
             Ok(if dry_run && pending {

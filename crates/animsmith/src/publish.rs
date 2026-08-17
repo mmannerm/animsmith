@@ -495,8 +495,9 @@ mod tests {
 
     #[test]
     fn command_stdout_sites_cannot_bypass_the_checked_text_boundary() {
+        let main_source = include_str!("main.rs");
         for (name, source) in [
-            ("main.rs", include_str!("main.rs")),
+            ("main.rs", main_source),
             ("assembly.rs", include_str!("assembly.rs")),
             ("scale.rs", include_str!("scale.rs")),
         ] {
@@ -517,6 +518,14 @@ mod tests {
                 bypasses.join("\n")
             );
         }
+        assert!(
+            !main_source.contains("Cli::parse();"),
+            "clap display-help/version bypasses checked stdout through Cli::parse"
+        );
+        assert!(
+            main_source.contains("Cli::try_parse()"),
+            "CLI parsing must retain display-help/version for checked delivery"
+        );
     }
 
     #[test]

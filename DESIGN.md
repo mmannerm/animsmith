@@ -136,7 +136,8 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   (unreadable file, bad config).
   `--deny-warnings` promotes warnings to errors.
 - **Stdout is reporting, not outcome authority.** Every JSON, text, and
-  Markdown stdout write uses the CLI's checked output boundary. A closed pipe
+  Markdown stdout write, including parser-rendered help and version text, uses
+  the CLI's checked output boundary. A closed pipe
   or other write failure is diagnosed with a best-effort checked stderr write,
   never panics, and never replaces the command's eventual `0`, `1`, or `2`.
   This deliberately includes output-centric commands such as `inspect`: exit
@@ -146,6 +147,9 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   publication as operator errors. JSON serialization failure remains an
   operator error because it means no truthful record could be formed; failure
   to deliver already-rendered bytes is only a reporting failure.
+  Multi-part human output is attempted as one checked stream where one command
+  can produce multiple records; in particular, all selected `fix` repair
+  reports yield at most one stdout-failure diagnostic.
 - Human-readable command results are assembled by pure functions in the CLI's
   renderer module. Command dispatch keeps execution, file writes, and exit
   policy in `main.rs` and passes structured values to the renderer; the

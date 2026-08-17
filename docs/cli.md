@@ -190,8 +190,9 @@ tangents.
 | 2 | Operator/tool error: unopenable input, bad config, unsupported format, or invalid flags. |
 
 The code reports what the run *did*, never how well it could report it. This
-holds for **every stdout presentation**: text, Markdown, and every `--format
-json` path (`measure`, `lint`, `diff`, `convert`, `assemble`, `scale`). If
+holds for **every stdout presentation**: parser-rendered help/version, text,
+Markdown, and every `--format json` path (`measure`, `lint`, `diff`, `convert`,
+`assemble`, `scale`). If
 stdout cannot accept the result — a closed pipe or full filesystem — the
 checked write never panics, a best-effort checked diagnostic goes to stderr,
 and the command's own code stands. Thus `lint … --format text | head` still
@@ -202,6 +203,9 @@ not a panic. Raising the stdout failure instead would report an operator error
 for work that was actually done and make exit semantics depend on presentation
 format. JSON serialization failure remains exit `2` because the CLI could not
 form a truthful record; delivery failure after rendering is only reporting.
+Commands that render several related pieces attempt one checked stream when a
+single delivery boundary is promised. In particular, all selected `fix`
+repair reports produce at most one stdout-failure diagnostic.
 Only stdout is affected; nothing about artifact publication changes.
 
 A role-dependent check with missing prerequisites reports a typed coverage

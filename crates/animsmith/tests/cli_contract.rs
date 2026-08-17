@@ -3982,6 +3982,76 @@ fn a_closed_stdout_preserves_text_and_markdown_command_outcomes() {
     );
 }
 
+#[test]
+fn closed_stdout_help_and_version_are_checked_successful_deliveries() {
+    for (case, args) in [
+        ("root help", vec!["--help"]),
+        ("subcommand help", vec!["fix", "--help"]),
+        ("version", vec!["--version"]),
+    ] {
+        let (reader, writer) = std::io::pipe().expect("creates a pipe");
+        drop(reader);
+        let output = animsmith()
+            .args(args)
+            .stdout(Stdio::from(writer))
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap_or_else(|error| panic!("spawns {case}: {error}"))
+            .wait_with_output()
+            .unwrap_or_else(|error| panic!("waits for {case}: {error}"));
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{case} remains a successful parser outcome; stderr:\n{stderr}"
+        );
+        assert!(
+            stderr.starts_with("animsmith: cannot write text output to stdout"),
+            "{case} stderr:\n{stderr}"
+        );
+        assert!(!stderr.contains("panicked at"), "{case} stderr:\n{stderr}");
+    }
+}
+
+#[test]
+fn closed_stdout_fix_with_multiple_reports_is_diagnosed_once() {
+    let dir = unique_temp_dir("closed-stdout-fix-multiple");
+    let input = dir.path().join("distinct-repairs.glb");
+    write_distinct_repair_glb(&input);
+    let (reader, writer) = std::io::pipe().expect("creates a pipe");
+    drop(reader);
+    let output = animsmith()
+        .args([
+            "fix",
+            input.to_str().expect("utf-8 fixture path"),
+            "--dry-run",
+            "--repair",
+            "quat-norm,quat-flip",
+        ])
+        .stdout(Stdio::from(writer))
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawns fix")
+        .wait_with_output()
+        .expect("waits for fix");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "pending repairs remain findings; stderr:\n{stderr}"
+    );
+    assert_eq!(
+        stderr
+            .matches("animsmith: cannot write text output to stdout")
+            .count(),
+        1,
+        "one attempted fix stream must produce one diagnostic:\n{stderr}"
+    );
+    assert!(!stderr.contains("panicked at"), "stderr:\n{stderr}");
+}
+
 // --- #30: exit-code, config-path, and inspect contract ---
 
 fn write_config(dir: &std::path::Path, name: &str, toml: &str) -> PathBuf {
