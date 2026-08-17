@@ -137,9 +137,11 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   `--deny-warnings` promotes warnings to errors.
 - **Stdout is reporting, not outcome authority.** Every JSON, text, and
   Markdown stdout write, including parser-rendered help and version text, uses
-  the CLI's checked output boundary. A closed pipe
-  or other write failure is diagnosed with a best-effort checked stderr write,
-  never panics, and never replaces the command's eventual `0`, `1`, or `2`.
+  a fallible checked write followed by a best-effort checked stderr diagnosis.
+  A closed pipe or other write failure never panics or replaces the outcome
+  already established by a stdout-bearing path: shipped success paths retain
+  `0`, while finding and refusal paths retain `1`. Operator errors occur
+  before stdout reporting, remain stderr-only, and retain `2`.
   This deliberately includes output-centric commands such as `inspect`: exit
   `0` states that inspection completed, not that an external consumer accepted
   every byte. Assigning a new outcome to text alone would make exit semantics
@@ -149,7 +151,8 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   to deliver already-rendered bytes is only a reporting failure.
   Multi-part human output is attempted as one checked stream where one command
   can produce multiple records; in particular, all selected `fix` repair
-  reports yield at most one stdout-failure diagnostic.
+  reports and all parts of one conversion summary yield at most one
+  stdout-failure diagnostic.
   Parser output remains clap-owned: the checked boundary calls clap's
   fallible writer directly so its configured automatic/forced ANSI styling is
   preserved instead of being stripped while materializing a plain string.

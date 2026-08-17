@@ -117,9 +117,11 @@ pub(crate) fn emit(bytes: &[u8]) {
 /// panics on a closed pipe. The stderr diagnosis is itself best effort because
 /// a command may have lost both output streams.
 pub(crate) fn emit_text(text: &str) {
-    if let Err(error) = emit_text_to(&mut std::io::stdout().lock(), text.as_bytes()) {
-        diagnose_write_failure(&error);
-    }
+    emit_text_with(
+        &mut std::io::stdout().lock(),
+        &mut std::io::stderr(),
+        text.as_bytes(),
+    );
 }
 
 /// Write rendered human-readable lines to stdout under one lock.
@@ -128,10 +130,7 @@ pub(crate) fn emit_text(text: &str) {
 /// newline that `println!("{line}")` supplied, stops after the first failed
 /// write, and emits at most one diagnosis for the attempted stream.
 pub(crate) fn emit_text_lines(lines: impl IntoIterator<Item = String>) {
-    let mut stdout = std::io::stdout().lock();
-    if let Err(error) = emit_text_lines_to(&mut stdout, lines) {
-        diagnose_write_failure(&error);
-    }
+    emit_text_lines_with(&mut std::io::stdout().lock(), &mut std::io::stderr(), lines);
 }
 
 /// Ask clap to deliver its already-styled help or version output, diagnosing
@@ -154,13 +153,15 @@ pub(crate) fn emit_clap_output(output: &clap::Error) {
 /// before a later report is pulled or rendered. The whole stream owns one
 /// stdout lock and at most one diagnosis.
 pub(crate) fn emit_fix_reports<'a>(
-    mut stdout: impl std::io::Write,
     reports: impl IntoIterator<Item = &'a (Repair, FixReport)>,
     target: Option<&'a Path>,
 ) {
-    if let Err(error) = emit_fix_reports_to(&mut stdout, reports, target) {
-        diagnose_write_failure(&error);
-    }
+    emit_fix_reports_with(
+        &mut std::io::stdout().lock(),
+        &mut std::io::stderr(),
+        reports,
+        target,
+    );
 }
 
 /// Write exact rendered human-readable chunks to stdout under one lock.
@@ -171,10 +172,11 @@ pub(crate) fn emit_fix_reports<'a>(
 /// rest of a potentially asset-sized transcript.
 #[cfg_attr(not(feature = "fbx"), allow(dead_code))]
 pub(crate) fn emit_text_chunks(chunks: impl IntoIterator<Item = String>) {
-    let mut stdout = std::io::stdout().lock();
-    if let Err(error) = emit_text_chunks_to(&mut stdout, chunks) {
-        diagnose_write_failure(&error);
-    }
+    emit_text_chunks_with(
+        &mut std::io::stdout().lock(),
+        &mut std::io::stderr(),
+        chunks,
+    );
 }
 
 /// Best-effort reporting for a stdout failure. Deliberately ignores stderr's
@@ -214,6 +216,28 @@ fn emit_text_to(sink: &mut impl std::io::Write, bytes: &[u8]) -> Result<(), Stri
         .map_err(|error| format!("cannot write text output to stdout: {error}"))
 }
 
+fn report_text_result_to(sink: &mut impl std::io::Write, result: Result<(), String>) {
+    if let Err(error) = result {
+        diagnose_write_failure_to(sink, &error);
+    }
+}
+
+fn emit_text_with(
+    stdout: &mut impl std::io::Write,
+    stderr: &mut impl std::io::Write,
+    bytes: &[u8],
+) {
+    report_text_result_to(stderr, emit_text_to(stdout, bytes));
+}
+
+fn emit_text_lines_with(
+    stdout: &mut impl std::io::Write,
+    stderr: &mut impl std::io::Write,
+    lines: impl IntoIterator<Item = String>,
+) {
+    report_text_result_to(stderr, emit_text_lines_to(stdout, lines));
+}
+
 fn emit_text_lines_to(
     sink: &mut impl std::io::Write,
     lines: impl IntoIterator<Item = String>,
@@ -247,6 +271,15 @@ fn emit_fix_reports_to<'a>(
     })
 }
 
+fn emit_fix_reports_with<'a>(
+    stdout: &mut impl std::io::Write,
+    stderr: &mut impl std::io::Write,
+    reports: impl IntoIterator<Item = &'a (Repair, FixReport)>,
+    target: Option<&'a Path>,
+) {
+    report_text_result_to(stderr, emit_fix_reports_to(stdout, reports, target));
+}
+
 #[cfg_attr(not(feature = "fbx"), allow(dead_code))]
 fn emit_text_chunks_to(
     sink: &mut impl std::io::Write,
@@ -256,6 +289,15 @@ fn emit_text_chunks_to(
         emit_text_to(sink, chunk.as_bytes())?;
     }
     Ok(())
+}
+
+#[cfg_attr(not(feature = "fbx"), allow(dead_code))]
+fn emit_text_chunks_with(
+    stdout: &mut impl std::io::Write,
+    stderr: &mut impl std::io::Write,
+    chunks: impl IntoIterator<Item = String>,
+) {
+    report_text_result_to(stderr, emit_text_chunks_to(stdout, chunks));
 }
 
 /// The directory a path lives in, treating a bare file name as `.`.
@@ -586,6 +628,113 @@ mod tests {
     }
 
     #[test]
+    fn line_and_chunk_streams_stop_after_a_write_zero_without_pulling_the_tail() {
+        let mut line_pulls = 0;
+        let lines = ["first", "failing", "unreached"].into_iter().map(|line| {
+            line_pulls += 1;
+            line.to_owned()
+        });
+        let mut line_stdout = ShortWriter {
+            accepted: Vec::new(),
+            budget: b"first\n".len(),
+        };
+        let mut line_stderr = Vec::new();
+        emit_text_lines_with(&mut line_stdout, &mut line_stderr, lines);
+        assert_eq!(line_stdout.accepted, b"first\n");
+        assert_eq!(line_pulls, 2, "the item after the failed write stays lazy");
+        let line_diagnostic = String::from_utf8(line_stderr).unwrap();
+        assert_eq!(
+            line_diagnostic
+                .matches("animsmith: cannot write text output to stdout")
+                .count(),
+            1,
+            "{line_diagnostic}"
+        );
+        assert!(
+            line_diagnostic.contains("failed to write whole buffer"),
+            "the accepted prefix ends in WriteZero, not BrokenPipe: {line_diagnostic}"
+        );
+
+        let mut chunk_pulls = 0;
+        let chunks = ["summary\n", "optional\n", "unreached\n"]
+            .into_iter()
+            .map(|chunk| {
+                chunk_pulls += 1;
+                chunk.to_owned()
+            });
+        let mut chunk_stdout = ShortWriter {
+            accepted: Vec::new(),
+            budget: b"summary\n".len(),
+        };
+        let mut chunk_stderr = Vec::new();
+        emit_text_chunks_with(&mut chunk_stdout, &mut chunk_stderr, chunks);
+        assert_eq!(chunk_stdout.accepted, b"summary\n");
+        assert_eq!(chunk_pulls, 2, "the item after the failed write stays lazy");
+        let chunk_diagnostic = String::from_utf8(chunk_stderr).unwrap();
+        assert_eq!(
+            chunk_diagnostic
+                .matches("animsmith: cannot write text output to stdout")
+                .count(),
+            1,
+            "{chunk_diagnostic}"
+        );
+        assert!(
+            chunk_diagnostic.contains("failed to write whole buffer"),
+            "the accepted prefix ends in WriteZero, not BrokenPipe: {chunk_diagnostic}"
+        );
+    }
+
+    #[test]
+    fn conversion_chunks_preserve_order_and_stop_after_the_first_optional_failure() {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        let summary = animsmith_gltf::write::write(
+            &animsmith_core::model::Document::default(),
+            &dir.path().join("summary.glb"),
+        )
+        .expect("obtains a real writer summary");
+        let first_summary =
+            crate::render::render_write_summary(Path::new("converted.glb"), &summary);
+        let transcript = || {
+            [
+                first_summary.clone(),
+                "baked 1 static mesh instance(s) into identity-root geometry\n".to_owned(),
+                "applied material texture recipe; emitted 2 texture(s)\n".to_owned(),
+            ]
+            .into_iter()
+        };
+
+        let mut writable_stdout = Vec::new();
+        let mut writable_stderr = Vec::new();
+        emit_text_chunks_with(&mut writable_stdout, &mut writable_stderr, transcript());
+        assert_eq!(
+            String::from_utf8(writable_stdout).unwrap(),
+            transcript().collect::<Vec<_>>().concat(),
+            "the write summary precedes bake and recipe summaries"
+        );
+        assert!(writable_stderr.is_empty());
+
+        let first = transcript().next().unwrap();
+        let mut pulls = 0;
+        let chunks = transcript().inspect(|_| pulls += 1);
+        let mut stdout = ShortWriter {
+            accepted: Vec::new(),
+            budget: first.len(),
+        };
+        let mut stderr = Vec::new();
+        emit_text_chunks_with(&mut stdout, &mut stderr, chunks);
+        assert_eq!(stdout.accepted, first.as_bytes());
+        assert_eq!(pulls, 2, "the recipe chunk after the failure is not pulled");
+        let diagnostic = String::from_utf8(stderr).unwrap();
+        assert_eq!(
+            diagnostic
+                .matches("animsmith: cannot write text output to stdout")
+                .count(),
+            1,
+            "{diagnostic}"
+        );
+    }
+
+    #[test]
     fn failed_fix_streams_do_not_pull_or_render_later_reports() {
         let mut pulled = 0;
         let reports = [
@@ -596,8 +745,82 @@ mod tests {
             pulled += 1;
             assert_eq!(pulled, 1, "closed output must not pull a later report");
         });
-        emit_fix_reports(&mut BrokenPipe, reports, None);
+        let mut stderr = Vec::new();
+        emit_fix_reports_with(&mut BrokenPipe, &mut stderr, reports, None);
         assert_eq!(pulled, 1);
+        let diagnostic = String::from_utf8(stderr).unwrap();
+        assert_eq!(
+            diagnostic
+                .matches("animsmith: cannot write text output to stdout")
+                .count(),
+            1,
+            "{diagnostic}"
+        );
+    }
+
+    #[test]
+    fn failed_fix_stream_stops_inside_a_real_multi_track_report() {
+        let mut document = animsmith_testkit::two_bone_rotation_doc(
+            "sway",
+            animsmith_testkit::quats_from_angles(&[0.0, 0.4, 0.8, 1.2, 1.6]),
+            false,
+        );
+        let mut second = document.clips[0].tracks[0].clone();
+        second.bone = 0;
+        document.clips[0].tracks.push(second);
+        for track in &mut document.clips[0].tracks {
+            let animsmith_core::model::TrackValues::Quats(values) = &mut track.values else {
+                panic!("rotation values");
+            };
+            values[1] = -values[1];
+            values[3] = -values[3];
+        }
+
+        let dir = tempfile::tempdir().expect("temporary directory");
+        let input = dir.path().join("multi-track.glb");
+        animsmith_gltf::write::write(&document, &input).expect("writes repair fixture");
+        let mut session = animsmith_gltf::fix::FixSession::read(&input).expect("reads fixture");
+        let report = session.apply(Repair::QuatFlip);
+        assert_eq!(report.tracks.len(), 2, "fixture has two repaired tracks");
+        assert_eq!(
+            crate::render::render_fix_report(Repair::QuatFlip, &report, None)
+                .take(2)
+                .count(),
+            2,
+            "the first report really has multiple track-derived lines"
+        );
+
+        let reports = [(Repair::QuatFlip, report)];
+        let mut stderr = Vec::new();
+        emit_fix_reports_with(&mut BrokenPipe, &mut stderr, reports.iter(), None);
+        let diagnostic = String::from_utf8(stderr).unwrap();
+        assert_eq!(
+            diagnostic
+                .matches("animsmith: cannot write text output to stdout")
+                .count(),
+            1,
+            "the first failed track line diagnoses the whole lazy stream once: {diagnostic}"
+        );
+
+        let rendered_lines = std::cell::Cell::new(0);
+        let error = emit_text_line_groups_to(&mut BrokenPipe, [()], |_| {
+            ["first track", "second track", "summary"]
+                .into_iter()
+                .map(|line| {
+                    rendered_lines.set(rendered_lines.get() + 1);
+                    line.to_owned()
+                })
+        })
+        .expect_err("the first track-derived line fails");
+        assert!(
+            error.starts_with("cannot write text output to stdout"),
+            "{error}"
+        );
+        assert_eq!(
+            rendered_lines.get(),
+            1,
+            "a first-line failure must not render later lines in the same report"
+        );
     }
 
     #[test]
@@ -632,6 +855,14 @@ mod tests {
                  emit_text_lines:\n{}",
                 bypasses.join("\n")
             );
+            assert!(
+                !source.contains("std::io::stdout")
+                    && !source.contains("io::stdout")
+                    && !source.contains("stdout().lock")
+                    && !source.contains("stdout().write")
+                    && !source.contains("stdout().flush"),
+                "{name} acquires or writes stdout outside publish.rs"
+            );
         }
         assert!(
             !main_source.contains("Cli::parse();"),
@@ -661,6 +892,93 @@ mod tests {
         assert!(
             !fix_dispatch.contains("render_fix_report"),
             "fix dispatch must not obtain a render iterator it could materialize"
+        );
+        let publish_source = include_str!("publish.rs");
+        let fix_wrapper = publish_source
+            .split_once("pub(crate) fn emit_fix_reports")
+            .and_then(|(_, suffix)| suffix.split_once("/// Write exact rendered"))
+            .map(|(body, _)| body)
+            .expect("locates specialized fix emitter");
+        for forbidden in ["collect", "Vec<", "Vec::", "from_iter", "render_fix_report"] {
+            assert!(
+                !fix_wrapper.contains(forbidden),
+                "specialized fix wrapper must pass the lazy report iterator through; found {forbidden}"
+            );
+        }
+        let fix_pipeline = publish_source
+            .split_once("fn emit_text_line_groups_to")
+            .and_then(|(_, suffix)| suffix.split_once("fn emit_fix_reports_with"))
+            .map(|(body, _)| body)
+            .expect("locates the lazy fix rendering pipeline");
+        assert!(
+            fix_pipeline.contains("flat_map(render)") && fix_pipeline.contains("render_fix_report"),
+            "the specialized fix emitter must stream rendered lines lazily"
+        );
+        for forbidden in ["collect", "Vec<", "Vec::", "from_iter"] {
+            assert!(
+                !fix_pipeline.contains(forbidden),
+                "the specialized fix pipeline must not retain its transcript; found {forbidden}"
+            );
+        }
+        for (emitter, start, end, route) in [
+            (
+                "emit",
+                "pub(crate) fn emit(bytes:",
+                "/// Write one already-rendered",
+                "diagnose_write_failure(",
+            ),
+            (
+                "emit_text",
+                "pub(crate) fn emit_text(text:",
+                "/// Write rendered human-readable lines",
+                "emit_text_with(",
+            ),
+            (
+                "emit_text_lines",
+                "pub(crate) fn emit_text_lines(",
+                "/// Ask clap",
+                "emit_text_lines_with(",
+            ),
+            (
+                "emit_clap_output",
+                "pub(crate) fn emit_clap_output(",
+                "/// Render and write all `fix`",
+                "diagnose_write_failure(",
+            ),
+            (
+                "emit_fix_reports",
+                "pub(crate) fn emit_fix_reports",
+                "/// Write exact rendered",
+                "emit_fix_reports_with(",
+            ),
+            (
+                "emit_text_chunks",
+                "pub(crate) fn emit_text_chunks(",
+                "/// Best-effort reporting",
+                "emit_text_chunks_with(",
+            ),
+        ] {
+            let body = publish_source
+                .split_once(start)
+                .and_then(|(_, suffix)| suffix.split_once(end))
+                .map(|(body, _)| body)
+                .unwrap_or_else(|| panic!("locates {emitter} implementation"));
+            assert!(
+                body.contains(route),
+                "{emitter} must retain the shared checked diagnostic route {route}"
+            );
+            assert!(
+                !body.contains("eprint!(") && !body.contains("eprintln!("),
+                "{emitter} must not bypass the checked stderr diagnosis"
+            );
+        }
+        assert!(
+            include_str!("scale.rs").contains("emit_text(&render::render_scale_published("),
+            "scale text publication must use the checked text emitter"
+        );
+        assert!(
+            include_str!("assembly.rs").contains("emit_text(&render::render_assemble_published("),
+            "assembly text publication must use the checked text emitter"
         );
     }
 

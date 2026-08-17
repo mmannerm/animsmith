@@ -195,7 +195,8 @@ Markdown, and every `--format json` path (`measure`, `lint`, `diff`, `convert`,
 `assemble`, `scale`). If
 stdout cannot accept the result — a closed pipe or full filesystem — the
 checked write never panics, a best-effort checked diagnostic goes to stderr,
-and the command's own code stands. Thus `lint … --format text | head` still
+and the stdout-bearing path's already-established code stands. Thus
+`lint … --format text | head` still
 exits `1` for findings it found, `inspect … | head` still exits `0` for an
 inspection it completed, and `scale` still exits `1` for a refusal or `0` for
 a published pair. Stderr may itself be closed; losing both streams is still
@@ -203,9 +204,12 @@ not a panic. Raising the stdout failure instead would report an operator error
 for work that was actually done and make exit semantics depend on presentation
 format. JSON serialization failure remains exit `2` because the CLI could not
 form a truthful record; delivery failure after rendering is only reporting.
+Other operator errors occur before stdout reporting, remain stderr-only, and
+retain exit `2`.
 Commands that render several related pieces attempt one checked stream when a
 single delivery boundary is promised. In particular, all selected `fix`
-repair reports produce at most one stdout-failure diagnostic.
+repair reports and all parts of one conversion summary produce at most one
+stdout-failure diagnostic.
 Help and version delivery uses clap's own fallible styled writer, so forced
 ANSI color remains intact while a closed destination still follows this rule.
 Only stdout is affected; nothing about artifact publication changes.

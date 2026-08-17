@@ -3850,8 +3850,11 @@ fn a_closed_stdout_is_diagnosed_without_rewriting_any_json_command_outcome() {
         );
         // Ours, not the OS's: the platform's wording for a reader-less pipe
         // is not this contract.
-        assert!(
-            stderr.starts_with("animsmith: cannot write JSON output to stdout"),
+        assert_eq!(
+            stderr
+                .matches("animsmith: cannot write JSON output to stdout")
+                .count(),
+            1,
             "{command} stderr:\n{stderr}"
         );
     }
@@ -3882,6 +3885,26 @@ fn a_closed_stdout_preserves_text_and_markdown_command_outcomes() {
                 clean.clone(),
                 "--format".to_owned(),
                 "text".to_owned(),
+            ],
+            0,
+        ),
+        (
+            "lint text success",
+            vec![
+                "lint".to_owned(),
+                clean.clone(),
+                "--format".to_owned(),
+                "text".to_owned(),
+            ],
+            0,
+        ),
+        (
+            "lint markdown success",
+            vec![
+                "lint".to_owned(),
+                clean.clone(),
+                "--format".to_owned(),
+                "markdown".to_owned(),
             ],
             0,
         ),
@@ -3959,8 +3982,11 @@ fn a_closed_stdout_preserves_text_and_markdown_command_outcomes() {
             Some(expected_exit),
             "{case} must keep its own outcome when stdout is closed; stderr:\n{stderr}"
         );
-        assert!(
-            stderr.starts_with("animsmith: cannot write text output to stdout"),
+        assert_eq!(
+            stderr
+                .matches("animsmith: cannot write text output to stdout")
+                .count(),
+            1,
             "{case} stderr:\n{stderr}"
         );
         assert!(!stderr.contains("panicked at"), "{case} stderr:\n{stderr}");
@@ -4006,8 +4032,11 @@ fn closed_stdout_help_and_version_are_checked_successful_deliveries() {
             Some(0),
             "{case} remains a successful parser outcome; stderr:\n{stderr}"
         );
-        assert!(
-            stderr.starts_with("animsmith: cannot write text output to stdout"),
+        assert_eq!(
+            stderr
+                .matches("animsmith: cannot write text output to stdout")
+                .count(),
+            1,
             "{case} stderr:\n{stderr}"
         );
         assert!(!stderr.contains("panicked at"), "{case} stderr:\n{stderr}");
@@ -4016,47 +4045,57 @@ fn closed_stdout_help_and_version_are_checked_successful_deliveries() {
 
 #[test]
 fn forced_color_help_preserves_clap_styling_through_checked_stdout() {
-    let output = animsmith()
-        .arg("--help")
-        .env_remove("NO_COLOR")
-        .env("CLICOLOR_FORCE", "1")
-        .output()
-        .expect("runs forced-color help");
-    assert_eq!(output.status.code(), Some(0));
-    assert!(output.stderr.is_empty());
-    assert!(
-        output.stdout.windows(2).any(|bytes| bytes == b"\x1b["),
-        "forced-color clap help must retain ANSI styling"
-    );
-    let visible = String::from_utf8_lossy(&output.stdout);
-    assert!(visible.contains("Usage:"), "help output:\n{visible}");
-    assert!(visible.contains("Commands:"), "help output:\n{visible}");
+    for (case, args, marker) in [
+        ("root", vec!["--help"], "Commands:"),
+        ("subcommand", vec!["fix", "--help"], "--repair"),
+    ] {
+        let output = animsmith()
+            .args(args)
+            .env_remove("NO_COLOR")
+            .env("CLICOLOR_FORCE", "1")
+            .output()
+            .unwrap_or_else(|error| panic!("runs forced-color {case} help: {error}"));
+        assert_eq!(output.status.code(), Some(0), "{case} help");
+        assert!(output.stderr.is_empty(), "{case} help stderr");
+        assert!(
+            output.stdout.windows(2).any(|bytes| bytes == b"\x1b["),
+            "forced-color {case} help must retain ANSI styling"
+        );
+        let visible = String::from_utf8_lossy(&output.stdout);
+        assert!(visible.contains("Usage:"), "{case} help output:\n{visible}");
+        assert!(visible.contains(marker), "{case} help output:\n{visible}");
+    }
 }
 
 #[test]
 fn forced_color_help_into_closed_stdout_is_diagnosed_without_a_panic() {
-    let (reader, writer) = std::io::pipe().expect("creates a pipe");
-    drop(reader);
-    let output = animsmith()
-        .arg("--help")
-        .env_remove("NO_COLOR")
-        .env("CLICOLOR_FORCE", "1")
-        .stdout(Stdio::from(writer))
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawns forced-color help")
-        .wait_with_output()
-        .expect("waits for forced-color help");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(output.status.code(), Some(0), "stderr:\n{stderr}");
-    assert_eq!(
-        stderr
-            .matches("animsmith: cannot write text output to stdout")
-            .count(),
-        1,
-        "stderr:\n{stderr}"
-    );
-    assert!(!stderr.contains("panicked at"), "stderr:\n{stderr}");
+    for (case, args) in [
+        ("root", vec!["--help"]),
+        ("subcommand", vec!["fix", "--help"]),
+    ] {
+        let (reader, writer) = std::io::pipe().expect("creates a pipe");
+        drop(reader);
+        let output = animsmith()
+            .args(args)
+            .env_remove("NO_COLOR")
+            .env("CLICOLOR_FORCE", "1")
+            .stdout(Stdio::from(writer))
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap_or_else(|error| panic!("spawns forced-color {case} help: {error}"))
+            .wait_with_output()
+            .unwrap_or_else(|error| panic!("waits for forced-color {case} help: {error}"));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(0), "{case} stderr:\n{stderr}");
+        assert_eq!(
+            stderr
+                .matches("animsmith: cannot write text output to stdout")
+                .count(),
+            1,
+            "{case} stderr:\n{stderr}"
+        );
+        assert!(!stderr.contains("panicked at"), "{case} stderr:\n{stderr}");
+    }
 }
 
 #[test]
@@ -4095,6 +4134,43 @@ fn closed_stdout_fix_with_multiple_reports_is_diagnosed_once() {
         "one attempted fix stream must produce one diagnostic:\n{stderr}"
     );
     assert!(!stderr.contains("panicked at"), "stderr:\n{stderr}");
+}
+
+#[test]
+fn closed_stdout_successful_fix_publishes_and_keeps_exit_0() {
+    let dir = unique_temp_dir("closed-stdout-fix-published");
+    let input = dir.path().join("distinct-repairs.glb");
+    let output = dir.path().join("fixed.glb");
+    write_distinct_repair_glb(&input);
+    let (reader, writer) = std::io::pipe().expect("creates a pipe");
+    drop(reader);
+    let result = animsmith()
+        .arg("fix")
+        .arg(&input)
+        .arg("-o")
+        .arg(&output)
+        .args(["--repair", "quat-norm,quat-flip"])
+        .stdout(Stdio::from(writer))
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawns fix")
+        .wait_with_output()
+        .expect("waits for fix");
+
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert_eq!(result.status.code(), Some(0), "stderr:\n{stderr}");
+    assert_eq!(
+        stderr
+            .matches("animsmith: cannot write text output to stdout")
+            .count(),
+        1,
+        "one published fix transcript must diagnose once:\n{stderr}"
+    );
+    assert!(
+        output.is_file(),
+        "the successful fix artifact was published"
+    );
+    animsmith_gltf::load(&output).expect("the published fixed artifact reloads");
 }
 
 // --- #30: exit-code, config-path, and inspect contract ---

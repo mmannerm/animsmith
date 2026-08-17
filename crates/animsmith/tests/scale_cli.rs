@@ -16,6 +16,7 @@ use animsmith_testkit::{
     unaffected_bind_scale_rig_glb,
 };
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
@@ -130,6 +131,29 @@ fn assert_schema_valid(instance: &Value) {
         .map(|error| format!("{}: {error}", error.instance_path()))
         .collect();
     assert!(errors.is_empty(), "schema errors: {}", errors.join("; "));
+}
+
+fn assert_published_pair_is_bound(fixture: &Fixture) {
+    let artifact_path = fixture.path("out.glb");
+    let evidence_path = fixture.path("out.json");
+    let artifact = std::fs::read(&artifact_path).expect("reads published scale artifact");
+    animsmith_gltf::load(&artifact_path).expect("published scale artifact reloads");
+    let evidence = read_json(&evidence_path);
+    assert_schema_valid(&evidence);
+    assert_eq!(evidence["outcome"], "published");
+    assert_eq!(
+        evidence["result"]["artifact"]["sha256"],
+        format!("{:x}", Sha256::digest(&artifact)),
+        "scale evidence binds the artifact that landed"
+    );
+    assert_eq!(
+        evidence["result"]["artifact"]["bytes"],
+        artifact.len() as u64
+    );
+    assert_eq!(
+        evidence["result"]["proof"]["read_back_digest_matches"],
+        true
+    );
 }
 
 fn glb(value: &Value, binary: &[u8]) -> Vec<u8> {
@@ -1400,14 +1424,17 @@ fn a_published_run_whose_stdout_is_closed_keeps_exit_0_and_diagnoses_on_stderr()
     );
     // Ours, not the OS's: the platform's wording for a reader-less pipe is
     // not this contract.
-    assert!(
-        stderr(&output).starts_with("animsmith: cannot write JSON output to stdout"),
+    assert_eq!(
+        stderr(&output)
+            .matches("animsmith: cannot write JSON output to stdout")
+            .count(),
+        1,
         "stderr:\n{}",
         stderr(&output)
     );
-    // And the run really did publish, which is why it is a success.
-    assert!(fixture.path("out.glb").is_file());
-    assert_eq!(read_json(&fixture.path("out.json"))["outcome"], "published");
+    // And the run really did publish a self-consistent pair, which is why it
+    // remains a success even though its summary could not be delivered.
+    assert_published_pair_is_bound(&fixture);
 }
 
 /// The minimal-build producer's default text summary uses the same checked
@@ -1424,13 +1451,15 @@ fn a_published_text_summary_with_closed_stdout_keeps_exit_0() {
         "stderr:\n{}",
         stderr(&output)
     );
-    assert!(
-        stderr(&output).starts_with("animsmith: cannot write text output to stdout"),
+    assert_eq!(
+        stderr(&output)
+            .matches("animsmith: cannot write text output to stdout")
+            .count(),
+        1,
         "stderr:\n{}",
         stderr(&output)
     );
-    assert!(fixture.path("out.glb").is_file());
-    assert_eq!(read_json(&fixture.path("out.json"))["outcome"], "published");
+    assert_published_pair_is_bound(&fixture);
 }
 
 /// The same for a refusal, where raising the write failure is an actual
@@ -1449,8 +1478,11 @@ fn a_refused_run_whose_stdout_is_closed_keeps_exit_1_and_diagnoses_on_stderr() {
         "a refusal whose record could not be printed is still a refusal; stderr:\n{}",
         stderr(&output)
     );
-    assert!(
-        stderr(&output).starts_with("animsmith: cannot write JSON output to stdout"),
+    assert_eq!(
+        stderr(&output)
+            .matches("animsmith: cannot write JSON output to stdout")
+            .count(),
+        1,
         "stderr:\n{}",
         stderr(&output)
     );
