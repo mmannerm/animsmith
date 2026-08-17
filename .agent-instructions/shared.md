@@ -54,6 +54,10 @@ next to it:
 - `.claude/skills/audit-task/test-criteria.md`
 - `.claude/skills/audit-task/code-invariants.md`
 
+The checklist's reciprocal cross-model audit is mandatory; follow its provider
+routing, persistence, attribution, and exact-head evidence rules. A same-model
+review is additive, not a substitute.
+
 For the code-review pass, use the strongest review surface available in
 your environment. Address all blockers before reporting a PR as ready
 for a maintainer merge decision.
@@ -61,10 +65,20 @@ for a maintainer merge decision.
 ## Review Economy
 
 - Follow the audit skill's freeze gate before starting external review.
+- Conserve tokens deliberately. Use fresh subagents for independent, bounded
+  review lenses, give them only the relevant raw diff/contract/criteria, and
+  keep synthesis with the primary agent instead of copying full conversation
+  history into every reviewer.
 - Keep one persistent session per reviewer and PR. Resume it for amended
   heads instead of reloading the full context in a new session.
-- Use the lowest model and reasoning effort adequate to the risk: low
-  for documentation, tests, and narrow deltas; medium for ordinary code;
-  high for numerical proof, security, untrusted input, or public-contract
-  changes.
+- For subagents and cross-model CLI reviewers alike, use the lowest model and
+  reasoning effort adequate to the risk: low for documentation, tests, and
+  narrow deltas; medium for ordinary code; high for numerical proof, security,
+  untrusted input, or public-contract changes. Record the cross-model choice.
+- Run independent reviewer passes in parallel when practical, reuse captured
+  exact-head author-gate and PR-check evidence, and request concise
+  evidence-linked findings.
+- The author runs `just gates` once per candidate head, before pushing it. The
+  later audit consumes that result and CI; audit agents do not rerun the same
+  exact-head mechanical suite independently.
 - Poll an active process for status; do not relaunch the same work.

@@ -32,6 +32,12 @@ Do not let evaluator setup, price, or transaction-record gaps change the
 technical verdict. Put provenance and evaluation-completeness limitations in
 their own places.
 
+For a collection rollup, state whether it is partial, name the evaluated and
+missing constituents, link each constituent report, and reserve the verdict
+for the evaluated combination. Prefer a full-body state handoff as the
+conservative unarmed/armed baseline. A headless mask or blend execution is not
+visual/contact acceptance and must not by itself justify layered use.
+
 ## Capability coverage
 
 ### Complete core
@@ -144,6 +150,11 @@ smaller subset.
 {{POOR_FIT_GAME_TYPES_MISSING_CONTENT_AND_MATERIAL_CAVEATS}}
 
 {{CROSS_PACK_COMPATIBILITY_RESULT_OR_REQUIRED_PAIRWISE_TEST}}
+
+For collection reports, include digest results for overlapping package paths,
+namespaced cross-pack members, exact skeleton/reference-rig evidence, and the
+gameplay gaps that one constituent fills for another. Do not infer compatibility
+from shared role names, humanoid labels, or co-import alone.
 
 ## Evidence status
 

@@ -100,6 +100,11 @@ changes: new checks, subcommands, measurement semantics, output
 contracts, dependency additions, write/fix path changes, or broad docs
 restructures.
 
+Substantial agent-authored changes also require one reciprocal cross-model CLI
+audit: Codex invokes Claude, and Claude invokes Codex. The versioned
+[audit workflow](.claude/skills/audit-task/SKILL.md) owns reviewer selection,
+model/effort, session reuse, attribution, and exact-head evidence rules.
+
 The audit should check:
 
 - Simplicity: the design is scoped to the issue and avoids needless

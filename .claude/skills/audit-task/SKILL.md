@@ -19,10 +19,33 @@ This workflow is written to be followable by any agent (Claude, Codex,
 ## Freeze gate
 
 Before launching cold or external review passes, finish the author
-self-review, PR body, documentation-freshness sweep, and local gates;
-record the exact HEAD SHA. If HEAD changes, stop in-flight audits,
-revalidate the amendment locally, and resume the same reviewer sessions
-against the delta. Do not keep an audit running against a stale head.
+self-review, PR body, documentation-freshness sweep, and the exact-head
+verification from step 1; record the exact HEAD SHA. If HEAD changes, stop
+in-flight audits, obtain fresh exact-head evidence, and resume the same reviewer
+sessions against the delta. Do not keep an audit running against a stale head.
+
+## Required reciprocal cross-model audit
+
+Every substantial task must receive one audit from the other model provider's
+CLI after the freeze gate and before the PR is reported ready for merge:
+
+- a Codex author invokes `claude` and asks Claude to run this audit checklist;
+- a Claude author invokes `codex review` and asks Codex to run this audit
+  checklist.
+
+An author's own review surface, a same-provider subagent, or a manual cold pass
+does not replace this reciprocal audit. If the required CLI is unavailable or
+unauthenticated, report the audit as blocked rather than silently substituting
+the authoring model. Apply the token, subagent, model, and reasoning-effort
+policy in [the shared agent instructions](../../../.agent-instructions/shared.md#review-economy),
+and record the requested or resolved reviewer model and effort with the reviewed
+HEAD in the audit result.
+
+Keep one persistent CLI session for each `(PR, reviewer)` pair. On a new HEAD,
+resume that session with the raw delta and fresh exact-head gate result; do not
+start an unanchored replacement session. The cross-model reviewer must use its
+own audit marker and attribution and must not overwrite the author's audit
+comment.
 
 ## Inputs you must locate
 
@@ -36,33 +59,38 @@ against the delta. Do not keep an audit running against a stale head.
    title,body`. Their acceptance criteria are part of the intent
    contract and feed the claims ledger (step 2).
 3. **Diff under review.** `git diff origin/main...HEAD` (or `gh pr diff <N>`).
-4. **Build + test status.** Build evidence is keyed by commit SHA, not by
-   reviewer. Reuse a complete captured result for the exact HEAD when its
-   command, output, and exit status are available; otherwise run it. Do
-   not repeat identical gates solely to make each reviewer compile the
-   same commit independently.
+4. **Build + test status.** Capture the author's pre-push local-gate result, the
+   exact-head PR checks, and uncovered local evidence required by step 1. Build
+   evidence is keyed by commit SHA, not by reviewer.
 
 ## Required workflow
 
 ### 1. Build, test, lint
 
-Obtain and capture an exact-head result for:
+Confirm that the author ran the pre-push `just gates` required by
+[DEVELOPMENT.md](../../../DEVELOPMENT.md#common-commands) and captured its
+command, exit status, and exact HEAD. Then obtain the required PR-check results
+for that same HEAD. Do not run `just gates` again inside `audit-task`, a
+cross-model reviewer, or each audit subagent solely to duplicate that author
+gate or successful CI.
 
-```
-just gates
-```
+If the recorded pre-push gate is missing or belongs to another commit, BLOCK
+until the author supplies one exact-head result. Reviewer independence comes
+from reading the raw artifacts and reaching an independent verdict, not from
+compiling the same commit repeatedly.
 
-(`cargo fmt --all --check`, `cargo clippy --workspace --all-targets --
--D warnings`, `cargo test --workspace`, and the `--no-default-features`
-CLI build.) If the diff touches measurement code (`metrics.rs`,
-`sample.rs`, check algorithms), also run the env-gated golden tests
-(`just golden`) when the reference assets are available, and say so
-either way. Any non-zero exit code is a hard fail. Report the exact
+Run additional checks only for surfaces CI cannot exercise. For example, if the
+diff touches measurement code (`metrics.rs`, `sample.rs`, check algorithms), run
+the env-gated golden tests (`just golden`) when licensed reference assets are
+available and say so either way. Likewise preserve local engine, authorized
+asset, and task-specific manifest validation when those claims matter. Any
+required PR-check or additional-check failure is a hard fail: report the exact
 error and BLOCK.
 
-Record the tested HEAD SHA with the result. Rerun after any HEAD change;
-reviewer independence comes from reading the raw artifacts and reaching
-an independent verdict, not from duplicating the same build.
+Record the HEAD SHA, author gate, and PR-check URLs or retained local evidence.
+After a HEAD change, the author reruns the pre-push gate before pushing the
+amendment; audit reviewers wait for fresh PR checks, resume against the delta,
+and rerun only uncovered checks affected by it.
 
 ### 2. PR-description intent adherence — the audit-specific check
 
@@ -118,7 +146,9 @@ freshness: not applicable".
 Run the strongest code-review pass available in the current agent
 environment against the open PR or branch diff (Claude: the
 `/code-review` plugin; Codex: its review surface; otherwise a manual
-bug-focused pass). Report only findings with at least 80% confidence.
+bug-focused pass). This is the author-side bug review and does not replace the
+required reciprocal cross-model audit. Report only findings with at least 80%
+confidence.
 
 Treat its findings as required reading. Don't dismiss them without
 specific counter-arguments. Don't duplicate what it already covered.
@@ -224,8 +254,9 @@ agent attribution line at the bottom of the comment.
 **Verdict:** [APPROVE] / [APPROVE WITH FOLLOW-UPS] / [BLOCK]
 
 ### Build / test / lint
-- just gates: ✓ / ✗ <details>
-- golden:     ✓ / ✗ / skipped (assets unavailable) / not applicable
+- author pre-push `just gates`: ✓ / ✗ <exact HEAD and retained result>
+- required PR checks: ✓ / ✗ <exact HEAD and links/details>
+- additional checks:  ✓ / ✗ / skipped (unavailable) / not applicable
 
 ### Findings
 

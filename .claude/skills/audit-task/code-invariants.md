@@ -79,10 +79,18 @@ values re-verified and the change justified in the PR description.
 
 ## invariant-8: No licensed assets in the repo
 
-Mixamo, Protofactor, and other licensed content must never be committed
-— not as fixtures, not as "small excerpts". Reference tests against
-them are env-gated and skip when unset. `testdata/` holds only CC0 or
-procedurally generated files.
+Commercial and other redistribution-restricted content, including Mixamo and
+Protofactor packs, must never be committed—not as fixtures, "small excerpts",
+derived clips, engine imports, caches, or motion-bearing generated evidence.
+Authorized one-time evaluation may use those assets only in an external local
+workspace. Reference tests against them are env-gated, developer-local, and
+skip when unset; CI never downloads, caches, or publishes them.
+
+Every repository or CI fixture must be synthetic/self-authored or have a
+license that explicitly permits repository inclusion and CI
+use/redistribution. Record provenance for any non-synthetic fixture. Scrubbed
+text reports, non-recoverable digests, and conclusions are allowed when they do
+not contain recoverable source motion or other restricted payloads.
 
 ## invariant-9: Loaders preserve authored data
 

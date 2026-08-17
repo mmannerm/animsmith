@@ -22,3 +22,5 @@ lod = "lod"
 [type.md.extend-identifiers]
 # Exact observed identifier in the Protofactor combined-take animation list.
 WalkForwadRight = "WalkForwadRight"
+# Exact observed identifier in the Protofactor Sword & Shield animation list.
+ParryHight2 = "ParryHight2"

@@ -52,13 +52,17 @@ $ just animation-pack-skill
 $ just gates
 ```
 
-`just gates` is the local PR gate and should be green before pushing a
-non-trivial PR. It runs formatting, clippy, workspace tests, golden skip
-marker verification, dependency checks, schema-id verification, GitHub
-community-file checks, spell checking, rustdoc with missing public docs
-denied, no-default-features CLI tests and builds, release binary smoke
-checks, package readiness checks, and the animation-pack skill's behavioral
-and published-report validation.
+`just gates` is the local PR gate and should be green on each candidate head
+before pushing a non-trivial PR. It runs formatting, clippy, workspace tests,
+golden skip marker verification, dependency checks, schema-id verification,
+GitHub community-file checks, spell checking, rustdoc with missing public docs
+denied, no-default-features CLI tests and builds, release binary smoke checks,
+package readiness checks, and the animation-pack skill's behavioral and
+published-report validation.
+
+This author-side pre-push gate is distinct from the later PR audit. Once the
+same commit is pushed, audit agents reuse the captured local result and the PR's
+required checks; they do not rerun `just gates` independently.
 
 The corresponding CI workflows also validate the same expectations on a
 clean checkout. Coverage and the security scanners (Scorecard, CodeQL)
@@ -99,8 +103,17 @@ is unset and prints the grep-able marker `ANIMSMITH_GOLDEN_SKIP`; CI and
 $ ANIMSMITH_GOLDEN_GLB=/path/to/reference-character.glb just golden
 ```
 
-Only CC0 or procedurally generated fixtures may be committed under
-`testdata/`.
+`ANIMSMITH_GOLDEN_GLB` is a developer-local, one-time reference input. Never
+commit it or expose it through CI downloads, secrets, caches, logs, or
+artifacts.
+
+The committed-fixture rule applies repository-wide, not only under
+`testdata/`: use synthetic/self-authored assets, CC0 assets, or other assets
+whose license explicitly permits repository inclusion and CI
+use/redistribution. Record provenance and license evidence for every
+non-synthetic fixture. Commercial and other redistribution-restricted assets,
+including excerpts and motion-bearing derivatives, stay outside the repository
+and CI.
 
 ## Documentation Builds
 

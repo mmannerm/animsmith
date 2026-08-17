@@ -11,6 +11,7 @@ Read and follow [CONTRIBUTING.md](CONTRIBUTING.md),
 
 - Keep Claude-specific settings and skills under `.claude/`.
 - The local `/audit-task` skill lives at `.claude/skills/audit-task/`.
-- Use the installed `/code-review` plugin for the audit review pass and
-  the `/simplify` plugin for simplification cleanups.
+- Use the installed `/code-review` plugin for the author-side audit review pass
+  and the `/simplify` plugin for simplification cleanups. Follow the shared
+  audit workflow for the separate reciprocal review.
 - End commits with `Co-Authored-By: Claude <model> <noreply@anthropic.com>`.

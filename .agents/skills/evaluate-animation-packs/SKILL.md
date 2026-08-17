@@ -24,6 +24,10 @@ Claude adapter directory.
 - Keep the acquired source immutable. Put inventories, configs, converted
   files, repaired files, reports, and engine imports in a separate evaluation
   workspace.
+- For commercial or otherwise redistribution-restricted inputs, put that
+  evaluation workspace outside the repository. An authorized one-time local
+  evaluation is allowed; the repository receives only scrubbed text reports,
+  non-recoverable digests, labels, and conclusions.
 - Hash the source before running tools. Use
   `.agents/skills/evaluate-animation-packs/scripts/inventory_pack.py` when a
   directory is available; retain the manifest with the report evidence.
@@ -33,8 +37,15 @@ Claude adapter directory.
 - Report license facts and ambiguities, but do not give legal advice. Quote or
   link the controlling license/marketplace terms and recommend review when the
   intended use or redistribution rights remain uncertain.
-- Do not upload licensed assets, generated reports containing proprietary
-  motion data, or engine project files to public services.
+- Never stage, commit, upload, or cache commercial or otherwise
+  redistribution-restricted source files, excerpts, extracted packages,
+  converted or repaired clips, motion-bearing derived evidence, or generated
+  engine projects. Before committing, inspect every added file and the staged
+  diff for those payloads.
+- Any fixture or validation input that will run in CI must be synthetic or
+  self-authored, or have a license that explicitly permits repository
+  inclusion and CI use/redistribution. Record provenance for non-synthetic
+  fixtures. Never make CI fetch a credential-gated marketplace pack.
 
 Read [assessment taxonomy](references/assessment-taxonomy.md) before assigning
 verdicts or remediation ownership. Read [engine and compatibility checks](references/engine-and-compatibility.md)
@@ -302,6 +313,28 @@ important pair or group, decide separately whether it supports:
 - artist-authored retargeting or cleanup;
 - no defensible conclusion from the available evidence.
 
+When at least two constituents of a collection have been evaluated, create or
+refresh a collection report pair even if the collection is incomplete. Mark it
+as a partial rollup and name both evaluated and missing constituents; never
+extend the two-pack verdict to the collection as sold. Build a namespaced
+rollup manifest from the validated constituent manifests, and keep constituent
+files, motions, and runtime sets traceable to their source pack.
+
+Before concluding that two installed packages coexist safely, compare every
+overlapping logical path by digest. A same-path match is positive packaging
+evidence; a same-path byte conflict is a material integration finding. Compare
+exact skeleton hierarchy/signature, shared reference-rig identity, units/axes,
+root policy, timing, and delivered metadata independently. A matching
+humanoid label or successful co-import is not enough.
+
+For an unarmed/armed or otherwise mode-specific pairing, evaluate a full-body
+state-machine handoff as the conservative baseline. Promote an upper-body mask
+only after its exact base/action members, pelvis/root ownership, support-foot
+behavior, prop/contact/IK requirements, and target-engine visual result are
+tested. A headless mask graph that evaluates without exceptions proves graph
+execution only. Keep kicks, lunges, displacement-bearing actions, and other
+pelvis-driven motions full-body unless stronger evidence supports layering.
+
 Explicitly analyze locomotion blends and sync, transitions, root-motion policy,
 upper/lower-body masks, additive and aim use, attachment and IK expectations,
 contact quality, and style mismatch when relevant to the target game. Do not
@@ -421,6 +454,15 @@ The pair must make these answers obvious:
 - How should the important sets be built and blended?
 - How complete and trustworthy is the evidence?
 
+For a partial collection rollup, the pair must additionally make obvious:
+
+- exactly which constituents are included and excluded;
+- which conclusions come from constituent reports versus new cross-pack tests;
+- whether shared package paths are byte-identical or conflicting;
+- whether the recommended integration uses a full-body state handoff, a mask,
+  or both, and the acceptance level actually reached;
+- which gameplay gaps one constituent fills and which remain when combined.
+
 Run:
 
 ```text
@@ -430,7 +472,9 @@ Run:
 
 Resolve placeholders, pair-link errors, structural errors, and primary-report
 length errors before delivery. Link retained evidence, but do not publish
-licensed source assets.
+licensed source assets. Keep commercial inputs and motion-bearing derivatives
+in the external evaluation workspace; published reports may retain only the
+scrubbed facts and identities described above.
 
 Markdown structure is parsed with the repository's pinned `pulldown-cmark`
 CommonMark/GFM parser. Never replace that parser with regular expressions or

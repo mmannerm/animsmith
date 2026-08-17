@@ -22,8 +22,9 @@ The linked-pair layout is report format version 1. Both documents record that
 version independently of the captured AnimSmith evaluator version.
 
 Add a collection-level report pair after multiple constituent packs have been
-evaluated. Its concise report should link rather than duplicate the constituent
-reports and own only collection-wide conclusions:
+evaluated, even while the rollup is partial. Name evaluated and missing
+constituents. Its concise report should link rather than duplicate the
+constituent reports and own only collection-wide conclusions:
 
 - evaluated and missing constituent packs;
 - combined gameplay/content coverage and meaningful duplicates;
@@ -31,6 +32,13 @@ reports and own only collection-wide conclusions:
 - cross-pack blend, transition, mask, interaction, and motion-database sets;
 - gaps that one constituent pack fills for another;
 - collection-level value, adoption conditions, and confidence boundaries.
+
+Build the rollup manifest by namespacing validated constituent manifests.
+Digest-compare every overlapping logical package path before claiming safe
+co-installation. Treat skeleton identity, engine graph execution, visual blend
+quality, masking/contact behavior, and target-character acceptance as separate
+claims. For unarmed/armed combinations, use a full-body state handoff as the
+default; promote masks only with member-specific pelvis/root/contact evidence.
 
 Reference cross-pack runtime-set members with stable namespaced motion ids such
 as `protofactor-basic-locomotion:walk-forward-unarmed`. Never imply
@@ -41,14 +49,24 @@ Use flat, stable filenames for each pair:
 
 - `<vendor>-<pack>.md` and `<vendor>-<pack>-evidence.md` for a constituent pack;
 - `<vendor>-<collection>.md` and `<vendor>-<collection>-evidence.md` for a
-  future collection rollup.
+  collection rollup.
 
 ## Current reports
 
 | Technical report | Evidence appendix | Scope | Evaluation status |
 |---|---|---|---|
 | [Protofactor Basic Locomotion](protofactor-basic-locomotion.md) | [Detailed evidence](protofactor-basic-locomotion-evidence.md) | One locally held Basic Locomotion pack from the Ultimate Animation Collection | Partial: exhaustive file/tool evaluation plus Unity 6000.5.8f1 import and headless Playables probe; other engines and visual acceptance deferred |
+| [Protofactor Sword & Shield](protofactor-sword-and-shield.md) | [Detailed evidence](protofactor-sword-and-shield-evidence.md) | One locally held Sword & Shield pack from the Ultimate Animation Collection | Partial: exhaustive file/tool evaluation plus Unity 6000.5.8f1 combined-project Playables, mask, and prop probe; other engines and visual acceptance deferred |
+| [Protofactor Ultimate Animation Collection](protofactor-ultimate-animation-collection.md) | [Detailed evidence](protofactor-ultimate-animation-collection-evidence.md) | Partial rollup of Basic Locomotion and Sword & Shield only | Partial: exact cross-pack asset/skeleton comparison and Unity co-import/composition evidence; remaining constituents and visual acceptance deferred |
 
-Licensed source files and detailed derived evidence are not committed. Reports
-retain portable artifact labels, digests, evaluator identity, coverage gaps,
-and the procedures needed to audit or repeat the work with authorized inputs.
+Commercial and other redistribution-restricted source files, excerpts,
+motion-bearing derivatives, and generated engine projects are not committed.
+They may be used only in an authorized external workspace for one-time local
+validation. Reports retain scrubbed artifact labels, non-recoverable digests,
+evaluator identity, coverage gaps, and procedures needed to repeat the work
+with authorized inputs.
+
+Repository and CI validation uses only synthetic/self-authored fixtures or
+assets whose licenses explicitly permit repository inclusion and CI
+use/redistribution. CI must not fetch, cache, or publish a credential-gated
+marketplace pack.
