@@ -67,11 +67,11 @@ For Rust pipelines, depend on the crates you need:
 
 ```toml
 [dependencies]
-animsmith-core = "0.2"
-animsmith-gltf = "0.2"
+animsmith-core = "0.3"
+animsmith-gltf = "0.3"
 # Optional:
-animsmith-fbx = "0.2"
-animsmith-report = "0.2"
+animsmith-fbx = "0.3"
+animsmith-report = "0.3"
 ```
 
 Published API documentation uses these stable docs.rs URLs:
