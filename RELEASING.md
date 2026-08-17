@@ -222,11 +222,11 @@ tag and Release per version.
 
 PRs opened with the default `GITHUB_TOKEN` do **not** trigger
 `on: pull_request` workflows, so the release-plz PR will not get its own
-CI run. The manual dispatch does run the full shared checks against `main`
-before opening or updating the PR, and the post-merge `checks` job runs them
-again before publishing. The dispatch-time run checks the pre-bump `main`
-tree, not release-plz's generated version, lockfile, or changelog changes, so
-review those files in the release PR. If branch protection also requires a
-check attached to the release PR itself, give the `release-pr` job a PAT or
-GitHub App token via the release-plz `token` input instead of
-`secrets.GITHUB_TOKEN`.
+full shared-check matrix of its own. The manual dispatch runs that matrix
+against pre-bump `main`, then checks out the exact generated branch and runs
+the focused release-version documentation guard in strict mode. The generated
+lockfile, changelog, and assets still require review, and the post-merge
+`checks` job runs the full matrix again before publishing. If branch protection
+also requires a full-matrix check attached to the release PR itself, give the
+`release-pr` job a PAT or GitHub App token via the release-plz `token` input
+instead of `secrets.GITHUB_TOKEN`.
