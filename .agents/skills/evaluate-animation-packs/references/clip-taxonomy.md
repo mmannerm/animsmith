@@ -111,7 +111,10 @@ belong to multiple sets. Do not manufacture a set merely to populate a report.
 ## Evaluation manifest
 
 Retain a UTF-8 JSON manifest with schema identifier
-`urn:animsmith:skill:animation-pack-evaluation-manifest:1`. Include:
+`urn:animsmith:skill:animation-pack-evaluation-manifest:1`. The shape below is
+abridged, not a validator-ready example: a completed manifest must expand every
+profile, pipeline stage, and primary-role total, and each runtime set that is
+present must contain at least two real members.
 
 ```json
 {
@@ -132,17 +135,7 @@ Retain a UTF-8 JSON manifest with schema identifier
       ]
     }
   ],
-  "runtime_sets": [
-    {
-      "id": "walk-in-place-directions",
-      "set_type": "directional-blend",
-      "members": [
-        {"motion_id": "walk-forward", "file": "WalkForward.fbx"}
-      ],
-      "classification_basis": ["vendor-stated"],
-      "confidence": "medium"
-    }
-  ],
+  "runtime_sets": [],
   "profiles": [],
   "pipeline_stages": [],
   "role_totals": {},
