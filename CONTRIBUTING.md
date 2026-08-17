@@ -22,7 +22,9 @@ Use this lifecycle for non-trivial changes:
 2. Implement the change with behavioral tests when behavior changes.
 3. Update docs in the same PR whenever public behavior, commands,
    output, feature flags, or supported workflows change.
-4. Run the required local gates from [DEVELOPMENT.md](DEVELOPMENT.md).
+4. Run the narrow preflight and any non-CI checks required by
+   [DEVELOPMENT.md](DEVELOPMENT.md); use the PR's required checks as the
+   canonical mechanical gate.
 5. Open a draft PR with a description of the behavior change, the chosen
    design, verification performed, and known out-of-scope work.
 6. Address review findings and run the project audit checklist for
@@ -99,6 +101,11 @@ Run the project audit checklist before asking for a merge on substantial
 changes: new checks, subcommands, measurement semantics, output
 contracts, dependency additions, write/fix path changes, or broad docs
 restructures.
+
+Substantial agent-authored changes also require one reciprocal cross-model CLI
+audit: Codex invokes Claude, and Claude invokes Codex. The versioned
+[audit workflow](.claude/skills/audit-task/SKILL.md) owns reviewer selection,
+model/effort, session reuse, attribution, and exact-head evidence rules.
 
 The audit should check:
 

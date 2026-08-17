@@ -19,12 +19,10 @@ This workflow is written to be followable by any agent (Claude, Codex,
 ## Freeze gate
 
 Before launching cold or external review passes, finish the author
-self-review, PR body, documentation-freshness sweep, and available exact-head
-verification; record the exact HEAD SHA. Prefer the PR's required checks as the
-canonical mechanical gate. Run only task-specific checks that CI does not
-cover. If HEAD changes, stop in-flight audits, obtain fresh exact-head evidence,
-and resume the same reviewer sessions against the delta. Do not keep an audit
-running against a stale head.
+self-review, PR body, documentation-freshness sweep, and the exact-head
+verification from step 1; record the exact HEAD SHA. If HEAD changes, stop
+in-flight audits, obtain fresh exact-head evidence, and resume the same reviewer
+sessions against the delta. Do not keep an audit running against a stale head.
 
 ## Required reciprocal cross-model audit
 
@@ -38,50 +36,16 @@ CLI after the freeze gate and before the PR is reported ready for merge:
 An author's own review surface, a same-provider subagent, or a manual cold pass
 does not replace this reciprocal audit. If the required CLI is unavailable or
 unauthenticated, report the audit as blocked rather than silently substituting
-the authoring model.
-
-Choose both the reviewer model and reasoning effort deliberately, and record
-them with the reviewed HEAD in the audit result. Use the lowest capable tier:
-
-- low for documentation-only, test-only, or narrow mechanical changes;
-- medium for ordinary implementation work;
-- high for numerical proof, security, untrusted-input handling, or
-  public-contract changes.
-
-Select a fast capable model for low-risk work, a current general-purpose
-frontier model for medium-risk work, and the strongest available review model
-for high-risk work. Provider aliases and model names change, so record the
-resolved or requested model instead of hard-coding one into this workflow.
+the authoring model. Apply the token, subagent, model, and reasoning-effort
+policy in [the shared agent instructions](../../../.agent-instructions/shared.md#review-economy),
+and record the requested or resolved reviewer model and effort with the reviewed
+HEAD in the audit result.
 
 Keep one persistent CLI session for each `(PR, reviewer)` pair. On a new HEAD,
 resume that session with the raw delta and fresh exact-head gate result; do not
 start an unanchored replacement session. The cross-model reviewer must use its
 own audit marker and attribution and must not overwrite the author's audit
 comment.
-
-## Token-efficient reviewer orchestration
-
-Conserve reviewer tokens without weakening independence:
-
-- use fresh subagents for the bounded intent, simplicity, and test-quality
-  passes required below whenever the environment supports them;
-- delegate other independent, bounded lenses when that avoids loading one
-  reviewer with unrelated context, but keep synthesis and the final verdict
-  with the primary agent;
-- give each subagent only its verbatim criteria plus the smallest raw artifact
-  set needed for that lens; do not fork the full implementation conversation or
-  preload the author's conclusions;
-- apply the same low/medium/high risk tiers above to subagent model choice and
-  reasoning effort, using the lowest capable combination for each lens;
-- run independent passes in parallel when practical, reuse exact-head build
-  and PR-check evidence without rerunning equivalent commands, and resume
-  existing reviewer sessions instead of replaying the full PR context;
-- ask reviewers for concise, evidence-linked findings rather than long
-  restatements of the diff.
-
-Subagents and the reciprocal cross-model CLI audit serve different purposes and
-are both required for substantial work. Same-model subagents provide focused
-cold lenses; the other provider supplies model-diversity review.
 
 ## Inputs you must locate
 
@@ -95,14 +59,9 @@ cold lenses; the other provider supplies model-diversity review.
    title,body`. Their acceptance criteria are part of the intent
    contract and feed the claims ledger (step 2).
 3. **Diff under review.** `git diff origin/main...HEAD` (or `gh pr diff <N>`).
-4. **Build + test status.** Build evidence is keyed by commit SHA, not by
-   reviewer. Prefer the required PR checks for the exact HEAD and retain their
-   result URLs. Do not rerun CI-equivalent mechanical gates locally or in each
-   reviewer merely for independence. Run only checks the PR workflow does not
-   cover, such as licensed-reference goldens, local engine probes, or
-   task-specific artifact validation. If CI is unavailable, state the gap and
-   use the narrowest local substitute necessary rather than reflexively running
-   every gate in every agent.
+4. **Build + test status.** Capture the exact-head PR checks and uncovered local
+   evidence required by step 1. Build evidence is keyed by commit SHA, not by
+   reviewer.
 
 ## Required workflow
 

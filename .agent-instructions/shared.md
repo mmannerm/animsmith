@@ -54,10 +54,9 @@ next to it:
 - `.claude/skills/audit-task/test-criteria.md`
 - `.claude/skills/audit-task/code-invariants.md`
 
-The checklist's reciprocal cross-model audit is mandatory: Codex runs the
-Claude CLI, and Claude runs the Codex CLI. A same-model review is additive, not
-a substitute. Select and record the reviewer model and effort tier according to
-the change risk.
+The checklist's reciprocal cross-model audit is mandatory; follow its provider
+routing, persistence, attribution, and exact-head evidence rules. A same-model
+review is additive, not a substitute.
 
 For the code-review pass, use the strongest review surface available in
 your environment. Address all blockers before reporting a PR as ready
@@ -78,7 +77,6 @@ for a maintainer merge decision.
   untrusted input, or public-contract changes. Record the cross-model choice.
 - Run independent reviewer passes in parallel when practical, reuse captured
   exact-head PR-check evidence, and request concise evidence-linked findings.
-- Treat successful required PR checks as the canonical mechanical gate. Do not
-  rerun CI-equivalent suites in every agent; run only narrow preflight or
-  additional checks for surfaces CI cannot cover.
+- Follow the audit workflow's canonical check selection. Do not rerun the same
+  exact-head mechanical suite in every agent.
 - Poll an active process for status; do not relaunch the same work.

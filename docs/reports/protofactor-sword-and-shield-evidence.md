@@ -95,7 +95,7 @@ Exact locomotion members, durations, speeds, coordinates, and contracts are reta
 
 | Role or runtime set | File-ready / clip-ready | Set-ready / rig-use | Runtime / acceptance boundary |
 |---|---|---|---|
-| Combat locomotion (56 files) | 55 normal humanoid files; Crouch FR RM quarantined; delivered loops have strict seam findings. | Common signature/timing except quarantine; phase spreads 0.726–0.808; 24 anchors refused. | Unity representative graphs only; complete visual rings/root ownership open. |
+| Combat locomotion (56 files) | 55 normal humanoid files; Crouch FR RM quarantined; delivered loops have strict seam findings. | Common signature/timing except quarantine; phase spreads 0.726–0.807; 24 anchors refused. | Unity representative graphs only; complete visual rings/root ownership open. |
 | Actions/defense/equipment (43) | Files readable; 39 are delivered as loops although most are one-shots; 13 RM pairs. | Props supplied; no hit events, contacts, IK, or additive contract. | Unity samples/masks/attachments execute; visual/contact gameplay open. |
 | Reactions/death (24) | Files readable; four heavy pairs; downed holds and recovery singles. | Four inferred transition chains; no pose/contact continuity gate. | State timing, interruption, ragdoll handoff, visual result open. |
 | Idles/taunts (9) | Files readable; delivered loop metadata present. | Same standard signature; no sync or mask contract. | Unity idle sampled; loop/taunt visual acceptance open. |
@@ -125,7 +125,7 @@ The reconstructed Unity delivery has 313 regular files: 136 FBXs and 162 metadat
 
 Every normal individual file exposes embedded clip `Take 001`; meaningful identity comes from case-sensitive filenames and Unity metadata. The vendor list contains non-authoritative spellings/casing such as `RunFrowardRight`, `ParryHight2`, `swordAttack2`, and `3hitCombo1`; exact report members use delivered filenames.
 
-Unity metadata defines 133 clip entries: 118 loop true and 15 false including the actor. Of the 132 individual motions, all except the malformed RM file produce AnimationClips. Stored source-avatar warnings appear in 131 metadata files, but Unity resolves and imports them; only the malformed file emits an active hierarchy error during the tested import.
+Unity metadata defines 133 clip entries: 118 loop true and 15 false including the actor. Fifty-two loop-true individual files are obvious one-shot-like candidates by role: 27 attacks, 10 defense actions, 12 reactions, and three taunts. Of the 132 individual motions, all except the malformed RM file produce AnimationClips. Stored source-avatar warnings appear in 131 metadata files, but Unity resolves and imports them; only the malformed file emits an active hierarchy error during the tested import.
 
 ## Mechanical baseline
 
