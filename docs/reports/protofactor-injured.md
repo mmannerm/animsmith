@@ -54,7 +54,7 @@ The main out-of-box defect is looping: 42 of 70 declared contracts fail, includi
 | Style G locomotion | walk | IP `Humanoid@WalkInjuredG.fbx`; RM `Humanoid@WalkInjuredG_RM.fbx` | variant=paired-ip-rm | duration=1.333 s; rm_speed=0.519 m/s | loop_ip=true; loop_rm=true; sync=phase; movement=animation |
 | Style G locomotion | run | IP `Humanoid@RunInjuredG.fbx`; RM `Humanoid@RunInjuredG_RM.fbx` | variant=paired-ip-rm | duration=0.800 s; rm_speed=2.127 m/s | loop_ip=true; loop_rm=true; sync=phase; movement=animation |
 
-These loop values are the intended runtime policy, not proof that the delivered seams are acceptable. `RunInjuredB.fbx` lacks an explicit Unity clip definition; its loop policy is inferred from its paired gait family and must be reviewed. Posture chains are inventoried in the appendix.
+These loop values are the intended runtime policy, not proof that the delivered seams are acceptable. `Humanoid@RunInjuredB.fbx` lacks an explicit Unity clip definition; its loop policy is inferred from its paired gait family and must be reviewed. Posture chains are inventoried in the appendix.
 
 ## Integration recipe
 
