@@ -1,0 +1,4 @@
+interface:
+  display_name: "Evaluate Animation Packs"
+  short_description: "Assess game-engine animation pack readiness"
+  default_prompt: "Use $evaluate-animation-packs to assess this animation pack for game-engine use and write the standard Markdown report."

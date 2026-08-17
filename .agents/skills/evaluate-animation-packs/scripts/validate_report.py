@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+"""Validate the required structure of an animation-pack Markdown report."""
+
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+from pathlib import Path
+
+
+REQUIRED_HEADINGS = [
+    "## Executive decision",
+    "## Evaluation scope and evidence",
+    "## Pack inventory and content coverage",
+    "## Out-of-the-box results",
+    "## AnimSmith results",
+    "## Engine integration",
+    "## Blending, masking, and gameplay caveats",
+    "## Compatibility",
+    "## Issue and remediation register",
+    "## Acquisition and adoption guidance",
+    "## Limitations and unknowns",
+    "## Reproduction appendix",
+    "## Sources",
+]
+REQUIRED_EXECUTIVE_HEADINGS = [
+    "### Decision",
+    "### Canonical clip-role inventory",
+    "### Runtime-set inventory",
+    "### Pipeline-stage coverage",
+    "### Readiness ladder by clip set",
+    "#### File-ready and clip-ready",
+    "#### Set-ready and rig/use",
+    "### Tooling frontier",
+    "### Validation-profile status",
+    "### Common-engine status",
+    "### Best fit",
+    "### Poor fit or material caveats",
+    "### Adoption conditions",
+]
+PRIMARY_ROLES = [
+    "idle-pose",
+    "continuous-locomotion",
+    "locomotion-transition",
+    "airborne",
+    "traversal",
+    "action-interaction",
+    "reaction-death",
+    "emote-cinematic",
+    "other-unknown",
+]
+PIPELINE_STAGE_LABELS = [
+    "Acquire",
+    "Preserve raw",
+    "Inspect",
+    "Segment",
+    "Root motion",
+    "Conform",
+    "Validate",
+    "Optimize",
+    "Export",
+    "Gate/report",
+]
+PROFILE_LABELS = [
+    "Marketplace intake",
+    "Blended locomotion",
+    "Root-motion controller",
+    "State-machine transitions",
+    "Layered upper body/weapons",
+    "Traversal/environment",
+    "Contact actions/interactions",
+    "Retargeted/customizable characters",
+    "Motion matching/search",
+    "Networked movement",
+    "Runtime performance",
+]
+MANIFEST_SCHEMA = "urn:animsmith:skill:animation-pack-evaluation-manifest:1"
+PLACEHOLDER = re.compile(r"\{\{[^{}]+\}\}")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Check required section order and unresolved template placeholders."
+    )
+    parser.add_argument("report", type=Path, help="completed Markdown report")
+    return parser.parse_args()
+
+
+def heading_position(text: str, heading: str) -> int:
+    match = re.search(rf"^{re.escape(heading)}\s*$", text, re.MULTILINE)
+    return match.start() if match else -1
+
+
+def validate(text: str) -> list[str]:
+    errors: list[str] = []
+    if not text.startswith("# Animation pack evaluation:"):
+        errors.append("report must start with '# Animation pack evaluation:'")
+
+    cursor = -1
+    for heading in REQUIRED_HEADINGS:
+        position = heading_position(text, heading)
+        if position < 0:
+            errors.append(f"missing required heading: {heading}")
+        elif position <= cursor:
+            errors.append(f"required heading is out of order: {heading}")
+        else:
+            cursor = position
+
+    executive_start = heading_position(text, "## Executive decision")
+    executive_end = heading_position(text, "## Evaluation scope and evidence")
+    if 0 <= executive_start < executive_end:
+        executive = text[executive_start:executive_end]
+        cursor = -1
+        for heading in REQUIRED_EXECUTIVE_HEADINGS:
+            position = heading_position(executive, heading)
+            if position < 0:
+                errors.append(f"missing required executive heading: {heading}")
+            elif position <= cursor:
+                errors.append(f"required executive heading is out of order: {heading}")
+            else:
+                cursor = position
+
+        role_start = heading_position(executive, "### Canonical clip-role inventory")
+        role_end = heading_position(executive, "### Runtime-set inventory")
+        if 0 <= role_start < role_end:
+            role_section = executive[role_start:role_end]
+            for role in PRIMARY_ROLES:
+                if f"`{role}`" not in role_section:
+                    errors.append(f"canonical role inventory is missing: {role}")
+
+        pipeline_start = heading_position(executive, "### Pipeline-stage coverage")
+        pipeline_end = heading_position(executive, "### Readiness ladder by clip set")
+        if 0 <= pipeline_start < pipeline_end:
+            pipeline_section = executive[pipeline_start:pipeline_end]
+            for label in PIPELINE_STAGE_LABELS:
+                if not re.search(rf"^\|\s*{re.escape(label)}\s*\|", pipeline_section, re.MULTILINE):
+                    errors.append(f"pipeline-stage coverage is missing: {label}")
+
+        profile_start = heading_position(executive, "### Validation-profile status")
+        profile_end = heading_position(executive, "### Common-engine status")
+        if 0 <= profile_start < profile_end:
+            profile_section = executive[profile_start:profile_end]
+            for label in PROFILE_LABELS:
+                if not re.search(rf"^\|\s*{re.escape(label)}\s*\|", profile_section, re.MULTILINE):
+                    errors.append(f"validation-profile status is missing: {label}")
+
+    if MANIFEST_SCHEMA not in text:
+        errors.append(f"report must identify evaluation manifest schema: {MANIFEST_SCHEMA}")
+
+    placeholders = sorted(set(PLACEHOLDER.findall(text)))
+    if placeholders:
+        preview = ", ".join(placeholders[:5])
+        remainder = len(placeholders) - 5
+        suffix = f" (and {remainder} more)" if remainder > 0 else ""
+        errors.append(f"unresolved template placeholders: {preview}{suffix}")
+
+    return errors
+
+
+def main() -> int:
+    args = parse_args()
+    try:
+        text = args.report.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        print(f"validate_report.py: {error}", file=sys.stderr)
+        return 2
+
+    errors = validate(text)
+    if errors:
+        for error in errors:
+            print(f"validate_report.py: {error}", file=sys.stderr)
+        return 1
+    print(f"validated animation-pack report: {args.report}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
