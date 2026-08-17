@@ -810,6 +810,43 @@ class ManifestValidatorTests(unittest.TestCase):
                             errors,
                         )
 
+    def test_rejects_malformed_scalar_for_every_declared_count(self) -> None:
+        paths = [
+            ("role_totals", role, field)
+            for role in V1_PRIMARY_ROLES
+            for field in ("logical_motions", "delivered_files")
+        ] + [
+            ("totals", field)
+            for field in ("logical_motions", "delivered_files", "runtime_sets")
+        ]
+        for path in paths:
+            manifest = valid_manifest_with_multiple_counts()
+            declared: object = manifest
+            for component in path:
+                declared = declared[component]  # type: ignore[index]
+            invalid_values = (
+                bool(declared),
+                float(declared),  # type: ignore[arg-type]
+                -1,
+                None,
+                "1",
+                {},
+            )
+            for invalid in invalid_values:
+                with self.subTest(path=".".join(path), invalid=repr(invalid)):
+                    manifest = valid_manifest_with_multiple_counts()
+                    assign_path(manifest, path, invalid)
+
+                    errors = manifest_validator.validate_manifest(manifest)
+
+                    if path[0] == "role_totals":
+                        error_path = f"role_totals[{path[1]}].{path[2]}"
+                    else:
+                        error_path = f"totals.{path[1]}"
+                    self.assertIn(
+                        f"{error_path} must be a non-negative integer", errors
+                    )
+
     def test_validation_error_order_is_deterministic(self) -> None:
         manifest = valid_manifest()
         manifest["schema"] = "urn:wrong:schema"

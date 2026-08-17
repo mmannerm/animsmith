@@ -54,6 +54,13 @@ def require_identifier(value: Any, path: str, errors: list[str]) -> bool:
     return True
 
 
+def require_count(value: Any, path: str, errors: list[str]) -> bool:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        errors.append(f"{path} must be a non-negative integer")
+        return False
+    return True
+
+
 def unknown_choices(values: list[Any], allowed: set[str]) -> list[str]:
     return sorted(
         {
@@ -292,7 +299,18 @@ def validate_manifest(data: Any) -> list[str]:
         }
         for role in PRIMARY_ROLES
     }
-    if data.get("role_totals") != expected_role_totals:
+    declared_role_totals = data.get("role_totals")
+    if isinstance(declared_role_totals, dict):
+        for role in PRIMARY_ROLES:
+            declared_role = declared_role_totals.get(role)
+            if isinstance(declared_role, dict):
+                for field in ("logical_motions", "delivered_files"):
+                    require_count(
+                        declared_role.get(field),
+                        f"role_totals[{role}].{field}",
+                        errors,
+                    )
+    if declared_role_totals != expected_role_totals:
         errors.append("role_totals does not match totals derived from motions")
 
     expected_totals = {
@@ -300,7 +318,11 @@ def validate_manifest(data: Any) -> list[str]:
         "delivered_files": len(file_to_motion),
         "runtime_sets": len(runtime_sets),
     }
-    if data.get("totals") != expected_totals:
+    declared_totals = data.get("totals")
+    if isinstance(declared_totals, dict):
+        for field in ("logical_motions", "delivered_files", "runtime_sets"):
+            require_count(declared_totals.get(field), f"totals.{field}", errors)
+    if declared_totals != expected_totals:
         errors.append("totals does not match motions, physical files, and runtime sets")
 
     return errors

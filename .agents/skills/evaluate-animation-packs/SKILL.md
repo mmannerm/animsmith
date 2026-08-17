@@ -26,10 +26,9 @@ Claude adapter directory.
 - Hash the source before running tools. Use
   `.agents/skills/evaluate-animation-packs/scripts/inventory_pack.py` when a
   directory is available; retain the manifest with the report evidence.
-- Separate `user-stated`, `observed`, `vendor-stated`,
-  `documentation-stated`, `inferred`, and `not evaluated`. Never promote user
-  recollection, preview media, or a partial sample into a claim about files or
-  transaction records that were not supplied.
+- Use only the evidence labels defined by the assessment taxonomy. Never
+  promote user recollection, preview media, or a partial sample into a claim
+  about files or transaction records that were not supplied.
 - Report license facts and ambiguities, but do not give legal advice. Quote or
   link the controlling license/marketplace terms and recommend review when the
   intended use or redistribution rights remain uncertain.
