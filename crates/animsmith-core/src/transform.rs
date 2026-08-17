@@ -1145,17 +1145,20 @@ pub const GAIT_ANCHOR_MAX_HORIZONTAL_ACCUMULATION_M: f64 = 0.01;
 /// Maximum accumulated root yaw admitted by the in-place gait-anchor policy.
 pub const GAIT_ANCHOR_MAX_YAW_ACCUMULATION_DEG: f64 = 1.0;
 
-/// Maximum `declared frame samples × skeleton bones` the in-place gait
-/// trajectory verifier will allocate and evaluate.
+/// Maximum samples admitted by each in-place gait work bound.
+///
+/// `declared frames × skeleton bones`, `declared frames × tracks`, and
+/// `maximum authored keys × skeleton bones` are checked independently.
 pub const GAIT_ANCHOR_MAX_TRAJECTORY_POSE_SAMPLES: usize = 1_000_000;
 
-/// Binary32 comparison room for gait-trajectory quantities derived through
-/// FK, quaternion normalization, and trigonometry.
+/// Binary32 comparison room for authored f32 endpoint evidence after stable
+/// binary64 measurement.
 ///
-/// This is deliberately local to gait anchoring: the fixed public 1 cm and 1°
-/// caps remain the policy, while four representable `f32` steps at the cap
-/// prevent an exactly authored boundary value from becoming platform-dependent.
-const GAIT_ANCHOR_DERIVED_F32_COMPARISON_ULPS: u32 = 4;
+/// First/final unwrapped-heading subtraction makes this independent of segment
+/// count: per-segment trigonometric error is not summed. This gait-local room
+/// only covers binary32 authored translation or quaternion quantization at the
+/// endpoint.
+const GAIT_ANCHOR_AUTHORED_F32_ENDPOINT_ULPS: u32 = 4;
 
 const GAIT_TRAJECTORY_ALTERNATIVES: &str = "retain source root motion, use runtime phase offsets, or use a separately designed \
      trajectory-preserving operation";
@@ -1182,12 +1185,16 @@ const GAIT_TRAJECTORY_ALTERNATIVES: &str = "retain source root motion, use runti
 /// non-constant cubic-spline track would need lossy resampling, or no
 /// tested rotation candidate remains measurable. Under
 /// [`GaitTrajectoryPolicy::InPlace`], missing/non-finite selected-root
-/// evidence, any nonconstant channel without a complete declared whole-frame
-/// key grid, malformed track cardinality or skeleton/role topology, pose-sample work above
+/// evidence, duplicate `(bone, property)` channels, any nonconstant channel
+/// without a complete declared whole-frame key grid, malformed track
+/// cardinality or skeleton/role topology, pose/channel/authored-key work above
 /// [`GAIT_ANCHOR_MAX_TRAJECTORY_POSE_SAMPLES`], and material horizontal
 /// translation or yaw accumulation are also errors. Trajectory measurements
-/// use the already-verified authored f32 key times, and their inclusive caps
-/// admit only four binary32 successors for platform-dependent derived math.
+/// use the already-verified authored f32 key times. Yaw is the difference
+/// between binary64 first/final headings plus counted full-turn crossings, so
+/// comparison error does not grow with the admitted segment count; the
+/// inclusive cap admits only four binary32 successors for endpoint
+/// translation/quaternion quantization.
 /// All errors are returned before `clip` is changed.
 ///
 pub fn align_gait_anchor(
@@ -1351,8 +1358,9 @@ fn verify_in_place_gait_trajectory(
     }
 
     let mut horizontal = Vec::with_capacity(grid.frame_count());
-    let mut yaw_steps_deg = Vec::with_capacity(grid.frame_count() - 1);
-    let mut previous_forward: Option<Vec3> = None;
+    let mut first_heading_deg: Option<f64> = None;
+    let mut previous_heading_deg: Option<f64> = None;
+    let mut winding_turns = 0i64;
     for frame in 0..grid.frame_count() {
         let position = grid.model_position(frame, bone);
         let rotation = grid.model_rotation(frame, bone);
@@ -1370,10 +1378,18 @@ fn verify_in_place_gait_trajectory(
         }
         horizontal.push(Vec3::new(position.x, 0.0, position.z));
 
-        let forward_3d = rotation.normalize() * Vec3::Z;
-        let forward_xz = Vec3::new(forward_3d.x, 0.0, forward_3d.z);
-        let length = forward_xz.length();
-        if !length.is_finite() || length <= f32::EPSILON {
+        // Derive heading in f64 from the authored/model-space f32 quaternion.
+        // Summing f32 atan2 steps made exact 1° clips drift with segment count.
+        // Track only full-turn crossings, then subtract the first heading from
+        // the final unwrapped heading. Unlike summing per-frame deltas, that
+        // result has no segment-count-dependent accumulation error.
+        let [x, y, z, w] = rotation.to_array().map(f64::from);
+        let norm = (x * x + y * y + z * z + w * w).sqrt();
+        let (x, y, z, w) = (x / norm, y / norm, z / norm, w / norm);
+        let forward_x = 2.0 * (x * z + w * y);
+        let forward_z = 1.0 - 2.0 * (x * x + y * y);
+        let horizontal_length = forward_x.hypot(forward_z);
+        if !horizontal_length.is_finite() || horizontal_length <= f64::from(f32::EPSILON) {
             return Err(format!(
                 "cannot gait-anchor clip {:?} under the in-place policy: selected {role} bone \
                  {:?} (index {bone}) has no finite horizontal forward axis at sample {frame}; \
@@ -1381,28 +1397,27 @@ fn verify_in_place_gait_trajectory(
                 clip.name, bone_name
             ));
         }
-        let forward = forward_xz / length;
-        if let Some(previous) = previous_forward {
-            let cross_y = previous.cross(forward).y;
-            let dot = previous.dot(forward).clamp(-1.0, 1.0);
-            let step_deg = f64::from(cross_y.atan2(dot).to_degrees());
-            if !step_deg.is_finite() {
-                return Err(format!(
-                    "cannot gait-anchor clip {:?} under the in-place policy: selected {role} \
-                     bone {:?} (index {bone}) has non-finite yaw evidence at sample {frame}; \
-                     {GAIT_TRAJECTORY_ALTERNATIVES}",
-                    clip.name, bone_name
-                ));
+        let heading_deg = forward_x.atan2(forward_z).to_degrees();
+        if let Some(previous) = previous_heading_deg {
+            let raw_delta = heading_deg - previous;
+            if raw_delta > 180.0 {
+                winding_turns -= 1;
+            } else if raw_delta < -180.0 {
+                winding_turns += 1;
             }
-            yaw_steps_deg.push(step_deg);
+        } else {
+            first_heading_deg = Some(heading_deg);
         }
-        previous_forward = Some(forward);
+        previous_heading_deg = Some(heading_deg);
     }
 
     let last = horizontal.len() - 1;
     let horizontal_endpoint_m = f64::from((horizontal[last] - horizontal[0]).length());
     let horizontal_accumulation_m = horizontal_endpoint_m;
-    let accumulated_yaw_deg = yaw_steps_deg.iter().sum::<f64>().abs();
+    let accumulated_yaw_deg = (previous_heading_deg.expect("non-empty pose grid")
+        - first_heading_deg.expect("non-empty pose grid")
+        + winding_turns as f64 * 360.0)
+        .abs();
     let yaw_accumulation_deg = accumulated_yaw_deg;
 
     if !horizontal_accumulation_m.is_finite()
@@ -1429,12 +1444,14 @@ fn verify_in_place_gait_trajectory(
 
 /// Compare a gait-local derived binary32 quantity with an inclusive policy
 /// cap. The measured path includes FK and quaternion/trigonometric operations
-/// whose final bit can vary by platform, so admit four binary32 successors of
-/// the cap. Values materially above the fixed cap remain refusals.
+/// whose authored endpoint carries binary32 translation/quaternion
+/// quantization, so admit four binary32 successors of the cap. Stable f64
+/// endpoint heading subtraction prevents this room from growing with the
+/// segment count. Values materially above the fixed cap remain refusals.
 fn gait_derived_f32_exceeds_cap(measured: f64, cap: f64) -> bool {
     let cap = cap as f32;
     debug_assert!(cap.is_finite() && cap > 0.0);
-    let tolerated = f32::from_bits(cap.to_bits() + GAIT_ANCHOR_DERIVED_F32_COMPARISON_ULPS);
+    let tolerated = f32::from_bits(cap.to_bits() + GAIT_ANCHOR_AUTHORED_F32_ENDPOINT_ULPS);
     measured > f64::from(tolerated)
 }
 
@@ -1481,12 +1498,22 @@ fn validate_gait_sampling_domain(
             ));
         }
     }
+    let mut seen_channels = BTreeSet::new();
     for (track_index, track) in clip.tracks.iter().enumerate() {
         if track.bone >= skeleton.bones.len() {
             return Err(format!(
                 "cannot gait-anchor clip {:?}: track {track_index} targets out-of-range bone \
                  index {}",
                 clip.name, track.bone
+            ));
+        }
+        if !seen_channels.insert(track_channel_key(track)) {
+            return Err(format!(
+                "cannot gait-anchor clip {:?}: track {track_index} duplicates the {} channel \
+                 for bone {}",
+                clip.name,
+                track.property.as_str(),
+                track.bone
             ));
         }
         let key_count = track.times.len();
@@ -1533,7 +1560,8 @@ fn validate_gait_sampling_domain(
 /// at a shifted omitted frame would synthesize and store a new value at an
 /// unchanged key time rather than bijectively reordering authored values.
 /// Bounding the grid before [`sample_clip`] also keeps the public core boundary
-/// from allocating attacker-controlled `frames × bones` pose arrays.
+/// from allocating attacker-controlled `frames × bones` pose arrays or walking
+/// attacker-controlled `frames × tracks` channel samples.
 fn verify_trajectory_frame_grid(
     clip: &Clip,
     role: &str,
@@ -1595,6 +1623,25 @@ fn verify_trajectory_frame_grid(
              {GAIT_ANCHOR_MAX_TRAJECTORY_POSE_SAMPLES} sample safety budget; \
              {GAIT_TRAJECTORY_ALTERNATIVES}",
             clip.name, bone_name
+        ));
+    }
+    let channel_samples = expected_keys
+        .checked_mul(clip.tracks.len())
+        .ok_or_else(|| {
+            format!(
+                "cannot gait-anchor clip {:?} under the in-place policy: declared channel \
+                 sampling work overflows this platform; {GAIT_TRAJECTORY_ALTERNATIVES}",
+                clip.name
+            )
+        })?;
+    if channel_samples > GAIT_ANCHOR_MAX_TRAJECTORY_POSE_SAMPLES {
+        return Err(format!(
+            "cannot gait-anchor clip {:?} under the in-place policy: declared tracks require \
+             {channel_samples} channel samples ({expected_keys} frames x {} tracks), above \
+             the {GAIT_ANCHOR_MAX_TRAJECTORY_POSE_SAMPLES} sample safety budget; \
+             {GAIT_TRAJECTORY_ALTERNATIVES}",
+            clip.name,
+            clip.tracks.len()
         ));
     }
     let authored_frames = default_frame_count(clip);

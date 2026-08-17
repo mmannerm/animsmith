@@ -636,6 +636,10 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             };
             let skeleton = doc.skeleton.clone();
             let mut touched = 0usize;
+            // Transform reporting is transactional with the artifact: a later
+            // clip refusal must not leave earlier per-clip success text on
+            // stdout when the command publishes nothing.
+            let mut messages = String::new();
             for c in doc.clips.iter_mut() {
                 if clip.as_deref().is_some_and(|name| name != c.name) {
                     continue;
@@ -643,45 +647,41 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 touched += 1;
                 if let Some((a, b)) = window {
                     animsmith_core::transform::slice(c, a, b, fps);
-                    print!("{}", render::render_transform_slice(c, a, b));
+                    messages.push_str(&render::render_transform_slice(c, a, b));
                 }
                 if let Some(hold) = hold_extend {
                     animsmith_core::transform::hold_extend(c, hold);
-                    print!("{}", render::render_transform_hold_extend(c, hold));
+                    messages.push_str(&render::render_transform_hold_extend(c, hold));
                 }
                 if drop_duplicate_loop_endpoint {
                     if config.expectations_for(&c.name).looping != Some(true) {
-                        print!(
-                            "{}",
-                            render::render_transform_duplicate_loop_endpoint_skipped(
+                        messages.push_str(
+                            &render::render_transform_duplicate_loop_endpoint_skipped(
                                 &c.name,
                                 "clip is not declared `loop = true` in config",
-                            )
+                            ),
                         );
                     } else {
                         match animsmith_core::transform::drop_duplicate_loop_endpoint(c) {
-                            Ok(Some(outcome)) => print!(
-                                "{}",
-                                render::render_transform_duplicate_loop_endpoint(
+                            Ok(Some(outcome)) => messages.push_str(
+                                &render::render_transform_duplicate_loop_endpoint(
                                     &c.name,
                                     outcome.removed_keys_per_track,
                                     outcome.duration_before_s,
                                     outcome.duration_after_s,
-                                )
+                                ),
                             ),
-                            Ok(None) => print!(
-                                "{}",
-                                render::render_transform_duplicate_loop_endpoint_skipped(
+                            Ok(None) => messages.push_str(
+                                &render::render_transform_duplicate_loop_endpoint_skipped(
                                     &c.name,
                                     "no mechanically removable repeated endpoint",
-                                )
+                                ),
                             ),
-                            Err(reason) => print!(
-                                "{}",
-                                render::render_transform_duplicate_loop_endpoint_skipped(
+                            Err(reason) => messages.push_str(
+                                &render::render_transform_duplicate_loop_endpoint_skipped(
                                     &c.name,
                                     &reason.to_string(),
-                                )
+                                ),
                             ),
                         }
                     }
@@ -695,16 +695,13 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                         animsmith_core::transform::GaitTrajectoryPolicy::InPlace,
                     )
                     .map_err(|reason| format!("clip {:?}: {reason}", c.name))?;
-                    print!(
-                        "{}",
-                        render::render_transform_gait_anchor(
-                            &c.name,
-                            outcome.phase_before,
-                            outcome.phase_after,
-                            outcome.frame_offset,
-                            outcome.seam_after
-                        )
-                    );
+                    messages.push_str(&render::render_transform_gait_anchor(
+                        &c.name,
+                        outcome.phase_before,
+                        outcome.phase_after,
+                        outcome.frame_offset,
+                        outcome.seam_after,
+                    ));
                 }
                 if prune_constant_tracks {
                     // `animates_bones` is an animation/motion contract.  Keep its
@@ -732,12 +729,9 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                         c,
                         &protected_bones,
                     );
-                    print!(
-                        "{}",
-                        render::render_transform_constant_track_pruning(
-                            &c.name, &skeleton, &outcome,
-                        )
-                    );
+                    messages.push_str(&render::render_transform_constant_track_pruning(
+                        &c.name, &skeleton, &outcome,
+                    ));
                 }
             }
             if touched == 0 {
@@ -747,7 +741,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 });
             }
             let summary = animsmith_gltf::write::write(&doc, &output).map_err(|e| e.to_string())?;
-            print!("{}", render::render_write_summary(&output, &summary));
+            messages.push_str(&render::render_write_summary(&output, &summary));
+            print!("{messages}");
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Fix {

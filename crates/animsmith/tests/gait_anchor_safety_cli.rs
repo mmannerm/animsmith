@@ -204,6 +204,11 @@ fn multi_clip_stationary_refusal_names_the_failing_clip_and_is_atomic() {
         .expect("runs multi-clip transform");
 
     assert_eq!(result.status.code(), Some(2));
+    assert!(
+        result.stdout.is_empty(),
+        "later refusal must suppress earlier clip success output: {:?}",
+        result.stdout
+    );
     let stderr = String::from_utf8(result.stderr).expect("UTF-8 diagnostic");
     assert!(
         stderr.contains("clip \"stationary_cycle\": no usable stride anchor"),

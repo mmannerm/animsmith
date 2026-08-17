@@ -74,20 +74,25 @@ missing/non-finite, horizontal accumulation exceeds 1 cm, or yaw accumulation
 exceeds 1°. Every nonconstant channel the operation would rotate must contain
 exactly one key at each `--fps` whole-frame sample over the clip duration, at
 the exact representable f32 `key / fps` time and period endpoint. Sparse,
-differently framed, duplicate, or off-grid trajectory evidence refuses so the
-phase shift remains a bijective authored-value permutation. Verification
+differently framed, duplicate-time, or off-grid trajectory evidence refuses,
+as do duplicate `(bone, property)` channels (including constant channels), so
+the phase shift remains a bijective authored-value permutation. Verification
 samples the exact admitted f32 key times, and mutation permutes output values
 by integer key index rather than resampling. Constant channels are exempt and
 cannot influence the declared period or shift. Before sampling, the command
 validates the complete skeleton,
 resolved metric roles, track targets/cardinalities, and finite evidence. Both
-declared-frame and maximum-authored-key work must fit the inclusive 1,000,000
-frame-by-bone budget. The translation and yaw caps apply directly; no interior
-step is an allowance. Derived binary32 FK/quaternion/trigonometric measurements
-admit only four f32 successors at each inclusive cap to keep exact authored
-1 cm/1° boundaries platform-stable; other checks are unchanged. A refusal
-names the clip and selected bone and does not
-publish the requested output. Keep authored root motion unchanged, apply a
+declared-frame and maximum-authored-key work must independently fit these
+inclusive 1,000,000-sample bounds: declared frames × skeleton bones, declared
+frames × tracks, and maximum authored keys × skeleton bones. The translation
+and yaw caps apply directly; no interior step is an allowance. Yaw uses f64
+first/final headings plus counted full-turn crossings, avoiding error growth
+with the admitted segment count. Four f32 successors at each inclusive cap
+cover only authored endpoint translation/quaternion quantization; other checks
+are unchanged. A refusal names the clip and selected bone, does not publish or
+replace the requested output, and emits no earlier per-clip success lines:
+standalone transform stdout is buffered until all selected clips and the
+artifact write succeed. Keep authored root motion unchanged, apply a
 runtime phase offset, or use separately designed trajectory-preserving tooling.
 The option does not convert root motion to in-place motion.
 

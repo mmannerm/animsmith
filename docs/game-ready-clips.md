@@ -348,10 +348,11 @@ There is no general automatic repair. `transform --gait-anchor` can rotate an
 explicitly in-place locomotion cycle in time to choose a better stride cut; it
 refuses accumulating root translation or yaw. Every nonconstant selected
 Root/Hips trajectory channel must contain exactly one key at each declared
-whole-frame sample; sparse, differently framed, duplicate, or off-grid
+whole-frame sample; sparse, differently framed, duplicate-time, or off-grid
 evidence refuses so the phase shift cannot synthesize values at omitted frames.
-The safety grid refuses before allocation above 1,000,000 frame-by-bone pose
-samples. It does not rewrite
+Duplicate `(bone, property)` channels refuse too. The safety grid refuses before
+allocation when declared frames × skeleton bones, declared frames × tracks, or
+maximum authored keys × skeleton bones exceeds 1,000,000 samples. It does not rewrite
 arbitrary bone endpoint poses or tangents. Angular-velocity C1 continuity,
 acceleration/jerk continuity, root-motion extraction policy, and runtime blend
 settings remain out of scope.
@@ -417,13 +418,17 @@ cm, or yaw accumulation above 1°. No interior step is subtracted as an
 allowance. Every nonconstant channel the operation would rotate must contain
 exactly one key at each declared whole-frame sample over the clip duration, at
 the exact representable f32 `key / fps` time and period endpoint. Sparse,
-differently framed, duplicate, or off-grid evidence refuses. Verification
+differently framed, duplicate-time, or off-grid evidence refuses, as do
+duplicate `(bone, property)` channels (including constant channels). Verification
 samples those exact times and mutation uses an integer key-index permutation;
 exempt constant-track endpoints cannot influence the period or shift. The whole
-skeleton, roles, and track shapes are validated before declared-frame and
-maximum-authored-key work share an inclusive 1,000,000 frame-by-bone budget.
-Derived trajectory math admits only four f32 successors at the inclusive 1 cm
-and 1° caps for platform stability. Do not apply it to
+skeleton, roles, and track shapes are validated before declared frames ×
+skeleton bones, declared frames × tracks, and maximum authored keys × skeleton
+bones are independently bounded at an inclusive 1,000,000 samples. Yaw uses
+f64 first/final headings plus counted full-turn crossings, avoiding
+segment-count-dependent accumulation error. Four f32 successors at the
+inclusive 1 cm and 1° caps cover only authored endpoint
+translation/quaternion quantization. Do not apply it to
 authored root motion: retain that trajectory, use
 runtime phase offsets, or use a separately designed trajectory-preserving
 operation. Gait anchoring does not convert root motion to in-place motion.

@@ -583,6 +583,88 @@ fn gait_anchor_policy_pins_translation_and_yaw_caps() {
     assert!(yaw_error.contains("cap 1.000 deg"), "got: {yaw_error}");
 }
 
+fn long_walk_with_distributed_yaw(accumulation_deg: f64) -> (Skeleton, Clip) {
+    const LONG_FRAMES: usize = 100_001;
+    const LONG_FPS: f64 = 100_000.0;
+    let skel = skeleton();
+    let times: Vec<f32> = (0..LONG_FRAMES)
+        .map(|key| (key as f64 / LONG_FPS) as f32)
+        .collect();
+    let rest_translations: Vec<Vec3> = skel
+        .bones
+        .iter()
+        .map(|bone| bone.rest.translation)
+        .collect();
+    let foot = |bone: usize, sign: f32| Track {
+        bone,
+        property: Property::Translation,
+        interpolation: Interpolation::Linear,
+        times: times.clone(),
+        values: TrackValues::Vec3s(
+            (0..LONG_FRAMES)
+                .map(|key| {
+                    let theta = (TAU * key as f64 / LONG_FRAMES as f64) as f32;
+                    rest_translations[bone]
+                        + Vec3::new(0.0, sign * 0.05 * theta.sin(), sign * 0.15 * theta.sin())
+                })
+                .collect(),
+        ),
+    };
+    let yaw = Track {
+        bone: 0,
+        property: Property::Rotation,
+        interpolation: Interpolation::Linear,
+        times: times.clone(),
+        values: TrackValues::Quats(
+            (0..LONG_FRAMES)
+                .map(|key| {
+                    let degrees = accumulation_deg * key as f64 / (LONG_FRAMES - 1) as f64;
+                    Quat::from_rotation_y((degrees as f32).to_radians())
+                })
+                .collect(),
+        ),
+    };
+    (
+        skel,
+        Clip {
+            name: "long_distributed_yaw".into(),
+            duration_s: (LONG_FRAMES - 1) as f64 / LONG_FPS,
+            tracks: vec![foot(1, 1.0), foot(2, -1.0), yaw],
+        },
+    )
+}
+
+#[test]
+fn gait_anchor_long_grid_yaw_cap_is_stable_and_minimally_above_refuses() {
+    const LONG_FPS: f64 = 100_000.0;
+    let (skel, mut at_cap) = long_walk_with_distributed_yaw(GAIT_ANCHOR_MAX_YAW_ACCUMULATION_DEG);
+    let resolved_roles = roles(&skel);
+    align_gait_anchor(
+        &skel,
+        &mut at_cap,
+        &resolved_roles,
+        LONG_FPS,
+        GaitTrajectoryPolicy::InPlace,
+    )
+    .expect("100,000 distributed yaw steps at the exact inclusive cap are admitted");
+
+    let (skel, mut above) =
+        long_walk_with_distributed_yaw(GAIT_ANCHOR_MAX_YAW_ACCUMULATION_DEG * 1.000_01);
+    let resolved_roles = roles(&skel);
+    let last_before = above.tracks[2].key_quat(100_000);
+    let error = align_gait_anchor(
+        &skel,
+        &mut above,
+        &resolved_roles,
+        LONG_FPS,
+        GaitTrajectoryPolicy::InPlace,
+    )
+    .unwrap_err();
+    assert!(error.contains("and yaw "), "got: {error}");
+    assert!(error.contains("cap 1.000 deg"), "got: {error}");
+    assert_eq!(above.tracks[2].key_quat(100_000), last_before);
+}
+
 #[test]
 fn gait_anchor_fails_closed_without_root_or_hips_evidence() {
     let (skel, mut clip) = open_walk();
@@ -905,6 +987,73 @@ fn gait_anchor_bounds_unrelated_authored_key_work_before_sampling() {
     assert!(error.contains("2000100 pose samples"), "got: {error}");
     assert!(error.contains("sample safety budget"), "got: {error}");
     assert_eq!(format!("{clip:?}"), before);
+}
+
+#[test]
+fn gait_anchor_rejects_duplicate_channels_before_sampling_or_mutation() {
+    let (skel, mut clip) = open_walk();
+    let roles = roles(&skel);
+    for _ in 0..2_001 {
+        clip.tracks.push(Track {
+            bone: 0,
+            property: Property::Scale,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0],
+            values: TrackValues::Vec3s(vec![Vec3::ONE]),
+        });
+    }
+    let track_count = clip.tracks.len();
+    let first = clip.tracks[2].key_vec3(0);
+    let last = clip.tracks.last().and_then(|track| track.key_vec3(0));
+
+    let error = align_gait_anchor(&skel, &mut clip, &roles, FPS, GaitTrajectoryPolicy::InPlace)
+        .unwrap_err();
+    assert!(
+        error.contains("track 3 duplicates the scale channel"),
+        "got: {error}"
+    );
+    assert_eq!(clip.tracks.len(), track_count);
+    assert_eq!(clip.tracks[2].key_vec3(0), first);
+    assert_eq!(clip.tracks.last().and_then(|track| track.key_vec3(0)), last);
+}
+
+#[test]
+fn gait_anchor_bounds_frame_by_track_sampling_work() {
+    let (mut skel, mut clip) = open_walk();
+    extend_skeleton_to(&mut skel, 10_500);
+    let roles = roles(&skel);
+    for bone in 0..skel.bones.len() {
+        for property in [Property::Rotation, Property::Scale] {
+            let values = if property == Property::Rotation {
+                TrackValues::Quats(vec![Quat::IDENTITY])
+            } else {
+                TrackValues::Vec3s(vec![Vec3::ONE])
+            };
+            clip.tracks.push(Track {
+                bone,
+                property,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0],
+                values,
+            });
+        }
+        if bone != 1 && bone != 2 {
+            clip.tracks.push(Track {
+                bone,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0],
+                values: TrackValues::Vec3s(vec![skel.bones[bone].rest.translation]),
+            });
+        }
+    }
+    let track_count = clip.tracks.len();
+
+    let error = align_gait_anchor(&skel, &mut clip, &roles, FPS, GaitTrajectoryPolicy::InPlace)
+        .unwrap_err();
+    assert!(error.contains("1008000 channel samples"), "got: {error}");
+    assert!(error.contains("32 frames x 31500 tracks"), "got: {error}");
+    assert_eq!(clip.tracks.len(), track_count);
 }
 
 #[test]
