@@ -57,6 +57,12 @@ cargo run -p animsmith --example embed
    defects load and become findings. The same document carries meshes, skins,
    factor-only materials, and available base-color and normal textures for
    scene round-trips.
+   An FBX host that needs auditable scale-boundary facts uses
+   `animsmith_fbx::load_scale_source` instead: the returned wrapper retains the
+   document and `FbxScaleCapabilityInventory` from one parse. The inventory
+   and complete normalized source-skeleton sidecar do not enable FBX scaling;
+   they explicitly record baked curves, rebuilt payloads, and unavailable raw
+   span proof.
 2. **Resolve rig roles.** Use `resolve_configured_roles` to apply the same
    named/auto profile plus inline-override policy as the CLI. Lower-level
    `detect_profile`, `profile::resolve_named`, and
@@ -217,6 +223,13 @@ For an embedded producer:
    declared bounds, aliasing, deterministic bytes, and the actual write set.
 6. Publish only the proved artifact and matching evidence as one coordinated
    pair, preserving the CLI's rollback and documented process-crash semantics.
+
+Those producer steps currently apply to glTF/GLB only. FBX embedders may call
+`animsmith_fbx::capability_facts` to inspect the conservative projection, but
+it remains unsupported for both operations. The FBX inventory makes the later
+writer/proof work explicit; it is not authority to substitute a normalized
+writer or claim raw FBX spans, object properties, curve keys, or vertex
+identity were preserved.
 
 `ScaleCandidate` grants no authority: proof independently validates the
 source, plan inventory, candidate structure, and numeric claims. A frontend

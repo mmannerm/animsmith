@@ -1,7 +1,13 @@
 use animsmith_core::glam::{Mat4, Vec3};
 use animsmith_core::measure::measure_assets;
-use animsmith_core::model::Property;
-use animsmith_core::{Document, TrackValues};
+use animsmith_core::model::{
+    Property, SourceInverseBindAccessorStatus, SourceNodeLocalRest, SourceSkeletonCoverage,
+};
+use animsmith_core::scale::{
+    ScaleCapabilityCoverage, ScaleError, ScaleOperation, ScaleRequest, plan_scale,
+};
+use animsmith_core::{Document, TrackValues, validate_document_shape};
+use animsmith_fbx::{FbxCoordinateAxis, FbxScaleDomainStatus};
 use std::path::PathBuf;
 
 /// A valid 1x1 PNG used as an externally referenced FBX normal map.
@@ -161,14 +167,381 @@ fn loads_self_authored_rigged_triangle_fixture() {
 }
 
 #[test]
+fn checked_in_fixtures_publish_complete_conservative_scale_inventories() {
+    for (name, take_count) in [
+        ("rigged_triangle.fbx", 1),
+        ("rigged_triangle_empty_take.fbx", 2),
+    ] {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("testdata")
+            .join(name);
+        let source = animsmith_fbx::load_scale_source(&path).expect("fixture loads");
+        let inventory = source.inventory();
+        let domains = &inventory.domains;
+
+        // Every Appendix D.4 row is stated explicitly. In particular,
+        // normalization/rebuilding/unverifiable spans are not collapsed into
+        // an absent flag merely because this small fixture lacks exotic data.
+        assert_eq!(domains.rest_hierarchy, FbxScaleDomainStatus::Normalized);
+        assert_eq!(domains.translation_animation, FbxScaleDomainStatus::Baked);
+        assert_eq!(
+            domains.rotation_and_scale_animation,
+            FbxScaleDomainStatus::Baked
+        );
+        assert_eq!(
+            domains.root_motion_and_velocity,
+            FbxScaleDomainStatus::Derived
+        );
+        assert_eq!(domains.base_mesh_geometry, FbxScaleDomainStatus::Rebuilt);
+        assert_eq!(domains.morphs, FbxScaleDomainStatus::Absent);
+        assert_eq!(domains.skin_binds, FbxScaleDomainStatus::Derived);
+        assert_eq!(domains.cameras_and_lights, FbxScaleDomainStatus::Absent);
+        assert_eq!(
+            domains.collision_and_custom_data,
+            FbxScaleDomainStatus::Absent
+        );
+        assert_eq!(
+            domains.other_vertex_and_source_data,
+            FbxScaleDomainStatus::Rebuilt
+        );
+        assert_eq!(
+            domains.out_of_contract_node_transforms,
+            FbxScaleDomainStatus::Normalized
+        );
+        assert_eq!(
+            domains.animation_targeting_matrix_nodes,
+            FbxScaleDomainStatus::Baked
+        );
+        assert_eq!(
+            domains.shared_raw_accessor_payloads,
+            FbxScaleDomainStatus::Unverifiable
+        );
+        assert_eq!(
+            domains.image_payload_aliases,
+            FbxScaleDomainStatus::Unverifiable
+        );
+
+        assert_eq!(
+            inventory.coordinate_normalization.original_up_axis,
+            FbxCoordinateAxis::Unknown
+        );
+        assert_eq!(
+            inventory.coordinate_normalization.original_unit_meters,
+            0.01
+        );
+        assert!(inventory.coordinate_normalization.target_right_handed_y_up);
+        assert_eq!(inventory.coordinate_normalization.target_unit_meters, 1.0);
+        assert!(inventory.coordinate_normalization.adjust_transforms);
+        assert!(inventory.animation_takes_baked);
+        assert!(!inventory.authored_curve_keys_preserved);
+        assert_eq!(inventory.animation_take_count, take_count);
+        assert_eq!(inventory.source_animation_curve_count, 1);
+        assert!(inventory.inherit_modes_compensated);
+        assert_eq!(inventory.generated_geometry_helper_node_count, 0);
+        assert_eq!(inventory.generated_scale_helper_node_count, 0);
+        assert_eq!(inventory.compensated_inherit_node_count, 0);
+        assert_eq!(inventory.generated_normal_mesh_count, 1);
+        assert_eq!(inventory.missing_normal_mesh_count, 0);
+        assert_eq!(inventory.skin_deformer_count, 1);
+        assert_eq!(inventory.skin_cluster_count, 1);
+        assert_eq!(inventory.empty_skin_deformer_count, 0);
+        assert_eq!(inventory.incomplete_bind_cluster_count, 0);
+        assert_eq!(inventory.bone_convenience_bind_overwrite_count, 0);
+        assert!(!inventory.identity_bind_defaults_invented);
+        assert_eq!(inventory.truncated_influence_vertex_count, 0);
+        assert_eq!(inventory.discarded_influence_count, 0);
+        assert_eq!(inventory.renormalized_influence_vertex_count, 0);
+        assert_eq!(inventory.missing_skin_influence_corner_count, 0);
+        assert_eq!(inventory.non_triangle_face_count, 0);
+        assert_eq!(inventory.triangulated_face_count, 0);
+        assert_eq!(inventory.omitted_non_polygon_face_count, 0);
+        assert_eq!(inventory.pre_weld_vertex_count, 3);
+        assert_eq!(inventory.post_weld_vertex_count, 3);
+        assert_eq!(inventory.multiple_skin_deformer_mesh_count, 0);
+        assert_eq!(inventory.dual_quaternion_skin_count, 0);
+        assert_eq!(inventory.blend_deformer_count, 0);
+        assert_eq!(inventory.cache_deformer_count, 0);
+        assert_eq!(inventory.unsupported_vertex_payload_mesh_count, 0);
+        assert_eq!(inventory.camera_count, 0);
+        assert_eq!(inventory.light_count, 0);
+        assert_eq!(inventory.shared_mesh_definition_count, 0);
+        assert_eq!(inventory.user_defined_property_count, 0);
+        assert_eq!(inventory.unsupported_source_element_count, 0);
+        assert_eq!(inventory.external_resource_count, 0);
+
+        assert_eq!(
+            inventory
+                .source_nodes
+                .iter()
+                .map(|row| (row.source_index, row.ufbx_typed_id, row.ufbx_element_id))
+                .collect::<Vec<_>>(),
+            vec![(0, 0, 0), (1, 1, 1), (2, 2, 3)]
+        );
+        assert_eq!(
+            inventory
+                .source_meshes
+                .iter()
+                .map(|row| (row.source_index, row.ufbx_typed_id, row.ufbx_element_id))
+                .collect::<Vec<_>>(),
+            vec![(0, 0, 2)]
+        );
+        assert_eq!(
+            inventory
+                .source_skins
+                .iter()
+                .map(|row| (row.source_index, row.ufbx_typed_id, row.ufbx_element_id))
+                .collect::<Vec<_>>(),
+            vec![(0, 0, 4)]
+        );
+
+        let facts = animsmith_fbx::capability_facts(inventory);
+        assert_eq!(facts.coverage, ScaleCapabilityCoverage::Complete);
+        assert!(facts.unknown_source_members_present);
+        assert!(facts.unsafe_accessor_layout_present);
+        assert!(!facts.is_supported());
+    }
+}
+
+#[test]
+fn capability_projection_maps_each_core_refusal_domain_independently() {
+    type InventoryMutation = fn(&mut animsmith_fbx::FbxScaleCapabilityInventory);
+
+    let source = animsmith_fbx::load_scale_source(&fixture()).expect("fixture loads");
+    let baseline = source.inventory();
+    let cases: &[(&str, InventoryMutation)] = &[
+        ("morph", |inventory| inventory.blend_deformer_count = 1),
+        ("camera", |inventory| inventory.camera_count = 1),
+        ("light", |inventory| inventory.light_count = 1),
+        ("instancing", |inventory| {
+            inventory.shared_mesh_definition_count = 1
+        }),
+        ("extension", |inventory| {
+            inventory.unsupported_source_element_count = 1
+        }),
+        ("extras", |inventory| {
+            inventory.user_defined_property_count = 1
+        }),
+        ("non-triangle", |inventory| {
+            inventory.non_triangle_face_count = 1
+        }),
+        ("vertex-payload", |inventory| {
+            inventory.unsupported_vertex_payload_mesh_count = 1
+        }),
+        ("secondary-influence", |inventory| {
+            inventory.truncated_influence_vertex_count = 1
+        }),
+        ("inverse-bind", |inventory| {
+            inventory.incomplete_bind_cluster_count = 1
+        }),
+        ("external-resource", |inventory| {
+            inventory.external_resource_count = 1
+        }),
+    ];
+    for (label, mutate) in cases {
+        let mut inventory = baseline.clone();
+        mutate(&mut inventory);
+        let facts = animsmith_fbx::capability_facts(&inventory);
+        let mapped = match *label {
+            "morph" => facts.morphs_present && facts.morph_weights_present,
+            "camera" => facts.cameras_present,
+            "light" => facts.lights_present,
+            "instancing" => facts.instancing_present,
+            "extension" => facts.unregistered_extensions_present,
+            "extras" => facts.extras_present,
+            "non-triangle" => facts.non_triangle_primitives_present,
+            "vertex-payload" => facts.unsupported_vertex_attributes_present,
+            "secondary-influence" => facts.secondary_skin_influences_present,
+            "inverse-bind" => facts.inverse_bind_issues_present,
+            "external-resource" => facts.external_resources_present,
+            _ => false,
+        };
+        assert!(mapped, "{label} must project to its core refusal flag");
+    }
+}
+
+#[test]
+fn polygon_triangulation_and_exact_welding_are_inventoried() {
+    let source = std::fs::read_to_string(fixture()).expect("read fixture");
+    let source = source
+        .replacen(
+            "Vertices: *9 { a: 0,0,0,100,0,0,0,100,0 }",
+            "Vertices: *12 { a: 0,0,0,100,0,0,100,100,0,0,100,0 }",
+            1,
+        )
+        .replacen(
+            "PolygonVertexIndex: *3 { a: 0,1,-3 }",
+            "PolygonVertexIndex: *4 { a: 0,1,2,-4 }",
+            1,
+        )
+        .replacen("Indexes: *3 { a: 0,1,2 }", "Indexes: *4 { a: 0,1,2,3 }", 1)
+        .replacen("Weights: *3 { a: 1,1,1 }", "Weights: *4 { a: 1,1,1,1 }", 1);
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("quad.fbx");
+    std::fs::write(&path, source).expect("write analytic quad fixture");
+
+    let loaded = animsmith_fbx::load_scale_source(&path).expect("quad fixture loads");
+    let inventory = loaded.inventory();
+    assert_eq!(inventory.non_triangle_face_count, 1);
+    assert_eq!(inventory.triangulated_face_count, 1);
+    assert_eq!(inventory.omitted_non_polygon_face_count, 0);
+    assert_eq!(inventory.pre_weld_vertex_count, 6);
+    assert_eq!(inventory.post_weld_vertex_count, 4);
+    let facts = animsmith_fbx::capability_facts(inventory);
+    assert!(facts.non_triangle_primitives_present);
+    assert!(facts.unsupported_vertex_attributes_present);
+}
+
+#[test]
+fn influence_truncation_renormalization_and_lossy_bone_bind_overwrite_are_inventoried() {
+    let source = std::fs::read_to_string(fixture()).expect("read fixture");
+    let source = source.replacen(
+        "ObjectType: \"Deformer\" { Count: 2 }",
+        "ObjectType: \"Deformer\" { Count: 6 }",
+        1,
+    );
+    let extra_clusters = (3..=6)
+        .map(|suffix| {
+            format!(
+                "\tDeformer: 400{suffix}, \"SubDeformer::root_cluster_{suffix}\", \"Cluster\" {{\n\t\tVersion: 100\n\t\tIndexes: *3 {{ a: 0,1,2 }}\n\t\tWeights: *3 {{ a: 1,1,1 }}\n\t\tTransform: *16 {{ a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }}\n\t\tTransformLink: *16 {{ a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }}\n\t}}\n"
+            )
+        })
+        .collect::<String>();
+    let source = source.replacen(
+        "\tAnimationStack: 3001",
+        &format!("{extra_clusters}\tAnimationStack: 3001"),
+        1,
+    );
+    let extra_connections = (3..=6)
+        .map(|suffix| format!("\tC: \"OO\",400{suffix},4001\n\tC: \"OO\",1001,400{suffix}\n"))
+        .collect::<String>();
+    let source = source.replacen(
+        "\tC: \"OO\",3002,3001",
+        &format!("{extra_connections}\tC: \"OO\",3002,3001"),
+        1,
+    );
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("five-influences.fbx");
+    std::fs::write(&path, source).expect("write analytic influence fixture");
+
+    let loaded = animsmith_fbx::load_scale_source(&path).expect("influence fixture loads");
+    let inventory = loaded.inventory();
+    assert_eq!(inventory.skin_cluster_count, 5);
+    assert_eq!(inventory.bone_convenience_bind_overwrite_count, 4);
+    assert_eq!(inventory.truncated_influence_vertex_count, 3);
+    assert_eq!(inventory.discarded_influence_count, 3);
+    assert_eq!(inventory.renormalized_influence_vertex_count, 3);
+    assert!(!inventory.identity_bind_defaults_invented);
+    assert!(animsmith_fbx::capability_facts(inventory).secondary_skin_influences_present);
+}
+
+#[test]
+fn complete_source_projection_retains_normalized_identity_and_derived_binds() {
+    let source = animsmith_fbx::load_scale_source(&fixture()).expect("fixture loads");
+    let document = source.document();
+    validate_document_shape(document).expect("complete FBX projection is structurally valid");
+    let projection = &document.assets.source_skeleton;
+    assert_eq!(projection.coverage, SourceSkeletonCoverage::Complete);
+    assert_eq!(projection.nodes.len(), 3);
+    assert_eq!(
+        projection
+            .nodes
+            .iter()
+            .map(|node| {
+                (
+                    node.source_node_index,
+                    node.name.as_deref(),
+                    node.parent_source_node_index,
+                    node.scene_root_indices.as_slice(),
+                    node.bone,
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            (0, None, None, &[0][..], Some(0)),
+            (1, Some("root"), Some(0), &[][..], Some(1)),
+            (2, Some("tri"), Some(1), &[][..], Some(2)),
+        ]
+    );
+    let SourceNodeLocalRest::Trs { scale, .. } = &projection.nodes[1].local_rest else {
+        panic!("ufbx normalized projection uses TRS");
+    };
+    assert_eq!(*scale, Vec3::splat(0.01));
+    assert_eq!(*scale, document.skeleton.bones[1].rest.scale);
+
+    assert_eq!(projection.skins.len(), 1);
+    let skin = &projection.skins[0];
+    assert_eq!(skin.source_skin_index, 0);
+    assert_eq!(skin.name.as_deref(), Some("skin"));
+    assert_eq!(skin.skeleton_root_source_node_index, None);
+    assert_eq!(skin.joint_source_node_indices, vec![1]);
+    assert_eq!(
+        skin.inverse_bind_accessor.status,
+        SourceInverseBindAccessorStatus::Available
+    );
+    assert_eq!(skin.inverse_bind_accessor.declared_count, Some(1));
+    assert_eq!(skin.inverse_bind_accessor.matrices, vec![Mat4::IDENTITY]);
+    assert_eq!(skin.attachments.len(), 1);
+    assert_eq!(skin.attachments[0].source_node_index, 2);
+    assert_eq!(skin.attachments[0].source_mesh_index, Some(0));
+}
+
+#[test]
+fn both_scale_operations_remain_typed_refusals_for_inventory_only_fbx() {
+    let source = animsmith_fbx::load_scale_source(&fixture()).expect("fixture loads");
+    let facts = animsmith_fbx::capability_facts(source.inventory());
+    for operation in [
+        ScaleOperation::WholeDocumentLinearUnits { factor: 2.0 },
+        ScaleOperation::RestBindUniformScale {
+            source_skin_index: 0,
+            source_root_node_index: 1,
+            expected_factor: 0.01,
+        },
+    ] {
+        assert_eq!(
+            plan_scale(&ScaleRequest {
+                operation,
+                document: source.document(),
+                capability: &facts,
+            })
+            .unwrap_err(),
+            ScaleError::IncompleteCapability
+        );
+    }
+
+    // Source identity is a separate gate: even a fabricated supported
+    // capability projection cannot license rest/bind after the sidecar is
+    // removed. This prevents either "complete" bit from standing in for the
+    // other inventory.
+    let mut without_projection = source.document().clone();
+    without_projection.assets.source_skeleton.coverage = SourceSkeletonCoverage::Unavailable;
+    let mut fabricated = animsmith_core::scale::ScaleCapabilityFacts::default();
+    fabricated.coverage = ScaleCapabilityCoverage::Complete;
+    assert_eq!(
+        plan_scale(&ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 1,
+                expected_factor: 0.01,
+            },
+            document: &without_projection,
+            capability: &fabricated,
+        })
+        .unwrap_err(),
+        ScaleError::IncompleteSourceSkeleton
+    );
+}
+
+#[test]
 fn load_path_and_captured_bytes_are_equivalent() {
     let path = fixture();
     let bytes = std::fs::read(&path).expect("capture fixture");
 
-    let from_path = animsmith_fbx::load(&path).expect("fixture loads by path");
-    let from_bytes = animsmith_fbx::load_bytes(&path, &bytes).expect("fixture loads by bytes");
+    let from_path = animsmith_fbx::load_scale_source(&path).expect("fixture loads by path");
+    let from_bytes =
+        animsmith_fbx::load_scale_source_bytes(&path, &bytes).expect("fixture loads by bytes");
 
-    assert_same_loaded_shape(&from_path, &from_bytes);
+    assert_eq!(from_path.inventory(), from_bytes.inventory());
+    assert_same_loaded_shape(from_path.document(), from_bytes.document());
 }
 
 #[test]
@@ -292,14 +665,20 @@ fn byte_loader_resolves_external_texture_relative_to_supplied_path() {
     let bytes = std::fs::read(&path).expect("capture FBX");
     std::fs::remove_file(&path).expect("remove primary input after capture");
 
-    let doc = animsmith_fbx::load_bytes(&path, &bytes).expect("captured FBX loads");
+    let source = animsmith_fbx::load_scale_source_bytes(&path, &bytes).expect("captured FBX loads");
 
-    assert_normal_texture(&doc);
+    assert_eq!(source.inventory().external_resource_count, 2);
+    assert!(animsmith_fbx::capability_facts(source.inventory()).external_resources_present);
+    assert_normal_texture(source.document());
 }
 
 #[test]
 fn loads_embedded_fbx_normal_texture() {
-    assert_normal_texture(&load_normal_material(NormalImage::Embedded));
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = write_normal_material(&dir, NormalImage::Embedded);
+    let source = animsmith_fbx::load_scale_source(&path).expect("embedded FBX loads");
+    assert_eq!(source.inventory().external_resource_count, 0);
+    assert_normal_texture(source.document());
 }
 
 #[test]

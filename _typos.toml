@@ -16,3 +16,5 @@ extend-exclude = [
 ue = "ue"
 # PBR material term surfaced by the ufbx material API (`pbr.metalness`).
 metalness = "metalness"
+# Level-of-detail abbreviation surfaced by the ufbx API (`lod_groups`).
+lod = "lod"

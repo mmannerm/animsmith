@@ -19,6 +19,27 @@ Scene assets carry triangulated meshes, skins, factor-only materials, and
 linked or embedded PNG/JPEG base-color and normal textures into the shared
 format-independent model.
 
+## Scale capability inventory
+
+`load_scale_source` and `load_scale_source_bytes` return the normalized
+`Document` together with a deterministic `FbxScaleCapabilityInventory` from
+the same ufbx parse. The inventory names every domain from DESIGN.md Appendix
+D.4 and records the exact ingestion boundary: original/target units and axes,
+adjusted transforms, helper nodes and inherit-mode compensation, baked takes
+and discarded authored curve keys, generated normals, cluster-derived bind
+matrices, influence truncation and renormalization, triangulation and exact-bit
+welding, unsupported deformers/payloads, external resources, and stable ufbx
+source identities. The document also carries a complete source-node and
+source-skin sidecar in normalized ufbx order.
+
+`capability_facts` projects the inventory into `animsmith-core`'s
+format-neutral scale gate. The projection is deliberately unsupported in this
+inventory-only slice: FBX loading has already normalized transform/unit state,
+rebuilt geometry, and baked curves, while ufbx exposes no raw payload spans for
+artifact-preservation proof. Neither rest/bind nor whole-document scaling is
+enabled. No API here claims raw FBX bytes, raw object properties, authored
+curve keys, or source vertex identity are preserved.
+
 ## Install
 
 ```toml

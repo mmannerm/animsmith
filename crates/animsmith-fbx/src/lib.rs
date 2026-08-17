@@ -12,6 +12,15 @@
 //! `ufbx` C build that `animsmith-core` and `animsmith-gltf` intentionally
 //! avoid.
 //!
+//! [`load_scale_source`] and [`load_scale_source_bytes`] retain a typed
+//! [`FbxScaleCapabilityInventory`] from the same parse. It names every
+//! Appendix D.4 domain and explicitly records baked curves, normalized
+//! transforms, derived binds, truncated/renormalized influences,
+//! triangulation, welding, generated data, and unavailable raw-span proof.
+//! [`capability_facts`] projects that complete inventory into core facts, but
+//! the result remains unsupported: both scale operations are intentionally
+//! refused until a later FBX writer and proof boundary exists.
+//!
 //! # Quick start
 //!
 //! ```no_run
@@ -50,11 +59,22 @@
 //!
 #![warn(missing_docs)]
 
+mod capability;
+
+pub use capability::{
+    FbxBindMatrixProvenance, FbxCoordinateAxis, FbxCoordinateNormalization,
+    FbxScaleCapabilityInventory, FbxScaleDomainInventory, FbxScaleDomainStatus, FbxScaleSource,
+    FbxSourceIdentity, capability_facts,
+};
+
 use animsmith_core::model::{
     Bone, Clip, Document, Interpolation, MaterialAsset, MeshAsset, MeshInstance,
     NormalTextureAsset, Primitive, Property, SceneAsset, SceneAssets, Skeleton, SourceInfo,
-    TextureAsset, Track, TrackValues, Transform,
+    SourceInverseBindAccessor, SourceInverseBindAccessorStatus, SourceNodeAsset,
+    SourceNodeLocalRest, SourceSkeletonAssets, SourceSkeletonCoverage, SourceSkinAsset,
+    SourceSkinAttachment, TextureAsset, Track, TrackValues, Transform,
 };
+use capability::AssetConversionFacts;
 use glam::{Mat4, Quat, Vec3};
 use std::path::Path;
 
@@ -132,10 +152,24 @@ fn mat4(m: &ufbx::Matrix) -> Mat4 {
 /// [`LoadError::Bake`] when an animation stack cannot be baked into the
 /// linear TRS tracks that animsmith's checks consume.
 pub fn load(path: &Path) -> Result<Document, LoadError> {
+    Ok(load_scale_source(path)?.into_document())
+}
+
+/// Load an `.fbx` file and retain its conservative scale capability inventory.
+///
+/// The returned source is inventory-only: neither scale operation is enabled
+/// for FBX by this API.
+///
+/// # Errors
+///
+/// Returns [`LoadError::Path`] when the path cannot be passed to `ufbx`,
+/// [`LoadError::Fbx`] when the FBX container cannot be parsed, and
+/// [`LoadError::Bake`] when an animation take cannot be baked.
+pub fn load_scale_source(path: &Path) -> Result<FbxScaleSource, LoadError> {
     path.to_str()
         .ok_or_else(|| LoadError::Path(path.display().to_string()))?;
     let bytes = std::fs::read(path).map_err(|error| LoadError::Fbx(error.to_string()))?;
-    load_bytes(path, &bytes)
+    load_scale_source_bytes(path, &bytes)
 }
 
 /// Load an FBX byte slice into a core [`Document`].
@@ -151,6 +185,20 @@ pub fn load(path: &Path) -> Result<Document, LoadError> {
 /// [`LoadError::Bake`] when an animation stack cannot be baked into the
 /// linear TRS tracks that animsmith's checks consume.
 pub fn load_bytes(path: &Path, bytes: &[u8]) -> Result<Document, LoadError> {
+    Ok(load_scale_source_bytes(path, bytes)?.into_document())
+}
+
+/// Load captured FBX bytes and retain the capability inventory from the same parse.
+///
+/// `path` supplies source provenance and the base for external resources;
+/// `bytes` is the exact captured top-level FBX container.
+///
+/// # Errors
+///
+/// Returns [`LoadError::Path`] when `path` cannot be passed to `ufbx`,
+/// [`LoadError::Fbx`] when the FBX container cannot be parsed, and
+/// [`LoadError::Bake`] when an animation take cannot be baked.
+pub fn load_scale_source_bytes(path: &Path, bytes: &[u8]) -> Result<FbxScaleSource, LoadError> {
     let filename = path
         .to_str()
         .ok_or_else(|| LoadError::Path(path.display().to_string()))?;
@@ -281,16 +329,20 @@ pub fn load_bytes(path: &Path, bytes: &[u8]) -> Result<Document, LoadError> {
         });
     }
 
-    let assets = extract_assets(&scene, path.parent());
+    let (assets, conversion) = extract_assets(&scene, path.parent());
+    let inventory = capability::inventory(&scene, &conversion);
 
-    Ok(Document {
-        skeleton: Skeleton { bones },
-        clips,
-        assets,
-        source: SourceInfo {
-            path: Some(path.display().to_string()),
-            format: Some("fbx".into()),
+    Ok(FbxScaleSource {
+        document: Document {
+            skeleton: Skeleton { bones },
+            clips,
+            assets,
+            source: SourceInfo {
+                path: Some(path.display().to_string()),
+                format: Some("fbx".into()),
+            },
         },
+        inventory,
     })
 }
 
@@ -360,12 +412,115 @@ fn normal_texture(
     })
 }
 
+/// Project every normalized ufbx node and skin deformer in stable typed-list
+/// order. These are source-side identities after the documented coordinate,
+/// helper-node, and inherit-mode normalization; they are not raw FBX object
+/// transforms.
+fn extract_source_skeleton(scene: &ufbx::Scene) -> SourceSkeletonAssets {
+    let nodes = scene
+        .nodes
+        .iter()
+        .map(|node| {
+            let mut source = SourceNodeAsset::new(
+                node.element.typed_id as usize,
+                SourceNodeLocalRest::Trs {
+                    translation: vec3(node.local_transform.translation),
+                    rotation: quat(node.local_transform.rotation),
+                    scale: vec3(node.local_transform.scale),
+                },
+            );
+            source.name = (!node.element.name.is_empty()).then(|| node.element.name.to_string());
+            source.parent_source_node_index = node
+                .parent
+                .as_ref()
+                .map(|parent| parent.element.typed_id as usize);
+            source.scene_root_indices = if node.is_root { vec![0] } else { Vec::new() };
+            source.bone = Some(node.element.typed_id as usize);
+            source
+        })
+        .collect();
+
+    let mut attachments = vec![Vec::new(); scene.skin_deformers.len()];
+    for node in &scene.nodes {
+        let Some(mesh) = &node.mesh else { continue };
+        for skin in &mesh.skin_deformers {
+            let Some(for_skin) = attachments.get_mut(skin.element.typed_id as usize) else {
+                return SourceSkeletonAssets::default();
+            };
+            for_skin.push(SourceSkinAttachment {
+                source_node_index: node.element.typed_id as usize,
+                source_mesh_index: Some(mesh.element.typed_id as usize),
+            });
+        }
+    }
+
+    let skins = scene
+        .skin_deformers
+        .iter()
+        .map(|skin| {
+            let source_skin_index = skin.element.typed_id as usize;
+            let matrices = skin
+                .clusters
+                .iter()
+                .filter_map(|cluster| {
+                    let bind =
+                        mat4(&cluster.bind_to_world).inverse() * mat4(&cluster.geometry_to_world);
+                    (cluster.bone_node.is_some() && bind.is_finite()).then_some(bind)
+                })
+                .collect::<Vec<_>>();
+            let status = if skin.clusters.is_empty() {
+                SourceInverseBindAccessorStatus::Absent
+            } else if matrices.len() != skin.clusters.len() {
+                SourceInverseBindAccessorStatus::Unreadable
+            } else {
+                SourceInverseBindAccessorStatus::Available
+            };
+            SourceSkinAsset {
+                source_skin_index,
+                name: (!skin.element.name.is_empty()).then(|| skin.element.name.to_string()),
+                // FBX skin deformers do not carry a glTF-style explicit
+                // skeleton-root declaration. Do not infer one.
+                skeleton_root_source_node_index: None,
+                joint_source_node_indices: skin
+                    .clusters
+                    .iter()
+                    .filter_map(|cluster| {
+                        cluster
+                            .bone_node
+                            .as_ref()
+                            .map(|node| node.element.typed_id as usize)
+                    })
+                    .collect(),
+                inverse_bind_accessor: SourceInverseBindAccessor {
+                    status,
+                    declared_count: (!skin.clusters.is_empty()).then_some(skin.clusters.len()),
+                    matrices,
+                },
+                attachments: attachments
+                    .get_mut(source_skin_index)
+                    .map(std::mem::take)
+                    .unwrap_or_default(),
+            }
+        })
+        .collect();
+
+    SourceSkeletonAssets {
+        coverage: SourceSkeletonCoverage::Complete,
+        nodes,
+        skins,
+    }
+}
+
 /// Extract triangulated geometry, skins, and factor-only materials with
 /// optional base-color and normal textures. Corner attributes come straight
 /// from ufbx's indexed accessors; skin weights keep the top four influences
 /// per source vertex and are renormalized.
-fn extract_assets(scene: &ufbx::Scene, base_dir: Option<&Path>) -> SceneAssets {
+fn extract_assets(
+    scene: &ufbx::Scene,
+    base_dir: Option<&Path>,
+) -> (SceneAssets, AssetConversionFacts) {
     let mut assets = SceneAssets::default();
+    let mut conversion = AssetConversionFacts::default();
     let mut material_index: std::collections::BTreeMap<u32, usize> =
         std::collections::BTreeMap::new();
 
@@ -450,19 +605,30 @@ fn extract_assets(scene: &ufbx::Scene, base_dir: Option<&Path>) -> SceneAssets {
                     .map(|v| {
                         let mut pairs: Vec<(u16, f32)> = Vec::new();
                         if let Some(sv) = s.vertices.get(v) {
-                            for w in 0..sv.num_weights as usize {
-                                let sw = &s.weights[sv.weight_begin as usize + w];
+                            let begin = sv.weight_begin as usize;
+                            let end = begin.saturating_add(sv.num_weights as usize);
+                            for sw in s.weights.get(begin..end).unwrap_or_default() {
                                 pairs.push((sw.cluster_index as u16, sw.weight as f32));
                             }
                         }
                         pairs.sort_by(|a, b| b.1.total_cmp(&a.1));
+                        if pairs.len() > 4 {
+                            conversion.truncated_influence_vertex_count += 1;
+                            conversion.discarded_influence_count += pairs.len() - 4;
+                        }
                         pairs.truncate(4);
                         let total: f32 = pairs.iter().map(|p| p.1).sum();
                         let mut joints = [0u16; 4];
                         let mut weights = [0f32; 4];
+                        let mut renormalized = false;
                         for (slot, (j, w)) in pairs.into_iter().enumerate() {
                             joints[slot] = j;
-                            weights[slot] = if total > 0.0 { w / total } else { 0.0 };
+                            let normalized = if total > 0.0 { w / total } else { 0.0 };
+                            renormalized |= normalized.to_bits() != w.to_bits();
+                            weights[slot] = normalized;
+                        }
+                        if renormalized {
+                            conversion.renormalized_influence_vertex_count += 1;
                         }
                         (joints, weights)
                     })
@@ -507,7 +673,11 @@ fn extract_assets(scene: &ufbx::Scene, base_dir: Option<&Path>) -> SceneAssets {
                 }
                 if !vertex_influences.is_empty() {
                     let vertex = mesh.vertex_indices[corner] as usize;
-                    let (joints, weights) = vertex_influences[vertex];
+                    let (joints, weights) =
+                        vertex_influences.get(vertex).copied().unwrap_or_else(|| {
+                            conversion.missing_skin_influence_corner_count += 1;
+                            ([0; 4], [0.0; 4])
+                        });
                     prim.joints.push(joints);
                     prim.weights.push(weights);
                 }
@@ -515,7 +685,9 @@ fn extract_assets(scene: &ufbx::Scene, base_dir: Option<&Path>) -> SceneAssets {
         }
         primitives.retain(|p| !p.positions.is_empty());
         for prim in &mut primitives {
+            conversion.pre_weld_vertex_count += prim.positions.len();
             prim.weld();
+            conversion.post_weld_vertex_count += prim.positions.len();
         }
         if primitives.is_empty() {
             continue;
@@ -548,5 +720,6 @@ fn extract_assets(scene: &ufbx::Scene, base_dir: Option<&Path>) -> SceneAssets {
             .collect(),
     });
     assets.default_scene = Some(0);
-    assets
+    assets.source_skeleton = extract_source_skeleton(scene);
+    (assets, conversion)
 }

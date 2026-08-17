@@ -821,14 +821,20 @@ pub enum SourceSkeletonCoverage {
     Complete,
 }
 
-/// The authored local-rest representation of one source node.
+/// The source-projected local-rest representation of one source node.
 ///
 /// glTF permits either decomposed TRS properties or a matrix. Keeping this
 /// representation separate from [`Bone::rest`] avoids presenting a lossy
-/// matrix decomposition as though it were authored TRS evidence.
+/// matrix decomposition as though it were authored TRS evidence. For glTF the
+/// value is the authored node member. A loader whose format semantics require
+/// coordinate, helper-node, or inheritance normalization may instead project
+/// that documented source-side result; its format-specific capability
+/// inventory must make the distinction explicit. In particular, the FBX
+/// loader records ufbx's adjusted/compensated TRS here and never claims it is
+/// the raw FBX transform stack.
 #[derive(Debug, Clone)]
 pub enum SourceNodeLocalRest {
-    /// Source node declared translation, rotation, and scale properties.
+    /// Source-declared or format-normalized translation, rotation, and scale.
     Trs {
         /// Local translation in scene units.
         translation: Vec3,
@@ -837,11 +843,15 @@ pub enum SourceNodeLocalRest {
         /// Local non-uniform scale.
         scale: Vec3,
     },
-    /// Source node declared a column-major 4×4 local transform matrix.
+    /// Source-declared or format-normalized column-major 4×4 local transform.
     Matrix(Mat4),
 }
 
-/// One source-format node with source-native identity facts.
+/// One source-side node with stable loader identity facts.
+///
+/// For a direct format projection this is an authored node. A loader that
+/// normalizes helper or inheritance semantics may also include generated
+/// source-side nodes, provided its capability inventory records that boundary.
 ///
 /// Marked `#[non_exhaustive]` because this projection grows as loaders learn
 /// to carry more source-native identity (`bone` was the most recent
@@ -853,16 +863,15 @@ pub enum SourceNodeLocalRest {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct SourceNodeAsset {
-    /// Stable node-array index in the source format.
+    /// Stable index in the loader's complete source-side node table.
     pub source_node_index: usize,
-    /// Authored node name, when present.
+    /// Source-projected node name, when present.
     pub name: Option<String>,
-    /// Source node-array index of the authored parent, when any.
+    /// Source-side node-table index of the projected parent, when any.
     pub parent_source_node_index: Option<usize>,
-    /// Declared source scenes that name this node as a root, in source-scene
-    /// index order.
+    /// Source scenes that name this projected node as a root, in source-scene order.
     pub scene_root_indices: Vec<usize>,
-    /// Authored local-rest representation.
+    /// Source-projected local-rest representation.
     pub local_rest: SourceNodeLocalRest,
     /// The core [`BoneId`] this source node normalized to, when the loader
     /// retained it as an independent normalized node.
@@ -888,7 +897,7 @@ pub struct SourceNodeAsset {
 
 impl SourceNodeAsset {
     /// One source node identified by its stable source-array index and its
-    /// authored local rest — the two facts every loader necessarily has.
+    /// source-projected local rest — the two facts every loader necessarily has.
     ///
     /// Every remaining fact ([`Self::name`], [`Self::parent_source_node_index`],
     /// [`Self::scene_root_indices`], [`Self::bone`]) starts absent and is
@@ -906,33 +915,42 @@ impl SourceNodeAsset {
     }
 }
 
-/// Read status for a source skin's inverse-bind accessor.
+/// Read status for a source skin's inverse-bind declaration.
+///
+/// glTF supplies this through an accessor. Other formats may supply an
+/// equivalent ordered declaration (for example, FBX cluster bind matrices)
+/// that the loader projects into target coordinates. Format-specific
+/// capability evidence must distinguish projected values from exact source
+/// payload preservation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceInverseBindAccessorStatus {
-    /// The skin did not declare an inverse-bind accessor.
+    /// The skin did not declare inverse-bind matrices.
     #[default]
     Absent,
-    /// The accessor was readable and had at least one matrix per declared joint.
+    /// The declaration was readable and had at least one matrix per declared joint.
     Available,
-    /// The source declared a count-zero inverse-bind accessor.
+    /// The source declared a count-zero inverse-bind payload.
     EmptyAccessor,
-    /// The accessor was readable but has fewer matrices than declared joints.
+    /// The declaration was readable but has fewer matrices than declared joints.
     CountMismatch,
-    /// The source declared an accessor that the loader could not read.
+    /// The source declared bind matrices that the loader could not read.
     Unreadable,
 }
 
-/// Read-side evidence for one source skin inverse-bind accessor.
+/// Read-side evidence for one source skin inverse-bind declaration.
 #[derive(Debug, Clone, Default)]
 pub struct SourceInverseBindAccessor {
-    /// Whether the accessor was absent, complete, or malformed.
+    /// Whether the source bind declaration was absent, complete, or malformed.
     pub status: SourceInverseBindAccessorStatus,
-    /// Declared source accessor count, or `None` when no accessor was declared.
+    /// Declared source matrix count, or `None` when no matrices were declared.
     pub declared_count: Option<usize>,
-    /// Raw matrices in accessor order when they were readable.
+    /// Matrices in declared joint order when they were readable.
     ///
-    /// This may contain non-finite values from a parseable binary accessor.
+    /// glTF retains raw accessor values. A format loader may instead retain a
+    /// documented coordinate-normalized projection of the source bind
+    /// declaration. This may contain non-finite values from a parseable binary
+    /// accessor or equivalent source structure.
     /// Measurement serialization must classify those values rather than emit
     /// non-finite JSON numbers.
     pub matrices: Vec<Mat4>,
