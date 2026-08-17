@@ -102,14 +102,14 @@ apply:
   measured gait-anchor transform using the selected `animsmith.toml` rig
   configuration. Assembly refuses before publication when the Root role (or
   Hips fallback) has missing/non-finite trajectory evidence, more than 1 cm of
-  horizontal accumulation, or more than 1° of yaw accumulation after the
-  ordinary interior open-loop wrap-step allowance (boundary jumps are not an
-  allowance). Every nonconstant channel that can affect the selected bone's
-  model-space position or yaw must also contain exactly one key at each
-  declared `fps` whole-frame sample over the clip duration, within f32
-  roundoff. Sparse, differently framed, duplicate, or off-grid trajectory
-  evidence refuses. The safety grid is bounded to 1,000,000 frame-by-bone pose
-  samples before allocation;
+  horizontal endpoint displacement, or more than 1° of yaw accumulation; no
+  interior step is subtracted as an allowance. Every nonconstant channel the
+  operation would rotate must contain exactly one key at each declared `fps`
+  whole-frame sample over the clip duration, at the exact representable f32
+  `key / fps` time and period endpoint. Sparse, differently framed, duplicate,
+  or off-grid evidence refuses. The complete skeleton, resolved roles, and
+  track shapes are validated first; declared-frame and maximum-authored-key
+  work share an inclusive 1,000,000 frame-by-bone sampling budget;
 - `strip_bones = [...]`: remove every TRS track for named base bones.
 
 `complete_tracks = true` fills absent TRS channels from the base rest pose for

@@ -135,7 +135,8 @@ fn transform_refuses_root_motion_before_publishing_output() {
     for fact in [
         "walk_root_motion",
         "selected Root bone \"root\"",
-        "horizontal translation 3.0000 m",
+        "clip \"walk_root_motion\": cannot gait-anchor",
+        "horizontal translation 3.1000 m",
         "yaw 0.000 deg",
         "retain source root motion",
         "runtime phase offsets",
@@ -147,4 +148,66 @@ fn transform_refuses_root_motion_before_publishing_output() {
         std::fs::read(&output).expect("reads unchanged output"),
         b"existing output"
     );
+}
+
+#[test]
+fn multi_clip_stationary_refusal_names_the_failing_clip_and_is_atomic() {
+    let dir = tempfile::tempdir().expect("creates temp directory");
+    let input = dir.path().join("multi.glb");
+    let output = dir.path().join("anchored.glb");
+    let mut document = root_motion_gait();
+    let mut valid = document.clips[0].clone();
+    valid.name = "valid_cycle".into();
+    let TrackValues::Vec3s(root) = &mut valid.tracks[0].values else {
+        unreachable!()
+    };
+    root.fill(Vec3::ZERO);
+    let mut stationary = valid.clone();
+    stationary.name = "stationary_cycle".into();
+    for track in &mut stationary.tracks[1..] {
+        let TrackValues::Vec3s(values) = &mut track.values else {
+            unreachable!()
+        };
+        let first = values[0];
+        values.fill(first);
+    }
+    document.clips = vec![valid, stationary];
+    animsmith_gltf::write::write(&document, &input).expect("writes multi-clip GLB");
+    std::fs::write(
+        dir.path().join("animsmith.toml"),
+        concat!(
+            "[rig]\nprofile = \"auto\"\n\n",
+            "[rig.roles]\n",
+            "root = \"root\"\n",
+            "hips = \"hips\"\n",
+            "left_foot = \"left_foot\"\n",
+            "right_foot = \"right_foot\"\n",
+        ),
+    )
+    .expect("writes role config");
+    std::fs::write(&output, b"existing output").expect("writes output sentinel");
+
+    let result = Command::new(env!("CARGO_BIN_EXE_animsmith"))
+        .current_dir(dir.path())
+        .args([
+            "--config",
+            "animsmith.toml",
+            "transform",
+            "multi.glb",
+            "-o",
+            "anchored.glb",
+            "--gait-anchor",
+            "--fps",
+            "32",
+        ])
+        .output()
+        .expect("runs multi-clip transform");
+
+    assert_eq!(result.status.code(), Some(2));
+    let stderr = String::from_utf8(result.stderr).expect("UTF-8 diagnostic");
+    assert!(
+        stderr.contains("clip \"stationary_cycle\": no usable stride anchor"),
+        "stderr: {stderr}"
+    );
+    assert_eq!(std::fs::read(output).unwrap(), b"existing output");
 }

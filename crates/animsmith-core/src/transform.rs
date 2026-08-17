@@ -1136,12 +1136,11 @@ pub enum GaitTrajectoryPolicy {
     InPlace,
 }
 
-/// Maximum horizontal root-trajectory accumulation admitted by the in-place
-/// gait-anchor policy, after allowing one ordinary open-loop wrap step.
+/// Maximum horizontal root-trajectory endpoint displacement admitted by the
+/// in-place gait-anchor policy.
 pub const GAIT_ANCHOR_MAX_HORIZONTAL_ACCUMULATION_M: f64 = 0.01;
 
-/// Maximum accumulated root yaw admitted by the in-place gait-anchor policy,
-/// after allowing one ordinary open-loop wrap step.
+/// Maximum accumulated root yaw admitted by the in-place gait-anchor policy.
 pub const GAIT_ANCHOR_MAX_YAW_ACCUMULATION_DEG: f64 = 1.0;
 
 /// Maximum `declared frame samples × skeleton bones` the in-place gait
@@ -1174,16 +1173,12 @@ const GAIT_TRAJECTORY_ALTERNATIVES: &str = "retain source root motion, use runti
 /// non-constant cubic-spline track would need lossy resampling, or no
 /// tested rotation candidate remains measurable. Under
 /// [`GaitTrajectoryPolicy::InPlace`], missing/non-finite selected-root
-/// evidence, nonconstant trajectory channels without a complete declared
-/// whole-frame key grid, trajectory pose-sample work above
+/// evidence, any nonconstant channel without a complete declared whole-frame
+/// key grid, malformed track cardinality or skeleton/role topology, pose-sample work above
 /// [`GAIT_ANCHOR_MAX_TRAJECTORY_POSE_SAMPLES`], and material horizontal
 /// translation or yaw accumulation are also errors. All errors are returned
 /// before `clip` is changed.
 ///
-/// # Panics
-///
-/// Panics if `roles` contains bone indices outside `skeleton`, or if a
-/// hand-built clip violates the loader key/value-count invariants.
 pub fn align_gait_anchor(
     skeleton: &Skeleton,
     clip: &mut Clip,
@@ -1191,15 +1186,14 @@ pub fn align_gait_anchor(
     fps: f64,
     trajectory_policy: GaitTrajectoryPolicy,
 ) -> Result<GaitAlignOutcome, String> {
-    match trajectory_policy {
+    let sampling_frames = match trajectory_policy {
         GaitTrajectoryPolicy::InPlace => {
             verify_in_place_gait_trajectory(skeleton, clip, roles, fps)?
         }
-    }
+    };
 
     let measure = |c: &Clip| -> Option<(f64, Option<f64>, f64)> {
-        let frames = crate::metrics::metric_frame_count(c)?;
-        let grid = sample_clip(skeleton, c, frames);
+        let grid = sample_clip(skeleton, c, sampling_frames);
         let m = foot_cycle_metrics(&grid, roles, crate::metrics::MIN_STRIDE_STEP_M)?;
         Some((m.gait_phase?, m.loop_seam_ratio, m.lr_amplitude_m))
     };
@@ -1269,20 +1263,16 @@ pub fn align_gait_anchor(
 /// Verify that cyclic time rotation cannot move an authored world trajectory
 /// wrap into the middle of the clip.
 ///
-/// An open loop omits its repeated closing sample, so a valid cyclic root may
-/// differ from its first sample by one ordinary frame step. The safety fact is
-/// therefore the endpoint displacement/yaw in excess of the largest interior
-/// in-clip step, not exact endpoint equality. Boundary steps are deliberately
-/// excluded from the allowance: otherwise one arbitrary jump at either edge
-/// could masquerade as the omitted closing sample. A travelling ramp or
-/// authored turn accumulates across many steps and remains well above that
-/// allowance.
+/// The fixed caps apply directly to endpoint displacement and accumulated yaw.
+/// No sampled step is subtracted as an allowance: an interior outlier must
+/// never authorize unrelated endpoint drift.
 fn verify_in_place_gait_trajectory(
     skeleton: &Skeleton,
     clip: &Clip,
     roles: &ResolvedRoles,
     fps: f64,
-) -> Result<(), String> {
+) -> Result<usize, String> {
+    validate_gait_sampling_domain(skeleton, clip, roles)?;
     let (role, bone) = roles
         .get(Role::Root)
         .map(|bone| ("Root", bone))
@@ -1332,32 +1322,8 @@ fn verify_in_place_gait_trajectory(
         ancestor_count += 1;
         cursor = entry.parent;
     }
-    for (track_index, track) in clip.tracks.iter().enumerate() {
-        if !trajectory_bones.get(track.bone).copied().unwrap_or(false) {
-            continue;
-        }
-        let has_non_finite_value = match &track.values {
-            TrackValues::Vec3s(values) => values.iter().any(|value| !value.is_finite()),
-            TrackValues::Quats(values) => values.iter().any(|value| !value.is_finite()),
-        };
-        if track.times.iter().any(|time| !time.is_finite()) || has_non_finite_value {
-            return Err(format!(
-                "cannot gait-anchor clip {:?} under the in-place policy: selected {role} bone \
-                 {:?} (index {bone}) has non-finite authored trajectory evidence in track \
-                 {track_index}; {GAIT_TRAJECTORY_ALTERNATIVES}",
-                clip.name, bone_name
-            ));
-        }
-    }
-    let frames = verify_trajectory_frame_grid(
-        clip,
-        role,
-        bone,
-        bone_name,
-        &trajectory_bones,
-        skeleton.bones.len(),
-        fps,
-    )?;
+    let frames =
+        verify_trajectory_frame_grid(clip, role, bone, bone_name, skeleton.bones.len(), fps)?;
     let grid = sample_clip(skeleton, clip, frames);
     if grid.frame_count() < 3 {
         return Err(format!(
@@ -1419,21 +1385,9 @@ fn verify_in_place_gait_trajectory(
 
     let last = horizontal.len() - 1;
     let horizontal_endpoint_m = f64::from((horizontal[last] - horizontal[0]).length());
-    let horizontal_wrap_step_m = horizontal
-        .windows(2)
-        .skip(1)
-        .take(horizontal.len().saturating_sub(3))
-        .map(|step| f64::from((step[1] - step[0]).length()))
-        .fold(0.0, f64::max);
-    let horizontal_accumulation_m = (horizontal_endpoint_m - horizontal_wrap_step_m).max(0.0);
+    let horizontal_accumulation_m = horizontal_endpoint_m;
     let accumulated_yaw_deg = yaw_steps_deg.iter().sum::<f64>().abs();
-    let yaw_wrap_step_deg = yaw_steps_deg
-        .iter()
-        .skip(1)
-        .take(yaw_steps_deg.len().saturating_sub(2))
-        .map(|step| step.abs())
-        .fold(0.0, f64::max);
-    let yaw_accumulation_deg = (accumulated_yaw_deg - yaw_wrap_step_deg).max(0.0);
+    let yaw_accumulation_deg = accumulated_yaw_deg;
 
     if !horizontal_accumulation_m.is_finite()
         || !yaw_accumulation_deg.is_finite()
@@ -1449,20 +1403,108 @@ fn verify_in_place_gait_trajectory(
         return Err(format!(
             "cannot gait-anchor clip {:?} under the in-place policy: selected {role} bone \
              {:?} (index {bone}) accumulates horizontal translation \
-             {horizontal_accumulation_m:.4} m (endpoint {horizontal_endpoint_m:.4} m, ordinary \
-             interior-step allowance {horizontal_wrap_step_m:.4} m, cap \
+             {horizontal_accumulation_m:.4} m (endpoint {horizontal_endpoint_m:.4} m, cap \
              {GAIT_ANCHOR_MAX_HORIZONTAL_ACCUMULATION_M:.4} m) and yaw \
-             {yaw_accumulation_deg:.3} deg (sampled total {accumulated_yaw_deg:.3} deg, ordinary \
-             interior-step allowance {yaw_wrap_step_deg:.3} deg, cap \
+             {yaw_accumulation_deg:.3} deg (sampled total {accumulated_yaw_deg:.3} deg, cap \
              {GAIT_ANCHOR_MAX_YAW_ACCUMULATION_DEG:.3} deg); \
              {GAIT_TRAJECTORY_ALTERNATIVES}",
             clip.name, bone_name
         ));
     }
+    Ok(frames)
+}
+
+/// Validate every hand-built input fact on which whole-skeleton sampling and
+/// value rotation rely. This runs before any allocation or mutation.
+fn validate_gait_sampling_domain(
+    skeleton: &Skeleton,
+    clip: &Clip,
+    roles: &ResolvedRoles,
+) -> Result<(), String> {
+    for (bone, entry) in skeleton.bones.iter().enumerate() {
+        if let Some(parent) = entry.parent {
+            if parent >= skeleton.bones.len() {
+                return Err(format!(
+                    "cannot gait-anchor clip {:?}: skeleton bone {:?} (index {bone}) has \
+                     out-of-range ancestor index {parent} (its parent), so trajectory evidence \
+                     is missing",
+                    clip.name, entry.name
+                ));
+            }
+            if parent >= bone {
+                return Err(format!(
+                    "cannot gait-anchor clip {:?}: skeleton bone {:?} (index {bone}) has parent \
+                     index {parent}, creating a cyclic ancestor chain or child-before-parent \
+                     order; whole-skeleton sampling requires an acyclic parents-before-children \
+                     order and trajectory evidence is missing",
+                    clip.name, entry.name
+                ));
+            }
+        }
+    }
+    for (role, bone) in roles.iter() {
+        if bone >= skeleton.bones.len() {
+            let role = if role == Role::Hips {
+                "Hips fallback"
+            } else {
+                role.as_str()
+            };
+            return Err(format!(
+                "cannot gait-anchor clip {:?}: selected {role} bone index {bone} is outside the \
+                 skeleton, so trajectory evidence is missing ({} bones)",
+                clip.name,
+                skeleton.bones.len()
+            ));
+        }
+    }
+    for (track_index, track) in clip.tracks.iter().enumerate() {
+        if track.bone >= skeleton.bones.len() {
+            return Err(format!(
+                "cannot gait-anchor clip {:?}: track {track_index} targets out-of-range bone \
+                 index {}",
+                clip.name, track.bone
+            ));
+        }
+        let key_count = track.times.len();
+        let expected_values = if track.interpolation == Interpolation::CubicSpline {
+            key_count.checked_mul(3)
+        } else {
+            Some(key_count)
+        }
+        .ok_or_else(|| {
+            format!(
+                "cannot gait-anchor clip {:?}: track {track_index} value cardinality overflows",
+                clip.name
+            )
+        })?;
+        let (value_count, storage_matches) = match &track.values {
+            TrackValues::Vec3s(values) => (values.len(), track.property != Property::Rotation),
+            TrackValues::Quats(values) => (values.len(), track.property == Property::Rotation),
+        };
+        if value_count != expected_values || !storage_matches {
+            return Err(format!(
+                "cannot gait-anchor clip {:?}: track {track_index} has {key_count} times and \
+                 {value_count} values for {:?} {:?}; expected exactly {expected_values} values \
+                 with property-compatible storage",
+                clip.name, track.property, track.interpolation
+            ));
+        }
+        let finite_values = match &track.values {
+            TrackValues::Vec3s(values) => values.iter().all(|value| value.is_finite()),
+            TrackValues::Quats(values) => values.iter().all(|value| value.is_finite()),
+        };
+        if track.times.iter().any(|time| !time.is_finite()) || !finite_values {
+            return Err(format!(
+                "cannot gait-anchor clip {:?}: non-finite authored trajectory evidence in \
+                 track {track_index}; {GAIT_TRAJECTORY_ALTERNATIVES}",
+                clip.name
+            ));
+        }
+    }
     Ok(())
 }
 
-/// Require every nonconstant trajectory-affecting channel to carry the complete
+/// Require every nonconstant channel to carry the complete
 /// whole-frame grid that [`rotate_values`] permutes. Sampling a sparse channel
 /// at a shifted omitted frame would synthesize and store a new value at an
 /// unchanged key time rather than bijectively reordering authored values.
@@ -1473,7 +1515,6 @@ fn verify_trajectory_frame_grid(
     role: &str,
     bone: BoneId,
     bone_name: &str,
-    trajectory_bones: &[bool],
     skeleton_bones: usize,
     fps: f64,
 ) -> Result<usize, String> {
@@ -1532,18 +1573,32 @@ fn verify_trajectory_frame_grid(
             clip.name, bone_name
         ));
     }
+    let authored_frames = default_frame_count(clip);
+    let authored_pose_samples = authored_frames.checked_mul(skeleton_bones).ok_or_else(|| {
+        format!(
+            "cannot gait-anchor clip {:?} under the in-place policy: authored sampling work \
+             overflows this platform; {GAIT_TRAJECTORY_ALTERNATIVES}",
+            clip.name
+        )
+    })?;
+    if authored_pose_samples > GAIT_ANCHOR_MAX_TRAJECTORY_POSE_SAMPLES {
+        return Err(format!(
+            "cannot gait-anchor clip {:?} under the in-place policy: authored tracks require \
+             {authored_pose_samples} pose samples ({authored_frames} maximum keys x \
+             {skeleton_bones} bones), above the {GAIT_ANCHOR_MAX_TRAJECTORY_POSE_SAMPLES} \
+             sample safety budget; {GAIT_TRAJECTORY_ALTERNATIVES}",
+            clip.name
+        ));
+    }
 
     for (track_index, track) in clip.tracks.iter().enumerate() {
-        if !trajectory_bones.get(track.bone).copied().unwrap_or(false)
-            || is_rotation_invariant_track(track)
-            || !track_affects_selected_trajectory(track, bone)
-        {
+        if is_rotation_invariant_track(track) {
             continue;
         }
         if track.key_count() != expected_keys {
             return Err(format!(
                 "cannot gait-anchor clip {:?} under the in-place policy: selected {role} bone \
-                 {:?} (index {bone}) has incomplete whole-frame trajectory evidence in track \
+                 {:?} (index {bone}) has incomplete whole-frame rotation evidence in track \
                  {track_index}: {} keys instead of exactly {expected_keys} at {fps} fps; \
                  {GAIT_TRAJECTORY_ALTERNATIVES}",
                 clip.name,
@@ -1552,9 +1607,13 @@ fn verify_trajectory_frame_grid(
             ));
         }
         for (key, &time) in track.times.iter().enumerate() {
-            let expected = (clip.duration_s * key as f64 / (expected_keys - 1) as f64) as f32;
-            let time_tolerance = f32::EPSILON * expected.abs().max(1.0) * 4.0;
-            if (time - expected).abs() > time_tolerance {
+            let expected = if key + 1 == expected_keys {
+                clip.duration_s as f32
+            } else {
+                (key as f64 / fps) as f32
+            };
+            let grid_endpoint = ((expected_keys - 1) as f64 / fps) as f32;
+            if time != expected || (key + 1 == expected_keys && time != grid_endpoint) {
                 return Err(format!(
                     "cannot gait-anchor clip {:?} under the in-place policy: selected {role} \
                      bone {:?} (index {bone}) has duplicate/non-frame-aligned whole-frame \
@@ -1567,18 +1626,6 @@ fn verify_trajectory_frame_grid(
         }
     }
     Ok(expected_keys)
-}
-
-fn track_affects_selected_trajectory(track: &Track, selected_bone: BoneId) -> bool {
-    match &track.values {
-        // The tolerant sampler treats every quaternion-valued channel as
-        // rotation, independent of its property tag.
-        TrackValues::Quats(_) => true,
-        TrackValues::Vec3s(_) => {
-            track.property == Property::Translation
-                || (track.bone != selected_bone && track.property == Property::Scale)
-        }
-    }
 }
 
 /// Exact representation-level predicate used by gait-anchor rotation. It is
@@ -1615,14 +1662,11 @@ fn is_rotation_invariant_track(track: &Track) -> bool {
 /// tracks (rotation-invariant) are skipped; non-constant CUBICSPLINE
 /// tracks are refused upstream in [`align_gait_anchor`].
 ///
-/// Uniform-framing assumption: the cycle period is `duration + 1/fps`,
-/// i.e. every track is framed on the same uniform `1/fps` grid and the
-/// open-loop wrap step spans exactly one such frame. On a clip with
-/// irregular key spacing — or tracks framed at different rates — that
-/// period is only approximate, the quantized shift may miss an existing
-/// key by a fraction of a frame, and the resample stops being exactly
-/// lossless. animsmith's pipeline emits uniformly-framed clips, so the
-/// assumption holds for the inputs this transform is applied to.
+/// The in-place preflight proves this uniform-framing condition before this
+/// function runs: every nonconstant track has one key at each exact f32
+/// `key / fps` time and the exact period endpoint. The sampled values therefore
+/// select an authored key bijectively; irregular, sparse, or differently
+/// framed channels never reach this mutation boundary.
 fn rotate_values(clip: &mut Clip, phase: f64, fps: f64, frame_offset: i32) {
     let duration = clip
         .tracks

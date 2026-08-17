@@ -412,13 +412,14 @@ max_gait_phase_spread = 0.15
 rotates a cyclic clip so its stride anchor lands at t=0, aligning the
 set member by member. Selecting it explicitly declares the clip in-place.
 AnimSmith verifies the Root role (or Hips fallback) before rewriting and
-refuses missing/non-finite evidence, horizontal accumulation above 1 cm, or
-yaw accumulation above 1° after allowing one ordinary interior step of an open
-cycle; a boundary jump cannot supply that allowance. Every nonconstant
-trajectory channel must contain exactly one key at each declared whole-frame
-sample over the clip duration, within f32 roundoff. Sparse, differently framed,
-duplicate, or off-grid evidence refuses, as does a safety grid above 1,000,000
-frame-by-bone pose samples. Do not apply it to
+refuses missing/non-finite evidence, horizontal endpoint displacement above 1
+cm, or yaw accumulation above 1°. No interior step is subtracted as an
+allowance. Every nonconstant channel the operation would rotate must contain
+exactly one key at each declared whole-frame sample over the clip duration, at
+the exact representable f32 `key / fps` time and period endpoint. Sparse,
+differently framed, duplicate, or off-grid evidence refuses. The whole
+skeleton, roles, and track shapes are validated before declared-frame and
+maximum-authored-key work share an inclusive 1,000,000 frame-by-bone budget. Do not apply it to
 authored root motion: retain that trajectory, use
 runtime phase offsets, or use a separately designed trajectory-preserving
 operation. Gait anchoring does not convert root motion to in-place motion.

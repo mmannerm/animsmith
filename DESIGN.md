@@ -59,19 +59,21 @@ output, and a self-contained HTML report with a 3D preview.
   only `InPlace`. Before any channel is cyclically reordered, AnimSmith samples
   the resolved Root role (falling back to Hips) and refuses missing/non-finite
   evidence, horizontal accumulation above 1 cm, or yaw accumulation above 1°.
-  Every nonconstant channel that can affect that bone's model-space position or
-  yaw must contain exactly one key at each declared whole-frame sample over
-  `[0, duration]` (within f32 roundoff). Sparse, differently framed, duplicate,
-  or off-grid trajectory evidence refuses: a phase shift must bijectively
+  Every nonconstant channel the operation would rotate must contain exactly one
+  key at each declared whole-frame sample over `[0, duration]`, at the exact
+  representable f32 `key / fps` time and exact period endpoint. Sparse,
+  differently framed, duplicate, or off-grid evidence refuses: a phase shift must bijectively
   permute authored values rather than synthesize values at omitted frames.
   Constant channels need no grid because cyclic reordering cannot change them.
-  Before allocating its pose grid, the public core boundary also requires
-  `frame samples × skeleton bones <= 1,000,000`.
-  Because an open loop omits its repeated closing frame, the measurement first
-  allows one ordinary interior in-clip step, then judges only the excess
-  endpoint displacement or accumulated yaw. Boundary steps cannot supply the
-  allowance, so a single edge jump is still refused. This admits cyclic pelvis/root
-  sway while refusing authored travel and turns. Root-motion phase offsets,
+  Before allocating a pose grid, the public core boundary validates all track
+  cardinalities, targets, finite values, all resolved metric-role indices, and
+  the complete acyclic parents-before-children skeleton. Both declared-frame
+  and maximum-authored-key work must satisfy the inclusive bound
+  `frame samples × skeleton bones <= 1,000,000`; every verifier and metric
+  sample uses the one bounded declared grid. The 1 cm endpoint-displacement and
+  1° accumulated-yaw caps are applied directly, without any sampled-step
+  allowance an interior outlier could inflate. This admits tightly closed
+  cyclic pelvis/root sway while refusing authored travel and turns. Root-motion phase offsets,
   root-motion extraction, and trajectory-preserving cyclic rebasing remain
   runtime or separately designed operations; gait anchoring must not improvise
   them.

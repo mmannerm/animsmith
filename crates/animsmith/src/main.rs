@@ -693,7 +693,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                         &roles,
                         fps,
                         animsmith_core::transform::GaitTrajectoryPolicy::InPlace,
-                    )?;
+                    )
+                    .map_err(|reason| format!("clip {:?}: {reason}", c.name))?;
                     print!(
                         "{}",
                         render::render_transform_gait_anchor(
