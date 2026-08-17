@@ -1150,6 +1150,37 @@ fn rejects_unreferenced_sparse_payloads_overlapping_a_rewritten_accessor() {
 }
 
 #[test]
+fn rejects_an_unreferenced_sparse_accessor_dense_base_overlapping_a_rewrite() {
+    let value = positions_and_unreferenced_accessor(
+        json!({
+            "bufferView": 1,
+            "componentType": 5126,
+            "count": 1,
+            "type": "VEC3",
+            "sparse": {
+                "count": 1,
+                "indices": { "bufferView": 2, "componentType": 5121 },
+                "values": { "bufferView": 3 }
+            }
+        }),
+        vec![
+            json!({ "buffer": 0, "byteOffset": 0, "byteLength": 36 }),
+            json!({ "buffer": 0, "byteOffset": 24, "byteLength": 12 }),
+            json!({ "buffer": 0, "byteOffset": 36, "byteLength": 1 }),
+            json!({ "buffer": 0, "byteOffset": 40, "byteLength": 12 }),
+        ],
+    );
+    let (violations, _) = unsupported(&value);
+    assert_eq!(
+        locations(
+            &violations,
+            GltfCapabilityViolationKind::OverlappingAccessorRanges
+        ),
+        vec!["/accessors/0", "/accessors/1"]
+    );
+}
+
+#[test]
 fn accepts_harmless_unreferenced_dense_and_sparse_accessors() {
     let dense = positions_and_unreferenced_accessor(
         json!({ "bufferView": 1, "componentType": 5121, "count": 4, "type": "SCALAR" }),
