@@ -476,7 +476,9 @@ impl Primitive {
     }
 
     fn expect_refusal(&self, expected: &str) {
-        let error = self.load().expect_err("mistyped accessor must be refused");
+        let error = self
+            .load()
+            .expect_err("invalid accessor encoding must be refused");
         assert!(
             matches!(error, LoadError::PrimitiveEncoding { .. }),
             "expected a PrimitiveEncoding refusal, got {error:?}"
@@ -538,7 +540,7 @@ fn loader_refuses_vec3_tex_coords() {
         .attribute("TEXCOORD_0", "VEC3", FLOAT, 3, f32s(&[0.0; 9]))
         .expect_refusal(
             "mesh 0 primitive 0 TEXCOORD_0: accessor 1 is VEC3 of FLOAT, \
-             but the loader reads VEC2 of UNSIGNED_BYTE, UNSIGNED_SHORT, or FLOAT",
+             but the loader reads VEC2 of normalized UNSIGNED_BYTE, normalized UNSIGNED_SHORT, or FLOAT",
         );
 }
 
@@ -570,7 +572,7 @@ fn loader_refuses_vec3_weights() {
         .attribute("WEIGHTS_0", "VEC3", FLOAT, 3, f32s(&[0.0; 9]))
         .expect_refusal(
             "mesh 0 primitive 0 WEIGHTS_0: accessor 2 is VEC3 of FLOAT, \
-             but the loader reads VEC4 of UNSIGNED_BYTE, UNSIGNED_SHORT, or FLOAT",
+             but the loader reads VEC4 of normalized UNSIGNED_BYTE, normalized UNSIGNED_SHORT, or FLOAT",
         );
 }
 
@@ -594,7 +596,7 @@ fn loader_refuses_signed_byte_tex_coords() {
         .attribute("TEXCOORD_0", "VEC2", BYTE, 3, u8s(&[0; 6]))
         .expect_refusal(
             "mesh 0 primitive 0 TEXCOORD_0: accessor 1 is VEC2 of BYTE, \
-             but the loader reads VEC2 of UNSIGNED_BYTE, UNSIGNED_SHORT, or FLOAT",
+             but the loader reads VEC2 of normalized UNSIGNED_BYTE, normalized UNSIGNED_SHORT, or FLOAT",
         );
 }
 
@@ -617,7 +619,7 @@ fn loader_refuses_signed_short_weights() {
         .attribute("WEIGHTS_0", "VEC4", SHORT, 3, u16s(&[0; 12]))
         .expect_refusal(
             "mesh 0 primitive 0 WEIGHTS_0: accessor 2 is VEC4 of SHORT, \
-             but the loader reads VEC4 of UNSIGNED_BYTE, UNSIGNED_SHORT, or FLOAT",
+             but the loader reads VEC4 of normalized UNSIGNED_BYTE, normalized UNSIGNED_SHORT, or FLOAT",
         );
 }
 
@@ -696,26 +698,24 @@ fn normalized_unsigned_short_tex_coords_load_as_the_float_equivalent() {
 }
 
 #[test]
-fn integer_tex_coords_without_the_normalized_flag_still_load() {
-    // glTF requires `"normalized": true` on an integer `TEXCOORD_n`, so
-    // these two documents are invalid — but they are invalid in a way the
-    // reader decodes perfectly well, and this loader is not a spec
-    // validator (see `attributes_no_reader_touches_are_not_refused`).
-    // Refusing them would reject files that measure fine, so they load.
-    //
-    // They decode to the same values as the flagged fixtures above because
-    // `gltf`'s `into_f32()` rescales `UNSIGNED_BYTE`/`UNSIGNED_SHORT` from
-    // full scale whatever the flag says — the flag is behaviourally inert
-    // on the load path, and only there: the `scale` preflight reads it to
-    // raise `UnsafeAccessorLayout`. That is `gltf`'s extraction behaviour,
-    // pinned here as what this loader currently hands checks, not a claim
-    // that it is the authored value.
-    for primitive in [
-        Primitive::new().attribute("TEXCOORD_0", "VEC2", UNSIGNED_BYTE, 3, u8s(&UV_BYTES)),
-        Primitive::new().attribute("TEXCOORD_0", "VEC2", UNSIGNED_SHORT, 3, u16s(&UV_SHORTS)),
-    ] {
-        assert_eq!(primitive.expect_primitive().uvs, EXPECTED_UVS);
-    }
+fn loader_refuses_integer_tex_coords_without_the_normalized_flag() {
+    // `gltf`'s `into_f32()` rescales these bytes even without the flag. The
+    // loader has no finding channel, so accepting them would let `measure`
+    // present a derived float as authored data. Refuse before decoding.
+    Primitive::new()
+        .attribute("TEXCOORD_0", "VEC2", UNSIGNED_BYTE, 3, u8s(&UV_BYTES))
+        .expect_refusal(
+            "mesh 0 primitive 0 TEXCOORD_0: accessor 1 is VEC2 of UNSIGNED_BYTE, \
+             but the loader reads VEC2 of normalized UNSIGNED_BYTE, normalized UNSIGNED_SHORT, \
+             or FLOAT",
+        );
+    Primitive::new()
+        .attribute("TEXCOORD_0", "VEC2", UNSIGNED_SHORT, 3, u16s(&UV_SHORTS))
+        .expect_refusal(
+            "mesh 0 primitive 0 TEXCOORD_0: accessor 1 is VEC2 of UNSIGNED_SHORT, \
+             but the loader reads VEC2 of normalized UNSIGNED_BYTE, normalized UNSIGNED_SHORT, \
+             or FLOAT",
+        );
 }
 
 /// Joint indices and weights the loader must read identically from either
@@ -814,38 +814,37 @@ fn normalized_unsigned_short_weights_load_as_the_float_equivalent() {
 }
 
 #[test]
-fn integer_weights_without_the_normalized_flag_still_load() {
-    // The `WEIGHTS_0` counterpart of
-    // `integer_tex_coords_without_the_normalized_flag_still_load`: invalid
-    // glTF that the reader decodes, so the loader does not refuse it, and
-    // `into_f32()` rescales it from full scale regardless of the flag.
-    for primitive in [
-        skinned(
-            UNSIGNED_SHORT,
-            u16s(&JOINT_VALUES),
-            UNSIGNED_BYTE,
-            weight_bytes(),
-        ),
-        skinned(
-            UNSIGNED_SHORT,
-            u16s(&JOINT_VALUES),
-            UNSIGNED_SHORT,
-            weight_shorts(),
-        ),
-    ] {
-        let primitive = primitive.expect_primitive();
-        assert_eq!(primitive.joints, EXPECTED_JOINTS);
-        assert_eq!(primitive.weights, EXPECTED_WEIGHTS);
-    }
+fn loader_refuses_integer_weights_without_the_normalized_flag() {
+    // The same fail-closed boundary applies to weights before their reader
+    // can silently rescale an unflagged integer accessor.
+    skinned(
+        UNSIGNED_SHORT,
+        u16s(&JOINT_VALUES),
+        UNSIGNED_BYTE,
+        weight_bytes(),
+    )
+    .expect_refusal(
+        "mesh 0 primitive 0 WEIGHTS_0: accessor 2 is VEC4 of UNSIGNED_BYTE, \
+         but the loader reads VEC4 of normalized UNSIGNED_BYTE, normalized UNSIGNED_SHORT, \
+         or FLOAT",
+    );
+    skinned(
+        UNSIGNED_SHORT,
+        u16s(&JOINT_VALUES),
+        UNSIGNED_SHORT,
+        weight_shorts(),
+    )
+    .expect_refusal(
+        "mesh 0 primitive 0 WEIGHTS_0: accessor 2 is VEC4 of UNSIGNED_SHORT, \
+         but the loader reads VEC4 of normalized UNSIGNED_BYTE, normalized UNSIGNED_SHORT, \
+         or FLOAT",
+    );
 }
 
-/// The fixtures above are the only witness that a *normalized* integer
-/// accessor loads, so they have to really be normalized. No loaded value
-/// can prove it: `gltf`'s `into_f32()` rescales `UNSIGNED_BYTE`/
-/// `UNSIGNED_SHORT` irrespective of the `normalized` metadata, so the
-/// flagged and unflagged fixtures decode identically. Only the document
-/// distinguishes them — so assert on the document, and the "normalized"
-/// tests above cannot silently decay into duplicates of the unflagged ones.
+/// The decoded-value fixtures above witness that a *normalized* integer
+/// accessor loads, so they have to really be normalized. The refusal fixtures
+/// likewise have to remain bare. Assert on the emitted document so neither
+/// side can silently decay into a duplicate of the other.
 ///
 /// Every normalized fixture is listed here by name, not a representative
 /// one: the flag is emitted per accessor, so a serializer that emitted it
@@ -921,7 +920,7 @@ fn a_normalized_attribute_really_declares_the_flag() {
 
     // Joint indices and the bare builder must stay unflagged, or the
     // "without the flag" tests would not be testing what they claim.
-    let unflagged: [(&str, &str, Primitive); 3] = [
+    let unflagged: [(&str, &str, Primitive); 5] = [
         (
             "JOINTS_0 alongside a normalized WEIGHTS_0",
             "JOINTS_0",
@@ -941,6 +940,26 @@ fn a_normalized_attribute_really_declares_the_flag() {
             "UNSIGNED_SHORT TEXCOORD_0 declared bare",
             "TEXCOORD_0",
             Primitive::new().attribute("TEXCOORD_0", "VEC2", UNSIGNED_SHORT, 3, u16s(&UV_SHORTS)),
+        ),
+        (
+            "UNSIGNED_BYTE WEIGHTS_0 declared bare",
+            "WEIGHTS_0",
+            skinned(
+                UNSIGNED_SHORT,
+                u16s(&JOINT_VALUES),
+                UNSIGNED_BYTE,
+                weight_bytes(),
+            ),
+        ),
+        (
+            "UNSIGNED_SHORT WEIGHTS_0 declared bare",
+            "WEIGHTS_0",
+            skinned(
+                UNSIGNED_SHORT,
+                u16s(&JOINT_VALUES),
+                UNSIGNED_SHORT,
+                weight_shorts(),
+            ),
         ),
     ];
     for (name, semantic, primitive) in &unflagged {
@@ -1441,7 +1460,7 @@ fn a_refusal_names_the_mesh_and_primitive_it_found() {
         .attribute("TEXCOORD_0", "VEC3", FLOAT, 3, f32s(&[0.0; 9]))
         .expect_refusal(
             "mesh 1 primitive 2 TEXCOORD_0: accessor 1 is VEC3 of FLOAT, \
-             but the loader reads VEC2 of UNSIGNED_BYTE, UNSIGNED_SHORT, or FLOAT",
+             but the loader reads VEC2 of normalized UNSIGNED_BYTE, normalized UNSIGNED_SHORT, or FLOAT",
         );
     positions_with_own_view()
         .at(2, 1)
@@ -1461,13 +1480,13 @@ fn a_refusal_spells_the_matrix_accessor_types() {
         .attribute("TEXCOORD_0", "MAT2", FLOAT, 3, f32s(&[0.0; 12]))
         .expect_refusal(
             "mesh 0 primitive 0 TEXCOORD_0: accessor 1 is MAT2 of FLOAT, \
-             but the loader reads VEC2 of UNSIGNED_BYTE, UNSIGNED_SHORT, or FLOAT",
+             but the loader reads VEC2 of normalized UNSIGNED_BYTE, normalized UNSIGNED_SHORT, or FLOAT",
         );
     Primitive::new()
         .attribute("TEXCOORD_0", "MAT3", FLOAT, 3, f32s(&[0.0; 27]))
         .expect_refusal(
             "mesh 0 primitive 0 TEXCOORD_0: accessor 1 is MAT3 of FLOAT, \
-             but the loader reads VEC2 of UNSIGNED_BYTE, UNSIGNED_SHORT, or FLOAT",
+             but the loader reads VEC2 of normalized UNSIGNED_BYTE, normalized UNSIGNED_SHORT, or FLOAT",
         );
 }
 
@@ -1481,7 +1500,7 @@ fn a_count_zero_accessor_is_still_judged() {
         .attribute("TEXCOORD_0", "VEC3", FLOAT, 0, f32s(&[0.0; 9]))
         .expect_refusal(
             "mesh 0 primitive 0 TEXCOORD_0: accessor 1 is VEC3 of FLOAT, \
-             but the loader reads VEC2 of UNSIGNED_BYTE, UNSIGNED_SHORT, or FLOAT",
+             but the loader reads VEC2 of normalized UNSIGNED_BYTE, normalized UNSIGNED_SHORT, or FLOAT",
         );
 }
 

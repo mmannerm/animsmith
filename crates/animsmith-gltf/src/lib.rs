@@ -138,10 +138,11 @@ pub enum LoadError {
     #[error("malformed node graph: {0}")]
     Topology(String),
     /// A primitive's vertex-attribute or index accessor declares an element
-    /// encoding the loader cannot read. Either the file contradicts the glTF
-    /// vertex-attribute rules (a `VEC3` `TEXCOORD_0`), or it uses a
-    /// spec-permitted encoding the `gltf` crate's reader has no decoder for
-    /// (a `KHR_mesh_quantization` `POSITION`). The message reports the
+    /// encoding the loader cannot read as authored. Either the file
+    /// contradicts the glTF vertex-attribute rules (a `VEC3` `TEXCOORD_0`, or
+    /// an integer `TEXCOORD_0`/`WEIGHTS_0` without `normalized: true`), or it
+    /// uses a spec-permitted encoding the `gltf` crate's reader has no decoder
+    /// for (a `KHR_mesh_quantization` `POSITION`). The message reports the
     /// encodings that slot accepts.
     #[error(
         "mesh {mesh} primitive {primitive} {attribute}: accessor {accessor} is {found}, but the loader reads {expected}"
@@ -158,7 +159,8 @@ pub enum LoadError {
         /// Declared encoding, such as `VEC3 of FLOAT`.
         found: String,
         /// Encodings the reader accepts, such as
-        /// `VEC2 of UNSIGNED_BYTE, UNSIGNED_SHORT, or FLOAT`.
+        /// `VEC2 of normalized UNSIGNED_BYTE, normalized UNSIGNED_SHORT, or
+        /// FLOAT`.
         expected: String,
     },
     /// A primitive's vertex-attribute or index accessor declares an element
@@ -443,6 +445,12 @@ struct ReaderEncoding {
     accessor_type: AccessorType,
     /// Accepted `componentType`s, in glTF enum order.
     component_types: &'static [ComponentType],
+    /// Whether accepted integer components must declare `normalized: true`.
+    ///
+    /// `gltf`'s float conversion rescales integer texture coordinates and
+    /// weights even when this flag is absent, so the loader must enforce the
+    /// declaration before it lets those readers reinterpret the values.
+    normalized_integers: bool,
 }
 
 /// `read_positions` is `Iter<[f32; 3]>` with no dispatch on the accessor.
@@ -452,65 +460,65 @@ struct ReaderEncoding {
 const POSITION_ENCODING: ReaderEncoding = ReaderEncoding {
     accessor_type: AccessorType::Vec3,
     component_types: &[ComponentType::F32],
+    normalized_integers: false,
 };
 /// `read_normals` is `Iter<[f32; 3]>`, with the same quantization caveat as
 /// [`POSITION_ENCODING`].
 const NORMAL_ENCODING: ReaderEncoding = ReaderEncoding {
     accessor_type: AccessorType::Vec3,
     component_types: &[ComponentType::F32],
+    normalized_integers: false,
 };
 /// `read_tex_coords` dispatches over the three encodings glTF permits for
 /// `TEXCOORD_n`: `FLOAT`, or normalized `UNSIGNED_BYTE`/`UNSIGNED_SHORT`.
-///
-/// The accessor's `normalized` flag is neither checked here nor honoured
-/// **on the load path**: `gltf`'s `into_f32()` rescales `UNSIGNED_BYTE`/
-/// `UNSIGNED_SHORT` from full scale whatever the flag says. So an integer
-/// `TEXCOORD_0` missing the flag — invalid glTF, but decodable — loads
-/// rescaled rather than refused, and an integer UV never reaches a check as
-/// its authored integer.
-///
-/// The flag is inert on that path only, not in this crate: the `scale`
-/// preflight reads it and raises `UnsafeAccessorLayout` for a normalized
-/// accessor it would otherwise rewrite (see `scale.rs`). Any claim that
-/// `normalized` changes nothing has to be qualified to loading.
+/// `gltf`'s `into_f32()` rescales either integer width even when the accessor
+/// omits `normalized: true`, so admission must consult the flag before that
+/// reader is built. Otherwise measurements would report values the document
+/// never authorized the loader to derive.
 const TEX_COORD_ENCODING: ReaderEncoding = ReaderEncoding {
     accessor_type: AccessorType::Vec2,
     component_types: &[ComponentType::U8, ComponentType::U16, ComponentType::F32],
+    normalized_integers: true,
 };
 /// `read_joints` dispatches over both encodings glTF permits for `JOINTS_n`.
 /// Joint indices are never `FLOAT` and never normalized.
 const JOINTS_ENCODING: ReaderEncoding = ReaderEncoding {
     accessor_type: AccessorType::Vec4,
     component_types: &[ComponentType::U8, ComponentType::U16],
+    normalized_integers: false,
 };
 /// `read_weights` dispatches over the three encodings glTF permits for
 /// `WEIGHTS_n`: `FLOAT`, or normalized `UNSIGNED_BYTE`/`UNSIGNED_SHORT`,
-/// with the same load-path-only inert-`normalized` caveat as
-/// [`TEX_COORD_ENCODING`].
+/// with the same admission requirement as [`TEX_COORD_ENCODING`].
 const WEIGHTS_ENCODING: ReaderEncoding = ReaderEncoding {
     accessor_type: AccessorType::Vec4,
     component_types: &[ComponentType::U8, ComponentType::U16, ComponentType::F32],
+    normalized_integers: true,
 };
 /// `read_indices` dispatches over the three index encodings glTF permits.
 const INDEX_ENCODING: ReaderEncoding = ReaderEncoding {
     accessor_type: AccessorType::Scalar,
     component_types: &[ComponentType::U8, ComponentType::U16, ComponentType::U32],
+    normalized_integers: false,
 };
 /// `read_inverse_bind_matrices` is `Iter<[[f32; 4]; 4]>`; glTF permits only
 /// `MAT4` of `FLOAT` there.
 const INVERSE_BIND_ENCODING: ReaderEncoding = ReaderEncoding {
     accessor_type: AccessorType::Mat4,
     component_types: &[ComponentType::F32],
+    normalized_integers: false,
 };
 /// `read_inputs` is an un-dispatched `Iter<f32>`.
 const ANIMATION_INPUT_ENCODING: ReaderEncoding = ReaderEncoding {
     accessor_type: AccessorType::Scalar,
     component_types: &[ComponentType::F32],
+    normalized_integers: false,
 };
 /// Translation and scale outputs are un-dispatched `Iter<[f32; 3]>` values.
 const ANIMATION_VEC3_OUTPUT_ENCODING: ReaderEncoding = ReaderEncoding {
     accessor_type: AccessorType::Vec3,
     component_types: &[ComponentType::F32],
+    normalized_integers: false,
 };
 /// Rotation outputs dispatch over every quaternion encoding glTF permits and
 /// the `gltf` reader decodes.
@@ -523,6 +531,7 @@ const ANIMATION_ROTATION_OUTPUT_ENCODING: ReaderEncoding = ReaderEncoding {
         ComponentType::U16,
         ComponentType::F32,
     ],
+    normalized_integers: false,
 };
 /// Morph-weight outputs dispatch over the same five component encodings as
 /// rotations, but use scalar elements because one key contains one scalar per
@@ -538,6 +547,7 @@ const ANIMATION_WEIGHT_OUTPUT_ENCODING: ReaderEncoding = ReaderEncoding {
         ComponentType::U16,
         ComponentType::F32,
     ],
+    normalized_integers: false,
 };
 
 /// Reject sampler accessors whose declared element disagrees with the exact
@@ -690,10 +700,13 @@ fn required_attribute_encoding(semantic: &gltf::Semantic) -> Option<&'static Rea
 /// "Never reinterpreted" is narrower than "every authored value survives",
 /// and deliberately so, in two directions.
 ///
-/// *Values are rescaled where glTF defines the encoding as a scaling.*
-/// `into_f32()` rescales an `UNSIGNED_BYTE`/`UNSIGNED_SHORT` `TEXCOORD_0` or
-/// `WEIGHTS_0` from full scale (see [`TEX_COORD_ENCODING`]). Checks
-/// therefore see those slots as floats, not as the integers on disk.
+/// *Values are rescaled where the accessor authorizes scaling.*
+/// `into_f32()` rescales a normalized `UNSIGNED_BYTE`/`UNSIGNED_SHORT`
+/// `TEXCOORD_0` or `WEIGHTS_0` from full scale (see
+/// [`TEX_COORD_ENCODING`]). Checks therefore see those slots as floats, not
+/// as the integers on disk. An integer accessor missing `normalized: true`
+/// is refused before this reader boundary because `gltf` would otherwise
+/// perform the same rescaling without the document declaring it.
 ///
 /// *Unreadable authored values are not absence.*
 /// [`unreadable_primitive_layout`] relates every dense and sparse walk to the
@@ -1049,20 +1062,30 @@ fn inverse_bind_is_readable(accessor: &gltf::Accessor<'_>) -> bool {
 fn encoding_matches(accessor: &gltf::Accessor<'_>, required: &ReaderEncoding) -> bool {
     accessor.dimensions() == required.accessor_type
         && required.component_types.contains(&accessor.data_type())
+        && (!required.normalized_integers
+            || accessor.data_type() == ComponentType::F32
+            || accessor.normalized())
 }
 
 /// Render an accepted encoding in the file's own vocabulary, so the refusal
 /// reads as the glTF the author would have to write.
 fn describe_encoding(required: &ReaderEncoding) -> String {
-    let names: Vec<&str> = required
+    let names: Vec<String> = required
         .component_types
         .iter()
         .copied()
-        .map(component_type_name)
+        .map(|component| {
+            let name = component_type_name(component);
+            if required.normalized_integers && component != ComponentType::F32 {
+                format!("normalized {name}")
+            } else {
+                name.to_owned()
+            }
+        })
         .collect();
     let components = match names.as_slice() {
         [] => String::new(),
-        [only] => (*only).to_owned(),
+        [only] => only.clone(),
         [first, last] => format!("{first} or {last}"),
         [rest @ .., last] => format!("{}, or {last}", rest.join(", ")),
     };

@@ -192,6 +192,15 @@ mesh accessor it cannot decode exactly as declared is refused with exit `2`
 rather than read as something else, so a run never reports numbers derived
 from bytes it misread.
 
+Integer `TEXCOORD_0` and `WEIGHTS_0` accessors are accepted only when they
+declare `"normalized": true`, as glTF requires. The upstream reader rescales
+`UNSIGNED_BYTE` and `UNSIGNED_SHORT` values even when that flag is missing;
+AnimSmith refuses the unflagged accessor before decoding so `measure` cannot
+present an unauthorized rescaling as authored data. Normalized integer and
+`FLOAT` forms retain their decoded values. Re-export the malformed attribute
+with the flag, or as `FLOAT`; the refusal identifies its mesh, primitive,
+semantic, and accessor.
+
 The common case is **`KHR_mesh_quantization`**: gltfpack and similar mesh
 optimizers store `POSITION` and `NORMAL` as `BYTE`/`SHORT` instead of
 `FLOAT`, and AnimSmith has no decoder for those. Which message you get

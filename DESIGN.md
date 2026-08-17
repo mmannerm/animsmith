@@ -117,7 +117,8 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   count mismatch, zero-key channels, absolute or escaping external
   buffer URIs, non-forest node graphs (cycles or a node with two
   parents), or a primitive accessor whose dense or sparse byte extent its
-  declared buffer view or resolved buffer bytes cannot satisfy, or an
+  declared buffer view or resolved buffer bytes cannot satisfy, an integer
+  `TEXCOORD_0` or `WEIGHTS_0` accessor that omits `normalized: true`, or an
   animation sampler accessor whose declared element does not match its
   property-selected reader — is rejected
   at load (operator error, exit 2; run glTF-Validator for the details).
@@ -135,6 +136,14 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   and morph-weight output retains those same component encodings as `SCALAR`.
   Declared lookalikes are never reinterpreted merely because their byte size
   happens to match the reader's element (decision recorded for #327).
+  The same fail-closed rule keeps invariant-9 honest for integer UVs and
+  weights: normalized `UNSIGNED_BYTE`/`UNSIGNED_SHORT` values are decoded to
+  their declared float range, and `FLOAT` values pass through, but an
+  unnormalized integer accessor is refused before decoding. The `gltf` reader
+  rescales those integers whether or not the flag is set, and the loader has
+  no finding channel in which to disclose that unauthorized reinterpretation;
+  allowing it would make `measure` report derived values as authored data
+  (decision recorded for #328).
   *Semantic* defects — NaN times or values, non-unit quaternions,
   hemisphere flips, seam pops — load fine and are judged by the checks;
   sampling is panic-free under them by construction.
