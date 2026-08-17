@@ -1654,7 +1654,7 @@ within versioned tolerances:
   including that each candidate mesh instance draws the same mesh, binds the
   same skin joints, hangs off the same node, and names the same source node as
   its source counterpart, none of which either operation rewrites, and that a
-  skin *outside* the affected closure keeps the inverse binds each side stores.
+  skin *outside* the affected closure keeps each slot's effective inverse bind.
   Identity here covers *placement*, not only what an instance is: the node is
   what positions an unskinned prop, and the source node is what resolves the
   skin whose absent bind accessor stands for the format-defined identity

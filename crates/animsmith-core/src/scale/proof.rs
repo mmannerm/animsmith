@@ -1407,7 +1407,7 @@ pub fn prove_scale(
         check_unaffected_instance_binds(source, candidate, &affected, &tol, &mut proof)?;
     }
     // The shared skin walk and unaffected-bind walk are the existing numeric
-    // owners for stored slot binds. Bone convenience binds that are
+    // owners for effective slot binds. Bone convenience binds that are
     // unreferenced or shadowed, plus normals that neither scale operation
     // writes, remain ownership-only rows: changing their numeric policy here
     // would alter the accepted set.

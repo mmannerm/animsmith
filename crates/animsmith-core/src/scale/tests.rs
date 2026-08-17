@@ -13019,6 +13019,76 @@ fn an_unaffected_skin_with_no_bind_evidence_on_either_side_still_proves() {
 }
 
 #[test]
+fn two_defaulted_identity_slots_are_each_compared_as_effective_binds() {
+    // Both sides omit every stored bind, but the complete attached source
+    // skin licenses the format-defined identity default for both slots.
+    // Keeping two slots makes the comparison count pin the "every slot"
+    // obligation as well as the both-defaulted fallback.
+    let mut doc = compensated_document_with_unrelated_skin(None);
+    attach_unrelated_source_skin(&mut doc, SourceInverseBindAccessorStatus::Absent);
+
+    let second_bone = doc.skeleton.bones.len();
+    let second_source_node_index = doc
+        .assets
+        .source_skeleton
+        .nodes
+        .iter()
+        .map(|node| node.source_node_index)
+        .max()
+        .expect("the document projects at least one node")
+        + 1;
+    let second_rest = Transform {
+        translation: Vec3::new(7.0, 0.0, 0.0),
+        rotation: Quat::IDENTITY,
+        scale: Vec3::ONE,
+    };
+    doc.skeleton.bones.push(Bone {
+        name: "unrelated-second".into(),
+        parent: None,
+        rest: second_rest,
+        inverse_bind: None,
+    });
+    doc.assets.source_skeleton.nodes.push(SourceNodeAsset {
+        source_node_index: second_source_node_index,
+        name: None,
+        parent_source_node_index: None,
+        scene_root_indices: vec![0],
+        local_rest: SourceNodeLocalRest::Trs {
+            translation: second_rest.translation,
+            rotation: second_rest.rotation,
+            scale: second_rest.scale,
+        },
+        bone: Some(second_bone),
+    });
+    doc.assets
+        .source_skeleton
+        .skins
+        .last_mut()
+        .expect("the unrelated skin has source evidence")
+        .joint_source_node_indices
+        .push(second_source_node_index);
+    doc.assets.instances[1].skin_joints.push(second_bone);
+
+    assert!(doc.assets.instances[1].skin_ibms.is_empty());
+    assert!(
+        doc.skeleton.bones[3..]
+            .iter()
+            .all(|bone| bone.inverse_bind.is_none())
+    );
+    let capability = complete_capability();
+    let plan = compensated_rest_bind_plan(&doc, &capability);
+    let candidate = build_scale_candidate(&doc, &plan).unwrap();
+    assert!(
+        candidate.document().assets.instances[1]
+            .skin_ibms
+            .is_empty()
+    );
+    let proof = prove_scale(&doc, &candidate, &plan).unwrap();
+    assert_eq!(proof.unaffected_inverse_bind.comparisons(), 2);
+    assert_eq!(proof.unaffected_inverse_bind.max(), 0.0);
+}
+
+#[test]
 fn explicit_and_defaulted_identity_are_the_same_unaffected_bind_in_both_directions() {
     let capability = complete_capability();
 
