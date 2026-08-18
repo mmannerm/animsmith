@@ -4,6 +4,11 @@ set -euo pipefail
 export LC_ALL=C
 
 REPO_URL="https://github.com/mmannerm/animsmith"
+
+# Cargo.toml's `rust-version` is the single source of truth for the MSRV;
+# every prose mention of it is checked against this value below.
+MSRV="$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
+test -n "$MSRV" || { echo "github-community: Cargo.toml has no rust-version" >&2; exit 1; }
 REPO_BLOB_URL="${REPO_URL}/blob/main/"
 SUPPORT_URL="${REPO_BLOB_URL}SUPPORT.md"
 SECURITY_URL="${REPO_BLOB_URL}SECURITY.md"
@@ -34,6 +39,18 @@ require_literal() {
 
   require_file "$path"
   grep -Fq -- "$literal" "$path" || fail "$path must include $description"
+}
+
+# Dependabot treats a version-shaped action ref as a tag to bump, so
+# `dtolnay/rust-toolchain@1.88` gets silently rewritten to whatever number
+# looks newest -- it once proposed `@1.100`, a nightly number, for the MSRV
+# job. Branch refs (`@stable`, `@nightly`) and SHA pins carrying an explicit
+# `toolchain:` input are immune, so those are the only forms allowed.
+require_no_versioned_rust_toolchain_ref() {
+  local offenders
+
+  offenders="$(grep -rnE 'uses: *dtolnay/rust-toolchain@[0-9]+\.' .github/workflows || true)"
+  test -z "$offenders" || fail "workflows must not pin a Rust version through the action ref, which Dependabot rewrites; use a branch ref or a SHA pin with an explicit toolchain: input -- $offenders"
 }
 
 require_order() {
@@ -126,7 +143,8 @@ require_match CONTRIBUTING.md '^## Merge Policy$' "merge policy"
 
 require_literal DEVELOPMENT.md "RELEASING.md" "maintainer release-doc link"
 require_literal DEVELOPMENT.md "DESIGN.md" "architecture-doc link"
-require_literal DEVELOPMENT.md 'MSRV `1.88`' "MSRV"
+require_literal DEVELOPMENT.md "MSRV \`$MSRV\`" "MSRV"
+require_no_versioned_rust_toolchain_ref
 require_literal DEVELOPMENT.md "just install-rust-tools" "tool install command"
 require_literal DEVELOPMENT.md "just gates" "local gate command"
 require_literal DEVELOPMENT.md "just doc" "rustdoc command"
