@@ -5,7 +5,8 @@ use animsmith_core::config::{CheckSettings, SeveritySetting};
 use animsmith_core::glam::Mat4;
 use animsmith_core::measure::{
     AssetMeasurements, ClipMeasurements, FrameGridMeasurement, ImageMeasurements,
-    LinearTransformClassification, MeshDefinitionMeasurements, SkeletonNodeLocalRestMeasurements,
+    LinearTransformClassification, LoopEndpointMode, MeasurementAvailability,
+    MeshDefinitionMeasurements, SkeletonNodeLocalRestMeasurements,
     SkeletonNodeLocalRestUnavailableReason, SkeletonRestWorldMatrixUnavailableReason,
     SkinDerivedMatrixUnavailableReason, measure_linear_transform,
 };
@@ -958,9 +959,15 @@ fn valid_clip_measurements() -> ClipMeasurements {
             "seam_velocity_delta_mps": 0.02,
             "seam_angular_velocity_delta_degps": 2.0
         }] },
+        "loop_continuity_availability": "measured",
+        "loop_endpoint_mode_availability": "not_applicable",
+        "frame_grid_availability": "not_applicable",
         "loop_seam_ratio": 0.1,
-        "gait": { "phase": 0.25, "lr_amplitude_m": 0.2 },
+        "loop_seam_ratio_availability": "measured",
+        "gait": { "phase": 0.25, "phase_availability": "measured", "lr_amplitude_m": 0.2 },
+        "gait_availability": "measured",
         "speed_mps": 1.0,
+        "speed_mps_availability": "measured",
     }))
     .expect("valid clip measurement fixture")
 }
@@ -1676,6 +1683,7 @@ fn measurement_contract_rejects_every_non_finite_numeric_branch() {
     assert_invalid_clip(
         |clip| {
             clip.frame_grid = Some(frame_grid("nan", 30));
+            clip.frame_grid_availability = MeasurementAvailability::Measured;
         },
         "clips[\"walk\"].frame_grid.fps",
     );
@@ -1725,6 +1733,7 @@ fn measurement_contract_rejects_invalid_frame_grid_structure() {
     ] {
         let mut clip = valid_clip_measurements();
         clip.frame_grid = Some(grid);
+        clip.frame_grid_availability = MeasurementAvailability::Measured;
         assert_eq!(
             MeasurementContract::new(
                 BTreeMap::from([("walk".into(), clip)]),
@@ -1737,6 +1746,71 @@ fn measurement_contract_rejects_invalid_frame_grid_structure() {
             }
         );
     }
+}
+
+#[test]
+fn measurement_contract_rejects_availability_status_value_mismatches() {
+    let invalid = |mutate: fn(&mut ClipMeasurements), path: &str| {
+        let mut clip = valid_clip_measurements();
+        mutate(&mut clip);
+        assert_eq!(
+            MeasurementContract::new(
+                BTreeMap::from([("walk".into(), clip)]),
+                AssetMeasurements::default(),
+            )
+            .expect_err("availability/value mismatch must fail"),
+            MeasurementContractError::InvalidStructure {
+                path: path.into(),
+                reason: "value presence must match availability status".into(),
+            }
+        );
+    };
+
+    // `measured` requires the sibling value to be present.
+    invalid(
+        |clip| clip.loop_continuity_availability = MeasurementAvailability::NotApplicable,
+        "clips[\"walk\"].loop_continuity",
+    );
+    invalid(
+        |clip| clip.frame_grid_availability = MeasurementAvailability::Measured,
+        "clips[\"walk\"].frame_grid",
+    );
+    invalid(
+        |clip| clip.loop_seam_ratio_availability = MeasurementAvailability::NotApplicable,
+        "clips[\"walk\"].loop_seam_ratio",
+    );
+    invalid(
+        |clip| clip.gait_availability = MeasurementAvailability::Unavailable,
+        "clips[\"walk\"].gait",
+    );
+    invalid(
+        |clip| clip.speed_mps_availability = MeasurementAvailability::NotApplicable,
+        "clips[\"walk\"].speed_mps",
+    );
+    invalid(
+        |clip| {
+            clip.gait.as_mut().expect("fixture gait").phase_availability =
+                MeasurementAvailability::Unavailable
+        },
+        "clips[\"walk\"].gait.phase",
+    );
+
+    // `not_applicable` / `unavailable` forbid a present sibling value.
+    invalid(
+        |clip| clip.loop_endpoint_mode = Some(LoopEndpointMode::UniqueCycle),
+        "clips[\"walk\"].loop_endpoint_mode",
+    );
+    invalid(
+        |clip| clip.speed_mps_availability = MeasurementAvailability::Unavailable,
+        "clips[\"walk\"].speed_mps",
+    );
+    invalid(
+        |clip| {
+            clip.gait.as_mut().expect("fixture gait").phase_availability =
+                MeasurementAvailability::NotApplicable
+        },
+        "clips[\"walk\"].gait.phase",
+    );
 }
 
 #[test]

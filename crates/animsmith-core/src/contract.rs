@@ -280,7 +280,9 @@ fn validate_measurements(
             .then_some(())
             .ok_or(MeasurementContractError::NonFiniteValue { path })
     };
-    let check_availability = |value_present: bool, availability: MeasurementAvailability, path: String| {
+    let check_availability = |value_present: bool,
+                              availability: MeasurementAvailability,
+                              path: String| {
         match (value_present, availability) {
             (true, MeasurementAvailability::Measured) => Ok(()),
             (

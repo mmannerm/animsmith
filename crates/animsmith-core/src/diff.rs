@@ -825,4 +825,89 @@ mod tests {
         assert!(json.get("before").is_none());
         assert!(json.get("after").is_none());
     }
+
+    #[test]
+    fn reports_not_applicable_to_unavailable_availability_transitions() {
+        let mut before = clip_measurements();
+        before.speed_mps = None;
+        before.speed_mps_availability = MeasurementAvailability::NotApplicable;
+
+        let mut after = before.clone();
+        after.speed_mps_availability = MeasurementAvailability::Unavailable;
+
+        let deltas = diff_measurements(
+            &measurement_map("walk", before),
+            &measurement_map("walk", after),
+        );
+
+        assert_eq!(deltas.len(), 1, "{:?}", delta_metrics(&deltas));
+        let delta = delta_for(&deltas, "speed_mps");
+        assert_eq!(delta.note, "became unavailable");
+        assert_eq!(delta.before, None);
+        assert_eq!(delta.after, None);
+    }
+
+    #[test]
+    fn reports_unavailable_to_not_applicable_availability_transitions() {
+        let mut before = clip_measurements();
+        before.speed_mps = None;
+        before.speed_mps_availability = MeasurementAvailability::Unavailable;
+
+        let mut after = before.clone();
+        after.speed_mps_availability = MeasurementAvailability::NotApplicable;
+
+        let deltas = diff_measurements(
+            &measurement_map("walk", before),
+            &measurement_map("walk", after),
+        );
+
+        assert_eq!(deltas.len(), 1, "{:?}", delta_metrics(&deltas));
+        let delta = delta_for(&deltas, "speed_mps");
+        assert_eq!(delta.note, "no longer applicable");
+    }
+
+    #[test]
+    fn availability_stays_silent_when_measured_or_unchanged() {
+        let before = clip_measurements();
+        let after = before.clone();
+
+        let deltas = diff_measurements(
+            &measurement_map("walk", before.clone()),
+            &measurement_map("walk", after),
+        );
+        assert!(deltas.is_empty(), "{:?}", delta_metrics(&deltas));
+
+        let mut moved_to_unavailable = before.clone();
+        moved_to_unavailable.speed_mps = None;
+        moved_to_unavailable.speed_mps_availability = MeasurementAvailability::Unavailable;
+        let deltas = diff_measurements(
+            &measurement_map("walk", before),
+            &measurement_map("walk", moved_to_unavailable),
+        );
+        assert_eq!(deltas.len(), 1, "{:?}", delta_metrics(&deltas));
+        assert_eq!(
+            delta_for(&deltas, "speed_mps").note,
+            "disappeared",
+            "measured -> unavailable is a value disappearance, not a not_applicable<->unavailable availability transition"
+        );
+    }
+
+    #[test]
+    fn reports_gait_phase_not_applicable_to_unavailable_transitions() {
+        let mut before = clip_measurements();
+        before.gait.as_mut().unwrap().phase = None;
+        before.gait.as_mut().unwrap().phase_availability = MeasurementAvailability::NotApplicable;
+
+        let mut after = before.clone();
+        after.gait.as_mut().unwrap().phase_availability = MeasurementAvailability::Unavailable;
+
+        let deltas = diff_measurements(
+            &measurement_map("walk", before),
+            &measurement_map("walk", after),
+        );
+
+        assert_eq!(deltas.len(), 1, "{:?}", delta_metrics(&deltas));
+        let delta = delta_for(&deltas, "gait.phase");
+        assert_eq!(delta.note, "became unavailable");
+    }
 }

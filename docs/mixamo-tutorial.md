@@ -237,8 +237,8 @@ The semantic checks need *your* expectations declared. Start from what
 ```console
 $ animsmith measure --format json walking.glb
 {
-  "schema_version": 7,
-  "schema": "urn:animsmith:schema:output:7",
+  "schema_version": 8,
+  "schema": "urn:animsmith:schema:output:8",
   "tool": { "name": "animsmith", "version": "0.3.1",
             "source": { "revision": null, "dirty": null } },
   "command": "measure",
@@ -254,8 +254,8 @@ $ animsmith measure --format json walking.glb
         "hips": "mixamorig:Hips", "spine": "mixamorig:Spine",
         "left_foot": "mixamorig:LeftFoot", "right_foot": "mixamorig:RightFoot" } },
       "measurements": {
-        "schema_version": 13,
-        "schema": "urn:animsmith:schema:measurements:13",
+        "schema_version": 14,
+        "schema": "urn:animsmith:schema:measurements:14",
         "clips": { "mixamo.com": {
           "duration_s": 1.0, "frame_count": 33,
           "animated_bones": ["mixamorig:Hips", "mixamorig:LeftFoot", "mixamorig:RightFoot"],
@@ -274,9 +274,15 @@ $ animsmith measure --format json walking.glb
               "seam_velocity_delta_mps": 0.0,
               "seam_angular_velocity_delta_degps": 0.0 }
           ] },
+          "loop_continuity_availability": "measured",
+          "loop_endpoint_mode_availability": "not_applicable",
+          "frame_grid_availability": "not_applicable",
           "loop_seam_ratio": 1.2e-15,
-          "gait": { "phase": 0.75, "lr_amplitude_m": 0.2 },
-          "speed_mps": 0.0
+          "loop_seam_ratio_availability": "measured",
+          "gait": { "phase": 0.75, "phase_availability": "measured", "lr_amplitude_m": 0.2 },
+          "gait_availability": "measured",
+          "speed_mps": 0.0,
+          "speed_mps_availability": "measured"
         } },
         "mesh_definitions": [],
         "node_instances": [],

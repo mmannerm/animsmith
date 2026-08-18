@@ -435,11 +435,11 @@ animsmith fix clip.glb --repair quat-norm,quat-flip -o fixed.glb
 `measure`, `lint`, and `diff` support `--format json`. The native JSON
 contract is the source of truth and is versioned with `schema_version`.
 See [output.md](output.md) and
-[`output-v7.schema.json`](schemas/output-v7.schema.json). Nested measurement
+[`output-v8.schema.json`](schemas/output-v8.schema.json). Nested measurement
 evidence has its own
-[`measurements-v13.schema.json`](schemas/measurements-v13.schema.json) contract.
-Output-v6 and earlier reports, including reports carrying measurements v12,
-are historical contracts; regenerate a current output-v7 report from the
+[`measurements-v14.schema.json`](schemas/measurements-v14.schema.json) contract.
+Output-v7 and earlier reports, including reports carrying measurements v13,
+are historical contracts; regenerate a current output-v8 report from the
 original asset with the current CLI before using `diff`.
 
 `rest-world-scale` is quiet until its config supplies `node_selectors`.

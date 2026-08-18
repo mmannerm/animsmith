@@ -9,16 +9,16 @@ use serde_json::{Value, json};
 use std::path::Path;
 use std::process::{Command, Output};
 
-const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v7.schema.json");
+const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v8.schema.json");
 const MEASUREMENTS_SCHEMA: &str =
-    include_str!("../../../docs/schemas/measurements-v13.schema.json");
+    include_str!("../../../docs/schemas/measurements-v14.schema.json");
 
 fn output_validator() -> jsonschema::Validator {
     let output: Value = serde_json::from_str(OUTPUT_SCHEMA).expect("valid output schema");
     let measurements: Value =
         serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid measurements schema");
     let registry = jsonschema::Registry::new()
-        .add("urn:animsmith:schema:measurements:13", measurements)
+        .add("urn:animsmith:schema:measurements:14", measurements)
         .expect("registers measurements schema")
         .prepare()
         .expect("prepares measurements schema registry");

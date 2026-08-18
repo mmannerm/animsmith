@@ -3830,6 +3830,12 @@ mod tests {
                     "frame_count": 2,
                     "animated_bones": ["hips"],
                     "bone_rotation_range_deg": {},
+                    "loop_continuity_availability": "unavailable",
+                    "loop_endpoint_mode_availability": "not_applicable",
+                    "frame_grid_availability": "not_applicable",
+                    "loop_seam_ratio_availability": "unavailable",
+                    "gait_availability": "unavailable",
+                    "speed_mps_availability": "unavailable",
                 }
             })
         );

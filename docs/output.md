@@ -7,24 +7,29 @@ future machine serializers should project the JSON contract.
 
 ## Contract identities
 
-Validation and comparison JSON commands emit output contract v7 with the immutable protocol
-identity `urn:animsmith:schema:output:7`. The retrievable schema is
-[`output-v7.schema.json`](schemas/output-v7.schema.json); its repository URL
+Validation and comparison JSON commands emit output contract v8 with the immutable protocol
+identity `urn:animsmith:schema:output:8`. The retrievable schema is
+[`output-v8.schema.json`](schemas/output-v8.schema.json); its repository URL
 is a retrieval location, not the protocol identity.
 
 Measurement evidence is nested and independently versioned as
-`urn:animsmith:schema:measurements:13`. Its retrievable schema is
-[`measurements-v13.schema.json`](schemas/measurements-v13.schema.json). Version
-13 retains each per-joint source-declaration inverse-bind matrix beside the
-observations derived from it, refuses non-affine sources, and publishes a scale-free
+`urn:animsmith:schema:measurements:14`. Its retrievable schema is
+[`measurements-v14.schema.json`](schemas/measurements-v14.schema.json). Version
+14 gives every clip fact that is not applicable to every clip a sibling
+`_availability` status (`measured`, `not_applicable`, or `unavailable`)
+alongside its optional value field, so a consumer can distinguish "this clip
+has no subject for the fact" from "the fact applies, but derivation failed" —
+a distinction a bare optional value cannot express. Version 13 retains each
+per-joint source-declaration inverse-bind matrix beside the observations
+derived from it, refuses non-affine sources, and publishes a scale-free
 reciprocal infinity-norm condition number before trusting an inversion.
-Measurements v12 and output v6 remain immutable historical contracts. Because
-each output schema statically pins its nested measurement URN, advancing the
-nested contract also requires the new output-v7 identity; it does not redesign
-the envelope shape.
+Measurements v13, v12, and output v7, v6 remain immutable historical contracts.
+Because each output schema statically pins its nested measurement URN,
+advancing the nested contract also requires the new output-v8 identity; it
+does not redesign the envelope shape.
 
 `convert --format json` is deliberately a separate conversion-evidence
-contract, not another command in the output-v7 envelope. Its immutable
+contract, not another command in the output-v8 envelope. Its immutable
 identity is `urn:animsmith:schema:conversion-evidence:2`; its retrievable
 schema is
 [`conversion-evidence-v2.schema.json`](schemas/conversion-evidence-v2.schema.json).
@@ -82,18 +87,20 @@ exclusively; regenerate v1 evidence when a v2 consumer is required.
 
 [`Output-v2`](schemas/output-v2.schema.json),
 [`output-v3`](schemas/output-v3.schema.json),
-[`output-v4`](schemas/output-v4.schema.json), and
-[`output-v5`](schemas/output-v5.schema.json) remain historical immutable
+[`output-v4`](schemas/output-v4.schema.json),
+[`output-v5`](schemas/output-v5.schema.json),
+[`output-v6`](schemas/output-v6.schema.json), and
+[`output-v7`](schemas/output-v7.schema.json) remain historical immutable
 contracts. The current CLI emits and
-`diff` reads output-v7; regenerate a current output-v7 report from the original
+`diff` reads output-v8; regenerate a current output-v8 report from the original
 asset with `animsmith measure --format json` before passing it to `diff`.
 
 ## Common envelope
 
 ```json
 {
-  "schema_version": 7,
-  "schema": "urn:animsmith:schema:output:7",
+  "schema_version": 8,
+  "schema": "urn:animsmith:schema:output:8",
   "tool": {
     "name": "animsmith",
     "version": "0.3.1",
@@ -428,8 +435,8 @@ Both commands put evidence under `files[].measurements`:
 
 ```json
 {
-  "schema_version": 13,
-  "schema": "urn:animsmith:schema:measurements:13",
+  "schema_version": 14,
+  "schema": "urn:animsmith:schema:measurements:14",
   "clips": {},
   "mesh_definitions": [],
   "node_instances": [],
@@ -448,15 +455,40 @@ Both commands put evidence under `files[].measurements`:
 ranges, optional per-bone loop continuity, and optional role-dependent gait,
 foot-seam, and speed metrics.
 
+Each optional clip fact — `loop_continuity`, `loop_endpoint_mode`,
+`frame_grid`, `loop_seam_ratio`, `gait` (and its own `gait.phase`), and
+`speed_mps` — carries a required sibling `<field>_availability` status
+(`gait.phase` uses `phase_availability`, nested beside `phase` inside the
+`gait` object) with one of three values:
+
+- `measured`: the fact was derived; the sibling value field is present.
+- `not_applicable`: this clip has no subject for the fact (for example, no
+  declared loop, no resolvable gait roles, or no root/hips travel quantity);
+  the sibling value field is absent.
+- `unavailable`: the fact applies to this clip, but it could not be derived
+  (evidence was insufficient or a producer stopped emitting it); the sibling
+  value field is absent.
+
+The value field is present if and only if its status is `measured`; the
+schema rejects a `measured` status without a value and a `not_applicable` or
+`unavailable` status with one. This distinction matters because the two
+absences require opposite handling: legitimate non-applicability should
+remain acceptable, while an applicable-but-`unavailable` metric must not
+silently pass a consumer threshold that only checks for a present value.
+`diff` reports a clip fact's `not_applicable` <-> `unavailable` transition
+explicitly (`"became unavailable"` / `"no longer applicable"`), since both
+states otherwise compare as an absent value.
+
 For clips declared with `loop = true`, `loop_endpoint_mode` is present when
 AnimSmith can distinguish a strict mechanically removable
 `duplicate_endpoint`, a non-duplicate `unique_cycle` within the effective
 position/rotation closure caps, or a `non_closing` cycle beyond either cap.
-Clips not declared as loops and loops without enough finite evidence omit the
-field. When a positive declared FPS places the duration and every authored key
-on its frame grid, `frame_grid` records that `fps` and the rounded number of
-`frame_intervals`; `frame_count` remains the longest authored channel's key
-count and is not relabeled as an authored FPS grid.
+Clips not declared as loops report `loop_endpoint_mode_availability:
+"not_applicable"`; loops without enough finite evidence report
+`"unavailable"`. When a positive declared FPS places the duration and every
+authored key on its frame grid, `frame_grid` records that `fps` and the
+rounded number of `frame_intervals`; `frame_count` remains the longest
+authored channel's key count and is not relabeled as an authored FPS grid.
 
 `loop_continuity.bones[]` is present when a clip has at least three samples and
 the seam-adjacent model-space evidence is finite. Rows stay in skeleton order
@@ -815,13 +847,13 @@ the same numeric value to a conforming adapter.
 
 ## `diff`
 
-`diff --format json` uses the same output v7 header and emits `inputs`, a
+`diff --format json` uses the same output v8 header and emits `inputs`, a
 delta count, and structured metric deltas:
 
 ```json
 {
-  "schema_version": 7,
-  "schema": "urn:animsmith:schema:output:7",
+  "schema_version": 8,
+  "schema": "urn:animsmith:schema:output:8",
   "tool": {
     "name": "animsmith",
     "version": "0.3.1",
@@ -836,8 +868,8 @@ delta count, and structured metric deltas:
 }
 ```
 
-`diff` accepts asset files or one-file v7 `measure`/`lint` reports carrying
-measurement contract v13. v12 and earlier reports are historical and are rejected with
+`diff` accepts asset files or one-file v8 `measure`/`lint` reports carrying
+measurement contract v14. v13 and earlier reports are historical and are rejected with
 guidance to regenerate them from the original asset. Multi-file reports and
 other unsupported contract versions are also rejected as operator errors.
 Before extracting the clip metrics it uses,
