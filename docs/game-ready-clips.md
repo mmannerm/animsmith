@@ -425,8 +425,12 @@ exempt constant-track endpoints cannot influence the period or shift. The whole
 skeleton, roles, and track shapes are validated before declared frames ×
 skeleton bones, declared frames × tracks, and maximum authored keys × skeleton
 bones are independently bounded at an inclusive 1,000,000 samples. Yaw uses
-f64 first/final headings plus counted full-turn crossings, avoiding
-segment-count-dependent accumulation error. Four f32 successors at the
+f64 first/final headings plus counted full-turn crossings. At sample zero it
+selects the local `+Z`, `+Y`, or `+X` basis axis with the greatest finite
+horizontal projection, in that tie order, and retains it for the whole proof.
+This accepts different source-axis conventions without switching axes later to
+hide yaw; loss of the selected horizontal projection refuses. The calculation
+avoids segment-count-dependent accumulation error. Four f32 successors at the
 inclusive 1 cm and 1° caps cover only authored endpoint
 translation/quaternion quantization. Do not apply it to
 authored root motion: retain that trajectory, use

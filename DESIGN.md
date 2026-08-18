@@ -79,9 +79,14 @@ output, and a self-contained HTML report with a 3D preview.
   verifier and metric sample uses the one bounded declared grid. The 1 cm endpoint-displacement and
   1° accumulated-yaw caps are applied directly, without any sampled-step
   allowance an interior outlier could inflate. Yaw is derived from model-space
-  f32 quaternions as binary64 headings, with full-turn crossings counted and
-  the first heading subtracted from the final unwrapped heading. The result has
-  no segment-count-dependent summation error. Only four f32 successors at each
+  f32 quaternions as binary64 headings. At sample zero, the verifier selects
+  the local `+Z`, `+Y`, or `+X` basis axis with the greatest finite horizontal
+  projection, breaking exact ties in that order, and retains that one axis for
+  the entire proof. This admits equivalent source-axis conventions without
+  switching witnesses later to hide yaw; a selected axis that later loses its
+  horizontal projection refuses. Full-turn crossings are counted and the first
+  heading is subtracted from the final unwrapped heading, so the result has no
+  segment-count-dependent summation error. Only four f32 successors at each
   inclusive cap cover authored endpoint translation/quaternion quantization;
   this gait-local rule does not widen other checks. Standalone transform output
   is transactional too: per-clip success lines and the write summary remain

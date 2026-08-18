@@ -10,7 +10,7 @@ use crate::profile::{ResolvedRoles, Role};
 use crate::sample::{PoseGrid, default_frame_count, sample_clip, sample_clip_at_times};
 #[cfg(test)]
 use crate::sample::{TrackSample, sample_track};
-use glam::{Quat, Vec3};
+use glam::{DQuat, DVec3, Quat, Vec3};
 use std::collections::BTreeSet;
 use std::fmt;
 use thiserror::Error;
@@ -1190,11 +1190,13 @@ const GAIT_TRAJECTORY_ALTERNATIVES: &str = "retain source root motion, use runti
 /// cardinality or skeleton/role topology, pose/channel/authored-key work above
 /// [`GAIT_ANCHOR_MAX_TRAJECTORY_POSE_SAMPLES`], and material horizontal
 /// translation or yaw accumulation are also errors. Trajectory measurements
-/// use the already-verified authored f32 key times. Yaw is the difference
-/// between binary64 first/final headings plus counted full-turn crossings, so
-/// comparison error does not grow with the admitted segment count; the
-/// inclusive cap admits only four binary32 successors for endpoint
-/// translation/quaternion quantization.
+/// use the already-verified authored f32 key times. At sample zero, yaw selects
+/// the local `+Z`, `+Y`, or `+X` basis axis with the greatest finite horizontal
+/// projection (using that order to break ties), then retains that one axis for
+/// the complete proof. Yaw is the difference between binary64 first/final
+/// headings plus counted full-turn crossings, so comparison error does not grow
+/// with the admitted segment count; the inclusive cap admits only four binary32
+/// successors for endpoint translation/quaternion quantization.
 /// All errors are returned before `clip` is changed.
 ///
 pub fn align_gait_anchor(
@@ -1361,6 +1363,7 @@ fn verify_in_place_gait_trajectory(
     let mut first_heading_deg: Option<f64> = None;
     let mut previous_heading_deg: Option<f64> = None;
     let mut winding_turns = 0i64;
+    let mut heading_axis: Option<GaitHeadingAxis> = None;
     for frame in 0..grid.frame_count() {
         let position = grid.model_position(frame, bone);
         let rotation = grid.model_rotation(frame, bone);
@@ -1379,25 +1382,31 @@ fn verify_in_place_gait_trajectory(
         horizontal.push(Vec3::new(position.x, 0.0, position.z));
 
         // Derive heading in f64 from the authored/model-space f32 quaternion.
-        // Summing f32 atan2 steps made exact 1° clips drift with segment count.
-        // Track only full-turn crossings, then subtract the first heading from
-        // the final unwrapped heading. Unlike summing per-frame deltas, that
-        // result has no segment-count-dependent accumulation error.
-        let [x, y, z, w] = rotation.to_array().map(f64::from);
-        let norm = (x * x + y * y + z * z + w * w).sqrt();
-        let (x, y, z, w) = (x / norm, y / norm, z / norm, w / norm);
-        let forward_x = 2.0 * (x * z + w * y);
-        let forward_z = 1.0 - 2.0 * (x * x + y * y);
-        let horizontal_length = forward_x.hypot(forward_z);
+        // A fixed local basis axis measures the same model-space yaw regardless
+        // of whether the source convention calls +Z, +Y, or +X "forward". The
+        // greatest horizontal projection at sample zero is the best-conditioned
+        // available witness; the fixed priority makes exact ties deterministic.
+        // Retaining that axis for every later sample prevents a per-sample
+        // fallback from switching witnesses and hiding accumulated yaw.
+        // The preceding finite/nonzero guard makes normalization total. Use
+        // glam's f64 quaternion/vector path so every candidate axis shares one
+        // well-tested rotation implementation rather than three hand-derived
+        // matrix-column formulas.
+        let normalized = rotation.as_dquat().normalize();
+        let axis = *heading_axis.get_or_insert_with(|| select_gait_heading_axis(normalized));
+        let (heading_x, heading_z) = gait_heading_horizontal(normalized, axis);
+        let horizontal_length = heading_x.hypot(heading_z);
         if !horizontal_length.is_finite() || horizontal_length <= f64::from(f32::EPSILON) {
             return Err(format!(
                 "cannot gait-anchor clip {:?} under the in-place policy: selected {role} bone \
-                 {:?} (index {bone}) has no finite horizontal forward axis at sample {frame}; \
-                 {GAIT_TRAJECTORY_ALTERNATIVES}",
-                clip.name, bone_name
+                 {:?} (index {bone}) has no finite horizontal projection for its selected \
+                 local {} heading basis at sample {frame}; {GAIT_TRAJECTORY_ALTERNATIVES}",
+                clip.name,
+                bone_name,
+                axis.label()
             ));
         }
-        let heading_deg = forward_x.atan2(forward_z).to_degrees();
+        let heading_deg = heading_x.atan2(heading_z).to_degrees();
         if let Some(previous) = previous_heading_deg {
             let raw_delta = heading_deg - previous;
             if raw_delta > 180.0 {
@@ -1440,6 +1449,55 @@ fn verify_in_place_gait_trajectory(
         ));
     }
     Ok(sampling_times)
+}
+
+/// One local orientation witness retained for a complete gait trajectory
+/// proof. Order is policy: conventional `+Z` wins an exact tie, followed by
+/// the common Z-up-source `+Y` convention and finally `+X`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GaitHeadingAxis {
+    Z,
+    Y,
+    X,
+}
+
+impl GaitHeadingAxis {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Z => "+Z",
+            Self::Y => "+Y",
+            Self::X => "+X",
+        }
+    }
+}
+
+/// Model-space horizontal `(x, z)` projection of one local unit basis axis.
+fn gait_heading_horizontal(rotation: DQuat, axis: GaitHeadingAxis) -> (f64, f64) {
+    let local_axis = match axis {
+        GaitHeadingAxis::Z => DVec3::Z,
+        GaitHeadingAxis::Y => DVec3::Y,
+        GaitHeadingAxis::X => DVec3::X,
+    };
+    let heading = rotation.mul_vec3(local_axis);
+    (heading.x, heading.z)
+}
+
+/// Select the best-conditioned local heading witness at sample zero. Exact
+/// ties retain the declared `+Z`, `+Y`, `+X` priority because replacement is
+/// strict rather than `>=`.
+fn select_gait_heading_axis(rotation: DQuat) -> GaitHeadingAxis {
+    let mut selected = GaitHeadingAxis::Z;
+    let (x, z) = gait_heading_horizontal(rotation, selected);
+    let mut best_length = x.hypot(z);
+    for candidate in [GaitHeadingAxis::Y, GaitHeadingAxis::X] {
+        let (x, z) = gait_heading_horizontal(rotation, candidate);
+        let length = x.hypot(z);
+        if length > best_length {
+            selected = candidate;
+            best_length = length;
+        }
+    }
+    selected
 }
 
 /// Compare a gait-local derived binary32 quantity with an inclusive policy

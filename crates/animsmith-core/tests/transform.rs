@@ -281,7 +281,9 @@ fn gait_anchor_permutes_authored_values_and_samples_authored_times_at_30_fps() {
     )
     .unwrap_err();
     assert!(
-        error.contains("no finite horizontal forward axis at sample 5"),
+        error.contains(
+            "no finite horizontal projection for its selected local +Z heading basis at sample 5"
+        ),
         "got: {error}"
     );
 }
@@ -324,6 +326,219 @@ fn root_yaw(values: impl IntoIterator<Item = f32>) -> Track {
         times: (0..KEYS).map(|key| key as f32 / FPS as f32).collect(),
         values: TrackValues::Quats(values.into_iter().map(Quat::from_rotation_y).collect()),
     }
+}
+
+fn vertical_local_forward_basis() -> Quat {
+    Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)
+}
+
+fn vertical_basis_root_yaw(values: impl IntoIterator<Item = f32>) -> Track {
+    let basis = vertical_local_forward_basis();
+    Track {
+        bone: 0,
+        property: Property::Rotation,
+        interpolation: Interpolation::Linear,
+        times: (0..KEYS).map(|key| key as f32 / FPS as f32).collect(),
+        values: TrackValues::Quats(
+            values
+                .into_iter()
+                .map(|yaw| Quat::from_rotation_y(yaw) * basis)
+                .collect(),
+        ),
+    }
+}
+
+#[test]
+fn gait_anchor_accepts_in_place_motion_when_local_z_is_vertical() {
+    let (mut skel, mut clip) = open_walk();
+    skel.bones[0].rest.rotation = vertical_local_forward_basis();
+    let roles = roles(&skel);
+
+    align_gait_anchor(&skel, &mut clip, &roles, FPS, GaitTrajectoryPolicy::InPlace)
+        .expect("a fixed horizontal alternative-axis witness admits the vertical-+Z source basis");
+}
+
+#[test]
+fn gait_anchor_vertical_z_tie_selects_y_once_and_never_falls_back_to_x() {
+    let (skel, mut clip) = open_walk();
+    // This exact quaternion maps local +Z vertically and gives local +Y and
+    // +X exactly equal horizontal projections. Policy must choose +Y.
+    let basis = Quat::from_xyzw(-0.5, -0.5, -0.5, 0.5);
+    let mut rotations = vec![basis; KEYS];
+    rotations[5] = Quat::IDENTITY;
+    clip.tracks.push(Track {
+        bone: 0,
+        property: Property::Rotation,
+        interpolation: Interpolation::Linear,
+        times: (0..KEYS).map(|key| key as f32 / FPS as f32).collect(),
+        values: TrackValues::Quats(rotations),
+    });
+    let roles = roles(&skel);
+    let before = format!("{clip:?}");
+
+    let error = align_gait_anchor(&skel, &mut clip, &roles, FPS, GaitTrajectoryPolicy::InPlace)
+        .unwrap_err();
+
+    assert!(
+        error.contains(
+            "no finite horizontal projection for its selected local +Y heading basis at sample 5"
+        ),
+        "got: {error}"
+    );
+    assert_eq!(format!("{clip:?}"), before);
+}
+
+#[test]
+fn gait_anchor_selects_the_genuinely_longest_x_projection() {
+    let (skel, mut clip) = open_walk();
+    // At sample zero local +X is fully horizontal, +Y has length sqrt(3)/2,
+    // and +Z has length 1/2. A first-usable implementation would choose +Z;
+    // the greatest-projection policy must retain +X.
+    let basis = Quat::from_rotation_x(std::f32::consts::FRAC_PI_3);
+    let mut rotations = vec![basis; KEYS];
+    rotations[5] = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+    clip.tracks.push(Track {
+        bone: 0,
+        property: Property::Rotation,
+        interpolation: Interpolation::Linear,
+        times: (0..KEYS).map(|key| key as f32 / FPS as f32).collect(),
+        values: TrackValues::Quats(rotations),
+    });
+    let roles = roles(&skel);
+    let before = format!("{clip:?}");
+
+    let error = align_gait_anchor(&skel, &mut clip, &roles, FPS, GaitTrajectoryPolicy::InPlace)
+        .unwrap_err();
+
+    assert!(
+        error.contains(
+            "no finite horizontal projection for its selected local +X heading basis at sample 5"
+        ),
+        "got: {error}"
+    );
+    assert_eq!(format!("{clip:?}"), before);
+}
+
+#[test]
+fn gait_anchor_x_basis_measures_accumulated_yaw() {
+    let (skel, mut clip) = open_walk();
+    let basis = Quat::from_rotation_x(std::f32::consts::FRAC_PI_3);
+    clip.tracks.push(Track {
+        bone: 0,
+        property: Property::Rotation,
+        interpolation: Interpolation::Linear,
+        times: (0..KEYS).map(|key| key as f32 / FPS as f32).collect(),
+        values: TrackValues::Quats(
+            (0..KEYS)
+                .map(|key| {
+                    let yaw = key as f32 * std::f32::consts::FRAC_PI_2 / (KEYS - 1) as f32;
+                    Quat::from_rotation_y(yaw) * basis
+                })
+                .collect(),
+        ),
+    });
+    let roles = roles(&skel);
+    let before = format!("{clip:?}");
+
+    let error = align_gait_anchor(&skel, &mut clip, &roles, FPS, GaitTrajectoryPolicy::InPlace)
+        .unwrap_err();
+
+    assert_gait_refusal_is_located_and_atomic(&clip, &before, &error);
+    assert!(error.contains("yaw 90.000 deg"), "got: {error}");
+}
+
+#[test]
+fn gait_anchor_vertical_basis_still_refuses_translation_and_yaw() {
+    let (mut skel, base) = open_walk();
+    skel.bones[0].rest.rotation = vertical_local_forward_basis();
+    let roles = roles(&skel);
+
+    let mut translation = base.clone();
+    translation.tracks.push(root_translation(
+        (0..KEYS).map(|key| Vec3::new(key as f32 * 0.1, 1.0, 0.0)),
+    ));
+    let translation_before = format!("{translation:?}");
+    let translation_error = align_gait_anchor(
+        &skel,
+        &mut translation,
+        &roles,
+        FPS,
+        GaitTrajectoryPolicy::InPlace,
+    )
+    .unwrap_err();
+    assert_gait_refusal_is_located_and_atomic(
+        &translation,
+        &translation_before,
+        &translation_error,
+    );
+    assert!(
+        translation_error.contains("horizontal translation 3.1000 m"),
+        "got: {translation_error}"
+    );
+
+    let mut yaw = base.clone();
+    yaw.tracks
+        .push(vertical_basis_root_yaw((0..KEYS).map(|key| {
+            key as f32 * std::f32::consts::FRAC_PI_2 / (KEYS - 1) as f32
+        })));
+    let yaw_before = format!("{yaw:?}");
+    let yaw_error =
+        align_gait_anchor(&skel, &mut yaw, &roles, FPS, GaitTrajectoryPolicy::InPlace).unwrap_err();
+    assert_gait_refusal_is_located_and_atomic(&yaw, &yaw_before, &yaw_error);
+    assert!(yaw_error.contains("yaw 90.000 deg"), "got: {yaw_error}");
+
+    let mut nonfinite = base.clone();
+    let mut rotations = vec![vertical_local_forward_basis(); KEYS];
+    rotations[KEYS / 2] = Quat::from_xyzw(f32::NAN, 0.0, 0.0, 1.0);
+    nonfinite.tracks.push(Track {
+        bone: 0,
+        property: Property::Rotation,
+        interpolation: Interpolation::Linear,
+        times: (0..KEYS).map(|key| key as f32 / FPS as f32).collect(),
+        values: TrackValues::Quats(rotations),
+    });
+    let nonfinite_before = format!("{nonfinite:?}");
+    let nonfinite_error = align_gait_anchor(
+        &skel,
+        &mut nonfinite,
+        &roles,
+        FPS,
+        GaitTrajectoryPolicy::InPlace,
+    )
+    .unwrap_err();
+    assert!(
+        nonfinite_error.contains("clip \"walk\""),
+        "got: {nonfinite_error}"
+    );
+    assert!(
+        nonfinite_error.contains("non-finite authored trajectory evidence in track 2"),
+        "got: {nonfinite_error}"
+    );
+    assert!(
+        nonfinite_error.contains("trajectory-preserving operation"),
+        "got: {nonfinite_error}"
+    );
+    assert_eq!(format!("{nonfinite:?}"), nonfinite_before);
+
+    let mut mixed = base;
+    mixed.tracks.push(root_translation(
+        (0..KEYS).map(|key| Vec3::new(0.0, 1.0, key as f32 * 0.05)),
+    ));
+    mixed.tracks.push(vertical_basis_root_yaw(
+        (0..KEYS).map(|key| key as f32 * std::f32::consts::FRAC_PI_2 / (KEYS - 1) as f32),
+    ));
+    let mixed_before = format!("{mixed:?}");
+    let mixed_error = align_gait_anchor(
+        &skel,
+        &mut mixed,
+        &roles,
+        FPS,
+        GaitTrajectoryPolicy::InPlace,
+    )
+    .unwrap_err();
+    assert_gait_refusal_is_located_and_atomic(&mixed, &mixed_before, &mixed_error);
+    assert!(mixed_error.contains("1.5500 m"), "got: {mixed_error}");
+    assert!(mixed_error.contains("yaw 90.000 deg"), "got: {mixed_error}");
 }
 
 fn assert_gait_refusal_is_located_and_atomic(clip: &Clip, before: &str, error: &str) {
@@ -779,24 +994,6 @@ fn gait_anchor_fails_closed_on_cyclic_ancestor_chain() {
     assert!(error.contains("pelvis"), "got: {error}");
     assert!(error.contains("cyclic ancestor chain"), "got: {error}");
     assert!(error.contains("evidence is missing"), "got: {error}");
-    assert_eq!(format!("{clip:?}"), before);
-}
-
-#[test]
-fn gait_anchor_fails_closed_without_horizontal_forward_axis() {
-    let (mut skel, mut clip) = open_walk();
-    skel.bones[0].rest.rotation = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
-    let roles = roles(&skel);
-    let before = format!("{clip:?}");
-
-    let error = align_gait_anchor(&skel, &mut clip, &roles, FPS, GaitTrajectoryPolicy::InPlace)
-        .unwrap_err();
-
-    assert!(error.contains("pelvis"), "got: {error}");
-    assert!(
-        error.contains("no finite horizontal forward axis"),
-        "got: {error}"
-    );
     assert_eq!(format!("{clip:?}"), before);
 }
 
