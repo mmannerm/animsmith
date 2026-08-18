@@ -140,6 +140,11 @@ Include every profile in the captured profile-set version.
 |---|---|---|---|---|
 | {{ISSUE}} | {{CAPTURED_COMMAND}} | {{RESULT}} | {{POSTCONDITION_EVIDENCE}} | {{GAP}} |
 
+For an explicit rig-role map, retain the default unresolved-role result beside
+the configured result, identify the covered skeleton variant, and record the
+configuration digest. Configuration can close evaluator coverage without
+changing or repairing the delivered animation bytes.
+
 For gait anchoring, explicitly state whether any root translation or yaw
 accumulates. AnimSmith versions that cyclically resample every channel must not
 be recommended on root-motion clips without independently re-derived
