@@ -230,6 +230,15 @@ the current version. Derive declarations from the selected validation profiles,
 but never turn a profile's likely needs into invented pack facts or tolerances.
 Run lint again and preserve the config and digest.
 
+When the untouched baseline cannot resolve rig roles but delivered bone names
+and a documented target convention support an explicit role map, preserve both
+results: the out-of-the-box coverage gap and the config-backed pass. Treat the
+map as repeatable evaluation/project configuration, not a source-asset repair.
+Record the config path and digest, and do not generalize success to skeleton
+variants that the map did not cover. A future automatic alias or
+case-insensitive match is only a tooling candidate if it detects ambiguity and
+refuses rather than choosing between multiple bones.
+
 Organize conclusions using the version-matched readiness ladder, not one flat
 pass/fail score:
 

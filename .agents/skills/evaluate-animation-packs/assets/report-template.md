@@ -23,6 +23,11 @@ State separately:
 - what still needs engine, artist/vendor, or future-tool work;
 - the largest confidence boundary.
 
+If explicit rig-role configuration changes measurement coverage, state the
+untouched result and the config-backed result separately. Do not describe a
+role map as a repaired source asset, and limit the configured conclusion to
+the skeleton variants actually covered by that map.
+
 If this is a refresh against a newer AnimSmith version, state which baseline,
 contract, and remediation conclusions changed. A current safety refusal is not
 a successful remediation; keep older generated-output measurements explicitly
