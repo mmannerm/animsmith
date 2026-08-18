@@ -51,6 +51,43 @@ into the changelog.
 Agent-authored commits also need the agent attribution trailer required
 by that agent's local instructions.
 
+## MSRV Policy
+
+The minimum supported Rust version is a floor, not a ratchet. It moves
+only when something in the tree actually requires a newer compiler —
+normally a dependency raising its own `rust-version`, occasionally a
+language feature the code has a concrete reason to adopt. It is never
+raised merely because a newer stable exists.
+
+The ceiling on that movement is six months: a bump must not require a
+compiler released within the last six months, so consumers who pin
+toolchains always have a two-release window to catch up. Six months is
+stated in months rather than as N-minus-releases because months are the
+unit downstream users experience, and the rule then survives a change in
+Rust's release cadence.
+
+Day-to-day development still happens on current stable, and CI checks
+stable on Linux, macOS, and Windows. The MSRV is what the published
+crates promise, not what maintainers run.
+
+`workspace.package.rust-version` in the root `Cargo.toml` is the single
+source of truth. Nothing else states the number independently: the CI
+MSRV job reads it out of the manifest, and two gates hold the prose to
+it (see the Toolchain section of [DEVELOPMENT.md](DEVELOPMENT.md)). A
+bump is therefore a one-line manifest edit plus whatever prose the gates
+flag.
+
+Because an MSRV bump is a compatibility change for downstream crates, it
+warrants a minor version rather than a patch, and a changelog entry
+saying so.
+
+Workflows must not pin `dtolnay/rust-toolchain` to a version-shaped ref
+such as `@1.88`. Dependabot reads those as action tags and bumps them,
+which silently rewrites the Rust version — it once proposed `@1.100`, a
+nightly number, for the MSRV job. Use a branch ref (`@stable`,
+`@nightly`) or a SHA pin with an explicit `toolchain:` input;
+`scripts/check-github-community-files.sh` enforces this.
+
 ## Documentation Freshness
 
 The PR description must call out documentation impact. If a change

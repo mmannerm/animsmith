@@ -171,8 +171,8 @@ documentation.
 
 This crate has no public feature flags. In the `animsmith` CLI, glTF
 inspect/measure/lint/transform/fix/diff support is always available,
-including in `--no-default-features` builds. The workspace MSRV is Rust
-1.88.
+including in `--no-default-features` builds. The workspace MSRV is
+Rust 1.88.
 
 ## More Detail
 

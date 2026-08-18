@@ -11,6 +11,22 @@ animsmith uses the Rust 2024 edition and MSRV `1.88`, declared in the
 workspace `Cargo.toml`. CI checks stable Rust on Linux, macOS, and
 Windows, plus the MSRV on Linux.
 
+Develop on current stable; the MSRV is the floor the published crates
+promise, not the compiler maintainers run. When that floor may move is
+governed by the MSRV policy in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+`workspace.package.rust-version` is the single source of truth for the
+number. The CI MSRV job reads it out of the manifest rather than pinning
+a second copy, and two gates hold the prose to it: this file's MSRV
+sentence via `scripts/check-github-community-files.sh`, and every crate
+README and rustdoc header via `crates/animsmith/tests/msrv_docs.rs`. A
+bump is therefore a one-line manifest edit plus whatever prose those
+gates flag.
+
+That same shell gate also rejects a version-shaped
+`dtolnay/rust-toolchain@1.88` ref in any workflow, because Dependabot
+rewrites those as if they were action tags.
+
 Install the local tools used by the gates:
 
 ```console
