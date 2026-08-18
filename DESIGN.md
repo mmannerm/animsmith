@@ -129,7 +129,7 @@ animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hol
 animsmith fix     <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
 animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb> [--material-texture-recipe recipe.toml] [--animation-only|--bake-static-mesh-transforms] [--format text|json]
 animsmith assemble <recipe.toml> -o <out.glb> --evidence <out.json>
-animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file output-v7 measure/lint JSON
+animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file output-v8 measure/lint JSON
 ```
 
 - `lint` = measure + judge against config. `measure` is lint minus
@@ -580,8 +580,8 @@ learns an embedder's contract schema.
 
 - **Text** (default): findings grouped per clip, measured-vs-expected on
   one line, colored; `--quiet` for CI summaries.
-- **JSON** (`--format json`): final output v7, identified by
-  `urn:animsmith:schema:output:7`. Lint emits one result per catalog check and
+- **JSON** (`--format json`): final output v8, identified by
+  `urn:animsmith:schema:output:8`. Lint emits one result per catalog check and
   represents selection, configuration, applicability, evaluation coverage,
   content findings, completed scopes, and typed gaps independently. Measure
   and lint share a nested, independently versioned measurement contract. The
@@ -595,11 +595,16 @@ learns an embedder's contract schema.
   facts. This remains measurement evidence, not an image acceptance, repair,
   resize, transcode, color-space, writer-preservation, or recipe-authority
   policy.
-  Measurements v13 retains exact raw inverse-bind matrices and publishes
-  affine and conditioning evidence before deriving their inverses. It also
-  carries forward v12's corrected linear-transform observations through shared
-  f64 affine facts; v12 and earlier contracts remain immutable historical
-  evidence.
+  Measurements v14 gives every clip fact that is not applicable to every
+  clip (loop continuity, loop endpoint mode, frame grid, loop seam ratio,
+  gait and its phase, and root-motion speed) a required sibling
+  `<field>_availability` status of `measured`, `not_applicable`, or
+  `unavailable`, so a consumer can distinguish a legitimately missing
+  subject from an applicable metric whose derivation failed and must fail
+  closed. It also retains v13's exact raw inverse-bind matrices and affine
+  and conditioning evidence before deriving their inverses, and v12's
+  corrected linear-transform observations through shared f64 affine facts;
+  v13 and earlier contracts remain immutable historical evidence.
   `convert --format json` instead emits the separately versioned
   `urn:animsmith:schema:conversion-evidence:2` producer-evidence contract:
   requested options, written-artifact counts, optional static mesh bake entries
@@ -608,7 +613,7 @@ learns an embedder's contract schema.
   the current CLI emits v2 exclusively.
   CLI exit status derives only from content severity (warnings block only
   with `--deny-warnings`); coverage gaps are nonblocking evidence.
-  The output-v7 envelope types and immutable identities live in
+  The output-v8 envelope types and immutable identities live in
   `animsmith-core` so CLI and embedded producers serialize the same reporting
   contract. Static-bake evidence is also a public core type; the conversion
   envelope remains a CLI producer contract.
@@ -2201,6 +2206,19 @@ exact-zero determinant decision: a uniformly small but well-conditioned matrix
 is assessed by its error amplification rather than its determinant magnitude.
 The new nested shape advances the immutable outer envelope to output v7;
 measurements v12 and output v6 remain historical.
+
+Measurements v14 gives every clip fact that is not applicable to every clip —
+loop continuity, loop endpoint mode, frame grid, loop seam ratio, gait (and
+its own phase), and root-motion speed — a required sibling
+`<field>_availability` status of `measured`, `not_applicable`, or
+`unavailable`. A bare optional value cannot distinguish "this clip has no
+subject for the fact" (`not_applicable`, a legitimate absence) from "the
+subject applies, but derivation failed" (`unavailable`, which a consumer must
+fail closed on rather than silently treat as passing); those two absences now
+compare distinctly under `diff` as well. The value field is present if and
+only if its status is `measured`. The new nested shape advances the immutable
+outer envelope to output v8; measurements v13 and output v7 remain
+historical.
 
 The implementation status is:
 

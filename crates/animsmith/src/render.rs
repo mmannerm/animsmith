@@ -1883,8 +1883,10 @@ mod tests {
                 "  a_removed clip: clip removed",
                 "  b_shared loop_seam_ratio: disappeared 1.0000 -> (gone)",
                 "  b_shared speed_mps: appeared (none) -> 2.0000",
+                "  b_shared loop_seam_ratio_availability: no longer applicable",
+                "  b_shared speed_mps_availability: became measured",
                 "  c_added clip: clip added",
-                "4 significant change(s)",
+                "6 significant change(s)",
             ]
         );
     }

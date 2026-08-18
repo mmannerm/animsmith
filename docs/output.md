@@ -475,9 +475,31 @@ schema rejects a `measured` status without a value and a `not_applicable` or
 absences require opposite handling: legitimate non-applicability should
 remain acceptable, while an applicable-but-`unavailable` metric must not
 silently pass a consumer threshold that only checks for a present value.
-`diff` reports a clip fact's `not_applicable` <-> `unavailable` transition
-explicitly (`"became unavailable"` / `"no longer applicable"`), since both
-states otherwise compare as an absent value.
+
+Field-by-field applicability:
+
+| Field | `not_applicable` when | `unavailable` when |
+| --- | --- | --- |
+| `loop_continuity` | the skeleton has no bones | present bones exist, but the clip has fewer than three samples or the seam-adjacent model-space evidence is non-finite |
+| `loop_endpoint_mode` | the clip is not declared `loop = true` | the clip is declared `loop = true`, but neither the strict duplicate-endpoint predicate nor sampled continuity evidence can classify it |
+| `frame_grid` | the clip has no declared/configured FPS expectation | an FPS expectation is declared, but the duration or an authored key does not land on that grid |
+| `loop_seam_ratio` | the Hips role or every foot role is unresolved | the Hips + at least one foot role resolved, but no real stride was found between the seam-adjacent frames (feet did not move relative to the hips by at least the configured stride floor) — the role domain this metric needs is present, so a missing ratio here is a derivation failure, not a missing subject |
+| `gait` | the Hips role or every foot role is unresolved | the Hips + at least one foot role resolved, but the per-clip cycle sample failed |
+| `gait.phase` (nested `phase_availability`) | only one side (left or right) resolved a foot role | both a left and a right foot role resolved, but the fundamental-harmonic trough could not be located |
+| `speed_mps` | neither the Root nor the Hips role is resolved | the Root or Hips role resolved, but root-motion speed could not be derived from the sampled grid |
+
+`diff` reports every change to a clip fact's availability status — not only
+the `not_applicable` <-> `unavailable` transition that a bare optional value
+would otherwise compare as unchanged (both are an absent value), but also a
+`measured` <-> either absence transition, reported under the field's own
+`<field>_availability` metric name (for example
+`"loop_seam_ratio_availability"`) so it never collides with that field's
+ordinary value-movement delta (`"loop_seam_ratio"`, reported `"appeared"` /
+`"disappeared"` / `"moved"` as before). This matters most for
+`loop_endpoint_mode` and `frame_grid`, which carry an enum and a small object
+rather than a plain number: they have no value-movement delta of their own,
+so without the status delta a `measured` -> `unavailable` transition on
+either would be completely silent.
 
 For clips declared with `loop = true`, `loop_endpoint_mode` is present when
 AnimSmith can distinguish a strict mechanically removable

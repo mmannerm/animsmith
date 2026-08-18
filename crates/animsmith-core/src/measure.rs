@@ -1961,9 +1961,15 @@ pub fn measure_document(
                 },
             };
             let (loop_seam_ratio, loop_seam_ratio_availability) = match &cycle {
+                // `cycle` resolved means the Hips + foot role domain existed;
+                // a `None` ratio here means the stride-derivation evidence
+                // (a real neighbour-step) was insufficient, not that the
+                // subject is absent. That is `Unavailable`, not
+                // `NotApplicable`; only a missing role domain is
+                // `NotApplicable` below.
                 Some(metrics) => match metrics.loop_seam_ratio {
                     Some(ratio) => (Some(ratio), MeasurementAvailability::Measured),
-                    None => (None, MeasurementAvailability::NotApplicable),
+                    None => (None, MeasurementAvailability::Unavailable),
                 },
                 None if !gait_roles_applicable => (None, MeasurementAvailability::NotApplicable),
                 None => (None, MeasurementAvailability::Unavailable),
@@ -3838,6 +3844,73 @@ mod tests {
                     "speed_mps_availability": "unavailable",
                 }
             })
+        );
+    }
+
+    /// A resolved Hips + foot role domain with feet that never move relative
+    /// to the hips (no real stride) must report `loop_seam_ratio_availability:
+    /// unavailable`, not `not_applicable`: the role domain this metric needs
+    /// is fully present, so its absence is a derivation failure, not a
+    /// legitimately missing subject. Only an unresolved Hips + foot role
+    /// domain is `not_applicable`.
+    #[test]
+    fn resolved_gait_roles_with_no_real_stride_report_loop_seam_ratio_unavailable() {
+        let clip = Clip {
+            name: "planted".into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 0,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 0.5, 1.0],
+                values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::ZERO, Vec3::ZERO]),
+            }],
+        };
+        let skeleton = Skeleton {
+            bones: vec![
+                Bone {
+                    name: "hips".into(),
+                    parent: None,
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "left_foot".into(),
+                    parent: Some(0),
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "right_foot".into(),
+                    parent: Some(0),
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+            ],
+        };
+        let roles = ResolvedRoles::from_names(
+            &skeleton,
+            [
+                (Role::Hips, "hips".into()),
+                (Role::LeftFoot, "left_foot".into()),
+                (Role::RightFoot, "right_foot".into()),
+            ],
+        );
+        let doc = Document {
+            skeleton,
+            clips: vec![clip],
+            ..Document::default()
+        };
+        let grids = MetricGrids::new(&doc);
+        let measurements = measure_document(&grids, &roles, &Config::default());
+        let measured = &measurements["planted"];
+
+        assert_eq!(measured.loop_seam_ratio, None);
+        assert_eq!(
+            measured.loop_seam_ratio_availability,
+            MeasurementAvailability::Unavailable,
+            "the Hips + foot role domain resolved; a missing ratio here is a \
+             derivation failure (no real stride), not a missing subject"
         );
     }
 
