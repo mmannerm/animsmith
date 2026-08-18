@@ -16,7 +16,7 @@ use crate::model::{
     SourceImageInspection, SourceInverseBindAccessorStatus, SourceNodeLocalRest,
     SourceSkeletonCoverage, tolerant_world_rest_matrices, values_equal_to_mean,
 };
-use crate::profile::ResolvedRoles;
+use crate::profile::{ResolvedRoles, Role};
 use crate::sample::PoseGrid;
 use crate::transform::analyze_duplicate_loop_endpoint;
 use glam::{Mat3, Mat4, Vec3};
@@ -1687,15 +1687,43 @@ pub fn measure_assets(doc: &Document) -> AssetMeasurements {
     }
 }
 
+/// Availability status of a clip fact that does not apply to every clip, and
+/// that can additionally fail to derive even when it does apply.
+///
+/// This distinguishes two very different absences that a bare `Option`
+/// cannot: [`Self::NotApplicable`] means this clip has no subject for the
+/// fact at all (for example, no declared loop, no resolvable gait roles, or
+/// no root/hips travel quantity), while [`Self::Unavailable`] means the
+/// subject applies but derivation failed or the available evidence was
+/// insufficient. A consumer that must fail closed on a missing applicable
+/// fact should treat only [`Self::Unavailable`] that way; [`Self::NotApplicable`]
+/// remains a legitimate, expected absence. The sibling value field is
+/// present exactly when this status is [`Self::Measured`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum MeasurementAvailability {
+    /// The fact was measured; the sibling value field carries the measurement.
+    Measured,
+    /// This clip has no subject for the fact.
+    NotApplicable,
+    /// The fact applies to this clip, but it could not be derived.
+    Unavailable,
+}
+
 /// Role-dependent gait metrics for one clip.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct GaitMeasurement {
     /// Stride-anchor phase in `[0,1)`; see
-    /// [`crate::metrics::FootCycleMetrics::gait_phase`].
+    /// [`crate::metrics::FootCycleMetrics::gait_phase`]. Not applicable when
+    /// only one side (left or right) resolved a foot role.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phase: Option<f64>,
-    /// Peak-to-peak L−R foot-height swing (metres).
+    /// Availability of [`Self::phase`].
+    pub phase_availability: MeasurementAvailability,
+    /// Peak-to-peak L−R foot-height swing (metres). Zero when [`Self::phase`]
+    /// is not applicable.
     pub lr_amplitude_m: f64,
 }
 
@@ -1787,29 +1815,43 @@ pub struct ClipMeasurements {
     /// omitted.
     pub bone_rotation_range_deg: BTreeMap<String, f64>,
     /// Model-space pose closure plus seam-adjacent linear- and angular-velocity
-    /// continuity for every skeleton bone. Available without rig-role
+    /// continuity for every skeleton bone. Not applicable only when the
+    /// skeleton has no bones; otherwise available without rig-role
     /// resolution.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loop_continuity: Option<LoopContinuityMeasurement>,
-    /// Endpoint convention measured for a declared looping clip when enough
-    /// authored or model-space continuity evidence is available.
+    /// Availability of [`Self::loop_continuity`].
+    pub loop_continuity_availability: MeasurementAvailability,
+    /// Endpoint convention for a clip declared `loop = true`. Not applicable
+    /// for clips not declared as loops.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loop_endpoint_mode: Option<LoopEndpointMode>,
-    /// Declared FPS-grid evidence when the duration and every authored key
-    /// land within the established frame-grid tolerance.
+    /// Availability of [`Self::loop_endpoint_mode`].
+    pub loop_endpoint_mode_availability: MeasurementAvailability,
+    /// Declared FPS-grid evidence. Not applicable when the clip has no
+    /// declared/configured FPS expectation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frame_grid: Option<FrameGridMeasurement>,
+    /// Availability of [`Self::frame_grid`].
+    pub frame_grid_availability: MeasurementAvailability,
     /// Loop wrap discontinuity ratio; needs hips + foot roles and a
     /// real stride. See [`crate::metrics::FootCycleMetrics`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loop_seam_ratio: Option<f64>,
-    /// Gait stride anchor; needs a left and a right foot role.
+    /// Availability of [`Self::loop_seam_ratio`].
+    pub loop_seam_ratio_availability: MeasurementAvailability,
+    /// Gait stride anchor; needs the Hips role plus a left or right foot
+    /// role.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gait: Option<GaitMeasurement>,
+    /// Availability of [`Self::gait`].
+    pub gait_availability: MeasurementAvailability,
     /// Horizontal root displacement ÷ duration (m/s); needs the Root
     /// (or Hips) role.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speed_mps: Option<f64>,
+    /// Availability of [`Self::speed_mps`].
+    pub speed_mps_availability: MeasurementAvailability,
 }
 
 /// Measure every clip using shared metric pose grids. Role-dependent
@@ -1857,33 +1899,106 @@ pub fn measure_document(
             let cycle = grid
                 .as_ref()
                 .and_then(|g| foot_cycle_metrics(g, roles, min_stride_step_m));
-            let loop_continuity = grid.as_ref().and_then(|grid| {
-                let metrics = loop_continuity_metrics(grid)?;
-                Some(LoopContinuityMeasurement {
-                    bones: metrics
-                        .into_iter()
-                        .enumerate()
-                        .map(|(bone_index, metrics)| BoneLoopContinuityMeasurement {
-                            bone_index: bone_index as u32,
-                            bone_name: doc.skeleton.bones[bone_index].name.clone(),
-                            position_delta_m: metrics.position_delta_m,
-                            rotation_delta_deg: metrics.rotation_delta_deg,
-                            seam_velocity_delta_mps: metrics.seam_velocity_delta_mps,
-                            seam_angular_velocity_delta_degps: metrics
-                                .seam_angular_velocity_delta_degps,
-                        })
-                        .collect(),
-                })
-            });
+            let gait_roles_applicable = roles.get(Role::Hips).is_some()
+                && [
+                    Role::LeftFoot,
+                    Role::LeftToe,
+                    Role::RightFoot,
+                    Role::RightToe,
+                ]
+                .iter()
+                .any(|&role| roles.get(role).is_some());
+            let has_left_foot_role = [Role::LeftFoot, Role::LeftToe]
+                .iter()
+                .any(|&role| roles.get(role).is_some());
+            let has_right_foot_role = [Role::RightFoot, Role::RightToe]
+                .iter()
+                .any(|&role| roles.get(role).is_some());
+
+            let (loop_continuity, loop_continuity_availability) = if doc.skeleton.bones.is_empty() {
+                (None, MeasurementAvailability::NotApplicable)
+            } else {
+                match grid.as_ref().and_then(|grid| loop_continuity_metrics(grid)) {
+                    Some(metrics) => (
+                        Some(LoopContinuityMeasurement {
+                            bones: metrics
+                                .into_iter()
+                                .enumerate()
+                                .map(|(bone_index, metrics)| BoneLoopContinuityMeasurement {
+                                    bone_index: bone_index as u32,
+                                    bone_name: doc.skeleton.bones[bone_index].name.clone(),
+                                    position_delta_m: metrics.position_delta_m,
+                                    rotation_delta_deg: metrics.rotation_delta_deg,
+                                    seam_velocity_delta_mps: metrics.seam_velocity_delta_mps,
+                                    seam_angular_velocity_delta_degps: metrics
+                                        .seam_angular_velocity_delta_degps,
+                                })
+                                .collect(),
+                        }),
+                        MeasurementAvailability::Measured,
+                    ),
+                    None => (None, MeasurementAvailability::Unavailable),
+                }
+            };
             let expectations = config.expectations_for(&clip.name);
             let (position_cap, rotation_cap) = effective_caps(config, &expectations);
-            let loop_endpoint_mode = (expectations.looping == Some(true))
-                .then(|| {
-                    measure_loop_endpoint_mode(clip, grid.as_deref(), position_cap, rotation_cap)
-                })
-                .flatten();
-            let frame_grid = measure_frame_grid(clip, expectations.fps);
-            let speed_mps = grid.as_ref().and_then(|g| root_motion_speed_mps(g, roles));
+            let (loop_endpoint_mode, loop_endpoint_mode_availability) = if expectations.looping
+                == Some(true)
+            {
+                match measure_loop_endpoint_mode(clip, grid.as_deref(), position_cap, rotation_cap)
+                {
+                    Some(mode) => (Some(mode), MeasurementAvailability::Measured),
+                    None => (None, MeasurementAvailability::Unavailable),
+                }
+            } else {
+                (None, MeasurementAvailability::NotApplicable)
+            };
+            let (frame_grid, frame_grid_availability) = match expectations.fps {
+                None => (None, MeasurementAvailability::NotApplicable),
+                Some(_) => match measure_frame_grid(clip, expectations.fps) {
+                    Some(measurement) => (Some(measurement), MeasurementAvailability::Measured),
+                    None => (None, MeasurementAvailability::Unavailable),
+                },
+            };
+            let (loop_seam_ratio, loop_seam_ratio_availability) = match &cycle {
+                Some(metrics) => match metrics.loop_seam_ratio {
+                    Some(ratio) => (Some(ratio), MeasurementAvailability::Measured),
+                    None => (None, MeasurementAvailability::NotApplicable),
+                },
+                None if !gait_roles_applicable => (None, MeasurementAvailability::NotApplicable),
+                None => (None, MeasurementAvailability::Unavailable),
+            };
+            let (gait, gait_availability) = match &cycle {
+                Some(metrics) => {
+                    let (phase, phase_availability) = match metrics.gait_phase {
+                        Some(phase) => (Some(phase), MeasurementAvailability::Measured),
+                        None if !(has_left_foot_role && has_right_foot_role) => {
+                            (None, MeasurementAvailability::NotApplicable)
+                        }
+                        None => (None, MeasurementAvailability::Unavailable),
+                    };
+                    (
+                        Some(GaitMeasurement {
+                            phase,
+                            phase_availability,
+                            lr_amplitude_m: metrics.lr_amplitude_m,
+                        }),
+                        MeasurementAvailability::Measured,
+                    )
+                }
+                None if !gait_roles_applicable => (None, MeasurementAvailability::NotApplicable),
+                None => (None, MeasurementAvailability::Unavailable),
+            };
+            let root_roles_applicable =
+                roles.get(Role::Root).is_some() || roles.get(Role::Hips).is_some();
+            let (speed_mps, speed_mps_availability) = if !root_roles_applicable {
+                (None, MeasurementAvailability::NotApplicable)
+            } else {
+                match grid.as_ref().and_then(|g| root_motion_speed_mps(g, roles)) {
+                    Some(speed) => (Some(speed), MeasurementAvailability::Measured),
+                    None => (None, MeasurementAvailability::Unavailable),
+                }
+            };
             let duration_s = if clip.duration_s.is_finite() {
                 clip.duration_s
             } else {
@@ -1903,14 +2018,17 @@ pub fn measure_document(
                     animated_bones: animated.into_iter().collect(),
                     bone_rotation_range_deg: rotation_range,
                     loop_continuity,
+                    loop_continuity_availability,
                     loop_endpoint_mode,
+                    loop_endpoint_mode_availability,
                     frame_grid,
-                    loop_seam_ratio: cycle.as_ref().and_then(|c| c.loop_seam_ratio),
-                    gait: cycle.map(|c| GaitMeasurement {
-                        phase: c.gait_phase,
-                        lr_amplitude_m: c.lr_amplitude_m,
-                    }),
+                    frame_grid_availability,
+                    loop_seam_ratio,
+                    loop_seam_ratio_availability,
+                    gait,
+                    gait_availability,
                     speed_mps,
+                    speed_mps_availability,
                 },
             )
         })

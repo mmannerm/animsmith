@@ -17,10 +17,10 @@ use crate::evaluation::{
 };
 use crate::measure::{
     Aabb, AssetMeasurements, ClipMeasurements, ImageMeasurements, LinearTransformClassification,
-    LinearTransformMeasurements, MaterialDefinitionMeasurements, SkeletonNodeLocalRestMeasurements,
-    SkeletonRestWorldMatrixUnavailableReason, SkinDerivedMatrixMeasurements,
-    SkinDerivedMatrixUnavailableReason, TextureMeasurements, assess_inverse_bind,
-    measure_linear_transform, summarize_skin_bind_linear,
+    LinearTransformMeasurements, MaterialDefinitionMeasurements, MeasurementAvailability,
+    SkeletonNodeLocalRestMeasurements, SkeletonRestWorldMatrixUnavailableReason,
+    SkinDerivedMatrixMeasurements, SkinDerivedMatrixUnavailableReason, TextureMeasurements,
+    assess_inverse_bind, measure_linear_transform, summarize_skin_bind_linear,
 };
 use crate::model::{
     DecodedImageColorType, MaterialResourceCoverage, SourceInverseBindAccessorStatus,
@@ -30,13 +30,13 @@ use crate::profile::ResolvedRoles;
 use crate::{Document, Severity};
 
 /// Current outer result-envelope version.
-pub const OUTPUT_SCHEMA_VERSION: u32 = 7;
+pub const OUTPUT_SCHEMA_VERSION: u32 = 8;
 /// Immutable identity of the current outer result envelope.
-pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:7";
+pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:8";
 /// Current nested measurement-contract version.
-pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 13;
+pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 14;
 /// Immutable identity of the current nested measurement contract.
-pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:13";
+pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:14";
 
 /// Source checkout identity for the producing animsmith build.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -51,7 +51,7 @@ impl ToolSource {
     /// Packaged or otherwise provenance-free builds use `None` for fields they
     /// cannot establish rather than claiming a clean checkout. Revisions that
     /// are not full 40-character hexadecimal Git object ids are dropped so an
-    /// envelope constructed through this API remains within output v7.
+    /// envelope constructed through this API remains within output v8.
     pub fn new(revision: Option<String>, dirty: Option<bool>) -> Self {
         let revision = revision.filter(|revision| {
             revision.len() == 40 && revision.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -280,12 +280,62 @@ fn validate_measurements(
             .then_some(())
             .ok_or(MeasurementContractError::NonFiniteValue { path })
     };
+    let check_availability = |value_present: bool, availability: MeasurementAvailability, path: String| {
+        match (value_present, availability) {
+            (true, MeasurementAvailability::Measured) => Ok(()),
+            (
+                false,
+                MeasurementAvailability::NotApplicable | MeasurementAvailability::Unavailable,
+            ) => Ok(()),
+            _ => Err(MeasurementContractError::InvalidStructure {
+                path,
+                reason: "value presence must match availability status".into(),
+            }),
+        }
+    };
     for (clip_name, clip) in clips {
         finite(clip.duration_s, format!("clips[{clip_name:?}].duration_s"))?;
         for (bone, value) in &clip.bone_rotation_range_deg {
             finite(
                 *value,
                 format!("clips[{clip_name:?}].bone_rotation_range_deg[{bone:?}]"),
+            )?;
+        }
+        check_availability(
+            clip.loop_continuity.is_some(),
+            clip.loop_continuity_availability,
+            format!("clips[{clip_name:?}].loop_continuity"),
+        )?;
+        check_availability(
+            clip.loop_endpoint_mode.is_some(),
+            clip.loop_endpoint_mode_availability,
+            format!("clips[{clip_name:?}].loop_endpoint_mode"),
+        )?;
+        check_availability(
+            clip.frame_grid.is_some(),
+            clip.frame_grid_availability,
+            format!("clips[{clip_name:?}].frame_grid"),
+        )?;
+        check_availability(
+            clip.loop_seam_ratio.is_some(),
+            clip.loop_seam_ratio_availability,
+            format!("clips[{clip_name:?}].loop_seam_ratio"),
+        )?;
+        check_availability(
+            clip.gait.is_some(),
+            clip.gait_availability,
+            format!("clips[{clip_name:?}].gait"),
+        )?;
+        check_availability(
+            clip.speed_mps.is_some(),
+            clip.speed_mps_availability,
+            format!("clips[{clip_name:?}].speed_mps"),
+        )?;
+        if let Some(gait) = &clip.gait {
+            check_availability(
+                gait.phase.is_some(),
+                gait.phase_availability,
+                format!("clips[{clip_name:?}].gait.phase"),
             )?;
         }
         if let Some(loop_continuity) = &clip.loop_continuity {
@@ -326,7 +376,7 @@ fn validate_measurements(
                 }
             }
         }
-        if let Some(frame_grid) = clip.frame_grid {
+        if let Some(frame_grid) = &clip.frame_grid {
             let path = format!("clips[{clip_name:?}].frame_grid");
             finite(frame_grid.fps, format!("{path}.fps"))?;
             if frame_grid.fps <= 0.0 {
@@ -2025,11 +2075,17 @@ mod measurement_report_input_tests {
             animated_bones: Vec::new(),
             bone_rotation_range_deg: BTreeMap::new(),
             loop_continuity: None,
+            loop_continuity_availability: MeasurementAvailability::NotApplicable,
             loop_endpoint_mode: None,
+            loop_endpoint_mode_availability: MeasurementAvailability::NotApplicable,
             frame_grid: None,
+            frame_grid_availability: MeasurementAvailability::NotApplicable,
             loop_seam_ratio: None,
+            loop_seam_ratio_availability: MeasurementAvailability::NotApplicable,
             gait: None,
+            gait_availability: MeasurementAvailability::NotApplicable,
             speed_mps: None,
+            speed_mps_availability: MeasurementAvailability::NotApplicable,
         };
         let invalid_mesh = || crate::measure::MeshDefinitionMeasurements {
             mesh_index: 0,

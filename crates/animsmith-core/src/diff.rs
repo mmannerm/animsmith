@@ -5,7 +5,7 @@
 //! as noise (f32 quantization, re-export dust), not a change worth
 //! reporting.
 
-use crate::measure::ClipMeasurements;
+use crate::measure::{ClipMeasurements, MeasurementAvailability};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -55,6 +55,37 @@ pub struct MetricDelta {
 
 fn non_finite_or_none(value: &Option<f64>) -> bool {
     value.is_none_or(|number| !number.is_finite())
+}
+
+/// Report a clip fact's `not_applicable` <-> `unavailable` availability
+/// transition. Both states already compare as an absent value elsewhere in
+/// this module, so without this the transition would be silent even though
+/// it distinguishes "this clip has no such subject" from "the subject
+/// applies, but derivation failed" — exactly the ambiguity a bare optional
+/// value cannot express.
+fn push_availability(
+    deltas: &mut Vec<MetricDelta>,
+    clip: &str,
+    metric: &str,
+    a: MeasurementAvailability,
+    b: MeasurementAvailability,
+) {
+    let note = match (a, b) {
+        (MeasurementAvailability::NotApplicable, MeasurementAvailability::Unavailable) => {
+            "became unavailable"
+        }
+        (MeasurementAvailability::Unavailable, MeasurementAvailability::NotApplicable) => {
+            "no longer applicable"
+        }
+        _ => return,
+    };
+    deltas.push(MetricDelta {
+        clip: clip.into(),
+        metric: metric.into(),
+        before: None,
+        after: None,
+        note: note.into(),
+    });
 }
 
 /// Compare two measurement maps and return only significant deltas.
@@ -211,6 +242,44 @@ pub fn diff_measurements(
             );
         }
 
+        push_availability(
+            &mut deltas,
+            clip,
+            "loop_continuity",
+            ma.loop_continuity_availability,
+            mb.loop_continuity_availability,
+        );
+        push_availability(
+            &mut deltas,
+            clip,
+            "loop_seam_ratio",
+            ma.loop_seam_ratio_availability,
+            mb.loop_seam_ratio_availability,
+        );
+        push_availability(
+            &mut deltas,
+            clip,
+            "gait",
+            ma.gait_availability,
+            mb.gait_availability,
+        );
+        push_availability(
+            &mut deltas,
+            clip,
+            "speed_mps",
+            ma.speed_mps_availability,
+            mb.speed_mps_availability,
+        );
+        if let (Some(ga), Some(gb)) = (ma.gait.as_ref(), mb.gait.as_ref()) {
+            push_availability(
+                &mut deltas,
+                clip,
+                "gait.phase",
+                ga.phase_availability,
+                gb.phase_availability,
+            );
+        }
+
         for bone in ma
             .bone_rotation_range_deg
             .keys()
@@ -271,7 +340,8 @@ pub fn diff_measurements(
 mod tests {
     use super::*;
     use crate::measure::{
-        BoneLoopContinuityMeasurement, ClipMeasurements, GaitMeasurement, LoopContinuityMeasurement,
+        BoneLoopContinuityMeasurement, ClipMeasurements, GaitMeasurement,
+        LoopContinuityMeasurement, MeasurementAvailability,
     };
 
     fn clip_measurements() -> ClipMeasurements {
@@ -290,14 +360,21 @@ mod tests {
                     seam_angular_velocity_delta_degps: 10.0,
                 }],
             }),
+            loop_continuity_availability: MeasurementAvailability::Measured,
             loop_endpoint_mode: None,
+            loop_endpoint_mode_availability: MeasurementAvailability::NotApplicable,
             frame_grid: None,
+            frame_grid_availability: MeasurementAvailability::NotApplicable,
             loop_seam_ratio: Some(0.2),
+            loop_seam_ratio_availability: MeasurementAvailability::Measured,
             gait: Some(GaitMeasurement {
                 phase: Some(0.25),
+                phase_availability: MeasurementAvailability::Measured,
                 lr_amplitude_m: 0.1,
             }),
+            gait_availability: MeasurementAvailability::Measured,
             speed_mps: Some(1.0),
+            speed_mps_availability: MeasurementAvailability::Measured,
         }
     }
 
