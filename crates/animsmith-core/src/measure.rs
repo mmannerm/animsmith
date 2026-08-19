@@ -1838,7 +1838,13 @@ pub struct ClipMeasurements {
     /// real stride. See [`crate::metrics::FootCycleMetrics`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loop_seam_ratio: Option<f64>,
-    /// Availability of [`Self::loop_seam_ratio`].
+    /// Availability of [`Self::loop_seam_ratio`]. `NotApplicable` when the
+    /// Hips + foot role domain is unresolved, or when it resolves but the
+    /// clip has no real stride to normalize the seam against (a
+    /// planted/idle clip). `Unavailable` when the role domain resolved but
+    /// the grid was otherwise unusable (e.g. too few frames), or a real
+    /// stride's ratio could not be derived; see
+    /// [`crate::metrics::FootCycleMetrics::loop_seam_ratio`].
     pub loop_seam_ratio_availability: MeasurementAvailability,
     /// Gait stride anchor; needs the Hips role plus a left or right foot
     /// role.
@@ -1961,14 +1967,22 @@ pub fn measure_document(
                 },
             };
             let (loop_seam_ratio, loop_seam_ratio_availability) = match &cycle {
-                // `cycle` resolved means the Hips + foot role domain existed;
-                // a `None` ratio here means the stride-derivation evidence
-                // (a real neighbour-step) was insufficient, not that the
-                // subject is absent. That is `Unavailable`, not
-                // `NotApplicable`; only a missing role domain is
-                // `NotApplicable` below.
+                // `cycle` resolved means the Hips + foot role domain existed.
+                // A `None` ratio then means one of two very different
+                // things: no real stride exists to normalize against (the
+                // clip is planted/idle — a legitimate absent subject, so
+                // `NotApplicable`), or a real stride exists but the ratio
+                // itself could not be derived from it (a true derivation
+                // failure, so `Unavailable`; see
+                // [`crate::metrics::FootCycleMetrics::loop_seam_ratio`] for
+                // the only known route to this — per-axis deltas near
+                // `f32::MAX`). Only a missing role domain below is
+                // otherwise `NotApplicable`.
                 Some(metrics) => match metrics.loop_seam_ratio {
                     Some(ratio) => (Some(ratio), MeasurementAvailability::Measured),
+                    None if !metrics.has_real_stride => {
+                        (None, MeasurementAvailability::NotApplicable)
+                    }
                     None => (None, MeasurementAvailability::Unavailable),
                 },
                 None if !gait_roles_applicable => (None, MeasurementAvailability::NotApplicable),
@@ -2103,6 +2117,7 @@ pub(crate) fn measure_frame_grid(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::CheckSettings;
     use crate::model::{
         AdditionalInfluenceSet, AffineDomainViolation, Bone, Clip, Document, Interpolation,
         MeshAsset, PositiveUniformAffineTolerance, Primitive, Property, SceneAsset, SceneAssets,
@@ -3849,12 +3864,12 @@ mod tests {
 
     /// A resolved Hips + foot role domain with feet that never move relative
     /// to the hips (no real stride) must report `loop_seam_ratio_availability:
-    /// unavailable`, not `not_applicable`: the role domain this metric needs
-    /// is fully present, so its absence is a derivation failure, not a
-    /// legitimately missing subject. Only an unresolved Hips + foot role
-    /// domain is `not_applicable`.
+    /// not_applicable`: the ratio is undefined without a stride to normalize
+    /// against, so this is a legitimately missing subject, not a derivation
+    /// failure. `unavailable` is reserved for a real stride whose ratio
+    /// still could not be derived.
     #[test]
-    fn resolved_gait_roles_with_no_real_stride_report_loop_seam_ratio_unavailable() {
+    fn resolved_gait_roles_with_no_real_stride_report_loop_seam_ratio_not_applicable() {
         let clip = Clip {
             name: "planted".into(),
             duration_s: 1.0,
@@ -3908,9 +3923,210 @@ mod tests {
         assert_eq!(measured.loop_seam_ratio, None);
         assert_eq!(
             measured.loop_seam_ratio_availability,
+            MeasurementAvailability::NotApplicable,
+            "the Hips + foot role domain resolved, but the clip has no real \
+             stride to normalize the seam against, so the ratio is a \
+             legitimately missing subject, not a derivation failure"
+        );
+    }
+
+    /// A resolved Hips + foot role domain with a Hips + `left_foot` bone,
+    /// used by the `loop_seam_ratio` availability-partition tests below.
+    fn gait_skeleton_and_roles() -> (Skeleton, ResolvedRoles) {
+        let skeleton = Skeleton {
+            bones: vec![
+                Bone {
+                    name: "hips".into(),
+                    parent: None,
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "left_foot".into(),
+                    parent: Some(0),
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "right_foot".into(),
+                    parent: Some(0),
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+            ],
+        };
+        let roles = ResolvedRoles::from_names(
+            &skeleton,
+            [
+                (Role::Hips, "hips".into()),
+                (Role::LeftFoot, "left_foot".into()),
+                (Role::RightFoot, "right_foot".into()),
+            ],
+        );
+        (skeleton, roles)
+    }
+
+    fn foot_translation_clip(name: &str, values: [Vec3; 3]) -> Clip {
+        Clip {
+            name: name.into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 1,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 0.5, 1.0],
+                values: TrackValues::Vec3s(values.to_vec()),
+            }],
+        }
+    }
+
+    /// The configured stride floor is a `>=` boundary: a neighbour step
+    /// strictly below it means no real stride (`NotApplicable`), and a
+    /// neighbour step meeting it exactly derives a real, finite ratio
+    /// (`Measured`). A mutant that flips `>=` to `>`, or that drops the
+    /// per-check `min_stride_step_m` override in favour of the built-in
+    /// default, changes which of these two clips lands on which side.
+    #[test]
+    fn loop_seam_ratio_floor_boundary_partitions_not_applicable_from_measured() {
+        let (skeleton, roles) = gait_skeleton_and_roles();
+        let floor = 0.05;
+        let below_floor = foot_translation_clip(
+            "below_floor",
+            [
+                Vec3::ZERO,
+                Vec3::new(floor as f32 - 0.01, 0.0, 0.0),
+                Vec3::ZERO,
+            ],
+        );
+        let at_floor = foot_translation_clip(
+            "at_floor",
+            [
+                Vec3::ZERO,
+                Vec3::new(floor as f32, 0.0, 0.0),
+                Vec3::new(0.01, 0.0, 0.0),
+            ],
+        );
+        let seam_pop = foot_translation_clip(
+            "seam_pop",
+            [
+                Vec3::ZERO,
+                Vec3::new(floor as f32, 0.0, 0.0),
+                Vec3::new(2.0 * floor as f32, 0.0, 0.0),
+            ],
+        );
+        let doc = Document {
+            skeleton,
+            clips: vec![below_floor, at_floor, seam_pop],
+            ..Document::default()
+        };
+        let grids = MetricGrids::new(&doc);
+        let mut config = Config::default();
+        config.checks.insert(
+            "loop-seam".into(),
+            CheckSettings {
+                min_stride_step_m: Some(floor),
+                ..CheckSettings::default()
+            },
+        );
+        let measurements = measure_document(&grids, &roles, &config);
+
+        let below = &measurements["below_floor"];
+        assert_eq!(below.loop_seam_ratio, None);
+        assert_eq!(
+            below.loop_seam_ratio_availability,
+            MeasurementAvailability::NotApplicable,
+            "a neighbour step strictly under the configured floor is not a \
+             real stride"
+        );
+
+        let at = &measurements["at_floor"];
+        assert_eq!(
+            at.loop_seam_ratio_availability,
+            MeasurementAvailability::Measured,
+            "a neighbour step meeting the floor exactly (>=) is a real \
+             stride with a derivable ratio"
+        );
+        let ratio = at.loop_seam_ratio.expect("real stride derives a ratio");
+        assert!(
+            (ratio - 0.01 / floor).abs() < 1e-6,
+            "seam / neighbour_step for the constructed positions, got {ratio}"
+        );
+
+        // A second finite ratio, distinct from the 0.2 case above and > 1,
+        // to prove finite-ratio classification isn't only exercised at one
+        // value: neighbour_step == floor and seam == 2 * floor gives an
+        // exact ratio of 2.0.
+        let pop = &measurements["seam_pop"];
+        assert_eq!(
+            pop.loop_seam_ratio_availability,
+            MeasurementAvailability::Measured,
+            "a real stride with a seam pop still derives a finite ratio"
+        );
+        let pop_ratio = pop.loop_seam_ratio.expect("real stride derives a ratio");
+        assert!(
+            (pop_ratio - 2.0).abs() < 1e-6,
+            "seam / neighbour_step for the constructed positions, got {pop_ratio}"
+        );
+    }
+
+    /// A real stride whose seam distance overflows `f32` squaring to
+    /// infinity (see
+    /// [`crate::metrics::tests::foot_metrics_real_stride_with_seam_beyond_f32_squaring_range_has_no_ratio`])
+    /// must surface as `Unavailable` end-to-end through
+    /// [`measure_document`], not collapse into `NotApplicable`: the role
+    /// domain and the stride both resolved, so this is a genuine
+    /// derivation failure.
+    #[test]
+    fn real_stride_beyond_f32_squaring_range_reports_loop_seam_ratio_unavailable() {
+        let (mut skeleton, _) = gait_skeleton_and_roles();
+        skeleton.bones.truncate(2); // hips + left_foot only
+        let clip = Clip {
+            name: "extreme".into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 1,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 0.25, 0.5, 1.0],
+                values: TrackValues::Vec3s(vec![
+                    Vec3::ZERO,
+                    Vec3::new(f32::MIN_POSITIVE, 0.0, 0.0),
+                    Vec3::new(f32::MAX - f32::MIN_POSITIVE, 0.0, 0.0),
+                    Vec3::new(f32::MAX, 0.0, 0.0),
+                ]),
+            }],
+        };
+        let roles = ResolvedRoles::from_names(
+            &skeleton,
+            [
+                (Role::Hips, "hips".to_string()),
+                (Role::LeftFoot, "left_foot".to_string()),
+            ],
+        );
+        let doc = Document {
+            skeleton,
+            clips: vec![clip],
+            ..Document::default()
+        };
+        let grids = MetricGrids::new(&doc);
+        let mut config = Config::default();
+        config.checks.insert(
+            "loop-seam".into(),
+            CheckSettings {
+                min_stride_step_m: Some(f64::from(f32::MIN_POSITIVE)),
+                ..CheckSettings::default()
+            },
+        );
+        let measurements = measure_document(&grids, &roles, &config);
+        let measured = &measurements["extreme"];
+
+        assert_eq!(measured.loop_seam_ratio, None);
+        assert_eq!(
+            measured.loop_seam_ratio_availability,
             MeasurementAvailability::Unavailable,
-            "the Hips + foot role domain resolved; a missing ratio here is a \
-             derivation failure (no real stride), not a missing subject"
+            "the role domain resolved and the neighbour step met the (tiny) \
+             configured floor, so this is a derivation failure, not a \
+             missing subject"
         );
     }
 
