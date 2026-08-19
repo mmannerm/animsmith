@@ -70,8 +70,14 @@ pub struct FootCycleMetrics {
     /// Wrap discontinuity of the feet (relative to hips) over the max of
     /// the two seam-adjacent in-clip steps. ≈1.0 for a clean cyclic
     /// loop; well above 1 for a seam pop. `None` when the clip has no
-    /// real stride, or when a real stride exists but the ratio could
-    /// not be derived from it (see [`Self::has_real_stride`]).
+    /// real stride (see [`Self::has_real_stride`]), or when a real
+    /// stride exists but `seam / neighbour_step` is not finite. The
+    /// whole-clip position finiteness gate above only bounds individual
+    /// coordinates, not the `f32` squared-length arithmetic used to turn
+    /// two positions into a distance; a per-axis delta near `f32::MAX`
+    /// overflows that squaring to infinity even though every input
+    /// position was finite. That is the only known route to this case —
+    /// it requires magnitudes far outside any real animation.
     pub loop_seam_ratio: Option<f64>,
     /// Whether the seam-adjacent neighbour step met the configured
     /// minimum stride threshold, i.e. whether the clip has a real
@@ -600,5 +606,69 @@ mod tests {
         assert!(grid.model_position(0, 0).is_finite());
         assert!(grid.model_position(0, 1).is_finite());
         assert!(foot_cycle_metrics(&grid, &roles, MIN_STRIDE_STEP_M).is_none());
+    }
+
+    /// A real stride can still leave `loop_seam_ratio` `None`: the seam
+    /// (frame `frames - 1` vs frame `0`) is a single point-to-point
+    /// distance, unconstrained by either neighbour step, so it can sit at
+    /// a per-axis delta near `f32::MAX` while both neighbour steps stay at
+    /// the smallest representable positive `f32` value (comfortably over
+    /// the configured floor). `f32` squares that delta while computing the
+    /// distance, overflowing to infinity even though every input position
+    /// was finite — the ratio then divides out non-finite, not "no
+    /// subject". This is the only known route to
+    /// [`FootCycleMetrics::loop_seam_ratio`]'s "real stride but
+    /// undirivable" `None`, and it requires magnitudes far outside any
+    /// real animation.
+    #[test]
+    fn foot_metrics_real_stride_with_seam_beyond_f32_squaring_range_has_no_ratio() {
+        let mut doc = document_with_metric_clip();
+        doc.skeleton.bones = vec![
+            Bone {
+                name: "hips".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            },
+            Bone {
+                name: "left".into(),
+                parent: Some(0),
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            },
+        ];
+        doc.clips[0].tracks = vec![Track {
+            bone: 1,
+            property: Property::Translation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 0.25, 0.5, 1.0],
+            values: TrackValues::Vec3s(vec![
+                Vec3::ZERO,
+                Vec3::new(f32::MIN_POSITIVE, 0.0, 0.0),
+                Vec3::new(f32::MAX - f32::MIN_POSITIVE, 0.0, 0.0),
+                Vec3::new(f32::MAX, 0.0, 0.0),
+            ]),
+        }];
+        let roles = ResolvedRoles::from_names(
+            &doc.skeleton,
+            [
+                (Role::Hips, "hips".to_string()),
+                (Role::LeftFoot, "left".to_string()),
+            ],
+        );
+        let grid = MetricGrids::new(&doc).grid(0).expect("metric grid");
+
+        let metrics = foot_cycle_metrics(&grid, &roles, f64::from(f32::MIN_POSITIVE))
+            .expect("hips + one foot role with enough frames yields metrics");
+
+        assert!(
+            metrics.has_real_stride,
+            "the neighbour step met the (tiny) configured floor"
+        );
+        assert_eq!(
+            metrics.loop_seam_ratio, None,
+            "the seam distance overflowed f32 squaring to infinity, so the \
+             ratio is non-finite despite a real stride"
+        );
     }
 }
