@@ -70,8 +70,15 @@ pub struct FootCycleMetrics {
     /// Wrap discontinuity of the feet (relative to hips) over the max of
     /// the two seam-adjacent in-clip steps. ≈1.0 for a clean cyclic
     /// loop; well above 1 for a seam pop. `None` when the clip has no
-    /// real stride.
+    /// real stride, or when a real stride exists but the ratio could
+    /// not be derived from it (see [`Self::has_real_stride`]).
     pub loop_seam_ratio: Option<f64>,
+    /// Whether the seam-adjacent neighbour step met the configured
+    /// minimum stride threshold, i.e. whether the clip has a real
+    /// stride to normalize the seam against. `false` means
+    /// [`Self::loop_seam_ratio`]'s absence is an expected "no subject"
+    /// (a planted/idle clip), not a derivation failure.
+    pub has_real_stride: bool,
     /// Cycle position `[0,1)` of the trough of the fundamental harmonic
     /// of the left-minus-right foot-height signal — a stride-phase
     /// anchor encoding handedness + cycle alignment. `None` when a side
@@ -285,7 +292,8 @@ pub fn foot_cycle_metrics(
     let step_first = max_foot_dist(1, 0);
     let step_last = max_foot_dist(frames - 1, frames - 2);
     let neighbour_step = step_first.max(step_last);
-    let loop_seam_ratio = if neighbour_step > 0.0 && neighbour_step >= min_stride_step_m {
+    let has_real_stride = neighbour_step > 0.0 && neighbour_step >= min_stride_step_m;
+    let loop_seam_ratio = if has_real_stride {
         let ratio = seam / neighbour_step;
         ratio.is_finite().then_some(ratio)
     } else {
@@ -314,6 +322,7 @@ pub fn foot_cycle_metrics(
 
     Some(FootCycleMetrics {
         loop_seam_ratio,
+        has_real_stride,
         gait_phase,
         lr_amplitude_m,
     })

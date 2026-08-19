@@ -1838,7 +1838,11 @@ pub struct ClipMeasurements {
     /// real stride. See [`crate::metrics::FootCycleMetrics`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loop_seam_ratio: Option<f64>,
-    /// Availability of [`Self::loop_seam_ratio`].
+    /// Availability of [`Self::loop_seam_ratio`]. `NotApplicable` when the
+    /// Hips + foot role domain is unresolved, or when it resolves but the
+    /// clip has no real stride to normalize the seam against (a
+    /// planted/idle clip). `Unavailable` only when a real stride exists
+    /// but the ratio itself could not be derived.
     pub loop_seam_ratio_availability: MeasurementAvailability,
     /// Gait stride anchor; needs the Hips role plus a left or right foot
     /// role.
@@ -1961,14 +1965,19 @@ pub fn measure_document(
                 },
             };
             let (loop_seam_ratio, loop_seam_ratio_availability) = match &cycle {
-                // `cycle` resolved means the Hips + foot role domain existed;
-                // a `None` ratio here means the stride-derivation evidence
-                // (a real neighbour-step) was insufficient, not that the
-                // subject is absent. That is `Unavailable`, not
-                // `NotApplicable`; only a missing role domain is
-                // `NotApplicable` below.
+                // `cycle` resolved means the Hips + foot role domain existed.
+                // A `None` ratio then means one of two very different
+                // things: no real stride exists to normalize against (the
+                // clip is planted/idle — a legitimate absent subject, so
+                // `NotApplicable`), or a real stride exists but the ratio
+                // itself could not be derived from it (a true derivation
+                // failure, so `Unavailable`). Only a missing role domain
+                // below is otherwise `NotApplicable`.
                 Some(metrics) => match metrics.loop_seam_ratio {
                     Some(ratio) => (Some(ratio), MeasurementAvailability::Measured),
+                    None if !metrics.has_real_stride => {
+                        (None, MeasurementAvailability::NotApplicable)
+                    }
                     None => (None, MeasurementAvailability::Unavailable),
                 },
                 None if !gait_roles_applicable => (None, MeasurementAvailability::NotApplicable),
@@ -3849,12 +3858,12 @@ mod tests {
 
     /// A resolved Hips + foot role domain with feet that never move relative
     /// to the hips (no real stride) must report `loop_seam_ratio_availability:
-    /// unavailable`, not `not_applicable`: the role domain this metric needs
-    /// is fully present, so its absence is a derivation failure, not a
-    /// legitimately missing subject. Only an unresolved Hips + foot role
-    /// domain is `not_applicable`.
+    /// not_applicable`: the ratio is undefined without a stride to normalize
+    /// against, so this is a legitimately missing subject, not a derivation
+    /// failure. `unavailable` is reserved for a real stride whose ratio
+    /// still could not be derived.
     #[test]
-    fn resolved_gait_roles_with_no_real_stride_report_loop_seam_ratio_unavailable() {
+    fn resolved_gait_roles_with_no_real_stride_report_loop_seam_ratio_not_applicable() {
         let clip = Clip {
             name: "planted".into(),
             duration_s: 1.0,
@@ -3908,9 +3917,10 @@ mod tests {
         assert_eq!(measured.loop_seam_ratio, None);
         assert_eq!(
             measured.loop_seam_ratio_availability,
-            MeasurementAvailability::Unavailable,
-            "the Hips + foot role domain resolved; a missing ratio here is a \
-             derivation failure (no real stride), not a missing subject"
+            MeasurementAvailability::NotApplicable,
+            "the Hips + foot role domain resolved, but the clip has no real \
+             stride to normalize the seam against, so the ratio is a \
+             legitimately missing subject, not a derivation failure"
         );
     }
 
