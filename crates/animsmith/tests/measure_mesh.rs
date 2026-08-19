@@ -6,7 +6,7 @@ use animsmith_core::glam::{Mat4, Vec3};
 use animsmith_core::model::*;
 
 const MEASUREMENTS_SCHEMA: &str =
-    include_str!("../../../docs/schemas/measurements-v13.schema.json");
+    include_str!("../../../docs/schemas/measurements-v14.schema.json");
 
 fn assert_measurements_schema_valid(measurements: &serde_json::Value) {
     let schema = serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid measurement schema JSON");
@@ -17,7 +17,7 @@ fn assert_measurements_schema_valid(measurements: &serde_json::Value) {
         .collect::<Vec<_>>();
     assert!(
         errors.is_empty(),
-        "measurement output must satisfy the published v12 schema:\n{}\ninstance: {measurements:#}",
+        "measurement output must satisfy the published v14 schema:\n{}\ninstance: {measurements:#}",
         errors.join("\n")
     );
 }
@@ -27,7 +27,7 @@ fn assert_measurements_schema_invalid(measurements: &serde_json::Value) {
     let validator = jsonschema::validator_for(&schema).expect("measurement schema compiles");
     assert!(
         !validator.is_valid(measurements),
-        "measurement output must violate the published v12 schema:\n{measurements:#}"
+        "measurement output must violate the published v14 schema:\n{measurements:#}"
     );
 }
 
@@ -937,4 +937,61 @@ fn cli_measure_omits_aabb_for_non_finite_geometry() {
         measurements["node_instances"][0]["static_node_world_aabb_unavailable_reason"],
         "no_finite_positions"
     );
+}
+
+#[test]
+fn published_schema_rejects_availability_status_value_mismatches() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("nested-scene.gltf");
+    write_nested_instanced_gltf(&input);
+
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_animsmith"))
+        .arg("measure")
+        .arg(&input)
+        .arg("--format")
+        .arg("json")
+        .output()
+        .expect("runs animsmith");
+    assert!(out.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid JSON");
+    let measurements = &report["files"][0]["measurements"];
+    assert_measurements_schema_valid(measurements);
+    let clip = &measurements["clips"]["move"];
+    assert!(clip.is_object(), "fixture must carry the animated clip");
+
+    // A `measured` availability status without its sibling value is invalid.
+    let mut declared_measured_without_value = clip.clone();
+    declared_measured_without_value["loop_continuity_availability"] = serde_json::json!("measured");
+    let mut missing_value = measurements.clone();
+    missing_value["clips"]["move"] = declared_measured_without_value;
+    assert_measurements_schema_invalid(&missing_value);
+
+    // A present value under a `not_applicable`/`unavailable` status is invalid.
+    let mut spurious_value = clip.clone();
+    spurious_value["loop_seam_ratio"] = serde_json::json!(0.2);
+    spurious_value["loop_seam_ratio_availability"] = serde_json::json!("not_applicable");
+    let mut invalid = measurements.clone();
+    invalid["clips"]["move"] = spurious_value;
+    assert_measurements_schema_invalid(&invalid);
+
+    // An unrecognized availability status is invalid.
+    let mut unknown_status = clip.clone();
+    unknown_status["speed_mps_availability"] = serde_json::json!("maybe");
+    let mut invalid_status = measurements.clone();
+    invalid_status["clips"]["move"] = unknown_status;
+    assert_measurements_schema_invalid(&invalid_status);
+
+    // A `gait` object whose `phase` value disagrees with its own
+    // `phase_availability` status is invalid even when the parent `gait`
+    // availability is consistent.
+    let mut gait_mismatch = clip.clone();
+    gait_mismatch["gait_availability"] = serde_json::json!("measured");
+    gait_mismatch["gait"] = serde_json::json!({
+        "phase": 0.25,
+        "phase_availability": "not_applicable",
+        "lr_amplitude_m": 0.1
+    });
+    let mut invalid_gait = measurements.clone();
+    invalid_gait["clips"]["move"] = gait_mismatch;
+    assert_measurements_schema_invalid(&invalid_gait);
 }

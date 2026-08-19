@@ -1527,8 +1527,14 @@ mod tests {
                         "seam_angular_velocity_delta_degps": 67.891
                     }
                 ] },
+                "loop_continuity_availability": "measured",
+                "loop_endpoint_mode_availability": "not_applicable",
+                "frame_grid_availability": "not_applicable",
                 "loop_seam_ratio": 0.25,
-                "gait": { "phase": 0.5, "lr_amplitude_m": 0.1 }
+                "loop_seam_ratio_availability": "measured",
+                "gait": { "phase": 0.5, "phase_availability": "measured", "lr_amplitude_m": 0.1 },
+                "gait_availability": "measured",
+                "speed_mps_availability": "not_applicable"
             }
         }))
         .expect("clip measurements deserialize");
@@ -1608,7 +1614,13 @@ mod tests {
                 "duration_s": 2.0,
                 "frame_count": 1,
                 "animated_bones": [],
-                "bone_rotation_range_deg": {}
+                "bone_rotation_range_deg": {},
+                "loop_continuity_availability": "not_applicable",
+                "loop_endpoint_mode_availability": "not_applicable",
+                "frame_grid_availability": "not_applicable",
+                "loop_seam_ratio_availability": "not_applicable",
+                "gait_availability": "not_applicable",
+                "speed_mps_availability": "not_applicable"
             }
         }))
         .expect("clip measurements deserialize");
@@ -1770,7 +1782,13 @@ mod tests {
                 "duration_s": 1.0,
                 "frame_count": 2,
                 "animated_bones": [],
-                "bone_rotation_range_deg": {}
+                "bone_rotation_range_deg": {},
+                "loop_continuity_availability": "not_applicable",
+                "loop_endpoint_mode_availability": "not_applicable",
+                "frame_grid_availability": "not_applicable",
+                "loop_seam_ratio_availability": "not_applicable",
+                "gait_availability": "not_applicable",
+                "speed_mps_availability": "not_applicable"
             }
         }))
         .expect("before measurements deserialize");
@@ -1779,7 +1797,13 @@ mod tests {
                 "duration_s": 1.1,
                 "frame_count": 2,
                 "animated_bones": [],
-                "bone_rotation_range_deg": {}
+                "bone_rotation_range_deg": {},
+                "loop_continuity_availability": "not_applicable",
+                "loop_endpoint_mode_availability": "not_applicable",
+                "frame_grid_availability": "not_applicable",
+                "loop_seam_ratio_availability": "not_applicable",
+                "gait_availability": "not_applicable",
+                "speed_mps_availability": "not_applicable"
             }
         }))
         .expect("after measurements deserialize");
@@ -1800,14 +1824,26 @@ mod tests {
                 "duration_s": 1.0,
                 "frame_count": 1,
                 "animated_bones": [],
-                "bone_rotation_range_deg": {}
+                "bone_rotation_range_deg": {},
+                "loop_continuity_availability": "not_applicable",
+                "loop_endpoint_mode_availability": "not_applicable",
+                "frame_grid_availability": "not_applicable",
+                "loop_seam_ratio_availability": "not_applicable",
+                "gait_availability": "not_applicable",
+                "speed_mps_availability": "not_applicable"
             },
             "b_shared": {
                 "duration_s": 1.0,
                 "frame_count": 1,
                 "animated_bones": [],
                 "bone_rotation_range_deg": {},
-                "loop_seam_ratio": 1.0
+                "loop_continuity_availability": "not_applicable",
+                "loop_endpoint_mode_availability": "not_applicable",
+                "frame_grid_availability": "not_applicable",
+                "loop_seam_ratio": 1.0,
+                "loop_seam_ratio_availability": "measured",
+                "gait_availability": "not_applicable",
+                "speed_mps_availability": "not_applicable"
             }
         }))
         .expect("before measurements deserialize");
@@ -1817,13 +1853,25 @@ mod tests {
                 "frame_count": 1,
                 "animated_bones": [],
                 "bone_rotation_range_deg": {},
-                "speed_mps": 2.0
+                "loop_continuity_availability": "not_applicable",
+                "loop_endpoint_mode_availability": "not_applicable",
+                "frame_grid_availability": "not_applicable",
+                "loop_seam_ratio_availability": "not_applicable",
+                "gait_availability": "not_applicable",
+                "speed_mps": 2.0,
+                "speed_mps_availability": "measured"
             },
             "c_added": {
                 "duration_s": 1.0,
                 "frame_count": 1,
                 "animated_bones": [],
-                "bone_rotation_range_deg": {}
+                "bone_rotation_range_deg": {},
+                "loop_continuity_availability": "not_applicable",
+                "loop_endpoint_mode_availability": "not_applicable",
+                "frame_grid_availability": "not_applicable",
+                "loop_seam_ratio_availability": "not_applicable",
+                "gait_availability": "not_applicable",
+                "speed_mps_availability": "not_applicable"
             }
         }))
         .expect("after measurements deserialize");
@@ -1835,8 +1883,10 @@ mod tests {
                 "  a_removed clip: clip removed",
                 "  b_shared loop_seam_ratio: disappeared 1.0000 -> (gone)",
                 "  b_shared speed_mps: appeared (none) -> 2.0000",
+                "  b_shared loop_seam_ratio_availability: no longer applicable",
+                "  b_shared speed_mps_availability: became measured",
                 "  c_added clip: clip added",
-                "4 significant change(s)",
+                "6 significant change(s)",
             ]
         );
     }

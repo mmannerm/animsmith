@@ -28,12 +28,19 @@ fn measurements(duration_s: f64) -> MeasurementMap {
                 "seam_velocity_delta_mps": 0.2,
                 "seam_angular_velocity_delta_degps": 10.0
             }] },
+            "loop_continuity_availability": "measured",
+            "loop_endpoint_mode_availability": "not_applicable",
+            "frame_grid_availability": "not_applicable",
             "loop_seam_ratio": 0.2,
+            "loop_seam_ratio_availability": "measured",
             "gait": {
                 "phase": 0.25,
+                "phase_availability": "measured",
                 "lr_amplitude_m": 0.1
             },
-            "speed_mps": 1.0
+            "gait_availability": "measured",
+            "speed_mps": 1.0,
+            "speed_mps_availability": "measured"
         }
     }))
     .expect("valid public measurement map")

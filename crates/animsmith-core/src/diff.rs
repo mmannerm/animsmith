@@ -5,7 +5,7 @@
 //! as noise (f32 quantization, re-export dust), not a change worth
 //! reporting.
 
-use crate::measure::ClipMeasurements;
+use crate::measure::{ClipMeasurements, MeasurementAvailability};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -55,6 +55,45 @@ pub struct MetricDelta {
 
 fn non_finite_or_none(value: &Option<f64>) -> bool {
     value.is_none_or(|number| !number.is_finite())
+}
+
+/// Report any change in a clip fact's availability status
+/// (`measured`/`not_applicable`/`unavailable`), including the
+/// `not_applicable` <-> `unavailable` transition that a bare optional value
+/// compares as unchanged elsewhere in this module (both are an absent
+/// value), and a `measured` <-> absent transition for facts with no numeric
+/// or structured value comparison of their own (`loop_endpoint_mode`,
+/// `frame_grid`) — without this those two facts' appearance/disappearance
+/// would be completely silent. The note names only the status reached: it is
+/// deterministic given `(a, b)` because this function returns early when
+/// `a == b`, so a reached status always names a genuine change.
+///
+/// `metric` should carry the wire field's own `_availability` suffix (for
+/// example `"loop_seam_ratio_availability"`) so this status delta never
+/// collides with a sibling numeric/structured delta reported under the bare
+/// field name.
+fn push_availability(
+    deltas: &mut Vec<MetricDelta>,
+    clip: &str,
+    metric: &str,
+    a: MeasurementAvailability,
+    b: MeasurementAvailability,
+) {
+    if a == b {
+        return;
+    }
+    let note = match b {
+        MeasurementAvailability::Measured => "became measured",
+        MeasurementAvailability::NotApplicable => "no longer applicable",
+        MeasurementAvailability::Unavailable => "became unavailable",
+    };
+    deltas.push(MetricDelta {
+        clip: clip.into(),
+        metric: metric.into(),
+        before: None,
+        after: None,
+        note: note.into(),
+    });
 }
 
 /// Compare two measurement maps and return only significant deltas.
@@ -211,6 +250,65 @@ pub fn diff_measurements(
             );
         }
 
+        push_availability(
+            &mut deltas,
+            clip,
+            "loop_continuity_availability",
+            ma.loop_continuity_availability,
+            mb.loop_continuity_availability,
+        );
+        push_availability(
+            &mut deltas,
+            clip,
+            "loop_endpoint_mode_availability",
+            ma.loop_endpoint_mode_availability,
+            mb.loop_endpoint_mode_availability,
+        );
+        push_availability(
+            &mut deltas,
+            clip,
+            "frame_grid_availability",
+            ma.frame_grid_availability,
+            mb.frame_grid_availability,
+        );
+        push_availability(
+            &mut deltas,
+            clip,
+            "loop_seam_ratio_availability",
+            ma.loop_seam_ratio_availability,
+            mb.loop_seam_ratio_availability,
+        );
+        push_availability(
+            &mut deltas,
+            clip,
+            "gait_availability",
+            ma.gait_availability,
+            mb.gait_availability,
+        );
+        push_availability(
+            &mut deltas,
+            clip,
+            "speed_mps_availability",
+            ma.speed_mps_availability,
+            mb.speed_mps_availability,
+        );
+        // `gait.phase_availability` only exists as a field when the parent
+        // `gait` object is present (schema: `gait` is Some exactly when
+        // `gait_availability == measured`), so it is only meaningfully
+        // comparable when both sides carry a `gait` object. A `gait` object
+        // appearing/disappearing entirely is already reported above via
+        // `gait_availability`, and `gait.phase`'s own value transition is
+        // already reported via the numeric `gait.phase` delta.
+        if let (Some(ga), Some(gb)) = (ma.gait.as_ref(), mb.gait.as_ref()) {
+            push_availability(
+                &mut deltas,
+                clip,
+                "gait.phase_availability",
+                ga.phase_availability,
+                gb.phase_availability,
+            );
+        }
+
         for bone in ma
             .bone_rotation_range_deg
             .keys()
@@ -271,7 +369,8 @@ pub fn diff_measurements(
 mod tests {
     use super::*;
     use crate::measure::{
-        BoneLoopContinuityMeasurement, ClipMeasurements, GaitMeasurement, LoopContinuityMeasurement,
+        BoneLoopContinuityMeasurement, ClipMeasurements, FrameGridMeasurement, GaitMeasurement,
+        LoopContinuityMeasurement, LoopEndpointMode, MeasurementAvailability,
     };
 
     fn clip_measurements() -> ClipMeasurements {
@@ -290,14 +389,21 @@ mod tests {
                     seam_angular_velocity_delta_degps: 10.0,
                 }],
             }),
+            loop_continuity_availability: MeasurementAvailability::Measured,
             loop_endpoint_mode: None,
+            loop_endpoint_mode_availability: MeasurementAvailability::NotApplicable,
             frame_grid: None,
+            frame_grid_availability: MeasurementAvailability::NotApplicable,
             loop_seam_ratio: Some(0.2),
+            loop_seam_ratio_availability: MeasurementAvailability::Measured,
             gait: Some(GaitMeasurement {
                 phase: Some(0.25),
+                phase_availability: MeasurementAvailability::Measured,
                 lr_amplitude_m: 0.1,
             }),
+            gait_availability: MeasurementAvailability::Measured,
             speed_mps: Some(1.0),
+            speed_mps_availability: MeasurementAvailability::Measured,
         }
     }
 
@@ -747,5 +853,200 @@ mod tests {
         let json = serde_json::to_value(delta).expect("delta serializes");
         assert!(json.get("before").is_none());
         assert!(json.get("after").is_none());
+    }
+
+    #[test]
+    fn reports_not_applicable_to_unavailable_availability_transitions() {
+        let mut before = clip_measurements();
+        before.speed_mps = None;
+        before.speed_mps_availability = MeasurementAvailability::NotApplicable;
+
+        let mut after = before.clone();
+        after.speed_mps_availability = MeasurementAvailability::Unavailable;
+
+        let deltas = diff_measurements(
+            &measurement_map("walk", before),
+            &measurement_map("walk", after),
+        );
+
+        assert_eq!(deltas.len(), 1, "{:?}", delta_metrics(&deltas));
+        let delta = delta_for(&deltas, "speed_mps_availability");
+        assert_eq!(delta.note, "became unavailable");
+        assert_eq!(delta.before, None);
+        assert_eq!(delta.after, None);
+    }
+
+    #[test]
+    fn reports_unavailable_to_not_applicable_availability_transitions() {
+        let mut before = clip_measurements();
+        before.speed_mps = None;
+        before.speed_mps_availability = MeasurementAvailability::Unavailable;
+
+        let mut after = before.clone();
+        after.speed_mps_availability = MeasurementAvailability::NotApplicable;
+
+        let deltas = diff_measurements(
+            &measurement_map("walk", before),
+            &measurement_map("walk", after),
+        );
+
+        assert_eq!(deltas.len(), 1, "{:?}", delta_metrics(&deltas));
+        let delta = delta_for(&deltas, "speed_mps_availability");
+        assert_eq!(delta.note, "no longer applicable");
+    }
+
+    #[test]
+    fn availability_stays_silent_only_when_unchanged() {
+        let before = clip_measurements();
+        let after = before.clone();
+
+        let deltas = diff_measurements(
+            &measurement_map("walk", before),
+            &measurement_map("walk", after),
+        );
+        assert!(deltas.is_empty(), "{:?}", delta_metrics(&deltas));
+    }
+
+    /// A `measured` -> `unavailable` transition on a scalar fact reports
+    /// *two* deltas: the ordinary numeric "disappeared" delta under the
+    /// bare field name, and a status delta under the field's
+    /// `_availability` name. Both are contract evidence: the first is the
+    /// value movement a consumer already watches; the second is what #443
+    /// exists for — it is the only signal that distinguishes this
+    /// applicable-but-failed-to-derive case from a legitimate absence.
+    #[test]
+    fn measured_to_unavailable_reports_both_value_and_availability_deltas() {
+        let before = clip_measurements();
+        let mut after = before.clone();
+        after.speed_mps = None;
+        after.speed_mps_availability = MeasurementAvailability::Unavailable;
+
+        let deltas = diff_measurements(
+            &measurement_map("walk", before),
+            &measurement_map("walk", after),
+        );
+
+        assert_eq!(deltas.len(), 2, "{:?}", delta_metrics(&deltas));
+        assert_eq!(delta_for(&deltas, "speed_mps").note, "disappeared");
+        assert_eq!(
+            delta_for(&deltas, "speed_mps_availability").note,
+            "became unavailable"
+        );
+    }
+
+    #[test]
+    fn reports_gait_phase_not_applicable_to_unavailable_transitions() {
+        let mut before = clip_measurements();
+        before.gait.as_mut().unwrap().phase = None;
+        before.gait.as_mut().unwrap().phase_availability = MeasurementAvailability::NotApplicable;
+
+        let mut after = before.clone();
+        after.gait.as_mut().unwrap().phase_availability = MeasurementAvailability::Unavailable;
+
+        let deltas = diff_measurements(
+            &measurement_map("walk", before),
+            &measurement_map("walk", after),
+        );
+
+        assert_eq!(deltas.len(), 1, "{:?}", delta_metrics(&deltas));
+        let delta = delta_for(&deltas, "gait.phase_availability");
+        assert_eq!(delta.note, "became unavailable");
+    }
+
+    /// `gait.phase_availability` is a field nested inside the `gait` object,
+    /// so it exists only when `gait` itself is present (schema invariant:
+    /// `gait` is `Some` exactly when `gait_availability == measured`).
+    /// When `gait` disappears entirely there is no `gait.phase_availability`
+    /// to compare on the side that lost it, so this transition must not be
+    /// reported there — the parent `gait_availability` delta and the
+    /// numeric `gait.phase` "disappeared" delta already carry that event.
+    #[test]
+    fn gait_phase_availability_is_not_compared_when_gait_itself_disappears() {
+        let before = clip_measurements();
+        let mut after = before.clone();
+        after.gait = None;
+        after.gait_availability = MeasurementAvailability::Unavailable;
+
+        let deltas = diff_measurements(
+            &measurement_map("walk", before),
+            &measurement_map("walk", after),
+        );
+
+        assert!(
+            deltas
+                .iter()
+                .all(|delta| delta.metric != "gait.phase_availability"),
+            "gait.phase_availability has no valid comparison when gait is absent on one side: {:?}",
+            delta_metrics(&deltas)
+        );
+        assert_eq!(delta_for(&deltas, "gait.phase").note, "disappeared");
+        assert_eq!(
+            delta_for(&deltas, "gait_availability").note,
+            "became unavailable"
+        );
+    }
+
+    /// `loop_endpoint_mode` and `frame_grid` have no numeric or structured
+    /// value comparison of their own (they are an enum and a small object,
+    /// not an `f64`), so a `measured` -> `unavailable` transition on either
+    /// would otherwise be completely silent. The `_availability` status
+    /// delta is their only diff evidence.
+    #[test]
+    fn measured_to_unavailable_reports_endpoint_and_frame_grid_status_deltas() {
+        let mut before = clip_measurements();
+        before.loop_endpoint_mode = Some(LoopEndpointMode::UniqueCycle);
+        before.loop_endpoint_mode_availability = MeasurementAvailability::Measured;
+        before.frame_grid = Some(FrameGridMeasurement {
+            fps: 30.0,
+            frame_intervals: 30,
+        });
+        before.frame_grid_availability = MeasurementAvailability::Measured;
+
+        let mut after = before.clone();
+        after.loop_endpoint_mode = None;
+        after.loop_endpoint_mode_availability = MeasurementAvailability::Unavailable;
+        after.frame_grid = None;
+        after.frame_grid_availability = MeasurementAvailability::Unavailable;
+
+        let deltas = diff_measurements(
+            &measurement_map("walk", before),
+            &measurement_map("walk", after),
+        );
+
+        assert_eq!(deltas.len(), 2, "{:?}", delta_metrics(&deltas));
+        assert_eq!(
+            delta_for(&deltas, "loop_endpoint_mode_availability").note,
+            "became unavailable"
+        );
+        assert_eq!(
+            delta_for(&deltas, "frame_grid_availability").note,
+            "became unavailable"
+        );
+    }
+
+    #[test]
+    fn reports_endpoint_and_frame_grid_not_applicable_to_unavailable_transitions() {
+        let mut before = clip_measurements();
+        before.loop_endpoint_mode_availability = MeasurementAvailability::NotApplicable;
+        before.frame_grid_availability = MeasurementAvailability::NotApplicable;
+
+        let mut after = before.clone();
+        after.loop_endpoint_mode_availability = MeasurementAvailability::Unavailable;
+        after.frame_grid_availability = MeasurementAvailability::Unavailable;
+
+        let deltas = diff_measurements(
+            &measurement_map("walk", before),
+            &measurement_map("walk", after),
+        );
+
+        assert_eq!(deltas.len(), 2, "{:?}", delta_metrics(&deltas));
+        assert_eq!(
+            delta_for(&deltas, "loop_endpoint_mode_availability").note,
+            "became unavailable"
+        );
+        assert_eq!(
+            delta_for(&deltas, "frame_grid_availability").note,
+            "became unavailable"
+        );
     }
 }
