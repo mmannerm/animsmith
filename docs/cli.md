@@ -359,13 +359,15 @@ uses one input as the authoritative skinned base, and exact-name remaps selected
 takes from other FBX or glTF inputs. It writes a GLB and assembly-evidence JSON
 as a rollback-safe publication pair. The command owns generic asset transforms;
 source extraction, project policy, and publication remain consumer concerns.
-The current recipe/evidence pair is v4. Recipe v4 may include an optional
+The current recipe/evidence pair is v5. Recipe v5 may include an optional
 `[rest_bind_scale]` block whose source skin index, source root node index, and
 expected factor are all required. The block is glTF/GLB-only and validates the
 base plus every clip's complete capability inventory and versioned skeleton
-basis before remapping any keys. It cannot be combined with
-`canonicalize_skin`, `ground_and_center`, or `remove_nodes`, because those
-operations change the proved basis. Set `prune_constant_tracks = true` to
+basis before remapping any keys. V5 composes the block with
+`canonicalize_skin`, `ground_and_center`, and `remove_nodes`: it applies those
+normalized assembly transforms to both the staged source and the rebased clip
+reference, then performs one final raw glTF rewrite and proof. Recipe v4
+retains its released refusal for that combination. Set `prune_constant_tracks = true` to
 remove only tracks proven constant after all other transforms, including track
 completion. Because this is all-property pruning, it can remove
 completion-generated `(bone, property)` coverage whose completed value is
@@ -379,11 +381,11 @@ Root-level `remove_nodes` exact-names base nodes and removes their descendant
 closure after animation transforms; any surviving track, mesh-instance, or
 skin reference refuses the operation.
 It performs no material, texture, or mesh garbage collection. Recipe/evidence
-v1 through v3 remain immutable historical contracts; v3 rejects
+v1 through v4 remain immutable historical contracts; v3 rejects
 `rest_bind_scale` as unknown.
 The recipe identity is
-`urn:animsmith:schema:character-assembly-recipe:4`; see
-[`character-assembly-recipe-v4.schema.json`](schemas/character-assembly-recipe-v4.schema.json).
+`urn:animsmith:schema:character-assembly-recipe:5`; see
+[`character-assembly-recipe-v5.schema.json`](schemas/character-assembly-recipe-v5.schema.json).
 
 ## Static mesh transform bake
 
@@ -460,9 +462,9 @@ An asset refusal under `--format json` uses the independent immutable
 [`producer-refusal-v1.schema.json`](schemas/producer-refusal-v1.schema.json)
 identity instead; conversion evidence v2 remains success-only and unchanged.
 
-`assemble` writes evidence v4 to its required `--evidence` path, with immutable
-identity `urn:animsmith:schema:character-assembly-evidence:4`; see
-[`character-assembly-evidence-v4.schema.json`](schemas/character-assembly-evidence-v4.schema.json).
+`assemble` writes evidence v5 to its required `--evidence` path, with immutable
+identity `urn:animsmith:schema:character-assembly-evidence:5`; see
+[`character-assembly-evidence-v5.schema.json`](schemas/character-assembly-evidence-v5.schema.json).
 `assemble --format json` prints the same record to stdout — the identical bytes
 the evidence file receives, serialized once — in place of the default `text`
 publication summary. An asset refusal publishes neither member and exits `1`;

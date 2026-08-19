@@ -32,8 +32,8 @@ evidence, and publication. DCC automation is outside this command.
 Start from [`examples/character-assembly.toml`](../examples/character-assembly.toml):
 
 ```toml
-schema_version = 4
-schema = "urn:animsmith:schema:character-assembly-recipe:4"
+schema_version = 5
+schema = "urn:animsmith:schema:character-assembly-recipe:5"
 input_root = "inputs"
 base_input = "base-character.fbx"
 mesh_instances = ["character-mesh"]
@@ -132,7 +132,7 @@ apply:
 
 ### Optional rest/bind scale canonicalization
 
-Recipe v4 can opt into the accepted rest/bind scale operation with one
+Recipe v5 can opt into the accepted rest/bind scale operation with one
 top-level block:
 
 ```toml
@@ -149,10 +149,15 @@ capability manifest or source-skeleton coverage is incomplete fail closed.
 Nothing is inferred from filenames, bounds, character height, or inverse-bind
 magnitudes.
 
-The block cannot be combined with `canonicalize_skin`, `ground_and_center`, or
-`remove_nodes`: each changes the proved hierarchy or source basis after the raw
-operation. Assembly returns a named recipe error for these combinations rather
-than degrading into an incomplete-coverage refusal.
+Recipe v5 composes the block with `canonicalize_skin`, `ground_and_center`, and
+`remove_nodes`. It captures and validates the raw inputs first, applies the
+same mesh selection and canonical assembly transforms to the staged candidate
+and an independently raw-rebased reference, then maps selectors by names and
+ordered selected joint topology after any index changes. It serializes the
+staged candidate, performs the raw rest-bind rewrite last, reloads those exact
+bytes once for proof, and atomically publishes only after the final clips match
+the rebased reference. Recipe v4 remains immutable and continues to reject
+that combination.
 
 Before any clip keys are remapped or copied, assembly captures and validates
 the exact bytes of the base and every separately supplied clip. Each input
@@ -253,16 +258,16 @@ boundary described in [Material texture recipes](material-texture-recipes.md),
 including BaseColor, normal, metallic-roughness, and occlusion slots.
 
 The normative current recipe schema is
-[`character-assembly-recipe-v4.schema.json`](schemas/character-assembly-recipe-v4.schema.json).
-Recipe v1, v2, and v3 remain immutable historical contracts. To migrate from
-v3, change `schema_version` and `schema` to v4, then add `rest_bind_scale` or
-omit it to retain the existing assembly behavior. V3 continues to reject the
-new block as unknown rather than silently adopting v4 behavior.
+[`character-assembly-recipe-v5.schema.json`](schemas/character-assembly-recipe-v5.schema.json).
+Recipe v1 through v4 remain immutable historical contracts. To migrate from
+v4, change `schema_version` and `schema` to v5 when composing rest/bind scale
+with canonicalization, grounding, or node removal. Omitting the block remains
+ordinary assembly behavior; v3 continues to reject the block as unknown.
 
 ## Evidence and determinism
 
 The current evidence identity is
-`urn:animsmith:schema:character-assembly-evidence:4`. It records the effective
+`urn:animsmith:schema:character-assembly-evidence:5`. It records the effective
 recipe, recipe and input SHA-256 digests, the selected configuration file's
 declared path and digest (or an explicit built-in-defaults marker), selected takes and windows, exact
 source/base bone remap names and indices, and track
@@ -283,11 +288,12 @@ once in original pre-removal node order: its exact name, original node index,
 nullable original parent index, and whether the recipe selected it directly
 rather than through an ancestor. It is empty when `remove_nodes` is omitted or
 empty. See
-[`character-assembly-evidence-v4.schema.json`](schemas/character-assembly-evidence-v4.schema.json).
+[`character-assembly-evidence-v5.schema.json`](schemas/character-assembly-evidence-v5.schema.json).
 
-When `rest_bind_scale` is active, v4 additionally pins each exact base/clip
-input digest and its versioned basis fingerprint, the explicit selectors and
-factor, every compatibility result, and the shared final-artifact scale proof.
+When `rest_bind_scale` is active, v5 additionally pins each exact base/clip
+input digest and its versioned basis fingerprint, both the requested source
+selectors and their effective staged selectors after canonicalization/removal,
+the factor, every compatibility result, and the shared final-artifact scale proof.
 The staged-source digest and exact emitted-byte read-back digest make the two
 serialization boundaries explicit; the read-back digest equals the published
 artifact identity on every accepted run.
