@@ -591,6 +591,55 @@ fn v5_missing_source_selectors_refuse_before_replacing_a_prior_pair() {
 }
 
 #[test]
+fn v5_ambiguous_post_assembly_skin_selector_refuses_atomically() {
+    // Two source skins with the same selected, named joint topology are
+    // individually valid glTF. The composed producer must not silently pick
+    // the first staged skin after canonicalization shifts raw source indices.
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    let mut ambiguous: Value = serde_json::from_slice(&rest_bind_scale_rig_gltf()).unwrap();
+    let second_skin = ambiguous["skins"][0].clone();
+    ambiguous["skins"].as_array_mut().unwrap().push(second_skin);
+    ambiguous["nodes"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "name": "holder2",
+            "mesh": 0,
+            "skin": 1
+        }));
+    ambiguous["scenes"][0]["nodes"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!(4));
+    let bytes = serde_json::to_vec(&ambiguous).unwrap();
+    std::fs::write(dir.path().join("inputs/base.gltf"), &bytes).unwrap();
+    std::fs::write(dir.path().join("inputs/walk.gltf"), bytes).unwrap();
+    let recipe = recipe_v5("walk.gltf").replace("base.glb", "base.gltf");
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+    let prior_artifact = b"prior artifact";
+    let prior_evidence = b"prior evidence";
+    std::fs::write(dir.path().join("character.glb"), prior_artifact).unwrap();
+    std::fs::write(dir.path().join("character.json"), prior_evidence).unwrap();
+
+    let output = run(dir.path());
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        refusal_detail(&output).contains("exactly one skin with the selected named joint topology"),
+        "the refusal identifies the ambiguous selected skin topology: {}",
+        refusal_detail(&output)
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("character.glb")).unwrap(),
+        prior_artifact
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("character.json")).unwrap(),
+        prior_evidence
+    );
+}
+
+#[test]
 fn v4_accepts_quaternion_sign_and_in_band_rest_spelling_differences() {
     let dir = tempfile::tempdir().expect("temporary directory");
     std::fs::create_dir(dir.path().join("inputs")).unwrap();
