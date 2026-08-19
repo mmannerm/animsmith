@@ -146,7 +146,7 @@ shape bindings only. The [scale workflow] describes the supported source
 boundary and coordinated CLI transaction; the [embedding guide] shows how to carry
 one core plan through the adapter.
 
-Character-assembly recipe v4 reuses these same preflight, plan-taking rewrite,
+Character-assembly recipe v5 reuses these same preflight, plan-taking rewrite,
 reload, and proof boundaries. When its optional rest/bind block is active, the
 base and every separately supplied clip must be glTF/GLB and pass complete raw
 capability preflight before any keys are remapped. FBX assembly remains

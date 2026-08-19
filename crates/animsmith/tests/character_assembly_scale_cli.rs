@@ -2,8 +2,8 @@
 
 #![cfg(feature = "fbx")]
 
-use animsmith_core::glam::{Quat, Vec3};
-use animsmith_core::model::{Interpolation, Property, TrackValues};
+use animsmith_core::glam::{Mat4, Quat, Vec3};
+use animsmith_core::model::{Document, Interpolation, Property, TrackValues};
 use animsmith_core::scale::{
     AssemblyScaleBasis, ScaleOperation, ScaleRequest, assembly_scale_basis, plan_scale,
 };
@@ -11,6 +11,7 @@ use animsmith_core::sha256_hex;
 use animsmith_testkit::{rest_bind_scale_rig_glb, rest_bind_scale_rig_gltf};
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -18,6 +19,10 @@ const RECIPE_SCHEMA: &str =
     include_str!("../../../docs/schemas/character-assembly-recipe-v4.schema.json");
 const EVIDENCE_SCHEMA: &str =
     include_str!("../../../docs/schemas/character-assembly-evidence-v4.schema.json");
+const RECIPE_SCHEMA_V5: &str =
+    include_str!("../../../docs/schemas/character-assembly-recipe-v5.schema.json");
+const EVIDENCE_SCHEMA_V5: &str =
+    include_str!("../../../docs/schemas/character-assembly-evidence-v5.schema.json");
 const RIGGED_TRIANGLE_FBX: &str = include_str!("../../animsmith-fbx/testdata/rigged_triangle.fbx");
 
 fn recipe(clip: &str) -> String {
@@ -39,6 +44,21 @@ input = "{clip}"
 take = "clip"
 "#
     )
+}
+
+fn recipe_v5(clip: &str) -> String {
+    recipe(clip)
+        .replacen("schema_version = 4", "schema_version = 5", 1)
+        .replacen(
+            "urn:animsmith:schema:character-assembly-recipe:4",
+            "urn:animsmith:schema:character-assembly-recipe:5",
+            1,
+        )
+        .replacen(
+            "fps = 30.0",
+            "fps = 30.0\ncanonicalize_skin = true\nground_and_center = true\nremove_nodes = [\"attach\"]",
+            1,
+        )
 }
 
 fn write_cubic_asset_from(path: &Path, bytes: &[u8], offset: f32) {
@@ -113,20 +133,33 @@ fn factor_two_rig_glb() -> Vec<u8> {
 }
 
 fn run(dir: &Path) -> Output {
+    run_to(dir, "recipe.toml", "character.glb", "character.json")
+}
+
+fn run_to(dir: &Path, recipe: &str, output: &str, evidence: &str) -> Output {
     Command::new(env!("CARGO_BIN_EXE_animsmith"))
         .current_dir(dir)
         .args([
             "assemble",
-            "recipe.toml",
+            recipe,
             "-o",
-            "character.glb",
+            output,
             "--evidence",
-            "character.json",
+            evidence,
             "--format",
             "json",
         ])
         .output()
         .expect("runs assemble")
+}
+
+fn rest_worlds(document: &Document) -> Vec<Mat4> {
+    let mut worlds = Vec::with_capacity(document.skeleton.bones.len());
+    for bone in &document.skeleton.bones {
+        let local = bone.rest.to_mat4();
+        worlds.push(bone.parent.map_or(local, |parent| worlds[parent] * local));
+    }
+    worlds
 }
 
 fn refusal_detail(output: &Output) -> String {
@@ -397,8 +430,9 @@ fn v4_rebases_every_cubic_slot_for_a_factor_greater_than_one() {
     let output = run(dir.path());
     assert!(
         output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+        "stderr: {}\nstdout: {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
     );
     let document = animsmith_gltf::load(&dir.path().join("character.glb")).unwrap();
     let track = document.clips[0]
@@ -433,7 +467,7 @@ fn v4_strip_bone_motion_evidence_uses_the_rebased_clip_basis() {
         "take = \"clip\"\n",
         "take = \"clip\"\nstrip_bones = [\"joint\"]\n",
     );
-    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+    std::fs::write(dir.path().join("recipe.toml"), &recipe).unwrap();
 
     let output = run(dir.path());
     assert!(
@@ -519,6 +553,90 @@ fn v4_rejects_an_orientation_basis_mismatch_atomically() {
     assert!(refusal_detail(&output).contains("named-orientation"));
     assert!(!dir.path().join("character.glb").exists());
     assert!(!dir.path().join("character.json").exists());
+}
+
+#[test]
+fn v5_missing_source_selectors_refuse_before_replacing_a_prior_pair() {
+    for (replacement, expected_detail) in [
+        ("source_skin_index = 9", "skin"),
+        ("source_root_node_index = 9", "root"),
+    ] {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        std::fs::create_dir(dir.path().join("inputs")).unwrap();
+        write_cubic_asset(&dir.path().join("inputs/base.glb"), 0.0);
+        write_cubic_asset(&dir.path().join("inputs/walk.glb"), 10.0);
+        let recipe = if replacement.starts_with("source_skin") {
+            recipe_v5("walk.glb").replace("source_skin_index = 0", replacement)
+        } else {
+            recipe_v5("walk.glb").replace("source_root_node_index = 0", replacement)
+        };
+        std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+        let prior_artifact = b"prior artifact";
+        let prior_evidence = b"prior evidence";
+        std::fs::write(dir.path().join("character.glb"), prior_artifact).unwrap();
+        std::fs::write(dir.path().join("character.json"), prior_evidence).unwrap();
+
+        let output = run(dir.path());
+        assert_eq!(output.status.code(), Some(1));
+        assert!(refusal_detail(&output).contains(expected_detail));
+        assert_eq!(
+            std::fs::read(dir.path().join("character.glb")).unwrap(),
+            prior_artifact
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("character.json")).unwrap(),
+            prior_evidence
+        );
+    }
+}
+
+#[test]
+fn v5_ambiguous_post_assembly_skin_selector_refuses_atomically() {
+    // Two source skins with the same selected, named joint topology are
+    // individually valid glTF. The composed producer must not silently pick
+    // the first staged skin after canonicalization shifts raw source indices.
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    let mut ambiguous: Value = serde_json::from_slice(&rest_bind_scale_rig_gltf()).unwrap();
+    let second_skin = ambiguous["skins"][0].clone();
+    ambiguous["skins"].as_array_mut().unwrap().push(second_skin);
+    ambiguous["nodes"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "name": "holder2",
+            "mesh": 0,
+            "skin": 1
+        }));
+    ambiguous["scenes"][0]["nodes"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!(4));
+    let bytes = serde_json::to_vec(&ambiguous).unwrap();
+    std::fs::write(dir.path().join("inputs/base.gltf"), &bytes).unwrap();
+    std::fs::write(dir.path().join("inputs/walk.gltf"), bytes).unwrap();
+    let recipe = recipe_v5("walk.gltf").replace("base.glb", "base.gltf");
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+    let prior_artifact = b"prior artifact";
+    let prior_evidence = b"prior evidence";
+    std::fs::write(dir.path().join("character.glb"), prior_artifact).unwrap();
+    std::fs::write(dir.path().join("character.json"), prior_evidence).unwrap();
+
+    let output = run(dir.path());
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        refusal_detail(&output).contains("exactly one skin with the selected named joint topology"),
+        "the refusal identifies the ambiguous selected skin topology: {}",
+        refusal_detail(&output)
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("character.glb")).unwrap(),
+        prior_artifact
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("character.json")).unwrap(),
+        prior_evidence
+    );
 }
 
 #[test]
@@ -687,6 +805,358 @@ fn v4_has_no_default_rest_bind_operation() {
     assert_eq!(document.skeleton.bones[0].rest.scale, Vec3::splat(0.01));
     assert_eq!(document.clips.len(), 2);
     assert!(document.clips.iter().all(|clip| clip.tracks.len() == 2));
+}
+
+#[test]
+fn v5_composes_rest_bind_scale_with_canonical_grounding_and_node_removal() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    write_cubic_asset(&dir.path().join("inputs/base.glb"), 0.0);
+    write_cubic_asset(&dir.path().join("inputs/walk.glb"), 10.0);
+    write_cubic_asset(&dir.path().join("inputs/run.glb"), 20.0);
+    write_cubic_asset(&dir.path().join("inputs/stripped.glb"), 30.0);
+    let recipe = format!(
+        "{}\n[[clips]]\nname = \"run\"\ninput = \"run.glb\"\ntake = \"clip\"\n\n[[clips]]\nname = \"stripped\"\ninput = \"stripped.glb\"\ntake = \"clip\"\nstrip_bones = [\"joint\"]\n",
+        recipe_v5("walk.glb")
+    );
+    let recipe_value: toml::Value = toml::from_str(&recipe).unwrap();
+    assert_schema(
+        &serde_json::to_value(recipe_value).unwrap(),
+        RECIPE_SCHEMA_V5,
+    );
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+
+    let output = run(dir.path());
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let evidence: Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("character.json")).unwrap()).unwrap();
+    assert_schema(&evidence, EVIDENCE_SCHEMA_V5);
+    assert_eq!(evidence["schema_version"], 5);
+    assert!(
+        evidence["transforms"]["canonicalized_skin"]
+            .as_bool()
+            .unwrap()
+    );
+    assert!(
+        evidence["transforms"]["ground_and_center"]
+            .as_bool()
+            .unwrap()
+    );
+    assert_eq!(evidence["transforms"]["removed_nodes"][0]["name"], "attach");
+    assert!(evidence["transforms"]["converted_bounds_min"][1].is_number());
+    let scale = &evidence["rest_bind_scale"];
+    assert_eq!(scale["source_skin_index"], 0);
+    assert_eq!(scale["source_root_node_index"], 0);
+    assert_eq!(scale["effective_source_skin_index"], 0);
+    assert_eq!(scale["effective_source_root_node_index"], 1);
+    assert_eq!(scale["expected_factor"], 0.01);
+    assert_eq!(scale["inputs"].as_array().unwrap().len(), 4);
+    assert_eq!(scale["inputs"][0]["role"], "base");
+    assert_eq!(scale["inputs"][1]["role"], "clip:walk");
+    assert_eq!(scale["inputs"][2]["role"], "clip:run");
+    assert_eq!(scale["inputs"][3]["role"], "clip:stripped");
+    assert!(
+        scale["inputs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|input| input["compatible"] == true)
+    );
+    assert_eq!(scale["read_back_sha256"], evidence["artifact"]["sha256"]);
+    assert_eq!(
+        scale["proof"]["artifact"]["sha256"],
+        evidence["artifact"]["sha256"]
+    );
+    assert_eq!(scale["proof"]["proof"]["read_back_digest_matches"], true);
+    assert_eq!(
+        scale["residual_comparison_counts"],
+        serde_json::json!({
+            "bounds": 42,
+            "cubic_interior": 2,
+            "key_translation": 4,
+            "mesh_position": 3,
+            "rest_rotation": 2,
+            "rest_translation": 2,
+            "skin_matrix": 7,
+            "track_value": 16,
+            "trajectory": 12,
+            "transform_only_affine": 0,
+            "unaffected_inverse_bind": 0,
+            "unit_scale": 2,
+        })
+    );
+    assert_eq!(evidence["clips"].as_array().unwrap().len(), 3);
+    let document = animsmith_gltf::load(&dir.path().join("character.glb")).unwrap();
+    assert!(
+        document
+            .skeleton
+            .bones
+            .iter()
+            .all(|bone| bone.name != "attach")
+    );
+    assert!(
+        document
+            .skeleton
+            .bones
+            .iter()
+            .all(|bone| bone.rest.scale == Vec3::ONE),
+        "the composed rest hierarchy has unit local scale"
+    );
+    let worlds = rest_worlds(&document);
+    let skinned_joints = document
+        .assets
+        .instances
+        .iter()
+        .flat_map(|instance| instance.skin_joints.iter().copied())
+        .collect::<BTreeSet<_>>();
+    for (index, (bone, world)) in document.skeleton.bones.iter().zip(&worlds).enumerate() {
+        for axis in [world.x_axis, world.y_axis, world.z_axis] {
+            assert!(
+                (axis.truncate().length() - 1.0).abs() <= 1.0e-5,
+                "{} has a unit rest-world axis",
+                bone.name
+            );
+        }
+        if skinned_joints.contains(&index) {
+            let inverse_bind = bone
+                .inverse_bind
+                .expect("emitted skin joint has an inverse bind");
+            assert!(
+                (*world * inverse_bind).abs_diff_eq(Mat4::IDENTITY, 1.0e-4),
+                "{} inverse bind matches the emitted rest world",
+                bone.name
+            );
+        }
+    }
+    assert_eq!(document.clips.len(), 2);
+    let walk = document
+        .clips
+        .iter()
+        .find(|clip| clip.name == "walk")
+        .unwrap();
+    let track = walk
+        .tracks
+        .iter()
+        .find(|track| track.property == Property::Translation)
+        .expect("rebased walk translation");
+    assert_eq!(track.interpolation, Interpolation::CubicSpline);
+    let TrackValues::Vec3s(values) = &track.values else {
+        panic!("translation must remain VEC3");
+    };
+    let expected = [
+        Vec3::new(12.0, 1.0, -1.0),
+        Vec3::new(10.0, 100.0, 2.0),
+        Vec3::new(13.0, 2.0, -2.0),
+        Vec3::new(14.0, 3.0, -3.0),
+        Vec3::new(10.0, 200.0, 4.0),
+        Vec3::new(15.0, 4.0, -4.0),
+    ];
+    assert_eq!(values.len(), expected.len());
+    for (actual, expected) in values.iter().zip(expected) {
+        assert!(actual.abs_diff_eq(expected * 0.01, 1.0e-6));
+    }
+    let run = document
+        .clips
+        .iter()
+        .find(|clip| clip.name == "run")
+        .expect("independently scaled second clip");
+    let run_track = run
+        .tracks
+        .iter()
+        .find(|track| track.property == Property::Translation)
+        .expect("rebased run translation");
+    let TrackValues::Vec3s(run_values) = &run_track.values else {
+        panic!("run translation must remain VEC3");
+    };
+    for (actual, expected) in run_values.iter().zip([
+        Vec3::new(22.0, 1.0, -1.0),
+        Vec3::new(20.0, 100.0, 2.0),
+        Vec3::new(23.0, 2.0, -2.0),
+        Vec3::new(24.0, 3.0, -3.0),
+        Vec3::new(20.0, 200.0, 4.0),
+        Vec3::new(25.0, 4.0, -4.0),
+    ]) {
+        assert!(actual.abs_diff_eq(expected * 0.01, 1.0e-6));
+    }
+    assert_eq!(evidence["clips"][2]["stripped_tracks"], 2);
+    assert!(
+        document.clips.iter().all(|clip| clip.name != "stripped"),
+        "a fully stripped clip is omitted only at publication, not from evidence"
+    );
+}
+
+#[test]
+fn v5_composed_selector_removal_refuses_before_replacing_a_prior_pair() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    write_cubic_asset(&dir.path().join("inputs/base.glb"), 0.0);
+    write_cubic_asset(&dir.path().join("inputs/walk.glb"), 10.0);
+    let recipe =
+        recipe_v5("walk.glb").replace("remove_nodes = [\"attach\"]", "remove_nodes = [\"joint\"]");
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+    let prior_artifact = b"prior artifact";
+    let prior_evidence = b"prior evidence";
+    std::fs::write(dir.path().join("character.glb"), prior_artifact).unwrap();
+    std::fs::write(dir.path().join("character.json"), prior_evidence).unwrap();
+
+    let output = run(dir.path());
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        refusal_detail(&output).contains("selected node"),
+        "the removed selected joint is rejected at a located node: {}",
+        refusal_detail(&output)
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("character.glb")).unwrap(),
+        prior_artifact
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("character.json")).unwrap(),
+        prior_evidence
+    );
+}
+
+#[test]
+fn v5_composed_artifact_matches_the_canonical_assembly_then_scale_pipeline() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    write_cubic_asset(&dir.path().join("inputs/base.glb"), 0.0);
+    write_cubic_asset(&dir.path().join("inputs/walk.glb"), 10.0);
+    let composed_recipe = recipe_v5("walk.glb");
+    std::fs::write(dir.path().join("recipe.toml"), &composed_recipe).unwrap();
+    let composed = run(dir.path());
+    assert!(
+        composed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&composed.stderr)
+    );
+    let composed_bytes = std::fs::read(dir.path().join("character.glb")).unwrap();
+
+    let stage_recipe = composed_recipe.replace(
+        "[rest_bind_scale]\nsource_skin_index = 0\nsource_root_node_index = 0\nexpected_factor = 0.01\n\n",
+        "",
+    );
+    std::fs::write(dir.path().join("stage.toml"), stage_recipe).unwrap();
+    let stage = run_to(dir.path(), "stage.toml", "stage.glb", "stage.json");
+    assert!(
+        stage.status.success(),
+        "{}",
+        String::from_utf8_lossy(&stage.stderr)
+    );
+    let scaled = Command::new(env!("CARGO_BIN_EXE_animsmith"))
+        .current_dir(dir.path())
+        .args([
+            "scale",
+            "rest-bind",
+            "stage.glb",
+            "-o",
+            "two-stage.glb",
+            "--source-skin-index",
+            "0",
+            "--source-root-node-index",
+            "1",
+            "--expected-factor=0.01",
+            "--evidence",
+            "two-stage.json",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("runs standalone rest-bind scale");
+    assert!(
+        scaled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&scaled.stderr)
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("two-stage.glb")).unwrap(),
+        composed_bytes,
+        "v5 preserves the exact geometry placement and grounding of the established two-stage path"
+    );
+}
+
+#[test]
+fn v5_without_rest_bind_scale_retains_ordinary_assembly() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    let bytes = rest_bind_scale_rig_glb();
+    std::fs::write(dir.path().join("inputs/base.glb"), &bytes).unwrap();
+    std::fs::write(dir.path().join("inputs/walk.glb"), &bytes).unwrap();
+    let recipe = recipe_v5("walk.glb").replace(
+        "[rest_bind_scale]\nsource_skin_index = 0\nsource_root_node_index = 0\nexpected_factor = 0.01\n\n",
+        "",
+    );
+    std::fs::write(dir.path().join("recipe.toml"), &recipe).unwrap();
+
+    let output = run(dir.path());
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let evidence: Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("character.json")).unwrap()).unwrap();
+    assert_schema(&evidence, EVIDENCE_SCHEMA_V5);
+    assert_eq!(evidence["schema_version"], 5);
+    assert!(evidence.get("rest_bind_scale").is_none());
+    let document = animsmith_gltf::load(&dir.path().join("character.glb")).unwrap();
+    assert_eq!(document.skeleton.bones[0].rest.scale, Vec3::ONE);
+    assert_eq!(document.clips.len(), 1);
+    assert_eq!(document.clips[0].tracks.len(), 2);
+
+    let legacy_recipe = recipe
+        .replace("schema_version = 5", "schema_version = 4")
+        .replace(
+            "urn:animsmith:schema:character-assembly-recipe:5",
+            "urn:animsmith:schema:character-assembly-recipe:4",
+        );
+    std::fs::write(dir.path().join("legacy.toml"), legacy_recipe).unwrap();
+    let legacy = run_to(dir.path(), "legacy.toml", "legacy.glb", "legacy.json");
+    assert!(
+        legacy.status.success(),
+        "{}",
+        String::from_utf8_lossy(&legacy.stderr)
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("character.glb")).unwrap(),
+        std::fs::read(dir.path().join("legacy.glb")).unwrap(),
+        "v5 without rest_bind_scale preserves the v4 ordinary-assembly artifact"
+    );
+}
+
+#[test]
+fn v5_rest_bind_scale_keeps_a_surviving_attachment_at_unit_world_scale() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    write_cubic_asset(&dir.path().join("inputs/base.glb"), 0.0);
+    write_cubic_asset(&dir.path().join("inputs/walk.glb"), 10.0);
+    let recipe = recipe_v5("walk.glb").replace("remove_nodes = [\"attach\"]\n", "");
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+
+    let output = run(dir.path());
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document = animsmith_gltf::load(&dir.path().join("character.glb")).unwrap();
+    let attachment = document
+        .skeleton
+        .bones
+        .iter()
+        .position(|bone| bone.name == "attach")
+        .expect("unselected attachment survives");
+    let world = rest_worlds(&document)[attachment];
+    for axis in [world.x_axis, world.y_axis, world.z_axis] {
+        assert!(
+            (axis.truncate().length() - 1.0).abs() <= 1.0e-5,
+            "surviving attachment has unit world scale"
+        );
+    }
 }
 
 #[test]

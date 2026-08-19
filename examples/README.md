@@ -624,7 +624,7 @@ files, use the versioned [`character-assembly.toml`](character-assembly.toml)
 recipe instead. `assemble` produces one GLB and evidence pair; source-package
 extraction and project publication stay outside animsmith.
 
-The example uses current recipe v4 without its optional rest/bind operation.
+The example uses current recipe v5 without its optional rest/bind operation.
 For glTF/GLB-only assembly, add `[rest_bind_scale]` with all three required
 `source_skin_index`, `source_root_node_index`, and `expected_factor` fields;
 the base and every clip must pass basis compatibility before remapping.

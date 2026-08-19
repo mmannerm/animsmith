@@ -88,10 +88,12 @@ check_schema docs/schemas/scale-evidence-v3.schema.json urn:animsmith:schema:sca
 check_schema docs/schemas/scale-evidence-v4.schema.json urn:animsmith:schema:scale-evidence:4 crates/animsmith/src/scale.rs docs/output.md docs/cli.md
 check_schema docs/schemas/character-assembly-recipe-v2.schema.json urn:animsmith:schema:character-assembly-recipe:2
 check_schema docs/schemas/character-assembly-recipe-v3.schema.json urn:animsmith:schema:character-assembly-recipe:3 crates/animsmith/src/assembly.rs
-check_schema docs/schemas/character-assembly-recipe-v4.schema.json urn:animsmith:schema:character-assembly-recipe:4 crates/animsmith/src/assembly.rs docs/character-assembly.md docs/cli.md docs/output.md examples/character-assembly.toml
+check_schema docs/schemas/character-assembly-recipe-v4.schema.json urn:animsmith:schema:character-assembly-recipe:4 crates/animsmith/src/assembly.rs
+check_schema docs/schemas/character-assembly-recipe-v5.schema.json urn:animsmith:schema:character-assembly-recipe:5 crates/animsmith/src/assembly.rs docs/character-assembly.md docs/cli.md docs/output.md
 check_schema docs/schemas/character-assembly-evidence-v2.schema.json urn:animsmith:schema:character-assembly-evidence:2
 check_schema docs/schemas/character-assembly-evidence-v3.schema.json urn:animsmith:schema:character-assembly-evidence:3 crates/animsmith/src/assembly.rs
-check_schema docs/schemas/character-assembly-evidence-v4.schema.json urn:animsmith:schema:character-assembly-evidence:4 crates/animsmith/src/assembly.rs docs/character-assembly.md docs/cli.md docs/output.md
+check_schema docs/schemas/character-assembly-evidence-v4.schema.json urn:animsmith:schema:character-assembly-evidence:4 crates/animsmith/src/assembly.rs
+check_schema docs/schemas/character-assembly-evidence-v5.schema.json urn:animsmith:schema:character-assembly-evidence:5 crates/animsmith/src/assembly.rs docs/character-assembly.md docs/cli.md docs/output.md
 if ! cmp -s docs/schemas/scale-evidence-v2.schema.json <(
   sed \
     -e 's/urn:animsmith:schema:scale-evidence:3/urn:animsmith:schema:scale-evidence:2/g' \
@@ -200,6 +202,34 @@ if ! cmp -s <(jq -S . docs/schemas/character-assembly-evidence-v3.schema.json) <
   ' docs/schemas/character-assembly-evidence-v4.schema.json
 ); then
   fail 'character-assembly-evidence-v4 must differ from immutable character-assembly-evidence-v3 only by identity and rest_bind_scale evidence'
+fi
+if ! cmp -s <(jq -S . docs/schemas/character-assembly-recipe-v4.schema.json) <(
+  jq -S '
+    .["$id"] = "urn:animsmith:schema:character-assembly-recipe:4"
+    | .title = "animsmith character assembly recipe v4"
+    | .properties.schema_version.const = 4
+    | .properties.schema.const = "urn:animsmith:schema:character-assembly-recipe:4"
+  ' docs/schemas/character-assembly-recipe-v5.schema.json
+); then
+  fail 'character-assembly-recipe-v5 must differ from immutable recipe-v4 only by identity'
+fi
+if ! cmp -s <(jq -S . docs/schemas/character-assembly-evidence-v4.schema.json) <(
+  jq -S '
+    .["$id"] = "urn:animsmith:schema:character-assembly-evidence:4"
+    | .title = "animsmith character assembly evidence v4"
+    | .properties.schema_version.const = 4
+    | .properties.schema.const = "urn:animsmith:schema:character-assembly-evidence:4"
+    | del(
+        .["$defs"].rest_bind_scale.properties.effective_source_skin_index,
+        .["$defs"].rest_bind_scale.properties.effective_source_root_node_index
+      )
+    | .["$defs"].rest_bind_scale.required -= [
+        "effective_source_skin_index",
+        "effective_source_root_node_index"
+      ]
+  ' docs/schemas/character-assembly-evidence-v5.schema.json
+); then
+  fail 'character-assembly-evidence-v5 must differ from immutable evidence-v4 only by identity and effective staged selectors'
 fi
 if ! jq -e '
   .["$defs"].residual_comparison_counts.required

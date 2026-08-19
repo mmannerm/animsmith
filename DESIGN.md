@@ -845,12 +845,12 @@ These decisions record result-contract ownership after output v3 finalization:
 ## Appendix D — decision record: skinned rest/bind scale canonicalization
 
 **Status (2026-08-17): implemented for self-contained glTF/GLB and character
-assembly recipe/evidence v4.** The shared
+assembly recipe/evidence v5.** The shared
 core plan, typed ledger, exact-source writers, independent core and artifact
 proofs, atomic CLI publisher, and immutable scale-evidence v4 producer are the
-current contract. Character assembly v4 can opt into rest/bind scale with
+current contract. Character assembly v5 can opt into rest/bind scale with
 explicit selectors and factor after validating a versioned basis for the base
-and every separate clip; recipe/evidence v1 through v3 remain unchanged.
+and every separate clip; recipe/evidence v1 through v4 remain unchanged.
 Whole-document conversion supports
 raw glTF `POSITION` morph deltas while preserving static JSON weights as
 numeric values and animated weight accessor payloads byte-exactly; other morph
@@ -1739,7 +1739,8 @@ Different rest translation bases, parent scale, parent rotation, helper layout,
 or effective factor reject before remapping. A digest identifies the evidence
 record but does not replace tolerance-aware semantic comparison.
 
-Character-assembly recipe/evidence v4 implements this record and comparator.
+Character-assembly recipe/evidence v4 implements the base record and
+comparator; v5 composes it with canonicalization, grounding, and node removal.
 It captures the exact base and clip bytes once, performs the raw glTF
 capability preflight and plan before remapping, and rebases each compatible
 clip's translation values and both `CUBICSPLINE` translation tangents in the
@@ -2045,7 +2046,7 @@ change requires a new policy identity and compatibility review.
 
 The single-document producer has no `animsmith.toml` key and no separate plan
 file: mutation must not become an incidental effect of a lint configuration.
-Assembly recipe v4 exposes the same rest/bind operation only through an
+Assembly recipe v5 exposes the same rest/bind operation only through an
 optional `[rest_bind_scale]` block whose selectors and factor are all required.
 It validates every base and clip basis before applying the operation or
 remapping keys. Recipe v3 has no such block and continues to reject it as
@@ -2139,7 +2140,7 @@ single-document operation and preserve assembly's currently insufficient
 separate-clip proof. A standalone command with unrelated duplicate math was
 also rejected. The chosen end state is one shared core transform-plan and proof
 layer with distinct, explicit frontends: the shipped single-document producer
-and character-assembly recipe/evidence v4 integration. The existing
+and character-assembly recipe/evidence v5 integration. The existing
 `canonicalize_skinned_bind_pose` remains the narrower unanimated bind-geometry
 foundation; it is not silently widened or renamed into this contract.
 
@@ -2225,7 +2226,7 @@ The implementation status is:
 - shipped: raw glTF/GLB capability preflight, the shared core plan/ledger and
   proof, preservation-safe whole-document and rest/bind exact-source writers,
   artifact proof, and atomic CLI publication with scale-evidence v4;
-- shipped: glTF-only assembly integration in recipe/evidence v4, including the
+- shipped: glTF-only assembly integration in recipe/evidence v5, including the
   versioned basis fingerprint/comparator, pre-remap clip rebasing, exact input
   digests, compatibility evidence, and proof over the exact staged artifact;
 - shipped: issue #286-A's explicit conservative ufbx-side status for every

@@ -35,10 +35,14 @@ const RECIPE_SCHEMA_VERSION_V3: u32 = 3;
 const RECIPE_SCHEMA_ID_V3: &str = "urn:animsmith:schema:character-assembly-recipe:3";
 const RECIPE_SCHEMA_VERSION_V4: u32 = 4;
 const RECIPE_SCHEMA_ID_V4: &str = "urn:animsmith:schema:character-assembly-recipe:4";
+const RECIPE_SCHEMA_VERSION_V5: u32 = 5;
+const RECIPE_SCHEMA_ID_V5: &str = "urn:animsmith:schema:character-assembly-recipe:5";
 const EVIDENCE_SCHEMA_VERSION_V3: u32 = 3;
 const EVIDENCE_SCHEMA_ID_V3: &str = "urn:animsmith:schema:character-assembly-evidence:3";
 const EVIDENCE_SCHEMA_VERSION_V4: u32 = 4;
 const EVIDENCE_SCHEMA_ID_V4: &str = "urn:animsmith:schema:character-assembly-evidence:4";
+const EVIDENCE_SCHEMA_VERSION_V5: u32 = 5;
+const EVIDENCE_SCHEMA_ID_V5: &str = "urn:animsmith:schema:character-assembly-evidence:5";
 
 fn default_fps() -> f64 {
     30.0
@@ -242,6 +246,10 @@ struct AssemblyRestBindScaleInputEvidence {
 struct AssemblyRestBindScaleEvidence {
     source_skin_index: usize,
     source_root_node_index: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effective_source_skin_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effective_source_root_node_index: Option<usize>,
     expected_factor: f64,
     inputs: Vec<AssemblyRestBindScaleInputEvidence>,
     staged_source_sha256: String,
@@ -374,10 +382,11 @@ fn validate_recipe(recipe: &AssemblyRecipe) -> Result<(), String> {
         (recipe.schema_version, recipe.schema.as_str()),
         (RECIPE_SCHEMA_VERSION_V3, RECIPE_SCHEMA_ID_V3)
             | (RECIPE_SCHEMA_VERSION_V4, RECIPE_SCHEMA_ID_V4)
+            | (RECIPE_SCHEMA_VERSION_V5, RECIPE_SCHEMA_ID_V5)
     );
     if !identity_supported {
         return Err(
-            "unsupported assembly recipe identity; expected schema_version 3/4 with its matching character-assembly-recipe URN"
+            "unsupported assembly recipe identity; expected schema_version 3/4/5 with its matching character-assembly-recipe URN"
                 .into(),
         );
     }
@@ -390,7 +399,11 @@ fn validate_recipe(recipe: &AssemblyRecipe) -> Result<(), String> {
                 "rest_bind_scale.expected_factor must be finite and greater than zero".into(),
             );
         }
-        if recipe.canonicalize_skin || recipe.ground_and_center || !recipe.remove_nodes.is_empty() {
+        if recipe.schema_version == RECIPE_SCHEMA_VERSION_V4
+            && (recipe.canonicalize_skin
+                || recipe.ground_and_center
+                || !recipe.remove_nodes.is_empty())
+        {
             return Err(
                 "rest_bind_scale cannot be combined with canonicalize_skin, ground_and_center, or remove_nodes because those operations change its proved basis"
                     .into(),
@@ -828,11 +841,22 @@ fn assemble_inner(
         || load_input(&base_path),
         |prepared| Ok(prepared.document.clone()),
     )?;
+    // When v5 composes rest/bind reparameterization with assembly transforms,
+    // this independently raw-rebased branch is the exact final-clip oracle.
+    // It deliberately follows the same normalized transforms as the staged
+    // branch; only the eventual raw glTF rewrite remains staged-only.
+    let mut rebased_base = prepared_scale_inputs
+        .get(&base_path)
+        .map(|prepared| prepared.rebased_document.clone());
     ensure_unique_bones(&base.skeleton, "base input")
         .refusal(Stage::Load, Kind::InvalidAssetStructure)?;
     let (retained_mesh_instances, removed_mesh_instances) =
         select_mesh_instances(&mut base, &recipe.mesh_instances)
             .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
+    if let Some(reference) = &mut rebased_base {
+        select_mesh_instances(reference, &recipe.mesh_instances)
+            .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
+    }
 
     let material_application = recipe
         .material_texture_recipe
@@ -877,6 +901,9 @@ fn assemble_inner(
     // the product. Canonicalization intentionally accepts a base scene only,
     // then clip remapping targets the canonical skeleton it returns.
     base.clips.clear();
+    if let Some(reference) = &mut rebased_base {
+        reference.clips.clear();
+    }
     let canonicalization = if recipe.canonicalize_skin {
         let options = animsmith_core::SkinnedBindPoseCanonicalizationOptions {
             // Both maintained loaders expose their Document world in
@@ -897,6 +924,21 @@ fn assemble_inner(
     } else {
         None
     };
+    if let Some(reference) = &mut rebased_base
+        && recipe.canonicalize_skin
+    {
+        let options = animsmith_core::SkinnedBindPoseCanonicalizationOptions {
+            source_to_meters_y_up: animsmith_core::glam::Mat4::IDENTITY,
+            placement: if recipe.ground_and_center {
+                animsmith_core::SkinnedBindPosePlacement::GroundAndCenter
+            } else {
+                animsmith_core::SkinnedBindPosePlacement::Preserve
+            },
+        };
+        *reference = animsmith_core::canonicalize_skinned_bind_pose(reference, options)
+            .refusal(Stage::Transform, Kind::TransformRefused)?
+            .document;
+    }
     ensure_unique_bones(&base.skeleton, "post-canonicalization base input")
         .refusal(Stage::Transform, Kind::InvalidAssetStructure)?;
     let node_removal =
@@ -904,13 +946,19 @@ fn assemble_inner(
             .map_err(|error| format!("cannot plan node removal: {error}"))
             .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
 
+    let reference_node_removal = rebased_base
+        .as_ref()
+        .map(|reference| {
+            animsmith_core::assembly::plan_node_subtree_removal(reference, &recipe.remove_nodes)
+                .map_err(|error| format!("cannot plan reference node removal: {error}"))
+                .refusal(Stage::Selection, Kind::AssetRecipeMismatch)
+        })
+        .transpose()?;
+
     let mut loaded = BTreeMap::<PathBuf, Document>::new();
     let mut clip_evidence = Vec::with_capacity(recipe.clips.len());
     let mut output_clips = Vec::with_capacity(recipe.clips.len());
     let mut expected_rebased_clips = Vec::with_capacity(recipe.clips.len());
-    let rebased_base = prepared_scale_inputs
-        .get(&base_path)
-        .map(|prepared| &prepared.rebased_document);
     for clip_recipe in &recipe.clips {
         let resolved = resolver.resolve(&clip_recipe.input).operator()?;
         if !loaded.contains_key(&resolved) {
@@ -935,7 +983,7 @@ fn assemble_inner(
             prepared_scale_inputs
                 .get(&resolved)
                 .map(|prepared| &prepared.rebased_document),
-            rebased_base,
+            rebased_base.as_ref(),
         ) {
             Some(
                 process_clip_before_copy(
@@ -1002,7 +1050,7 @@ fn assemble_inner(
         let evidence = &mut clip_evidence[index];
         evidence.completed_tracks = staged_completed;
 
-        if let Some(scale_base) = rebased_base {
+        if let Some(scale_base) = rebased_base.as_ref() {
             let rebased_clip = &mut expected_rebased_clips[index];
             let rebased_completed = complete_and_normalize_clip(
                 rebased_clip,
@@ -1045,6 +1093,20 @@ fn assemble_inner(
         evidence.emitted_tracks = staged_clip.tracks.len();
     }
     base.clips = output_clips;
+    if let (Some(reference), Some(reference_removal)) =
+        (&mut rebased_base, reference_node_removal.as_ref())
+    {
+        // The glTF writer deliberately omits clips that have no writable
+        // tracks. Mirror that public artifact shape before the final exact
+        // reload comparison; otherwise a fully stripped clip would make the
+        // reference describe a clip the writer cannot emit.
+        expected_rebased_clips.retain(|clip| !clip.tracks.is_empty());
+        reference.clips = expected_rebased_clips;
+        animsmith_core::assembly::apply_node_subtree_removal(reference, reference_removal)
+            .map_err(|error| format!("cannot remove selected reference nodes: {error}"))
+            .refusal(Stage::Transform, Kind::TransformRefused)?;
+        expected_rebased_clips = reference.clips.clone();
+    }
     let removed_nodes = node_removal
         .removed_nodes()
         .iter()
@@ -1092,6 +1154,21 @@ fn assemble_inner(
         let staged_operation =
             map_staged_rest_bind_operation(original_base, staged_source.document(), scale)
                 .refusal(Stage::Proof, Kind::ProofFailed)?;
+        let (effective_source_skin_index, effective_source_root_node_index) = match staged_operation
+        {
+            ScaleOperation::RestBindUniformScale {
+                source_skin_index,
+                source_root_node_index,
+                ..
+            } => (source_skin_index, source_root_node_index),
+            _ => {
+                return Err(
+                    "staged assembly selector mapping did not produce a rest/bind operation"
+                        .to_owned(),
+                )
+                .refusal(Stage::Proof, Kind::ProofFailed);
+            }
+        };
         let facts = operation_capability_facts(staged_source.manifest(), staged_operation)
             .map_err(|error| format!("staged assembly scale capability failed: {error}"))
             .refusal(Stage::Proof, Kind::ProofFailed)?;
@@ -1126,6 +1203,10 @@ fn assemble_inner(
         rest_bind_scale_evidence = Some(AssemblyRestBindScaleEvidence {
             source_skin_index: scale.source_skin_index,
             source_root_node_index: scale.source_root_node_index,
+            effective_source_skin_index: (recipe.schema_version == RECIPE_SCHEMA_VERSION_V5)
+                .then_some(effective_source_skin_index),
+            effective_source_root_node_index: (recipe.schema_version == RECIPE_SCHEMA_VERSION_V5)
+                .then_some(effective_source_root_node_index),
             expected_factor: scale.expected_factor,
             inputs: rest_bind_input_evidence,
             staged_source_sha256,
@@ -1137,7 +1218,9 @@ fn assemble_inner(
     }
     let (artifact_sha256, artifact_bytes) = read_digest(&artifact_temp).operator()?;
     let (evidence_schema_version, evidence_schema) =
-        if recipe.schema_version == RECIPE_SCHEMA_VERSION_V4 {
+        if recipe.schema_version == RECIPE_SCHEMA_VERSION_V5 {
+            (EVIDENCE_SCHEMA_VERSION_V5, EVIDENCE_SCHEMA_ID_V5)
+        } else if recipe.schema_version == RECIPE_SCHEMA_VERSION_V4 {
             (EVIDENCE_SCHEMA_VERSION_V4, EVIDENCE_SCHEMA_ID_V4)
         } else {
             (EVIDENCE_SCHEMA_VERSION_V3, EVIDENCE_SCHEMA_ID_V3)
