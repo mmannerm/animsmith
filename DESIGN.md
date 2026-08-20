@@ -2304,12 +2304,13 @@ It is not any of the following:
 - authority to rewrite an asset.
 
 Those distinctions are structural. `[rig]` continues to own role resolution,
-`[clips]` owns per-clip intent, `[checks]` owns activation, severity, and
-project tolerances, engine readback owns observed import results, and
-Appendix D plus each transform's own proof contract owns rewriting. An engine
-profile may describe a hard importer constraint or interpretation, but it
-must not silently change the math, thresholds, or findings of an existing
-consumer-neutral check.
+`[runtime_nodes]` owns the shared selection of project-declared attachment,
+socket, IK, collision, and other runtime-facing nodes, `[clips]` owns per-clip
+intent, `[checks]` owns activation, severity, and project tolerances, engine
+readback owns observed import results, and Appendix D plus each transform's
+own proof contract owns rewriting. An engine profile may describe a hard
+importer constraint or interpretation, but it must not silently change the
+math, thresholds, or findings of an existing consumer-neutral check.
 
 The issue's original suggestion that profiles own loop/contact thresholds is
 therefore rejected. An engine may expose a loop toggle or a compression
@@ -2335,7 +2336,22 @@ root_motion_source = "root"
 root_rotation = "extract"
 root_position_y = "bake"
 root_position_xz = "extract"
+
+[runtime_nodes]
+selectors = ["weapon_socket", "ik_*", "collision_anchor"]
 ```
+
+`[runtime_nodes].selectors` is project policy, not an importer fact. Exact
+names and `*` globs resolve with the deterministic miss and ambiguity behavior
+already established by issue #268. The existing
+`[checks.rest-world-scale].node_selectors` field remains accepted as a
+compatibility alias and is normalized into this shared selection before
+evaluation. Declaring both forms is a typed configuration error rather than a
+precedence rule. `rest-world-scale` and the selected-node facet of
+`engine-unit-scale` consume the same resolved set; one check never reads the
+other check's private settings. With no resolved runtime-node selection, that
+facet is genuinely not applicable while component/root and mesh-node unit
+mapping rules may still apply.
 
 An absent `[engine]` section means today's engine-neutral behavior. There is no
 `generic` engine profile, no auto-detection, no nearest-version match, and no
@@ -2479,20 +2495,39 @@ fact, a profile prediction, generated advice, and an engine readback. Text and
 HTML views render that model rather than maintaining separate conclusions.
 
 Prediction, advice, and readback contracts reuse one versioned provenance
-header for input identity, profile tuple and facts digest, settings digest,
-schema identities, and source references. Their top-level schema identities
-and typed payloads remain separate because their authorities differ: a shared
-header must not let advice or an observation deserialize as measured or
-predicted evidence. This centralizes common identity plumbing without coupling
-the three contracts' independent compatibility rules.
+header for input dependency-closure identity, profile tuple and facts digest,
+settings digest, schema identities, and source references. The primary-file
+`InputIdentity` remains present, but it is not sufficient closure identity for
+a text glTF or any source with external dependencies. The header also carries
+a deterministic source-reference-to-resource map and the exact byte count and
+digest of every distinct external resource declared or consumed by the loader
+or target importer, keyed by a source-relative declaration rather than a host
+absolute path. It records closure coverage as complete, partial, or
+unavailable. If an applicable rule, suggestion, or readback comparison depends
+on a resource whose identity cannot be established, that work is unavailable
+rather than silently bound to primary-file bytes alone.
+
+The three contracts' top-level schema identities and typed payloads remain
+separate because their authorities differ: a shared header must not let advice
+or an observation deserialize as measured or predicted evidence. This
+centralizes common identity plumbing without coupling the contracts'
+independent compatibility rules.
 
 Profile selection never turns unavailable evidence into `not_applicable`.
 `not_applicable` is reserved for a rule whose subject genuinely does not exist
-under the resolved profile and project intent. An applicable rule with missing
-or non-finite input or incomplete raw-source coverage is unavailable and must
-fail closed for a consumer that requires the prediction. Unknown profile,
-version, importer, or setting selections fail earlier as configuration errors;
-they are never downgraded to coverage.
+under the resolved profile and project intent. An engine prediction is
+**required** when the resolved profile and project intent make its rule
+applicable and its check remains enabled after `[checks]` configuration.
+Explicitly disabling that check is the opt-out; severity does not change
+whether evidence is required. A required rule with missing or non-finite input
+or incomplete raw-source coverage emits a typed
+`required_prediction_unavailable` evaluation and makes `lint` exit 1. It is
+not rewritten as a content finding, and existing engine-neutral coverage gaps
+remain nonblocking. Advice generation refuses the affected suggestion without
+changing lint status. Unknown profile, version, importer, or setting
+selections fail earlier as configuration errors; they are never downgraded to
+coverage. The next output contract records the requirement state so embedded
+consumers can apply the same policy without parsing CLI exit behavior.
 
 ### E.5 Root motion, units, and scale
 
@@ -2545,15 +2580,16 @@ not authorized by this profile design.
 ### E.6 Advice, manifests, and readback
 
 Generated import settings use a separate immutable advisory-sidecar contract.
-They bind the input digest, full profile identity and facts digest, selected
-importer settings, measurement/check identities, and every suggestion or
-refusal. They must say when upstream canonicalization is required instead of
-presenting an unsafe importer bake as equivalent. They never affect lint exit
-status or claim to be measured evidence or the engine's actual imported
-state.
+They bind the complete input dependency-closure identity, full profile identity
+and facts digest, selected importer settings, measurement/check identities,
+and every suggestion or refusal. They must say when upstream canonicalization
+is required instead of presenting an unsafe importer bake as equivalent. They
+never affect lint exit status or claim to be measured evidence or the engine's
+actual imported state.
 
 The 0.4.0 generation boundary is one input document. The engine-neutral glTF
-inventory may publish source indices, names, targets, and the input digest.
+inventory may publish source indices, names, targets, and the complete input
+dependency-closure identity.
 A versioned Bevy adapter may derive typed labels and supported-extension
 predictions from that inventory; those fields are not mislabeled as
 engine-version-agnostic. Cross-file clip identity, runtime sets, collection
@@ -2608,11 +2644,11 @@ The dependency order is:
 1. this decision record;
 2. coordinated engine-neutral measurement work for per-property coverage and
    root displacement/yaw (#402 and #408);
-3. the dedicated raw importer-sensitive source-facts projection;
+3. the dedicated raw importer-sensitive source-facts projection (#463);
 4. strict engine-profile registry, config, and resolution types without
-   prediction behavior;
-5. reproducible output support for the resolved target, facts digest, and
-   per-check basis;
+   prediction behavior (#464);
+5. reproducible output and dependency-closure provenance for the resolved
+   target, facts digest, required-prediction state, and per-check basis (#465);
 6. per-concern prediction rules, split from umbrella issue #154 into bounded
    engine/rule slices where their input facts differ;
 7. single-document preset advice and separate glTF-inventory/Bevy-adapter
