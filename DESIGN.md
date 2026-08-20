@@ -2333,21 +2333,24 @@ importer = "fbx-model-importer"
 [engine.settings]
 convert_units = true
 bake_axis_conversion = true
+root_motion_source = "root"
 
 [clips."locomotion_*"]
-in_place = false
+movement_owner_xz = "animation"
+movement_owner_y = "gameplay"
+movement_owner_yaw = "animation"
 
 [clips."locomotion_*".engine_settings]
-root_motion_source = "root"
 root_rotation = "extract"
 root_position_y = "bake"
 root_position_xz = "extract"
 
 [clips.idle]
-in_place = true
+movement_owner_xz = "gameplay"
+movement_owner_y = "gameplay"
+movement_owner_yaw = "gameplay"
 
 [clips.idle.engine_settings]
-root_motion_source = "root"
 root_rotation = "bake"
 root_position_y = "bake"
 root_position_xz = "bake"
@@ -2386,10 +2389,13 @@ and either document or clip scope. Document-scoped importer choices live only
 under `[engine.settings]`. Clip-scoped importer choices live only under the
 matching `[clips.<selector>.engine_settings]` table and resolve through the
 existing clip-selector rule (exact name over matching globs, later matching
-globs winning ties). `[clips.<selector>]` fields such as `in_place` remain
-project intent; the sibling `engine_settings` table records the importer state
-that the prediction must compare with that intent. A setting at the wrong scope
-is a typed configuration error, not an override.
+globs winning ties). For the Unity FBX profiles, the Motion/Root Motion Node
+choice applies to all imported clips and is therefore document-scoped as
+`root_motion_source`; rotation and position bake/extract choices remain
+clip-scoped. `[clips.<selector>]` movement-owner fields remain project intent;
+the sibling `engine_settings` table records the importer state that a prediction
+must compare with that intent. A setting at the wrong scope is a typed
+configuration error, not an override.
 
 Each applicable setting is also classified by the immutable profile facts as
 either required or as having one documented default. Resolution materializes
@@ -2447,15 +2453,19 @@ registry.
 
 Crate ownership is fixed before implementation. A new format-neutral
 `animsmith-engine` library owns the built-in fact registry, strict tuple
-resolution, prediction-rule adapters, and versioned engine-side contracts. It
-depends on `animsmith-core`, but not on format libraries, TOML, a filesystem,
-or engine SDKs. `animsmith-core` continues to own consumer-neutral documents,
-measurements, checks, and shared source-evidence value types. The glTF and FBX
-libraries populate the common raw-source projection while retaining their
-format-specific parsing details. The `animsmith` CLI owns strict TOML mapping
-and orchestration; `animsmith-report` renders the resulting public contracts.
-This preserves the engine-agnostic core and gives embedders the same registry
-and resolver as the CLI.
+resolution, prediction-rule adapters, and the standalone advisory/readback
+payloads. It depends on `animsmith-core`, but not on format libraries, TOML, a
+filesystem, or engine SDKs. `animsmith-core` continues to own consumer-neutral
+documents, measurements, checks, shared source-evidence value types, every
+measure/lint envelope and URN, and a registry-independent wire projection for
+profile identity, rule basis, prediction state, and shared provenance. The
+engine library populates that core-owned projection; core never depends on the
+engine registry or its concrete profile types. The glTF and FBX libraries
+populate the common raw-source projection while retaining their format-specific
+parsing details. The `animsmith` CLI owns strict TOML mapping and orchestration;
+`animsmith-report` renders the resulting public contracts. This preserves
+Appendix C's envelope ownership, prevents a core/engine dependency cycle, and
+gives embedders the same registry and resolver as the CLI.
 
 ### E.3 Rules, checks, and precedence
 
@@ -2531,10 +2541,14 @@ minimum:
   roles, or unavailable measurements.
 
 This record belongs in the next versioned output contract; an existing schema
-identity is never widened in place. The exact JSON shape is owned by the
-implementation slice, but it must permit a consumer to distinguish a measured
-fact, a profile prediction, generated advice, and an engine readback. Text and
-HTML views render that model rather than maintaining separate conclusions.
+identity is never widened in place. Under Appendix C, `animsmith-core` owns that
+outer lint envelope, its URN, and the registry-independent prediction/provenance
+wire types. `animsmith-engine` constructs those wire records through a one-way
+adapter without making core depend on the engine crate. The exact JSON shape is
+fixed by the implementation slice, but it must permit a consumer to distinguish
+a measured fact, a profile prediction, generated advice, and an engine
+readback. Text and HTML views render that model rather than maintaining separate
+conclusions.
 
 Prediction, advice, and readback contracts reuse one versioned provenance
 header for input dependency-closure identity, profile tuple and facts digest,
@@ -2559,8 +2573,10 @@ Profile selection never turns unavailable evidence into `not_applicable`.
 `not_applicable` is reserved for a rule whose subject genuinely does not exist
 under the resolved profile and project intent. An engine prediction is
 **required** when the resolved profile and project intent make its rule
-applicable and its check remains enabled after `[checks]` configuration.
-Explicitly disabling that check is the opt-out; severity does not change
+applicable, the run's `CheckSelection` selects its check, and the check remains
+enabled after `[checks]` configuration. An unselected check remains visible as
+`unselected` and is not required; an explicitly disabled check remains visible
+as `disabled`. Once a check is selected and enabled, severity does not change
 whether evidence is required. A required rule with missing or non-finite input
 or incomplete raw-source coverage emits a typed
 `required_prediction_unavailable` evaluation and makes `lint` exit 1. It is
@@ -2618,11 +2634,21 @@ requirements are satisfied.
 
 Root motion is handled the same way. The profile describes which source or
 projection a configured importer uses and what a bake/extract option means.
-The artifact supplies engine-neutral displacement and yaw evidence, while
-`[clips]` supplies the project's expected movement owner. A filename such as
-`_RM`, small translation magnitude, or the profile alone cannot declare the
-intent. Conversion between root motion and in-place remains ADR-gated and is
-not authorized by this profile design.
+The artifact supplies engine-neutral horizontal displacement, signed vertical
+displacement plus non-collapsing vertical excursion/extrema, and yaw evidence.
+`[clips.<selector>]` independently declares
+`movement_owner_xz`, `movement_owner_y`, and `movement_owner_yaw` as either
+`"gameplay"` (the entity/controller owns world motion and the importer bakes
+that component into pose) or `"animation"` (extracted root motion owns world
+motion). Issue #466 owns these engine-neutral clip-intent fields. The existing
+`in_place` field remains a compatibility alias only for
+horizontal ownership (`true` means gameplay, `false` means animation); declaring
+it together with `movement_owner_xz` is a typed configuration error. A missing
+axis declaration makes only the intent-dependent rule for that axis not
+applicable; it is never inferred from another axis. A filename such as `_RM`,
+small translation magnitude, or the profile alone cannot declare intent.
+Conversion between root motion and in-place remains ADR-gated and is not
+authorized by this profile design.
 
 ### E.6 Advice, manifests, and readback
 
@@ -2690,18 +2716,20 @@ The dependency order is:
 
 1. this decision record;
 2. coordinated engine-neutral measurement work for per-property coverage and
-   root displacement/yaw (#402 and #408);
-3. the dedicated raw importer-sensitive source-facts projection (#463);
-4. strict engine-profile registry, config, and resolution types without
+   horizontal/vertical root trajectory plus yaw (#402 and #408);
+3. independent per-axis clip movement-ownership intent (#466), required before
+   root-motion prediction but not by the measurement/profile substrate;
+4. the dedicated raw importer-sensitive source-facts projection (#463);
+5. strict engine-profile registry, config, and resolution types without
    prediction behavior (#464);
-5. reproducible output and dependency-closure provenance for the resolved
+6. reproducible output and dependency-closure provenance for the resolved
    target, facts digest, required-prediction state, and per-check basis (#465);
-6. per-concern prediction rules, split from umbrella issue #154 into bounded
+7. per-concern prediction rules, split from umbrella issue #154 into bounded
    engine/rule slices where their input facts differ;
-7. single-document preset advice and separate glTF-inventory/Bevy-adapter
+8. single-document preset advice and separate glTF-inventory/Bevy-adapter
    generation (#155 and #156);
-8. prediction-versus-readback feasibility and harness decisions (#151); and
-9. per-engine guides generated from the accepted rules and evidence (#157).
+9. prediction-versus-readback feasibility and harness decisions (#151); and
+10. per-engine guides generated from the accepted rules and evidence (#157).
 
 The two measurement tickets share schema, diff, rendering, and contract
 surfaces, so they require one version plan and sequential implementation rather
