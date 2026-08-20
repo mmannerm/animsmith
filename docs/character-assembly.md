@@ -32,8 +32,8 @@ evidence, and publication. DCC automation is outside this command.
 Start from [`examples/character-assembly.toml`](../examples/character-assembly.toml):
 
 ```toml
-schema_version = 5
-schema = "urn:animsmith:schema:character-assembly-recipe:5"
+schema_version = 6
+schema = "urn:animsmith:schema:character-assembly-recipe:6"
 input_root = "inputs"
 base_input = "base-character.fbx"
 mesh_instances = ["character-mesh"]
@@ -44,7 +44,8 @@ ground_and_center = true
 prune_constant_tracks = false
 fps = 30.0
 
-# Optional and glTF-only; every selector and the factor are required together.
+# Optional for glTF/GLB and the inventory-complete FBX subset; every selector
+# and the factor are required together.
 # [rest_bind_scale]
 # source_skin_index = 0
 # source_root_node_index = 3
@@ -132,7 +133,7 @@ apply:
 
 ### Optional rest/bind scale canonicalization
 
-Recipe v5 can opt into the accepted rest/bind scale operation with one
+Recipe v6 can opt into the accepted rest/bind scale operation with one
 top-level block:
 
 ```toml
@@ -143,16 +144,21 @@ expected_factor = 0.01
 ```
 
 The block has no defaults: the source skin index, source root node index, and
-finite positive expected factor are all required. It initially accepts only
-glTF/GLB base and clip inputs. FBX inputs and any glTF input whose raw
-capability manifest or source-skeleton coverage is incomplete fail closed.
-Nothing is inferred from filenames, bounds, character height, or inverse-bind
-magnitudes.
+finite positive expected factor are all required. Recipe v6 accepts glTF/GLB
+and the narrow FBX subset whose complete ufbx inventory proves the normalized
+metre/Y-up rest hierarchy, derived bind evidence, rebuilt geometry, baked
+animation, and every other modeled domain. Incomplete source-skeleton
+projection, unsupported payload, altered skin influences, incomplete bind
+evidence, external resources, or an incompatible basis fails closed. Nothing
+is inferred from filenames, bounds, character height, inverse-bind magnitudes,
+or source units. Recipes v4/v5 remain immutable and continue to reject FBX
+when `rest_bind_scale` is active.
 
-Recipe v5 composes the block with `canonicalize_skin`, `ground_and_center`, and
+Recipe v6 retains recipe v5's composition with `canonicalize_skin`,
+`ground_and_center`, and
 `remove_nodes`. It captures and validates the raw inputs first, applies the
 same mesh selection and canonical assembly transforms to the staged candidate
-and an independently raw-rebased reference, then maps selectors by names and
+and an independently source-rebased reference, then maps selectors by names and
 ordered selected joint topology after any index changes. It serializes the
 staged candidate, performs the raw rest-bind rewrite last, reloads those exact
 bytes once for proof, and atomically publishes only after the final clips match
@@ -258,16 +264,16 @@ boundary described in [Material texture recipes](material-texture-recipes.md),
 including BaseColor, normal, metallic-roughness, and occlusion slots.
 
 The normative current recipe schema is
-[`character-assembly-recipe-v5.schema.json`](schemas/character-assembly-recipe-v5.schema.json).
-Recipe v1 through v4 remain immutable historical contracts. To migrate from
-v4, change `schema_version` and `schema` to v5 when composing rest/bind scale
-with canonicalization, grounding, or node removal. Omitting the block remains
-ordinary assembly behavior; v3 continues to reject the block as unknown.
+[`character-assembly-recipe-v6.schema.json`](schemas/character-assembly-recipe-v6.schema.json).
+Recipe v1 through v5 remain immutable historical contracts. Migrate from v5
+by changing only `schema_version` and `schema` to v6 when FBX must participate
+in `rest_bind_scale`. Omitting the block remains ordinary assembly behavior;
+v3 continues to reject the block as unknown.
 
 ## Evidence and determinism
 
 The current evidence identity is
-`urn:animsmith:schema:character-assembly-evidence:5`. It records the effective
+`urn:animsmith:schema:character-assembly-evidence:6`. It records the effective
 recipe, recipe and input SHA-256 digests, the selected configuration file's
 declared path and digest (or an explicit built-in-defaults marker), selected takes and windows, exact
 source/base bone remap names and indices, and track
@@ -288,9 +294,9 @@ once in original pre-removal node order: its exact name, original node index,
 nullable original parent index, and whether the recipe selected it directly
 rather than through an ancestor. It is empty when `remove_nodes` is omitted or
 empty. See
-[`character-assembly-evidence-v5.schema.json`](schemas/character-assembly-evidence-v5.schema.json).
+[`character-assembly-evidence-v6.schema.json`](schemas/character-assembly-evidence-v6.schema.json).
 
-When `rest_bind_scale` is active, v5 additionally pins each exact base/clip
+When `rest_bind_scale` is active, v6 pins each exact base/clip
 input digest and its versioned basis fingerprint, both the requested source
 selectors and their effective staged selectors after canonicalization/removal,
 the factor, every compatibility result, and the shared final-artifact scale proof.
@@ -306,7 +312,15 @@ records let a consumer verify that assembly validated and transformed every
 participating input before remapping and that proof consumed the exact bytes
 subsequently published.
 
-Evidence v1, v2, and v3 remain immutable historical contracts; v1 does not
+Each v6 scale-input row also identifies the captured container and its source
+projection. `raw-gltf` records authored-curve and raw-span preservation.
+`normalized-baked-fbx` explicitly records both as false, embeds the complete
+FBX capability inventory, and binds the private normalized GLB stage by digest
+and byte count. This stage is not a second public artifact or evidence chain:
+assembly still serializes, rewrites, reloads, proves, digest-checks, and
+atomically publishes one final GLB/evidence pair.
+
+Evidence v1 through v5 remain immutable historical contracts; v1 does not
 describe pruning, v1 and v2 do not describe structural node removal, and none
 of them describe rest/bind scale compatibility. Consumers migrating from v2 or
 v3 must verify `removed_nodes` against the effective

@@ -1229,18 +1229,9 @@ fn run_fbx_rest_bind(request: &Request, tool: ToolInfo) -> Result<ExitCode, Stri
     // raw representation whose bytes the existing glTF rest/bind writer can
     // rewrite exactly. The v5 record binds its identity explicitly so this
     // does not masquerade as raw FBX preservation.
-    let staged_temp = tempfile::Builder::new()
-        .prefix(".animsmith-fbx-stage-")
-        .suffix(".glb")
-        .tempfile_in(parent_or_current(&request.output))
-        .map_err(|error| format!("cannot create temporary FBX staging source: {error}"))?
-        .into_temp_path();
-    animsmith_gltf::write::write(source.document(), &staged_temp)
-        .map_err(|error| format!("cannot serialize normalized FBX staging source: {error}"))?;
-    let staged_bytes = fs::read(&staged_temp)
-        .map_err(|error| format!("cannot read temporary FBX staging source: {error}"))?;
-    let staged_identity = InputIdentity::from_bytes(&staged_bytes);
-    let staged_source = match preflight_scale_source_bytes(&staged_temp, &staged_bytes) {
+    let staged =
+        serialize_fbx_rest_bind_stage(source.document(), parent_or_current(&request.output))?;
+    let staged_source = match preflight_scale_source_bytes(staged.path(), staged.bytes()) {
         Ok(source) => source,
         Err(error) => {
             return emit_fbx_rejection(
@@ -1319,9 +1310,59 @@ fn run_fbx_rest_bind(request: &Request, tool: ToolInfo) -> Result<ExitCode, Stri
         &paths,
         identity,
         source.inventory(),
-        staged_identity,
+        staged.identity().clone(),
         produced,
     )
+}
+
+/// One private normalized-FBX-to-GLB staging source shared by standalone
+/// scaling and assembly. The temporary path remains owned here so callers
+/// cannot outlive the bytes they preflight.
+#[cfg(feature = "fbx")]
+pub(crate) struct FbxRestBindStage {
+    path: tempfile::TempPath,
+    bytes: Vec<u8>,
+    identity: InputIdentity,
+}
+
+#[cfg(feature = "fbx")]
+impl FbxRestBindStage {
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub(crate) fn identity(&self) -> &InputIdentity {
+        &self.identity
+    }
+}
+
+/// Serialize one admitted normalized FBX document into the single private GLB
+/// staging representation used by both FBX rest/bind entry points.
+#[cfg(feature = "fbx")]
+pub(crate) fn serialize_fbx_rest_bind_stage(
+    document: &Document,
+    staging_parent: &Path,
+) -> Result<FbxRestBindStage, String> {
+    let path = tempfile::Builder::new()
+        .prefix(".animsmith-fbx-stage-")
+        .suffix(".glb")
+        .tempfile_in(staging_parent)
+        .map_err(|error| format!("cannot create temporary FBX staging source: {error}"))?
+        .into_temp_path();
+    animsmith_gltf::write::write(document, &path)
+        .map_err(|error| format!("cannot serialize normalized FBX staging source: {error}"))?;
+    let bytes = fs::read(&path)
+        .map_err(|error| format!("cannot read temporary FBX staging source: {error}"))?;
+    let identity = InputIdentity::from_bytes(&bytes);
+    Ok(FbxRestBindStage {
+        path,
+        bytes,
+        identity,
+    })
 }
 
 #[cfg(feature = "fbx")]
@@ -1429,7 +1470,7 @@ fn emit_fbx_rejection(
 /// assigned raw glTF array index. Both the root and the complete ordered skin
 /// joint topology must map exactly once.
 #[cfg(feature = "fbx")]
-fn map_fbx_staged_rest_bind_operation(
+pub(crate) fn map_fbx_staged_rest_bind_operation(
     original: &Document,
     staged: &Document,
     operation: ScaleOperation,

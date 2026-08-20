@@ -12,6 +12,7 @@ use crate::publish::{
     require_writable_destination, serialize_record,
 };
 use crate::{Format, render};
+use animsmith_core::InputIdentity;
 use animsmith_core::model::{
     Clip, Document, Interpolation, MaterialAsset, MeshAsset, Property, Skeleton, TrackValues,
 };
@@ -20,6 +21,7 @@ use animsmith_core::scale::{
     require_assembly_scale_compatibility,
 };
 use animsmith_core::{Config, ToolInfo, resolve_configured_roles, sha256_hex};
+use animsmith_fbx::FbxScaleCapabilityInventory;
 use animsmith_gltf::write::WriteSummary;
 use animsmith_gltf::{
     operation_capability_facts, preflight_scale_source_bytes, prove_rewritten_rest_bind,
@@ -37,12 +39,16 @@ const RECIPE_SCHEMA_VERSION_V4: u32 = 4;
 const RECIPE_SCHEMA_ID_V4: &str = "urn:animsmith:schema:character-assembly-recipe:4";
 const RECIPE_SCHEMA_VERSION_V5: u32 = 5;
 const RECIPE_SCHEMA_ID_V5: &str = "urn:animsmith:schema:character-assembly-recipe:5";
+const RECIPE_SCHEMA_VERSION_V6: u32 = 6;
+const RECIPE_SCHEMA_ID_V6: &str = "urn:animsmith:schema:character-assembly-recipe:6";
 const EVIDENCE_SCHEMA_VERSION_V3: u32 = 3;
 const EVIDENCE_SCHEMA_ID_V3: &str = "urn:animsmith:schema:character-assembly-evidence:3";
 const EVIDENCE_SCHEMA_VERSION_V4: u32 = 4;
 const EVIDENCE_SCHEMA_ID_V4: &str = "urn:animsmith:schema:character-assembly-evidence:4";
 const EVIDENCE_SCHEMA_VERSION_V5: u32 = 5;
 const EVIDENCE_SCHEMA_ID_V5: &str = "urn:animsmith:schema:character-assembly-evidence:5";
+const EVIDENCE_SCHEMA_VERSION_V6: u32 = 6;
+const EVIDENCE_SCHEMA_ID_V6: &str = "urn:animsmith:schema:character-assembly-evidence:6";
 
 fn default_fps() -> f64 {
     30.0
@@ -240,6 +246,25 @@ struct AssemblyRestBindScaleInputEvidence {
     basis_fingerprint: String,
     compatible: bool,
     compatibility: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    input_format: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_projection: Option<AssemblyScaleInputProjectionEvidence>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+enum AssemblyScaleInputProjectionEvidence {
+    RawGltf {
+        authored_curve_keys_preserved: bool,
+        raw_source_spans_preserved: bool,
+    },
+    NormalizedBakedFbx {
+        authored_curve_keys_preserved: bool,
+        raw_source_spans_preserved: bool,
+        staged_source: InputIdentity,
+        capability: Box<FbxScaleCapabilityInventory>,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -383,10 +408,11 @@ fn validate_recipe(recipe: &AssemblyRecipe) -> Result<(), String> {
         (RECIPE_SCHEMA_VERSION_V3, RECIPE_SCHEMA_ID_V3)
             | (RECIPE_SCHEMA_VERSION_V4, RECIPE_SCHEMA_ID_V4)
             | (RECIPE_SCHEMA_VERSION_V5, RECIPE_SCHEMA_ID_V5)
+            | (RECIPE_SCHEMA_VERSION_V6, RECIPE_SCHEMA_ID_V6)
     );
     if !identity_supported {
         return Err(
-            "unsupported assembly recipe identity; expected schema_version 3/4/5 with its matching character-assembly-recipe URN"
+            "unsupported assembly recipe identity; expected schema_version 3/4/5/6 with its matching character-assembly-recipe URN"
                 .into(),
         );
     }
@@ -521,6 +547,8 @@ fn prepare_scale_input(
     declared: &Path,
     resolved: &Path,
     scale: AssemblyRestBindScaleRecipe,
+    recipe_version: u32,
+    staging_parent: &Path,
     tool: &ToolInfo,
 ) -> Result<PreparedScaleInput, crate::producer::Failure> {
     use crate::producer::{Classify as _, Failure, Kind, Stage};
@@ -528,9 +556,17 @@ fn prepare_scale_input(
         .extension()
         .and_then(|extension| extension.to_str())
         .unwrap_or_default();
-    if !extension.eq_ignore_ascii_case("gltf") && !extension.eq_ignore_ascii_case("glb") {
+    let is_gltf = extension.eq_ignore_ascii_case("gltf") || extension.eq_ignore_ascii_case("glb");
+    let is_fbx = extension.eq_ignore_ascii_case("fbx");
+    if !is_gltf && !(recipe_version == RECIPE_SCHEMA_VERSION_V6 && is_fbx) {
+        if recipe_version < RECIPE_SCHEMA_VERSION_V6 {
+            return Err(Failure::operator(format!(
+                "rest_bind_scale input {} is not glTF/GLB; assembly scale integration is glTF-only",
+                declared.display()
+            )));
+        }
         return Err(Failure::operator(format!(
-            "rest_bind_scale input {} is not glTF/GLB; assembly scale integration is glTF-only",
+            "rest_bind_scale input {} is not glTF/GLB or FBX",
             declared.display()
         )));
     }
@@ -541,15 +577,133 @@ fn prepare_scale_input(
     let byte_count = u64::try_from(bytes.len())
         .map_err(|_| format!("input {} size exceeds u64", declared.display()))
         .operator()?;
-    let source = preflight_scale_source_bytes(resolved, &bytes)
+    let operation = rest_bind_operation(scale);
+    let (document, rebased_document, basis, input_format, source_projection) = if is_fbx {
+        let fbx_source = animsmith_fbx::load_scale_source_bytes(resolved, &bytes)
+            .map_err(|error| {
+                format!(
+                    "rest_bind_scale FBX load rejected input {}: {error}",
+                    declared.display()
+                )
+            })
+            .refusal(Stage::Load, Kind::UnreadableSource)?;
+        animsmith_fbx::rest_bind_capability_facts(fbx_source.inventory())
+            .map_err(|error| {
+                format!(
+                    "rest_bind_scale FBX capability rejected input {}: {error}",
+                    declared.display()
+                )
+            })
+            .refusal(Stage::Transform, Kind::UnsupportedSourceDomain)?;
+        let staged =
+            crate::scale::serialize_fbx_rest_bind_stage(fbx_source.document(), staging_parent)
+                .operator()?;
+        let staged_source = preflight_scale_source_bytes(staged.path(), staged.bytes())
+            .map_err(|error| {
+                format!(
+                    "rest_bind_scale staged FBX preflight rejected input {}: {error}",
+                    declared.display()
+                )
+            })
+            .refusal(Stage::Transform, Kind::UnsupportedSourceDomain)?;
+        let staged_operation = crate::scale::map_fbx_staged_rest_bind_operation(
+            fbx_source.document(),
+            staged_source.document(),
+            operation,
+        )
         .map_err(|error| {
             format!(
-                "rest_bind_scale preflight rejected input {}: {error}",
+                "rest_bind_scale FBX selector mapping rejected input {}: {error}",
                 declared.display()
             )
         })
-        .refusal(Stage::Load, Kind::UnreadableSource)?;
-    let operation = rest_bind_operation(scale);
+        .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
+        let (rebased_document, basis) = prepare_gltf_scale_projection(
+            declared,
+            staged.path(),
+            &staged_source,
+            staged_operation,
+        )?;
+        (
+            fbx_source.document().clone(),
+            rebased_document,
+            basis,
+            "fbx",
+            AssemblyScaleInputProjectionEvidence::NormalizedBakedFbx {
+                authored_curve_keys_preserved: false,
+                raw_source_spans_preserved: false,
+                staged_source: staged.identity().clone(),
+                capability: Box::new(fbx_source.inventory().clone()),
+            },
+        )
+    } else {
+        let source = preflight_scale_source_bytes(resolved, &bytes)
+            .map_err(|error| {
+                format!(
+                    "rest_bind_scale preflight rejected input {}: {error}",
+                    declared.display()
+                )
+            })
+            .refusal(Stage::Load, Kind::UnreadableSource)?;
+        let (rebased_document, basis) =
+            prepare_gltf_scale_projection(declared, resolved, &source, operation)?;
+        (
+            source.document().clone(),
+            rebased_document,
+            basis,
+            if extension.eq_ignore_ascii_case("glb") {
+                "glb"
+            } else {
+                "gltf"
+            },
+            AssemblyScaleInputProjectionEvidence::RawGltf {
+                authored_curve_keys_preserved: true,
+                raw_source_spans_preserved: true,
+            },
+        )
+    };
+    #[derive(Serialize)]
+    struct Fingerprint<'a> {
+        schema: &'static str,
+        tool: &'a ToolInfo,
+        input_sha256: &'a str,
+        basis: &'a AssemblyScaleBasis,
+    }
+    let fingerprint_bytes = serde_json::to_vec(&Fingerprint {
+        schema: "urn:animsmith:character-assembly-scale-basis:1",
+        tool,
+        input_sha256: &sha256,
+        basis: &basis,
+    })
+    .map_err(|error| format!("cannot serialize assembly scale basis: {error}"))
+    .operator()?;
+    Ok(PreparedScaleInput {
+        document,
+        rebased_document,
+        basis,
+        evidence: AssemblyRestBindScaleInputEvidence {
+            role,
+            declared_path: declared.display().to_string(),
+            sha256,
+            bytes: byte_count,
+            basis_schema: "urn:animsmith:character-assembly-scale-basis:1",
+            basis_fingerprint: sha256_hex(&fingerprint_bytes),
+            compatible: true,
+            compatibility: "compatible",
+            input_format: (recipe_version == RECIPE_SCHEMA_VERSION_V6).then_some(input_format),
+            source_projection: (recipe_version == RECIPE_SCHEMA_VERSION_V6)
+                .then_some(source_projection),
+        },
+    })
+}
+
+fn prepare_gltf_scale_projection(
+    declared: &Path,
+    source_path: &Path,
+    source: &animsmith_gltf::GltfScaleSource,
+    operation: ScaleOperation,
+) -> Result<(Document, AssemblyScaleBasis), crate::producer::Failure> {
+    use crate::producer::{Classify as _, Kind, Stage};
     let facts = operation_capability_facts(source.manifest(), operation)
         .map_err(|error| {
             format!(
@@ -578,7 +732,7 @@ fn prepare_scale_input(
             )
         })
         .refusal(Stage::Proof, Kind::ProofFailed)?;
-    let artifact = rewrite_scale_plan(&source, &plan)
+    let artifact = rewrite_scale_plan(source, &plan)
         .map_err(|error| {
             format!(
                 "rest_bind_scale rewrite rejected input {}: {error}",
@@ -586,7 +740,7 @@ fn prepare_scale_input(
             )
         })
         .refusal(Stage::Transform, Kind::TransformRefused)?;
-    let rebased_document = animsmith_gltf::load_bytes(resolved, artifact.bytes())
+    let rebased_document = animsmith_gltf::load_bytes(source_path, artifact.bytes())
         .map_err(|error| {
             format!(
                 "cannot reload rest_bind_scale rewrite for input {}: {error}",
@@ -594,36 +748,7 @@ fn prepare_scale_input(
             )
         })
         .refusal(Stage::Proof, Kind::ProofFailed)?;
-    #[derive(Serialize)]
-    struct Fingerprint<'a> {
-        schema: &'static str,
-        tool: &'a ToolInfo,
-        input_sha256: &'a str,
-        basis: &'a AssemblyScaleBasis,
-    }
-    let fingerprint_bytes = serde_json::to_vec(&Fingerprint {
-        schema: "urn:animsmith:character-assembly-scale-basis:1",
-        tool,
-        input_sha256: &sha256,
-        basis: &basis,
-    })
-    .map_err(|error| format!("cannot serialize assembly scale basis: {error}"))
-    .operator()?;
-    Ok(PreparedScaleInput {
-        document: source.document().clone(),
-        rebased_document,
-        basis,
-        evidence: AssemblyRestBindScaleInputEvidence {
-            role,
-            declared_path: declared.display().to_string(),
-            sha256,
-            bytes: byte_count,
-            basis_schema: "urn:animsmith:character-assembly-scale-basis:1",
-            basis_fingerprint: sha256_hex(&fingerprint_bytes),
-            compatible: true,
-            compatibility: "compatible",
-        },
-    })
+    Ok((rebased_document, basis))
 }
 
 /// One parsed `assemble` invocation, including the global `--config` this
@@ -783,7 +908,7 @@ fn assemble_inner(
     };
 
     let base_path = resolver.resolve(&recipe.base_input).operator()?;
-    // The v4 scale path captures and validates every source before any
+    // Every versioned scale path captures and validates every source before any
     // assembly transform, remap, or copy. The same captured normalized
     // documents feed assembly; no later reopen can race validation.
     let mut prepared_scale_inputs = BTreeMap::<PathBuf, PreparedScaleInput>::new();
@@ -794,6 +919,8 @@ fn assemble_inner(
             &recipe.base_input,
             &base_path,
             scale,
+            recipe.schema_version,
+            output_parent,
             &tool,
         )?;
         let base_basis = prepared.basis.clone();
@@ -813,6 +940,8 @@ fn assemble_inner(
                 &clip_recipe.input,
                 &resolved,
                 scale,
+                recipe.schema_version,
+                output_parent,
                 &tool,
             )?;
             require_assembly_scale_compatibility(&base_basis, &prepared.basis)
@@ -841,10 +970,10 @@ fn assemble_inner(
         || load_input(&base_path),
         |prepared| Ok(prepared.document.clone()),
     )?;
-    // When v5 composes rest/bind reparameterization with assembly transforms,
-    // this independently raw-rebased branch is the exact final-clip oracle.
+    // When v5/v6 composes rest/bind reparameterization with assembly transforms,
+    // this independently source-rebased branch is the exact final-clip oracle.
     // It deliberately follows the same normalized transforms as the staged
-    // branch; only the eventual raw glTF rewrite remains staged-only.
+    // branch; only the eventual raw staged-GLB rewrite remains staged-only.
     let mut rebased_base = prepared_scale_inputs
         .get(&base_path)
         .map(|prepared| prepared.rebased_document.clone());
@@ -1203,9 +1332,9 @@ fn assemble_inner(
         rest_bind_scale_evidence = Some(AssemblyRestBindScaleEvidence {
             source_skin_index: scale.source_skin_index,
             source_root_node_index: scale.source_root_node_index,
-            effective_source_skin_index: (recipe.schema_version == RECIPE_SCHEMA_VERSION_V5)
+            effective_source_skin_index: (recipe.schema_version >= RECIPE_SCHEMA_VERSION_V5)
                 .then_some(effective_source_skin_index),
-            effective_source_root_node_index: (recipe.schema_version == RECIPE_SCHEMA_VERSION_V5)
+            effective_source_root_node_index: (recipe.schema_version >= RECIPE_SCHEMA_VERSION_V5)
                 .then_some(effective_source_root_node_index),
             expected_factor: scale.expected_factor,
             inputs: rest_bind_input_evidence,
@@ -1218,7 +1347,9 @@ fn assemble_inner(
     }
     let (artifact_sha256, artifact_bytes) = read_digest(&artifact_temp).operator()?;
     let (evidence_schema_version, evidence_schema) =
-        if recipe.schema_version == RECIPE_SCHEMA_VERSION_V5 {
+        if recipe.schema_version == RECIPE_SCHEMA_VERSION_V6 {
+            (EVIDENCE_SCHEMA_VERSION_V6, EVIDENCE_SCHEMA_ID_V6)
+        } else if recipe.schema_version == RECIPE_SCHEMA_VERSION_V5 {
             (EVIDENCE_SCHEMA_VERSION_V5, EVIDENCE_SCHEMA_ID_V5)
         } else if recipe.schema_version == RECIPE_SCHEMA_VERSION_V4 {
             (EVIDENCE_SCHEMA_VERSION_V4, EVIDENCE_SCHEMA_ID_V4)
@@ -1323,8 +1454,8 @@ fn exact_take<'a>(doc: &'a Document, take: &str, input: &Path) -> Result<&'a Cli
 
 /// Apply every pre-copy clip transform in one declared source basis.
 ///
-/// The v4 scale path invokes this same pipeline for the staged source and its
-/// raw-rebased counterpart. The staged clip remains the source for the final
+/// Every scale-enabled recipe invokes this same pipeline for the staged source
+/// and its source-rebased counterpart. The staged clip remains the source for the final
 /// shared raw rewrite, while scale-sensitive evidence and later membership
 /// decisions come from the rebased result.
 fn process_clip_before_copy(

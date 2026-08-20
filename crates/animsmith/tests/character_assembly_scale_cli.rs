@@ -1,4 +1,4 @@
-//! Public-boundary coverage for character-assembly recipe/evidence v4.
+//! Public-boundary coverage for character-assembly rest/bind scale contracts.
 
 #![cfg(feature = "fbx")]
 
@@ -23,6 +23,10 @@ const RECIPE_SCHEMA_V5: &str =
     include_str!("../../../docs/schemas/character-assembly-recipe-v5.schema.json");
 const EVIDENCE_SCHEMA_V5: &str =
     include_str!("../../../docs/schemas/character-assembly-evidence-v5.schema.json");
+const RECIPE_SCHEMA_V6: &str =
+    include_str!("../../../docs/schemas/character-assembly-recipe-v6.schema.json");
+const EVIDENCE_SCHEMA_V6: &str =
+    include_str!("../../../docs/schemas/character-assembly-evidence-v6.schema.json");
 const RIGGED_TRIANGLE_FBX: &str = include_str!("../../animsmith-fbx/testdata/rigged_triangle.fbx");
 
 fn recipe(clip: &str) -> String {
@@ -59,6 +63,27 @@ fn recipe_v5(clip: &str) -> String {
             "fps = 30.0\ncanonicalize_skin = true\nground_and_center = true\nremove_nodes = [\"attach\"]",
             1,
         )
+}
+
+fn fbx_recipe_v6(clip: &str) -> String {
+    format!(
+        r#"schema_version = 6
+schema = "urn:animsmith:schema:character-assembly-recipe:6"
+input_root = "inputs"
+base_input = "base.fbx"
+fps = 30.0
+
+[rest_bind_scale]
+source_skin_index = 0
+source_root_node_index = 1
+expected_factor = 0.01
+
+[[clips]]
+name = "walk"
+input = "{clip}"
+take = "take"
+"#
+    )
 }
 
 fn write_cubic_asset_from(path: &Path, bytes: &[u8], offset: f32) {
@@ -766,6 +791,183 @@ fn v4_active_block_rejects_fbx_instead_of_claiming_complete_coverage() {
     );
     assert!(!dir.path().join("character.glb").exists());
     assert!(!dir.path().join("character.json").exists());
+}
+
+#[test]
+fn v6_assembles_eligible_fbx_base_and_clip_through_one_proved_glb() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    std::fs::write(dir.path().join("inputs/base.fbx"), RIGGED_TRIANGLE_FBX).unwrap();
+    std::fs::write(dir.path().join("inputs/walk.fbx"), RIGGED_TRIANGLE_FBX).unwrap();
+    let recipe = fbx_recipe_v6("walk.fbx");
+    let recipe_value: toml::Value = toml::from_str(&recipe).unwrap();
+    assert_schema(
+        &serde_json::to_value(recipe_value).unwrap(),
+        RECIPE_SCHEMA_V6,
+    );
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+
+    let first = run(dir.path());
+    assert!(
+        first.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert!(first.stderr.is_empty());
+    let artifact = std::fs::read(dir.path().join("character.glb")).unwrap();
+    let evidence_bytes = std::fs::read(dir.path().join("character.json")).unwrap();
+    assert_eq!(first.stdout, evidence_bytes);
+    let evidence: Value = serde_json::from_slice(&evidence_bytes).unwrap();
+    assert_schema(&evidence, EVIDENCE_SCHEMA_V6);
+    assert_eq!(evidence["schema_version"], 6);
+    assert_eq!(
+        evidence["schema"],
+        "urn:animsmith:schema:character-assembly-evidence:6"
+    );
+    assert_eq!(evidence["artifact"]["sha256"], sha256_hex(&artifact));
+    let scale = &evidence["rest_bind_scale"];
+    assert_eq!(scale["read_back_sha256"], evidence["artifact"]["sha256"]);
+    assert_eq!(scale["proof"]["proof"]["read_back_digest_matches"], true);
+    assert_eq!(scale["inputs"].as_array().unwrap().len(), 2);
+    for (input, role, declared) in [
+        (&scale["inputs"][0], "base", "base.fbx"),
+        (&scale["inputs"][1], "clip:walk", "walk.fbx"),
+    ] {
+        assert_eq!(input["role"], role);
+        assert_eq!(input["declared_path"], declared);
+        assert_eq!(input["input_format"], "fbx");
+        let projection = &input["source_projection"];
+        assert_eq!(projection["kind"], "normalized-baked-fbx");
+        assert_eq!(projection["authored_curve_keys_preserved"], false);
+        assert_eq!(projection["raw_source_spans_preserved"], false);
+        assert_eq!(projection["capability"]["animation_takes_baked"], true);
+        assert_eq!(
+            projection["capability"]["authored_curve_keys_preserved"],
+            false
+        );
+        assert_eq!(
+            projection["capability"]["domains"]["translation_animation"],
+            "baked"
+        );
+        assert!(projection["staged_source"]["bytes"].as_u64().unwrap() > 0);
+    }
+    let assembled = animsmith_gltf::load(&dir.path().join("character.glb")).unwrap();
+    assert_eq!(assembled.clips.len(), 1);
+    assert_eq!(assembled.clips[0].name, "walk");
+    assert!(
+        assembled
+            .skeleton
+            .bones
+            .iter()
+            .all(|bone| bone.rest.scale == Vec3::ONE),
+        "the published rest hierarchy is fully reparameterized"
+    );
+
+    let second = run(dir.path());
+    assert!(second.status.success());
+    assert_eq!(
+        std::fs::read(dir.path().join("character.glb")).unwrap(),
+        artifact
+    );
+    assert_eq!(second.stdout, evidence_bytes);
+    assert_eq!(
+        std::fs::read(dir.path().join("character.json")).unwrap(),
+        evidence_bytes
+    );
+}
+
+#[test]
+fn v6_refuses_an_incomplete_fbx_clip_inventory_atomically() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    std::fs::write(dir.path().join("inputs/base.fbx"), RIGGED_TRIANGLE_FBX).unwrap();
+    let unsupported = RIGGED_TRIANGLE_FBX.replacen(
+        "\t\t\tP: \"Lcl Scaling\", \"Lcl Scaling\", \"\", \"A\",1,1,1",
+        "\t\t\tP: \"Lcl Scaling\", \"Lcl Scaling\", \"\", \"A\",1,1,1\n\t\t\tP: \"PipelineTag\", \"KString\", \"\", \"U\",\"unsupported\"",
+        1,
+    );
+    std::fs::write(dir.path().join("inputs/walk.fbx"), unsupported).unwrap();
+    std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v6("walk.fbx")).unwrap();
+    let prior_artifact = b"prior artifact";
+    let prior_evidence = b"prior evidence";
+    std::fs::write(dir.path().join("character.glb"), prior_artifact).unwrap();
+    std::fs::write(dir.path().join("character.json"), prior_evidence).unwrap();
+
+    let output = run(dir.path());
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        refusal_detail(&output).contains("FBX capability rejected input walk.fbx"),
+        "{}",
+        refusal_detail(&output)
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("character.glb")).unwrap(),
+        prior_artifact
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("character.json")).unwrap(),
+        prior_evidence
+    );
+}
+
+#[test]
+fn v6_gltf_projection_adds_only_the_new_evidence_boundary() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    let bytes = rest_bind_scale_rig_glb();
+    std::fs::write(dir.path().join("inputs/base.glb"), &bytes).unwrap();
+    std::fs::write(dir.path().join("inputs/walk.glb"), &bytes).unwrap();
+    let v6 = recipe("walk.glb")
+        .replacen("schema_version = 4", "schema_version = 6", 1)
+        .replacen(
+            "urn:animsmith:schema:character-assembly-recipe:4",
+            "urn:animsmith:schema:character-assembly-recipe:6",
+            1,
+        );
+    std::fs::write(dir.path().join("recipe.toml"), &v6).unwrap();
+    let output = run(dir.path());
+    assert!(output.status.success());
+    let v6_artifact = std::fs::read(dir.path().join("character.glb")).unwrap();
+    let evidence: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_schema(&evidence, EVIDENCE_SCHEMA_V6);
+    for input in evidence["rest_bind_scale"]["inputs"].as_array().unwrap() {
+        assert_eq!(input["input_format"], "glb");
+        assert_eq!(input["source_projection"]["kind"], "raw-gltf");
+        assert_eq!(
+            input["source_projection"]["authored_curve_keys_preserved"],
+            true
+        );
+        assert_eq!(
+            input["source_projection"]["raw_source_spans_preserved"],
+            true
+        );
+    }
+
+    let v5 = v6
+        .replacen("schema_version = 6", "schema_version = 5", 1)
+        .replacen(
+            "urn:animsmith:schema:character-assembly-recipe:6",
+            "urn:animsmith:schema:character-assembly-recipe:5",
+            1,
+        );
+    std::fs::write(dir.path().join("legacy.toml"), v5).unwrap();
+    let legacy = run_to(dir.path(), "legacy.toml", "legacy.glb", "legacy.json");
+    assert!(legacy.status.success());
+    assert_eq!(
+        std::fs::read(dir.path().join("legacy.glb")).unwrap(),
+        v6_artifact,
+        "v6 changes evidence/admission, not established glTF artifact semantics"
+    );
+    let legacy_evidence: Value = serde_json::from_slice(&legacy.stdout).unwrap();
+    assert_schema(&legacy_evidence, EVIDENCE_SCHEMA_V5);
+    assert!(
+        legacy_evidence["rest_bind_scale"]["inputs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|input| input.get("input_format").is_none()
+                && input.get("source_projection").is_none())
+    );
 }
 
 #[test]

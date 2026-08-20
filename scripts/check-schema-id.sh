@@ -90,11 +90,13 @@ check_schema docs/schemas/scale-evidence-v5.schema.json urn:animsmith:schema:sca
 check_schema docs/schemas/character-assembly-recipe-v2.schema.json urn:animsmith:schema:character-assembly-recipe:2
 check_schema docs/schemas/character-assembly-recipe-v3.schema.json urn:animsmith:schema:character-assembly-recipe:3 crates/animsmith/src/assembly.rs
 check_schema docs/schemas/character-assembly-recipe-v4.schema.json urn:animsmith:schema:character-assembly-recipe:4 crates/animsmith/src/assembly.rs
-check_schema docs/schemas/character-assembly-recipe-v5.schema.json urn:animsmith:schema:character-assembly-recipe:5 crates/animsmith/src/assembly.rs docs/character-assembly.md docs/cli.md docs/output.md
+check_schema docs/schemas/character-assembly-recipe-v5.schema.json urn:animsmith:schema:character-assembly-recipe:5 crates/animsmith/src/assembly.rs
+check_schema docs/schemas/character-assembly-recipe-v6.schema.json urn:animsmith:schema:character-assembly-recipe:6 crates/animsmith/src/assembly.rs docs/character-assembly.md docs/cli.md docs/output.md
 check_schema docs/schemas/character-assembly-evidence-v2.schema.json urn:animsmith:schema:character-assembly-evidence:2
 check_schema docs/schemas/character-assembly-evidence-v3.schema.json urn:animsmith:schema:character-assembly-evidence:3 crates/animsmith/src/assembly.rs
 check_schema docs/schemas/character-assembly-evidence-v4.schema.json urn:animsmith:schema:character-assembly-evidence:4 crates/animsmith/src/assembly.rs
-check_schema docs/schemas/character-assembly-evidence-v5.schema.json urn:animsmith:schema:character-assembly-evidence:5 crates/animsmith/src/assembly.rs docs/character-assembly.md docs/cli.md docs/output.md
+check_schema docs/schemas/character-assembly-evidence-v5.schema.json urn:animsmith:schema:character-assembly-evidence:5 crates/animsmith/src/assembly.rs
+check_schema docs/schemas/character-assembly-evidence-v6.schema.json urn:animsmith:schema:character-assembly-evidence:6 crates/animsmith/src/assembly.rs docs/character-assembly.md docs/cli.md docs/output.md
 if ! cmp -s docs/schemas/scale-evidence-v2.schema.json <(
   sed \
     -e 's/urn:animsmith:schema:scale-evidence:3/urn:animsmith:schema:scale-evidence:2/g' \
@@ -231,6 +233,39 @@ if ! cmp -s <(jq -S . docs/schemas/character-assembly-evidence-v4.schema.json) <
   ' docs/schemas/character-assembly-evidence-v5.schema.json
 ); then
   fail 'character-assembly-evidence-v5 must differ from immutable evidence-v4 only by identity and effective staged selectors'
+fi
+if ! cmp -s <(jq -S . docs/schemas/character-assembly-recipe-v5.schema.json) <(
+  jq -S '
+    .["$id"] = "urn:animsmith:schema:character-assembly-recipe:5"
+    | .title = "animsmith character assembly recipe v5"
+    | .properties.schema_version.const = 5
+    | .properties.schema.const = "urn:animsmith:schema:character-assembly-recipe:5"
+  ' docs/schemas/character-assembly-recipe-v6.schema.json
+); then
+  fail 'character-assembly-recipe-v6 must differ from immutable recipe-v5 only by identity'
+fi
+if ! cmp -s <(jq -S . docs/schemas/character-assembly-evidence-v5.schema.json) <(
+  jq -S '
+    .["$id"] = "urn:animsmith:schema:character-assembly-evidence:5"
+    | .title = "animsmith character assembly evidence v5"
+    | .properties.schema_version.const = 5
+    | .properties.schema.const = "urn:animsmith:schema:character-assembly-evidence:5"
+    | .["$defs"].rest_bind_scale_input.required -= ["input_format", "source_projection"]
+    | del(
+        .["$defs"].rest_bind_scale_input.allOf,
+        .["$defs"].rest_bind_scale_input.properties.input_format,
+        .["$defs"].rest_bind_scale_input.properties.source_projection,
+        .["$defs"].raw_gltf_projection,
+        .["$defs"].normalized_baked_fbx_projection,
+        .["$defs"].input_identity,
+        .["$defs"].fbx_capability,
+        .["$defs"].source_identity,
+        .["$defs"].status,
+        .["$defs"].count
+      )
+  ' docs/schemas/character-assembly-evidence-v6.schema.json
+); then
+  fail 'character-assembly-evidence-v6 must differ from immutable evidence-v5 only by identity and explicit source-projection evidence'
 fi
 if ! jq -e '
   .["$defs"].residual_comparison_counts.required
