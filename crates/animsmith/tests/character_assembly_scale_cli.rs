@@ -86,6 +86,21 @@ take = "take"
     )
 }
 
+fn unsupported_user_property_fbx() -> String {
+    RIGGED_TRIANGLE_FBX.replacen(
+        "\t\t\tP: \"Lcl Scaling\", \"Lcl Scaling\", \"\", \"A\",1,1,1",
+        "\t\t\tP: \"Lcl Scaling\", \"Lcl Scaling\", \"\", \"A\",1,1,1\n\t\t\tP: \"PipelineTag\", \"KString\", \"\", \"U\",\"unsupported\"",
+        1,
+    )
+}
+
+fn write_normalized_fbx_glb(path: &Path) {
+    let document =
+        animsmith_fbx::load_bytes(Path::new("source.fbx"), RIGGED_TRIANGLE_FBX.as_bytes())
+            .expect("analytic FBX fixture loads");
+    animsmith_gltf::write::write(&document, path).expect("normalized FBX fixture stages as GLB");
+}
+
 fn write_cubic_asset_from(path: &Path, bytes: &[u8], offset: f32) {
     let mut document = animsmith_gltf::load_bytes(Path::new("source.glb"), bytes).unwrap();
     let track = document.clips[0]
@@ -794,6 +809,41 @@ fn v4_active_block_rejects_fbx_instead_of_claiming_complete_coverage() {
 }
 
 #[test]
+fn v5_active_block_keeps_its_fbx_refusal_and_preserves_a_prior_pair() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    std::fs::write(dir.path().join("inputs/base.fbx"), RIGGED_TRIANGLE_FBX).unwrap();
+    std::fs::write(dir.path().join("inputs/walk.fbx"), RIGGED_TRIANGLE_FBX).unwrap();
+    let recipe = fbx_recipe_v6("walk.fbx")
+        .replacen("schema_version = 6", "schema_version = 5", 1)
+        .replacen(
+            "urn:animsmith:schema:character-assembly-recipe:6",
+            "urn:animsmith:schema:character-assembly-recipe:5",
+            1,
+        );
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+    let prior_artifact = b"prior artifact";
+    let prior_evidence = b"prior evidence";
+    std::fs::write(dir.path().join("character.glb"), prior_artifact).unwrap();
+    std::fs::write(dir.path().join("character.json"), prior_evidence).unwrap();
+
+    let output = run(dir.path());
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("rest_bind_scale input base.fbx is not glTF/GLB")
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("character.glb")).unwrap(),
+        prior_artifact
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("character.json")).unwrap(),
+        prior_evidence
+    );
+}
+
+#[test]
 fn v6_assembles_eligible_fbx_base_and_clip_through_one_proved_glb() {
     let dir = tempfile::tempdir().expect("temporary directory");
     std::fs::create_dir(dir.path().join("inputs")).unwrap();
@@ -881,12 +931,11 @@ fn v6_refuses_an_incomplete_fbx_clip_inventory_atomically() {
     let dir = tempfile::tempdir().expect("temporary directory");
     std::fs::create_dir(dir.path().join("inputs")).unwrap();
     std::fs::write(dir.path().join("inputs/base.fbx"), RIGGED_TRIANGLE_FBX).unwrap();
-    let unsupported = RIGGED_TRIANGLE_FBX.replacen(
-        "\t\t\tP: \"Lcl Scaling\", \"Lcl Scaling\", \"\", \"A\",1,1,1",
-        "\t\t\tP: \"Lcl Scaling\", \"Lcl Scaling\", \"\", \"A\",1,1,1\n\t\t\tP: \"PipelineTag\", \"KString\", \"\", \"U\",\"unsupported\"",
-        1,
-    );
-    std::fs::write(dir.path().join("inputs/walk.fbx"), unsupported).unwrap();
+    std::fs::write(
+        dir.path().join("inputs/walk.fbx"),
+        unsupported_user_property_fbx(),
+    )
+    .unwrap();
     std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v6("walk.fbx")).unwrap();
     let prior_artifact = b"prior artifact";
     let prior_evidence = b"prior evidence";
@@ -908,6 +957,79 @@ fn v6_refuses_an_incomplete_fbx_clip_inventory_atomically() {
         std::fs::read(dir.path().join("character.json")).unwrap(),
         prior_evidence
     );
+}
+
+#[test]
+fn v6_refuses_an_incomplete_fbx_base_inventory_atomically() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    std::fs::write(
+        dir.path().join("inputs/base.fbx"),
+        unsupported_user_property_fbx(),
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("inputs/walk.fbx"), RIGGED_TRIANGLE_FBX).unwrap();
+    std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v6("walk.fbx")).unwrap();
+    let prior_artifact = b"prior artifact";
+    let prior_evidence = b"prior evidence";
+    std::fs::write(dir.path().join("character.glb"), prior_artifact).unwrap();
+    std::fs::write(dir.path().join("character.json"), prior_evidence).unwrap();
+
+    let output = run(dir.path());
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        refusal_detail(&output).contains("FBX capability rejected input base.fbx"),
+        "{}",
+        refusal_detail(&output)
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("character.glb")).unwrap(),
+        prior_artifact
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("character.json")).unwrap(),
+        prior_evidence
+    );
+}
+
+#[test]
+fn v6_accepts_mixed_fbx_and_glb_inputs_in_both_directions() {
+    for (base, clip, expected_formats) in [
+        ("base.fbx", "walk.glb", ["fbx", "glb"]),
+        ("base.glb", "walk.fbx", ["glb", "fbx"]),
+    ] {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        std::fs::create_dir(dir.path().join("inputs")).unwrap();
+        for input in [base, clip] {
+            let path = dir.path().join("inputs").join(input);
+            if input.ends_with(".fbx") {
+                std::fs::write(path, RIGGED_TRIANGLE_FBX).unwrap();
+            } else {
+                write_normalized_fbx_glb(&path);
+            }
+        }
+        let recipe = fbx_recipe_v6(clip).replace(
+            "base_input = \"base.fbx\"",
+            &format!("base_input = {base:?}"),
+        );
+        std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+
+        let output = run(dir.path());
+        assert!(
+            output.status.success(),
+            "{base} + {clip}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let evidence: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_schema(&evidence, EVIDENCE_SCHEMA_V6);
+        let inputs = evidence["rest_bind_scale"]["inputs"].as_array().unwrap();
+        assert_eq!(inputs[0]["input_format"], expected_formats[0]);
+        assert_eq!(inputs[1]["input_format"], expected_formats[1]);
+        assert_eq!(
+            evidence["rest_bind_scale"]["read_back_sha256"],
+            evidence["artifact"]["sha256"]
+        );
+    }
 }
 
 #[test]
