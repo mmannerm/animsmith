@@ -2511,11 +2511,19 @@ mod tests {
             let retained = builder.push_construct(construct(index, format!("e{index}")));
             assert_eq!(retained, index < RAW_SOURCE_V1_MAX_OBSERVATIONS);
         }
+        assert!(!builder.push_construct(construct(
+            RAW_SOURCE_V1_MAX_OBSERVATIONS + 1,
+            "must-not-resume".to_string()
+        )));
         let loaded = builder.finish(Document::default()).expect("bounded facts");
         let facts = loaded.source_facts();
         assert_eq!(
             facts.constructs().rows().len(),
             RAW_SOURCE_V1_MAX_OBSERVATIONS
+        );
+        assert_eq!(
+            facts.constructs().coverage(),
+            SourceSetCoverageV1::partial(SourceUnavailableReasonV1::ProjectionBudgetExceeded)
         );
         assert_eq!(
             facts.work().inspected_rows(),
