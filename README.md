@@ -162,7 +162,7 @@ Contract-aware checks use declared expectations and, where needed, rig roles:
 | `loop-seam` | error | feet-relative-to-hips wrap discontinuity in declared loops |
 | `loop-seam-vel` | error | maximum per-bone model-space linear-velocity change across a declared loop wrap |
 | `loop-seam-rot` | error | maximum per-bone model-space angular-velocity change across a declared loop wrap |
-| `in-place` | error | declared in-place vs root-motion mode must match measured travel |
+| `in-place` | error | declared XZ movement owner must match measured horizontal travel |
 | `gait-group` | error | stride-phase spread across a declared directional blend ring |
 | `sync-group` | error | same-time blend members must share duration, frame grid, and endpoint convention |
 | `time-complement` | warning | same-time blend pairs whose gait phase aligns substantially better under reflected time |
@@ -221,6 +221,10 @@ uniform_scale_tolerance = 0.0001
 
 [clips."run_*"]
 loop = true
+# Project intent is independent per world-motion component.
+movement_owner_xz = "animation"
+movement_owner_y = "gameplay"
+movement_owner_yaw = "animation"
 # Clip/glob caps override these global defaults only for matching clips.
 max_loop_position_delta_m = 0.04
 max_loop_rotation_delta_deg = 2.0
@@ -256,6 +260,16 @@ min_lr_amplitude_m = 0.03
 Duration-pin values must be finite and positive; their tolerances must be
 finite and non-negative. Invalid pins are explicit `duration-sanity` errors,
 not silently ignored contracts.
+
+`movement_owner_xz`, `movement_owner_y`, and `movement_owner_yaw` each accept
+`"gameplay"` when the entity/controller owns that component or `"animation"`
+when extracted root motion owns it. Omitted axes remain unspecified; animsmith
+never infers one axis from another, a filename, measured displacement, or an
+engine profile. The legacy `in_place` boolean remains an XZ-only input alias
+(true is gameplay, false is animation). One selector entry cannot declare
+both spellings. Alias and canonical declarations in different glob/exact
+layers are normalized first, then use the same field-by-field precedence as
+the other clip expectations.
 
 `rest-world-scale` is quiet until `node_selectors` is nonempty. Each selector
 uses a deterministic `*` glob and must resolve exactly once; a miss or multiple

@@ -6,6 +6,7 @@
 
 use crate::check::{Check, CheckCtx};
 use crate::checks::root_motion_gap;
+use crate::config::MovementOwner;
 use crate::evaluation::{
     Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope, EvaluationScopeCode,
 };
@@ -20,11 +21,12 @@ pub struct RootMotionSpeed;
 
 impl RootMotionSpeed {
     /// Clips whose declared `speed_mps` this check judges (root-motion
-    /// clips — treadmill speeds belong to `foot-slide`).
+    /// clips — speeds for gameplay-owned XZ/treadmill clips belong to
+    /// `foot-slide`).
     fn has_pending_work(ctx: &CheckCtx) -> bool {
         ctx.clip_expectations()
             .iter()
-            .any(|e| e.speed_mps.is_some() && e.in_place != Some(true))
+            .any(|e| e.speed_mps.is_some() && e.movement_owner_xz != Some(MovementOwner::Gameplay))
     }
 }
 
@@ -50,7 +52,7 @@ impl Check for RootMotionSpeed {
             let Some(pin) = expectations.speed_mps else {
                 continue;
             };
-            if expectations.in_place == Some(true) {
+            if expectations.movement_owner_xz == Some(MovementOwner::Gameplay) {
                 // A treadmill clip's declared speed describes the
                 // stance sweep, not root displacement — `foot-slide`
                 // validates it there.

@@ -1,5 +1,5 @@
 //! Typed configuration: rig selection, per-check settings, per-clip
-//! expectations, and typed clip groups. The TOML file (`animsmith.toml`) is
+//! expectations and movement ownership, and typed clip groups. The TOML file (`animsmith.toml`) is
 //! *one* constructor of this — embedding pipelines build it
 //! programmatically through this module and keep their own contract
 //! formats on their side.
@@ -38,6 +38,33 @@ pub enum SeveritySetting {
     Warn,
     /// Force content findings to errors.
     Error,
+}
+
+/// The system that owns one component of a clip's world movement.
+///
+/// This is project intent, not a fact inferred from the animation or an
+/// engine profile. [`MovementOwner::Gameplay`] means the entity/controller
+/// supplies the component and an importer should bake it into pose;
+/// [`MovementOwner::Animation`] means extracted root motion supplies it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MovementOwner {
+    /// The entity or gameplay controller owns this movement component.
+    Gameplay,
+    /// Extracted animation root motion owns this movement component.
+    Animation,
+}
+
+impl MovementOwner {
+    /// Convert the legacy horizontal `in_place` declaration into its canonical
+    /// movement owner.
+    pub const fn from_in_place(in_place: bool) -> Self {
+        if in_place {
+            Self::Gameplay
+        } else {
+            Self::Animation
+        }
+    }
 }
 
 impl SeveritySetting {
@@ -151,9 +178,18 @@ pub struct ClipExpectations {
     /// Declared locomotion speed (m/s) carried by the clip's root
     /// motion.
     pub speed_mps: Option<Pinned>,
-    /// The clip is authored in place (no net root travel); consumed by
-    /// the `in-place` check (and exempts an in-place clip from
-    /// `root-motion-speed`).
+    /// Owner of horizontal X/Z world movement.
+    pub movement_owner_xz: Option<MovementOwner>,
+    /// Owner of vertical Y world movement.
+    pub movement_owner_y: Option<MovementOwner>,
+    /// Owner of world yaw movement.
+    pub movement_owner_yaw: Option<MovementOwner>,
+    /// Compatibility input alias for [`ClipExpectations::movement_owner_xz`]:
+    /// `true` means [`MovementOwner::Gameplay`] and `false` means
+    /// [`MovementOwner::Animation`]. A selector entry must not declare both
+    /// spellings. Effective expectations returned by
+    /// [`Config::expectations_for`] normalize this alias into
+    /// `movement_owner_xz` and clear this field.
     pub in_place: Option<bool>,
     /// Authored frame rate; consumed by the `fps` check (keys must land
     /// on the `1/fps` grid).
@@ -164,6 +200,16 @@ pub struct ClipExpectations {
 }
 
 impl ClipExpectations {
+    /// Canonical horizontal owner declared by this selector entry.
+    ///
+    /// Call [`Config::validate`] before resolving expectations so a selector
+    /// that declares both the canonical field and its compatibility alias is
+    /// rejected as a typed configuration error.
+    pub fn normalized_movement_owner_xz(&self) -> Option<MovementOwner> {
+        self.movement_owner_xz
+            .or_else(|| self.in_place.map(MovementOwner::from_in_place))
+    }
+
     /// Overlay `other` on `self` (other's set fields win).
     fn merged_with(&self, other: &ClipExpectations) -> ClipExpectations {
         ClipExpectations {
@@ -182,7 +228,12 @@ impl ClipExpectations {
                 .or(self.max_loop_angular_velocity_delta_degps),
             duration_s: other.duration_s.or(self.duration_s),
             speed_mps: other.speed_mps.or(self.speed_mps),
-            in_place: other.in_place.or(self.in_place),
+            movement_owner_xz: other
+                .normalized_movement_owner_xz()
+                .or_else(|| self.normalized_movement_owner_xz()),
+            movement_owner_y: other.movement_owner_y.or(self.movement_owner_y),
+            movement_owner_yaw: other.movement_owner_yaw.or(self.movement_owner_yaw),
+            in_place: None,
             fps: other.fps.or(self.fps),
             animates_bones: other
                 .animates_bones
@@ -373,6 +424,15 @@ pub enum ConfigValidationError {
         /// Stable public [`ClipExpectations`] field name.
         field: &'static str,
     },
+    /// One clip selector declared both the canonical horizontal owner and its
+    /// legacy `in_place` alias.
+    #[error(
+        "clip selector {selector:?} cannot declare both \"movement_owner_xz\" and \"in_place\""
+    )]
+    ConflictingClipMovementOwner {
+        /// Exact clip name or glob containing both spellings.
+        selector: String,
+    },
     /// A sync-group tolerance was negative or non-finite.
     #[error("sync group {group:?} field {field:?} must be a finite non-negative number")]
     InvalidSyncGroupTolerance {
@@ -435,6 +495,8 @@ impl Config {
     /// per-check numeric policy is outside its documented finite domain,
     /// [`ConfigValidationError::InvalidClipLoopCap`] when a clip selector
     /// contains a negative or non-finite per-clip loop cap,
+    /// [`ConfigValidationError::ConflictingClipMovementOwner`] when one clip
+    /// selector declares both `movement_owner_xz` and its `in_place` alias,
     /// [`ConfigValidationError::InvalidSyncGroupTolerance`] when a same-time
     /// group has an invalid timing tolerance, or
     /// [`ConfigValidationError::InvalidTimeComplementSetting`] when an
@@ -514,6 +576,11 @@ impl Config {
             }
         }
         for (selector, expectations) in &self.clips {
+            if expectations.movement_owner_xz.is_some() && expectations.in_place.is_some() {
+                return Err(ConfigValidationError::ConflictingClipMovementOwner {
+                    selector: selector.clone(),
+                });
+            }
             for (field, value) in [
                 (
                     "max_loop_position_delta_m",
@@ -577,6 +644,12 @@ impl Config {
 
     /// Effective expectations for a clip: glob matches (in key order)
     /// overlaid, exact match last.
+    ///
+    /// Each selector entry's legacy `in_place` input is normalized into
+    /// [`ClipExpectations::movement_owner_xz`] before the field overlay. The
+    /// returned value therefore always has [`ClipExpectations::in_place`] set
+    /// to `None`. Call [`Config::validate`] before this method so same-entry
+    /// alias conflicts are rejected rather than resolved by precedence.
     pub fn expectations_for(&self, clip: &str) -> ClipExpectations {
         let mut out = ClipExpectations::default();
         for (pattern, exp) in &self.clips {

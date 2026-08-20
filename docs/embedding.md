@@ -86,6 +86,11 @@ cargo run -p animsmith --example embed
 3. **Build `Config`.** The CLI's TOML is only one constructor. Deserialize
    the types from your schema or build them programmatically. Deserialization
    validates numeric check tolerances and per-clip loop caps immediately.
+   `MovementOwner` represents independent XZ, Y, and yaw intent in core;
+   `Config::expectations_for` returns canonical effective fields after
+   exact/glob layering. The legacy `in_place` input maps only to XZ and is
+   cleared from that effective result. A selector that declares both spellings
+   is rejected by `Config::validate`.
    Programmatic callers must call `Config::validate` before passing a directly
    constructed config to measurement-only APIs; `evaluate_checks` performs the
    same validation before inspecting or running the check catalog and returns

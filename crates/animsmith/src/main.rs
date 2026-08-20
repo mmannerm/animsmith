@@ -647,7 +647,11 @@ fn load_config_with_source(explicit: Option<&Path>) -> Result<LoadedConfig, Stri
         std::fs::read(&path).map_err(|e| format!("cannot read config {}: {e}", path.display()))?;
     let text = std::str::from_utf8(&bytes)
         .map_err(|e| format!("bad config {}: config is not UTF-8: {e}", path.display()))?;
-    let config = toml::from_str(text).map_err(|e| format!("bad config {}: {e}", path.display()))?;
+    let config: Config =
+        toml::from_str(text).map_err(|e| format!("bad config {}: {e}", path.display()))?;
+    config
+        .validate()
+        .map_err(|e| format!("bad config {}: {e}", path.display()))?;
     Ok(LoadedConfig {
         config,
         #[cfg(feature = "fbx")]

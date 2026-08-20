@@ -174,7 +174,7 @@ builtin_codes!(
         meaning = "One named same-time sync group had compatible member timing evidence compared.",
         emitted_by = ["sync-group"],
     TRAVEL_MODE => "travel_mode",
-        meaning = "One named clip's in-place/root-motion declaration was judged.",
+        meaning = "One named clip's XZ movement-owner declaration was judged.",
         emitted_by = ["in-place"],
     FRAME_GRID => "frame_grid",
         meaning = "The named clip's declared frame grid was evaluated.",

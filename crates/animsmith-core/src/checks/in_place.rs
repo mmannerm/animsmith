@@ -1,10 +1,11 @@
-//! `in-place` — a clip's declared travel mode must match its measured
-//! root motion. In-place clips drive entity velocity from gameplay and
-//! expect no baked travel; root-motion clips are the opposite. A
-//! mismatch makes the character glide or run in place at runtime.
+//! `in-place` — a clip's declared horizontal movement owner must match its
+//! measured root motion. Gameplay-owned XZ motion expects no baked travel;
+//! animation-owned XZ motion expects root travel. A mismatch makes the
+//! character glide or run in place at runtime.
 
 use crate::check::{Check, CheckCtx};
 use crate::checks::root_motion_gap;
+use crate::config::MovementOwner;
 use crate::evaluation::{
     Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope, EvaluationScopeCode,
 };
@@ -25,7 +26,7 @@ impl Check for InPlace {
         if ctx
             .clip_expectations()
             .iter()
-            .any(|expectations| expectations.in_place.is_some())
+            .any(|expectations| expectations.movement_owner_xz.is_some())
         {
             Applicability::Applicable
         } else {
@@ -38,9 +39,10 @@ impl Check for InPlace {
         let mut evaluated_scopes = Vec::new();
         let mut gaps = Vec::new();
         for (index, clip) in ctx.doc.clips.iter().enumerate() {
-            let Some(expected) = ctx.expectations(index).in_place else {
+            let Some(owner) = ctx.expectations(index).movement_owner_xz else {
                 continue;
             };
+            let expected_in_place = owner == MovementOwner::Gameplay;
             let scope = EvaluationScope::new(EvaluationScopeCode::TRAVEL_MODE).subject(&clip.name);
             if let Some(gap) = root_motion_gap(ctx.roles) {
                 gaps.push(gap.scope(scope));
@@ -61,7 +63,7 @@ impl Check for InPlace {
             };
             evaluated_scopes.push(scope);
             let travels = speed >= TRAVEL_THRESHOLD_MPS;
-            if expected && travels {
+            if expected_in_place && travels {
                 findings.push(
                     Finding::new(
                         self.id(),
@@ -75,7 +77,7 @@ impl Check for InPlace {
                     .measured(speed)
                     .expected(0.0f64),
                 );
-            } else if !expected && !travels {
+            } else if owner == MovementOwner::Animation && !travels {
                 findings.push(
                     Finding::new(
                         self.id(),

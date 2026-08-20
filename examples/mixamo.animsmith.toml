@@ -22,10 +22,10 @@ profile = "mixamo"
 
 [clips."mixamo.com"]
 # Downloaded with In Place checked, so the walk must not travel;
-# declaring in_place arms the in-place check. loop = true arms role-free
+# declaring XZ gameplay ownership arms the in-place check. loop = true arms role-free
 # per-bone pose/velocity closure plus locomotion-specific loop-seam.
 loop = true
-in_place = true
+movement_owner_xz = "gameplay"
 
 # For the root-motion variant (downloaded without In Place), declare
 # the speed your character controller expects instead (Mixamo's default
@@ -33,8 +33,11 @@ in_place = true
 #
 #   [clips."mixamo.com"]
 #   loop = true
-#   in_place = false
+#   movement_owner_xz = "animation"
 #   speed_mps = { value = 1.8, tolerance = 0.15 }
+
+# Legacy configs may use `in_place = true` or `false` as an XZ-only alias.
+# Do not declare that alias together with `movement_owner_xz` in one entry.
 
 [checks.loop-seam]
 # Fail a wrap discontinuity more than 1.6x the in-clip stride step.

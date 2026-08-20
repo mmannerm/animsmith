@@ -5,7 +5,7 @@
 //!
 //! Run: `cargo run -p animsmith --example embed`
 
-use animsmith_core::config::{ClipExpectations, Pinned};
+use animsmith_core::config::{ClipExpectations, MovementOwner, Pinned};
 use animsmith_core::measure::measure_document;
 use animsmith_core::profile::{ResolvedRoles, Role, detect_profile};
 use animsmith_core::{
@@ -59,7 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Deliberately wrong: the fixture's root travels 1 m/s, so
             // this declaration produces an `in-place` Error below —
             // demonstrating a finding and the non-zero gate exit.
-            in_place: Some(true),
+            movement_owner_xz: Some(MovementOwner::Gameplay),
             fps: Some(2.0), // the fixture keys at 0.0/0.5/1.0 s
             speed_mps: None,
             animates_bones: Some(vec!["hips".into()]),
@@ -106,7 +106,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     println!(
         "{} finding(s); gate exit code {exit} (expected 1 — see the \
-         deliberately wrong in_place declaration above)",
+         deliberately wrong movement_owner_xz declaration above)",
         findings.len()
     );
 
