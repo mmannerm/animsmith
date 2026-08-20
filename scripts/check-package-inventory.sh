@@ -42,7 +42,13 @@ publishable_manifests=()
 publishable_members=()
 unpublished_crates=()
 published_readmes=()
-published_doc_sources=()
+published_source_entries=()
+
+# docs.rs always attempts `cargo rustdoc --lib`. The CLI package is
+# intentionally bin-only, so its docs.rs landing/source/features pages are
+# useful package metadata, but a rustdoc build is explicitly exempt until a
+# meaningful public library target is introduced.
+bin_only_docs_rs_exemptions=(animsmith)
 
 for member in "${workspace_members[@]}"; do
   manifest="$member/Cargo.toml"
@@ -111,12 +117,24 @@ for ((i = 0; i < ${#publishable_crates[@]}; i++)); do
   fi
   published_readmes+=("$readme")
 
-  if test -f "$member/src/lib.rs"; then
-    published_doc_sources+=("$member/src/lib.rs")
-  elif test -f "$member/src/main.rs"; then
-    published_doc_sources+=("$member/src/main.rs")
+  if printf '%s\n' "${bin_only_docs_rs_exemptions[@]}" | grep -Fxq "$crate"; then
+    test ! -f "$member/src/lib.rs" || {
+      fail "$crate docs.rs bin-only exemption must not have a library source"
+    }
+    test -f "$member/src/main.rs" || {
+      fail "$crate is exempt from docs.rs rustdoc only when its bin source exists"
+    }
+    grep -Eq '^[[:space:]]*\[\[bin\]\][[:space:]]*$' "$manifest" || {
+      fail "$crate docs.rs bin-only exemption requires an explicit [[bin]] target"
+    }
+    ! grep -Eq '^[[:space:]]*\[lib\][[:space:]]*$' "$manifest" || {
+      fail "$crate docs.rs bin-only exemption must not have a library target"
+    }
+    published_source_entries+=("$member/src/main.rs")
+  elif test -f "$member/src/lib.rs"; then
+    published_source_entries+=("$member/src/lib.rs")
   else
-    fail "$member must provide src/lib.rs or src/main.rs for rustdoc"
+    fail "$member must provide src/lib.rs or use an explicit bin-only docs.rs exemption"
   fi
 
   require_fixed_line \
@@ -136,12 +154,12 @@ done
 bad_repo_links="$(
   grep -Eho 'https://github\.com/mmannerm/animsmith/(blob|tree)/[^)[:space:]]+' \
     "${published_readmes[@]}" \
-    "${published_doc_sources[@]}" \
+    "${published_source_entries[@]}" \
     DESIGN.md \
     | grep -Ev 'https://github\.com/mmannerm/animsmith/(blob|tree)/main/' || true
 )"
 if [ -n "$bad_repo_links" ]; then
-  fail "published README, rustdoc, and design repository links must use /main/ while pre-1.0 drift is accepted: $bad_repo_links"
+  fail "published README, source entry, and design repository links must use /main/ while pre-1.0 drift is accepted: $bad_repo_links"
 fi
 
 for crate in "${publishable_crates[@]}"; do
