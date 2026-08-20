@@ -153,6 +153,13 @@ capability preflight before any keys are remapped. FBX assembly remains
 available when the block is omitted; the block itself does not infer support
 from the normalized document.
 
+Recipe v6 leaves that immutable v5 contract unchanged and additionally admits
+the narrow inventory-complete FBX rest/bind subset. Each admitted FBX input is
+captured and normalized/baked by the FBX frontend, serialized into a private
+GLB stage, then passed through these same glTF plan-taking rewrite and proof
+boundaries. Its evidence identifies the FBX capability inventory and private
+stage explicitly; it does not claim raw FBX span or authored-curve preservation.
+
 [scale workflow]: https://github.com/mmannerm/animsmith/blob/main/docs/scale.md
 [embedding guide]: https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md#scale-plan-and-proof-contracts
 

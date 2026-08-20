@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:animsmith:schema:character-assembly-recipe:6",
+  "title": "animsmith character assembly recipe v6",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "schema",
+    "base_input",
+    "clips"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 6
+    },
+    "schema": {
+      "const": "urn:animsmith:schema:character-assembly-recipe:6"
+    },
+    "input_root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "base_input": {
+      "type": "string",
+      "minLength": 1
+    },
+    "mesh_instances": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "remove_nodes": {
+      "type": "array",
+      "uniqueItems": true,
+      "default": [],
+      "description": "Exact unique post-canonicalization base-node names whose complete descendant closures are removed after animation transforms.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "material_texture_recipe": {
+      "type": "string",
+      "minLength": 1
+    },
+    "complete_tracks": {
+      "type": "boolean"
+    },
+    "canonicalize_skin": {
+      "type": "boolean"
+    },
+    "ground_and_center": {
+      "type": "boolean"
+    },
+    "prune_constant_tracks": {
+      "type": "boolean",
+      "default": false,
+      "description": "After completion, quaternion normalization, and every other assembly transform, remove constant tracks that preserve the sampled pose."
+    },
+    "rest_bind_scale": {
+      "$ref": "#/$defs/rest_bind_scale"
+    },
+    "fps": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 1000
+    },
+    "clips": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/clip"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "rest_bind_scale": {
+      "type": "object",
+      "required": [
+        "source_skin_index",
+        "source_root_node_index",
+        "expected_factor"
+      ],
+      "properties": {
+        "source_skin_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "source_root_node_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expected_factor": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "clip": {
+      "type": "object",
+      "required": [
+        "name",
+        "input",
+        "take"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "input": {
+          "type": "string",
+          "minLength": 1
+        },
+        "take": {
+          "type": "string",
+          "minLength": 1
+        },
+        "frame_window": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "time_window": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          ],
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "drop_closing_endpoint": {
+          "type": "boolean"
+        },
+        "hold_frames": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "gait_anchor": {
+          "type": "boolean"
+        },
+        "strip_bones": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "not": {
+        "required": [
+          "frame_window",
+          "time_window"
+        ]
+      },
+      "additionalProperties": false
+    }
+  }
+}
