@@ -2383,6 +2383,10 @@ fn repeated_selected_joint_name_fbx_fixture() -> String {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../animsmith-fbx/testdata/rigged_triangle.fbx"),
     )
     .expect("reads analytic FBX fixture")
+    // The ordered connection splice below deliberately matches its analytic
+    // LF fixture spelling. Normalize a Windows checkout first so it builds
+    // the same selected-skin topology on every CI platform.
+    .replace("\r\n", "\n")
     .replacen("Count: 8", "Count: 12", 1)
     .replacen(
         "Weights: *3 { a: 1,1,1 }",
